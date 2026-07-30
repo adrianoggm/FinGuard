@@ -62,6 +62,27 @@ Detalles que cambian el resultado:
 | Se devuelven los movimientos que sustentan el cálculo | La suma tiene que poder comprobarse a mano (§2.1) |
 | La traza es opt-in | Expone el SQL; útil para la memoria, no para respuestas normales |
 
+### Periodos relativos
+
+En lugar de `dateRange` se puede enviar un `period`, y lo resuelve el servidor. El LLM **nombra** el periodo, nunca calcula fechas: aritmética de calendario en un modelo generativo es donde aparecen los errores silenciosos de un mes.
+
+```jsonc
+"period": {"period": "LAST_MONTH", "reference": "2026-07-15"}   // reference es opcional
+```
+
+| Periodo | Rango (referencia = miércoles 2026-07-15) |
+| --- | --- |
+| `TODAY` / `YESTERDAY` | 07-15 / 07-14 |
+| `THIS_WEEK` | 07-13 → 07-15 — del lunes a hoy, no la semana entera |
+| `LAST_WEEK` | 07-06 → 07-12 — completa |
+| `THIS_MONTH` | 07-01 → 07-15 |
+| `LAST_MONTH` | 06-01 → 06-30 — completo |
+| `THIS_YEAR` | 01-01 → 07-15 |
+| `LAST_N_DAYS`, `n` | hoy y los `n-1` anteriores |
+| `LAST_N_MONTHS`, `n` | desde el día 1 de hace `n-1` meses, incluido el mes en curso |
+
+`reference` fija qué día es «hoy»: sin él se usa la fecha actual en la zona del informe. [`resolve`](src/finguard_banking/domain/relative_period.py) es una función pura —el reloj vive en el borde— así que los tests cubren fin de mes, año bisiesto y cruce de año sin depender de cuándo se ejecuten.
+
 Topes: 500 grupos y 100 justificantes por consulta (§8.6). Sin implementar todavía: `comparison` (comparar con el periodo anterior) y la métrica `AVG`. `metric` viaja en el plan porque es parte del contrato, pero `SUM` y `COUNT` se devuelven siempre las dos: el cliente lee la que pidió.
 
 ## Saldo
@@ -141,7 +162,28 @@ just seed-generate   # regenera el SQL
 
 [`seeds/verify.sql`](seeds/verify.sql) **falla** —no avisa— si alguna transacción no cuadra, si hay asientos en otra moneda que su cuenta, o si hay transacciones sin asientos. Medir un benchmark sobre datos incoherentes es peor que no medirlo.
 
-Los tests de integración **no** dependen de este dataset: crean sus propios datos y los deshacen. Quien lo necesita es la evaluación de la Fase 2.
+Los tests de integración **no** dependen de este dataset: crean sus propios datos y los deshacen. Quien lo necesita es la evaluación.
+
+## Evaluación
+
+```bash
+just seed && just evaluate
+```
+
+```
+ok   gasolina_julio                   159.46 EUR
+ok   gasolina_mes_pasado              102.80 EUR
+…
+exactitud de ejecución: 12/12 (100.0%)
+```
+
+[`evaluation/queries.yaml`](evaluation/queries.yaml) tiene 12 casos con el plan que emitirá el LLM y la cifra que debe salir: totales, ingresos, neto, agrupaciones por semana, categoría y comercio, un periodo vacío, y uno que comprueba que lo `PENDING` no cuenta.
+
+Lo que hace que esto mida algo: **las cifras esperadas no salen del motor**. Se calculan con [`evaluation/expected.sql`](evaluation/expected.sql) (`just evaluate-expected`), SQL escrito aparte, sobre las tablas, sin vistas ni compilador ni resolvedor de periodos, con las fechas puestas a mano. Si salieran del propio motor, la evaluación solo comprobaría que el motor se parece a sí mismo.
+
+Dos detalles: los casos con periodo relativo **fijan `reference`** —el runner falla si alguno no lo hace, porque el resultado cambiaría cada día— y las consultas van por el **rol de solo lectura**, el mismo que usa el servicio.
+
+`question` todavía no se usa: es el texto con el que se medirá la exactitud de interpretación cuando el asistente traduzca lenguaje natural a plan (Fase 3).
 
 Las pruebas de [`test_ledger_integrity.py`](tests/test_ledger_integrity.py) comprueban cada rechazo contra la base real. Fuerzan los triggers diferidos con `SET CONSTRAINTS ALL IMMEDIATE` y deshacen la transacción al terminar, que es la única limpieza posible sobre un libro mayor inmutable.
 
