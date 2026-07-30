@@ -56,6 +56,29 @@ Un asiento tampoco puede ir en una moneda distinta a la de su cuenta: 2.500 al d
 
 De `ledger_transactions` solo se bloquea el `DELETE`: su `status` sí cambia, por ejemplo al pasar a `BOOKED`. Para deshacer un movimiento se anota una transacción compensatoria.
 
+## Datos de desarrollo
+
+El dataset es un **artefacto versionado**, no algo que cada máquina genere distinto: los tests futuros, el benchmark de la Fase 2 y la demo trabajan sobre exactamente los mismos movimientos.
+
+```bash
+just seed            # carga seeds/0001_demo.sql y lo verifica. CUIDADO: empieza con TRUNCATE
+just seed-verify     # comprueba lo que haya cargado ahora mismo
+just seed-generate   # regenera el SQL
+```
+
+[`seeds/0001_demo.sql`](seeds/0001_demo.sql) trae 1.624 transacciones y 3.248 asientos: 3 titulares con nómina, alquiler, suscripciones, supermercado, gasolina, restaurantes, transporte, salud, ocio y bizums entre 2025-02 y 2026-07, más la cuenta de compensación que hace de contrapartida de todo.
+
+| Propiedad | Por qué |
+| --- | --- |
+| Determinista | Misma semilla → mismo fichero byte a byte. Regenerar y encontrar `git diff` vacío es la prueba |
+| `category` y `merchant_name` en `metadata` | Es lo que consultará el motor de la Fase 2 (§9.2) |
+| 3 transacciones `PENDING` | Para poder comprobar que el saldo ignora lo que no está contabilizado |
+| Fechas fijas | Reproducibilidad. El precio es que envejecen: para la demo, `--end-date` y regenerar |
+
+[`seeds/verify.sql`](seeds/verify.sql) **falla** —no avisa— si alguna transacción no cuadra, si hay asientos en otra moneda que su cuenta, o si hay transacciones sin asientos. Medir un benchmark sobre datos incoherentes es peor que no medirlo.
+
+Los tests de integración **no** dependen de este dataset: crean sus propios datos y los deshacen. Quien lo necesita es la evaluación de la Fase 2.
+
 Las pruebas de [`test_ledger_integrity.py`](tests/test_ledger_integrity.py) comprueban cada rechazo contra la base real. Fuerzan los triggers diferidos con `SET CONSTRAINTS ALL IMMEDIATE` y deshacen la transacción al terminar, que es la única limpieza posible sobre un libro mayor inmutable.
 
 Configuración por entorno con prefijo `BANKING_` (`BANKING_DATABASE_URL`). El default apunta a la base local del perfil `core`.
