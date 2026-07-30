@@ -3,10 +3,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from finguard_banking.adapters.inbound.http.routes import router
 from finguard_banking.bootstrap.config import get_settings
+from finguard_banking.domain.errors import AccountNotFoundError
 
 
 @asynccontextmanager
@@ -24,21 +26,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FinGuard Banking API", version="0.1.0", lifespan=lifespan)
+app.include_router(router)
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
-    """El proceso responde. No comprueba dependencias a propósito."""
-    return {"status": "ok"}
-
-
-@app.get("/ready")
-async def ready() -> JSONResponse:
-    """Listo para servir: la base de datos contesta."""
-    pool: asyncpg.Pool[Any] = app.state.pool
-    try:
-        async with pool.acquire() as connection:
-            await connection.execute("SELECT 1")
-    except (OSError, asyncpg.PostgresError):
-        return JSONResponse({"status": "unavailable", "database": "down"}, status_code=503)
-    return JSONResponse({"status": "ok", "database": "up"})
+@app.exception_handler(AccountNotFoundError)
+async def account_not_found(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=404)
