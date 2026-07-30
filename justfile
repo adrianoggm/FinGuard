@@ -84,6 +84,15 @@ seed-verify:
 seed-generate:
     cd apps/banking-api && uv run python scripts/generate_seed.py
 
+# Mide la exactitud de ejecución del motor de consultas. Necesita `just seed` antes
+evaluate:
+    cd apps/banking-api && uv run python scripts/evaluate_queries.py
+
+# Recalcula a mano las cifras esperadas del dataset de evaluación
+evaluate-expected:
+    docker exec -i finguard-postgres-1 psql -U finguard_banking -d finguard_banking \
+        -v ON_ERROR_STOP=1 < apps/banking-api/evaluation/expected.sql
+
 # Instala las dependencias de cada servicio Python
 install:
     for s in {{ py_services }}; do echo "== $s"; (cd "$s" && uv sync); done
