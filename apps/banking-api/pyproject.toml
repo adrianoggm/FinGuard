@@ -10,6 +10,9 @@ dependencies = [
     "pydantic-settings>=2.7",
     "alembic>=1.14",
     "sqlalchemy>=2.0",
+    # Base de datos de zonas horarias. Windows no trae ninguna y las imágenes slim
+    # tampoco la garantizan: sin esto, ZoneInfo("Europe/Madrid") falla según la máquina.
+    "tzdata>=2025.1",
 ]
 
 [dependency-groups]
@@ -41,6 +44,9 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+# Sin el plugin, mypy espera los alias del contrato ("from", "to") en el constructor
+# en lugar de los nombres de los campos, y populate_by_name le pasa desapercibido.
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
