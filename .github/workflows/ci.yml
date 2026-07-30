@@ -1,0 +1,101 @@
+name: ci
+
+# Se ejecuta en cada push: hasta ahora la única verificación era ejecutar
+# `just check` a mano antes de subir.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Rápido y sin base de datos: formato, tipos y tests unitarios de cada servicio.
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [banking-api, assistant-api]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/${{ matrix.service }}/uv.lock
+
+      # --frozen falla si el lock ha divergido del pyproject, en lugar de re-resolver
+      # y verificar algo distinto de lo que se ejecuta en local.
+      - run: uv sync --frozen
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src
+      - run: uv run pytest -q -m "not integration"
+
+  # Lo que solo se puede comprobar contra PostgreSQL de verdad: las invariantes del
+  # libro mayor, el compilador de consultas y que el dataset carga y cuadra.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: finguard
+          POSTGRES_PASSWORD: finguard
+          POSTGRES_DB: finguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGPASSWORD: finguard
+      BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@127.0.0.1:5432/finguard_banking
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/banking-api/uv.lock
+
+      - name: Instala psql si el runner no lo trae
+        run: command -v psql || sudo apt-get install -y --no-install-recommends postgresql-client
+
+      # El mismo fichero que usa Docker Compose en local: una base y un rol por
+      # servicio, sin acceso cruzado.
+      - name: Crea las bases y los roles por servicio
+        run: |
+          psql -h 127.0.0.1 -U finguard -d finguard -v ON_ERROR_STOP=1 \
+            -f infrastructure/postgres/init/01-databases.sql
+
+      - run: uv sync --frozen
+        working-directory: apps/banking-api
+
+      - run: uv run alembic upgrade head
+        working-directory: apps/banking-api
+
+      - run: uv run pytest -q
+        working-directory: apps/banking-api
+
+      - name: Carga el dataset y comprueba que cuadra
+        run: |
+          psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f apps/banking-api/seeds/0001_demo.sql
+          psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/banking-api/seeds/verify.sql
+
+      # El dataset es un artefacto versionado: regenerarlo no puede cambiarlo.
+      - name: El generador del dataset sigue siendo determinista
+        run: |
+          uv run python scripts/generate_seed.py
+          git diff --exit-code -- seeds/
+        working-directory: apps/banking-api
