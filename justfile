@@ -55,6 +55,18 @@ build:
 db-shell:
     docker exec -it finguard-postgres-1 psql -U finguard_banking -d finguard_banking
 
+# Aplica las migraciones pendientes. Solo banking-api tiene esquema propio por ahora
+migrate:
+    cd apps/banking-api && uv run alembic upgrade head
+
+# Deshace la última migración
+migrate-down:
+    cd apps/banking-api && uv run alembic downgrade -1
+
+# Crea una migración vacía: just migration "contactos"
+migration name:
+    cd apps/banking-api && uv run alembic revision -m "{{ name }}"
+
 # Instala las dependencias de cada servicio Python
 install:
     for s in {{ py_services }}; do echo "== $s"; (cd "$s" && uv sync); done
