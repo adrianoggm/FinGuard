@@ -142,7 +142,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx2" },
+    { name = "httpx2", specifier = ">=2.9" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.9" },

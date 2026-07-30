@@ -4,7 +4,7 @@
 
 set shell := ["bash", "-uc"]
 
-py_services := "apps/banking-api"
+py_services := "apps/banking-api apps/assistant-api"
 
 # Lista las tareas disponibles
 default:
@@ -55,6 +55,18 @@ build:
 db-shell:
     docker exec -it finguard-postgres-1 psql -U finguard_banking -d finguard_banking
 
+# Aplica las migraciones pendientes. Solo banking-api tiene esquema propio por ahora
+migrate:
+    cd apps/banking-api && uv run alembic upgrade head
+
+# Deshace la última migración
+migrate-down:
+    cd apps/banking-api && uv run alembic downgrade -1
+
+# Crea una migración vacía: just migration "contactos"
+migration name:
+    cd apps/banking-api && uv run alembic revision -m "{{ name }}"
+
 # Instala las dependencias de cada servicio Python
 install:
     for s in {{ py_services }}; do echo "== $s"; (cd "$s" && uv sync); done
@@ -62,6 +74,14 @@ install:
 # banking-api con recarga automática. Necesita el 8001 libre: usa `just db`, no `just back`
 serve-banking:
     cd apps/banking-api && uv run uvicorn finguard_banking.bootstrap.main:app --reload --port 8001
+
+# assistant-api con recarga automática. Necesita el 8000 libre
+serve-assistant:
+    cd apps/assistant-api && uv run uvicorn finguard_assistant.bootstrap.main:app --reload --port 8000
+
+# Política de LLM activa
+llm-policy:
+    curl -sS http://127.0.0.1:8000/admin/llm-policy
 
 # --- Calidad ------------------------------------------------------------------
 
