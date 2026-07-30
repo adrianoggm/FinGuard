@@ -4,6 +4,9 @@ Regla de vision.md §9.3: no se ejecuta SQL producido por el LLM. Aquí la estru
 del SQL sale exclusivamente de enums —conjuntos cerrados definidos en el código— y
 todo valor que venga de fuera viaja como parámetro. Ni un dato del usuario se
 concatena en la cadena.
+
+Se lee la vista `assistant_read.transactions_v1`, nunca las tablas. Qué cuenta como
+contabilizado y qué signo tiene cada asiento son decisiones de la vista, no de aquí.
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from finguard_banking.domain.financial_query import Direction, FinancialQuery, GroupBy
+
+VISTA = "assistant_read.transactions_v1"
 
 # Tope de filas devueltas por consulta (vision.md §8.6).
 MAX_GRUPOS = 500
@@ -39,7 +44,6 @@ class _Parametros:
 
 
 def _expresion_de_grupo(group_by: GroupBy, tz: str) -> str:
-    # Las claves 'category' y 'merchant_name' son literales nuestros, no del usuario.
     match group_by:
         case GroupBy.NONE:
             return "'total'"
@@ -50,17 +54,17 @@ def _expresion_de_grupo(group_by: GroupBy, tz: str) -> str:
         case GroupBy.MONTH:
             return f"to_char(t.occurred_at AT TIME ZONE {tz}, 'YYYY-MM')"
         case GroupBy.CATEGORY:
-            return "COALESCE(t.metadata ->> 'category', 'SIN_CATEGORIA')"
+            return "COALESCE(t.category, 'SIN_CATEGORIA')"
         case GroupBy.MERCHANT:
-            return "COALESCE(t.metadata ->> 'merchant_name', 'SIN_COMERCIO')"
+            return "COALESCE(t.merchant_name, 'SIN_COMERCIO')"
 
 
 def _expresion_de_importe(direction: Direction) -> str:
     if direction is Direction.ALL:
         # Con los dos sentidos mezclados el total solo tiene sentido con signo.
-        return "CASE WHEN e.entry_type = 'CREDIT' THEN e.amount_minor ELSE -e.amount_minor END"
+        return "t.signed_amount_minor"
     # En un solo sentido el importe es positivo: "he gastado 34,20", no "-34,20".
-    return "e.amount_minor"
+    return "t.amount_minor"
 
 
 def _condiciones(consulta: FinancialQuery, parametros: _Parametros, tz: str) -> list[str]:
@@ -69,22 +73,17 @@ def _condiciones(consulta: FinancialQuery, parametros: _Parametros, tz: str) -> 
     hasta = parametros.de(consulta.date_range.hasta)
 
     condiciones = [
-        f"e.account_id = {cuenta}",
-        # Solo lo contabilizado: lo demás todavía no ha ocurrido.
-        "t.status = 'BOOKED'",
+        f"t.account_id = {cuenta}",
         # El rango incluye el día final completo, en la zona horaria del informe.
         f"t.occurred_at >= (({desde}::date)::timestamp AT TIME ZONE {tz})",
         f"t.occurred_at < (({hasta}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
 
-    if consulta.direction is Direction.EXPENSE:
-        condiciones.append(f"e.entry_type = {parametros.de('DEBIT')}")
-    elif consulta.direction is Direction.INCOME:
-        condiciones.append(f"e.entry_type = {parametros.de('CREDIT')}")
+    if consulta.direction is not Direction.ALL:
+        condiciones.append(f"t.direction = {parametros.de(consulta.direction.value)}")
 
     if consulta.categories:
-        categorias = parametros.de(list(consulta.categories))
-        condiciones.append(f"t.metadata ->> 'category' = ANY({categorias})")
+        condiciones.append(f"t.category = ANY({parametros.de(list(consulta.categories))})")
 
     return condiciones
 
@@ -99,8 +98,7 @@ def compilar_agregado(consulta: FinancialQuery, zona_horaria: str) -> CompiledQu
             {_expresion_de_grupo(consulta.group_by, tz)} AS clave,
             COALESCE(SUM({_expresion_de_importe(consulta.direction)}), 0) AS total_minor,
             COUNT(*) AS movement_count
-        FROM ledger_entries e
-        JOIN ledger_transactions t ON t.id = e.transaction_id
+        FROM {VISTA} t
         WHERE {" AND ".join(condiciones)}
         GROUP BY 1
         ORDER BY 1
@@ -117,17 +115,16 @@ def compilar_movimientos(consulta: FinancialQuery, zona_horaria: str) -> Compile
 
     sql = f"""
         SELECT
-            t.id AS transaction_id,
+            t.transaction_id,
             t.occurred_at,
             COALESCE(t.description, '') AS description,
-            t.metadata ->> 'merchant_name' AS merchant_name,
-            t.metadata ->> 'category' AS category,
+            t.merchant_name,
+            t.category,
             {_expresion_de_importe(consulta.direction)} AS amount_minor,
-            CASE WHEN e.entry_type = 'CREDIT' THEN 'INCOME' ELSE 'EXPENSE' END AS direction
-        FROM ledger_entries e
-        JOIN ledger_transactions t ON t.id = e.transaction_id
+            t.direction
+        FROM {VISTA} t
         WHERE {" AND ".join(condiciones)}
-        ORDER BY t.occurred_at DESC, t.id
+        ORDER BY t.occurred_at DESC, t.transaction_id
         LIMIT {limite}
     """
     return CompiledQuery(sql=sql, parameters=parametros.valores)

@@ -18,6 +18,14 @@ from finguard_banking.domain.financial_query_result import (
     QueryTrace,
 )
 
+# La moneda y la existencia de la cuenta salen de la vista de saldos, no de la tabla
+# accounts: el rol de consulta no la alcanza, y es justo lo que tiene que pasar.
+_CUENTA_SQL = """
+    SELECT b.currency
+    FROM assistant_read.account_balances_v1 b
+    WHERE b.account_id = $1
+"""
+
 
 class PostgresFinancialQueryRepository:
     def __init__(self, pool: asyncpg.Pool[Any], reporting_timezone: str) -> None:
@@ -30,9 +38,7 @@ class PostgresFinancialQueryRepository:
 
         comienzo = time.perf_counter()
         async with self._pool.acquire() as connection:
-            moneda = await connection.fetchval(
-                "SELECT currency FROM accounts WHERE id = $1", query.account_id
-            )
+            moneda = await connection.fetchval(_CUENTA_SQL, query.account_id)
             # Una cuenta que no existe no es una cuenta sin movimientos.
             if moneda is None:
                 raise AccountNotFoundError(query.account_id)

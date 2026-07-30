@@ -21,12 +21,19 @@ from finguard_banking.ports.ledger_repository import LedgerRepository
 # asyncpg.Pool solo es genérico para el type checker, así que estas anotaciones no
 # pueden evaluarse en tiempo de ejecución: de ahí el `from __future__ import annotations`.
 def _pool(request: Request) -> asyncpg.Pool[Any]:
+    """Pool del propietario: escrituras y comprobación de estado."""
     pool: asyncpg.Pool[Any] = request.app.state.pool
     return pool
 
 
+def _query_pool(request: Request) -> asyncpg.Pool[Any]:
+    """Pool de solo lectura: todo lo que se consulta pasa por aquí (§8.6)."""
+    pool: asyncpg.Pool[Any] = request.app.state.query_pool
+    return pool
+
+
 def get_ledger_repository(request: Request) -> LedgerRepository:
-    return PostgresLedgerRepository(_pool(request))
+    return PostgresLedgerRepository(_query_pool(request))
 
 
 def get_balance(request: Request) -> GetBalance:
@@ -34,7 +41,7 @@ def get_balance(request: Request) -> GetBalance:
 
 
 def get_financial_query_repository(request: Request) -> FinancialQueryRepository:
-    return PostgresFinancialQueryRepository(_pool(request), get_settings().reporting_timezone)
+    return PostgresFinancialQueryRepository(_query_pool(request), get_settings().reporting_timezone)
 
 
 def run_financial_query(request: Request) -> RunFinancialQuery:

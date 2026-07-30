@@ -36,6 +36,8 @@ services:
     profiles: ["core", "poc"]
     environment:
       BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
+      # Rol de solo lectura para el motor de consultas (§8.6)
+      BANKING_QUERY_DATABASE_URL: postgresql://finguard_query_reader:finguard_query_reader@postgres:5432/finguard_banking
     ports:
       - "127.0.0.1:${BANKING_PORT:-8001}:8001"
     depends_on:

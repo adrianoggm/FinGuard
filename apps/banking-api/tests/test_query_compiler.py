@@ -67,8 +67,8 @@ def test_ningun_valor_de_entrada_aparece_en_la_cadena() -> None:
 def test_el_sentido_del_movimiento_tambien_es_parametro() -> None:
     compilada = compilar_agregado(consulta(direction=Direction.EXPENSE), "Europe/Madrid")
 
-    assert "'DEBIT'" not in compilada.sql
-    assert "DEBIT" in compilada.parameters
+    assert "'EXPENSE'" not in compilada.sql
+    assert "EXPENSE" in compilada.parameters
 
 
 @pytest.mark.parametrize(
@@ -78,8 +78,8 @@ def test_el_sentido_del_movimiento_tambien_es_parametro() -> None:
         (GroupBy.DAY, "'YYYY-MM-DD'"),
         (GroupBy.WEEK, "date_trunc('week'"),
         (GroupBy.MONTH, "'YYYY-MM'"),
-        (GroupBy.CATEGORY, "'category'"),
-        (GroupBy.MERCHANT, "'merchant_name'"),
+        (GroupBy.CATEGORY, "COALESCE(t.category"),
+        (GroupBy.MERCHANT, "COALESCE(t.merchant_name"),
     ],
 )
 def test_cada_agrupacion_compila_a_su_expresion(agrupacion: GroupBy, fragmento: str) -> None:
@@ -88,12 +88,16 @@ def test_cada_agrupacion_compila_a_su_expresion(agrupacion: GroupBy, fragmento: 
     assert fragmento in compilada.sql
 
 
-def test_solo_se_consultan_movimientos_contabilizados() -> None:
+def test_solo_se_lee_la_vista_autorizada() -> None:
+    # Qué cuenta como contabilizado es decisión de la vista. Si el compilador tocara
+    # las tablas, esa regla volvería a estar repetida y podría divergir.
     for compilada in (
         compilar_agregado(consulta(), "Europe/Madrid"),
         compilar_movimientos(consulta(), "Europe/Madrid"),
     ):
-        assert "t.status = 'BOOKED'" in compilada.sql
+        assert "assistant_read.transactions_v1" in compilada.sql
+        assert "ledger_entries" not in compilada.sql
+        assert "ledger_transactions" not in compilada.sql
 
 
 def test_el_dia_final_del_rango_entra_completo() -> None:

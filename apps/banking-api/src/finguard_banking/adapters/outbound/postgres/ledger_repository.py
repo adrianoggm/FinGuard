@@ -9,30 +9,12 @@ from finguard_banking.domain.balance import Balance
 from finguard_banking.domain.errors import AccountNotFoundError
 
 # El saldo se deriva de los asientos, no de una columna mutable: el libro mayor es
-# la fuente de verdad (ADR-001, vision.md §8.5).
-#
-# Signo desde el punto de vista del titular: un DEBIT sobre su cuenta le quita
-# dinero y un CREDIT se lo da. Es el mismo criterio del ejemplo de Bizum del spec,
-# donde enviar 25 € se anota como débito en la cuenta del usuario.
-#
-# Solo cuentan los asientos de transacciones BOOKED; lo demás no ha ocurrido aún.
+# la fuente de verdad (ADR-001, vision.md §8.5). La derivación —qué cuenta como
+# contabilizado y con qué signo— vive en la vista, no repetida aquí.
 _BALANCE_SQL = """
-    SELECT
-        a.currency,
-        NOW() AS as_of,
-        COALESCE(SUM(
-            CASE WHEN asientos.entry_type = 'CREDIT' THEN asientos.amount_minor
-                 ELSE -asientos.amount_minor END
-        ), 0) AS booked_minor
-    FROM accounts a
-    LEFT JOIN (
-        SELECT e.account_id, e.entry_type, e.amount_minor
-        FROM ledger_entries e
-        JOIN ledger_transactions t ON t.id = e.transaction_id
-        WHERE t.status = 'BOOKED'
-    ) asientos ON asientos.account_id = a.id
-    WHERE a.id = $1
-    GROUP BY a.currency
+    SELECT b.currency, b.booked_minor, NOW() AS as_of
+    FROM assistant_read.account_balances_v1 b
+    WHERE b.account_id = $1
 """
 
 

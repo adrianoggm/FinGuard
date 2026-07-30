@@ -13,15 +13,25 @@ from finguard_banking.domain.errors import AccountNotFoundError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Dos pools con roles distintos (vision.md §8.6): el propietario para escribir y
+    # comprobar el estado, y uno de solo lectura para todo lo que se consulta. Que el
+    # camino de lectura no pueda escribir no depende de que este código sea correcto.
+    #
     # ponytail: si la base de datos no está, el arranque falla y se ve el error de una vez.
-    # Para arrancar sin base de datos, mover la creación del pool a /ready.
+    # Para arrancar sin base de datos, mover la creación de los pools a /ready.
+    settings = get_settings()
     pool: asyncpg.Pool[Any] = await asyncpg.create_pool(
-        get_settings().database_url, min_size=1, max_size=5
+        settings.database_url, min_size=1, max_size=5
+    )
+    query_pool: asyncpg.Pool[Any] = await asyncpg.create_pool(
+        settings.query_database_url, min_size=1, max_size=5
     )
     app.state.pool = pool
+    app.state.query_pool = query_pool
     try:
         yield
     finally:
+        await query_pool.close()
         await pool.close()
 
 
