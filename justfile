@@ -67,6 +67,23 @@ migrate-down:
 migration name:
     cd apps/banking-api && uv run alembic revision -m "{{ name }}"
 
+# --- Datos de desarrollo ------------------------------------------------------
+
+# Carga el dataset sintético. CUIDADO: empieza con un TRUNCATE del libro mayor
+seed file="0001_demo.sql":
+    docker exec -i finguard-postgres-1 psql -U finguard_banking -d finguard_banking \
+        -v ON_ERROR_STOP=1 -q < apps/banking-api/seeds/{{ file }}
+    @just seed-verify
+
+# Comprueba que lo cargado cuadra y resume el volumen
+seed-verify:
+    docker exec -i finguard-postgres-1 psql -U finguard_banking -d finguard_banking \
+        -v ON_ERROR_STOP=1 < apps/banking-api/seeds/verify.sql
+
+# Regenera el dataset. Es determinista: si no cambias nada, git diff sale vacío
+seed-generate:
+    cd apps/banking-api && uv run python scripts/generate_seed.py
+
 # Instala las dependencias de cada servicio Python
 install:
     for s in {{ py_services }}; do echo "== $s"; (cd "$s" && uv sync); done
