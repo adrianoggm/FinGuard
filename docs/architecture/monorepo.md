@@ -902,40 +902,24 @@ tests/
 
 ## 14. CI/CD
 
-```text
-.github/workflows/
-├── pull-request.yml
-├── contracts.yml
-├── build-images.yml
-├── security.yml
-└── release.yml
-```
+Lo que existe hoy es [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), en cada push y en cada PR contra `main`, con dos jobs:
 
-### Pull request
+| Job | Qué ejecuta | Con base de datos |
+| --- | --- | --- |
+| `check` | Uno por servicio en paralelo: `uv sync --frozen`, `ruff check`, `ruff format --check`, `mypy src`, `pytest -m "not integration"` | No |
+| `integration` | Crea las bases y roles con el mismo `01-databases.sql` del compose, aplica las migraciones, ejecuta la suite completa, carga el dataset y lo verifica, y comprueba que el generador sigue siendo determinista | PostgreSQL 18 como service container |
 
-1. Detectar proyectos afectados.
-2. Ejecutar lint.
-3. Ejecutar typecheck.
-4. Ejecutar tests.
-5. Construir proyectos afectados.
-6. Validar contratos.
+Dos decisiones:
 
-```bash
-pnpm nx affected -t lint,typecheck,test,build
-```
+- **`uv sync --frozen`**, no `uv sync`. Si el lock ha divergido del `pyproject.toml`, el job falla en lugar de re-resolver y verificar algo distinto de lo que corre en local.
+- **Sin filtros por ruta ni `nx affected`.** Con dos servicios, la matriz los ejecuta los dos en paralelo y termina antes de lo que tardaría razonar sobre qué cambió. Los filtros entran cuando el tiempo de CI moleste; entonces `dorny/paths-filter` es suficiente y no obliga a meter Nx.
 
-### Contratos
+Pendientes, cuando exista lo que verifican:
 
-Se ejecutaría cuando cambie `packages/contracts/**`. Comprobaría:
-
-- Esquemas válidos.
-- Clientes regenerados.
-- Cambios incompatibles.
-- Tests de consumidores.
-
-### Imágenes
-
-Solo construiría las imágenes afectadas. GitHub Actions permite filtrar workflows según las rutas modificadas, aunque también puede centralizarse esta lógica mediante `nx affected`.
+- **Contratos** — al cambiar `packages/contracts/**`: esquemas válidos, clientes regenerados, cambios incompatibles y tests de consumidores. Hoy la carpeta está vacía.
+- **Imágenes** — construir y publicar solo lo afectado.
+- **Seguridad** — análisis de dependencias y de secretos.
+- **Release** — etiquetado y publicación.
 
 ---
 
