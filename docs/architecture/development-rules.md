@@ -14,3 +14,4 @@ Reglas que aplican a todo el monorepo. Ver [monorepo.md](monorepo.md) para la es
 10. Todo evento y petición incorpora un `correlation_id`.
 11. Todo servicio dispone de `/health`, `/ready` y métricas.
 12. Todo cambio en una operación financiera requiere pruebas de concurrencia e idempotencia.
+13. Las credenciales del repositorio son exclusivamente de desarrollo local: los servicios que las usan no publican puertos fuera de `127.0.0.1`, y ningún despliegue las reutiliza — las inyecta desde un gestor de secretos.
