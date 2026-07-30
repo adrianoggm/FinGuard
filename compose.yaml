@@ -1,18 +1,21 @@
 name: finguard
 
-# Perfiles: core (mínimo funcional), voice, a2a, events.
-# docker compose --profile core up
+# Perfiles:
+#   core  esqueleto: base de datos + APIs de backend
+#   poc   todo lo que exista: core + piel (web, y más adelante app móvil)
+#   voice / a2a / events  se añaden en sus iteraciones
+#
+# Un componente suelto no necesita perfil: docker compose up postgres
+# Todo se publica solo en 127.0.0.1: las credenciales son de desarrollo (regla 13).
 
 services:
   postgres:
     image: postgres:18-alpine
-    profiles: ["core"]
+    profiles: ["core", "poc"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-finguard}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
       POSTGRES_DB: ${POSTGRES_DB:-finguard}
-    # Solo localhost: las credenciales de desarrollo son triviales y publicar en
-    # 0.0.0.0 expondría la base de datos a toda la red local.
     # 5442 en el host: 5432 y 5433 suelen estar ocupados por otros proyectos.
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
@@ -25,6 +28,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  banking-api:
+    build:
+      context: .
+      dockerfile: apps/banking-api/Dockerfile
+    profiles: ["core", "poc"]
+    environment:
+      BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
+    ports:
+      - "127.0.0.1:${BANKING_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres-data:
