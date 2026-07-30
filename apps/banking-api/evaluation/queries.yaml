@@ -1,0 +1,127 @@
+# Dataset de evaluación del motor de consultas (Fase 2).
+#
+# Cada caso es un plan como el que emitirá el LLM, y lo que el motor debe devolver
+# sobre seeds/0001_demo.sql. Las cifras esperadas NO salen del motor: se calcularon
+# con evaluation/expected.sql, SQL escrito aparte, sobre las tablas y con las fechas
+# explícitas. Si salieran del propio motor, esto no mediría nada.
+#
+# `question` no se usa todavía: es el texto con el que se medirá la exactitud de
+# interpretación cuando el asistente traduzca lenguaje natural a plan (Fase 3).
+#
+# Los casos con periodo relativo fijan `reference`: sin eso el resultado cambiaría
+# cada día y esto dejaría de ser una medida.
+
+- id: gasolina_julio
+  question: ¿Cuánto he gastado en gasolina este mes?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+  expected: {totalMinor: 15946, movementCount: 3}
+
+- id: gasolina_mes_pasado
+  question: ¿Y cuánto gasté el mes anterior?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    period: {period: LAST_MONTH, reference: 2026-07-15}
+  expected: {totalMinor: 10280, movementCount: 2}
+
+- id: supermercado_tres_meses
+  question: ¿Cuánto llevo gastado en supermercado en los últimos tres meses?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [GROCERIES]
+    period: {period: LAST_N_MONTHS, n: 3, reference: 2026-07-15}
+  expected: {totalMinor: 132149, movementCount: 23}
+
+- id: gasto_total_junio
+  question: ¿Cuánto gasté en total en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 208140, movementCount: 28}
+
+- id: ingresos_junio
+  question: ¿Cuánto ingresé en junio?
+  account: ES-0001
+  plan:
+    direction: INCOME
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 251617, movementCount: 3}
+
+# Con los dos sentidos mezclados el total es el neto: 251617 - 208140.
+- id: neto_junio
+  question: ¿Cuánto ahorré en junio?
+  account: ES-0001
+  plan:
+    direction: ALL
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 43477, movementCount: 31}
+
+- id: gasolina_julio_por_semana
+  question: Compara mi gasto en gasolina de este mes por semanas
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+    groupBy: WEEK
+  expected:
+    totalMinor: 15946
+    movementCount: 3
+    groups:
+      - {key: "2026-07-06", totalMinor: 7009, movementCount: 1}
+      - {key: "2026-07-13", totalMinor: 4098, movementCount: 1}
+      - {key: "2026-07-20", totalMinor: 4839, movementCount: 1}
+
+- id: junio_por_categoria
+  question: ¿En qué me fui el dinero en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+    groupBy: CATEGORY
+  expected: {totalMinor: 208140, movementCount: 28}
+
+- id: supermercado_junio_por_comercio
+  question: ¿En qué supermercados compré en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [GROCERIES]
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+    groupBy: MERCHANT
+  expected: {totalMinor: 50693, movementCount: 8}
+
+# Un periodo sin movimientos: cero no es un error, y no debe confundirse con uno.
+- id: salud_esta_semana
+  question: ¿He gastado algo en farmacia esta semana?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [HEALTH]
+    period: {period: THIS_WEEK, reference: 2026-07-15}
+  expected: {totalMinor: 0, movementCount: 0}
+
+# El dataset tiene una compra de ocio PENDING el 31 de julio: no puede contar.
+- id: ocio_julio_sin_lo_pendiente
+  question: ¿Cuánto he gastado en ocio este mes?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [LEISURE]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+  expected: {totalMinor: 4459, movementCount: 2}
+
+- id: gasto_junio_tercera_cuenta
+  question: ¿Cuánto gasté en junio?
+  account: ES-0003
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 243979, movementCount: 30}

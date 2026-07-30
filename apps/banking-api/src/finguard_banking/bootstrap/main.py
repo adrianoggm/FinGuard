@@ -4,7 +4,9 @@ from typing import Any
 
 import asyncpg
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from finguard_banking.adapters.inbound.http.routes import router
 from finguard_banking.bootstrap.config import get_settings
@@ -42,3 +44,13 @@ app.include_router(router)
 @app.exception_handler(AccountNotFoundError)
 async def account_not_found(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": str(exc)}, status_code=404)
+
+
+@app.exception_handler(ValidationError)
+async def invalid_query(request: Request, exc: Exception) -> JSONResponse:
+    """Un plan que el dominio rechaza es un 422, no un error del servidor.
+
+    Los límites se validan una sola vez, en el dominio; el adaptador solo traduce.
+    """
+    detalle = exc.errors() if isinstance(exc, ValidationError) else [{"msg": str(exc)}]
+    return JSONResponse({"detail": jsonable_encoder(detalle)}, status_code=422)

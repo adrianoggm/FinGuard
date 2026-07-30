@@ -52,8 +52,10 @@ RESULTADO = FinancialQueryResult(
 class RepositorioFalso:
     def __init__(self, resultado: FinancialQueryResult | None) -> None:
         self._resultado = resultado
+        self.recibida: FinancialQuery | None = None
 
     async def run(self, query: FinancialQuery) -> FinancialQueryResult:
+        self.recibida = query
         if self._resultado is None:
             raise AccountNotFoundError(query.account_id)
         return self._resultado
@@ -126,6 +128,36 @@ def test_no_se_puede_colar_sql_como_campo_extra() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_un_periodo_relativo_se_resuelve_antes_de_llegar_al_dominio() -> None:
+    repositorio = RepositorioFalso(RESULTADO)
+    app.dependency_overrides[run_financial_query] = lambda: RunFinancialQuery(repositorio)
+    cuerpo = {k: v for k, v in CUERPO.items() if k != "dateRange"}
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**cuerpo, "period": {"period": "LAST_MONTH", "reference": "2026-07-15"}},
+    )
+
+    assert response.status_code == 200
+    assert repositorio.recibida is not None
+    # El dominio solo ve fechas absolutas: la resolución ocurre en el borde.
+    assert repositorio.recibida.date_range.desde.isoformat() == "2026-06-01"
+    assert repositorio.recibida.date_range.hasta.isoformat() == "2026-06-30"
+
+
+def test_hay_que_indicar_el_periodo_de_una_sola_forma() -> None:
+    cliente = _con_repositorio(RESULTADO)
+    sin_rango = {k: v for k, v in CUERPO.items() if k != "dateRange"}
+
+    ambos = cliente.post(
+        "/v1/financial-queries", json={**CUERPO, "period": {"period": "LAST_MONTH"}}
+    )
+    ninguno = cliente.post("/v1/financial-queries", json=sin_rango)
+
+    assert ambos.status_code == 422
+    assert ninguno.status_code == 422
 
 
 def test_un_rango_al_reves_se_rechaza() -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import Request
@@ -46,6 +48,15 @@ def get_financial_query_repository(request: Request) -> FinancialQueryRepository
 
 def run_financial_query(request: Request) -> RunFinancialQuery:
     return RunFinancialQuery(get_financial_query_repository(request))
+
+
+def reporting_today(request: Request) -> date:
+    """Qué día es hoy en la zona del informe.
+
+    El reloj vive en el borde: el dominio resuelve periodos con una función pura y no
+    consulta la hora, así que sus resultados no dependen de cuándo se ejecuten.
+    """
+    return datetime.now(ZoneInfo(get_settings().reporting_timezone)).date()
 
 
 async def database_answers(request: Request) -> bool:
