@@ -17,10 +17,24 @@ just serve-banking   # http://127.0.0.1:8001
 just check           # ruff + mypy + pytest
 ```
 
-| Endpoint | Comprueba |
+| Endpoint | Qué hace |
 | --- | --- |
-| `GET /health` | Que el proceso responde. No mira dependencias |
-| `GET /ready` | Que PostgreSQL contesta. `503` si no |
+| `GET /health` | Confirma que el proceso responde. No mira dependencias |
+| `GET /ready` | Confirma que PostgreSQL contesta. `503` si no |
+| `GET /v1/accounts/{id}/balance` | Saldo derivado del libro mayor. `404` si la cuenta no existe |
+
+## Saldo
+
+El saldo **se calcula sumando los asientos**, no se lee de una columna mutable: el libro mayor es la fuente de verdad (ADR-001). Solo cuentan los asientos de transacciones `BOOKED`.
+
+El signo es el del titular: un `DEBIT` sobre su cuenta le quita dinero, un `CREDIT` se lo da. Es el criterio del ejemplo de Bizum del spec, donde enviar 25 € se anota como débito en la cuenta de quien envía.
+
+```
+GET /v1/accounts/{id}/balance
+{"accountId":"…","availableMinor":146035,"bookedMinor":146035,"currency":"EUR","asOf":"…"}
+```
+
+`available` y `booked` coinciden hoy y dejarán de coincidir en Fase 5, cuando existan importes reservados por operaciones pendientes de confirmar. `balance_projections` está creada pero **sin usar**: se gana su sitio en Fase 5, cuando haga falta bloquear una fila con `FOR UPDATE` para cobrar sin condiciones de carrera.
 
 ## Esquema
 
