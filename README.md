@@ -40,7 +40,7 @@ Python 3.12 · FastAPI · Pydantic · SQLAlchemy 2 · Alembic · PostgreSQL · R
 docker compose --profile core up -d --wait
 ```
 
-Por ahora el perfil `core` solo levanta PostgreSQL 18 en el puerto **5442** del host (5432 y 5433 suelen estar ocupados por otros proyectos), con una base de datos y un rol por servicio:
+Por ahora el perfil `core` solo levanta PostgreSQL 18 en `127.0.0.1:5442` (5432 y 5433 suelen estar ocupados por otros proyectos), con una base de datos y un rol por servicio. Las credenciales de desarrollo son triviales, así que el puerto **no** se publica fuera de localhost:
 
 | Base de datos | Rol | Contraseña de desarrollo |
 | --- | --- | --- |
