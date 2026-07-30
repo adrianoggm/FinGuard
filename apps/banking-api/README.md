@@ -22,6 +22,46 @@ just check           # ruff + mypy + pytest
 | `GET /health` | Confirma que el proceso responde. No mira dependencias |
 | `GET /ready` | Confirma que PostgreSQL contesta. `503` si no |
 | `GET /v1/accounts/{id}/balance` | Saldo derivado del libro mayor. `404` si la cuenta no existe |
+| `POST /v1/financial-queries` | Ejecuta un plan de consulta validado. `422` si el plan no cabe en el contrato |
+
+## Consultas financieras
+
+El cuerpo de `POST /v1/financial-queries` es la **representación intermedia** de [vision.md §9.2](../../docs/vision.md), nunca SQL. El modelo de dominio tiene `extra="forbid"`: un campo que no reconoce —`"sql"`, por ejemplo— es un `422`, no algo que se ignore en silencio.
+
+```jsonc
+{
+  "accountId": "…",
+  "direction": "EXPENSE",              // EXPENSE | INCOME | ALL
+  "categories": ["TRANSPORT_FUEL"],    // patrón cerrado, máximo 20
+  "dateRange": {"from": "2026-07-01", "to": "2026-07-31"},
+  "groupBy": "WEEK",                   // NONE | DAY | WEEK | MONTH | CATEGORY | MERCHANT
+  "supportingLimit": 3,                // justificantes, máximo 100
+  "explain": true                      // devuelve el SQL compilado y sus parámetros
+}
+```
+
+[`query_compiler.py`](src/finguard_banking/adapters/outbound/postgres/query_compiler.py) traduce ese plan a SQL: **la estructura sale de enums** definidos en el código y **todo valor viaja como parámetro**. Se puede ver con `"explain": true`:
+
+```sql
+SELECT to_char(date_trunc('week', t.occurred_at AT TIME ZONE $1), 'YYYY-MM-DD') …
+  WHERE e.account_id = $2 AND t.status = 'BOOKED'
+    AND t.occurred_at >= (($3::date)::timestamp AT TIME ZONE $1)
+    AND t.occurred_at <  (($4::date + 1)::timestamp AT TIME ZONE $1)
+    AND e.entry_type = $5 AND t.metadata ->> 'category' = ANY($6)
+```
+
+Detalles que cambian el resultado:
+
+| Decisión | Por qué |
+| --- | --- |
+| El gasto se devuelve **en positivo** | «He gastado 34,20», no «-34,20». Con `direction: ALL` el total va con signo, porque es el neto |
+| El día final del rango entra **completo** | Comparar con `<= to` dejaría fuera todo lo posterior a medianoche |
+| Se agrupa en `Europe/Madrid` | Configurable con `BANKING_REPORTING_TIMEZONE`. En UTC, una compra de las 23:30 caería en el día siguiente |
+| Solo cuenta lo `BOOKED` | Igual que el saldo |
+| Se devuelven los movimientos que sustentan el cálculo | La suma tiene que poder comprobarse a mano (§2.1) |
+| La traza es opt-in | Expone el SQL; útil para la memoria, no para respuestas normales |
+
+Topes: 500 grupos y 100 justificantes por consulta (§8.6). Sin implementar todavía: `comparison` (comparar con el periodo anterior) y la métrica `AVG`. `metric` viaja en el plan porque es parte del contrato, pero `SUM` y `COUNT` se devuelven siempre las dos: el cliente lee la que pidió.
 
 ## Saldo
 
