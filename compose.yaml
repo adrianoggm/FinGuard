@@ -11,9 +11,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-finguard}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
       POSTGRES_DB: ${POSTGRES_DB:-finguard}
+    # Solo localhost: las credenciales de desarrollo son triviales y publicar en
+    # 0.0.0.0 expondría la base de datos a toda la red local.
     # 5442 en el host: 5432 y 5433 suelen estar ocupados por otros proyectos.
     ports:
-      - "${POSTGRES_PORT:-5442}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
     volumes:
       # En Postgres 18+ el volumen se monta en /var/lib/postgresql, no en .../data.
       - postgres-data:/var/lib/postgresql

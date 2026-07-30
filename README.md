@@ -36,8 +36,15 @@ Python 3.12 · FastAPI · Pydantic · SQLAlchemy 2 · Alembic · PostgreSQL · R
 
 ## Cómo arrancar
 
-Pendiente de la Fase 0. El objetivo es arrancar el núcleo con un solo comando:
-
 ```bash
-docker compose --profile core up
+docker compose --profile core up -d --wait
 ```
+
+Por ahora el perfil `core` solo levanta PostgreSQL 18 en `127.0.0.1:5442` (5432 y 5433 suelen estar ocupados por otros proyectos), con una base de datos y un rol por servicio. Las credenciales de desarrollo son triviales, así que el puerto **no** se publica fuera de localhost:
+
+| Base de datos | Rol | Contraseña de desarrollo |
+| --- | --- | --- |
+| `finguard_banking` | `finguard_banking` | `finguard_banking` |
+| `finguard_assistant` | `finguard_assistant` | `finguard_assistant` |
+
+Ningún rol puede conectarse a la base de datos de otro servicio. Copia [.env.example](.env.example) a `.env` para cambiar puerto o credenciales.
