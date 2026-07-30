@@ -1,0 +1,28 @@
+name: finguard
+
+# Perfiles: core (mínimo funcional), voice, a2a, events.
+# docker compose --profile core up
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    profiles: ["core"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-finguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
+      POSTGRES_DB: ${POSTGRES_DB:-finguard}
+    # 5442 en el host: 5432 y 5433 suelen estar ocupados por otros proyectos.
+    ports:
+      - "${POSTGRES_PORT:-5442}:5432"
+    volumes:
+      # En Postgres 18+ el volumen se monta en /var/lib/postgresql, no en .../data.
+      - postgres-data:/var/lib/postgresql
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finguard} -d ${POSTGRES_DB:-finguard}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
