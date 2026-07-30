@@ -1,5 +1,7 @@
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
 import asyncpg
 import pytest
@@ -41,15 +43,35 @@ async def crear_cuenta(conn: asyncpg.Connection, currency: str = "EUR") -> uuid.
     return account_id
 
 
-async def crear_transaccion(conn: asyncpg.Connection) -> uuid.UUID:
+async def crear_transaccion(conn: asyncpg.Connection, status: str = "BOOKED") -> uuid.UUID:
     transaction_id = uuid.uuid4()
     await conn.execute(
         "INSERT INTO ledger_transactions (id, transaction_type, status, reference, occurred_at) "
-        "VALUES ($1, 'TRANSFER', 'BOOKED', $2, NOW())",
+        "VALUES ($1, 'TRANSFER', $2, $3, NOW())",
         transaction_id,
+        status,
         f"ref-{transaction_id.hex[:12]}",
     )
     return transaction_id
+
+
+def como_pool(conn: asyncpg.Connection) -> Any:
+    """Hace pasar una conexión suelta por un pool.
+
+    Los repositorios piden un pool y hacen `acquire()`. En los tests hay que
+    reutilizar la conexión del fixture, porque los datos viven en una transacción
+    sin confirmar que otra conexión no vería.
+    """
+
+    class _PoolDeUnaConexion:
+        def acquire(self) -> Any:
+            @asynccontextmanager
+            async def prestada() -> AsyncIterator[asyncpg.Connection]:
+                yield conn
+
+            return prestada()
+
+    return _PoolDeUnaConexion()
 
 
 async def anotar(
