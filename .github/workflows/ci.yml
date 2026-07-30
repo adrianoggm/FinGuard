@@ -61,6 +61,7 @@ jobs:
     env:
       PGPASSWORD: finguard
       BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@127.0.0.1:5432/finguard_banking
+      BANKING_QUERY_DATABASE_URL: postgresql://finguard_query_reader:finguard_query_reader@127.0.0.1:5432/finguard_banking
     steps:
       - uses: actions/checkout@v4
 
@@ -76,8 +77,10 @@ jobs:
       # servicio, sin acceso cruzado.
       - name: Crea las bases y los roles por servicio
         run: |
-          psql -h 127.0.0.1 -U finguard -d finguard -v ON_ERROR_STOP=1 \
-            -f infrastructure/postgres/init/01-databases.sql
+          for script in infrastructure/postgres/init/*.sql; do
+            echo "== $script"
+            psql -h 127.0.0.1 -U finguard -d finguard -v ON_ERROR_STOP=1 -f "$script"
+          done
 
       - run: uv sync --frozen
         working-directory: apps/banking-api

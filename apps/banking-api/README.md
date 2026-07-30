@@ -44,10 +44,11 @@ El cuerpo de `POST /v1/financial-queries` es la **representación intermedia** d
 
 ```sql
 SELECT to_char(date_trunc('week', t.occurred_at AT TIME ZONE $1), 'YYYY-MM-DD') …
-  WHERE e.account_id = $2 AND t.status = 'BOOKED'
+  FROM assistant_read.transactions_v1 t
+  WHERE t.account_id = $2
     AND t.occurred_at >= (($3::date)::timestamp AT TIME ZONE $1)
     AND t.occurred_at <  (($4::date + 1)::timestamp AT TIME ZONE $1)
-    AND e.entry_type = $5 AND t.metadata ->> 'category' = ANY($6)
+    AND t.direction = $5 AND t.category = ANY($6)
 ```
 
 Detalles que cambian el resultado:
@@ -95,6 +96,29 @@ just migration "contactos"    # nueva migración vacía
 Un asiento tampoco puede ir en una moneda distinta a la de su cuenta: 2.500 al debe en USD contra 2.500 al haber en USD cuadra aritméticamente, pero si las cuentas son en euros no es una transacción válida.
 
 De `ledger_transactions` solo se bloquea el `DELETE`: su `status` sí cambia, por ejemplo al pasar a `BOOKED`. Para deshacer un movimiento se anota una transacción compensatoria.
+
+## Camino de lectura
+
+Nada que se consulte lee las tablas. `0002_read_views` crea dos vistas en el esquema `assistant_read` (§8.6):
+
+| Vista | Qué da |
+| --- | --- |
+| `transactions_v1` | Un asiento por fila, ya interpretado: `direction`, `amount_minor` positivo, `signed_amount_minor`, `category`, `merchant_name`. Solo lo `BOOKED` |
+| `account_balances_v1` | Saldo por cuenta. `LEFT JOIN`, así que una cuenta sin movimientos sale a cero y una que no existe no sale |
+
+Las vistas son también el **único sitio** donde viven dos reglas de dinero que antes estaban repetidas en tres SQL distintos: qué cuenta como contabilizado y qué signo tiene cada asiento.
+
+El servicio abre **dos pools con roles distintos**: `finguard_banking` para escribir y comprobar estado, y `finguard_query_reader` (`BANKING_QUERY_DATABASE_URL`) para todo lo que se consulta. Ese rol:
+
+- solo tiene `SELECT`, y solo sobre esas dos vistas;
+- **no puede ni ver que las tablas existen** — sin `USAGE` en `public`, un `SELECT ... FROM accounts` responde *«relation does not exist»*, no «permiso denegado»;
+- tiene la sesión en `default_transaction_read_only`, `statement_timeout = 3s` e `idle_in_transaction_session_timeout = 10s`.
+
+Que el camino de lectura no pueda escribir **no depende de que este código sea correcto**. Lo comprueban [`test_query_reader_privileges.py`](tests/test_query_reader_privileges.py), contra la base real, y [`test_read_path_only_uses_views.py`](tests/test_read_path_only_uses_views.py), que revisa que ninguna sentencia del camino de lectura nombre una tabla.
+
+Aún **sin implementar**: RLS por titular. Filtrar por cliente exige una identidad autenticada, y hasta que exista (§12) tendría que inyectarla la propia aplicación, que es justo el control que RLS debería imponerle.
+
+> El rol nace en [`init/02-query-reader.sql`](../../infrastructure/postgres/init/02-query-reader.sql), que solo se ejecuta con el volumen vacío. En una base ya creada: `just reset && just migrate && just seed`.
 
 ## Datos de desarrollo
 
