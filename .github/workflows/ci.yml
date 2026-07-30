@@ -96,6 +96,12 @@ jobs:
           psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f apps/banking-api/seeds/0001_demo.sql
           psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/banking-api/seeds/verify.sql
 
+      # Exactitud de ejecución sobre el dataset (vision.md §17). Falla si alguna
+      # consulta deja de devolver la cifra que calculó evaluation/expected.sql.
+      - name: Exactitud del motor de consultas
+        run: uv run python scripts/evaluate_queries.py
+        working-directory: apps/banking-api
+
       # El dataset es un artefacto versionado: regenerarlo no puede cambiarlo.
       - name: El generador del dataset sigue siendo determinista
         run: |
