@@ -1,0 +1,5 @@
+# Los ficheros generados se comparan byte a byte con lo que produce su generador
+# (just seed-generate y git diff vacío). Su final de línea no puede depender del
+# sistema donde se haga el checkout, o regenerar marcaría el fichero entero como
+# modificado en Windows.
+apps/banking-api/seeds/*.sql text eol=lf
