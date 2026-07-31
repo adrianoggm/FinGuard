@@ -1,8 +1,7 @@
-"""La barrera del §8.6: lo que el rol de consulta NO puede hacer.
+"""The §8.6 barrier: what the query role CANNOT do.
 
-Estas comprobaciones no van sobre el código de la aplicación, van sobre los permisos
-de PostgreSQL. Si el compilador de consultas tuviera un agujero, esto es lo que
-seguiría en pie.
+These checks are not about application code, they are about PostgreSQL privileges.
+If the query compiler had a hole, this is what would still be standing.
 """
 
 from collections.abc import AsyncIterator
@@ -14,11 +13,11 @@ from finguard_banking.bootstrap.config import get_settings
 
 pytestmark = pytest.mark.integration
 
-TABLAS = ["ledger_entries", "ledger_transactions", "accounts", "customers", "balance_projections"]
+TABLES = ["ledger_entries", "ledger_transactions", "accounts", "customers", "balance_projections"]
 
 
 @pytest.fixture
-async def lector() -> AsyncIterator[asyncpg.Connection]:
+async def reader() -> AsyncIterator[asyncpg.Connection]:
     conn: asyncpg.Connection = await asyncpg.connect(get_settings().query_database_url)
     try:
         yield conn
@@ -27,7 +26,7 @@ async def lector() -> AsyncIterator[asyncpg.Connection]:
 
 
 @pytest.fixture
-async def propietario() -> AsyncIterator[asyncpg.Connection]:
+async def owner() -> AsyncIterator[asyncpg.Connection]:
     conn: asyncpg.Connection = await asyncpg.connect(get_settings().database_url)
     try:
         yield conn
@@ -35,28 +34,29 @@ async def propietario() -> AsyncIterator[asyncpg.Connection]:
         await conn.close()
 
 
-async def test_puede_leer_las_vistas_autorizadas(lector: asyncpg.Connection) -> None:
-    await lector.fetchval("SELECT COUNT(*) FROM assistant_read.transactions_v1")
-    await lector.fetchval("SELECT COUNT(*) FROM assistant_read.account_balances_v1")
+async def test_it_can_read_the_authorised_views(reader: asyncpg.Connection) -> None:
+    await reader.fetchval("SELECT COUNT(*) FROM assistant_read.transactions_v1")
+    await reader.fetchval("SELECT COUNT(*) FROM assistant_read.account_balances_v1")
 
 
-@pytest.mark.parametrize("tabla", TABLAS)
-async def test_las_tablas_existen_pero_el_lector_no_las_ve(
-    lector: asyncpg.Connection, propietario: asyncpg.Connection, tabla: str
+@pytest.mark.parametrize("table", TABLES)
+async def test_the_tables_exist_but_the_reader_cannot_see_them(
+    reader: asyncpg.Connection, owner: asyncpg.Connection, table: str
 ) -> None:
-    # Para el propietario la tabla está ahí...
-    assert await propietario.fetchval(
-        "SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public' AND tablename = $1", tabla
+    # For the owner the table is there...
+    assert await owner.fetchval(
+        "SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public' AND tablename = $1", table
     )
 
-    # ...y para el lector no existe siquiera. Sin USAGE en el esquema public no puede
-    # ni confirmar qué tablas hay: es más fuerte que un "permiso denegado".
+    # ...and for the reader it does not even exist. Without USAGE on the public
+    # schema it cannot confirm which tables are there: stronger than a denied
+    # permission.
     with pytest.raises(asyncpg.UndefinedTableError):
-        await lector.fetchval(f"SELECT COUNT(*) FROM {tabla}")  # noqa: S608
+        await reader.fetchval(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
 
 
-async def test_no_puede_escribir_ni_en_lo_que_ve(lector: asyncpg.Connection) -> None:
-    # La vista es lo único que alcanza, y su sesión es de solo lectura.
+async def test_it_cannot_write_even_where_it_can_read(reader: asyncpg.Connection) -> None:
+    # The views are all it reaches, and its session is read-only.
     with pytest.raises(
         (
             asyncpg.ReadOnlySQLTransactionError,
@@ -64,13 +64,13 @@ async def test_no_puede_escribir_ni_en_lo_que_ve(lector: asyncpg.Connection) -> 
             asyncpg.ErrorInAssignmentError,
         )
     ):
-        await lector.execute("CREATE TEMP TABLE intento (id int)")
+        await reader.execute("CREATE TEMP TABLE attempt (id int)")
 
 
-async def test_su_sesion_es_de_solo_lectura(lector: asyncpg.Connection) -> None:
-    assert await lector.fetchval("SHOW default_transaction_read_only") == "on"
+async def test_its_session_is_read_only(reader: asyncpg.Connection) -> None:
+    assert await reader.fetchval("SHOW default_transaction_read_only") == "on"
 
 
-async def test_tiene_un_limite_de_tiempo_por_sentencia(lector: asyncpg.Connection) -> None:
-    # Sin esto, una consulta mal planteada podría ocupar la base indefinidamente (§8.6).
-    assert await lector.fetchval("SHOW statement_timeout") == "3s"
+async def test_it_has_a_per_statement_time_limit(reader: asyncpg.Connection) -> None:
+    # Without this, a badly shaped query could hold the database indefinitely (§8.6).
+    assert await reader.fetchval("SHOW statement_timeout") == "3s"

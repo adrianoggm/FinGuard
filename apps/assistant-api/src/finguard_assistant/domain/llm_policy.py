@@ -2,14 +2,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LlmPolicy(BaseModel):
-    """Política de generación activa: qué proveedor se usa y con qué parámetros.
+    """The active generation policy: which provider is used and with what settings.
 
-    Es inmutable: cambiar de política significa sustituirla, no mutarla, para que
-    una petición en curso no vea la configuración cambiar a mitad.
+    It is immutable: changing policy means replacing it, not mutating it, so that a
+    request already in flight never sees the configuration change halfway through.
     """
 
-    # protected_namespaces=(): el campo se llama `model` a propósito, es el nombre
-    # que usan todos los proveedores.
+    # protected_namespaces=(): the field is called `model` on purpose, that is the
+    # name every provider uses.
     model_config = ConfigDict(frozen=True, protected_namespaces=())
 
     provider: str = Field(min_length=1)

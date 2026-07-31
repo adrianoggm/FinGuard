@@ -1,11 +1,11 @@
-"""vistas de lectura y permisos del rol de consulta
+"""read views and permissions for the query role
 
-Implementa vision.md §8.6: el motor de consultas no lee las tablas, lee dos vistas,
-y lo hace con un rol que no puede hacer nada más.
+Implements vision.md §8.6: the query engine does not read the tables, it reads two
+views, and it does so with a role that cannot do anything else.
 
-Las vistas también son el único sitio donde viven dos reglas que antes estaban
-repetidas en el SQL del saldo, en el del agregado y en el de los justificantes:
-qué cuenta como contabilizado y qué signo tiene cada asiento.
+The views are also the only place where two rules live that used to be repeated in
+the balance SQL, the aggregate SQL and the supporting-movements SQL: what counts as
+booked, and which sign each entry carries.
 
 Revision ID: 0002_read_views
 Revises: 0001_ledger
@@ -19,14 +19,14 @@ down_revision = "0001_ledger"
 branch_labels = None
 depends_on = None
 
-ROL = "finguard_query_reader"
+ROLE = "finguard_query_reader"
 
 
 def upgrade() -> None:
     op.execute("CREATE SCHEMA assistant_read")
 
-    # Un asiento por fila, ya interpretado: sin entry_type ni status que el
-    # consumidor tenga que recordar filtrar.
+    # One entry per row, already interpreted: no entry_type or status the consumer
+    # has to remember to filter on.
     op.execute("""
         CREATE VIEW assistant_read.transactions_v1 AS
         SELECT
@@ -48,8 +48,8 @@ def upgrade() -> None:
         WHERE lt.status = 'BOOKED'
     """)
 
-    # LEFT JOIN a propósito: una cuenta sin movimientos aparece a cero, y una cuenta
-    # que no existe no aparece. Son dos respuestas distintas.
+    # LEFT JOIN on purpose: an account with no movements shows up at zero, and an
+    # account that does not exist does not show up at all. Two different answers.
     op.execute("""
         CREATE VIEW assistant_read.account_balances_v1 AS
         SELECT
@@ -61,14 +61,14 @@ def upgrade() -> None:
         GROUP BY a.id, a.currency
     """)
 
-    # El rol nace en infrastructure/postgres/init/02-query-reader.sql. Si falta, esto
-    # falla a propósito: sin rol, las vistas no protegen de nada.
-    op.execute(f"GRANT USAGE ON SCHEMA assistant_read TO {ROL}")
-    op.execute(f"GRANT SELECT ON assistant_read.transactions_v1 TO {ROL}")
-    op.execute(f"GRANT SELECT ON assistant_read.account_balances_v1 TO {ROL}")
+    # The role is created in infrastructure/postgres/init/02-query-reader.sql. If it
+    # is missing this fails on purpose: without the role, the views protect nothing.
+    op.execute(f"GRANT USAGE ON SCHEMA assistant_read TO {ROLE}")
+    op.execute(f"GRANT SELECT ON assistant_read.transactions_v1 TO {ROLE}")
+    op.execute(f"GRANT SELECT ON assistant_read.account_balances_v1 TO {ROLE}")
 
-    # Sin USAGE en public no puede ni listar los nombres de las tablas. Las vistas
-    # siguen funcionando porque se ejecutan con los permisos de su propietario.
+    # Without USAGE on public it cannot even list the table names. The views still
+    # work because they run with their owner's privileges.
     op.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
 
 

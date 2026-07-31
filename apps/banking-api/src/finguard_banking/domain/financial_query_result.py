@@ -5,7 +5,7 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class QueryGroup:
-    """Un tramo del resultado: una semana, una categoría, un comercio..."""
+    """One slice of the result: a week, a category, a merchant..."""
 
     key: str
     total_minor: int
@@ -14,7 +14,7 @@ class QueryGroup:
 
 @dataclass(frozen=True)
 class Movement:
-    """Movimiento que sustenta el cálculo. Sin esto la respuesta no es verificable."""
+    """A movement backing the figure. Without these the answer is not verifiable."""
 
     transaction_id: UUID
     occurred_at: datetime
@@ -27,7 +27,7 @@ class Movement:
 
 @dataclass(frozen=True)
 class QueryTrace:
-    """Traza para la memoria y el benchmark (vision.md §9.3)."""
+    """Traceability for the report and the benchmark (vision.md §9.3)."""
 
     sql: str
     parameters: list[str]

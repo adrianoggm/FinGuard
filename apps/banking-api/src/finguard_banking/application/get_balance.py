@@ -5,11 +5,11 @@ from finguard_banking.ports.ledger_repository import LedgerRepository
 
 
 class GetBalance:
-    """Consulta el saldo de una cuenta.
+    """Reads the balance of an account.
 
-    Hoy solo delega. Es el sitio donde entrará la comprobación de que quien
-    pregunta es el titular de la cuenta (§12 de la visión), así que la capa HTTP
-    nunca habla directamente con el repositorio.
+    Today it only delegates. It is the place where the check that the caller owns
+    the account will go (§12 of the vision), which is why the HTTP layer never talks
+    to the repository directly.
     """
 
     def __init__(self, ledger: LedgerRepository) -> None:

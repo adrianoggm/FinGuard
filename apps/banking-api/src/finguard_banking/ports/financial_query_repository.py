@@ -5,8 +5,8 @@ from finguard_banking.domain.financial_query_result import FinancialQueryResult
 
 
 class FinancialQueryRepository(Protocol):
-    """Ejecuta un plan de consulta ya validado."""
+    """Runs an already validated query plan."""
 
     async def run(self, query: FinancialQuery) -> FinancialQueryResult:
-        """Lanza AccountNotFoundError si la cuenta no existe."""
+        """Raises AccountNotFoundError if the account does not exist."""
         ...

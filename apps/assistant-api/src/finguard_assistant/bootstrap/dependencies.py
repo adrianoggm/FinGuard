@@ -11,5 +11,6 @@ def get_policies(request: Request) -> PolicyStore:
 
 
 def get_answer_message(request: Request) -> AnswerMessage:
-    # El caso de uso recibe el registro como función: no conoce qué proveedores hay.
+    # The use case receives the registry as a function: it does not know which
+    # providers exist.
     return AnswerMessage(get_policies(request), registry.get)

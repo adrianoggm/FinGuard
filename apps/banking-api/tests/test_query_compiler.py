@@ -1,4 +1,4 @@
-"""Lo que no puede pasar nunca: que un dato de fuera acabe dentro de la cadena SQL."""
+"""What must never happen: a value from outside ending up inside the SQL string."""
 
 import uuid
 from datetime import date
@@ -7,8 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from finguard_banking.adapters.outbound.postgres.query_compiler import (
-    compilar_agregado,
-    compilar_movimientos,
+    compile_aggregate,
+    compile_movements,
 )
 from finguard_banking.domain.financial_query import (
     DateRange,
@@ -17,62 +17,62 @@ from finguard_banking.domain.financial_query import (
     GroupBy,
 )
 
-CUENTA = uuid.UUID("11111111-1111-1111-1111-111111111111")
-RANGO = DateRange(desde=date(2026, 7, 1), hasta=date(2026, 7, 31))
-INYECCION = "TRANSPORT_FUEL'; DROP TABLE ledger_entries; --"
+ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
+RANGE = DateRange(start=date(2026, 7, 1), end=date(2026, 7, 31))
+INJECTION = "TRANSPORT_FUEL'; DROP TABLE ledger_entries; --"
 
 
-def consulta(**kwargs: object) -> FinancialQuery:
-    return FinancialQuery(account_id=CUENTA, date_range=RANGO, **kwargs)  # type: ignore[arg-type]
+def query(**kwargs: object) -> FinancialQuery:
+    return FinancialQuery(account_id=ACCOUNT, date_range=RANGE, **kwargs)  # type: ignore[arg-type]
 
 
-def test_el_dominio_rechaza_una_categoria_con_sql_dentro() -> None:
+def test_the_domain_rejects_a_category_with_sql_inside() -> None:
     with pytest.raises(ValidationError):
-        consulta(categories=(INYECCION,))
+        query(categories=(INJECTION,))
 
 
-def test_aunque_la_validacion_falle_la_categoria_viaja_como_parametro() -> None:
-    # model_construct salta la validación: simula que alguien la esquiva. Ni así el
-    # texto entra en el SQL.
+def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None:
+    # model_construct skips validation: it simulates someone dodging it. Not even
+    # then does the text make it into the SQL.
     plan = FinancialQuery.model_construct(
-        account_id=CUENTA,
-        date_range=RANGO,
-        categories=(INYECCION,),
+        account_id=ACCOUNT,
+        date_range=RANGE,
+        categories=(INJECTION,),
         direction=Direction.EXPENSE,
         group_by=GroupBy.NONE,
         supporting_limit=20,
         explain=False,
     )
 
-    compilada = compilar_agregado(plan, "Europe/Madrid")
+    compiled = compile_aggregate(plan, "Europe/Madrid")
 
-    assert "DROP TABLE" not in compilada.sql
-    assert [INYECCION] in compilada.parameters
-    assert "= ANY($" in compilada.sql
+    assert "DROP TABLE" not in compiled.sql
+    assert [INJECTION] in compiled.parameters
+    assert "= ANY($" in compiled.sql
 
 
-def test_ningun_valor_de_entrada_aparece_en_la_cadena() -> None:
-    compilada = compilar_agregado(
-        consulta(categories=("GROCERIES",), direction=Direction.EXPENSE), "Europe/Madrid"
+def test_no_input_value_appears_in_the_string() -> None:
+    compiled = compile_aggregate(
+        query(categories=("GROCERIES",), direction=Direction.EXPENSE), "Europe/Madrid"
     )
 
-    assert str(CUENTA) not in compilada.sql
-    assert "GROCERIES" not in compilada.sql
-    assert "2026-07-01" not in compilada.sql
-    assert "Europe/Madrid" not in compilada.sql
-    # Cuenta, zona, fechas, sentido y categorías: todo parametrizado.
-    assert len(compilada.parameters) == 6
+    assert str(ACCOUNT) not in compiled.sql
+    assert "GROCERIES" not in compiled.sql
+    assert "2026-07-01" not in compiled.sql
+    assert "Europe/Madrid" not in compiled.sql
+    # Account, time zone, dates, direction and categories: all parameterised.
+    assert len(compiled.parameters) == 6
 
 
-def test_el_sentido_del_movimiento_tambien_es_parametro() -> None:
-    compilada = compilar_agregado(consulta(direction=Direction.EXPENSE), "Europe/Madrid")
+def test_the_direction_is_a_parameter_too() -> None:
+    compiled = compile_aggregate(query(direction=Direction.EXPENSE), "Europe/Madrid")
 
-    assert "'EXPENSE'" not in compilada.sql
-    assert "EXPENSE" in compilada.parameters
+    assert "'EXPENSE'" not in compiled.sql
+    assert "EXPENSE" in compiled.parameters
 
 
 @pytest.mark.parametrize(
-    ("agrupacion", "fragmento"),
+    ("group_by", "fragment"),
     [
         (GroupBy.NONE, "'total'"),
         (GroupBy.DAY, "'YYYY-MM-DD'"),
@@ -82,41 +82,41 @@ def test_el_sentido_del_movimiento_tambien_es_parametro() -> None:
         (GroupBy.MERCHANT, "COALESCE(t.merchant_name"),
     ],
 )
-def test_cada_agrupacion_compila_a_su_expresion(agrupacion: GroupBy, fragmento: str) -> None:
-    compilada = compilar_agregado(consulta(group_by=agrupacion), "Europe/Madrid")
+def test_each_grouping_compiles_to_its_expression(group_by: GroupBy, fragment: str) -> None:
+    compiled = compile_aggregate(query(group_by=group_by), "Europe/Madrid")
 
-    assert fragmento in compilada.sql
+    assert fragment in compiled.sql
 
 
-def test_solo_se_lee_la_vista_autorizada() -> None:
-    # Qué cuenta como contabilizado es decisión de la vista. Si el compilador tocara
-    # las tablas, esa regla volvería a estar repetida y podría divergir.
-    for compilada in (
-        compilar_agregado(consulta(), "Europe/Madrid"),
-        compilar_movimientos(consulta(), "Europe/Madrid"),
+def test_only_the_authorised_view_is_read() -> None:
+    # What counts as booked is the view's decision. If the compiler touched the
+    # tables, that rule would be duplicated again and could drift.
+    for compiled in (
+        compile_aggregate(query(), "Europe/Madrid"),
+        compile_movements(query(), "Europe/Madrid"),
     ):
-        assert "assistant_read.transactions_v1" in compilada.sql
-        assert "ledger_entries" not in compilada.sql
-        assert "ledger_transactions" not in compilada.sql
+        assert "assistant_read.transactions_v1" in compiled.sql
+        assert "ledger_entries" not in compiled.sql
+        assert "ledger_transactions" not in compiled.sql
 
 
-def test_el_dia_final_del_rango_entra_completo() -> None:
-    compilada = compilar_agregado(consulta(), "Europe/Madrid")
+def test_the_last_day_of_the_range_is_included_in_full() -> None:
+    compiled = compile_aggregate(query(), "Europe/Madrid")
 
-    # Comparar con `<= hasta` dejaría fuera todo lo posterior a medianoche.
-    assert "::date + 1)::timestamp AT TIME ZONE" in compilada.sql
+    # Comparing with `<= to` would drop everything after midnight.
+    assert "::date + 1)::timestamp AT TIME ZONE" in compiled.sql
 
 
-def test_un_rango_al_reves_no_es_una_consulta() -> None:
+def test_a_backwards_range_is_not_a_query() -> None:
     with pytest.raises(ValidationError):
-        DateRange(desde=date(2026, 7, 31), hasta=date(2026, 7, 1))
+        DateRange(start=date(2026, 7, 31), end=date(2026, 7, 1))
 
 
-def test_un_campo_desconocido_se_rechaza() -> None:
+def test_an_unknown_field_is_rejected() -> None:
     with pytest.raises(ValidationError):
         FinancialQuery.model_validate(
             {
-                "accountId": str(CUENTA),
+                "accountId": str(ACCOUNT),
                 "dateRange": {"from": "2026-07-01", "to": "2026-07-31"},
                 "sql": "SELECT 1",
             }

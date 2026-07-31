@@ -8,8 +8,8 @@ from finguard_assistant.domain.errors import UnknownProviderError
 
 app = FastAPI(title="FinGuard Assistant API", version="0.1.0")
 
-# La política activa se crea al arrancar y vive en el estado de la aplicación:
-# el servicio no es stateless a propósito, la configuración cambia en caliente.
+# The active policy is created at startup and lives in the application state: the
+# service is deliberately not stateless, its configuration changes at runtime.
 app.state.policies = PolicyStore(get_settings().default_policy())
 
 app.include_router(router)

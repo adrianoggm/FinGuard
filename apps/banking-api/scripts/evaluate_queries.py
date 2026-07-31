@@ -1,13 +1,13 @@
-"""Mide la exactitud de ejecución del motor de consultas (vision.md §17).
+"""Measures the execution accuracy of the query engine (vision.md §17).
 
-Ejecuta cada caso de evaluation/queries.yaml contra la base cargada con el dataset y
-compara con las cifras que calculó evaluation/expected.sql. Sale con código distinto
-de cero si alguna falla, así que sirve tanto de informe como de comprobación en CI.
+Runs each case in evaluation/queries.yaml against the database loaded with the
+dataset and compares it with the figures computed by evaluation/expected.sql. It
+exits non-zero if any case fails, so it works both as a report and as a check.
 
-    just evaluate          # necesita `just seed` antes
+    just evaluate          # needs `just seed` first
 
-Las consultas van por el pool de solo lectura, el mismo rol que usa el servicio: si
-una consulta necesitara privilegios de más, aquí también fallaría.
+Queries go through the read-only pool, the same role the service uses: if a query
+needed extra privileges, it would fail here too.
 """
 
 from __future__ import annotations
@@ -29,82 +29,82 @@ from finguard_banking.adapters.outbound.postgres.financial_query_repository impo
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.domain.financial_query_result import FinancialQueryResult
 
-POR_DEFECTO = Path(__file__).resolve().parent.parent / "evaluation" / "queries.yaml"
+DEFAULT_CASES = Path(__file__).resolve().parent.parent / "evaluation" / "queries.yaml"
 
 
 @dataclass
-class Resultado:
-    caso: str
-    correcto: bool
-    detalle: str
+class Outcome:
+    case: str
+    passed: bool
+    detail: str
 
 
-def _comparar(caso: dict[str, Any], obtenido: FinancialQueryResult) -> Resultado:
-    esperado = caso["expected"]
-    fallos: list[str] = []
+def _compare(case: dict[str, Any], actual: FinancialQueryResult) -> Outcome:
+    expected = case["expected"]
+    failures: list[str] = []
 
-    if obtenido.total_minor != esperado["totalMinor"]:
-        fallos.append(f"total {obtenido.total_minor} != {esperado['totalMinor']}")
-    if obtenido.movement_count != esperado["movementCount"]:
-        fallos.append(f"movimientos {obtenido.movement_count} != {esperado['movementCount']}")
+    if actual.total_minor != expected["totalMinor"]:
+        failures.append(f"total {actual.total_minor} != {expected['totalMinor']}")
+    if actual.movement_count != expected["movementCount"]:
+        failures.append(f"movements {actual.movement_count} != {expected['movementCount']}")
 
-    if "groups" in esperado:
-        obtenidos = [
+    if "groups" in expected:
+        groups = [
             {"key": g.key, "totalMinor": g.total_minor, "movementCount": g.movement_count}
-            for g in obtenido.groups
+            for g in actual.groups
         ]
-        if obtenidos != esperado["groups"]:
-            fallos.append(f"grupos {obtenidos} != {esperado['groups']}")
+        if groups != expected["groups"]:
+            failures.append(f"groups {groups} != {expected['groups']}")
 
-    detalle = "; ".join(fallos) if fallos else f"{obtenido.total_minor / 100:.2f} EUR"
-    return Resultado(caso=caso["id"], correcto=not fallos, detalle=detalle)
+    detail = "; ".join(failures) if failures else f"{actual.total_minor / 100:.2f} EUR"
+    return Outcome(case=case["id"], passed=not failures, detail=detail)
 
 
-async def ejecutar(casos: list[dict[str, Any]]) -> int:
-    ajustes = get_settings()
+async def evaluate(cases: list[dict[str, Any]]) -> int:
+    settings = get_settings()
 
-    propietario = await asyncpg.connect(ajustes.database_url)
-    lector: asyncpg.Pool[Any] = await asyncpg.create_pool(ajustes.query_database_url)
+    owner = await asyncpg.connect(settings.database_url)
+    reader: asyncpg.Pool[Any] = await asyncpg.create_pool(settings.query_database_url)
     try:
-        cuentas = {
-            fila["account_reference"]: fila["id"]
-            for fila in await propietario.fetch("SELECT id, account_reference FROM accounts")
+        accounts = {
+            row["account_reference"]: row["id"]
+            for row in await owner.fetch("SELECT id, account_reference FROM accounts")
         }
-        if not cuentas:
-            print("La base está vacía: ejecuta `just seed` antes.", file=sys.stderr)
+        if not accounts:
+            print("The database is empty: run `just seed` first.", file=sys.stderr)
             return 2
 
-        repositorio = PostgresFinancialQueryRepository(lector, ajustes.reporting_timezone)
-        resultados: list[Resultado] = []
+        repository = PostgresFinancialQueryRepository(reader, settings.reporting_timezone)
+        outcomes: list[Outcome] = []
 
-        for caso in casos:
-            plan = dict(caso["plan"])
-            # Un periodo relativo sin referencia daría un resultado distinto cada día.
+        for case in cases:
+            plan = dict(case["plan"])
+            # A relative period without a reference would give a different result
+            # every day.
             if "period" in plan and "reference" not in plan["period"]:
-                print(f"{caso['id']}: el periodo relativo no fija reference", file=sys.stderr)
+                print(f"{case['id']}: the relative period does not pin reference", file=sys.stderr)
                 return 2
 
-            plan["accountId"] = str(cuentas[caso["account"]])
-            peticion = FinancialQueryRequest.model_validate(plan)
-            consulta = peticion.a_consulta(date.today())
-            resultados.append(_comparar(caso, await repositorio.run(consulta)))
+            plan["accountId"] = str(accounts[case["account"]])
+            request = FinancialQueryRequest.model_validate(plan)
+            outcomes.append(_compare(case, await repository.run(request.to_query(date.today()))))
     finally:
-        await lector.close()
-        await propietario.close()
+        await reader.close()
+        await owner.close()
 
-    aciertos = sum(1 for r in resultados if r.correcto)
-    total = len(resultados)
-    ancho = max(len(r.caso) for r in resultados)
-    for r in resultados:
-        marca = "ok  " if r.correcto else "FALLA"
-        print(f"  {marca} {r.caso:<{ancho}}  {r.detalle}")
+    passed = sum(1 for outcome in outcomes if outcome.passed)
+    total = len(outcomes)
+    width = max(len(outcome.case) for outcome in outcomes)
+    for outcome in outcomes:
+        mark = "ok  " if outcome.passed else "FAIL"
+        print(f"  {mark} {outcome.case:<{width}}  {outcome.detail}")
 
-    print(f"\nexactitud de ejecución: {aciertos}/{total} ({aciertos / total:.1%})")
-    return 0 if aciertos == total else 1
+    print(f"\nexecution accuracy: {passed}/{total} ({passed / total:.1%})")
+    return 0 if passed == total else 1
 
 
 if __name__ == "__main__":
-    # Admite otro fichero de casos como argumento, que es como se comprueba que este
-    # comprobador puede fallar de verdad.
-    ruta = Path(sys.argv[1]) if len(sys.argv) > 1 else POR_DEFECTO
-    raise SystemExit(asyncio.run(ejecutar(yaml.safe_load(ruta.read_text(encoding="utf-8")))))
+    # It accepts another case file as an argument, which is how we check that this
+    # checker can actually fail.
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CASES
+    raise SystemExit(asyncio.run(evaluate(yaml.safe_load(path.read_text(encoding="utf-8")))))

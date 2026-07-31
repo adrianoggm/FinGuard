@@ -4,10 +4,10 @@ from finguard_assistant.domain.llm_policy import LlmPolicy
 
 
 class PolicyStore:
-    """Guarda la política activa y permite cambiarla sin reiniciar el servicio.
+    """Holds the active policy and allows swapping it without restarting the service.
 
-    ponytail: el estado vive en la memoria del proceso. Con más de una réplica
-    cada una tendría su propia política; mover a Redis cuando haya réplicas.
+    ponytail: the state lives in the process memory. With more than one replica each
+    would have its own policy; move it to Redis once there are replicas.
     """
 
     def __init__(self, default: LlmPolicy) -> None:
@@ -23,8 +23,8 @@ class PolicyStore:
         return self._current
 
     async def replace(self, policy: LlmPolicy) -> LlmPolicy:
-        # El lock serializa dos cambios simultáneos; la sustitución es atómica,
-        # así que ninguna petición ve una política a medio aplicar.
+        # The lock serialises two simultaneous changes; the swap is atomic, so no
+        # request ever sees a half-applied policy.
         async with self._lock:
             self._current = policy
             return self._current

@@ -5,11 +5,11 @@ from finguard_banking.domain.balance import Balance
 
 
 class LedgerRepository(Protocol):
-    """Lectura del libro mayor. La implementación decide cómo, no qué."""
+    """Reads from the ledger. The implementation decides how, not what."""
 
     async def balance_of(self, account_id: UUID) -> Balance:
-        """Saldo de la cuenta derivado de sus asientos contabilizados.
+        """Balance of the account derived from its booked entries.
 
-        Lanza AccountNotFoundError si la cuenta no existe.
+        Raises AccountNotFoundError if the account does not exist.
         """
         ...

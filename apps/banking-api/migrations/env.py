@@ -19,12 +19,12 @@ if config.config_file_name is not None:
 
 
 def _async_url(url: str) -> str:
-    """SQLAlchemy exige el driver en la URL; la aplicación usa asyncpg directamente."""
+    """SQLAlchemy needs the driver in the URL; the app uses asyncpg directly."""
     return url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
-# La URL sale de la configuración del servicio, no del .ini: así las migraciones
-# y la aplicación no pueden acabar apuntando a bases de datos distintas.
+# The URL comes from the service configuration, not from the .ini: that way the
+# migrations and the application cannot end up pointing at different databases.
 config.set_main_option("sqlalchemy.url", _async_url(get_settings().database_url))
 
 # add your model's MetaData object here

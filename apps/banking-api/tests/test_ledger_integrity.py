@@ -1,122 +1,120 @@
-"""Las invariantes del libro mayor las garantiza PostgreSQL, no el código que escribe.
+"""The ledger invariants are enforced by PostgreSQL, not by the code that writes.
 
-Cada test comprueba que la base de datos rechaza lo que no debe entrar, sin importar
-qué servicio o qué consola lo intente.
+Each test checks that the database rejects what must not get in, no matter which
+service or which console attempts it.
 """
 
 import asyncpg
 import pytest
-from conftest import anotar, crear_cuenta, crear_transaccion, forzar_comprobacion
+from conftest import create_account, create_transaction, force_deferred_checks, post_entry
 
 pytestmark = pytest.mark.integration
 
 
-async def test_una_transaccion_equilibrada_es_valida(connection: asyncpg.Connection) -> None:
-    origen = await crear_cuenta(connection)
-    destino = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
+async def test_a_balanced_transaction_is_valid(connection: asyncpg.Connection) -> None:
+    source = await create_account(connection)
+    target = await create_account(connection)
+    transaction = await create_transaction(connection)
 
-    await anotar(connection, transaccion, origen, "DEBIT", 2500)
-    await anotar(connection, transaccion, destino, "CREDIT", 2500)
+    await post_entry(connection, transaction, source, "DEBIT", 2500)
+    await post_entry(connection, transaction, target, "CREDIT", 2500)
 
-    await forzar_comprobacion(connection)
-
-
-async def test_una_transaccion_descuadrada_se_rechaza(connection: asyncpg.Connection) -> None:
-    origen = await crear_cuenta(connection)
-    destino = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
-
-    await anotar(connection, transaccion, origen, "DEBIT", 2500)
-    await anotar(connection, transaccion, destino, "CREDIT", 2400)
-
-    with pytest.raises(asyncpg.RaiseError, match="desequilibrada"):
-        await forzar_comprobacion(connection)
+    await force_deferred_checks(connection)
 
 
-async def test_un_asiento_suelto_no_es_una_transaccion(connection: asyncpg.Connection) -> None:
-    cuenta = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
+async def test_an_unbalanced_transaction_is_rejected(connection: asyncpg.Connection) -> None:
+    source = await create_account(connection)
+    target = await create_account(connection)
+    transaction = await create_transaction(connection)
 
-    await anotar(connection, transaccion, cuenta, "DEBIT", 2500)
+    await post_entry(connection, transaction, source, "DEBIT", 2500)
+    await post_entry(connection, transaction, target, "CREDIT", 2400)
 
-    with pytest.raises(asyncpg.RaiseError, match="desequilibrada"):
-        await forzar_comprobacion(connection)
-
-
-async def test_no_se_cuadra_mezclando_monedas(connection: asyncpg.Connection) -> None:
-    en_euros = await crear_cuenta(connection, currency="EUR")
-    en_dolares = await crear_cuenta(connection, currency="USD")
-    transaccion = await crear_transaccion(connection)
-
-    # Los importes son iguales, pero 2500 EUR al debe no compensan 2500 USD al haber.
-    await anotar(connection, transaccion, en_euros, "DEBIT", 2500, currency="EUR")
-    await anotar(connection, transaccion, en_dolares, "CREDIT", 2500, currency="USD")
-
-    with pytest.raises(asyncpg.RaiseError, match="desequilibrada"):
-        await forzar_comprobacion(connection)
+    with pytest.raises(asyncpg.RaiseError, match="unbalanced"):
+        await force_deferred_checks(connection)
 
 
-async def test_un_asiento_no_puede_ir_en_otra_moneda_que_su_cuenta(
+async def test_a_lone_entry_is_not_a_transaction(connection: asyncpg.Connection) -> None:
+    account = await create_account(connection)
+    transaction = await create_transaction(connection)
+
+    await post_entry(connection, transaction, account, "DEBIT", 2500)
+
+    with pytest.raises(asyncpg.RaiseError, match="unbalanced"):
+        await force_deferred_checks(connection)
+
+
+async def test_mixing_currencies_does_not_balance(connection: asyncpg.Connection) -> None:
+    in_euros = await create_account(connection, currency="EUR")
+    in_dollars = await create_account(connection, currency="USD")
+    transaction = await create_transaction(connection)
+
+    # The amounts match, but 2500 EUR debited is not offset by 2500 USD credited.
+    await post_entry(connection, transaction, in_euros, "DEBIT", 2500, currency="EUR")
+    await post_entry(connection, transaction, in_dollars, "CREDIT", 2500, currency="USD")
+
+    with pytest.raises(asyncpg.RaiseError, match="unbalanced"):
+        await force_deferred_checks(connection)
+
+
+async def test_an_entry_cannot_use_a_currency_other_than_its_account(
     connection: asyncpg.Connection,
 ) -> None:
-    origen = await crear_cuenta(connection, currency="EUR")
-    destino = await crear_cuenta(connection, currency="EUR")
-    transaccion = await crear_transaccion(connection)
+    source = await create_account(connection, currency="EUR")
+    target = await create_account(connection, currency="EUR")
+    transaction = await create_transaction(connection)
 
-    # Cuadra en USD, pero las dos cuentas son en euros.
-    await anotar(connection, transaccion, origen, "DEBIT", 2500, currency="USD")
-    await anotar(connection, transaccion, destino, "CREDIT", 2500, currency="USD")
+    # It balances in USD, but both accounts are in euros.
+    await post_entry(connection, transaction, source, "DEBIT", 2500, currency="USD")
+    await post_entry(connection, transaction, target, "CREDIT", 2500, currency="USD")
 
-    with pytest.raises(asyncpg.RaiseError, match="moneda distinta"):
-        await forzar_comprobacion(connection)
+    with pytest.raises(asyncpg.RaiseError, match="currency other than"):
+        await force_deferred_checks(connection)
 
 
-@pytest.mark.parametrize("importe", [0, -2500])
-async def test_un_asiento_sin_importe_positivo_se_rechaza(
-    connection: asyncpg.Connection, importe: int
+@pytest.mark.parametrize("amount", [0, -2500])
+async def test_an_entry_without_a_positive_amount_is_rejected(
+    connection: asyncpg.Connection, amount: int
 ) -> None:
-    cuenta = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
+    account = await create_account(connection)
+    transaction = await create_transaction(connection)
 
     with pytest.raises(asyncpg.CheckViolationError):
-        await anotar(connection, transaccion, cuenta, "DEBIT", importe)
+        await post_entry(connection, transaction, account, "DEBIT", amount)
 
 
-async def test_un_tipo_de_asiento_inventado_se_rechaza(connection: asyncpg.Connection) -> None:
-    cuenta = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
+async def test_an_invented_entry_type_is_rejected(connection: asyncpg.Connection) -> None:
+    account = await create_account(connection)
+    transaction = await create_transaction(connection)
 
     with pytest.raises(asyncpg.CheckViolationError):
-        await anotar(connection, transaccion, cuenta, "APUNTE", 2500)
+        await post_entry(connection, transaction, account, "POSTING", 2500)
 
 
-async def test_un_asiento_no_se_puede_modificar(connection: asyncpg.Connection) -> None:
-    origen = await crear_cuenta(connection)
-    destino = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
-    asiento = await anotar(connection, transaccion, origen, "DEBIT", 2500)
-    await anotar(connection, transaccion, destino, "CREDIT", 2500)
+async def test_an_entry_cannot_be_modified(connection: asyncpg.Connection) -> None:
+    source = await create_account(connection)
+    target = await create_account(connection)
+    transaction = await create_transaction(connection)
+    entry = await post_entry(connection, transaction, source, "DEBIT", 2500)
+    await post_entry(connection, transaction, target, "CREDIT", 2500)
 
-    with pytest.raises(asyncpg.RaiseError, match="inmutable"):
-        await connection.execute(
-            "UPDATE ledger_entries SET amount_minor = 1 WHERE id = $1", asiento
-        )
+    with pytest.raises(asyncpg.RaiseError, match="immutable"):
+        await connection.execute("UPDATE ledger_entries SET amount_minor = 1 WHERE id = $1", entry)
 
 
-async def test_un_asiento_no_se_puede_borrar(connection: asyncpg.Connection) -> None:
-    origen = await crear_cuenta(connection)
-    destino = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
-    asiento = await anotar(connection, transaccion, origen, "DEBIT", 2500)
-    await anotar(connection, transaccion, destino, "CREDIT", 2500)
+async def test_an_entry_cannot_be_deleted(connection: asyncpg.Connection) -> None:
+    source = await create_account(connection)
+    target = await create_account(connection)
+    transaction = await create_transaction(connection)
+    entry = await post_entry(connection, transaction, source, "DEBIT", 2500)
+    await post_entry(connection, transaction, target, "CREDIT", 2500)
 
-    with pytest.raises(asyncpg.RaiseError, match="inmutable"):
-        await connection.execute("DELETE FROM ledger_entries WHERE id = $1", asiento)
+    with pytest.raises(asyncpg.RaiseError, match="immutable"):
+        await connection.execute("DELETE FROM ledger_entries WHERE id = $1", entry)
 
 
-async def test_una_transaccion_no_se_puede_borrar(connection: asyncpg.Connection) -> None:
-    transaccion = await crear_transaccion(connection)
+async def test_a_transaction_cannot_be_deleted(connection: asyncpg.Connection) -> None:
+    transaction = await create_transaction(connection)
 
-    with pytest.raises(asyncpg.RaiseError, match="inmutable"):
-        await connection.execute("DELETE FROM ledger_transactions WHERE id = $1", transaccion)
+    with pytest.raises(asyncpg.RaiseError, match="immutable"):
+        await connection.execute("DELETE FROM ledger_transactions WHERE id = $1", transaction)

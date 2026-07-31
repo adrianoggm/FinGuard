@@ -1,133 +1,133 @@
-# Tareas del monorepo. Requiere docker, uv y just.
-# ponytail: `just` en lugar de Nx mientras haya pocos proyectos, y en lugar de make
-# porque make no viene en Windows. Nx entra si el CI llega a doler.
+# Monorepo tasks. Requires docker, uv and just.
+# ponytail: `just` instead of Nx while there are few projects, and instead of make
+# because make does not ship with Windows. Nx comes in if CI ever starts to hurt.
 
 set shell := ["bash", "-uc"]
 
 py_services := "apps/banking-api apps/assistant-api"
 
-# Lista las tareas disponibles
+# List the available tasks
 default:
     @just --list
 
-# --- Arranque -----------------------------------------------------------------
+# --- Startup ------------------------------------------------------------------
 
-# Solo la base de datos
+# Just the database
 db:
     docker compose up -d --wait postgres
 
-# Un componente suelto con lo que necesite para estar sano: just component banking-api
+# A single component plus whatever it needs to be healthy: just component banking-api
 component name:
     docker compose up -d --wait --build {{ name }}
 
-# Esqueleto: base de datos + APIs de backend. La piel (web, móvil) queda fuera
+# Skeleton: database + backend APIs. The skin (web, mobile) stays out
 back:
     docker compose --profile core up -d --wait --build
 
-# La PoC completa: esqueleto + piel. Hoy equivale a `back`, hasta que exista apps/web
+# The whole PoC: skeleton + skin. Today the same as `back`, until apps/web exists
 poc:
     docker compose --profile poc up -d --wait --build
 
-# Para todo lo levantado del proyecto; los datos sobreviven en el volumen.
-# --profile "*" es imprescindible: sin él, down ignora los servicios con perfil
+# Stops everything in the project; the data survives in the volume.
+# --profile "*" is essential: without it, down ignores services that have a profile
 down:
     docker compose --profile "*" down --remove-orphans
 
-# Borra también los datos
+# Wipes the data too
 reset:
     docker compose --profile "*" down --remove-orphans --volumes
 
-# Estado de los contenedores
+# Container status
 ps:
     docker compose --profile "*" ps --all
 
-# Logs en vivo: just logs, o just logs banking-api
+# Live logs: just logs, or just logs banking-api
 logs service="":
     docker compose --profile "*" logs -f {{ service }}
 
-# Construye las imágenes sin arrancar nada
+# Builds the images without starting anything
 build:
     docker compose --profile poc build
 
-# --- Desarrollo local ---------------------------------------------------------
+# --- Local development --------------------------------------------------------
 
-# Consola psql sobre la base del banking
+# psql console on the banking database
 db-shell:
     docker exec -it finguard-postgres-1 psql -U finguard_banking -d finguard_banking
 
-# Aplica las migraciones pendientes. Solo banking-api tiene esquema propio por ahora
+# Applies pending migrations. Only banking-api has a schema of its own so far
 migrate:
     cd apps/banking-api && uv run alembic upgrade head
 
-# Deshace la última migración
+# Undoes the last migration
 migrate-down:
     cd apps/banking-api && uv run alembic downgrade -1
 
-# Crea una migración vacía: just migration "contactos"
+# Creates an empty migration: just migration "contacts"
 migration name:
     cd apps/banking-api && uv run alembic revision -m "{{ name }}"
 
-# --- Datos de desarrollo ------------------------------------------------------
+# --- Development data ---------------------------------------------------------
 
-# Carga el dataset sintético. CUIDADO: empieza con un TRUNCATE del libro mayor
+# Loads the synthetic dataset. CAREFUL: it starts with a TRUNCATE of the ledger
 seed file="0001_demo.sql":
     docker exec -i finguard-postgres-1 psql -U finguard_banking -d finguard_banking \
         -v ON_ERROR_STOP=1 -q < apps/banking-api/seeds/{{ file }}
     @just seed-verify
 
-# Comprueba que lo cargado cuadra y resume el volumen
+# Checks that what is loaded adds up, and summarises the volume
 seed-verify:
     docker exec -i finguard-postgres-1 psql -U finguard_banking -d finguard_banking \
         -v ON_ERROR_STOP=1 < apps/banking-api/seeds/verify.sql
 
-# Regenera el dataset. Es determinista: si no cambias nada, git diff sale vacío
+# Regenerates the dataset. Deterministic: change nothing and git diff stays empty
 seed-generate:
     cd apps/banking-api && uv run python scripts/generate_seed.py
 
-# Mide la exactitud de ejecución del motor de consultas. Necesita `just seed` antes
+# Measures the execution accuracy of the query engine. Needs `just seed` first
 evaluate:
     cd apps/banking-api && uv run python scripts/evaluate_queries.py
 
-# Recalcula a mano las cifras esperadas del dataset de evaluación
+# Recomputes by hand the expected figures of the evaluation dataset
 evaluate-expected:
     docker exec -i finguard-postgres-1 psql -U finguard_banking -d finguard_banking \
         -v ON_ERROR_STOP=1 < apps/banking-api/evaluation/expected.sql
 
-# Instala las dependencias de cada servicio Python
+# Installs the dependencies of every Python service
 install:
     for s in {{ py_services }}; do echo "== $s"; (cd "$s" && uv sync); done
 
-# banking-api con recarga automática. Necesita el 8001 libre: usa `just db`, no `just back`
+# banking-api with autoreload. Needs port 8001 free: use `just db`, not `just back`
 serve-banking:
     cd apps/banking-api && uv run uvicorn finguard_banking.bootstrap.main:app --reload --port 8001
 
-# assistant-api con recarga automática. Necesita el 8000 libre
+# assistant-api with autoreload. Needs port 8000 free
 serve-assistant:
     cd apps/assistant-api && uv run uvicorn finguard_assistant.bootstrap.main:app --reload --port 8000
 
-# Política de LLM activa
+# The active LLM policy
 llm-policy:
     curl -sS http://127.0.0.1:8000/admin/llm-policy
 
-# --- Calidad ------------------------------------------------------------------
+# --- Quality ------------------------------------------------------------------
 
 lint:
     for s in {{ py_services }}; do (cd "$s" && uv run ruff check . && uv run ruff format --check .); done
 
-# Aplica formato y arreglos automáticos
+# Applies formatting and automatic fixes
 format:
     for s in {{ py_services }}; do (cd "$s" && uv run ruff format . && uv run ruff check --fix .); done
 
 typecheck:
     for s in {{ py_services }}; do (cd "$s" && uv run mypy src); done
 
-# Tests de todos los servicios. Los marcados como integration necesitan `just db`
+# Tests for every service. The ones marked integration need `just db`
 test:
     for s in {{ py_services }}; do (cd "$s" && uv run pytest -q); done
 
-# Sin base de datos: salta los tests de integración
+# Without a database: skips the integration tests
 test-unit:
     for s in {{ py_services }}; do (cd "$s" && uv run pytest -q -m "not integration"); done
 
-# Lo que tiene que pasar antes de subir un commit
+# What has to pass before pushing a commit
 check: lint typecheck test

@@ -1,10 +1,10 @@
-"""El saldo sale de los asientos, no de una columna que alguien haya escrito."""
+"""The balance comes from the entries, not from a column someone wrote."""
 
 import uuid
 
 import asyncpg
 import pytest
-from conftest import anotar, como_pool, crear_cuenta, crear_transaccion
+from conftest import as_pool, create_account, create_transaction, post_entry, record_movement
 
 from finguard_banking.adapters.outbound.postgres.ledger_repository import (
     PostgresLedgerRepository,
@@ -14,65 +14,59 @@ from finguard_banking.domain.errors import AccountNotFoundError
 pytestmark = pytest.mark.integration
 
 
-async def test_una_cuenta_sin_movimientos_tiene_saldo_cero(
+async def test_an_account_without_movements_has_a_zero_balance(
     connection: asyncpg.Connection,
 ) -> None:
-    cuenta = await crear_cuenta(connection)
-    repositorio = PostgresLedgerRepository(como_pool(connection))
+    account = await create_account(connection)
+    repository = PostgresLedgerRepository(as_pool(connection))
 
-    saldo = await repositorio.balance_of(cuenta)
+    balance = await repository.balance_of(account)
 
-    assert saldo.booked_minor == 0
-    assert saldo.available_minor == 0
-    assert saldo.currency == "EUR"
-
-
-async def test_un_debito_resta_y_un_credito_suma(connection: asyncpg.Connection) -> None:
-    origen = await crear_cuenta(connection)
-    destino = await crear_cuenta(connection)
-    transaccion = await crear_transaccion(connection)
-    await anotar(connection, transaccion, origen, "DEBIT", 2500)
-    await anotar(connection, transaccion, destino, "CREDIT", 2500)
-    repositorio = PostgresLedgerRepository(como_pool(connection))
-
-    # Enviar dinero se anota como débito en la cuenta de quien lo envía.
-    assert (await repositorio.balance_of(origen)).booked_minor == -2500
-    assert (await repositorio.balance_of(destino)).booked_minor == 2500
+    assert balance.booked_minor == 0
+    assert balance.available_minor == 0
+    assert balance.currency == "EUR"
 
 
-async def test_el_saldo_acumula_varias_transacciones(connection: asyncpg.Connection) -> None:
-    cuenta = await crear_cuenta(connection)
-    contrapartida = await crear_cuenta(connection)
-    for importe in (10_000, 2_549):
-        transaccion = await crear_transaccion(connection)
-        await anotar(connection, transaccion, cuenta, "CREDIT", importe)
-        await anotar(connection, transaccion, contrapartida, "DEBIT", importe)
-    repositorio = PostgresLedgerRepository(como_pool(connection))
+async def test_a_debit_subtracts_and_a_credit_adds(connection: asyncpg.Connection) -> None:
+    source = await create_account(connection)
+    target = await create_account(connection)
+    transaction = await create_transaction(connection)
+    await post_entry(connection, transaction, source, "DEBIT", 2500)
+    await post_entry(connection, transaction, target, "CREDIT", 2500)
+    repository = PostgresLedgerRepository(as_pool(connection))
 
-    assert (await repositorio.balance_of(cuenta)).booked_minor == 12_549
-
-
-async def test_lo_que_no_esta_contabilizado_no_cuenta(connection: asyncpg.Connection) -> None:
-    cuenta = await crear_cuenta(connection)
-    contrapartida = await crear_cuenta(connection)
-
-    contabilizada = await crear_transaccion(connection, status="BOOKED")
-    await anotar(connection, contabilizada, cuenta, "CREDIT", 5_000)
-    await anotar(connection, contabilizada, contrapartida, "DEBIT", 5_000)
-
-    pendiente = await crear_transaccion(connection, status="PENDING")
-    await anotar(connection, pendiente, cuenta, "CREDIT", 99_999)
-    await anotar(connection, pendiente, contrapartida, "DEBIT", 99_999)
-
-    repositorio = PostgresLedgerRepository(como_pool(connection))
-
-    assert (await repositorio.balance_of(cuenta)).booked_minor == 5_000
+    # Sending money is recorded as a debit on the sender's account.
+    assert (await repository.balance_of(source)).booked_minor == -2500
+    assert (await repository.balance_of(target)).booked_minor == 2500
 
 
-async def test_una_cuenta_que_no_existe_se_distingue_de_una_a_cero(
+async def test_the_balance_accumulates_several_transactions(
     connection: asyncpg.Connection,
 ) -> None:
-    repositorio = PostgresLedgerRepository(como_pool(connection))
+    account = await create_account(connection)
+    counterparty = await create_account(connection)
+    for amount in (10_000, 2_549):
+        await record_movement(connection, account, counterparty, amount)
+    repository = PostgresLedgerRepository(as_pool(connection))
+
+    assert (await repository.balance_of(account)).booked_minor == 12_549
+
+
+async def test_what_is_not_booked_does_not_count(connection: asyncpg.Connection) -> None:
+    account = await create_account(connection)
+    counterparty = await create_account(connection)
+    await record_movement(connection, account, counterparty, 5_000, status="BOOKED")
+    await record_movement(connection, account, counterparty, 99_999, status="PENDING")
+
+    repository = PostgresLedgerRepository(as_pool(connection))
+
+    assert (await repository.balance_of(account)).booked_minor == 5_000
+
+
+async def test_an_account_that_does_not_exist_differs_from_one_at_zero(
+    connection: asyncpg.Connection,
+) -> None:
+    repository = PostgresLedgerRepository(as_pool(connection))
 
     with pytest.raises(AccountNotFoundError):
-        await repositorio.balance_of(uuid.uuid4())
+        await repository.balance_of(uuid.uuid4())

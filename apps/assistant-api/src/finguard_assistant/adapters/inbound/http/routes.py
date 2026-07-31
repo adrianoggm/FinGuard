@@ -34,21 +34,21 @@ class MessageResponse(BaseModel):
 
 router = APIRouter()
 
-# ponytail: estos endpoints cambian el comportamiento del asistente y hoy no piden
-# credenciales. Antes de exponer el servicio fuera de localhost tienen que quedar
-# detrás de OAuth con un scope de administración (§12 de la visión).
+# ponytail: these endpoints change how the assistant behaves and today they ask for
+# no credentials. Before the service is exposed beyond localhost they have to sit
+# behind OAuth with an administration scope (§12 of the vision).
 admin = APIRouter(prefix="/admin", tags=["admin"])
 
 
 @router.get("/health")
 async def health() -> dict[str, str]:
-    """El proceso responde. No comprueba dependencias a propósito."""
+    """The process answers. It deliberately does not check dependencies."""
     return {"status": "ok"}
 
 
 @router.get("/ready")
 async def ready(policies: Policies) -> JSONResponse:
-    """Listo para servir: la política activa apunta a un proveedor que existe."""
+    """Ready to serve: the active policy points at a provider that exists."""
     provider = policies.current().provider
     if provider not in registry.available():
         return JSONResponse({"status": "unavailable", "provider": provider}, status_code=503)
@@ -68,8 +68,8 @@ async def read_policy(policies: Policies) -> PolicyView:
 
 @admin.put("/llm-policy")
 async def replace_policy(policy: LlmPolicy, policies: Policies) -> PolicyView:
-    # Se valida el proveedor antes de tocar el estado: una política inválida no
-    # deja el servicio a medio configurar.
+    # The provider is validated before touching the state: an invalid policy never
+    # leaves the service half configured.
     registry.get(policy.provider)
     return PolicyView(
         active=await policies.replace(policy), available_providers=registry.available()

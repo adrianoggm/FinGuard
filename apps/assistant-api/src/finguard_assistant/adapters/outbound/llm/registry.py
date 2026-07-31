@@ -2,8 +2,8 @@ from finguard_assistant.adapters.outbound.llm.echo import EchoProvider
 from finguard_assistant.domain.errors import UnknownProviderError
 from finguard_assistant.ports.llm_provider import LlmProvider
 
-# Añadir un proveedor real (OpenAI, Gemini, ...) es escribir un módulo que cumpla
-# LlmProvider y registrarlo aquí. Ni el dominio ni los casos de uso cambian.
+# Adding a real provider (OpenAI, Gemini, ...) means writing a module that fulfils
+# LlmProvider and registering it here. Neither the domain nor the use cases change.
 _PROVIDERS: dict[str, LlmProvider] = {provider.name: provider for provider in (EchoProvider(),)}
 
 

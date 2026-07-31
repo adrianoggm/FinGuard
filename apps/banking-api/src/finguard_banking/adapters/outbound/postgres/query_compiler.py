@@ -1,12 +1,12 @@
-"""Compila un plan de consulta validado a SQL parametrizado.
+"""Compiles a validated query plan into parameterised SQL.
 
-Regla de vision.md §9.3: no se ejecuta SQL producido por el LLM. Aquí la estructura
-del SQL sale exclusivamente de enums —conjuntos cerrados definidos en el código— y
-todo valor que venga de fuera viaja como parámetro. Ni un dato del usuario se
-concatena en la cadena.
+Rule from vision.md §9.3: SQL produced by the LLM is never executed. Here the shape
+of the SQL comes exclusively from enums — closed sets defined in code — and every
+value coming from outside travels as a parameter. Not one piece of user data is
+concatenated into the string.
 
-Se lee la vista `assistant_read.transactions_v1`, nunca las tablas. Qué cuenta como
-contabilizado y qué signo tiene cada asiento son decisiones de la vista, no de aquí.
+It reads the `assistant_read.transactions_v1` view, never the tables. What counts as
+booked and which sign each entry carries are decisions of the view, not of this file.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from typing import Any
 
 from finguard_banking.domain.financial_query import Direction, FinancialQuery, GroupBy
 
-VISTA = "assistant_read.transactions_v1"
+VIEW = "assistant_read.transactions_v1"
 
-# Tope de filas devueltas por consulta (vision.md §8.6).
-MAX_GRUPOS = 500
+# Cap on rows returned per query (vision.md §8.6).
+MAX_GROUPS = 500
 
 
 @dataclass(frozen=True)
@@ -28,22 +28,22 @@ class CompiledQuery:
     parameters: list[Any]
 
 
-class _Parametros:
-    """Numera los parámetros y guarda sus valores en el mismo orden."""
+class _Parameters:
+    """Numbers the placeholders and keeps their values in the same order."""
 
     def __init__(self) -> None:
-        self._valores: list[Any] = []
+        self._values: list[Any] = []
 
-    def de(self, valor: Any) -> str:
-        self._valores.append(valor)
-        return f"${len(self._valores)}"
+    def bind(self, value: Any) -> str:
+        self._values.append(value)
+        return f"${len(self._values)}"
 
     @property
-    def valores(self) -> list[Any]:
-        return list(self._valores)
+    def values(self) -> list[Any]:
+        return list(self._values)
 
 
-def _expresion_de_grupo(group_by: GroupBy, tz: str) -> str:
+def _group_expression(group_by: GroupBy, tz: str) -> str:
     match group_by:
         case GroupBy.NONE:
             return "'total'"
@@ -54,64 +54,66 @@ def _expresion_de_grupo(group_by: GroupBy, tz: str) -> str:
         case GroupBy.MONTH:
             return f"to_char(t.occurred_at AT TIME ZONE {tz}, 'YYYY-MM')"
         case GroupBy.CATEGORY:
-            return "COALESCE(t.category, 'SIN_CATEGORIA')"
+            # Contract values, so English: the assistant is the one that phrases
+            # them for a Spanish-speaking user.
+            return "COALESCE(t.category, 'UNCATEGORISED')"
         case GroupBy.MERCHANT:
-            return "COALESCE(t.merchant_name, 'SIN_COMERCIO')"
+            return "COALESCE(t.merchant_name, 'UNKNOWN_MERCHANT')"
 
 
-def _expresion_de_importe(direction: Direction) -> str:
+def _amount_expression(direction: Direction) -> str:
     if direction is Direction.ALL:
-        # Con los dos sentidos mezclados el total solo tiene sentido con signo.
+        # With both directions mixed, only a signed total makes sense.
         return "t.signed_amount_minor"
-    # En un solo sentido el importe es positivo: "he gastado 34,20", no "-34,20".
+    # In a single direction the amount is positive: "I spent 34.20", not "-34.20".
     return "t.amount_minor"
 
 
-def _condiciones(consulta: FinancialQuery, parametros: _Parametros, tz: str) -> list[str]:
-    cuenta = parametros.de(consulta.account_id)
-    desde = parametros.de(consulta.date_range.desde)
-    hasta = parametros.de(consulta.date_range.hasta)
+def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list[str]:
+    account = parameters.bind(query.account_id)
+    start = parameters.bind(query.date_range.start)
+    end = parameters.bind(query.date_range.end)
 
-    condiciones = [
-        f"t.account_id = {cuenta}",
-        # El rango incluye el día final completo, en la zona horaria del informe.
-        f"t.occurred_at >= (({desde}::date)::timestamp AT TIME ZONE {tz})",
-        f"t.occurred_at < (({hasta}::date + 1)::timestamp AT TIME ZONE {tz})",
+    conditions = [
+        f"t.account_id = {account}",
+        # The range includes the whole final day, in the reporting time zone.
+        f"t.occurred_at >= (({start}::date)::timestamp AT TIME ZONE {tz})",
+        f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
 
-    if consulta.direction is not Direction.ALL:
-        condiciones.append(f"t.direction = {parametros.de(consulta.direction.value)}")
+    if query.direction is not Direction.ALL:
+        conditions.append(f"t.direction = {parameters.bind(query.direction.value)}")
 
-    if consulta.categories:
-        condiciones.append(f"t.category = ANY({parametros.de(list(consulta.categories))})")
+    if query.categories:
+        conditions.append(f"t.category = ANY({parameters.bind(list(query.categories))})")
 
-    return condiciones
+    return conditions
 
 
-def compilar_agregado(consulta: FinancialQuery, zona_horaria: str) -> CompiledQuery:
-    parametros = _Parametros()
-    tz = parametros.de(zona_horaria)
-    condiciones = _condiciones(consulta, parametros, tz)
+def compile_aggregate(query: FinancialQuery, reporting_timezone: str) -> CompiledQuery:
+    parameters = _Parameters()
+    tz = parameters.bind(reporting_timezone)
+    conditions = _conditions(query, parameters, tz)
 
     sql = f"""
         SELECT
-            {_expresion_de_grupo(consulta.group_by, tz)} AS clave,
-            COALESCE(SUM({_expresion_de_importe(consulta.direction)}), 0) AS total_minor,
+            {_group_expression(query.group_by, tz)} AS key,
+            COALESCE(SUM({_amount_expression(query.direction)}), 0) AS total_minor,
             COUNT(*) AS movement_count
-        FROM {VISTA} t
-        WHERE {" AND ".join(condiciones)}
+        FROM {VIEW} t
+        WHERE {" AND ".join(conditions)}
         GROUP BY 1
         ORDER BY 1
-        LIMIT {MAX_GRUPOS}
+        LIMIT {MAX_GROUPS}
     """
-    return CompiledQuery(sql=sql, parameters=parametros.valores)
+    return CompiledQuery(sql=sql, parameters=parameters.values)
 
 
-def compilar_movimientos(consulta: FinancialQuery, zona_horaria: str) -> CompiledQuery:
-    parametros = _Parametros()
-    tz = parametros.de(zona_horaria)
-    condiciones = _condiciones(consulta, parametros, tz)
-    limite = parametros.de(consulta.supporting_limit)
+def compile_movements(query: FinancialQuery, reporting_timezone: str) -> CompiledQuery:
+    parameters = _Parameters()
+    tz = parameters.bind(reporting_timezone)
+    conditions = _conditions(query, parameters, tz)
+    limit = parameters.bind(query.supporting_limit)
 
     sql = f"""
         SELECT
@@ -120,11 +122,11 @@ def compilar_movimientos(consulta: FinancialQuery, zona_horaria: str) -> Compile
             COALESCE(t.description, '') AS description,
             t.merchant_name,
             t.category,
-            {_expresion_de_importe(consulta.direction)} AS amount_minor,
+            {_amount_expression(query.direction)} AS amount_minor,
             t.direction
-        FROM {VISTA} t
-        WHERE {" AND ".join(condiciones)}
+        FROM {VIEW} t
+        WHERE {" AND ".join(conditions)}
         ORDER BY t.occurred_at DESC, t.transaction_id
-        LIMIT {limite}
+        LIMIT {limit}
     """
-    return CompiledQuery(sql=sql, parameters=parametros.valores)
+    return CompiledQuery(sql=sql, parameters=parameters.values)

@@ -1,17 +1,17 @@
--- Dataset sintetico del nucleo bancario de FinGuard. GENERADO, no editar a mano.
+-- Synthetic dataset for the FinGuard banking core. GENERATED, do not edit by hand.
 --   scripts/generate_seed.py
 --
--- semilla        20260730
--- meses          18, hasta 2026-07-31
--- titulares      3 + cuenta de compensacion
--- transacciones  1624 (1621 BOOKED, 3 PENDING)
--- asientos       3248
--- sha256         facfb0871775cfd99a3b542d7cd5aac7f76e8f8b1173bd90de5225d78a4e7f6a
+-- seed           20260730
+-- months         18, up to 2026-07-31
+-- holders        3 + clearing account
+-- transactions   1624 (1621 BOOKED, 3 PENDING)
+-- entries        3248
+-- sha256         56c8c2089ae724292b75853e789562ffd43d5eb29b8460c1c8afaa6831802a00
 --
--- CUIDADO: empieza con un TRUNCATE. Es un dataset de desarrollo.
+-- CAREFUL: it starts with a TRUNCATE. This is a development dataset.
 BEGIN;
 
--- El libro mayor es inmutable: no se puede borrar con DELETE.
+-- The ledger is immutable: it cannot be cleared with DELETE.
 TRUNCATE ledger_entries, ledger_transactions, balance_projections,
          accounts, customers;
 

@@ -1,9 +1,9 @@
-"""Ningún SQL del camino de lectura puede nombrar una tabla.
+"""No SQL on the read path may name a table.
 
-Este test existe porque el fallo ya ocurrió: el repositorio de consultas leía
-`accounts` para sacar la moneda, y solo se descubrió al ejecutarlo con el rol
-restringido. Los tests de integración usan la conexión del propietario, así que no
-lo habrían visto nunca.
+This test exists because the mistake already happened: the query repository read
+`accounts` to get the currency, and it only surfaced when running with the restricted
+role. The integration tests use the owner connection, so they would never have caught
+it.
 """
 
 import re
@@ -14,7 +14,7 @@ from finguard_banking.adapters.outbound.postgres import (
     query_compiler,
 )
 
-TABLAS_PROHIBIDAS = (
+FORBIDDEN_TABLES = (
     "ledger_entries",
     "ledger_transactions",
     "accounts",
@@ -22,28 +22,28 @@ TABLAS_PROHIBIDAS = (
     "balance_projections",
 )
 
-MODULOS = (financial_query_repository, ledger_repository, query_compiler)
+MODULES = (financial_query_repository, ledger_repository, query_compiler)
 
 
-def sentencias() -> dict[str, str]:
-    """Todas las constantes de SQL de los módulos del camino de lectura."""
-    encontradas = {
-        f"{modulo.__name__}.{nombre}": valor
-        for modulo in MODULOS
-        for nombre, valor in vars(modulo).items()
-        if nombre.endswith("_SQL") and isinstance(valor, str)
+def statements() -> dict[str, str]:
+    """Every SQL constant in the modules on the read path."""
+    found = {
+        f"{module.__name__}.{name}": value
+        for module in MODULES
+        for name, value in vars(module).items()
+        if name.endswith("_SQL") and isinstance(value, str)
     }
-    assert encontradas, "no se ha encontrado ninguna constante _SQL: ¿han cambiado de nombre?"
-    return encontradas
+    assert found, "no _SQL constant found: have they been renamed?"
+    return found
 
 
-def test_ninguna_sentencia_nombra_una_tabla() -> None:
-    for donde, sql in sentencias().items():
-        for tabla in TABLAS_PROHIBIDAS:
-            # \b para no confundir `accounts` con `account_balances_v1`.
-            assert not re.search(rf"\b{tabla}\b", sql), f"{donde} nombra la tabla {tabla}"
+def test_no_statement_names_a_table() -> None:
+    for where, sql in statements().items():
+        for table in FORBIDDEN_TABLES:
+            # \b so that `accounts` is not confused with `account_balances_v1`.
+            assert not re.search(rf"\b{table}\b", sql), f"{where} names the table {table}"
 
 
-def test_las_sentencias_leen_del_esquema_autorizado() -> None:
-    for donde, sql in sentencias().items():
-        assert "assistant_read." in sql, f"{donde} no lee de assistant_read"
+def test_statements_read_from_the_authorised_schema() -> None:
+    for where, sql in statements().items():
+        assert "assistant_read." in sql, f"{where} does not read from assistant_read"
