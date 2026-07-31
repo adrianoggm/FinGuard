@@ -116,8 +116,8 @@ async def evaluate(cases: list[dict[str, Any]], heuristic: list[dict[str, Any]])
 
             plan["accountId"] = str(accounts[case["account"]])
             request = FinancialQueryRequest.model_validate(plan)
-            query = http_mapper.query_from_dto(request, date.today())
-            outcomes.append(_compare(case, await repository.run(query)))
+            plan = http_mapper.plan_from_dto(request, date.today())
+            outcomes.append(_compare(case, await repository.run(plan)))
 
         for case in heuristic:
             plan = dict(case["plan"])
@@ -126,8 +126,8 @@ async def evaluate(cases: list[dict[str, Any]], heuristic: list[dict[str, Any]])
                 return 2
             plan["accountId"] = str(accounts[case["account"]])
             request = FinancialQueryRequest.model_validate(plan)
-            query = http_mapper.query_from_dto(request, date.today())
-            outcomes.append(_judge(case, await repository.run(query)))
+            plan = http_mapper.plan_from_dto(request, date.today())
+            outcomes.append(_judge(case, await repository.run(plan)))
     finally:
         await reader.close()
         await owner.close()

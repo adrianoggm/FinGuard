@@ -6,8 +6,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_banking.application.use_cases.get_balance import GetBalance
-from finguard_banking.bootstrap.dependencies import get_balance
+from finguard_banking.application.bus.query_bus import QueryBus
+from finguard_banking.application.queries.get_balance import (
+    GetBalanceHandler,
+    GetBalanceQuery,
+)
+from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.balance import Balance
 from finguard_banking.domain.errors import AccountNotFoundError
@@ -28,7 +32,11 @@ class FakeRepository:
 
 
 def _with_repository(balance: Balance | None) -> TestClient:
-    app.dependency_overrides[get_balance] = lambda: GetBalance(FakeRepository(balance))
+    # A bus with one fake handler: the controller cannot tell the difference, and no
+    # database is involved.
+    bus = QueryBus()
+    bus.register(GetBalanceQuery, GetBalanceHandler(FakeRepository(balance)))
+    app.dependency_overrides[get_query_bus] = lambda: bus
     return TestClient(app)
 
 

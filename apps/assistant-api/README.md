@@ -12,10 +12,23 @@ Public contract: [`packages/contracts/openapi/assistant-api.yaml`](../../package
 
 ```text
 domain/          value objects, models, ports, errors — no framework, no pydantic
-application/     policy_store.py + use_cases/
+application/     bus/ (QueryBus · CommandBus) · queries/ · commands/ · policy_store.py
 infrastructure/  controllers/ · dto/ · mappers/ · llm/ · config/ · error_handlers.py
 bootstrap/       composition root
 ```
+
+CQRS: reads are queries, and swapping the policy is a command, because it changes state.
+
+| Message | Answers with |
+| --- | --- |
+| `AnswerMessageQuery` | `AnswerMessageResult` — the text, which model served it, and what was attempted first |
+| `GetLlmCatalogueQuery` | `CatalogueResult` — active policy, fallback, available models and providers |
+| `ReplaceLlmPolicyCommand` | `CatalogueResult` — the state after the swap |
+| `ResetLlmPolicyCommand` | `CatalogueResult` |
+
+Commands answer with the resulting state rather than nothing: the endpoint has to reply with it, and a second read to fetch what was just written would be a race waiting to happen.
+
+A **query never answers with a domain model**, so `LlmPolicy` and `LlmModel` stop at the application boundary and a mapper turns the Result into the wire shape.
 
 The domain raises `DomainError` subclasses with a `code`, never bare `ValueError`, and [`error_handlers.py`](src/finguard_assistant/infrastructure/error_handlers.py) maps that code to a status: unknown model or provider → `422`, invalid value → `422`, every model failed → `503`, one provider failed → `502`.
 

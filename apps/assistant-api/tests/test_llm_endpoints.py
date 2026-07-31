@@ -6,18 +6,42 @@ import pytest
 from fastapi.testclient import TestClient
 from support import BACKUP, PRIMARY, catalogue
 
+from finguard_assistant.application.bus.command_bus import CommandBus
+from finguard_assistant.application.bus.query_bus import QueryBus
+from finguard_assistant.application.commands.replace_llm_policy import (
+    ReplaceLlmPolicyCommand,
+    ReplaceLlmPolicyHandler,
+    ResetLlmPolicyCommand,
+    ResetLlmPolicyHandler,
+)
 from finguard_assistant.application.policy_store import PolicyStore
-from finguard_assistant.bootstrap.dependencies import get_catalogue, get_policies
+from finguard_assistant.application.queries.get_llm_catalogue import (
+    GetLlmCatalogueHandler,
+    GetLlmCatalogueQuery,
+)
+from finguard_assistant.bootstrap.dependencies import get_command_bus, get_query_bus
 from finguard_assistant.bootstrap.main import app
 
 
 @pytest.fixture(autouse=True)
 def _wired() -> Iterator[None]:
-    """The app wired to a two-model catalogue, so swapping is observable."""
+    """Buses wired to a two-model catalogue, so swapping is observable.
+
+    Only `echo` is a provider this build can talk to; `flaky` is not, which is what the
+    readiness test relies on.
+    """
     models = catalogue(PRIMARY, BACKUP)
     store = PolicyStore(models, models.default_policy())
-    app.dependency_overrides[get_catalogue] = lambda: models
-    app.dependency_overrides[get_policies] = lambda: store
+    providers = ["echo"]
+
+    queries = QueryBus()
+    queries.register(GetLlmCatalogueQuery, GetLlmCatalogueHandler(store, models, providers))
+    commands = CommandBus()
+    commands.register(ReplaceLlmPolicyCommand, ReplaceLlmPolicyHandler(store, models, providers))
+    commands.register(ResetLlmPolicyCommand, ResetLlmPolicyHandler(store, models, providers))
+
+    app.dependency_overrides[get_query_bus] = lambda: queries
+    app.dependency_overrides[get_command_bus] = lambda: commands
     yield
     app.dependency_overrides.clear()
 

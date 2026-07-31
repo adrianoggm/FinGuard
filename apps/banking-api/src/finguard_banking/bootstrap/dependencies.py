@@ -7,17 +7,9 @@ from zoneinfo import ZoneInfo
 import asyncpg
 from fastapi import Request
 
-from finguard_banking.application.use_cases.get_balance import GetBalance
-from finguard_banking.application.use_cases.run_financial_query import RunFinancialQuery
+from finguard_banking.application.bus.command_bus import CommandBus
+from finguard_banking.application.bus.query_bus import QueryBus
 from finguard_banking.bootstrap.config import get_settings
-from finguard_banking.domain.ports.financial_query_repository import FinancialQueryRepository
-from finguard_banking.domain.ports.ledger_repository import LedgerRepository
-from finguard_banking.infrastructure.persistence.financial_query_repository import (
-    PostgresFinancialQueryRepository,
-)
-from finguard_banking.infrastructure.persistence.ledger_repository import (
-    PostgresLedgerRepository,
-)
 
 
 # asyncpg.Pool is only generic for the type checker, so these annotations cannot be
@@ -28,29 +20,15 @@ def _pool(request: Request) -> asyncpg.Pool[Any]:
     return pool
 
 
-def _query_pool(request: Request) -> asyncpg.Pool[Any]:
-    """Read-only pool: everything that is queried goes through here (§8.6)."""
-    pool: asyncpg.Pool[Any] = request.app.state.query_pool
-    return pool
+def get_query_bus(request: Request) -> QueryBus:
+    """Controllers ask the bus, never a handler or a repository directly."""
+    bus: QueryBus = request.app.state.query_bus
+    return bus
 
 
-def get_ledger_repository(request: Request) -> LedgerRepository:
-    return PostgresLedgerRepository(_query_pool(request))
-
-
-def get_balance(request: Request) -> GetBalance:
-    return GetBalance(get_ledger_repository(request))
-
-
-def get_financial_query_repository(request: Request) -> FinancialQueryRepository:
-    settings = get_settings()
-    return PostgresFinancialQueryRepository(
-        _query_pool(request), settings.reporting_timezone, settings.groups_limit
-    )
-
-
-def run_financial_query(request: Request) -> RunFinancialQuery:
-    return RunFinancialQuery(get_financial_query_repository(request))
+def get_command_bus(request: Request) -> CommandBus:
+    bus: CommandBus = request.app.state.command_bus
+    return bus
 
 
 def reporting_today(request: Request) -> date:

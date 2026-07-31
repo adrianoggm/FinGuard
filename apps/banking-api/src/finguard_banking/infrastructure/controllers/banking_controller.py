@@ -11,13 +11,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from finguard_banking.application.use_cases.get_balance import GetBalance
-from finguard_banking.application.use_cases.run_financial_query import RunFinancialQuery
+from finguard_banking.application.bus.query_bus import QueryBus
+from finguard_banking.application.queries.get_balance import GetBalanceQuery
+from finguard_banking.application.queries.movement_summary import MovementSummaryQuery
 from finguard_banking.bootstrap.dependencies import (
     database_answers,
-    get_balance,
+    get_query_bus,
     reporting_today,
-    run_financial_query,
 )
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
@@ -26,8 +26,7 @@ from finguard_banking.infrastructure.dto.banking_dto import (
 )
 from finguard_banking.infrastructure.mappers import http_mapper
 
-Balances = Annotated[GetBalance, Depends(get_balance)]
-Queries = Annotated[RunFinancialQuery, Depends(run_financial_query)]
+Queries = Annotated[QueryBus, Depends(get_query_bus)]
 DatabaseAnswers = Annotated[bool, Depends(database_answers)]
 Today = Annotated[date, Depends(reporting_today)]
 
@@ -51,9 +50,9 @@ async def ready(database_answers: DatabaseAnswers) -> JSONResponse:
 
 
 @accounts_router.get("/{account_id}/balance", summary="Balance of an account")
-async def read_balance(account_id: UUID, balances: Balances) -> BalanceResponse:
+async def read_balance(account_id: UUID, queries: Queries) -> BalanceResponse:
     """Balance derived from the ledger entries, never from a mutable column."""
-    return http_mapper.balance_to_dto(await balances(account_id))
+    return http_mapper.balance_to_dto(await queries.ask(GetBalanceQuery(account_id)))
 
 
 @queries_router.post("", summary="Run a financial query")
@@ -65,5 +64,5 @@ async def post_financial_query(
     The body is the intermediate representation from §9.2, not SQL: any field we do not
     recognise is rejected. A relative period is resolved before the plan is built.
     """
-    plan = http_mapper.query_from_dto(body, today)
-    return http_mapper.result_to_dto(await queries(plan))
+    plan = http_mapper.plan_from_dto(body, today)
+    return http_mapper.summary_to_dto(await queries.ask(MovementSummaryQuery(plan)))

@@ -12,10 +12,16 @@ Public contract: [`packages/contracts/openapi/banking-api.yaml`](../../packages/
 
 ```text
 domain/          value objects, models, ports, errors — no framework, no pydantic
-application/     use_cases/
+application/     bus/ (QueryBus · CommandBus) · queries/
 infrastructure/  controllers/ · dto/ · mappers/ · persistence/ · evaluation/ · error_handlers.py
 bootstrap/       composition root
 ```
+
+CQRS: a controller never touches a handler or a repository. It builds a `Query` and asks the bus, which owns exactly one handler per query type — registering a second one for the same type raises, because otherwise the answer would depend on import order.
+
+`GetBalanceQuery → GetBalanceResult` and `MovementSummaryQuery → MovementSummaryResult`. A **query never answers with a domain model**: Results are flat carriers, so the controller cannot end up depending on the core's shape. The chain is rows → domain (`row_mapper`) → Result (handler) → DTO (`http_mapper`).
+
+`CommandBus` exists with no commands registered yet. That is deliberate: phase 5's money movements are where idempotency, audit and correlation IDs all want the same seam, and building it then would mean touching every write at once.
 
 The domain raises `DomainError` subclasses with a `code`, never bare `ValueError`, and [`error_handlers.py`](src/finguard_banking/infrastructure/error_handlers.py) maps that code to a status in one place: not found → `404`, invalid input → `422`, currency clash → `409`.
 

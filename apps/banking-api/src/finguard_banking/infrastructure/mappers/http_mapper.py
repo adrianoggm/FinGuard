@@ -1,20 +1,20 @@
-"""Domain ↔ DTO. The only place that knows both shapes.
+"""Result ↔ DTO, plus DTO → plan. The only place that knows both shapes.
 
-Money is flattened back into `amountMinor` + `currency` on the way out because that is
-what the §13 contract says. The pair only exists on the wire: inside, the currency
-travels with the figure.
+Queries answer with Results, never with domain models, so what arrives here is already
+flat. What this adds is the wire format: camelCase, `from`/`to`, and the `amountMinor` +
+`currency` pair the §13 contract asks for.
 """
 
 from datetime import date
 
-from finguard_banking.domain.balance import Balance
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import (
-    FinancialQueryResult,
-    Movement,
-    QueryGroup,
-    QueryTrace,
+from finguard_banking.application.queries.get_balance import GetBalanceResult
+from finguard_banking.application.queries.movement_summary import (
+    MovementSummaryResult,
+    SummaryGroup,
+    SummaryMovement,
+    SummaryTrace,
 )
+from finguard_banking.domain.financial_query import FinancialQuery
 from finguard_banking.domain.relative_period import RelativePeriod, resolve
 from finguard_banking.domain.value_objects.date_range import DateRange
 from finguard_banking.infrastructure.dto.banking_dto import (
@@ -27,9 +27,9 @@ from finguard_banking.infrastructure.dto.banking_dto import (
 )
 
 
-def query_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery:
-    """Builds the plan. A relative period is resolved here, at the edge, because this
-    is where the clock lives — the domain only ever sees absolute dates."""
+def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery:
+    """Builds the plan. A relative period is resolved here, at the edge, because this is
+    where the clock lives — the domain only ever sees absolute dates."""
     if request.date_range is not None:
         date_range = DateRange(start=request.date_range.start, end=request.date_range.end)
     elif request.period is not None:
@@ -54,47 +54,45 @@ def query_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuer
     )
 
 
-def balance_to_dto(balance: Balance) -> BalanceResponse:
+def balance_to_dto(result: GetBalanceResult) -> BalanceResponse:
     return BalanceResponse(
-        account_id=balance.account_id,
-        available_minor=balance.available.amount_minor,
-        booked_minor=balance.booked.amount_minor,
-        currency=balance.currency,
-        as_of=balance.as_of,
+        account_id=result.account_id,
+        available_minor=result.available_minor,
+        booked_minor=result.booked_minor,
+        currency=result.currency,
+        as_of=result.as_of,
     )
 
 
-def _group_to_dto(group: QueryGroup) -> GroupResponse:
+def _group_to_dto(group: SummaryGroup) -> GroupResponse:
     return GroupResponse(
-        key=group.key,
-        total_minor=group.total.amount_minor,
-        movement_count=group.movement_count,
+        key=group.key, total_minor=group.total_minor, movement_count=group.movement_count
     )
 
 
-def _movement_to_dto(movement: Movement) -> MovementResponse:
+def _movement_to_dto(movement: SummaryMovement) -> MovementResponse:
     return MovementResponse(
         transaction_id=movement.transaction_id,
         occurred_at=movement.occurred_at,
         description=movement.description,
         merchant_name=movement.merchant_name,
         category=movement.category,
-        amount_minor=movement.amount.amount_minor,
+        amount_minor=movement.amount_minor,
         direction=movement.direction,
     )
 
 
-def _trace_to_dto(trace: QueryTrace) -> TraceResponse:
+def _trace_to_dto(trace: SummaryTrace) -> TraceResponse:
     return TraceResponse(sql=trace.sql, parameters=trace.parameters, elapsed_ms=trace.elapsed_ms)
 
 
-def result_to_dto(result: FinancialQueryResult) -> FinancialQueryResponse:
+def summary_to_dto(result: MovementSummaryResult) -> FinancialQueryResponse:
     return FinancialQueryResponse(
         account_id=result.account_id,
         currency=result.currency,
-        total_minor=result.total.amount_minor,
+        total_minor=result.total_minor,
         movement_count=result.movement_count,
         groups=[_group_to_dto(group) for group in result.groups],
-        supporting_movements=[_movement_to_dto(m) for m in result.supporting_movements],
+        supporting_movements=[_movement_to_dto(m) for m in result.movements],
         trace=_trace_to_dto(result.trace) if result.trace is not None else None,
     )
