@@ -8,6 +8,21 @@ It knows nothing about the LLM or the conversational context.
 
 Public contract: [`packages/contracts/openapi/banking-api.yaml`](../../packages/contracts/openapi/banking-api.yaml) (pending).
 
+## Layers
+
+```text
+domain/          value objects, models, ports, errors — no framework, no pydantic
+application/     use_cases/
+infrastructure/  controllers/ · dto/ · mappers/ · persistence/ · evaluation/ · error_handlers.py
+bootstrap/       composition root
+```
+
+The domain raises `DomainError` subclasses with a `code`, never bare `ValueError`, and [`error_handlers.py`](src/finguard_banking/infrastructure/error_handlers.py) maps that code to a status in one place: not found → `404`, invalid input → `422`, currency clash → `409`.
+
+Amounts travel as [`Money`](src/finguard_banking/domain/value_objects/money.py) — an amount and its currency together — so nothing in Python can add euros to dollars. The database enforces that per transaction at COMMIT; `Money` enforces it where the arithmetic happens. On the wire it is flattened back into `amountMinor` + `currency`, because that is what the §13 contract says.
+
+Limits come in two flavours: [`domain/constants.py`](src/finguard_banking/domain/constants.py) holds the **hard ceilings**, which configuration cannot raise, and `BANKING_MAX_*` holds the **policy** a deployment applies, always clamped to the ceiling. A dataclass invariant is evaluated when the object is built, so it cannot read runtime configuration — hence the split. `BANKING_MAX_GROUPS=5000` narrows nothing; `=10` does.
+
 ## Running it
 
 ```bash
@@ -39,7 +54,7 @@ GET /v1/accounts/{id}/balance
 
 ## Financial queries
 
-The body of `POST /v1/financial-queries` is the **intermediate representation** from [vision.md §9.2](../../docs/vision.md), never SQL. The domain model sets `extra="forbid"`: a field it does not recognise — `"sql"`, say — is a `422`, not something quietly ignored.
+The body of `POST /v1/financial-queries` is the **intermediate representation** from [vision.md §9.2](../../docs/vision.md), never SQL. The request DTO sets `extra="forbid"`: a field it does not recognise — `"sql"`, say — is a `422`, not something quietly ignored.
 
 ```jsonc
 {
@@ -53,7 +68,7 @@ The body of `POST /v1/financial-queries` is the **intermediate representation** 
 }
 ```
 
-[`query_compiler.py`](src/finguard_banking/adapters/outbound/postgres/query_compiler.py) turns that plan into SQL: **the shape comes from enums** defined in code and **every value travels as a parameter**. You can see it with `"explain": true`:
+[`query_compiler.py`](src/finguard_banking/infrastructure/persistence/query_compiler.py) turns that plan into SQL: **the shape comes from enums** defined in code and **every value travels as a parameter**. You can see it with `"explain": true`:
 
 ```sql
 SELECT to_char(date_trunc('week', t.occurred_at AT TIME ZONE $1), 'YYYY-MM-DD') …
@@ -106,6 +121,8 @@ Alembic migrations in [`migrations/`](migrations/). The URL comes from `BANKING_
 just migrate                  # alembic upgrade head
 just migration "contacts"     # a new empty migration
 ```
+
+The trigger bodies live in [`migrations/sql/`](migrations/sql/) rather than inside Python strings: they are the most delicate logic in the repository and deserve syntax highlighting and a linter. Alembic still owns the versioning, the `downgrade` and `alembic_version`.
 
 `0001_ledger` creates `customers`, `accounts`, `ledger_transactions`, `ledger_entries` and `balance_projections` with the DDL from [vision.md §8.5](../../docs/vision.md), and leaves **two invariants enforced by PostgreSQL**, not by the code that writes:
 
@@ -166,18 +183,28 @@ The integration tests do **not** depend on this dataset: they create their own d
 
 ## Evaluation
 
+Two kinds of case, because two kinds of question.
+
 ```bash
 just seed && just evaluate
 ```
 
 ```
-ok   fuel_july                   159.46 EUR
-ok   fuel_last_month             102.80 EUR
-…
-execution accuracy: 12/12 (100.0%)
+deterministic: 12/12 (100.0%)
+  ok   fuel_july                       159.46 EUR
+  ok   fuel_last_month                 102.80 EUR
+  …
+heuristic: 3/3 (100.0%)
+  ok   fuel_july_explained             score 1.00
+  ok   june_spending_breakdown         score 1.00
+  ok   savings_last_three_months       score 1.00
 ```
 
-[`evaluation/queries.yaml`](evaluation/queries.yaml) holds 12 cases with the plan the LLM will emit and the figure that must come out: totals, income, net, groupings by week, category and merchant, an empty period, and one that checks that `PENDING` does not count.
+**Deterministic** ([`evaluation/queries.yaml`](evaluation/queries.yaml)) — one right answer: 12 cases with the plan the LLM will emit and the figure that must come out. Totals, income, net, groupings by week, category and merchant, an empty period, and one that checks that `PENDING` does not count.
+
+**Heuristic** ([`evaluation/heuristic.yaml`](evaluation/heuristic.yaml)) — no single exact answer, so the result is scored instead of asserted. Each case carries a rubric of weighted requirements and a threshold. Today the judge is [`RuleBasedJudge`](src/finguard_banking/infrastructure/evaluation/rule_based_judge.py), which verifies the properties a correct result must have regardless of wording: the figure reconciles with its own evidence, the grouping actually groups, nothing is dated in the future. A requirement it cannot score returns **zero**, never a pass — that is how a rubric quietly stops measuring anything.
+
+When an LLM judge lands it fulfils the same [`ResultJudgePort`](src/finguard_banking/domain/ports/result_judge.py) and scores what a rule cannot: whether the answer reads as an answer, whether it covers the question. The harness and the dataset do not change.
 
 What makes this measure anything: **the expected figures do not come from the engine**. They are computed with [`evaluation/expected.sql`](evaluation/expected.sql) (`just evaluate-expected`), SQL written separately, over the tables, with no views, no compiler and no period resolver, with the dates spelled out by hand. If they came from the engine itself, the evaluation would only be checking that the engine resembles itself.
 

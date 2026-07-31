@@ -1,6 +1,9 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from finguard_banking.domain import constants
 
 
 class Settings(BaseSettings):
@@ -22,6 +25,20 @@ class Settings(BaseSettings):
     # Time zone used to group reports by day, week or month. Under UTC a purchase made
     # at 23:30 in Spain would fall on the next day.
     reporting_timezone: str = "Europe/Madrid"
+
+    # Query limits this deployment applies. They can only narrow the domain ceilings in
+    # domain/constants.py, never widen them: a configuration mistake cannot turn into a
+    # query that returns half the ledger.
+    max_supporting_movements: int = Field(default=constants.MAX_SUPPORTING_MOVEMENTS, ge=0)
+    max_groups: int = Field(default=constants.MAX_GROUPS, ge=1)
+
+    @property
+    def supporting_movements_limit(self) -> int:
+        return min(self.max_supporting_movements, constants.MAX_SUPPORTING_MOVEMENTS)
+
+    @property
+    def groups_limit(self) -> int:
+        return min(self.max_groups, constants.MAX_GROUPS)
 
 
 @lru_cache

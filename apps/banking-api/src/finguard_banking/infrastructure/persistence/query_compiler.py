@@ -20,6 +20,9 @@ from finguard_banking.domain.financial_query import FinancialQuery
 
 VIEW = "assistant_read.transactions_v1"
 
+# The ceiling from the domain is the default; a deployment may only narrow it.
+DEFAULT_GROUP_LIMIT = MAX_GROUPS
+
 
 @dataclass(frozen=True)
 class CompiledQuery:
@@ -87,7 +90,9 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
     return conditions
 
 
-def compile_aggregate(query: FinancialQuery, reporting_timezone: str) -> CompiledQuery:
+def compile_aggregate(
+    query: FinancialQuery, reporting_timezone: str, group_limit: int = DEFAULT_GROUP_LIMIT
+) -> CompiledQuery:
     parameters = _Parameters()
     tz = parameters.bind(reporting_timezone)
     conditions = _conditions(query, parameters, tz)
@@ -101,7 +106,7 @@ def compile_aggregate(query: FinancialQuery, reporting_timezone: str) -> Compile
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
         ORDER BY 1
-        LIMIT {MAX_GROUPS}
+        LIMIT {min(group_limit, MAX_GROUPS)}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
 

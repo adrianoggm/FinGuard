@@ -4,10 +4,12 @@ import uuid
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
 
 from finguard_banking.domain.enums import Direction, GroupBy
-from finguard_banking.domain.financial_query import DateRange, FinancialQuery
+from finguard_banking.domain.errors import InvalidValueError
+from finguard_banking.domain.financial_query import FinancialQuery
+from finguard_banking.domain.value_objects.date_range import DateRange
+from finguard_banking.infrastructure.dto.banking_dto import FinancialQueryRequest
 from finguard_banking.infrastructure.persistence.query_compiler import (
     compile_aggregate,
     compile_movements,
@@ -23,22 +25,21 @@ def query(**kwargs: object) -> FinancialQuery:
 
 
 def test_the_domain_rejects_a_category_with_sql_inside() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(InvalidValueError):
         query(categories=(INJECTION,))
 
 
 def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None:
-    # model_construct skips validation: it simulates someone dodging it. Not even
-    # then does the text make it into the SQL.
-    plan = FinancialQuery.model_construct(
-        account_id=ACCOUNT,
-        date_range=RANGE,
-        categories=(INJECTION,),
-        direction=Direction.EXPENSE,
-        group_by=GroupBy.NONE,
-        supporting_limit=20,
-        explain=False,
-    )
+    # The object is built without running its invariants: it simulates someone
+    # dodging validation. Not even then does the text make it into the SQL.
+    plan = object.__new__(FinancialQuery)
+    object.__setattr__(plan, "account_id", ACCOUNT)
+    object.__setattr__(plan, "date_range", RANGE)
+    object.__setattr__(plan, "categories", (INJECTION,))
+    object.__setattr__(plan, "direction", Direction.EXPENSE)
+    object.__setattr__(plan, "group_by", GroupBy.NONE)
+    object.__setattr__(plan, "supporting_limit", 20)
+    object.__setattr__(plan, "explain", False)
 
     compiled = compile_aggregate(plan, "Europe/Madrid")
 
@@ -104,13 +105,16 @@ def test_the_last_day_of_the_range_is_included_in_full() -> None:
 
 
 def test_a_backwards_range_is_not_a_query() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(InvalidValueError):
         DateRange(start=date(2026, 7, 31), end=date(2026, 7, 1))
 
 
 def test_an_unknown_field_is_rejected() -> None:
+    # The wire shape is the DTO's business now; the domain never sees the extra field.
+    from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
-        FinancialQuery.model_validate(
+        FinancialQueryRequest.model_validate(
             {
                 "accountId": str(ACCOUNT),
                 "dateRange": {"from": "2026-07-01", "to": "2026-07-31"},

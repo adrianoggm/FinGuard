@@ -6,7 +6,7 @@ service or which console attempts it.
 
 import asyncpg
 import pytest
-from conftest import create_account, create_transaction, force_deferred_checks, post_entry
+from support import create_account, create_transaction, force_deferred_checks, post_entry
 
 pytestmark = pytest.mark.integration
 

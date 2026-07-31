@@ -1,8 +1,9 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from finguard_assistant.domain.llm_policy import LlmPolicy
+from finguard_assistant.infrastructure.config.toml_model_catalogue import TomlModelCatalogue
 
 
 class Settings(BaseSettings):
@@ -12,19 +13,16 @@ class Settings(BaseSettings):
         env_prefix="ASSISTANT_", env_file=".env", extra="ignore", protected_namespaces=()
     )
 
-    # Default policy at startup. At runtime it is swapped over HTTP.
-    llm_provider: str = "echo"
-    llm_model: str = "echo-1"
-    llm_temperature: float = 0.2
-    llm_max_output_tokens: int = 1024
+    # Path to the model catalogue. Which models exist, which provider serves each one
+    # and what happens when one fails are configuration, not code (see
+    # infrastructure/config/toml_model_catalogue.py). Unset means the built-in echo
+    # catalogue, so the service starts with no file at all.
+    llm_catalogue_file: Path | None = None
 
-    def default_policy(self) -> LlmPolicy:
-        return LlmPolicy(
-            provider=self.llm_provider,
-            model=self.llm_model,
-            temperature=self.llm_temperature,
-            max_output_tokens=self.llm_max_output_tokens,
-        )
+    def catalogue(self) -> TomlModelCatalogue:
+        if self.llm_catalogue_file is None:
+            return TomlModelCatalogue.built_in()
+        return TomlModelCatalogue.from_file(self.llm_catalogue_file)
 
 
 @lru_cache

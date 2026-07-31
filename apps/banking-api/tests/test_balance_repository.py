@@ -4,9 +4,10 @@ import uuid
 
 import asyncpg
 import pytest
-from conftest import as_pool, create_account, create_transaction, post_entry, record_movement
+from support import as_pool, create_account, create_transaction, post_entry, record_movement
 
 from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.ledger_repository import (
     PostgresLedgerRepository,
 )
@@ -22,9 +23,8 @@ async def test_an_account_without_movements_has_a_zero_balance(
 
     balance = await repository.balance_of(account)
 
-    assert balance.booked_minor == 0
-    assert balance.available_minor == 0
-    assert balance.currency == "EUR"
+    assert balance.booked == Money(0, "EUR")
+    assert balance.available == Money(0, "EUR")
 
 
 async def test_a_debit_subtracts_and_a_credit_adds(connection: asyncpg.Connection) -> None:
@@ -36,8 +36,8 @@ async def test_a_debit_subtracts_and_a_credit_adds(connection: asyncpg.Connectio
     repository = PostgresLedgerRepository(as_pool(connection))
 
     # Sending money is recorded as a debit on the sender's account.
-    assert (await repository.balance_of(source)).booked_minor == -2500
-    assert (await repository.balance_of(target)).booked_minor == 2500
+    assert (await repository.balance_of(source)).booked == Money(-2500, "EUR")
+    assert (await repository.balance_of(target)).booked == Money(2500, "EUR")
 
 
 async def test_the_balance_accumulates_several_transactions(
@@ -49,7 +49,7 @@ async def test_the_balance_accumulates_several_transactions(
         await record_movement(connection, account, counterparty, amount)
     repository = PostgresLedgerRepository(as_pool(connection))
 
-    assert (await repository.balance_of(account)).booked_minor == 12_549
+    assert (await repository.balance_of(account)).booked == Money(12_549, "EUR")
 
 
 async def test_what_is_not_booked_does_not_count(connection: asyncpg.Connection) -> None:
@@ -60,7 +60,7 @@ async def test_what_is_not_booked_does_not_count(connection: asyncpg.Connection)
 
     repository = PostgresLedgerRepository(as_pool(connection))
 
-    assert (await repository.balance_of(account)).booked_minor == 5_000
+    assert (await repository.balance_of(account)).booked == Money(5_000, "EUR")
 
 
 async def test_an_account_that_does_not_exist_differs_from_one_at_zero(

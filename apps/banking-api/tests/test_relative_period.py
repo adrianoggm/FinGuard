@@ -3,10 +3,11 @@
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
 
 from finguard_banking.domain.enums import Period
+from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.relative_period import RelativePeriod, resolve
+from finguard_banking.infrastructure.dto.banking_dto import RelativePeriodRequest
 
 # A Wednesday, so "this week" and "last week" do not line up with the month.
 WEDNESDAY = date(2026, 7, 15)
@@ -64,25 +65,28 @@ def test_without_a_reference_it_uses_the_today_it_is_given() -> None:
 
 
 def test_a_period_with_a_count_requires_it() -> None:
-    with pytest.raises(ValidationError, match="requires n"):
+    with pytest.raises(InvalidValueError, match="requires n"):
         relative(Period.LAST_N_DAYS)
 
 
 def test_a_period_without_a_count_does_not_accept_one() -> None:
     # LAST_MONTH with n=3 would be ambiguous: last month, or the last three?
-    with pytest.raises(ValidationError, match="does not accept n"):
+    with pytest.raises(InvalidValueError, match="does not accept n"):
         relative(Period.LAST_MONTH, n=3)
 
 
 @pytest.mark.parametrize("months", [0, 25])
 def test_months_are_bounded(months: int) -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(InvalidValueError):
         relative(Period.LAST_N_MONTHS, n=months)
 
 
 def test_an_invented_period_is_rejected() -> None:
+    # A period outside the enum never reaches the domain: the DTO stops it.
+    from pydantic import ValidationError
+
     with pytest.raises(ValidationError):
-        RelativePeriod.model_validate({"period": "SINCE_FOREVER"})
+        RelativePeriodRequest.model_validate({"period": "SINCE_FOREVER"})
 
 
 def test_a_resolved_range_is_never_backwards() -> None:

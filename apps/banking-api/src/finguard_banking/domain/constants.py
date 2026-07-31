@@ -1,9 +1,15 @@
-"""Limits and caps of the banking domain.
+"""Hard ceilings of the banking domain.
 
-They live together because they are business policy, not implementation detail.
-`MAX_GROUPS` in particular used to sit inside the PostgreSQL adapter even though
-§8.6 describes it as the maximum row limit of a query — where the next adapter
-would not have seen it.
+These are not the limits a deployment applies — they are the ones it cannot exceed.
+A dataclass invariant is evaluated when the object is built, so it cannot read runtime
+configuration; that is why the split exists:
+
+    domain/constants.py   the ceiling. Protection that configuration cannot raise.
+    bootstrap/config.py   the policy. What this deployment actually allows, always
+                          clamped to the ceiling.
+
+So `BANKING_MAX_SUPPORTING_MOVEMENTS=50` narrows the limit and `=5000` does not widen
+it past 100.
 """
 
 # Evidence movements returned alongside a figure (vision.md §8.6).
@@ -21,7 +27,7 @@ MAX_CATEGORY_LENGTH = 40
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
 
-# Sentinel keys for grouping rows that carry no category or merchant. They are
-# contract values, so English: the assistant phrases them for the user.
+# Sentinel keys for grouping rows that carry no category or merchant. They are contract
+# values, so English: the assistant phrases them for the user.
 UNCATEGORISED = "UNCATEGORISED"
 UNKNOWN_MERCHANT = "UNKNOWN_MERCHANT"

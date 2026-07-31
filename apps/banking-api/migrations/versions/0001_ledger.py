@@ -4,16 +4,27 @@ The DDL follows docs/vision.md §8.5. It adds the foreign keys the spec argues f
 §8.1 but does not write, and the two invariants that ADR-002 and ADR-003 take for
 granted: that every transaction balances, and that entries are never touched.
 
+The trigger bodies live in migrations/sql/ rather than inside Python strings: they are
+the most delicate logic in the repository and deserve syntax highlighting and a linter.
+
 Revision ID: 0001_ledger
 Create Date: 2026-07-30
 """
 
+from pathlib import Path
+
 from alembic import op
+
+SQL = Path(__file__).resolve().parent.parent / "sql"
 
 revision = "0001_ledger"
 down_revision = None
 branch_labels = None
 depends_on = None
+
+
+def _sql(name: str) -> str:
+    return (SQL / name).read_text(encoding="utf-8")
 
 
 def upgrade() -> None:
@@ -88,49 +99,8 @@ def upgrade() -> None:
     )
     op.execute("CREATE INDEX idx_transactions_metadata ON ledger_transactions USING GIN(metadata)")
 
-    # ADR-003: every transaction has balanced debits and credits.
-    # Checked per currency, not on the total: 25 EUR debited against 25 USD credited
-    # adds up to zero and is not a valid transaction.
-    # It is a deferred CONSTRAINT TRIGGER, so it runs at COMMIT and the entries of one
-    # transaction may be inserted across several statements.
-    op.execute("""
-        CREATE FUNCTION assert_transaction_is_balanced() RETURNS TRIGGER AS $$
-        DECLARE
-            unbalanced INTEGER;
-            foreign_currencies INTEGER;
-        BEGIN
-            SELECT COUNT(*) INTO unbalanced FROM (
-                SELECT currency,
-                       SUM(CASE WHEN entry_type = 'DEBIT' THEN amount_minor
-                                ELSE -amount_minor END) AS delta
-                FROM ledger_entries
-                WHERE transaction_id = NEW.transaction_id
-                GROUP BY currency
-            ) per_currency
-            WHERE delta <> 0;
-
-            IF unbalanced > 0 THEN
-                RAISE EXCEPTION
-                    'transaction % is unbalanced: debits and credits do not match per currency',
-                    NEW.transaction_id;
-            END IF;
-
-            SELECT COUNT(*) INTO foreign_currencies
-            FROM ledger_entries e
-            JOIN accounts a ON a.id = e.account_id
-            WHERE e.transaction_id = NEW.transaction_id
-              AND e.currency <> a.currency;
-
-            IF foreign_currencies > 0 THEN
-                RAISE EXCEPTION
-                    'transaction %: entries in a currency other than their account',
-                    NEW.transaction_id;
-            END IF;
-
-            RETURN NULL;
-        END;
-        $$ LANGUAGE plpgsql
-    """)
+    # ADR-003, checked per currency. See migrations/sql/ for the body.
+    op.execute(_sql("0001_assert_transaction_is_balanced.sql"))
 
     # INSERT only: UPDATE and DELETE are blocked by the immutability trigger.
     op.execute("""
@@ -140,19 +110,9 @@ def upgrade() -> None:
             FOR EACH ROW EXECUTE FUNCTION assert_transaction_is_balanced()
     """)
 
-    # ADR-002: movements are never modified or deleted; a correction is a new
-    # compensating transaction. The status of ledger_transactions does change (to
-    # BOOKED, for instance), which is why only DELETE is blocked there.
-    op.execute("""
-        CREATE FUNCTION reject_ledger_mutation() RETURNS TRIGGER AS $$
-        BEGIN
-            RAISE EXCEPTION
-                'the ledger is immutable: % on % is not allowed, '
-                'use a compensating transaction',
-                TG_OP, TG_TABLE_NAME;
-        END;
-        $$ LANGUAGE plpgsql
-    """)
+    # ADR-002. The status of ledger_transactions does change (to BOOKED, for instance),
+    # which is why only DELETE is blocked there.
+    op.execute(_sql("0001_reject_ledger_mutation.sql"))
 
     op.execute("""
         CREATE TRIGGER ledger_entries_immutable

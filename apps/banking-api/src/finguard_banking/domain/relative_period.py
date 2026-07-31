@@ -2,50 +2,47 @@
 
 The LLM names the period (`LAST_MONTH`), it does not compute it: calendar arithmetic
 inside a generative model is exactly where silent off-by-one-month errors come from.
-Here it is a pure function, so the result never depends on when it runs.
+`resolve` is a pure function — "today" comes in as an argument — so the result never
+depends on when it runs.
 """
 
-from __future__ import annotations
-
+from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Self
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic.alias_generators import to_camel
 
 from finguard_banking.domain.constants import MAX_PERIOD_DAYS, MAX_PERIOD_MONTHS
 from finguard_banking.domain.enums import Period
-from finguard_banking.domain.financial_query import DateRange
+from finguard_banking.domain.errors import InvalidValueError
+from finguard_banking.domain.value_objects.date_range import DateRange
 
 NEEDS_COUNT = (Period.LAST_N_DAYS, Period.LAST_N_MONTHS)
 
 
-class RelativePeriod(BaseModel):
-    """A relative period. `reference` pins what "today" means; without it, nothing
-    is reproducible."""
+@dataclass(frozen=True)
+class RelativePeriod:
+    """`reference` pins what "today" means; without it, nothing is reproducible.
 
-    model_config = ConfigDict(
-        alias_generator=to_camel, populate_by_name=True, frozen=True, extra="forbid"
-    )
+    The ceilings here are the domain's own protection. The limit a deployment actually
+    allows is configurable and applied at the edge (see bootstrap/config.py): a hard
+    ceiling that cannot be raised by configuration, plus a policy that can.
+    """
 
     period: Period
-    n: int | None = Field(default=None, ge=1, le=MAX_PERIOD_DAYS)
+    n: int | None = None
     reference: date | None = None
 
-    @model_validator(mode="after")
-    def _consistent_count(self) -> Self:
+    def __post_init__(self) -> None:
         needed = self.period in NEEDS_COUNT
         if needed and self.n is None:
-            raise ValueError(f"{self.period} requires n")
+            raise InvalidValueError(f"{self.period} requires n")
         if not needed and self.n is not None:
-            raise ValueError(f"{self.period} does not accept n")
-        if (
-            self.period is Period.LAST_N_MONTHS
-            and self.n is not None
-            and self.n > MAX_PERIOD_MONTHS
-        ):
-            raise ValueError(f"at most {MAX_PERIOD_MONTHS} months")
-        return self
+            raise InvalidValueError(f"{self.period} does not accept n")
+        if self.n is None:
+            return
+        if self.n < 1:
+            raise InvalidValueError("n must be at least 1")
+        ceiling = MAX_PERIOD_MONTHS if self.period is Period.LAST_N_MONTHS else MAX_PERIOD_DAYS
+        if self.n > ceiling:
+            raise InvalidValueError(f"{self.period} allows at most {ceiling}")
 
 
 def _first_of_month(day: date) -> date:
@@ -92,13 +89,13 @@ def resolve(relative: RelativePeriod, today: date) -> DateRange:
             return DateRange(start=date(reference.year, 1, 1), end=reference)
 
         case Period.LAST_N_DAYS:
-            if relative.n is None:
-                raise ValueError("LAST_N_DAYS requires n")
+            if relative.n is None:  # pragma: no cover - the invariant prevents it
+                raise InvalidValueError("LAST_N_DAYS requires n")
             # Today counts: "the last 7 days" are today and the 6 before it.
             return DateRange(start=reference - timedelta(days=relative.n - 1), end=reference)
 
         case Period.LAST_N_MONTHS:
-            if relative.n is None:
-                raise ValueError("LAST_N_MONTHS requires n")
+            if relative.n is None:  # pragma: no cover - the invariant prevents it
+                raise InvalidValueError("LAST_N_MONTHS requires n")
             # The current month counts, from its 1st.
             return DateRange(start=_months_back(reference, relative.n - 1), end=reference)

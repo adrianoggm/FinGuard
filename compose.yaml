@@ -59,9 +59,12 @@ services:
       dockerfile: apps/assistant-api/Dockerfile
     profiles: ["core", "poc"]
     environment:
-      # Default LLM policy at startup; it can be swapped at runtime over HTTP.
-      ASSISTANT_LLM_PROVIDER: ${ASSISTANT_LLM_PROVIDER:-echo}
-      ASSISTANT_LLM_MODEL: ${ASSISTANT_LLM_MODEL:-echo-1}
+      # Which models exist, which provider serves each one and what happens when one
+      # fails come from this file, not from code. Mounted read-only so it can change
+      # without rebuilding the image.
+      ASSISTANT_LLM_CATALOGUE_FILE: /app/config/llm.toml
+    volumes:
+      - ./apps/assistant-api/config:/app/config:ro
     ports:
       - "127.0.0.1:${ASSISTANT_PORT:-8000}:8000"
     depends_on:
