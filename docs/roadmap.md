@@ -4,8 +4,6 @@
 
 ### Phase 0 — Design and preparation
 
-**30 July – 3 August**
-
 - Create the repository.
 - Record the architectural decisions.
 - Define the contracts.
@@ -17,8 +15,6 @@
 *Outcome:* a runnable structure and a documented architecture.
 
 ### Phase 1 — Banking core
-
-**4 – 10 August**
 
 - Implement accounts.
 - Implement the ledger.
@@ -32,8 +28,6 @@
 
 ### Phase 2 — Financial queries
 
-**11 – 17 August**
-
 - Define `FinancialQuery`.
 - Resolve relative dates.
 - Implement the SQL compiler.
@@ -46,8 +40,6 @@
 
 ### Phase 3 — Conversational assistant
 
-**18 – 24 August**
-
 - Integrate an LLM provider.
 - Implement tool selection.
 - Keep context.
@@ -58,8 +50,6 @@
 *Outcome:* a working text assistant.
 
 ### Phase 4 — Dynamic visualisation
-
-**25 – 31 August**
 
 - Implement the visual planner.
 - Generate Vega-Lite.
@@ -74,8 +64,6 @@
 
 ### Phase 5 — Secure Bizum
 
-**1 – 7 September**
-
 - Implement `payment_intents`.
 - Add two-step confirmation.
 - Add idempotency.
@@ -88,8 +76,6 @@
 
 ### Phase 6 — Real-time voice
 
-**8 – 14 September**
-
 - Capture audio.
 - Integrate transcription.
 - Add synthesis.
@@ -101,8 +87,6 @@
 
 ### Phase 7 — A2A preparation
 
-**15 – 19 September**
-
 - Build the A2A adapter.
 - Publish the Agent Card.
 - Expose a query skill.
@@ -113,8 +97,6 @@
 *Outcome:* an interoperability demo that does not compromise the core.
 
 ### Phase 8 — Evaluation and security
-
-**20 – 23 September**
 
 - Run the benchmark.
 - Test ambiguous queries.
@@ -128,8 +110,6 @@
 
 ### Phase 9 — Deliverables
 
-**24 – 27 September**
-
 - Prepare the video script.
 - Record the demo.
 - Write the report.
@@ -138,8 +118,6 @@
 - Document the limitations.
 
 ### Final buffer
-
-**28 – 30 September**
 
 - Fixes.
 - Re-recording if needed.
