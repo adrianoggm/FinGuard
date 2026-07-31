@@ -15,3 +15,4 @@ Rules that apply across the whole monorepo. See [monorepo.md](monorepo.md) for t
 11. Every service exposes `/health`, `/ready` and metrics.
 12. Any change to a financial operation requires concurrency and idempotency tests.
 13. Credentials in the repository are strictly for local development: the services that use them publish no ports beyond `127.0.0.1`, and no deployment reuses them — deployments inject them from a secret store.
+14. Everything written for other developers is in English: code, comments, tests, documentation, commit messages and pull requests. Only the product's own data stays in Spanish — merchant names, movement descriptions, and the questions a user asks — because that is what a Spanish-speaking user says and reads.

@@ -1,6 +1,6 @@
 # Hexagonal review before phase 3
 
-Review of `banking-api` and `assistant-api` as they stand at commit `46e2e3a`, before
+Review of `banking-api` and `assistant-api` as they stand at commit `854ab05`, before
 wiring the LLM service. Every finding carries the evidence it came from, so it can be
 argued with instead of believed.
 
