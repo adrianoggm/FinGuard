@@ -14,6 +14,11 @@ service needs it.
 
 from typing import Any, Protocol
 
+from finguard_assistant.application.bus.errors import (
+    HandlerAlreadyRegisteredError,
+    HandlerNotRegisteredError,
+)
+
 
 class Query[R]:
     """Marker for a read. `R` is what the handler answers with."""
@@ -21,20 +26,6 @@ class Query[R]:
 
 class QueryHandler[Q, R](Protocol):
     async def handle(self, query: Q) -> R: ...
-
-
-class HandlerNotRegisteredError(Exception):
-    """No handler for this query. A wiring bug, not a domain error."""
-
-    def __init__(self, query: type[Any]) -> None:
-        super().__init__(f"no handler registered for {query.__name__}")
-
-
-class HandlerAlreadyRegisteredError(Exception):
-    """Two handlers claimed the same query: the answer would depend on import order."""
-
-    def __init__(self, query: type[Any]) -> None:
-        super().__init__(f"query {query.__name__} already has a handler")
 
 
 class QueryBus:

@@ -4,17 +4,9 @@ from dataclasses import dataclass
 
 import pytest
 
-from finguard_assistant.application.bus.command_bus import (
+from finguard_assistant.application import (
     Command,
     CommandBus,
-)
-from finguard_assistant.application.bus.command_bus import (
-    HandlerAlreadyRegisteredError as CommandAlreadyRegistered,
-)
-from finguard_assistant.application.bus.command_bus import (
-    HandlerNotRegisteredError as CommandNotRegistered,
-)
-from finguard_assistant.application.bus.query_bus import (
     HandlerAlreadyRegisteredError,
     HandlerNotRegisteredError,
     Query,
@@ -70,7 +62,7 @@ async def test_a_query_with_no_handler_fails_loudly() -> None:
 
 
 async def test_a_command_with_no_handler_fails_loudly() -> None:
-    with pytest.raises(CommandNotRegistered, match="Shout"):
+    with pytest.raises(HandlerNotRegisteredError, match="Shout"):
         await CommandBus().dispatch(Shout("hola"))
 
 
@@ -87,7 +79,7 @@ def test_two_handlers_cannot_claim_the_same_command() -> None:
     bus = CommandBus()
     bus.register(Shout, ShoutHandler())
 
-    with pytest.raises(CommandAlreadyRegistered, match="Shout"):
+    with pytest.raises(HandlerAlreadyRegisteredError, match="Shout"):
         bus.register(Shout, ShoutHandler())
 
 
