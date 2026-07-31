@@ -1,0 +1,48 @@
+[project]
+name = "finguard-assistant-api"
+version = "0.1.0"
+description = "Orquestador conversacional de FinGuard"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pydantic-settings>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
+    # Not a typosquat of httpx: it is what starlette>=1.3 declares for its testclient.
+    # Asserted in tests/test_dependency_provenance.py, which also fails if the lock
+    # stops pinning it by sha256 from PyPI. Read that, not this.
+    "httpx2>=2.9",
+    "ruff>=0.9",
+    "mypy>=1.14",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finguard_assistant"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E and W are pycodestyle, N is pep8-naming: PEP 8 enforced, not assumed.
+# Measured but not enabled yet: D (pydocstyle) costs 233 docstrings across both
+# services, S (flake8-bandit) 95 findings dominated by asserts in tests.
+select = ["E", "W", "F", "I", "N", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: needs a running PostgreSQL"]
+asyncio_mode = "auto"

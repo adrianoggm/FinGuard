@@ -1,0 +1,123 @@
+name: ci
+
+# Runs on every push: until now the only verification was running `just check` by hand.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast and database-free: PEP 8, types and unit tests, across the Python versions
+  # and the operating systems the team develops on. Development happens on Windows
+  # and the images run on Linux, so both have to be green.
+  check:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
+        service: [banking-api, assistant-api]
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/${{ matrix.service }}/uv.lock
+
+      # --frozen fails if the lock has drifted from the pyproject, instead of
+      # re-resolving and verifying something different from what runs locally.
+      # --python overrides the repository's .python-version so the matrix means
+      # something.
+      - run: uv sync --frozen --python ${{ matrix.python }}
+
+      # E and W are pycodestyle, N is pep8-naming: the PEP 8 check the review asked
+      # for. format --check keeps the layout from drifting.
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+      - run: uv run mypy src
+      - run: uv run pytest -q -m "not integration"
+
+  # What can only be checked against a real PostgreSQL: the ledger invariants, the
+  # query compiler, and that the dataset loads and adds up.
+  #
+  # Linux only: GitHub service containers do not run on Windows runners. The Windows
+  # coverage of the integration path is therefore a gap — running it there means
+  # installing PostgreSQL on the runner, which is a decision of its own.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: finguard
+          POSTGRES_PASSWORD: finguard
+          POSTGRES_DB: finguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PGPASSWORD: finguard
+      BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@127.0.0.1:5432/finguard_banking
+      BANKING_QUERY_DATABASE_URL: postgresql://finguard_query_reader:finguard_query_reader@127.0.0.1:5432/finguard_banking
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/banking-api/uv.lock
+
+      - name: Install psql if the runner does not ship it
+        run: command -v psql || sudo apt-get install -y --no-install-recommends postgresql-client
+
+      # The same files Docker Compose uses locally: one database and one role per
+      # service, with no cross access.
+      - name: Create the databases and per-service roles
+        run: |
+          for script in infrastructure/postgres/init/*.sql; do
+            echo "== $script"
+            psql -h 127.0.0.1 -U finguard -d finguard -v ON_ERROR_STOP=1 -f "$script"
+          done
+
+      - run: uv sync --frozen
+        working-directory: apps/banking-api
+
+      - run: uv run alembic upgrade head
+        working-directory: apps/banking-api
+
+      - run: uv run pytest -q
+        working-directory: apps/banking-api
+
+      - name: Load the dataset and check that it adds up
+        run: |
+          psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f apps/banking-api/seeds/0001_demo.sql
+          psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/banking-api/seeds/verify.sql
+
+      # Two kinds of case (vision.md §17): deterministic ones fail if a figure stops
+      # matching what expected.sql computed, heuristic ones fail if the judge's score
+      # drops below the case threshold.
+      - name: Query engine accuracy, deterministic and heuristic
+        run: uv run python scripts/evaluate_queries.py
+        working-directory: apps/banking-api
+
+      # The dataset is a versioned artefact: regenerating it cannot change it.
+      - name: The dataset generator is still deterministic
+        run: |
+          uv run python scripts/generate_seed.py
+          git diff --exit-code -- seeds/
+        working-directory: apps/banking-api
