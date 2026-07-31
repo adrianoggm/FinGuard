@@ -1,16 +1,23 @@
 import asyncio
 
-from finguard_assistant.domain.llm_policy import LlmPolicy
+from finguard_assistant.domain.ports.model_catalogue import ModelCataloguePort
+from finguard_assistant.domain.value_objects.llm_policy import LlmPolicy
 
 
 class PolicyStore:
-    """Holds the active policy and allows swapping it without restarting the service.
+    """Holds the active policy and swaps it without restarting the service.
 
-    ponytail: the state lives in the process memory. With more than one replica each
-    would have its own policy; move it to Redis once there are replicas.
+    The swap is atomic in the sense that matters: the policy is a frozen object and
+    `_current` is rebound in a single assignment, so a reader either sees the whole old
+    policy or the whole new one — never a half-applied mix of model and temperature.
+    The lock serialises two concurrent writers; readers need none.
+
+    ponytail: the state lives in this process. With more than one replica each would
+    have its own policy; move it to Redis once there are replicas.
     """
 
-    def __init__(self, default: LlmPolicy) -> None:
+    def __init__(self, catalogue: ModelCataloguePort, default: LlmPolicy) -> None:
+        self._catalogue = catalogue
         self._default = default
         self._current = default
         self._lock = asyncio.Lock()
@@ -23,8 +30,9 @@ class PolicyStore:
         return self._current
 
     async def replace(self, policy: LlmPolicy) -> LlmPolicy:
-        # The lock serialises two simultaneous changes; the swap is atomic, so no
-        # request ever sees a half-applied policy.
+        # The model is checked against the catalogue before anything is rebound, so a
+        # policy naming a model this deployment does not have never becomes active.
+        self._catalogue.get(policy.model.alias)
         async with self._lock:
             self._current = policy
             return self._current
