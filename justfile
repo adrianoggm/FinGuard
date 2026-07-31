@@ -131,3 +131,11 @@ test-unit:
 
 # What has to pass before pushing a commit
 check: lint typecheck test
+
+# Installs the git hook. Run once per clone; uvx needs no global install
+hooks:
+    uvx pre-commit install
+
+# Runs the hooks over the whole repository, not just what is staged
+hooks-all:
+    uvx pre-commit run --all-files
