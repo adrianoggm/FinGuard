@@ -43,7 +43,10 @@ def get_balance(request: Request) -> GetBalance:
 
 
 def get_financial_query_repository(request: Request) -> FinancialQueryRepository:
-    return PostgresFinancialQueryRepository(_query_pool(request), get_settings().reporting_timezone)
+    settings = get_settings()
+    return PostgresFinancialQueryRepository(
+        _query_pool(request), settings.reporting_timezone, settings.groups_limit
+    )
 
 
 def run_financial_query(request: Request) -> RunFinancialQuery:

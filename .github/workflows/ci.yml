@@ -108,9 +108,10 @@ jobs:
           psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f apps/banking-api/seeds/0001_demo.sql
           psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/banking-api/seeds/verify.sql
 
-      # Execution accuracy over the dataset (vision.md §17). Fails if any query stops
-      # returning the figure computed by evaluation/expected.sql.
-      - name: Query engine accuracy
+      # Two kinds of case (vision.md §17): deterministic ones fail if a figure stops
+      # matching what expected.sql computed, heuristic ones fail if the judge's score
+      # drops below the case threshold.
+      - name: Query engine accuracy, deterministic and heuristic
         run: uv run python scripts/evaluate_queries.py
         working-directory: apps/banking-api
 

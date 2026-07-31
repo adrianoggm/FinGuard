@@ -25,12 +25,19 @@ _ACCOUNT_SQL = """
 
 
 class PostgresFinancialQueryRepository:
-    def __init__(self, pool: asyncpg.Pool[Any], reporting_timezone: str) -> None:
+    def __init__(
+        self, pool: asyncpg.Pool[Any], reporting_timezone: str, group_limit: int | None = None
+    ) -> None:
         self._pool = pool
         self._timezone = reporting_timezone
+        self._group_limit = group_limit
 
     async def run(self, query: FinancialQuery) -> FinancialQueryResult:
-        aggregate = compile_aggregate(query, self._timezone)
+        aggregate = (
+            compile_aggregate(query, self._timezone, self._group_limit)
+            if self._group_limit is not None
+            else compile_aggregate(query, self._timezone)
+        )
         movements = compile_movements(query, self._timezone)
 
         started = time.perf_counter()

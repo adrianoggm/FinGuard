@@ -1,0 +1,74 @@
+# Heuristic evaluation cases.
+#
+# The deterministic dataset (queries.yaml) asks a question with one right answer: the
+# figure either matches what expected.sql computed or it does not. These cases have no
+# single exact answer, so they are scored instead of asserted: a judge reads the result
+# and rates how well it satisfies each requirement.
+#
+# Until a real LLM lands, the judge is the rule-based one in
+# evaluation/rule_based_judge.py, which checks the requirements it can check
+# mechanically. The point of the split is that the harness, the rubric and the scores
+# exist now, so plugging an LLM judge in later changes one class, not the dataset.
+#
+# `requirements` is the rubric. Each one is scored 0..1 and the case passes if the
+# weighted score reaches `threshold`.
+
+- id: fuel_july_explained
+  question: ¿Cuánto he gastado en gasolina este mes y en qué gasolineras?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+    groupBy: MERCHANT
+    supportingLimit: 10
+  threshold: 0.9
+  requirements:
+    # An answer nobody can check is not an answer: the figure has to be reproducible
+    # from the movements returned with it.
+    - id: total_matches_evidence
+      weight: 2
+    # A "how much and where" question has to come back grouped by where.
+    - id: is_grouped
+      weight: 1
+    - id: every_movement_has_a_merchant
+      weight: 1
+    - id: no_future_movements
+      weight: 1
+
+- id: june_spending_breakdown
+  question: ¿En qué me fui el dinero en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+    groupBy: CATEGORY
+    supportingLimit: 5
+  threshold: 0.9
+  requirements:
+    - id: total_matches_groups
+      weight: 2
+    - id: is_grouped
+      weight: 1
+    - id: groups_are_ordered
+      weight: 1
+    - id: every_movement_has_a_category
+      weight: 1
+
+- id: savings_last_three_months
+  question: ¿Estoy ahorrando en los últimos tres meses?
+  account: ES-0003
+  plan:
+    direction: ALL
+    period: {period: LAST_N_MONTHS, n: 3, reference: 2026-07-15}
+    groupBy: MONTH
+    supportingLimit: 0
+  threshold: 0.9
+  requirements:
+    # A net figure with mixed directions must be the sum of its months, signed.
+    - id: total_matches_groups
+      weight: 2
+    - id: is_grouped
+      weight: 1
+    - id: groups_are_ordered
+      weight: 1
