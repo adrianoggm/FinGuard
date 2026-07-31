@@ -7,8 +7,8 @@ flat. What this adds is the wire format: camelCase, `from`/`to`, and the `amount
 
 from datetime import date
 
-from finguard_banking.application.queries.get_balance import GetBalanceResult
-from finguard_banking.application.queries.movement_summary import (
+from finguard_banking.application import (
+    GetBalanceResult,
     MovementSummaryResult,
     SummaryGroup,
     SummaryMovement,

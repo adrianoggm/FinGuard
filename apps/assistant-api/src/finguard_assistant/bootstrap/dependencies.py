@@ -1,7 +1,6 @@
 from fastapi import Request
 
-from finguard_assistant.application.bus.command_bus import CommandBus
-from finguard_assistant.application.bus.query_bus import QueryBus
+from finguard_assistant.application import CommandBus, QueryBus
 
 
 def get_query_bus(request: Request) -> QueryBus:

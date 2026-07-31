@@ -7,8 +7,7 @@ from zoneinfo import ZoneInfo
 import asyncpg
 from fastapi import Request
 
-from finguard_banking.application.bus.command_bus import CommandBus
-from finguard_banking.application.bus.query_bus import QueryBus
+from finguard_banking.application import CommandBus, QueryBus
 from finguard_banking.bootstrap.config import get_settings
 
 

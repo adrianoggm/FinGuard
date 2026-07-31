@@ -11,9 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from finguard_banking.application.bus.query_bus import QueryBus
-from finguard_banking.application.queries.get_balance import GetBalanceQuery
-from finguard_banking.application.queries.movement_summary import MovementSummaryQuery
+from finguard_banking.application import GetBalanceQuery, MovementSummaryQuery, QueryBus
 from finguard_banking.bootstrap.dependencies import (
     database_answers,
     get_query_bus,

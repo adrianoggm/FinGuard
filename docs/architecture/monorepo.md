@@ -474,36 +474,22 @@ packages/contracts/
 │   ├── payment-preview.schema.json
 │   └── audit-event.schema.json
 │
-├── a2a/
-│   ├── agent-card.schema.json
-│   ├── query-movements.input.json
-│   └── query-movements.output.json
-│
-└── generated/
-    ├── python/
-    └── typescript/
+└── a2a/
+    ├── agent-card.schema.json
+    ├── query-movements.input.json
+    └── query-movements.output.json
 ```
 
-The process would be:
-
-```text
-OpenAPI or JSON Schema contract
-          ↓
-Validation
-          ↓
-Client generation
-          ├── Python client
-          └── TypeScript client
-```
+**No client generation.** The contracts are written and maintained by hand, and each consumer writes its own thin client against them. Generating clients from a service's live OpenAPI would make one service's build depend on another's, and would invert the source of truth: the contract would become a by-product of the implementation instead of the agreement the implementation has to honour.
 
 So that:
 
-- `assistant-api` uses a generated client to call `banking-api`.
-- `web` uses a generated client to call `assistant-api`.
+- `assistant-api` calls `banking-api` through a hand-written client that follows the contract.
+- `web` calls `assistant-api` the same way.
 - Events are validated against AsyncAPI or JSON Schema.
 - A2A translates its messages into known internal contracts.
 
-This stops a change in one Python class from silently breaking another service.
+The trade-off is deliberate: nothing detects a drift between a service and its contract automatically, so the divergence is corrected by hand when it shows up. What is bought with that is that no component depends on another to build.
 
 ---
 
@@ -916,7 +902,7 @@ Two decisions:
 
 Pending, once the things they verify exist:
 
-- **Contracts** — on changes to `packages/contracts/**`: valid schemas, regenerated clients, breaking changes and consumer tests. The folder is empty today.
+- **Contracts** — on changes to `packages/contracts/**`: valid schemas and consumer tests. No client regeneration: §5 rules codegen out. The folder is empty today.
 - **Images** — build and publish only what is affected.
 - **Security** — dependency and secret scanning.
 - **Release** — tagging and publishing.

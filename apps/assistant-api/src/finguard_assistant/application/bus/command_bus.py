@@ -14,6 +14,11 @@ service needs it.
 
 from typing import Any, Protocol
 
+from finguard_assistant.application.bus.errors import (
+    HandlerAlreadyRegisteredError,
+    HandlerNotRegisteredError,
+)
+
 
 class Command[R]:
     """Marker for a write. `R` is what the handler answers with."""
@@ -21,20 +26,6 @@ class Command[R]:
 
 class CommandHandler[C, R](Protocol):
     async def handle(self, command: C) -> R: ...
-
-
-class HandlerNotRegisteredError(Exception):
-    """No handler for this command. A wiring bug, not a domain error."""
-
-    def __init__(self, command: type[Any]) -> None:
-        super().__init__(f"no handler registered for {command.__name__}")
-
-
-class HandlerAlreadyRegisteredError(Exception):
-    """Two handlers claimed the same command: behaviour would depend on import order."""
-
-    def __init__(self, command: type[Any]) -> None:
-        super().__init__(f"command {command.__name__} already has a handler")
 
 
 class CommandBus:
