@@ -33,6 +33,7 @@ A monorepo of independent projects: each service has its own dependencies, lockf
 ## Getting started
 
 ```bash
+just hooks     # installs the pre-commit hook. Once per clone
 just back      # postgres + banking-api + assistant-api
 just migrate   # applies the migrations
 just seed      # loads the synthetic dataset and checks that it adds up
