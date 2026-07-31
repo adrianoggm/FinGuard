@@ -31,7 +31,10 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC"]
+# E and W are pycodestyle, N is pep8-naming: PEP 8 enforced, not assumed.
+# Measured but not enabled yet: D (pydocstyle) costs 233 docstrings across both
+# services, S (flake8-bandit) 95 findings dominated by asserts in tests.
+select = ["E", "W", "F", "I", "N", "UP", "B", "ASYNC"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -39,4 +42,4 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: necesita PostgreSQL en marcha"]
+markers = ["integration: needs a running PostgreSQL"]

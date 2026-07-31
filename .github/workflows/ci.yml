@@ -5,19 +5,23 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Fast and database-free: formatting, types and unit tests for each service.
+  # Fast and database-free: PEP 8, types and unit tests, across the Python versions
+  # and the operating systems the team develops on. Development happens on Windows
+  # and the images run on Linux, so both have to be green.
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
         service: [banking-api, assistant-api]
     defaults:
       run:
@@ -32,15 +36,24 @@ jobs:
 
       # --frozen fails if the lock has drifted from the pyproject, instead of
       # re-resolving and verifying something different from what runs locally.
-      - run: uv sync --frozen
+      # --python overrides the repository's .python-version so the matrix means
+      # something.
+      - run: uv sync --frozen --python ${{ matrix.python }}
 
+      # E and W are pycodestyle, N is pep8-naming: the PEP 8 check the review asked
+      # for. format --check keeps the layout from drifting.
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+
       - run: uv run mypy src
       - run: uv run pytest -q -m "not integration"
 
   # What can only be checked against a real PostgreSQL: the ledger invariants, the
   # query compiler, and that the dataset loads and adds up.
+  #
+  # Linux only: GitHub service containers do not run on Windows runners. The Windows
+  # coverage of the integration path is therefore a gap — running it there means
+  # installing PostgreSQL on the runner, which is a decision of its own.
   integration:
     runs-on: ubuntu-latest
     services:
