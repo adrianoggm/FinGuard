@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic.alias_generators import to_camel
 
-from finguard_banking.application.get_balance import GetBalance
-from finguard_banking.application.run_financial_query import RunFinancialQuery
+from finguard_banking.application.use_cases.get_balance import GetBalance
+from finguard_banking.application.use_cases.run_financial_query import RunFinancialQuery
 from finguard_banking.bootstrap.dependencies import (
     database_answers,
     get_balance,

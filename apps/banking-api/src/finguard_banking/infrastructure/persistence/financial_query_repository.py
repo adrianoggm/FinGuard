@@ -5,10 +5,6 @@ from typing import Any
 
 import asyncpg
 
-from finguard_banking.adapters.outbound.postgres.query_compiler import (
-    compile_aggregate,
-    compile_movements,
-)
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.financial_query import FinancialQuery
 from finguard_banking.domain.financial_query_result import (
@@ -16,6 +12,10 @@ from finguard_banking.domain.financial_query_result import (
     Movement,
     QueryGroup,
     QueryTrace,
+)
+from finguard_banking.infrastructure.persistence.query_compiler import (
+    compile_aggregate,
+    compile_movements,
 )
 
 # The currency and the existence of the account come from the balances view, not from

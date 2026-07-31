@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_banking.application.run_financial_query import RunFinancialQuery
+from finguard_banking.application.use_cases.run_financial_query import RunFinancialQuery
 from finguard_banking.bootstrap.dependencies import run_financial_query
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.errors import AccountNotFoundError

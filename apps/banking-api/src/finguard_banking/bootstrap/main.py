@@ -8,9 +8,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from finguard_banking.adapters.inbound.http.routes import router
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.infrastructure.controllers.routes import router
 
 
 @asynccontextmanager
