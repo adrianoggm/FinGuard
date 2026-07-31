@@ -3,7 +3,7 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from finguard_assistant.infrastructure.config.toml_model_catalogue import TomlModelCatalogue
+from finguard_assistant.infrastructure import TomlModelCatalogue
 
 
 class Settings(BaseSettings):

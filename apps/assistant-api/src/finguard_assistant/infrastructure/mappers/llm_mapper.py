@@ -4,8 +4,8 @@ Queries and commands answer with Results, never with domain objects, so what arr
 here is already flat. This adds the wire format and nothing else.
 """
 
-from finguard_assistant.application.queries.answer_message import AnswerMessageResult
-from finguard_assistant.application.queries.get_llm_catalogue import (
+from finguard_assistant.application import (
+    AnswerMessageResult,
     CatalogueResult,
     ModelRow,
     PolicyRow,

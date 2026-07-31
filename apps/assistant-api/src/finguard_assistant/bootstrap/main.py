@@ -1,26 +1,25 @@
 from fastapi import FastAPI
 
-from finguard_assistant.application.bus.command_bus import CommandBus
-from finguard_assistant.application.bus.query_bus import QueryBus
-from finguard_assistant.application.commands.replace_llm_policy import (
+from finguard_assistant.application import (
+    AnswerMessageHandler,
+    AnswerMessageQuery,
+    CommandBus,
+    GetLlmCatalogueHandler,
+    GetLlmCatalogueQuery,
+    PolicyStore,
+    QueryBus,
     ReplaceLlmPolicyCommand,
     ReplaceLlmPolicyHandler,
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
-from finguard_assistant.application.policy_store import PolicyStore
-from finguard_assistant.application.queries.answer_message import (
-    AnswerMessageHandler,
-    AnswerMessageQuery,
-)
-from finguard_assistant.application.queries.get_llm_catalogue import (
-    GetLlmCatalogueHandler,
-    GetLlmCatalogueQuery,
-)
 from finguard_assistant.bootstrap.config import get_settings
-from finguard_assistant.infrastructure import error_handlers
-from finguard_assistant.infrastructure.controllers.llm_controller import admin, router
-from finguard_assistant.infrastructure.llm.provider_registry import ProviderRegistry
+from finguard_assistant.infrastructure import (
+    ProviderRegistry,
+    admin_router,
+    assistant_router,
+    register_error_handlers,
+)
 
 DESCRIPTION = """
 Conversational orchestrator of FinGuard.
@@ -69,9 +68,9 @@ def create_app() -> FastAPI:
     app.state.query_bus = query_bus
     app.state.command_bus = command_bus
 
-    app.include_router(router)
-    app.include_router(admin)
-    error_handlers.register(app)
+    app.include_router(assistant_router)
+    app.include_router(admin_router)
+    register_error_handlers(app)
     return app
 
 

@@ -5,25 +5,22 @@ from typing import Any
 import asyncpg
 from fastapi import FastAPI
 
-from finguard_banking.application.bus.command_bus import CommandBus
-from finguard_banking.application.bus.query_bus import QueryBus
-from finguard_banking.application.queries.get_balance import GetBalanceHandler, GetBalanceQuery
-from finguard_banking.application.queries.movement_summary import (
+from finguard_banking.application import (
+    CommandBus,
+    GetBalanceHandler,
+    GetBalanceQuery,
     MovementSummaryHandler,
     MovementSummaryQuery,
+    QueryBus,
 )
 from finguard_banking.bootstrap.config import get_settings
-from finguard_banking.infrastructure import error_handlers
-from finguard_banking.infrastructure.controllers.banking_controller import (
+from finguard_banking.infrastructure import (
+    PostgresFinancialQueryRepository,
+    PostgresLedgerRepository,
     accounts_router,
     health_router,
     queries_router,
-)
-from finguard_banking.infrastructure.persistence.financial_query_repository import (
-    PostgresFinancialQueryRepository,
-)
-from finguard_banking.infrastructure.persistence.ledger_repository import (
-    PostgresLedgerRepository,
+    register_error_handlers,
 )
 
 DESCRIPTION = """
@@ -98,7 +95,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(accounts_router)
     app.include_router(queries_router)
-    error_handlers.register(app)
+    register_error_handlers(app)
     return app
 
 
