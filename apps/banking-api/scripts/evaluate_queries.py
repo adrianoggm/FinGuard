@@ -22,12 +22,12 @@ from typing import Any
 import asyncpg
 import yaml
 
-from finguard_banking.adapters.inbound.http.routes import FinancialQueryRequest
-from finguard_banking.adapters.outbound.postgres.financial_query_repository import (
-    PostgresFinancialQueryRepository,
-)
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.infrastructure.controllers.routes import FinancialQueryRequest
+from finguard_banking.infrastructure.persistence.financial_query_repository import (
+    PostgresFinancialQueryRepository,
+)
 
 DEFAULT_CASES = Path(__file__).resolve().parent.parent / "evaluation" / "queries.yaml"
 

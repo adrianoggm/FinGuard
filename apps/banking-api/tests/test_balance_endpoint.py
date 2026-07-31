@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_banking.application.get_balance import GetBalance
+from finguard_banking.application.use_cases.get_balance import GetBalance
 from finguard_banking.bootstrap.dependencies import get_balance
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.balance import Balance

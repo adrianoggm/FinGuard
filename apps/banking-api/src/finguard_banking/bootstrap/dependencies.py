@@ -7,17 +7,17 @@ from zoneinfo import ZoneInfo
 import asyncpg
 from fastapi import Request
 
-from finguard_banking.adapters.outbound.postgres.financial_query_repository import (
+from finguard_banking.application.use_cases.get_balance import GetBalance
+from finguard_banking.application.use_cases.run_financial_query import RunFinancialQuery
+from finguard_banking.bootstrap.config import get_settings
+from finguard_banking.domain.ports.financial_query_repository import FinancialQueryRepository
+from finguard_banking.domain.ports.ledger_repository import LedgerRepository
+from finguard_banking.infrastructure.persistence.financial_query_repository import (
     PostgresFinancialQueryRepository,
 )
-from finguard_banking.adapters.outbound.postgres.ledger_repository import (
+from finguard_banking.infrastructure.persistence.ledger_repository import (
     PostgresLedgerRepository,
 )
-from finguard_banking.application.get_balance import GetBalance
-from finguard_banking.application.run_financial_query import RunFinancialQuery
-from finguard_banking.bootstrap.config import get_settings
-from finguard_banking.ports.financial_query_repository import FinancialQueryRepository
-from finguard_banking.ports.ledger_repository import LedgerRepository
 
 
 # asyncpg.Pool is only generic for the type checker, so these annotations cannot be

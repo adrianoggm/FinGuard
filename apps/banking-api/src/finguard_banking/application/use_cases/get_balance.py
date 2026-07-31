@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from finguard_banking.domain.balance import Balance
-from finguard_banking.ports.ledger_repository import LedgerRepository
+from finguard_banking.domain.ports.ledger_repository import LedgerRepository
 
 
 class GetBalance:

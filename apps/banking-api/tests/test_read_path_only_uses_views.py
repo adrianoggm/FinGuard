@@ -8,7 +8,7 @@ it.
 
 import re
 
-from finguard_banking.adapters.outbound.postgres import (
+from finguard_banking.infrastructure.persistence import (
     financial_query_repository,
     ledger_repository,
     query_compiler,

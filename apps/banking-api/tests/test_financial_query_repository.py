@@ -7,12 +7,12 @@ import asyncpg
 import pytest
 from conftest import as_pool, create_account, record_movement
 
-from finguard_banking.adapters.outbound.postgres.financial_query_repository import (
-    PostgresFinancialQueryRepository,
-)
 from finguard_banking.domain.enums import Direction, GroupBy
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.financial_query import DateRange, FinancialQuery
+from finguard_banking.infrastructure.persistence.financial_query_repository import (
+    PostgresFinancialQueryRepository,
+)
 
 pytestmark = pytest.mark.integration
 

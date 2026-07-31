@@ -6,10 +6,10 @@ import asyncpg
 import pytest
 from conftest import as_pool, create_account, create_transaction, post_entry, record_movement
 
-from finguard_banking.adapters.outbound.postgres.ledger_repository import (
+from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.infrastructure.persistence.ledger_repository import (
     PostgresLedgerRepository,
 )
-from finguard_banking.domain.errors import AccountNotFoundError
 
 pytestmark = pytest.mark.integration
 
