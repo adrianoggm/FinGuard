@@ -1,9 +1,9 @@
 # web
 
-Aplicación del cliente (React / Next.js + TypeScript). Puerto local `3000`.
+Client application (React / Next.js + TypeScript). Local port `3000`.
 
-Chat y streaming, captura y reproducción de audio, renderizado de Vega-Lite, confirmaciones de Bizum, presentación de los movimientos consultados y sesión del usuario.
+Chat and streaming, audio capture and playback, Vega-Lite rendering, Bizum confirmations, display of the movements behind each figure, and user session handling.
 
-No contiene reglas financieras y no llama a `banking-api`: solo a `assistant-api`.
+It holds no financial rules and never calls `banking-api`: only `assistant-api`.
 
-Pendiente: Fase 3 del [roadmap](../../docs/roadmap.md).
+Pending: phase 3 of the [roadmap](../../docs/roadmap.md).

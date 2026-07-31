@@ -15,13 +15,8 @@ from finguard_banking.bootstrap.dependencies import (
     reporting_today,
     run_financial_query,
 )
-from finguard_banking.domain.financial_query import (
-    DateRange,
-    Direction,
-    FinancialQuery,
-    GroupBy,
-    Metric,
-)
+from finguard_banking.domain.enums import Direction, GroupBy, Metric
+from finguard_banking.domain.financial_query import DateRange, FinancialQuery
 from finguard_banking.domain.relative_period import RelativePeriod, resolve
 
 Balances = Annotated[GetBalance, Depends(get_balance)]

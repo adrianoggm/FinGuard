@@ -1,46 +1,59 @@
 # banking-api
 
-Núcleo financiero determinista. Sin IA. Puerto local `8001`.
+Deterministic financial core. No AI. Local port `8001`.
 
-Único servicio con escritura sobre la base financiera: cuentas, libro mayor de doble entrada, saldos, movimientos, contactos, intenciones de pago, Bizum simulado, idempotencia, políticas financieras y publicación de eventos de dominio.
+The only service allowed to write financial data: accounts, double-entry ledger, balances, movements, contacts, payment intents, simulated Bizum, idempotency, financial policies and domain event publishing.
 
-No conoce el LLM ni el contexto conversacional.
+It knows nothing about the LLM or the conversational context.
 
-Contrato público: [`packages/contracts/openapi/banking-api.yaml`](../../packages/contracts/openapi/banking-api.yaml) (pendiente).
+Public contract: [`packages/contracts/openapi/banking-api.yaml`](../../packages/contracts/openapi/banking-api.yaml) (pending).
 
-## Ejecutar
+## Running it
 
 ```bash
-just up              # PostgreSQL, si no está levantado
+just up              # PostgreSQL, if it is not already running
 just install         # uv sync
 just serve-banking   # http://127.0.0.1:8001
 just check           # ruff + mypy + pytest
 ```
 
-| Endpoint | Qué hace |
+| Endpoint | What it does |
 | --- | --- |
-| `GET /health` | Confirma que el proceso responde. No mira dependencias |
-| `GET /ready` | Confirma que PostgreSQL contesta. `503` si no |
-| `GET /v1/accounts/{id}/balance` | Saldo derivado del libro mayor. `404` si la cuenta no existe |
-| `POST /v1/financial-queries` | Ejecuta un plan de consulta validado. `422` si el plan no cabe en el contrato |
+| `GET /health` | Confirms the process answers. Does not look at dependencies |
+| `GET /ready` | Confirms PostgreSQL answers. `503` if it does not |
+| `GET /v1/accounts/{id}/balance` | Balance derived from the ledger. `404` if the account does not exist |
+| `POST /v1/financial-queries` | Runs a validated query plan. `422` if the plan does not fit the contract |
 
-## Consultas financieras
+## Balance
 
-El cuerpo de `POST /v1/financial-queries` es la **representación intermedia** de [vision.md §9.2](../../docs/vision.md), nunca SQL. El modelo de dominio tiene `extra="forbid"`: un campo que no reconoce —`"sql"`, por ejemplo— es un `422`, no algo que se ignore en silencio.
+The balance **is computed by adding up the entries**, never read from a mutable column: the ledger is the source of truth (ADR-001). Only entries of `BOOKED` transactions count.
+
+The sign is the account holder's: a `DEBIT` on their account takes money away, a `CREDIT` gives it to them. That is the criterion of the Bizum example in the spec, where sending €25 is recorded as a debit on the sender's account.
+
+```
+GET /v1/accounts/{id}/balance
+{"accountId":"…","availableMinor":146035,"bookedMinor":146035,"currency":"EUR","asOf":"…"}
+```
+
+`available` and `booked` match today and will stop matching in phase 5, when there are amounts held by operations awaiting confirmation. `balance_projections` exists but is **unused**: it earns its place in phase 5, when a row has to be locked with `FOR UPDATE` to charge without race conditions.
+
+## Financial queries
+
+The body of `POST /v1/financial-queries` is the **intermediate representation** from [vision.md §9.2](../../docs/vision.md), never SQL. The domain model sets `extra="forbid"`: a field it does not recognise — `"sql"`, say — is a `422`, not something quietly ignored.
 
 ```jsonc
 {
   "accountId": "…",
   "direction": "EXPENSE",              // EXPENSE | INCOME | ALL
-  "categories": ["TRANSPORT_FUEL"],    // patrón cerrado, máximo 20
+  "categories": ["TRANSPORT_FUEL"],    // closed pattern, at most 20
   "dateRange": {"from": "2026-07-01", "to": "2026-07-31"},
   "groupBy": "WEEK",                   // NONE | DAY | WEEK | MONTH | CATEGORY | MERCHANT
-  "supportingLimit": 3,                // justificantes, máximo 100
-  "explain": true                      // devuelve el SQL compilado y sus parámetros
+  "supportingLimit": 3,                // evidence movements, at most 100
+  "explain": true                      // returns the compiled SQL and its parameters
 }
 ```
 
-[`query_compiler.py`](src/finguard_banking/adapters/outbound/postgres/query_compiler.py) traduce ese plan a SQL: **la estructura sale de enums** definidos en el código y **todo valor viaja como parámetro**. Se puede ver con `"explain": true`:
+[`query_compiler.py`](src/finguard_banking/adapters/outbound/postgres/query_compiler.py) turns that plan into SQL: **the shape comes from enums** defined in code and **every value travels as a parameter**. You can see it with `"explain": true`:
 
 ```sql
 SELECT to_char(date_trunc('week', t.occurred_at AT TIME ZONE $1), 'YYYY-MM-DD') …
@@ -51,142 +64,127 @@ SELECT to_char(date_trunc('week', t.occurred_at AT TIME ZONE $1), 'YYYY-MM-DD') 
     AND t.direction = $5 AND t.category = ANY($6)
 ```
 
-Detalles que cambian el resultado:
+Decisions that change the result:
 
-| Decisión | Por qué |
+| Decision | Why |
 | --- | --- |
-| El gasto se devuelve **en positivo** | «He gastado 34,20», no «-34,20». Con `direction: ALL` el total va con signo, porque es el neto |
-| El día final del rango entra **completo** | Comparar con `<= to` dejaría fuera todo lo posterior a medianoche |
-| Se agrupa en `Europe/Madrid` | Configurable con `BANKING_REPORTING_TIMEZONE`. En UTC, una compra de las 23:30 caería en el día siguiente |
-| Solo cuenta lo `BOOKED` | Igual que el saldo |
-| Se devuelven los movimientos que sustentan el cálculo | La suma tiene que poder comprobarse a mano (§2.1) |
-| La traza es opt-in | Expone el SQL; útil para la memoria, no para respuestas normales |
+| Spending comes back **positive** | "I spent 34.20", not "-34.20". With `direction: ALL` the total is signed, because it is a net figure |
+| The final day of the range is included **in full** | Comparing with `<= to` would drop everything after midnight |
+| Grouping happens in `Europe/Madrid` | Configurable with `BANKING_REPORTING_TIMEZONE`. Under UTC a purchase at 23:30 would land on the next day |
+| Only `BOOKED` counts | Same as the balance |
+| The movements backing the figure come back with it | The sum has to be checkable by hand (§2.1) |
+| The trace is opt-in | It exposes the SQL; useful for the report, not for normal answers |
 
-### Periodos relativos
+### Relative periods
 
-En lugar de `dateRange` se puede enviar un `period`, y lo resuelve el servidor. El LLM **nombra** el periodo, nunca calcula fechas: aritmética de calendario en un modelo generativo es donde aparecen los errores silenciosos de un mes.
+Instead of `dateRange` you can send a `period`, and the server resolves it. The LLM **names** the period, it never computes dates: calendar arithmetic inside a generative model is where silent off-by-one-month errors come from.
 
 ```jsonc
-"period": {"period": "LAST_MONTH", "reference": "2026-07-15"}   // reference es opcional
+"period": {"period": "LAST_MONTH", "reference": "2026-07-15"}   // reference is optional
 ```
 
-| Periodo | Rango (referencia = miércoles 2026-07-15) |
+| Period | Range (reference = Wednesday 2026-07-15) |
 | --- | --- |
 | `TODAY` / `YESTERDAY` | 07-15 / 07-14 |
-| `THIS_WEEK` | 07-13 → 07-15 — del lunes a hoy, no la semana entera |
-| `LAST_WEEK` | 07-06 → 07-12 — completa |
+| `THIS_WEEK` | 07-13 → 07-15 — Monday to today, not the whole week |
+| `LAST_WEEK` | 07-06 → 07-12 — complete |
 | `THIS_MONTH` | 07-01 → 07-15 |
-| `LAST_MONTH` | 06-01 → 06-30 — completo |
+| `LAST_MONTH` | 06-01 → 06-30 — complete |
 | `THIS_YEAR` | 01-01 → 07-15 |
-| `LAST_N_DAYS`, `n` | hoy y los `n-1` anteriores |
-| `LAST_N_MONTHS`, `n` | desde el día 1 de hace `n-1` meses, incluido el mes en curso |
+| `LAST_N_DAYS`, `n` | today and the `n-1` days before it |
+| `LAST_N_MONTHS`, `n` | from the 1st of `n-1` months ago, current month included |
 
-`reference` fija qué día es «hoy»: sin él se usa la fecha actual en la zona del informe. [`resolve`](src/finguard_banking/domain/relative_period.py) es una función pura —el reloj vive en el borde— así que los tests cubren fin de mes, año bisiesto y cruce de año sin depender de cuándo se ejecuten.
+`reference` pins what "today" means; without it the current date in the reporting time zone is used. [`resolve`](src/finguard_banking/domain/relative_period.py) is a pure function — the clock lives at the edge — so its tests cover month ends, leap years and year boundaries without depending on when they run.
 
-Topes: 500 grupos y 100 justificantes por consulta (§8.6). Sin implementar todavía: `comparison` (comparar con el periodo anterior) y la métrica `AVG`. `metric` viaja en el plan porque es parte del contrato, pero `SUM` y `COUNT` se devuelven siempre las dos: el cliente lee la que pidió.
+Caps: 500 groups and 100 evidence movements per query (§8.6). Not implemented yet: `comparison` (comparing against the previous period) and the `AVG` metric. `metric` travels in the plan because it is part of the contract, but `SUM` and `COUNT` are both always returned: the client reads the one it asked for.
 
-## Saldo
+## Schema
 
-El saldo **se calcula sumando los asientos**, no se lee de una columna mutable: el libro mayor es la fuente de verdad (ADR-001). Solo cuentan los asientos de transacciones `BOOKED`.
-
-El signo es el del titular: un `DEBIT` sobre su cuenta le quita dinero, un `CREDIT` se lo da. Es el criterio del ejemplo de Bizum del spec, donde enviar 25 € se anota como débito en la cuenta de quien envía.
-
-```
-GET /v1/accounts/{id}/balance
-{"accountId":"…","availableMinor":146035,"bookedMinor":146035,"currency":"EUR","asOf":"…"}
-```
-
-`available` y `booked` coinciden hoy y dejarán de coincidir en Fase 5, cuando existan importes reservados por operaciones pendientes de confirmar. `balance_projections` está creada pero **sin usar**: se gana su sitio en Fase 5, cuando haga falta bloquear una fila con `FOR UPDATE` para cobrar sin condiciones de carrera.
-
-## Esquema
-
-Migraciones con Alembic en [`migrations/`](migrations/). La URL sale de `BANKING_DATABASE_URL`, nunca del `alembic.ini`, para que las migraciones y el servicio no puedan apuntar a bases distintas.
+Alembic migrations in [`migrations/`](migrations/). The URL comes from `BANKING_DATABASE_URL`, never from `alembic.ini`, so migrations and the service cannot end up pointing at different databases.
 
 ```bash
 just migrate                  # alembic upgrade head
-just migration "contactos"    # nueva migración vacía
+just migration "contacts"     # a new empty migration
 ```
 
-`0001_ledger` crea `customers`, `accounts`, `ledger_transactions`, `ledger_entries` y `balance_projections` con el DDL de [vision.md §8.5](../../docs/vision.md), y deja **dos invariantes garantizadas por PostgreSQL**, no por el código que escribe:
+`0001_ledger` creates `customers`, `accounts`, `ledger_transactions`, `ledger_entries` and `balance_projections` with the DDL from [vision.md §8.5](../../docs/vision.md), and leaves **two invariants enforced by PostgreSQL**, not by the code that writes:
 
-| Invariante | Cómo se garantiza | ADR |
+| Invariant | How it is enforced | ADR |
 | --- | --- | --- |
-| Cada transacción cuadra, y cuadra **por moneda** | `CONSTRAINT TRIGGER` diferido al COMMIT | ADR-003 |
-| Un asiento no se modifica ni se borra | Trigger `BEFORE UPDATE OR DELETE` | ADR-002 |
+| Every transaction balances, and balances **per currency** | Deferred `CONSTRAINT TRIGGER`, at COMMIT | ADR-003 |
+| An entry is never modified or deleted | `BEFORE UPDATE OR DELETE` trigger | ADR-002 |
 
-Un asiento tampoco puede ir en una moneda distinta a la de su cuenta: 2.500 al debe en USD contra 2.500 al haber en USD cuadra aritméticamente, pero si las cuentas son en euros no es una transacción válida.
+An entry also cannot be in a currency other than its account's: 2,500 debited in USD against 2,500 credited in USD balances arithmetically, but if both accounts are in euros it is not a valid transaction.
 
-De `ledger_transactions` solo se bloquea el `DELETE`: su `status` sí cambia, por ejemplo al pasar a `BOOKED`. Para deshacer un movimiento se anota una transacción compensatoria.
+Only `DELETE` is blocked on `ledger_transactions`: their `status` does change, for instance when moving to `BOOKED`. Undoing a movement means recording a compensating transaction.
 
-## Camino de lectura
+## Read path
 
-Nada que se consulte lee las tablas. `0002_read_views` crea dos vistas en el esquema `assistant_read` (§8.6):
+Nothing that is queried reads the tables. `0002_read_views` creates two views in the `assistant_read` schema (§8.6):
 
-| Vista | Qué da |
+| View | What it gives |
 | --- | --- |
-| `transactions_v1` | Un asiento por fila, ya interpretado: `direction`, `amount_minor` positivo, `signed_amount_minor`, `category`, `merchant_name`. Solo lo `BOOKED` |
-| `account_balances_v1` | Saldo por cuenta. `LEFT JOIN`, así que una cuenta sin movimientos sale a cero y una que no existe no sale |
+| `transactions_v1` | One entry per row, already interpreted: `direction`, positive `amount_minor`, `signed_amount_minor`, `category`, `merchant_name`. `BOOKED` only |
+| `account_balances_v1` | Balance per account. `LEFT JOIN`, so an account with no movements shows up at zero and one that does not exist does not show up |
 
-Las vistas son también el **único sitio** donde viven dos reglas de dinero que antes estaban repetidas en tres SQL distintos: qué cuenta como contabilizado y qué signo tiene cada asiento.
+The views are also the **only place** where two money rules live that used to be repeated across three different SQL statements: what counts as booked, and which sign each entry carries.
 
-El servicio abre **dos pools con roles distintos**: `finguard_banking` para escribir y comprobar estado, y `finguard_query_reader` (`BANKING_QUERY_DATABASE_URL`) para todo lo que se consulta. Ese rol:
+The service opens **two pools with different roles**: `finguard_banking` to write and check health, and `finguard_query_reader` (`BANKING_QUERY_DATABASE_URL`) for everything that is queried. That role:
 
-- solo tiene `SELECT`, y solo sobre esas dos vistas;
-- **no puede ni ver que las tablas existen** — sin `USAGE` en `public`, un `SELECT ... FROM accounts` responde *«relation does not exist»*, no «permiso denegado»;
-- tiene la sesión en `default_transaction_read_only`, `statement_timeout = 3s` e `idle_in_transaction_session_timeout = 10s`.
+- only has `SELECT`, and only on those two views;
+- **cannot even see that the tables exist** — without `USAGE` on `public`, `SELECT ... FROM accounts` answers *"relation does not exist"*, not "permission denied";
+- runs with `default_transaction_read_only`, `statement_timeout = 3s` and `idle_in_transaction_session_timeout = 10s`.
 
-Que el camino de lectura no pueda escribir **no depende de que este código sea correcto**. Lo comprueban [`test_query_reader_privileges.py`](tests/test_query_reader_privileges.py), contra la base real, y [`test_read_path_only_uses_views.py`](tests/test_read_path_only_uses_views.py), que revisa que ninguna sentencia del camino de lectura nombre una tabla.
+The read path being unable to write **does not depend on this code being correct**. That is checked by [`test_query_reader_privileges.py`](tests/test_query_reader_privileges.py), against the real database, and by [`test_read_path_only_uses_views.py`](tests/test_read_path_only_uses_views.py), which verifies that no statement on the read path names a table.
 
-Aún **sin implementar**: RLS por titular. Filtrar por cliente exige una identidad autenticada, y hasta que exista (§12) tendría que inyectarla la propia aplicación, que es justo el control que RLS debería imponerle.
+Still **not implemented**: per-holder RLS. Filtering by customer requires an authenticated identity, and until one exists (§12) the application itself would have to inject it, which is precisely the control RLS is supposed to impose on it.
 
-> El rol nace en [`init/02-query-reader.sql`](../../infrastructure/postgres/init/02-query-reader.sql), que solo se ejecuta con el volumen vacío. En una base ya creada: `just reset && just migrate && just seed`.
+> The role is created in [`init/02-query-reader.sql`](../../infrastructure/postgres/init/02-query-reader.sql), which only runs when the volume is empty. On an existing database: `just reset && just migrate && just seed`.
 
-## Datos de desarrollo
+## Development data
 
-El dataset es un **artefacto versionado**, no algo que cada máquina genere distinto: los tests futuros, el benchmark de la Fase 2 y la demo trabajan sobre exactamente los mismos movimientos.
+The dataset is a **versioned artefact**, not something each machine generates differently: future tests, the phase 2 benchmark and the demo all work on exactly the same movements.
 
 ```bash
-just seed            # carga seeds/0001_demo.sql y lo verifica. CUIDADO: empieza con TRUNCATE
-just seed-verify     # comprueba lo que haya cargado ahora mismo
-just seed-generate   # regenera el SQL
+just seed            # loads seeds/0001_demo.sql and verifies it. CAREFUL: starts with a TRUNCATE
+just seed-verify     # checks whatever is loaded right now
+just seed-generate   # regenerates the SQL
 ```
 
-[`seeds/0001_demo.sql`](seeds/0001_demo.sql) trae 1.624 transacciones y 3.248 asientos: 3 titulares con nómina, alquiler, suscripciones, supermercado, gasolina, restaurantes, transporte, salud, ocio y bizums entre 2025-02 y 2026-07, más la cuenta de compensación que hace de contrapartida de todo.
+[`seeds/0001_demo.sql`](seeds/0001_demo.sql) carries 1,624 transactions and 3,248 entries: 3 account holders with salary, rent, subscriptions, groceries, fuel, restaurants, transport, health, leisure and Bizums between 2025-02 and 2026-07, plus the clearing account that acts as counterparty for everything.
 
-| Propiedad | Por qué |
+| Property | Why |
 | --- | --- |
-| Determinista | Misma semilla → mismo fichero byte a byte. Regenerar y encontrar `git diff` vacío es la prueba |
-| `category` y `merchant_name` en `metadata` | Es lo que consultará el motor de la Fase 2 (§9.2) |
-| 3 transacciones `PENDING` | Para poder comprobar que el saldo ignora lo que no está contabilizado |
-| Fechas fijas | Reproducibilidad. El precio es que envejecen: para la demo, `--end-date` y regenerar |
+| Deterministic | Same seed → same file, byte for byte. Regenerating and finding an empty `git diff` is the proof |
+| `category` and `merchant_name` in `metadata` | It is what the phase 2 engine queries (§9.2) |
+| 3 `PENDING` transactions | So it can be checked that the balance ignores what is not booked |
+| Fixed dates | Reproducibility. The price is that they age: for the demo, `--end-date` and regenerate |
 
-[`seeds/verify.sql`](seeds/verify.sql) **falla** —no avisa— si alguna transacción no cuadra, si hay asientos en otra moneda que su cuenta, o si hay transacciones sin asientos. Medir un benchmark sobre datos incoherentes es peor que no medirlo.
+[`seeds/verify.sql`](seeds/verify.sql) **fails** — it does not warn — if a transaction does not balance, if entries are in a currency other than their account's, or if there are transactions with no entries. Measuring a benchmark over incoherent data is worse than not measuring it.
 
-Los tests de integración **no** dependen de este dataset: crean sus propios datos y los deshacen. Quien lo necesita es la evaluación.
+The integration tests do **not** depend on this dataset: they create their own data and undo it. The one that needs it is the evaluation.
 
-## Evaluación
+## Evaluation
 
 ```bash
 just seed && just evaluate
 ```
 
 ```
-ok   gasolina_julio                   159.46 EUR
-ok   gasolina_mes_pasado              102.80 EUR
+ok   fuel_july                   159.46 EUR
+ok   fuel_last_month             102.80 EUR
 …
-exactitud de ejecución: 12/12 (100.0%)
+execution accuracy: 12/12 (100.0%)
 ```
 
-[`evaluation/queries.yaml`](evaluation/queries.yaml) tiene 12 casos con el plan que emitirá el LLM y la cifra que debe salir: totales, ingresos, neto, agrupaciones por semana, categoría y comercio, un periodo vacío, y uno que comprueba que lo `PENDING` no cuenta.
+[`evaluation/queries.yaml`](evaluation/queries.yaml) holds 12 cases with the plan the LLM will emit and the figure that must come out: totals, income, net, groupings by week, category and merchant, an empty period, and one that checks that `PENDING` does not count.
 
-Lo que hace que esto mida algo: **las cifras esperadas no salen del motor**. Se calculan con [`evaluation/expected.sql`](evaluation/expected.sql) (`just evaluate-expected`), SQL escrito aparte, sobre las tablas, sin vistas ni compilador ni resolvedor de periodos, con las fechas puestas a mano. Si salieran del propio motor, la evaluación solo comprobaría que el motor se parece a sí mismo.
+What makes this measure anything: **the expected figures do not come from the engine**. They are computed with [`evaluation/expected.sql`](evaluation/expected.sql) (`just evaluate-expected`), SQL written separately, over the tables, with no views, no compiler and no period resolver, with the dates spelled out by hand. If they came from the engine itself, the evaluation would only be checking that the engine resembles itself.
 
-Dos detalles: los casos con periodo relativo **fijan `reference`** —el runner falla si alguno no lo hace, porque el resultado cambiaría cada día— y las consultas van por el **rol de solo lectura**, el mismo que usa el servicio.
+Two details: cases with a relative period **pin `reference`** — the runner fails if one does not, because the result would change every day — and the queries go through the **read-only role**, the same one the service uses.
 
-`question` todavía no se usa: es el texto con el que se medirá la exactitud de interpretación cuando el asistente traduzca lenguaje natural a plan (Fase 3).
+`question` is not used yet: it is the text against which interpretation accuracy will be measured once the assistant turns natural language into a plan (phase 3). It stays in Spanish because that is the language of the product.
 
-Las pruebas de [`test_ledger_integrity.py`](tests/test_ledger_integrity.py) comprueban cada rechazo contra la base real. Fuerzan los triggers diferidos con `SET CONSTRAINTS ALL IMMEDIATE` y deshacen la transacción al terminar, que es la única limpieza posible sobre un libro mayor inmutable.
+The tests in [`test_ledger_integrity.py`](tests/test_ledger_integrity.py) check each rejection against the real database. They fire the deferred triggers with `SET CONSTRAINTS ALL IMMEDIATE` and roll the transaction back at the end, which is the only cleanup possible over an immutable ledger.
 
-Configuración por entorno con prefijo `BANKING_` (`BANKING_DATABASE_URL`). El default apunta a la base local del perfil `core`.
-
-Siguiente: cuentas y libro mayor, Fase 1 del [roadmap](../../docs/roadmap.md).
+Next: accounts and contacts, phase 1 of the [roadmap](../../docs/roadmap.md).

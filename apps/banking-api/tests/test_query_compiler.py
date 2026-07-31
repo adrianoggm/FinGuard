@@ -10,12 +10,8 @@ from finguard_banking.adapters.outbound.postgres.query_compiler import (
     compile_aggregate,
     compile_movements,
 )
-from finguard_banking.domain.financial_query import (
-    DateRange,
-    Direction,
-    FinancialQuery,
-    GroupBy,
-)
+from finguard_banking.domain.enums import Direction, GroupBy
+from finguard_banking.domain.financial_query import DateRange, FinancialQuery
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 RANGE = DateRange(start=date(2026, 7, 1), end=date(2026, 7, 31))

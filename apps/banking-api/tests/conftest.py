@@ -9,6 +9,12 @@ import asyncpg
 import pytest
 
 from finguard_banking.bootstrap.config import get_settings
+from finguard_banking.domain.enums import (
+    AccountStatus,
+    EntryType,
+    TransactionStatus,
+    TransactionType,
+)
 
 
 @pytest.fixture
@@ -36,18 +42,19 @@ async def create_account(conn: asyncpg.Connection, currency: str = "EUR") -> uui
     )
     await conn.execute(
         "INSERT INTO accounts (id, customer_id, account_reference, currency, status) "
-        "VALUES ($1, $2, $3, $4, 'ACTIVE')",
+        "VALUES ($1, $2, $3, $4, $5)",
         account_id,
         customer_id,
         f"ES-{account_id.hex[:12]}",
         currency,
+        AccountStatus.ACTIVE.value,
     )
     return account_id
 
 
 async def create_transaction(
     conn: asyncpg.Connection,
-    status: str = "BOOKED",
+    status: str = TransactionStatus.BOOKED.value,
     *,
     category: str | None = None,
     merchant: str | None = None,
@@ -64,8 +71,9 @@ async def create_transaction(
     await conn.execute(
         "INSERT INTO ledger_transactions "
         "(id, transaction_type, status, reference, description, metadata, occurred_at) "
-        "VALUES ($1, 'TRANSFER', $2, $3, $4, $5::jsonb, COALESCE($6::timestamptz, NOW()))",
+        "VALUES ($1, $2, $3, $4, $5, $6::jsonb, COALESCE($7::timestamptz, NOW()))",
         transaction_id,
+        TransactionType.TRANSFER.value,
         status,
         f"ref-{transaction_id.hex[:12]}",
         description,
@@ -109,8 +117,9 @@ async def record_movement(
     transaction_id = await create_transaction(conn, **kwargs)
     incoming = amount_minor > 0
     amount = abs(amount_minor)
-    await post_entry(conn, transaction_id, account, "CREDIT" if incoming else "DEBIT", amount)
-    await post_entry(conn, transaction_id, counterparty, "DEBIT" if incoming else "CREDIT", amount)
+    debit, credit = EntryType.DEBIT.value, EntryType.CREDIT.value
+    await post_entry(conn, transaction_id, account, credit if incoming else debit, amount)
+    await post_entry(conn, transaction_id, counterparty, debit if incoming else credit, amount)
     return transaction_id
 
 

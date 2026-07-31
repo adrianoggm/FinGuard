@@ -1,62 +1,62 @@
 # FinGuard Engine
 
-> Especificación funcional y técnica
+> Functional and technical specification
 
-## Tabla de contenidos
+## Table of contents
 
-1. [Resumen ejecutivo](#1-resumen-ejecutivo)
-2. [Visión del producto](#2-visión-del-producto)
-3. [Objetivos](#3-objetivos)
-4. [Principios de diseño](#4-principios-de-diseño)
-5. [Arquitectura general](#5-arquitectura-general)
-6. [Estrategia de microservicios](#6-estrategia-de-microservicios)
-7. [Preparación para A2A](#7-preparación-para-a2a)
-8. [Base de datos](#8-base-de-datos)
-9. [Motor de consultas financieras](#9-motor-de-consultas-financieras)
-10. [Motor de visualización](#10-motor-de-visualización)
-11. [Flujo seguro de Bizum](#11-flujo-seguro-de-bizum)
-12. [Seguridad](#12-seguridad)
-13. [Contratos externos iniciales](#13-contratos-externos-iniciales)
-14. [Tecnologías](#14-tecnologías)
-15. [Estructura del repositorio](#15-estructura-del-repositorio)
-16. [Escenario principal de demostración](#16-escenario-principal-de-demostración)
-17. [Decisiones arquitectónicas iniciales](#17-decisiones-arquitectónicas-iniciales)
-18. [Riesgos](#18-riesgos)
-19. [Definición de terminado](#19-definición-de-terminado)
-20. [Mensaje de presentación](#20-mensaje-de-presentación)
+1. [Executive summary](#1-executive-summary)
+2. [Product vision](#2-product-vision)
+3. [Objectives](#3-objectives)
+4. [Design principles](#4-design-principles)
+5. [Overall architecture](#5-overall-architecture)
+6. [Microservice strategy](#6-microservice-strategy)
+7. [A2A readiness](#7-a2a-readiness)
+8. [Database](#8-database)
+9. [Financial query engine](#9-financial-query-engine)
+10. [Visualisation engine](#10-visualisation-engine)
+11. [Secure Bizum flow](#11-secure-bizum-flow)
+12. [Security](#12-security)
+13. [Initial external contracts](#13-initial-external-contracts)
+14. [Technologies](#14-technologies)
+15. [Repository structure](#15-repository-structure)
+16. [Main demo scenario](#16-main-demo-scenario)
+17. [Initial architectural decisions](#17-initial-architectural-decisions)
+18. [Risks](#18-risks)
+19. [Definition of done](#19-definition-of-done)
+20. [Pitch](#20-pitch)
 
-Las fases, fechas y métricas de éxito viven en [roadmap.md](roadmap.md).
-
----
-
-## 1. Resumen ejecutivo
-
-**FinGuard** es un motor financiero conversacional, modular y seguro que permite consultar información bancaria y preparar operaciones mediante lenguaje natural.
-
-El usuario podrá interactuar por texto o voz para:
-
-- Consultar su saldo.
-- Analizar movimientos financieros.
-- Formular preguntas temporales y comparativas.
-- Preparar y confirmar envíos simulados mediante Bizum.
-- Obtener visualizaciones generadas dinámicamente.
-- Mantener conversaciones contextuales sobre sus finanzas.
-
-El sistema se diseñará desde el principio para evolucionar hacia un asistente financiero completo y para interoperar con agentes externos mediante el protocolo Agent-to-Agent — A2A.
-
-La seguridad será una propiedad estructural del sistema, no una capa añadida posteriormente. El modelo generativo podrá interpretar intenciones y redactar respuestas, pero **no** tendrá acceso directo a la base de datos ni capacidad autónoma para ejecutar movimientos de dinero.
-
-> **FinGuard interpreta. Los servicios deterministas validan. El usuario autoriza. El sistema ejecuta.**
+The phases, dates and success metrics live in [roadmap.md](roadmap.md).
 
 ---
 
-## 2. Visión del producto
+## 1. Executive summary
 
-### 2.1. Propuesta de valor
+**FinGuard** is a conversational, modular and secure financial engine that lets users query banking information and prepare operations through natural language.
 
-FinGuard permite que el usuario se relacione con sus finanzas mediante una conversación natural, eliminando la necesidad de navegar por numerosos menús y filtros.
+Users will be able to interact by text or voice to:
 
-Ejemplos:
+- Check their balance.
+- Analyse financial movements.
+- Ask temporal and comparative questions.
+- Prepare and confirm simulated Bizum transfers.
+- Obtain dynamically generated visualisations.
+- Hold contextual conversations about their finances.
+
+The system is designed from the start to grow into a complete financial assistant and to interoperate with external agents through the Agent-to-Agent protocol — A2A.
+
+Security is a structural property of the system, not a layer added afterwards. The generative model may interpret intent and write answers, but it has **no** direct access to the database and no autonomous ability to move money.
+
+> **FinGuard interprets. Deterministic services validate. The user authorises. The system executes.**
+
+---
+
+## 2. Product vision
+
+### 2.1. Value proposition
+
+FinGuard lets users deal with their finances through a natural conversation, removing the need to navigate menus and filters.
+
+Examples:
 
 > «¿Cuánto he gastado en gasolina este mes?»
 >
@@ -68,124 +68,124 @@ Ejemplos:
 >
 > «Envía 25 euros por Bizum a Laura para la cena.»
 
-El sistema debe responder utilizando información verificable y mostrar los movimientos que sustentan cada cálculo.
+The system must answer using verifiable information and show the movements that back each figure.
 
-### 2.2. Evolución prevista
+### 2.2. Planned evolution
 
 ```text
 FinGuard Engine
     │
     ├── FinGuard Assistant
-    │      Aplicación conversacional para el cliente
+    │      Conversational application for the customer
     │
     ├── FinGuard Voice
-    │      Interacción de voz en tiempo real
+    │      Real-time voice interaction
     │
     ├── FinGuard Insights
-    │      Consultas, análisis y visualizaciones
+    │      Queries, analysis and visualisations
     │
     ├── FinGuard Actions
-    │      Operaciones financieras controladas
+    │      Controlled financial operations
     │
     └── FinGuard Connect
-           Interoperabilidad A2A con agentes externos
+           A2A interoperability with external agents
 ```
 
 ---
 
-## 3. Objetivos
+## 3. Objectives
 
-### 3.1. Objetivos funcionales
+### 3.1. Functional objectives
 
-- Permitir conversaciones por texto y voz.
-- Consultar el saldo disponible.
-- Consultar y agregar movimientos mediante lenguaje natural.
-- Resolver referencias temporales como:
-  - Hoy.
-  - Esta semana.
-  - El mes anterior.
-  - Los últimos tres meses.
-- Mantener contexto entre mensajes sucesivos.
-- Preparar y confirmar operaciones Bizum simuladas.
-- Generar una visualización adaptada a cada respuesta.
-- Mostrar la procedencia de los resultados.
-- Registrar las decisiones y operaciones relevantes.
-- Exponer capacidades seleccionadas mediante A2A.
+- Support conversations by text and voice.
+- Report the available balance.
+- Query and aggregate movements through natural language.
+- Resolve temporal references such as:
+  - Today.
+  - This week.
+  - Last month.
+  - The last three months.
+- Keep context across successive messages.
+- Prepare and confirm simulated Bizum operations.
+- Generate a visualisation suited to each answer.
+- Show where the results came from.
+- Record the relevant decisions and operations.
+- Expose selected capabilities through A2A.
 
-### 3.2. Objetivos técnicos
+### 3.2. Technical objectives
 
-- Mantener separados el razonamiento probabilístico y la ejecución determinista.
-- Diseñar servicios sustituibles mediante contratos explícitos.
-- Evitar dependencias directas entre el dominio y los proveedores de IA.
-- Garantizar idempotencia en operaciones financieras.
-- Mantener un registro financiero inmutable.
-- Incorporar autorización humana antes de cualquier movimiento.
-- Permitir sustituir:
-  - El proveedor LLM.
-  - El proveedor de voz.
-  - La base de datos analítica.
-  - El sistema de visualización.
-  - La API bancaria simulada.
-- Preparar el sistema para funcionar como cliente y servidor A2A.
+- Keep probabilistic reasoning and deterministic execution separate.
+- Design replaceable services behind explicit contracts.
+- Avoid direct dependencies between the domain and the AI providers.
+- Guarantee idempotency in financial operations.
+- Keep an immutable financial record.
+- Require human authorisation before any movement.
+- Allow replacing:
+  - The LLM provider.
+  - The voice provider.
+  - The analytical database.
+  - The visualisation system.
+  - The simulated banking API.
+- Prepare the system to act as both an A2A client and an A2A server.
 
-### 3.3. Fuera del alcance inicial
+### 3.3. Out of initial scope
 
-- Operaciones bancarias reales.
-- Asesoramiento financiero regulado.
-- Inversiones o compraventa de activos.
-- Solicitud automática de préstamos.
-- Acceso a cuentas bancarias reales.
-- Decisiones financieras autónomas sin confirmación.
-- Entrenamiento de un modelo fundacional propio.
-- Microservicios desplegados en Kubernetes durante la primera fase.
+- Real banking operations.
+- Regulated financial advice.
+- Investments or asset trading.
+- Automatic loan applications.
+- Access to real bank accounts.
+- Autonomous financial decisions without confirmation.
+- Training a foundation model of our own.
+- Microservices deployed on Kubernetes during the first phase.
 
 ---
 
-## 4. Principios de diseño
+## 4. Design principles
 
-### 4.1. Seguridad por diseño
+### 4.1. Security by design
 
-Toda acción financiera debe pasar por:
+Every financial action must go through:
 
 ```text
-Intención
+Intent
    ↓
-Estructura validada
+Validated structure
    ↓
-Política de seguridad
+Security policy
    ↓
-Previsualización
+Preview
    ↓
-Confirmación explícita
+Explicit confirmation
    ↓
-Ejecución idempotente
+Idempotent execution
    ↓
-Auditoría
+Audit
 ```
 
-### 4.2. El LLM no es una fuente de verdad
+### 4.2. The LLM is not a source of truth
 
-El modelo **podrá**:
+The model **may**:
 
-- Interpretar la intención.
-- Extraer parámetros.
-- Seleccionar una herramienta.
-- Explicar resultados.
-- Proponer una visualización.
+- Interpret intent.
+- Extract parameters.
+- Select a tool.
+- Explain results.
+- Propose a visualisation.
 
-El modelo **no podrá**:
+The model **may not**:
 
-- Inventar saldos o importes.
-- Consultar directamente las tablas bancarias.
-- Construir SQL sin validación.
-- Modificar registros financieros.
-- Confirmar una operación en nombre del usuario.
-- Alterar reglas de seguridad.
-- Decidir si una operación ya ha sido autorizada.
+- Invent balances or amounts.
+- Query the banking tables directly.
+- Build SQL without validation.
+- Modify financial records.
+- Confirm an operation on the user's behalf.
+- Alter security rules.
+- Decide whether an operation has already been authorised.
 
-### 4.3. Contratos antes que implementaciones
+### 4.3. Contracts before implementations
 
-Cada capacidad se definirá mediante un contrato independiente:
+Every capability is defined behind its own contract:
 
 ```python
 class BankingPort(Protocol):
@@ -205,11 +205,11 @@ class BankingPort(Protocol):
         ...
 ```
 
-El orquestador conocerá el contrato, pero no la base de datos ni los detalles de implementación.
+The orchestrator knows the contract, not the database nor the implementation details.
 
-### 4.4. Separación entre dominio y protocolos
+### 4.4. Separating domain from protocols
 
-Los objetos internos no dependerán de:
+Internal objects do not depend on:
 
 - A2A.
 - OpenAI.
@@ -219,15 +219,15 @@ Los objetos internos no dependerán de:
 - RabbitMQ.
 - Vega-Lite.
 
-Los protocolos y proveedores se implementarán como adaptadores externos.
+Protocols and providers are implemented as external adapters.
 
 ---
 
-## 5. Arquitectura general
+## 5. Overall architecture
 
 ```mermaid
 flowchart TB
-    USER[Usuario]
+    USER[User]
 
     WEB[FinGuard Web<br/>React / Next.js]
     VOICE[Voice Gateway<br/>Realtime audio]
@@ -247,7 +247,7 @@ flowchart TB
     BROKER[(RabbitMQ)]
 
     LLM[LLM Provider]
-    EXTERNAL[Agentes externos A2A]
+    EXTERNAL[External A2A agents]
 
     USER --> WEB
     WEB <--> API
@@ -277,129 +277,129 @@ flowchart TB
 
 ---
 
-## 6. Estrategia de microservicios
+## 6. Microservice strategy
 
-El sistema se diseñará como servicios independientes, pero la separación lógica no obliga a desplegar inmediatamente cada módulo en un contenedor diferente.
+The system is designed as independent services, but that logical separation does not force each module into its own container from day one.
 
-### 6.1. Servicios desplegables
+### 6.1. Deployable services
 
 #### 6.1.1. `finguard-assistant`
 
-Responsabilidades:
+Responsibilities:
 
-- Mantener el contexto conversacional.
-- Clasificar la intención.
-- Coordinar herramientas.
-- Generar respuestas.
-- Gestionar solicitudes de visualización.
-- Aplicar las reglas conversacionales.
-- Integrarse con proveedores LLM.
+- Keeping the conversational context.
+- Classifying intent.
+- Coordinating tools.
+- Producing answers.
+- Handling visualisation requests.
+- Applying the conversational rules.
+- Integrating with LLM providers.
 
-No será propietario de cuentas ni movimientos bancarios.
+It does not own accounts or banking movements.
 
 #### 6.1.2. `finguard-banking`
 
-Responsabilidades:
+Responsibilities:
 
-- Gestionar cuentas ficticias.
-- Mantener el libro mayor.
-- Consultar saldos.
-- Exponer movimientos.
-- Gestionar contactos.
-- Preparar operaciones Bizum.
-- Confirmar operaciones.
-- Aplicar idempotencia.
-- Publicar eventos financieros.
+- Managing fictional accounts.
+- Keeping the ledger.
+- Reporting balances.
+- Exposing movements.
+- Managing contacts.
+- Preparing Bizum operations.
+- Confirming operations.
+- Applying idempotency.
+- Publishing financial events.
 
-Será el único servicio con permiso de escritura sobre los datos financieros.
+It is the only service with write permission over the financial data.
 
 #### 6.1.3. `finguard-voice`
 
-Responsabilidades:
+Responsibilities:
 
-- Recibir audio en streaming.
-- Detectar el final de turno.
-- Transcribir.
-- Gestionar interrupciones.
-- Sintetizar la respuesta.
-- Mantener sesiones realtime.
+- Receiving streaming audio.
+- Detecting the end of a turn.
+- Transcribing.
+- Handling barge-in.
+- Synthesising the answer.
+- Keeping realtime sessions.
 
-No tendrá conocimiento del dominio bancario.
+It knows nothing about the banking domain.
 
 #### 6.1.4. `finguard-a2a`
 
-Responsabilidades:
+Responsibilities:
 
-- Publicar el Agent Card.
-- Actuar como servidor A2A.
-- Actuar como cliente A2A.
-- Descubrir agentes autorizados.
-- Traducir tareas A2A a comandos internos.
-- Traducir resultados internos a artefactos A2A.
-- Gestionar estados y trazabilidad de tareas externas.
+- Publishing the Agent Card.
+- Acting as an A2A server.
+- Acting as an A2A client.
+- Discovering authorised agents.
+- Translating A2A tasks into internal commands.
+- Translating internal results into A2A artifacts.
+- Managing the state and traceability of external tasks.
 
 #### 6.1.5. `finguard-audit`
 
-Responsabilidades:
+Responsibilities:
 
-- Consumir eventos de dominio.
-- Mantener una auditoría append-only.
-- Registrar accesos, consultas y operaciones.
-- Proporcionar trazabilidad para la demo y la evaluación.
+- Consuming domain events.
+- Keeping an append-only audit trail.
+- Recording accesses, queries and operations.
+- Providing traceability for the demo and the evaluation.
 
 #### 6.1.6. `finguard-web`
 
-Responsabilidades:
+Responsibilities:
 
 - Chat.
-- Captura y reproducción de audio.
-- Visualizaciones.
-- Confirmaciones de operaciones.
-- Presentación de movimientos utilizados.
-- Estado de herramientas y tareas.
+- Audio capture and playback.
+- Visualisations.
+- Operation confirmations.
+- Displaying the movements that were used.
+- Tool and task state.
 
-### 6.2. Despliegue inicial recomendado
+### 6.2. Recommended initial deployment
 
-Para evitar complejidad prematura:
+To avoid premature complexity:
 
 ```text
-Fase inicial
+Initial phase
 ├── finguard-web
 ├── finguard-assistant
 ├── finguard-banking
 └── PostgreSQL
 
-Fase intermedia
+Intermediate phase
 ├── finguard-voice
 ├── RabbitMQ
 └── finguard-audit
 
-Fase avanzada
+Advanced phase
 └── finguard-a2a
 ```
 
-Aunque algunos módulos compartan inicialmente un proceso, sus contratos y dependencias deben permitir separarlos sin modificar el dominio.
+Even if some modules initially share a process, their contracts and dependencies must allow separating them without touching the domain.
 
 ---
 
-## 7. Preparación para A2A
+## 7. A2A readiness
 
-### 7.1. Papel de A2A
+### 7.1. The role of A2A
 
-A2A se utilizará para interoperar con agentes externos, no como sustituto de todos los protocolos internos.
+A2A is used to interoperate with external agents, not as a replacement for every internal protocol.
 
-El estándar define conceptos como Agent Card, Task, Message, Part y Artifact. Una tarea representa una unidad de trabajo con estado, mientras que los resultados concretos deben devolverse como artefactos asociados a la tarea.
+The standard defines concepts such as Agent Card, Task, Message, Part and Artifact. A task represents a unit of work with state, while concrete results must be returned as artifacts attached to the task.
 
-FinGuard podrá asumir los dos roles:
+FinGuard can take both roles:
 
-- **A2A Server** — un agente externo solicita una capacidad a FinGuard.
-- **A2A Client** — FinGuard solicita una capacidad a otro agente.
+- **A2A Server** — an external agent requests a capability from FinGuard.
+- **A2A Client** — FinGuard requests a capability from another agent.
 
-### 7.2. Adaptador A2A
+### 7.2. A2A adapter
 
 ```mermaid
 flowchart LR
-    REMOTE[Agente remoto]
+    REMOTE[Remote agent]
     A2A[A2A Adapter]
     AUTH[Identity and Policy]
     BUS[Command Bus]
@@ -415,7 +415,7 @@ flowchart LR
     A2A --> REMOTE
 ```
 
-El dominio no recibirá objetos del SDK A2A. El adaptador transformará:
+The domain never receives A2A SDK objects. The adapter transforms:
 
 ```text
 A2A Message
@@ -429,15 +429,15 @@ A2A Artifact
 
 ### 7.3. Agent Card
 
-FinGuard publicará su tarjeta en:
+FinGuard publishes its card at:
 
 ```text
 /.well-known/agent-card.json
 ```
 
-El Agent Card describe identidad, URL, capacidades, requisitos de autenticación y skills. A2A contempla descubrimiento mediante la ruta estandarizada o mediante registros privados, algo especialmente apropiado para entornos empresariales.
+The Agent Card describes identity, URL, capabilities, authentication requirements and skills. A2A supports discovery through the standardised path or through private registries, which suits enterprise environments particularly well.
 
-Ejemplo conceptual:
+Conceptual example:
 
 ```json
 {
@@ -467,28 +467,28 @@ Ejemplo conceptual:
 }
 ```
 
-La tarjeta pública **no** incluirá:
+The public card does **not** include:
 
-- Topología interna.
-- Nombres de tablas.
+- Internal topology.
+- Table names.
 - Prompts.
-- Credenciales.
-- Identificadores personales.
-- Capacidades administrativas.
+- Credentials.
+- Personal identifiers.
+- Administrative capabilities.
 
-### 7.4. Mapeo de conceptos
+### 7.4. Concept mapping
 
 | A2A | FinGuard |
 | --- | --- |
-| Agent Card | Capacidades públicas de FinGuard |
-| `contextId` | Conversación o sesión autorizada |
-| Task | Ejecución de una consulta u operación |
-| Message | Instrucción o aclaración |
-| Artifact | Resultado, gráfico, previsualización o recibo |
-| TaskStatus | Estado interno normalizado |
-| `data` Part | Contrato JSON estructurado |
+| Agent Card | FinGuard's public capabilities |
+| `contextId` | An authorised conversation or session |
+| Task | Execution of a query or an operation |
+| Message | An instruction or a clarification |
+| Artifact | A result, chart, preview or receipt |
+| TaskStatus | Normalised internal state |
+| `data` Part | Structured JSON contract |
 
-### 7.5. Skills iniciales
+### 7.5. Initial skills
 
 - `finguard.query_balance`
 - `finguard.query_movements`
@@ -497,67 +497,67 @@ La tarjeta pública **no** incluirá:
 - `finguard.prepare_bizum`
 - `finguard.get_payment_status`
 
-No se expondrá inicialmente una skill denominada `execute_bizum`. La ejecución requerirá una autorización producida fuera del agente externo.
+No skill called `execute_bizum` is exposed initially. Execution requires an authorisation produced outside the external agent.
 
-### 7.6. Seguridad A2A
+### 7.6. A2A security
 
-A2A declara los requisitos de autenticación en el Agent Card, mientras que las credenciales se transmiten mediante mecanismos web estándar separados del contenido de los mensajes.
+A2A declares authentication requirements in the Agent Card, while credentials travel through standard web mechanisms kept separate from the message content.
 
-FinGuard aplicará:
+FinGuard applies:
 
-- HTTPS obligatorio.
-- OAuth 2.0 u OpenID Connect.
-- Scopes por skill.
-- Registro privado de agentes permitidos.
-- Verificación de audiencia y emisor.
-- Caducidad corta de tokens.
-- Límites de peticiones.
+- Mandatory HTTPS.
+- OAuth 2.0 or OpenID Connect.
+- Per-skill scopes.
+- A private registry of allowed agents.
+- Audience and issuer verification.
+- Short-lived tokens.
+- Request limits.
 - Correlation IDs.
-- Validación completa de datos recibidos.
-- Lista blanca de agentes durante el concurso.
-- Rechazo de instrucciones que intenten alterar políticas internas.
+- Full validation of incoming data.
+- An allowlist of agents during the competition.
+- Rejection of instructions that try to alter internal policies.
 
-A2A v1.0 incorpora negociación de versión y capacidades para verificar firmas de Agent Card; FinGuard dejará previstos ambos mecanismos.
+A2A v1.0 adds version and capability negotiation for verifying Agent Card signatures; FinGuard leaves room for both mechanisms.
 
-### 7.7. Implementación
+### 7.7. Implementation
 
-Se utilizará el SDK oficial de Python, que actualmente implementa A2A 1.0 y ofrece integración opcional con FastAPI, Starlette, gRPC y OpenTelemetry.
+The official Python SDK will be used; it currently implements A2A 1.0 and offers optional integration with FastAPI, Starlette, gRPC and OpenTelemetry.
 
-La implementación inicial utilizará:
+The initial implementation uses:
 
 - A2A 1.0
 - HTTP + JSON
-- SSE para actualizaciones
-- Agent Card en well-known URI
+- SSE for updates
+- Agent Card at the well-known URI
 
 ---
 
-## 8. Base de datos
+## 8. Database
 
-### 8.1. Elección
+### 8.1. Choice
 
-Se utilizará **PostgreSQL 18**, o la última versión estable soportada por el entorno de despliegue.
+**PostgreSQL 18** is used, or the latest stable version supported by the deployment environment.
 
-La elección se fundamenta en:
+The choice rests on:
 
-- Transacciones ACID.
-- Restricciones relacionales.
-- Claves foráneas.
-- Bloqueo de filas.
-- Niveles configurables de aislamiento.
-- Tipos numéricos exactos.
-- Soporte de JSONB.
-- Índices B-tree, GIN y otros.
+- ACID transactions.
+- Relational constraints.
+- Foreign keys.
+- Row locking.
+- Configurable isolation levels.
+- Exact numeric types.
+- JSONB support.
+- B-tree, GIN and other indexes.
 - Row-Level Security.
-- Buen soporte en Python y herramientas de observabilidad.
+- Good support in Python and in observability tooling.
 
-PostgreSQL permite aplicar políticas de seguridad por fila, restringiendo qué registros puede seleccionar o modificar cada rol; si se habilita RLS y no existe una política aplicable, se utiliza un comportamiento de denegación por defecto.
+PostgreSQL can apply per-row security policies, restricting which records each role may select or modify; if RLS is enabled and no policy applies, the default is to deny.
 
-JSONB podrá utilizarse para metadatos variables y dispone de indexación GIN, pero no sustituirá las columnas relacionales en los campos críticos.
+JSONB may be used for variable metadata and supports GIN indexing, but it does not replace relational columns for critical fields.
 
-### 8.2. Distribución de datos por servicio
+### 8.2. Data ownership per service
 
-Cada servicio será propietario de sus datos.
+Every service owns its data.
 
 ```text
 finguard-banking-db
@@ -590,50 +590,50 @@ finguard-audit-db
 └── integrity_checkpoints
 ```
 
-Durante el concurso podrán vivir en un único clúster PostgreSQL con:
+During the competition they may live in a single PostgreSQL cluster with:
 
-- Bases de datos o esquemas separados.
-- Usuarios diferentes.
-- Credenciales diferentes.
-- Permisos mínimos.
-- Prohibición de acceso cruzado directo.
+- Separate databases or schemas.
+- Different users.
+- Different credentials.
+- Minimum privileges.
+- No direct cross access.
 
-### 8.3. Modelo financiero
+### 8.3. Financial model
 
-No se utilizará exclusivamente una columna mutable denominada `balance`.
+A single mutable column called `balance` is not used on its own.
 
-Se implementará un libro mayor de doble entrada:
+A double-entry ledger is implemented:
 
 ```text
-Operación Bizum de 25 €
-    ├── Débito: cuenta del usuario       2.500 céntimos
-    └── Crédito: cuenta de compensación  2.500 céntimos
+Bizum operation of €25
+    ├── Debit:  user account         2,500 minor units
+    └── Credit: clearing account     2,500 minor units
 ```
 
-Cada transacción debe estar equilibrada:
+Every transaction must balance:
 
-$$\sum \text{débitos} = \sum \text{créditos}$$
+$$\sum \text{debits} = \sum \text{credits}$$
 
-### 8.4. Representación monetaria
+### 8.4. Monetary representation
 
-Los importes se almacenarán como:
+Amounts are stored as:
 
 ```sql
 amount_minor BIGINT NOT NULL
 currency CHAR(3) NOT NULL
 ```
 
-Ejemplo:
+Example:
 
 ```text
-25,49 EUR → amount_minor = 2549
+25.49 EUR → amount_minor = 2549
 ```
 
-**No** se utilizarán `FLOAT`, `REAL` ni `DOUBLE PRECISION` para representar dinero.
+`FLOAT`, `REAL` and `DOUBLE PRECISION` are **not** used to represent money.
 
-PostgreSQL también dispone del tipo `NUMERIC`, que representa valores exactos con precisión seleccionable. Para FinGuard se prefieren unidades menores enteras en el libro mayor y `Decimal` en la capa de aplicación.
+PostgreSQL also offers the `NUMERIC` type, which represents exact values with selectable precision. FinGuard prefers integer minor units in the ledger and `Decimal` in the application layer.
 
-### 8.5. Tablas principales
+### 8.5. Main tables
 
 #### `accounts`
 
@@ -696,7 +696,7 @@ CREATE TABLE balance_projections (
 );
 ```
 
-El libro mayor será la fuente de verdad. `balance_projections` será una proyección optimizada para lectura.
+The ledger is the source of truth. `balance_projections` is a read-optimised projection.
 
 #### `payment_intents`
 
@@ -717,7 +717,7 @@ CREATE TABLE payment_intents (
 );
 ```
 
-Estados:
+States:
 
 - `DRAFT`
 - `AWAITING_CONFIRMATION`
@@ -743,13 +743,13 @@ CREATE TABLE outbox_events (
 );
 ```
 
-El evento se escribirá en la misma transacción que modifica el dominio. Posteriormente, un relay lo publicará en RabbitMQ. Este patrón evita el problema de confirmar la operación en la base de datos y perder el evento antes de publicarlo, aunque los consumidores deberán ser idempotentes porque un evento puede entregarse más de una vez.
+The event is written in the same transaction that modifies the domain. A relay publishes it to RabbitMQ afterwards. This pattern avoids committing the operation to the database and losing the event before publishing it, though consumers must be idempotent because an event may be delivered more than once.
 
-### 8.6. Datos para consultas del asistente
+### 8.6. Data for the assistant's queries
 
-El LLM no accederá al libro mayor.
+The LLM never reaches the ledger.
 
-El servicio bancario expondrá una vista limitada:
+The banking service exposes a limited view:
 
 ```sql
 CREATE VIEW assistant_read.transactions_v1 AS
@@ -769,18 +769,18 @@ JOIN ledger_entries le
 WHERE lt.status = 'BOOKED';
 ```
 
-Se creará un rol exclusivo `finguard_query_reader` con las siguientes restricciones:
+A dedicated role `finguard_query_reader` is created, with these restrictions:
 
-- Solo `SELECT`.
-- Solo vistas autorizadas.
-- Sin acceso a tablas de pagos.
-- Sin acceso a credenciales ni datos personales completos.
+- `SELECT` only.
+- Authorised views only.
+- No access to payment tables.
+- No access to credentials or full personal data.
 - `statement_timeout`.
-- Límite máximo de filas.
-- Row-Level Security por cliente.
-- Conexión de solo lectura.
+- A maximum row limit.
+- Row-Level Security per customer.
+- A read-only connection.
 
-### 8.7. Índices iniciales
+### 8.7. Initial indexes
 
 ```sql
 CREATE INDEX idx_ledger_entries_account
@@ -802,32 +802,32 @@ CREATE INDEX idx_payment_intents_account_status
 
 ---
 
-## 9. Motor de consultas financieras
+## 9. Financial query engine
 
-### 9.1. Flujo
+### 9.1. Flow
 
 ```mermaid
 sequenceDiagram
-    participant U as Usuario
+    participant U as User
     participant A as Assistant
     participant L as LLM
     participant Q as Query Service
     participant B as Banking API
     participant DB as PostgreSQL
 
-    U->>A: ¿Cuánto gasté en gasolina este mes?
-    A->>L: Extraer FinancialQuery
-    L-->>A: FinancialQuery estructurada
-    A->>Q: Validar y compilar
-    Q->>B: Ejecutar consulta autorizada
-    B->>DB: SQL parametrizado de solo lectura
-    DB-->>B: Resultado
+    U->>A: How much did I spend on fuel this month?
+    A->>L: Extract a FinancialQuery
+    L-->>A: Structured FinancialQuery
+    A->>Q: Validate and compile
+    Q->>B: Run the authorised query
+    B->>DB: Parameterised read-only SQL
+    DB-->>B: Result
     B-->>Q: FinancialQueryResult
-    Q-->>A: Resultado verificado
-    A-->>U: Respuesta + movimientos + gráfico
+    Q-->>A: Verified result
+    A-->>U: Answer + movements + chart
 ```
 
-### 9.2. Representación intermedia
+### 9.2. Intermediate representation
 
 ```json
 {
@@ -844,31 +844,31 @@ sequenceDiagram
 }
 ```
 
-### 9.3. Compilación
+### 9.3. Compilation
 
-La representación se validará mediante Pydantic y se transformará en SQL parametrizado.
+The representation is validated with Pydantic and turned into parameterised SQL.
 
-No se ejecutará directamente una cadena SQL producida por el LLM.
+An SQL string produced by the LLM is never executed directly.
 
-Para cumplir el objetivo de conversión de lenguaje natural a SQL se conservarán:
+To meet the natural-language-to-SQL objective, the following are kept:
 
-- La pregunta original.
-- El plan estructurado.
-- El SQL compilado.
-- Los parámetros.
-- El resultado.
-- La validación.
-- El tiempo de ejecución.
+- The original question.
+- The structured plan.
+- The compiled SQL.
+- The parameters.
+- The result.
+- The validation.
+- The execution time.
 
-Esto permitirá medir precisión y mostrar trazabilidad en la memoria.
+This makes it possible to measure accuracy and to show traceability in the report.
 
 ---
 
-## 10. Motor de visualización
+## 10. Visualisation engine
 
-### 10.1. Entrada
+### 10.1. Input
 
-El motor recibirá únicamente datos previamente calculados:
+The engine receives only data that has already been computed:
 
 ```json
 {
@@ -885,136 +885,136 @@ El motor recibirá únicamente datos previamente calculados:
 }
 ```
 
-### 10.2. Salida
+### 10.2. Output
 
 ```json
 {
   "format": "vega-lite",
-  "reason": "La consulta compara una magnitud a lo largo del tiempo",
+  "reason": "The query compares a magnitude over time",
   "specification": {}
 }
 ```
 
-### 10.3. Validaciones
+### 10.3. Validations
 
-- Esquema Vega-Lite válido.
-- Sin JavaScript arbitrario.
-- Sin recursos externos.
-- Solo campos presentes en los datos.
-- Número máximo de marcas.
-- Sin títulos inventados.
-- Ejes consistentes con los tipos.
-- Sin gráficos cuando una tarjeta KPI sea más adecuada.
+- A valid Vega-Lite schema.
+- No arbitrary JavaScript.
+- No external resources.
+- Only fields present in the data.
+- A maximum number of marks.
+- No invented titles.
+- Axes consistent with the types.
+- No chart when a KPI card would suit better.
 
 ---
 
-## 11. Flujo seguro de Bizum
+## 11. Secure Bizum flow
 
 ```mermaid
 sequenceDiagram
-    participant U as Usuario
+    participant U as User
     participant A as Assistant
     participant P as Policy Engine
     participant B as Banking Service
     participant DB as PostgreSQL
 
-    U->>A: Envía 25 € a Laura
-    A->>B: Resolver contacto
+    U->>A: Send €25 to Laura
+    A->>B: Resolve the contact
     B-->>A: Laura Martín
-    A->>B: Preparar Bizum
-    B->>P: Validar límites y saldo
-    P-->>B: Permitido
-    B->>DB: Crear payment_intent
-    B-->>A: Previsualización
-    A-->>U: ¿Confirmas 25 € a Laura Martín?
-    U->>A: Sí
-    A->>B: Confirmar con token
-    B->>DB: Bloquear saldo y ejecutar transacción
+    A->>B: Prepare the Bizum
+    B->>P: Validate limits and balance
+    P-->>B: Allowed
+    B->>DB: Create a payment_intent
+    B-->>A: Preview
+    A-->>U: Confirm €25 to Laura Martín?
+    U->>A: Yes
+    A->>B: Confirm with a token
+    B->>DB: Lock the balance and run the transaction
     DB-->>B: Commit
-    B-->>A: Recibo
-    A-->>U: Bizum simulado realizado
+    B-->>A: Receipt
+    A-->>U: Simulated Bizum completed
 ```
 
-Para confirmar una operación:
+To confirm an operation:
 
-1. Se abrirá una transacción.
-2. Se comprobará la clave de idempotencia.
-3. Se bloqueará la proyección de saldo con `SELECT ... FOR UPDATE`.
-4. Se comprobará saldo y caducidad.
-5. Se crearán las entradas equilibradas.
-6. Se actualizará la proyección.
-7. Se insertará el evento en `outbox_events`.
-8. Se confirmará la transacción.
+1. A transaction is opened.
+2. The idempotency key is checked.
+3. The balance projection is locked with `SELECT ... FOR UPDATE`.
+4. Balance and expiry are checked.
+5. The balanced entries are created.
+6. The projection is updated.
+7. The event is inserted into `outbox_events`.
+8. The transaction is committed.
 
-PostgreSQL permite bloquear las filas seleccionadas frente a actualizaciones concurrentes mediante `FOR UPDATE`.
+PostgreSQL can lock the selected rows against concurrent updates with `FOR UPDATE`.
 
-Para operaciones especialmente sensibles se podrá utilizar aislamiento `SERIALIZABLE` y reintentar cuando PostgreSQL detecte un conflicto.
+For particularly sensitive operations, `SERIALIZABLE` isolation may be used, retrying when PostgreSQL detects a conflict.
 
 ---
 
-## 12. Seguridad
+## 12. Security
 
-### 12.1. Capas de seguridad
+### 12.1. Security layers
 
 ```text
-Identidad
+Identity
     ↓
-Autorización
+Authorisation
     ↓
-Validación estructural
+Structural validation
     ↓
-Políticas financieras
+Financial policies
     ↓
-Confirmación humana
+Human confirmation
     ↓
-Transacción segura
+Secure transaction
     ↓
-Auditoría
+Audit
 ```
 
-### 12.2. Medidas principales
+### 12.2. Main measures
 
 - OAuth 2.0 / OpenID Connect.
-- Tokens de corta duración.
-- Scopes por operación.
-- Cifrado TLS.
-- Secretos fuera del código.
-- Roles separados en PostgreSQL.
+- Short-lived tokens.
+- Per-operation scopes.
+- TLS encryption.
+- Secrets kept out of the code.
+- Separate PostgreSQL roles.
 - Row-Level Security.
-- Límite de consultas.
+- Query limits.
 - Rate limiting.
-- Sanitización de entradas.
-- Validación Pydantic.
-- SQL parametrizado.
-- Idempotencia.
-- Registro de cada herramienta invocada.
-- Enmascarado de teléfonos e identificadores.
-- No registrar audio completo por defecto.
-- No enviar más datos de los necesarios al LLM.
-- Confirmación explícita para operaciones.
-- Caducidad de previsualizaciones.
-- Denegación por defecto.
+- Input sanitisation.
+- Pydantic validation.
+- Parameterised SQL.
+- Idempotency.
+- A record of every tool invoked.
+- Masking of phone numbers and identifiers.
+- No full audio recorded by default.
+- No more data sent to the LLM than necessary.
+- Explicit confirmation for operations.
+- Expiring previews.
+- Deny by default.
 
-### 12.3. Protección frente a prompt injection
+### 12.3. Prompt injection protection
 
-Los mensajes provenientes de usuarios o agentes externos se considerarán datos no confiables.
+Messages coming from users or external agents are treated as untrusted data.
 
-Un mensaje **no podrá**:
+A message **may not**:
 
-- Cambiar el system prompt.
-- Modificar políticas.
-- Otorgarse permisos.
-- Crear scopes.
-- Confirmar una operación sin prueba de autorización.
-- Solicitar credenciales.
-- Alterar el registro de auditoría.
-- Convertir un resultado externo en instrucción interna.
+- Change the system prompt.
+- Modify policies.
+- Grant itself permissions.
+- Create scopes.
+- Confirm an operation without proof of authorisation.
+- Request credentials.
+- Alter the audit trail.
+- Turn an external result into an internal instruction.
 
-Los datos externos se encapsularán como contenido y no como instrucciones del sistema.
+External data is wrapped as content, never as system instructions.
 
-### 12.4. Auditoría
+### 12.4. Audit
 
-Cada evento incluirá:
+Every event carries:
 
 ```json
 {
@@ -1030,13 +1030,13 @@ Cada evento incluirá:
 }
 ```
 
-Los eventos serán append-only y podrán encadenarse mediante hashes para detectar modificaciones posteriores.
+Events are append-only and can be chained through hashes so later modifications are detectable.
 
 ---
 
-## 13. Contratos externos iniciales
+## 13. Initial external contracts
 
-### 13.1. Saldo
+### 13.1. Balance
 
 ```http
 GET /v1/accounts/{account_id}/balance
@@ -1052,7 +1052,7 @@ GET /v1/accounts/{account_id}/balance
 }
 ```
 
-### 13.2. Consulta de movimientos
+### 13.2. Movement query
 
 ```http
 POST /v1/financial-queries
@@ -1072,14 +1072,14 @@ POST /v1/financial-queries
 }
 ```
 
-### 13.3. Preparación de Bizum
+### 13.3. Bizum preparation
 
 ```http
 POST /v1/bizum/intents
 Idempotency-Key: 8710b0d8-...
 ```
 
-### 13.4. Confirmación
+### 13.4. Confirmation
 
 ```http
 POST /v1/bizum/intents/{intent_id}/confirm
@@ -1093,35 +1093,35 @@ POST /v1/bizum/intents/{intent_id}/confirm
 
 ---
 
-## 14. Tecnologías
+## 14. Technologies
 
-| Componente | Tecnología |
+| Component | Technology |
 | --- | --- |
-| Frontend | React o Next.js + TypeScript |
+| Frontend | React or Next.js + TypeScript |
 | Backend | Python 3.12+ |
-| Framework API | FastAPI |
-| Validación | Pydantic |
-| ORM y acceso SQL | SQLAlchemy 2 |
-| Migraciones | Alembic |
-| Base de datos | PostgreSQL |
-| Caché y sesiones | Redis |
-| Mensajería | RabbitMQ |
-| Visualización | Vega-Lite |
-| A2A | SDK oficial de Python |
-| Observabilidad | OpenTelemetry |
-| Métricas | Prometheus |
-| Dashboards técnicos | Grafana |
-| Contenedores | Docker Compose |
+| API framework | FastAPI |
+| Validation | Pydantic |
+| ORM and SQL access | SQLAlchemy 2 |
+| Migrations | Alembic |
+| Database | PostgreSQL |
+| Cache and sessions | Redis |
+| Messaging | RabbitMQ |
+| Visualisation | Vega-Lite |
+| A2A | Official Python SDK |
+| Observability | OpenTelemetry |
+| Metrics | Prometheus |
+| Technical dashboards | Grafana |
+| Containers | Docker Compose |
 | Tests | Pytest |
-| Frontend tests | Vitest y Playwright |
+| Frontend tests | Vitest and Playwright |
 
 ---
 
-## 15. Estructura del repositorio
+## 15. Repository structure
 
-Monorepo único (`finguard`) con proyectos autónomos y desplegables por separado. La estructura completa, el tooling y las reglas de dependencia están en [architecture/monorepo.md](architecture/monorepo.md); las reglas de desarrollo en [architecture/development-rules.md](architecture/development-rules.md).
+A single monorepo (`finguard`) with autonomous, independently deployable projects. The full structure, the tooling and the dependency rules live in [architecture/monorepo.md](architecture/monorepo.md); the development rules in [architecture/development-rules.md](architecture/development-rules.md).
 
-Estructura mínima de la primera iteración:
+Minimum structure for the first iteration:
 
 ```text
 finguard/
@@ -1149,116 +1149,116 @@ finguard/
 
 ---
 
-## 16. Escenario principal de demostración
+## 16. Main demo scenario
 
-1. El usuario pregunta por el gasto en gasolina.
-2. FinGuard obtiene un resultado verificable.
-3. Se muestra el importe y los movimientos utilizados.
-4. Se genera un gráfico temporal.
-5. El usuario pregunta por el mes anterior.
-6. FinGuard conserva el contexto.
-7. El usuario solicita una comparación semanal.
-8. El gráfico se regenera.
-9. El usuario prepara un Bizum.
-10. FinGuard muestra destinatario, importe y saldo posterior.
-11. El usuario confirma.
-12. Se ejecuta la operación simulada.
-13. Se muestra el recibo y la auditoría.
-14. Opcionalmente, un agente externo consulta una skill mediante A2A.
-
----
-
-## 17. Decisiones arquitectónicas iniciales
-
-### ADR-001 — PostgreSQL como base transaccional
-
-**Estado:** aceptada.
-
-PostgreSQL será la fuente de verdad para cuentas, movimientos y operaciones.
-
-### ADR-002 — Libro mayor inmutable
-
-**Estado:** aceptada.
-
-Los movimientos confirmados no se modificarán ni borrarán. Las correcciones se representarán mediante nuevas transacciones compensatorias.
-
-### ADR-003 — Doble entrada
-
-**Estado:** aceptada.
-
-Toda operación financiera tendrá débitos y créditos equilibrados.
-
-### ADR-004 — LLM sin acceso directo a datos
-
-**Estado:** aceptada.
-
-El LLM utilizará herramientas y contratos validados.
-
-### ADR-005 — Confirmación humana
-
-**Estado:** aceptada.
-
-Toda operación que modifique dinero requerirá confirmación explícita.
-
-### ADR-006 — A2A como adaptador
-
-**Estado:** aceptada.
-
-Los modelos del dominio no dependerán del protocolo A2A.
-
-### ADR-007 — Microservicios por capacidad
-
-**Estado:** aceptada.
-
-Los servicios se separarán por responsabilidades de negocio, no por funciones técnicas pequeñas.
-
-### ADR-008 — Moneda en unidades menores
-
-**Estado:** aceptada.
-
-Los importes se representarán mediante enteros y código de moneda.
+1. The user asks about their fuel spending.
+2. FinGuard obtains a verifiable result.
+3. The amount and the movements behind it are shown.
+4. A time-series chart is generated.
+5. The user asks about the previous month.
+6. FinGuard keeps the context.
+7. The user asks for a weekly comparison.
+8. The chart is regenerated.
+9. The user prepares a Bizum.
+10. FinGuard shows the recipient, the amount and the resulting balance.
+11. The user confirms.
+12. The simulated operation is executed.
+13. The receipt and the audit trail are shown.
+14. Optionally, an external agent queries a skill through A2A.
 
 ---
 
-## 18. Riesgos
+## 17. Initial architectural decisions
 
-| Riesgo | Mitigación |
+### ADR-001 — PostgreSQL as the transactional store
+
+**Status:** accepted.
+
+PostgreSQL is the source of truth for accounts, movements and operations.
+
+### ADR-002 — Immutable ledger
+
+**Status:** accepted.
+
+Booked movements are never modified or deleted. Corrections are represented as new compensating transactions.
+
+### ADR-003 — Double entry
+
+**Status:** accepted.
+
+Every financial operation has balanced debits and credits.
+
+### ADR-004 — No direct data access for the LLM
+
+**Status:** accepted.
+
+The LLM works through validated tools and contracts.
+
+### ADR-005 — Human confirmation
+
+**Status:** accepted.
+
+Every operation that moves money requires explicit confirmation.
+
+### ADR-006 — A2A as an adapter
+
+**Status:** accepted.
+
+Domain models do not depend on the A2A protocol.
+
+### ADR-007 — Microservices by capability
+
+**Status:** accepted.
+
+Services are split by business responsibility, not by small technical functions.
+
+### ADR-008 — Money in minor units
+
+**Status:** accepted.
+
+Amounts are represented with integers and a currency code.
+
+---
+
+## 18. Risks
+
+| Risk | Mitigation |
 | --- | --- |
-| Text-to-SQL incorrecto | Plan intermedio y compilador determinista |
-| Datos inventados | Respuestas exclusivamente respaldadas por herramientas |
-| Operación duplicada | Idempotency key y restricción única |
-| Condición de carrera en saldo | Bloqueo de fila o aislamiento serializable |
-| Prompt injection | Separación de instrucciones, datos y políticas |
-| Exceso de microservicios | Separación lógica y despliegue progresivo |
-| Latencia de voz | Streaming e indicadores de progreso |
-| Fallo del proveedor LLM | Interfaz de proveedor sustituible |
-| Gráfico inválido | Validación y fallback seguro |
-| A2A amplía demasiado el alcance | Implementar únicamente dos skills en el concurso |
-| Falta de tiempo | Priorizar texto, consultas y Bizum antes que A2A |
+| Incorrect text-to-SQL | An intermediate plan and a deterministic compiler |
+| Invented data | Answers backed exclusively by tools |
+| Duplicate operation | Idempotency key and a unique constraint |
+| Race condition on the balance | Row locking or serializable isolation |
+| Prompt injection | Separation of instructions, data and policies |
+| Too many microservices | Logical separation and progressive deployment |
+| Voice latency | Streaming and progress indicators |
+| LLM provider outage | A replaceable provider interface |
+| Invalid chart | Validation and a safe fallback |
+| A2A widening the scope too much | Only two skills implemented for the competition |
+| Running out of time | Text, queries and Bizum before A2A |
 
 ---
 
-## 19. Definición de terminado
+## 19. Definition of done
 
-FinGuard estará preparado para la entrega cuando:
+FinGuard is ready for submission when:
 
-- El sistema se inicie mediante Docker Compose.
-- Exista un dataset financiero reproducible.
-- Las consultas principales superen el benchmark.
-- El saldo proceda del libro mayor.
-- Bizum requiera confirmación.
-- La idempotencia esté probada.
-- Los gráficos sean generados y validados.
-- La conversación funcione por texto.
-- La voz funcione o exista un fallback textual fiable.
-- La auditoría permita reconstruir una operación.
-- El Agent Card pueda publicarse.
-- Al menos una skill A2A funcione.
-- El vídeo tenga una duración máxima de tres minutos.
-- La memoria describa arquitectura, seguridad, resultados y limitaciones.
+- The system starts through Docker Compose.
+- A reproducible financial dataset exists.
+- The main queries pass the benchmark.
+- The balance is derived from the ledger.
+- Bizum requires confirmation.
+- Idempotency is proven.
+- Charts are generated and validated.
+- The conversation works by text.
+- Voice works, or a reliable text fallback exists.
+- The audit trail allows reconstructing an operation.
+- The Agent Card can be published.
+- At least one A2A skill works.
+- The video lasts no more than three minutes.
+- The report describes architecture, security, results and limitations.
 
 ---
 
-## 20. Mensaje de presentación
+## 20. Pitch
 
-**FinGuard** es un motor financiero conversacional diseñado bajo principios de seguridad, trazabilidad e interoperabilidad. Convierte lenguaje natural en consultas verificables, genera visualizaciones dinámicas y ejecuta operaciones simuladas mediante flujos controlados, manteniendo siempre separados el razonamiento probabilístico, la autorización del usuario y la ejecución bancaria. Su arquitectura modular permite evolucionarlo hacia un asistente completo y conectarlo con agentes externos mediante A2A.
+**FinGuard** is a conversational financial engine built on principles of security, traceability and interoperability. It turns natural language into verifiable queries, generates dynamic visualisations and runs simulated operations through controlled flows, always keeping probabilistic reasoning, user authorisation and banking execution apart. Its modular architecture allows it to grow into a complete assistant and to connect with external agents through A2A.
