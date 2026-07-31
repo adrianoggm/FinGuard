@@ -1,12 +1,13 @@
 name: finguard
 
-# Perfiles:
-#   core  esqueleto: base de datos + APIs de backend
-#   poc   todo lo que exista: core + piel (web, y más adelante app móvil)
-#   voice / a2a / events  se añaden en sus iteraciones
+# Profiles:
+#   core  skeleton: database + backend APIs
+#   poc   everything that exists: core + skin (web, and later a mobile app)
+#   voice / a2a / events  arrive in their own iterations
 #
-# Un componente suelto no necesita perfil: docker compose up postgres
-# Todo se publica solo en 127.0.0.1: las credenciales son de desarrollo (regla 13).
+# A single component needs no profile: docker compose up postgres
+# Everything is published on 127.0.0.1 only: the credentials are for development
+# (rule 13).
 
 services:
   postgres:
@@ -16,11 +17,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-finguard}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
       POSTGRES_DB: ${POSTGRES_DB:-finguard}
-    # 5442 en el host: 5432 y 5433 suelen estar ocupados por otros proyectos.
+    # Development credentials are trivial, so localhost only: publishing on 0.0.0.0
+    # would expose the database to the whole local network.
+    # 5442 on the host: 5432 and 5433 are usually taken by other projects.
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
     volumes:
-      # En Postgres 18+ el volumen se monta en /var/lib/postgresql, no en .../data.
+      # On Postgres 18+ the volume mounts at /var/lib/postgresql, not at .../data.
       - postgres-data:/var/lib/postgresql
       - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -36,7 +39,7 @@ services:
     profiles: ["core", "poc"]
     environment:
       BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
-      # Rol de solo lectura para el motor de consultas (§8.6)
+      # Read-only role for the query engine (§8.6)
       BANKING_QUERY_DATABASE_URL: postgresql://finguard_query_reader:finguard_query_reader@postgres:5432/finguard_banking
     ports:
       - "127.0.0.1:${BANKING_PORT:-8001}:8001"
@@ -56,7 +59,7 @@ services:
       dockerfile: apps/assistant-api/Dockerfile
     profiles: ["core", "poc"]
     environment:
-      # Política de LLM por defecto al arrancar; se cambia en caliente por HTTP.
+      # Default LLM policy at startup; it can be swapped at runtime over HTTP.
       ASSISTANT_LLM_PROVIDER: ${ASSISTANT_LLM_PROVIDER:-echo}
       ASSISTANT_LLM_MODEL: ${ASSISTANT_LLM_MODEL:-echo-1}
     ports:

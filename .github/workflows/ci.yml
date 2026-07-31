@@ -1,7 +1,6 @@
 name: ci
 
-# Se ejecuta en cada push: hasta ahora la única verificación era ejecutar
-# `just check` a mano antes de subir.
+# Runs on every push: until now the only verification was running `just check` by hand.
 on:
   push:
     branches: ["**"]
@@ -13,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Rápido y sin base de datos: formato, tipos y tests unitarios de cada servicio.
+  # Fast and database-free: formatting, types and unit tests for each service.
   check:
     runs-on: ubuntu-latest
     strategy:
@@ -31,8 +30,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: apps/${{ matrix.service }}/uv.lock
 
-      # --frozen falla si el lock ha divergido del pyproject, en lugar de re-resolver
-      # y verificar algo distinto de lo que se ejecuta en local.
+      # --frozen fails if the lock has drifted from the pyproject, instead of
+      # re-resolving and verifying something different from what runs locally.
       - run: uv sync --frozen
 
       - run: uv run ruff check .
@@ -40,8 +39,8 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest -q -m "not integration"
 
-  # Lo que solo se puede comprobar contra PostgreSQL de verdad: las invariantes del
-  # libro mayor, el compilador de consultas y que el dataset carga y cuadra.
+  # What can only be checked against a real PostgreSQL: the ledger invariants, the
+  # query compiler, and that the dataset loads and adds up.
   integration:
     runs-on: ubuntu-latest
     services:
@@ -70,12 +69,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: apps/banking-api/uv.lock
 
-      - name: Instala psql si el runner no lo trae
+      - name: Install psql if the runner does not ship it
         run: command -v psql || sudo apt-get install -y --no-install-recommends postgresql-client
 
-      # El mismo fichero que usa Docker Compose en local: una base y un rol por
-      # servicio, sin acceso cruzado.
-      - name: Crea las bases y los roles por servicio
+      # The same files Docker Compose uses locally: one database and one role per
+      # service, with no cross access.
+      - name: Create the databases and per-service roles
         run: |
           for script in infrastructure/postgres/init/*.sql; do
             echo "== $script"
@@ -91,19 +90,19 @@ jobs:
       - run: uv run pytest -q
         working-directory: apps/banking-api
 
-      - name: Carga el dataset y comprueba que cuadra
+      - name: Load the dataset and check that it adds up
         run: |
           psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f apps/banking-api/seeds/0001_demo.sql
           psql "$BANKING_DATABASE_URL" -v ON_ERROR_STOP=1 -f apps/banking-api/seeds/verify.sql
 
-      # Exactitud de ejecución sobre el dataset (vision.md §17). Falla si alguna
-      # consulta deja de devolver la cifra que calculó evaluation/expected.sql.
-      - name: Exactitud del motor de consultas
+      # Execution accuracy over the dataset (vision.md §17). Fails if any query stops
+      # returning the figure computed by evaluation/expected.sql.
+      - name: Query engine accuracy
         run: uv run python scripts/evaluate_queries.py
         working-directory: apps/banking-api
 
-      # El dataset es un artefacto versionado: regenerarlo no puede cambiarlo.
-      - name: El generador del dataset sigue siendo determinista
+      # The dataset is a versioned artefact: regenerating it cannot change it.
+      - name: The dataset generator is still deterministic
         run: |
           uv run python scripts/generate_seed.py
           git diff --exit-code -- seeds/
