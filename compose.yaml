@@ -1,0 +1,81 @@
+name: finguard
+
+# Profiles:
+#   core  skeleton: database + backend APIs
+#   poc   everything that exists: core + skin (web, and later a mobile app)
+#   voice / a2a / events  arrive in their own iterations
+#
+# A single component needs no profile: docker compose up postgres
+# Everything is published on 127.0.0.1 only: the credentials are for development
+# (rule 13).
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    profiles: ["core", "poc"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-finguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
+      POSTGRES_DB: ${POSTGRES_DB:-finguard}
+    # Development credentials are trivial, so localhost only: publishing on 0.0.0.0
+    # would expose the database to the whole local network.
+    # 5442 on the host: 5432 and 5433 are usually taken by other projects.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
+    volumes:
+      # On Postgres 18+ the volume mounts at /var/lib/postgresql, not at .../data.
+      - postgres-data:/var/lib/postgresql
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finguard} -d ${POSTGRES_DB:-finguard}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  banking-api:
+    build:
+      context: .
+      dockerfile: apps/banking-api/Dockerfile
+    profiles: ["core", "poc"]
+    environment:
+      BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
+      # Read-only role for the query engine (§8.6)
+      BANKING_QUERY_DATABASE_URL: postgresql://finguard_query_reader:finguard_query_reader@postgres:5432/finguard_banking
+    ports:
+      - "127.0.0.1:${BANKING_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  assistant-api:
+    build:
+      context: .
+      dockerfile: apps/assistant-api/Dockerfile
+    profiles: ["core", "poc"]
+    environment:
+      # Which models exist, which provider serves each one and what happens when one
+      # fails come from this file, not from code. Mounted read-only so it can change
+      # without rebuilding the image.
+      ASSISTANT_LLM_CATALOGUE_FILE: /app/config/llm.toml
+    volumes:
+      - ./apps/assistant-api/config:/app/config:ro
+    ports:
+      - "127.0.0.1:${ASSISTANT_PORT:-8000}:8000"
+    depends_on:
+      banking-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres-data:

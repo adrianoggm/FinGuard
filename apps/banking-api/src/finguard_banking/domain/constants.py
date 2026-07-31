@@ -1,0 +1,33 @@
+"""Hard ceilings of the banking domain.
+
+These are not the limits a deployment applies — they are the ones it cannot exceed.
+A dataclass invariant is evaluated when the object is built, so it cannot read runtime
+configuration; that is why the split exists:
+
+    domain/constants.py   the ceiling. Protection that configuration cannot raise.
+    bootstrap/config.py   the policy. What this deployment actually allows, always
+                          clamped to the ceiling.
+
+So `BANKING_MAX_SUPPORTING_MOVEMENTS=50` narrows the limit and `=5000` does not widen
+it past 100.
+"""
+
+# Evidence movements returned alongside a figure (vision.md §8.6).
+MAX_SUPPORTING_MOVEMENTS = 100
+DEFAULT_SUPPORTING_MOVEMENTS = 20
+
+# Rows a single query may return.
+MAX_GROUPS = 500
+
+# A query plan arrives from the LLM: everything about it is bounded.
+MAX_CATEGORIES = 20
+MAX_CATEGORY_LENGTH = 40
+
+# Relative periods.
+MAX_PERIOD_MONTHS = 24
+MAX_PERIOD_DAYS = 366
+
+# Sentinel keys for grouping rows that carry no category or merchant. They are contract
+# values, so English: the assistant phrases them for the user.
+UNCATEGORISED = "UNCATEGORISED"
+UNKNOWN_MERCHANT = "UNKNOWN_MERCHANT"
