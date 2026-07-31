@@ -16,6 +16,7 @@ from finguard_banking.domain.financial_query_result import (
     Movement,
     QueryGroup,
 )
+from finguard_banking.domain.value_objects.money import Money
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TRANSACTION = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -31,10 +32,9 @@ BODY = {
 
 RESULT = FinancialQueryResult(
     account_id=ACCOUNT,
-    currency="EUR",
-    total_minor=12_743,
+    total=Money(12_743, "EUR"),
     movement_count=3,
-    groups=[QueryGroup(key="2026-07-06", total_minor=3_420, movement_count=1)],
+    groups=[QueryGroup(key="2026-07-06", total=Money(3_420, "EUR"), movement_count=1)],
     supporting_movements=[
         Movement(
             transaction_id=TRANSACTION,
@@ -42,7 +42,7 @@ RESULT = FinancialQueryResult(
             description="Compra en Repsol",
             merchant_name="Repsol",
             category="TRANSPORT_FUEL",
-            amount_minor=3_420,
+            amount=Money(3_420, "EUR"),
             direction="EXPENSE",
         )
     ],

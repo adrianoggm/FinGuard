@@ -7,12 +7,9 @@ import asyncpg
 
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import (
-    FinancialQueryResult,
-    Movement,
-    QueryGroup,
-    QueryTrace,
-)
+from finguard_banking.domain.financial_query_result import FinancialQueryResult, QueryTrace
+from finguard_banking.domain.value_objects.money import Money
+from finguard_banking.infrastructure.mappers import row_mapper
 from finguard_banking.infrastructure.persistence.query_compiler import (
     compile_aggregate,
     compile_movements,
@@ -51,34 +48,15 @@ class PostgresFinancialQueryRepository:
             )
         elapsed_ms = (time.perf_counter() - started) * 1000
 
-        groups = [
-            QueryGroup(
-                key=str(row["key"]),
-                total_minor=int(row["total_minor"]),
-                movement_count=int(row["movement_count"]),
-            )
-            for row in rows
-        ]
+        groups = [row_mapper.to_group(row, currency) for row in rows]
 
         return FinancialQueryResult(
             account_id=query.account_id,
-            currency=currency,
             # The total comes from the groups: one query, one count.
-            total_minor=sum(group.total_minor for group in groups),
+            total=Money(sum(group.total.amount_minor for group in groups), currency),
             movement_count=sum(group.movement_count for group in groups),
             groups=groups,
-            supporting_movements=[
-                Movement(
-                    transaction_id=row["transaction_id"],
-                    occurred_at=row["occurred_at"],
-                    description=row["description"],
-                    merchant_name=row["merchant_name"],
-                    category=row["category"],
-                    amount_minor=int(row["amount_minor"]),
-                    direction=row["direction"],
-                )
-                for row in supporting
-            ],
+            supporting_movements=[row_mapper.to_movement(row, currency) for row in supporting],
             trace=QueryTrace(
                 sql=" ".join(aggregate.sql.split()),
                 parameters=[str(value) for value in aggregate.parameters],

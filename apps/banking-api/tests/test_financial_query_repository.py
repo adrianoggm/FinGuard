@@ -5,11 +5,13 @@ from datetime import UTC, date, datetime
 
 import asyncpg
 import pytest
-from conftest import as_pool, create_account, record_movement
+from support import as_pool, create_account, record_movement
 
 from finguard_banking.domain.enums import Direction, GroupBy
 from finguard_banking.domain.errors import AccountNotFoundError
-from finguard_banking.domain.financial_query import DateRange, FinancialQuery
+from finguard_banking.domain.financial_query import FinancialQuery
+from finguard_banking.domain.value_objects.date_range import DateRange
+from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
     PostgresFinancialQueryRepository,
 )
@@ -49,7 +51,7 @@ async def test_it_only_adds_up_the_requested_categories(connection: asyncpg.Conn
     )
 
     # Spending comes back positive: "I spent 77.00", not "-77.00".
-    assert result.total_minor == 7_700
+    assert result.total == Money(7_700, "EUR")
     assert result.movement_count == 2
     assert result.currency == "EUR"
 
@@ -73,7 +75,7 @@ async def test_what_falls_outside_the_range_does_not_count(
 
     result = await repository(connection).run(plan(account, direction=Direction.EXPENSE))
 
-    assert result.total_minor == 5_000
+    assert result.total == Money(5_000, "EUR")
 
 
 async def test_what_is_not_booked_does_not_count(connection: asyncpg.Connection) -> None:
@@ -94,7 +96,7 @@ async def test_what_is_not_booked_does_not_count(connection: asyncpg.Connection)
 
     result = await repository(connection).run(plan(account, direction=Direction.EXPENSE))
 
-    assert result.total_minor == 5_000
+    assert result.total == Money(5_000, "EUR")
 
 
 async def test_it_groups_by_week(connection: asyncpg.Connection) -> None:
@@ -109,8 +111,8 @@ async def test_it_groups_by_week(connection: asyncpg.Connection) -> None:
         plan(account, direction=Direction.EXPENSE, group_by=GroupBy.WEEK)
     )
 
-    assert [group.total_minor for group in result.groups] == [3_420, 6_200, 3_123]
-    assert result.total_minor == 12_743
+    assert [g.total.amount_minor for g in result.groups] == [3_420, 6_200, 3_123]
+    assert result.total == Money(12_743, "EUR")
 
 
 async def test_it_groups_by_category(connection: asyncpg.Connection) -> None:
@@ -130,7 +132,7 @@ async def test_it_groups_by_category(connection: asyncpg.Connection) -> None:
         plan(account, direction=Direction.EXPENSE, group_by=GroupBy.CATEGORY)
     )
 
-    assert {(g.key, g.total_minor) for g in result.groups} == {
+    assert {(g.key, g.total.amount_minor) for g in result.groups} == {
         ("GROCERIES", 5_000),
         ("RESTAURANTS", 7_000),
     }
@@ -148,10 +150,10 @@ async def test_income_is_kept_apart_from_spending(connection: asyncpg.Connection
     spending = await repository(connection).run(plan(account, direction=Direction.EXPENSE))
     everything = await repository(connection).run(plan(account, direction=Direction.ALL))
 
-    assert income.total_minor == 245_000
-    assert spending.total_minor == 9_000
+    assert income.total == Money(245_000, "EUR")
+    assert spending.total == Money(9_000, "EUR")
     # With both directions mixed the total is signed: it is the net for the period.
-    assert everything.total_minor == 236_000
+    assert everything.total == Money(236_000, "EUR")
 
 
 async def test_it_returns_the_movements_backing_the_figure(
@@ -178,7 +180,7 @@ async def test_it_returns_the_movements_backing_the_figure(
     movement = result.supporting_movements[0]
     assert movement.merchant_name == "Repsol"
     assert movement.category == "TRANSPORT_FUEL"
-    assert movement.amount_minor == 4_500
+    assert movement.amount == Money(4_500, "EUR")
     assert movement.direction == "EXPENSE"
     assert movement.description == "Compra en Repsol"
 
@@ -196,7 +198,7 @@ async def test_the_figure_can_be_asked_for_without_evidence(
         plan(account, direction=Direction.EXPENSE, supporting_limit=0)
     )
 
-    assert result.total_minor == 4_500
+    assert result.total == Money(4_500, "EUR")
     assert result.supporting_movements == []
 
 

@@ -3,14 +3,27 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
-from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from fastapi import FastAPI
 
 from finguard_banking.bootstrap.config import get_settings
-from finguard_banking.domain.errors import AccountNotFoundError
-from finguard_banking.infrastructure.controllers.routes import router
+from finguard_banking.infrastructure import error_handlers
+from finguard_banking.infrastructure.controllers.banking_controller import (
+    accounts_router,
+    health_router,
+    queries_router,
+)
+
+DESCRIPTION = """
+Deterministic financial core of FinGuard. No AI.
+
+The balance is **derived from the ledger entries**, never read from a mutable column,
+and every figure comes back with the movements that back it. A financial query is a
+validated plan (§9.2) compiled into parameterised SQL — SQL produced by an LLM is never
+executed.
+
+Everything that is queried goes through a read-only role that reaches two views and
+nothing else.
+"""
 
 
 @asynccontextmanager
@@ -37,20 +50,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await pool.close()
 
 
-app = FastAPI(title="FinGuard Banking API", version="0.1.0", lifespan=lifespan)
-app.include_router(router)
+def create_app() -> FastAPI:
+    """Composition root: the only place that wires concrete implementations."""
+    app = FastAPI(
+        title="FinGuard Banking API",
+        version="0.1.0",
+        description=DESCRIPTION,
+        summary="Deterministic financial core",
+        openapi_tags=[
+            {"name": "health", "description": "Liveness and readiness."},
+            {"name": "accounts", "description": "Accounts and balances (§13.1)."},
+            {"name": "queries", "description": "Financial queries over the ledger (§13.2)."},
+        ],
+        docs_url="/docs",
+        redoc_url="/redoc",
+        lifespan=lifespan,
+    )
+
+    app.include_router(health_router)
+    app.include_router(accounts_router)
+    app.include_router(queries_router)
+    error_handlers.register(app)
+    return app
 
 
-@app.exception_handler(AccountNotFoundError)
-async def account_not_found(request: Request, exc: Exception) -> JSONResponse:
-    return JSONResponse({"detail": str(exc)}, status_code=404)
-
-
-@app.exception_handler(ValidationError)
-async def invalid_query(request: Request, exc: Exception) -> JSONResponse:
-    """A plan the domain rejects is a 422, not a server error.
-
-    Limits are validated once, in the domain; the adapter only translates.
-    """
-    detail = exc.errors() if isinstance(exc, ValidationError) else [{"msg": str(exc)}]
-    return JSONResponse({"detail": jsonable_encoder(detail)}, status_code=422)
+app = create_app()

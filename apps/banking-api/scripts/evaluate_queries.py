@@ -24,7 +24,8 @@ import yaml
 
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.domain.financial_query_result import FinancialQueryResult
-from finguard_banking.infrastructure.controllers.routes import FinancialQueryRequest
+from finguard_banking.infrastructure.dto.banking_dto import FinancialQueryRequest
+from finguard_banking.infrastructure.mappers import http_mapper
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
     PostgresFinancialQueryRepository,
 )
@@ -43,20 +44,20 @@ def _compare(case: dict[str, Any], actual: FinancialQueryResult) -> Outcome:
     expected = case["expected"]
     failures: list[str] = []
 
-    if actual.total_minor != expected["totalMinor"]:
-        failures.append(f"total {actual.total_minor} != {expected['totalMinor']}")
+    if actual.total.amount_minor != expected["totalMinor"]:
+        failures.append(f"total {actual.total.amount_minor} != {expected['totalMinor']}")
     if actual.movement_count != expected["movementCount"]:
         failures.append(f"movements {actual.movement_count} != {expected['movementCount']}")
 
     if "groups" in expected:
         groups = [
-            {"key": g.key, "totalMinor": g.total_minor, "movementCount": g.movement_count}
+            {"key": g.key, "totalMinor": g.total.amount_minor, "movementCount": g.movement_count}
             for g in actual.groups
         ]
         if groups != expected["groups"]:
             failures.append(f"groups {groups} != {expected['groups']}")
 
-    detail = "; ".join(failures) if failures else f"{actual.total_minor / 100:.2f} EUR"
+    detail = "; ".join(failures) if failures else str(actual.total)
     return Outcome(case=case["id"], passed=not failures, detail=detail)
 
 
@@ -87,7 +88,8 @@ async def evaluate(cases: list[dict[str, Any]]) -> int:
 
             plan["accountId"] = str(accounts[case["account"]])
             request = FinancialQueryRequest.model_validate(plan)
-            outcomes.append(_compare(case, await repository.run(request.to_query(date.today()))))
+            plan = http_mapper.query_from_dto(request, date.today())
+            outcomes.append(_compare(case, await repository.run(plan)))
     finally:
         await reader.close()
         await owner.close()

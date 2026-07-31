@@ -11,6 +11,7 @@ from finguard_banking.bootstrap.dependencies import get_balance
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.balance import Balance
 from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.domain.value_objects.money import Money
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 MOMENT = datetime(2026, 7, 30, 9, 30, tzinfo=UTC)
@@ -39,9 +40,8 @@ def _clear_overrides() -> None:
 def test_it_returns_the_balance_with_the_contract_names() -> None:
     balance = Balance(
         account_id=ACCOUNT,
-        available_minor=146035,
-        booked_minor=146035,
-        currency="EUR",
+        available=Money(146035, "EUR"),
+        booked=Money(146035, "EUR"),
         as_of=MOMENT,
     )
 
