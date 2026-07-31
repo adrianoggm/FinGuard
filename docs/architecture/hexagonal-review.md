@@ -197,24 +197,27 @@ wander into them:
 - **`resolve` as a pure function** with the clock at the edge. That part already follows
   the pattern.
 
-## Open decision: commands, queries and buses
+## Resolved: commands, queries and buses
 
-The team's Python template prescribes hexagonal **plus CQRS with custom buses**. Today
-`GetBalance` and `RunFinancialQuery` are plain callables that delegate to a port.
+Decided in favour of the team template: **CQRS with buses, from now**, not deferred to
+phase 5.
 
-Options:
+Both services carry a `QueryBus` and a `CommandBus`. Reads are queries; swapping the LLM
+policy is a command. Handlers answer with Results, never with domain models — the rule
+the previous code broke by handing `Balance` and `FinancialQueryResult` straight to the
+controller.
 
-1. **Buses now**, aligned with the template. Two more indirections per operation, and a
-   `command_bus` / `query_bus` to wire. Pays off with cross-cutting concerns —
-   idempotency, audit, correlation IDs — because they all hook in one place.
-2. **Plain callables for reads, commands for writes.** Reads stay as they are; phase 5
-   introduces `Command` + handler, where the funnel actually earns its keep: every
-   money movement needs idempotency and an audit entry.
-3. Keep everything as callables.
+`banking-api` registers no commands yet, and that is the point of having the bus already:
+when phase 5 adds a money movement, idempotency, audit and correlation IDs hook into one
+seam instead of into every write.
 
-Recommendation: **option 2**. Reads have nothing to hook, and Bizum has three
-cross-cutting concerns that all want the same seam. This is your architecture call, not
-mine — it affects how every future operation is written.
+Two conscious deviations from the template, both worth knowing:
+
+- **Async, not sync.** The template says sync by default; this project is asyncpg and
+  async FastAPI throughout. Converting would be a large rewrite with nothing to show.
+- **The bus modules are duplicated** in both services rather than shared. Two copies of
+  sixty lines beat a package nothing else uses; they move to `packages/python/` when a
+  third service needs them. Marked with a `ponytail:` note in both.
 
 ## Suggested order
 

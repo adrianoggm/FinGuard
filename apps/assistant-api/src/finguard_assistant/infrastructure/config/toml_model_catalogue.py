@@ -28,6 +28,7 @@ out of the box.
 import tomllib
 from pathlib import Path
 
+from finguard_assistant.domain.constants import DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_TEMPERATURE
 from finguard_assistant.domain.enums import FallbackPolicy
 from finguard_assistant.domain.errors import InvalidValueError, UnknownModelError
 from finguard_assistant.domain.value_objects.llm_model import LlmModel
@@ -65,8 +66,8 @@ class TomlModelCatalogue:
             models=(BUILT_IN,),
             fallback=FallbackPolicy.FAIL,
             default_alias=BUILT_IN.alias,
-            temperature=0.2,
-            max_output_tokens=1024,
+            temperature=DEFAULT_TEMPERATURE,
+            max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
         )
 
     @classmethod
@@ -85,8 +86,8 @@ class TomlModelCatalogue:
             models=models,
             fallback=FallbackPolicy(raw.get("fallback", FallbackPolicy.FAIL.value)),
             default_alias=raw.get("default", aliases[0] if aliases else ""),
-            temperature=float(raw.get("temperature", 0.2)),
-            max_output_tokens=int(raw.get("max_output_tokens", 1024)),
+            temperature=float(raw.get("temperature", DEFAULT_TEMPERATURE)),
+            max_output_tokens=int(raw.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)),
         )
 
     @property

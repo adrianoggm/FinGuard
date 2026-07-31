@@ -6,7 +6,7 @@ import pytest
 
 from finguard_banking.domain.enums import Period
 from finguard_banking.domain.errors import InvalidValueError
-from finguard_banking.domain.relative_period import RelativePeriod, resolve
+from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
 from finguard_banking.infrastructure.dto.banking_dto import RelativePeriodRequest
 
 # A Wednesday, so "this week" and "last week" do not line up with the month.

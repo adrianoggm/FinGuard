@@ -1,9 +1,12 @@
 from dataclasses import dataclass
 
+from finguard_assistant.domain.constants import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_TEMPERATURE,
+    MAX_TEMPERATURE,
+)
 from finguard_assistant.domain.errors import InvalidValueError
 from finguard_assistant.domain.value_objects.llm_model import LlmModel
-
-MAX_TEMPERATURE = 2.0
 
 
 @dataclass(frozen=True)
@@ -18,8 +21,8 @@ class LlmPolicy:
     """
 
     model: LlmModel
-    temperature: float = 0.2
-    max_output_tokens: int = 1024
+    temperature: float = DEFAULT_TEMPERATURE
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.temperature <= MAX_TEMPERATURE:

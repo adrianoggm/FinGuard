@@ -1,63 +1,53 @@
-"""Domain ↔ DTO. The only place that knows both shapes."""
+"""Result ↔ DTO. The only place that knows both shapes.
 
-from finguard_assistant.domain.models.answer import Answer
-from finguard_assistant.domain.ports.model_catalogue import ModelCataloguePort
-from finguard_assistant.domain.value_objects.llm_model import LlmModel
-from finguard_assistant.domain.value_objects.llm_policy import LlmPolicy
+Queries and commands answer with Results, never with domain objects, so what arrives
+here is already flat. This adds the wire format and nothing else.
+"""
+
+from finguard_assistant.application.queries.answer_message import AnswerMessageResult
+from finguard_assistant.application.queries.get_llm_catalogue import (
+    CatalogueResult,
+    ModelRow,
+    PolicyRow,
+)
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageResponse,
     ModelResponse,
-    PolicyRequest,
     PolicyResponse,
 )
 
 
-def model_to_dto(model: LlmModel) -> ModelResponse:
-    return ModelResponse(alias=model.alias, provider=model.provider, model=model.model)
+def _model_to_dto(row: ModelRow) -> ModelResponse:
+    return ModelResponse(alias=row.alias, provider=row.provider, model=row.model)
 
 
-def policy_to_dto(policy: LlmPolicy) -> PolicyResponse:
+def _policy_to_dto(row: PolicyRow) -> PolicyResponse:
     return PolicyResponse(
-        model=model_to_dto(policy.model),
-        temperature=policy.temperature,
-        max_output_tokens=policy.max_output_tokens,
+        model=_model_to_dto(row.model),
+        temperature=row.temperature,
+        max_output_tokens=row.max_output_tokens,
     )
 
 
-def catalogue_to_dto(
-    active: LlmPolicy, catalogue: ModelCataloguePort, providers: list[str]
-) -> CatalogueResponse:
+def catalogue_to_dto(result: CatalogueResult) -> CatalogueResponse:
     return CatalogueResponse(
-        active=policy_to_dto(active),
-        fallback=catalogue.fallback.value,
-        available_models=[model_to_dto(model) for model in catalogue.models()],
-        available_providers=providers,
+        active=_policy_to_dto(result.active),
+        fallback=result.fallback,
+        available_models=[_model_to_dto(row) for row in result.available_models],
+        available_providers=result.available_providers,
     )
 
 
-def answer_to_dto(answer: Answer) -> MessageResponse:
+def answer_to_dto(result: AnswerMessageResult) -> MessageResponse:
     return MessageResponse(
-        text=answer.text,
-        policy=policy_to_dto(answer.policy),
-        attempted=list(answer.attempts),
-    )
-
-
-def policy_from_dto(
-    request: PolicyRequest, catalogue: ModelCataloguePort, current: LlmPolicy
-) -> LlmPolicy:
-    """Builds the new policy from the request.
-
-    The alias is resolved against the catalogue — a caller cannot name a model this
-    deployment does not have — and the settings it leaves out keep their current value.
-    """
-    return LlmPolicy(
-        model=catalogue.get(request.model_alias),
-        temperature=current.temperature if request.temperature is None else request.temperature,
-        max_output_tokens=(
-            current.max_output_tokens
-            if request.max_output_tokens is None
-            else request.max_output_tokens
+        text=result.text,
+        policy=PolicyResponse(
+            model=ModelResponse(
+                alias=result.model_alias, provider=result.provider, model=result.model
+            ),
+            temperature=result.temperature,
+            max_output_tokens=result.max_output_tokens,
         ),
+        attempted=list(result.attempted),
     )

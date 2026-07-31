@@ -16,7 +16,7 @@ from typing import Any
 
 from finguard_banking.domain.constants import MAX_GROUPS, UNCATEGORISED, UNKNOWN_MERCHANT
 from finguard_banking.domain.enums import Direction, GroupBy
-from finguard_banking.domain.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query import FinancialQuery
 
 VIEW = "assistant_read.transactions_v1"
 
@@ -85,7 +85,7 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         conditions.append(f"t.direction = {parameters.bind(query.direction.value)}")
 
     if query.categories:
-        conditions.append(f"t.category = ANY({parameters.bind(list(query.categories))})")
+        conditions.append(f"t.category = ANY({parameters.bind(query.category_values())})")
 
     return conditions
 

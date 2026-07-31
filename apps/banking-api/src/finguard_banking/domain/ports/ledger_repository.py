@@ -1,7 +1,7 @@
 from typing import Protocol
 from uuid import UUID
 
-from finguard_banking.domain.balance import Balance
+from finguard_banking.domain.models.balance import Balance
 
 
 class LedgerRepository(Protocol):

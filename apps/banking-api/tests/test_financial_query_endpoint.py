@@ -6,12 +6,16 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from finguard_banking.application.use_cases.run_financial_query import RunFinancialQuery
-from finguard_banking.bootstrap.dependencies import run_financial_query
+from finguard_banking.application.bus.query_bus import QueryBus
+from finguard_banking.application.queries.movement_summary import (
+    MovementSummaryHandler,
+    MovementSummaryQuery,
+)
+from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.errors import AccountNotFoundError
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import (
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query_result import (
     FinancialQueryResult,
     Movement,
     QueryGroup,
@@ -61,10 +65,14 @@ class FakeRepository:
         return self._result
 
 
+def _bus_with(repository: FakeRepository) -> QueryBus:
+    bus = QueryBus()
+    bus.register(MovementSummaryQuery, MovementSummaryHandler(repository))
+    return bus
+
+
 def _with_repository(result: FinancialQueryResult | None) -> TestClient:
-    app.dependency_overrides[run_financial_query] = lambda: RunFinancialQuery(
-        FakeRepository(result)
-    )
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(FakeRepository(result))
     return TestClient(app)
 
 
@@ -130,7 +138,7 @@ def test_sql_cannot_be_smuggled_in_as_an_extra_field() -> None:
 
 def test_a_relative_period_is_resolved_before_reaching_the_domain() -> None:
     repository = FakeRepository(RESULT)
-    app.dependency_overrides[run_financial_query] = lambda: RunFinancialQuery(repository)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
     body = {k: v for k, v in BODY.items() if k != "dateRange"}
 
     response = TestClient(app).post(

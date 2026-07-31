@@ -11,11 +11,23 @@ Public contract: [`packages/contracts/openapi/banking-api.yaml`](../../packages/
 ## Layers
 
 ```text
-domain/          value objects, models, ports, errors — no framework, no pydantic
-application/     use_cases/
+domain/          models/ · value_objects/ · ports/ · enums · constants · errors
+application/     bus/ (QueryBus · CommandBus) · queries/
 infrastructure/  controllers/ · dto/ · mappers/ · persistence/ · evaluation/ · error_handlers.py
 bootstrap/       composition root
 ```
+
+The line between the two domain packages, so it does not have to be guessed: `models/`
+carries an identity or is the outcome of an operation on one — `Balance`,
+`FinancialQuery`, `FinancialQueryResult`. `value_objects/` is defined purely by its
+attributes, with invariants and no identity — `Money`, `DateRange`, `Category`,
+`RelativePeriod`. Two value objects with equal fields are the same thing.
+
+CQRS: a controller never touches a handler or a repository. It builds a `Query` and asks the bus, which owns exactly one handler per query type — registering a second one for the same type raises, because otherwise the answer would depend on import order.
+
+`GetBalanceQuery → GetBalanceResult` and `MovementSummaryQuery → MovementSummaryResult`. A **query never answers with a domain model**: Results are flat carriers, so the controller cannot end up depending on the core's shape. The chain is rows → domain (`row_mapper`) → Result (handler) → DTO (`http_mapper`).
+
+`CommandBus` exists with no commands registered yet. That is deliberate: phase 5's money movements are where idempotency, audit and correlation IDs all want the same seam, and building it then would mean touching every write at once.
 
 The domain raises `DomainError` subclasses with a `code`, never bare `ValueError`, and [`error_handlers.py`](src/finguard_banking/infrastructure/error_handlers.py) maps that code to a status in one place: not found → `404`, invalid input → `422`, currency clash → `409`.
 
@@ -109,7 +121,7 @@ Instead of `dateRange` you can send a `period`, and the server resolves it. The 
 | `LAST_N_DAYS`, `n` | today and the `n-1` days before it |
 | `LAST_N_MONTHS`, `n` | from the 1st of `n-1` months ago, current month included |
 
-`reference` pins what "today" means; without it the current date in the reporting time zone is used. [`resolve`](src/finguard_banking/domain/relative_period.py) is a pure function — the clock lives at the edge — so its tests cover month ends, leap years and year boundaries without depending on when they run.
+`reference` pins what "today" means; without it the current date in the reporting time zone is used. [`resolve`](src/finguard_banking/domain/value_objects/relative_period.py) is a pure function — the clock lives at the edge — so its tests cover month ends, leap years and year boundaries without depending on when they run.
 
 Caps: 500 groups and 100 evidence movements per query (§8.6). Not implemented yet: `comparison` (comparing against the previous period) and the `AVG` metric. `metric` travels in the plan because it is part of the contract, but `SUM` and `COUNT` are both always returned: the client reads the one it asked for.
 

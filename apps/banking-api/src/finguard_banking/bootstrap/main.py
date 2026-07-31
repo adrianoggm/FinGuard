@@ -5,12 +5,25 @@ from typing import Any
 import asyncpg
 from fastapi import FastAPI
 
+from finguard_banking.application.bus.command_bus import CommandBus
+from finguard_banking.application.bus.query_bus import QueryBus
+from finguard_banking.application.queries.get_balance import GetBalanceHandler, GetBalanceQuery
+from finguard_banking.application.queries.movement_summary import (
+    MovementSummaryHandler,
+    MovementSummaryQuery,
+)
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import error_handlers
 from finguard_banking.infrastructure.controllers.banking_controller import (
     accounts_router,
     health_router,
     queries_router,
+)
+from finguard_banking.infrastructure.persistence.financial_query_repository import (
+    PostgresFinancialQueryRepository,
+)
+from finguard_banking.infrastructure.persistence.ledger_repository import (
+    PostgresLedgerRepository,
 )
 
 DESCRIPTION = """
@@ -43,6 +56,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.pool = pool
     app.state.query_pool = query_pool
+
+    # Handlers are wired once the pools exist: a handler holds its repository, and the
+    # repository holds the pool it reads from.
+    ledger = PostgresLedgerRepository(query_pool)
+    financial_queries = PostgresFinancialQueryRepository(
+        query_pool, settings.reporting_timezone, settings.groups_limit
+    )
+    app.state.query_bus.register(GetBalanceQuery, GetBalanceHandler(ledger))
+    app.state.query_bus.register(MovementSummaryQuery, MovementSummaryHandler(financial_queries))
+
     try:
         yield
     finally:
@@ -66,6 +89,11 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         lifespan=lifespan,
     )
+
+    # The buses exist before startup so tests can register a fake handler without
+    # bringing a database up.
+    app.state.query_bus = QueryBus()
+    app.state.command_bus = CommandBus()
 
     app.include_router(health_router)
     app.include_router(accounts_router)

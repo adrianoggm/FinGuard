@@ -8,7 +8,7 @@ the dataset do not change when the judge does.
 from dataclasses import dataclass
 from typing import Protocol
 
-from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 
 
 @dataclass(frozen=True)

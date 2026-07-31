@@ -1,32 +1,33 @@
-"""HTTP surface of the LLM layer. Routes only: shapes live in dto/, mapping in mappers/."""
+"""HTTP surface of the LLM layer.
+
+Routes only: shapes live in dto/, mapping in mappers/, and every route goes through a
+bus — a controller never touches a handler or the policy store directly.
+"""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from finguard_assistant.application.policy_store import PolicyStore
-from finguard_assistant.application.use_cases.answer_message import AnswerMessage
-from finguard_assistant.bootstrap.dependencies import (
-    get_answer_message,
-    get_catalogue,
-    get_policies,
-    get_provider_registry,
+from finguard_assistant.application.bus.command_bus import CommandBus
+from finguard_assistant.application.bus.query_bus import QueryBus
+from finguard_assistant.application.commands.replace_llm_policy import (
+    ReplaceLlmPolicyCommand,
+    ResetLlmPolicyCommand,
 )
-from finguard_assistant.domain.ports.model_catalogue import ModelCataloguePort
+from finguard_assistant.application.queries.answer_message import AnswerMessageQuery
+from finguard_assistant.application.queries.get_llm_catalogue import GetLlmCatalogueQuery
+from finguard_assistant.bootstrap.dependencies import get_command_bus, get_query_bus
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
     MessageResponse,
     PolicyRequest,
 )
-from finguard_assistant.infrastructure.llm.provider_registry import ProviderRegistry
 from finguard_assistant.infrastructure.mappers import llm_mapper
 
-Policies = Annotated[PolicyStore, Depends(get_policies)]
-Catalogue = Annotated[ModelCataloguePort, Depends(get_catalogue)]
-Registry = Annotated[ProviderRegistry, Depends(get_provider_registry)]
-Answering = Annotated[AnswerMessage, Depends(get_answer_message)]
+Queries = Annotated[QueryBus, Depends(get_query_bus)]
+Commands = Annotated[CommandBus, Depends(get_command_bus)]
 
 router = APIRouter(tags=["assistant"])
 
@@ -43,41 +44,36 @@ async def health() -> dict[str, str]:
 
 
 @router.get("/ready", summary="Readiness")
-async def ready(policies: Policies, registry: Registry) -> JSONResponse:
+async def ready(queries: Queries) -> JSONResponse:
     """Ready to serve: the active model's provider is one this build can talk to."""
-    provider = policies.current().model.provider
-    if provider not in registry.available():
+    catalogue = await queries.ask(GetLlmCatalogueQuery())
+    provider = catalogue.active.model.provider
+    if provider not in catalogue.available_providers:
         return JSONResponse({"status": "unavailable", "provider": provider}, status_code=503)
     return JSONResponse({"status": "ok", "provider": provider})
 
 
 @router.post("/v1/messages", summary="Answer a message")
-async def send_message(body: MessageRequest, answering: Answering) -> MessageResponse:
+async def send_message(body: MessageRequest, queries: Queries) -> MessageResponse:
     """Answers with the active model, falling back if the catalogue says so."""
-    return llm_mapper.answer_to_dto(await answering(body.prompt))
+    return llm_mapper.answer_to_dto(await queries.ask(AnswerMessageQuery(body.prompt)))
 
 
 @admin.get("/llm-policy", summary="Active policy and catalogue")
-async def read_policy(
-    policies: Policies, catalogue: Catalogue, registry: Registry
-) -> CatalogueResponse:
-    return llm_mapper.catalogue_to_dto(policies.current(), catalogue, registry.available())
+async def read_policy(queries: Queries) -> CatalogueResponse:
+    return llm_mapper.catalogue_to_dto(await queries.ask(GetLlmCatalogueQuery()))
 
 
 @admin.put("/llm-policy", summary="Swap the active policy")
-async def replace_policy(
-    body: PolicyRequest, policies: Policies, catalogue: Catalogue, registry: Registry
-) -> CatalogueResponse:
-    """The alias is resolved against the catalogue before anything is rebound, so an
-    unknown model never becomes active."""
-    policy = llm_mapper.policy_from_dto(body, catalogue, policies.current())
-    return llm_mapper.catalogue_to_dto(
-        await policies.replace(policy), catalogue, registry.available()
+async def replace_policy(body: PolicyRequest, commands: Commands) -> CatalogueResponse:
+    command = ReplaceLlmPolicyCommand(
+        model_alias=body.model_alias,
+        temperature=body.temperature,
+        max_output_tokens=body.max_output_tokens,
     )
+    return llm_mapper.catalogue_to_dto(await commands.dispatch(command))
 
 
 @admin.post("/llm-policy/reset", summary="Back to the startup policy")
-async def reset_policy(
-    policies: Policies, catalogue: Catalogue, registry: Registry
-) -> CatalogueResponse:
-    return llm_mapper.catalogue_to_dto(await policies.reset(), catalogue, registry.available())
+async def reset_policy(commands: Commands) -> CatalogueResponse:
+    return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))

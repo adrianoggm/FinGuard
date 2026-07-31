@@ -11,7 +11,7 @@ cannot: whether the answer reads as an answer, whether it covers the question as
 
 from datetime import UTC, datetime
 
-from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 from finguard_banking.domain.ports.result_judge import Assessment, Requirement, Verdict
 
 

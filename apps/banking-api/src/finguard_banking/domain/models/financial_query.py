@@ -14,11 +14,11 @@ from uuid import UUID
 from finguard_banking.domain.constants import (
     DEFAULT_SUPPORTING_MOVEMENTS,
     MAX_CATEGORIES,
-    MAX_CATEGORY_LENGTH,
     MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_banking.domain.enums import Direction, GroupBy, Metric
 from finguard_banking.domain.errors import InvalidValueError
+from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
 
 
@@ -28,7 +28,9 @@ class FinancialQuery:
     date_range: DateRange
     metric: Metric = Metric.SUM
     direction: Direction = Direction.ALL
-    categories: tuple[str, ...] = field(default_factory=tuple)
+    # Every category validated itself on construction: the plan only has to bound how
+    # many of them there are.
+    categories: tuple[Category, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     # How many movements to return as evidence for the figure.
     supporting_limit: int = DEFAULT_SUPPORTING_MOVEMENTS
@@ -42,8 +44,7 @@ class FinancialQuery:
             )
         if len(self.categories) > MAX_CATEGORIES:
             raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
-        for category in self.categories:
-            if not category.isascii() or not category.replace("_", "").isalnum():
-                raise InvalidValueError(f"invalid category: {category!r}")
-            if len(category) > MAX_CATEGORY_LENGTH:
-                raise InvalidValueError(f"category too long: {category!r}")
+
+    def category_values(self) -> list[str]:
+        """The plain strings, for the one place that needs them: a SQL parameter."""
+        return [category.value for category in self.categories]

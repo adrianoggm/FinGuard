@@ -1,7 +1,7 @@
 from typing import Protocol
 
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 
 
 class FinancialQueryRepository(Protocol):

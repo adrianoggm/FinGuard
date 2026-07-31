@@ -32,7 +32,7 @@ import asyncpg
 import yaml
 
 from finguard_banking.bootstrap.config import get_settings
-from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 from finguard_banking.domain.ports.result_judge import Requirement
 from finguard_banking.infrastructure.dto.banking_dto import FinancialQueryRequest
 from finguard_banking.infrastructure.evaluation.rule_based_judge import RuleBasedJudge
@@ -116,8 +116,8 @@ async def evaluate(cases: list[dict[str, Any]], heuristic: list[dict[str, Any]])
 
             plan["accountId"] = str(accounts[case["account"]])
             request = FinancialQueryRequest.model_validate(plan)
-            query = http_mapper.query_from_dto(request, date.today())
-            outcomes.append(_compare(case, await repository.run(query)))
+            plan = http_mapper.plan_from_dto(request, date.today())
+            outcomes.append(_compare(case, await repository.run(plan)))
 
         for case in heuristic:
             plan = dict(case["plan"])
@@ -126,8 +126,8 @@ async def evaluate(cases: list[dict[str, Any]], heuristic: list[dict[str, Any]])
                 return 2
             plan["accountId"] = str(accounts[case["account"]])
             request = FinancialQueryRequest.model_validate(plan)
-            query = http_mapper.query_from_dto(request, date.today())
-            outcomes.append(_judge(case, await repository.run(query)))
+            plan = http_mapper.plan_from_dto(request, date.today())
+            outcomes.append(_judge(case, await repository.run(plan)))
     finally:
         await reader.close()
         await owner.close()
