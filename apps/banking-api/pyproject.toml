@@ -18,8 +18,13 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8",
-    # httpx2 es el sucesor de httpx (github.com/pydantic/httpx2) y es lo que pide
-    # starlette>=1.3 en su testclient. Con "httpx" se cae al camino deprecado.
+    # Not a typosquat, and here is how to check it rather than take our word:
+    #   uv run python -c "import importlib.metadata as m; print(m.requires('starlette'))"
+    # prints httpx2>=2.0.0 for the 'full' extra — the requirement is starlette's own,
+    # not ours, and its testclient does `import httpx2 as httpx`. The package is
+    # github.com/pydantic/httpx2, pinned here by sha256 in uv.lock and installed with
+    # --frozen. Swapping it for httpx contradicts starlette and takes the deprecated
+    # path, so automated scanners flagging the name are wrong on this one.
     "httpx2>=2.9",
     "ruff>=0.9",
     "mypy>=1.14",
