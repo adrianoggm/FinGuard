@@ -1,8 +1,8 @@
-"""libro mayor de doble entrada: clientes, cuentas, asientos y proyección de saldo
+"""double-entry ledger: customers, accounts, entries and balance projection
 
-El DDL sigue el de docs/vision.md §8.5. Se añaden las claves foráneas que el spec
-describe en §8.1 pero no escribe, y las dos invariantes que ADR-002 y ADR-003 dan
-por ciertas: que cada transacción cuadre y que los asientos no se toquen.
+The DDL follows docs/vision.md §8.5. It adds the foreign keys the spec argues for in
+§8.1 but does not write, and the two invariants that ADR-002 and ADR-003 take for
+granted: that every transaction balances, and that entries are never touched.
 
 Revision ID: 0001_ledger
 Create Date: 2026-07-30
@@ -78,7 +78,7 @@ def upgrade() -> None:
         )
     """)
 
-    # Índices de docs/vision.md §8.7 que aplican a estas tablas.
+    # Indexes from docs/vision.md §8.7 that apply to these tables.
     op.execute("CREATE INDEX idx_ledger_entries_account ON ledger_entries(account_id)")
     op.execute("CREATE INDEX idx_ledger_entries_transaction ON ledger_entries(transaction_id)")
     op.execute("CREATE INDEX idx_transactions_occurred_at ON ledger_transactions(occurred_at)")
@@ -88,42 +88,42 @@ def upgrade() -> None:
     )
     op.execute("CREATE INDEX idx_transactions_metadata ON ledger_transactions USING GIN(metadata)")
 
-    # ADR-003: toda transacción tiene débitos y créditos equilibrados.
-    # Se comprueba por moneda, no sobre el total: 25 EUR al debe contra 25 USD al
-    # haber suman cero y no son una transacción válida.
-    # Es un CONSTRAINT TRIGGER diferido, así que se evalúa al COMMIT y los asientos
-    # de una misma transacción pueden insertarse en varias sentencias.
+    # ADR-003: every transaction has balanced debits and credits.
+    # Checked per currency, not on the total: 25 EUR debited against 25 USD credited
+    # adds up to zero and is not a valid transaction.
+    # It is a deferred CONSTRAINT TRIGGER, so it runs at COMMIT and the entries of one
+    # transaction may be inserted across several statements.
     op.execute("""
         CREATE FUNCTION assert_transaction_is_balanced() RETURNS TRIGGER AS $$
         DECLARE
-            descuadres INTEGER;
-            monedas_ajenas INTEGER;
+            unbalanced INTEGER;
+            foreign_currencies INTEGER;
         BEGIN
-            SELECT COUNT(*) INTO descuadres FROM (
+            SELECT COUNT(*) INTO unbalanced FROM (
                 SELECT currency,
                        SUM(CASE WHEN entry_type = 'DEBIT' THEN amount_minor
                                 ELSE -amount_minor END) AS delta
                 FROM ledger_entries
                 WHERE transaction_id = NEW.transaction_id
                 GROUP BY currency
-            ) por_moneda
+            ) per_currency
             WHERE delta <> 0;
 
-            IF descuadres > 0 THEN
+            IF unbalanced > 0 THEN
                 RAISE EXCEPTION
-                    'transaccion % desequilibrada: los debitos y creditos no cuadran por moneda',
+                    'transaction % is unbalanced: debits and credits do not match per currency',
                     NEW.transaction_id;
             END IF;
 
-            SELECT COUNT(*) INTO monedas_ajenas
+            SELECT COUNT(*) INTO foreign_currencies
             FROM ledger_entries e
             JOIN accounts a ON a.id = e.account_id
             WHERE e.transaction_id = NEW.transaction_id
               AND e.currency <> a.currency;
 
-            IF monedas_ajenas > 0 THEN
+            IF foreign_currencies > 0 THEN
                 RAISE EXCEPTION
-                    'transaccion %: hay asientos en una moneda distinta a la de su cuenta',
+                    'transaction %: entries in a currency other than their account',
                     NEW.transaction_id;
             END IF;
 
@@ -132,7 +132,7 @@ def upgrade() -> None:
         $$ LANGUAGE plpgsql
     """)
 
-    # Solo en INSERT: UPDATE y DELETE los bloquea el trigger de inmutabilidad.
+    # INSERT only: UPDATE and DELETE are blocked by the immutability trigger.
     op.execute("""
         CREATE CONSTRAINT TRIGGER ledger_entries_balanced
             AFTER INSERT ON ledger_entries
@@ -140,15 +140,15 @@ def upgrade() -> None:
             FOR EACH ROW EXECUTE FUNCTION assert_transaction_is_balanced()
     """)
 
-    # ADR-002: los movimientos no se modifican ni se borran; una corrección es una
-    # transacción compensatoria nueva. El status de ledger_transactions sí cambia
-    # (por ejemplo a BOOKED), por eso ahí solo se bloquea el DELETE.
+    # ADR-002: movements are never modified or deleted; a correction is a new
+    # compensating transaction. The status of ledger_transactions does change (to
+    # BOOKED, for instance), which is why only DELETE is blocked there.
     op.execute("""
         CREATE FUNCTION reject_ledger_mutation() RETURNS TRIGGER AS $$
         BEGIN
             RAISE EXCEPTION
-                'el libro mayor es inmutable: % sobre % no esta permitido, '
-                'usa una transaccion compensatoria',
+                'the ledger is immutable: % on % is not allowed, '
+                'use a compensating transaction',
                 TG_OP, TG_TABLE_NAME;
         END;
         $$ LANGUAGE plpgsql

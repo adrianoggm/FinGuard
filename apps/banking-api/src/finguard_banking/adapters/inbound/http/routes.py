@@ -30,27 +30,19 @@ DatabaseAnswers = Annotated[bool, Depends(database_answers)]
 Today = Annotated[date, Depends(reporting_today)]
 
 
-class _Respuesta(BaseModel):
-    """Hacia fuera todo va en camelCase, como los contratos de vision.md §13."""
+class _Payload(BaseModel):
+    """Outwards everything is camelCase, like the contracts in vision.md §13."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, from_attributes=True)
 
 
-class BalanceResponse(_Respuesta):
-    account_id: UUID
-    available_minor: int
-    booked_minor: int
-    currency: str
-    as_of: datetime
-
-
 class FinancialQueryRequest(BaseModel):
-    """Cuerpo de la petición.
+    """Request body.
 
-    Admite el rango explícito o un periodo relativo; el dominio solo conoce rangos
-    absolutos, así que la resolución ocurre aquí, en el borde, que es donde vive el
-    reloj. Los límites de cada campo los valida el dominio: aquí no se duplican para
-    que no puedan divergir.
+    Accepts either an explicit range or a relative period; the domain only knows
+    absolute ranges, so the resolution happens here, at the edge, which is where the
+    clock lives. Per-field limits are validated by the domain: they are not duplicated
+    here so that they cannot drift apart.
     """
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
@@ -66,38 +58,46 @@ class FinancialQueryRequest(BaseModel):
     explain: bool = False
 
     @model_validator(mode="after")
-    def _un_solo_periodo(self) -> Self:
+    def _exactly_one_range(self) -> Self:
         if (self.date_range is None) == (self.period is None):
-            raise ValueError("indica exactamente uno de dateRange o period")
+            raise ValueError("provide exactly one of dateRange or period")
         return self
 
-    def a_consulta(self, hoy: date) -> FinancialQuery:
+    def to_query(self, today: date) -> FinancialQuery:
         if self.date_range is not None:
-            rango = self.date_range
+            date_range = self.date_range
         elif self.period is not None:
-            rango = resolve(self.period, hoy)
-        else:  # pragma: no cover - lo impide el validador
-            raise ValueError("falta el periodo")
+            date_range = resolve(self.period, today)
+        else:  # pragma: no cover - prevented by the validator
+            raise ValueError("missing period")
 
         return FinancialQuery(
             account_id=self.account_id,
             metric=self.metric,
             direction=self.direction,
             categories=self.categories,
-            date_range=rango,
+            date_range=date_range,
             group_by=self.group_by,
             supporting_limit=self.supporting_limit,
             explain=self.explain,
         )
 
 
-class GroupResponse(_Respuesta):
+class BalanceResponse(_Payload):
+    account_id: UUID
+    available_minor: int
+    booked_minor: int
+    currency: str
+    as_of: datetime
+
+
+class GroupResponse(_Payload):
     key: str
     total_minor: int
     movement_count: int
 
 
-class MovementResponse(_Respuesta):
+class MovementResponse(_Payload):
     transaction_id: UUID
     occurred_at: datetime
     description: str
@@ -107,13 +107,13 @@ class MovementResponse(_Respuesta):
     direction: str
 
 
-class TraceResponse(_Respuesta):
+class TraceResponse(_Payload):
     sql: str
     parameters: list[str]
     elapsed_ms: float
 
 
-class FinancialQueryResponse(_Respuesta):
+class FinancialQueryResponse(_Payload):
     account_id: UUID
     currency: str
     total_minor: int
@@ -128,13 +128,13 @@ router = APIRouter()
 
 @router.get("/health")
 async def health() -> dict[str, str]:
-    """El proceso responde. No comprueba dependencias a propósito."""
+    """The process answers. It deliberately does not check dependencies."""
     return {"status": "ok"}
 
 
 @router.get("/ready")
 async def ready(database_answers: DatabaseAnswers) -> JSONResponse:
-    """Listo para servir: la base de datos contesta."""
+    """Ready to serve: the database answers."""
     if not database_answers:
         return JSONResponse({"status": "unavailable", "database": "down"}, status_code=503)
     return JSONResponse({"status": "ok", "database": "up"})
@@ -147,11 +147,11 @@ async def read_balance(account_id: UUID, balances: Balances) -> BalanceResponse:
 
 @router.post("/v1/financial-queries")
 async def post_financial_query(
-    body: FinancialQueryRequest, queries: Queries, hoy: Today
+    body: FinancialQueryRequest, queries: Queries, today: Today
 ) -> FinancialQueryResponse:
-    """Ejecuta un plan de consulta validado (§13.2).
+    """Runs a validated query plan (§13.2).
 
-    El cuerpo es la representación intermedia del §9.2, no SQL: se rechaza cualquier
-    campo que no se reconozca. Si trae un periodo relativo, se resuelve aquí.
+    The body is the intermediate representation from §9.2, not SQL: any field we do
+    not recognise is rejected. If it carries a relative period, it is resolved here.
     """
-    return FinancialQueryResponse.model_validate(await queries(body.a_consulta(hoy)))
+    return FinancialQueryResponse.model_validate(await queries(body.to_query(today)))

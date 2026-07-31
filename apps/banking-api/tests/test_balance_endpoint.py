@@ -1,4 +1,4 @@
-"""El endpoint del contrato §13.1, sin base de datos: aquí solo se prueba la forma."""
+"""The §13.1 endpoint, without a database: only its shape is checked here."""
 
 import uuid
 from datetime import UTC, datetime
@@ -12,44 +12,44 @@ from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.balance import Balance
 from finguard_banking.domain.errors import AccountNotFoundError
 
-CUENTA = uuid.UUID("11111111-1111-1111-1111-111111111111")
-INSTANTE = datetime(2026, 7, 30, 9, 30, tzinfo=UTC)
+ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
+MOMENT = datetime(2026, 7, 30, 9, 30, tzinfo=UTC)
 
 
-class RepositorioFalso:
-    def __init__(self, saldo: Balance | None) -> None:
-        self._saldo = saldo
+class FakeRepository:
+    def __init__(self, balance: Balance | None) -> None:
+        self._balance = balance
 
     async def balance_of(self, account_id: uuid.UUID) -> Balance:
-        if self._saldo is None:
+        if self._balance is None:
             raise AccountNotFoundError(account_id)
-        return self._saldo
+        return self._balance
 
 
-def _con_repositorio(saldo: Balance | None) -> TestClient:
-    app.dependency_overrides[get_balance] = lambda: GetBalance(RepositorioFalso(saldo))
+def _with_repository(balance: Balance | None) -> TestClient:
+    app.dependency_overrides[get_balance] = lambda: GetBalance(FakeRepository(balance))
     return TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def _limpiar_overrides() -> None:
+def _clear_overrides() -> None:
     app.dependency_overrides.clear()
 
 
-def test_devuelve_el_saldo_con_los_nombres_del_contrato() -> None:
-    saldo = Balance(
-        account_id=CUENTA,
+def test_it_returns_the_balance_with_the_contract_names() -> None:
+    balance = Balance(
+        account_id=ACCOUNT,
         available_minor=146035,
         booked_minor=146035,
         currency="EUR",
-        as_of=INSTANTE,
+        as_of=MOMENT,
     )
 
-    response = _con_repositorio(saldo).get(f"/v1/accounts/{CUENTA}/balance")
+    response = _with_repository(balance).get(f"/v1/accounts/{ACCOUNT}/balance")
 
     assert response.status_code == 200
     assert response.json() == {
-        "accountId": str(CUENTA),
+        "accountId": str(ACCOUNT),
         "availableMinor": 146035,
         "bookedMinor": 146035,
         "currency": "EUR",
@@ -57,13 +57,13 @@ def test_devuelve_el_saldo_con_los_nombres_del_contrato() -> None:
     }
 
 
-def test_una_cuenta_inexistente_devuelve_404() -> None:
-    response = _con_repositorio(None).get(f"/v1/accounts/{CUENTA}/balance")
+def test_an_unknown_account_returns_404() -> None:
+    response = _with_repository(None).get(f"/v1/accounts/{ACCOUNT}/balance")
 
     assert response.status_code == 404
 
 
-def test_un_identificador_que_no_es_uuid_no_llega_al_dominio() -> None:
-    response = _con_repositorio(None).get("/v1/accounts/no-soy-un-uuid/balance")
+def test_an_identifier_that_is_not_a_uuid_never_reaches_the_domain() -> None:
+    response = _with_repository(None).get("/v1/accounts/not-a-uuid/balance")
 
     assert response.status_code == 422

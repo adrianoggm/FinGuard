@@ -20,16 +20,16 @@ from finguard_banking.ports.financial_query_repository import FinancialQueryRepo
 from finguard_banking.ports.ledger_repository import LedgerRepository
 
 
-# asyncpg.Pool solo es genérico para el type checker, así que estas anotaciones no
-# pueden evaluarse en tiempo de ejecución: de ahí el `from __future__ import annotations`.
+# asyncpg.Pool is only generic for the type checker, so these annotations cannot be
+# evaluated at runtime: hence `from __future__ import annotations`.
 def _pool(request: Request) -> asyncpg.Pool[Any]:
-    """Pool del propietario: escrituras y comprobación de estado."""
+    """Owner pool: writes and health checks."""
     pool: asyncpg.Pool[Any] = request.app.state.pool
     return pool
 
 
 def _query_pool(request: Request) -> asyncpg.Pool[Any]:
-    """Pool de solo lectura: todo lo que se consulta pasa por aquí (§8.6)."""
+    """Read-only pool: everything that is queried goes through here (§8.6)."""
     pool: asyncpg.Pool[Any] = request.app.state.query_pool
     return pool
 
@@ -51,16 +51,16 @@ def run_financial_query(request: Request) -> RunFinancialQuery:
 
 
 def reporting_today(request: Request) -> date:
-    """Qué día es hoy en la zona del informe.
+    """What day it is in the reporting time zone.
 
-    El reloj vive en el borde: el dominio resuelve periodos con una función pura y no
-    consulta la hora, así que sus resultados no dependen de cuándo se ejecuten.
+    The clock lives at the edge: the domain resolves periods with a pure function and
+    never reads the time, so its results do not depend on when they run.
     """
     return datetime.now(ZoneInfo(get_settings().reporting_timezone)).date()
 
 
 async def database_answers(request: Request) -> bool:
-    """Si la base de datos contesta. La capa HTTP no necesita saber cómo se pregunta."""
+    """Whether the database answers. The HTTP layer need not know how we ask."""
     try:
         async with _pool(request).acquire() as connection:
             await connection.execute("SELECT 1")

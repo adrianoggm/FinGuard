@@ -13,10 +13,10 @@ from finguard_banking.bootstrap.config import get_settings
 
 @pytest.fixture
 async def connection() -> AsyncIterator[asyncpg.Connection]:
-    """Conexión cuyo trabajo se deshace al terminar: los tests no dejan rastro.
+    """A connection whose work is undone at the end: tests leave no trace.
 
-    El libro mayor es inmutable, así que un test no podría borrar sus propios
-    datos: la única limpieza posible es no confirmar la transacción.
+    The ledger is immutable, so a test could not delete its own data: the only
+    possible cleanup is never committing the transaction.
     """
     conn: asyncpg.Connection = await asyncpg.connect(get_settings().database_url)
     transaction = conn.transaction()
@@ -28,11 +28,11 @@ async def connection() -> AsyncIterator[asyncpg.Connection]:
         await conn.close()
 
 
-async def crear_cuenta(conn: asyncpg.Connection, currency: str = "EUR") -> uuid.UUID:
+async def create_account(conn: asyncpg.Connection, currency: str = "EUR") -> uuid.UUID:
     customer_id = uuid.uuid4()
     account_id = uuid.uuid4()
     await conn.execute(
-        "INSERT INTO customers (id, full_name) VALUES ($1, $2)", customer_id, "Cliente de prueba"
+        "INSERT INTO customers (id, full_name) VALUES ($1, $2)", customer_id, "Test customer"
     )
     await conn.execute(
         "INSERT INTO accounts (id, customer_id, account_reference, currency, status) "
@@ -45,21 +45,21 @@ async def crear_cuenta(conn: asyncpg.Connection, currency: str = "EUR") -> uuid.
     return account_id
 
 
-async def crear_transaccion(
+async def create_transaction(
     conn: asyncpg.Connection,
     status: str = "BOOKED",
     *,
-    categoria: str | None = None,
-    comercio: str | None = None,
-    ocurrido: datetime | None = None,
-    descripcion: str = "Movimiento de prueba",
+    category: str | None = None,
+    merchant: str | None = None,
+    occurred_at: datetime | None = None,
+    description: str = "Test movement",
 ) -> uuid.UUID:
     transaction_id = uuid.uuid4()
-    metadatos: dict[str, str] = {}
-    if categoria is not None:
-        metadatos["category"] = categoria
-    if comercio is not None:
-        metadatos["merchant_name"] = comercio
+    metadata: dict[str, str] = {}
+    if category is not None:
+        metadata["category"] = category
+    if merchant is not None:
+        metadata["merchant_name"] = merchant
 
     await conn.execute(
         "INSERT INTO ledger_transactions "
@@ -68,49 +68,14 @@ async def crear_transaccion(
         transaction_id,
         status,
         f"ref-{transaction_id.hex[:12]}",
-        descripcion,
-        json.dumps(metadatos),
-        ocurrido,
+        description,
+        json.dumps(metadata),
+        occurred_at,
     )
     return transaction_id
 
 
-async def registrar(
-    conn: asyncpg.Connection,
-    cuenta: uuid.UUID,
-    contrapartida: uuid.UUID,
-    importe_minor: int,
-    **kwargs: Any,
-) -> uuid.UUID:
-    """Un movimiento completo y cuadrado. Importe positivo = entra dinero a `cuenta`."""
-    transaccion = await crear_transaccion(conn, **kwargs)
-    entra = importe_minor > 0
-    importe = abs(importe_minor)
-    await anotar(conn, transaccion, cuenta, "CREDIT" if entra else "DEBIT", importe)
-    await anotar(conn, transaccion, contrapartida, "DEBIT" if entra else "CREDIT", importe)
-    return transaccion
-
-
-def como_pool(conn: asyncpg.Connection) -> Any:
-    """Hace pasar una conexión suelta por un pool.
-
-    Los repositorios piden un pool y hacen `acquire()`. En los tests hay que
-    reutilizar la conexión del fixture, porque los datos viven en una transacción
-    sin confirmar que otra conexión no vería.
-    """
-
-    class _PoolDeUnaConexion:
-        def acquire(self) -> Any:
-            @asynccontextmanager
-            async def prestada() -> AsyncIterator[asyncpg.Connection]:
-                yield conn
-
-            return prestada()
-
-    return _PoolDeUnaConexion()
-
-
-async def anotar(
+async def post_entry(
     conn: asyncpg.Connection,
     transaction_id: uuid.UUID,
     account_id: uuid.UUID,
@@ -133,10 +98,45 @@ async def anotar(
     return entry_id
 
 
-async def forzar_comprobacion(conn: asyncpg.Connection) -> None:
-    """Dispara los triggers diferidos sin confirmar la transacción.
+async def record_movement(
+    conn: asyncpg.Connection,
+    account: uuid.UUID,
+    counterparty: uuid.UUID,
+    amount_minor: int,
+    **kwargs: Any,
+) -> uuid.UUID:
+    """A complete, balanced movement. A positive amount means money into `account`."""
+    transaction_id = await create_transaction(conn, **kwargs)
+    incoming = amount_minor > 0
+    amount = abs(amount_minor)
+    await post_entry(conn, transaction_id, account, "CREDIT" if incoming else "DEBIT", amount)
+    await post_entry(conn, transaction_id, counterparty, "DEBIT" if incoming else "CREDIT", amount)
+    return transaction_id
 
-    La invariante del cuadre se evalúa al COMMIT; esto la evalúa ahora, que es la
-    única forma de comprobarla sin dejar datos escritos.
+
+async def force_deferred_checks(conn: asyncpg.Connection) -> None:
+    """Fires the deferred triggers without committing.
+
+    The balance invariant is evaluated at COMMIT; this evaluates it now, which is the
+    only way to check it without leaving data behind.
     """
     await conn.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
+def as_pool(conn: asyncpg.Connection) -> Any:
+    """Makes a single connection look like a pool.
+
+    Repositories ask for a pool and call `acquire()`. Tests must reuse the fixture's
+    connection, because the data lives in an uncommitted transaction that another
+    connection would not see.
+    """
+
+    class _SingleConnectionPool:
+        def acquire(self) -> Any:
+            @asynccontextmanager
+            async def borrowed() -> AsyncIterator[asyncpg.Connection]:
+                yield conn
+
+            return borrowed()
+
+    return _SingleConnectionPool()

@@ -4,10 +4,10 @@ from finguard_banking.ports.financial_query_repository import FinancialQueryRepo
 
 
 class RunFinancialQuery:
-    """Resuelve una consulta financiera.
+    """Resolves a financial query.
 
-    El plan llega ya validado por el dominio. Aquí entrará la comprobación de que
-    quien pregunta es el titular de la cuenta (§12 de la visión).
+    The plan arrives already validated by the domain. The check that the caller owns
+    the account will go here (§12 of the vision).
     """
 
     def __init__(self, queries: FinancialQueryRepository) -> None:

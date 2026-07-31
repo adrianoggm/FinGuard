@@ -6,8 +6,8 @@ from typing import Any
 import asyncpg
 
 from finguard_banking.adapters.outbound.postgres.query_compiler import (
-    compilar_agregado,
-    compilar_movimientos,
+    compile_aggregate,
+    compile_movements,
 )
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.financial_query import FinancialQuery
@@ -18,9 +18,9 @@ from finguard_banking.domain.financial_query_result import (
     QueryTrace,
 )
 
-# La moneda y la existencia de la cuenta salen de la vista de saldos, no de la tabla
-# accounts: el rol de consulta no la alcanza, y es justo lo que tiene que pasar.
-_CUENTA_SQL = """
+# The currency and the existence of the account come from the balances view, not from
+# the accounts table: the query role cannot reach it, and that is exactly the point.
+_ACCOUNT_SQL = """
     SELECT b.currency
     FROM assistant_read.account_balances_v1 b
     WHERE b.account_id = $1
@@ -33,56 +33,56 @@ class PostgresFinancialQueryRepository:
         self._timezone = reporting_timezone
 
     async def run(self, query: FinancialQuery) -> FinancialQueryResult:
-        agregado = compilar_agregado(query, self._timezone)
-        movimientos = compilar_movimientos(query, self._timezone)
+        aggregate = compile_aggregate(query, self._timezone)
+        movements = compile_movements(query, self._timezone)
 
-        comienzo = time.perf_counter()
+        started = time.perf_counter()
         async with self._pool.acquire() as connection:
-            moneda = await connection.fetchval(_CUENTA_SQL, query.account_id)
-            # Una cuenta que no existe no es una cuenta sin movimientos.
-            if moneda is None:
+            currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
+            # An account that does not exist is not an account without movements.
+            if currency is None:
                 raise AccountNotFoundError(query.account_id)
 
-            filas = await connection.fetch(agregado.sql, *agregado.parameters)
-            justificantes = (
-                await connection.fetch(movimientos.sql, *movimientos.parameters)
+            rows = await connection.fetch(aggregate.sql, *aggregate.parameters)
+            supporting = (
+                await connection.fetch(movements.sql, *movements.parameters)
                 if query.supporting_limit
                 else []
             )
-        transcurrido_ms = (time.perf_counter() - comienzo) * 1000
+        elapsed_ms = (time.perf_counter() - started) * 1000
 
-        grupos = [
+        groups = [
             QueryGroup(
-                key=str(fila["clave"]),
-                total_minor=int(fila["total_minor"]),
-                movement_count=int(fila["movement_count"]),
+                key=str(row["key"]),
+                total_minor=int(row["total_minor"]),
+                movement_count=int(row["movement_count"]),
             )
-            for fila in filas
+            for row in rows
         ]
 
         return FinancialQueryResult(
             account_id=query.account_id,
-            currency=moneda,
-            # El total sale de los grupos: una sola consulta, un solo recuento.
-            total_minor=sum(grupo.total_minor for grupo in grupos),
-            movement_count=sum(grupo.movement_count for grupo in grupos),
-            groups=grupos,
+            currency=currency,
+            # The total comes from the groups: one query, one count.
+            total_minor=sum(group.total_minor for group in groups),
+            movement_count=sum(group.movement_count for group in groups),
+            groups=groups,
             supporting_movements=[
                 Movement(
-                    transaction_id=fila["transaction_id"],
-                    occurred_at=fila["occurred_at"],
-                    description=fila["description"],
-                    merchant_name=fila["merchant_name"],
-                    category=fila["category"],
-                    amount_minor=int(fila["amount_minor"]),
-                    direction=fila["direction"],
+                    transaction_id=row["transaction_id"],
+                    occurred_at=row["occurred_at"],
+                    description=row["description"],
+                    merchant_name=row["merchant_name"],
+                    category=row["category"],
+                    amount_minor=int(row["amount_minor"]),
+                    direction=row["direction"],
                 )
-                for fila in justificantes
+                for row in supporting
             ],
             trace=QueryTrace(
-                sql=" ".join(agregado.sql.split()),
-                parameters=[str(valor) for valor in agregado.parameters],
-                elapsed_ms=round(transcurrido_ms, 2),
+                sql=" ".join(aggregate.sql.split()),
+                parameters=[str(value) for value in aggregate.parameters],
+                elapsed_ms=round(elapsed_ms, 2),
             )
             if query.explain
             else None,

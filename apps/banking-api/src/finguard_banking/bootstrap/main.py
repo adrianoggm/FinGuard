@@ -15,12 +15,12 @@ from finguard_banking.domain.errors import AccountNotFoundError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Dos pools con roles distintos (vision.md §8.6): el propietario para escribir y
-    # comprobar el estado, y uno de solo lectura para todo lo que se consulta. Que el
-    # camino de lectura no pueda escribir no depende de que este código sea correcto.
+    # Two pools with different roles (vision.md §8.6): the owner writes and checks
+    # health, a read-only one serves everything that is queried. The read path being
+    # unable to write does not depend on this code being correct.
     #
-    # ponytail: si la base de datos no está, el arranque falla y se ve el error de una vez.
-    # Para arrancar sin base de datos, mover la creación de los pools a /ready.
+    # ponytail: if the database is down, startup fails and the error shows up at once.
+    # To start without a database, move pool creation to /ready.
     settings = get_settings()
     pool: asyncpg.Pool[Any] = await asyncpg.create_pool(
         settings.database_url, min_size=1, max_size=5
@@ -48,9 +48,9 @@ async def account_not_found(request: Request, exc: Exception) -> JSONResponse:
 
 @app.exception_handler(ValidationError)
 async def invalid_query(request: Request, exc: Exception) -> JSONResponse:
-    """Un plan que el dominio rechaza es un 422, no un error del servidor.
+    """A plan the domain rejects is a 422, not a server error.
 
-    Los límites se validan una sola vez, en el dominio; el adaptador solo traduce.
+    Limits are validated once, in the domain; the adapter only translates.
     """
-    detalle = exc.errors() if isinstance(exc, ValidationError) else [{"msg": str(exc)}]
-    return JSONResponse({"detail": jsonable_encoder(detalle)}, status_code=422)
+    detail = exc.errors() if isinstance(exc, ValidationError) else [{"msg": str(exc)}]
+    return JSONResponse({"detail": jsonable_encoder(detail)}, status_code=422)
