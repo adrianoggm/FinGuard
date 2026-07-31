@@ -8,29 +8,14 @@ Here it is a pure function, so the result never depends on when it runs.
 from __future__ import annotations
 
 from datetime import date, timedelta
-from enum import StrEnum
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
+from finguard_banking.domain.constants import MAX_PERIOD_DAYS, MAX_PERIOD_MONTHS
+from finguard_banking.domain.enums import Period
 from finguard_banking.domain.financial_query import DateRange
-
-MAX_MONTHS = 24
-MAX_DAYS = 366
-
-
-class Period(StrEnum):
-    TODAY = "TODAY"
-    YESTERDAY = "YESTERDAY"
-    THIS_WEEK = "THIS_WEEK"
-    LAST_WEEK = "LAST_WEEK"
-    THIS_MONTH = "THIS_MONTH"
-    LAST_MONTH = "LAST_MONTH"
-    THIS_YEAR = "THIS_YEAR"
-    LAST_N_DAYS = "LAST_N_DAYS"
-    LAST_N_MONTHS = "LAST_N_MONTHS"
-
 
 NEEDS_COUNT = (Period.LAST_N_DAYS, Period.LAST_N_MONTHS)
 
@@ -44,7 +29,7 @@ class RelativePeriod(BaseModel):
     )
 
     period: Period
-    n: int | None = Field(default=None, ge=1, le=MAX_DAYS)
+    n: int | None = Field(default=None, ge=1, le=MAX_PERIOD_DAYS)
     reference: date | None = None
 
     @model_validator(mode="after")
@@ -54,8 +39,12 @@ class RelativePeriod(BaseModel):
             raise ValueError(f"{self.period} requires n")
         if not needed and self.n is not None:
             raise ValueError(f"{self.period} does not accept n")
-        if self.period is Period.LAST_N_MONTHS and self.n is not None and self.n > MAX_MONTHS:
-            raise ValueError(f"at most {MAX_MONTHS} months")
+        if (
+            self.period is Period.LAST_N_MONTHS
+            and self.n is not None
+            and self.n > MAX_PERIOD_MONTHS
+        ):
+            raise ValueError(f"at most {MAX_PERIOD_MONTHS} months")
         return self
 
 

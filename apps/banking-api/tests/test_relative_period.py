@@ -5,7 +5,8 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from finguard_banking.domain.relative_period import Period, RelativePeriod, resolve
+from finguard_banking.domain.enums import Period
+from finguard_banking.domain.relative_period import RelativePeriod, resolve
 
 # A Wednesday, so "this week" and "last week" do not line up with the month.
 WEDNESDAY = date(2026, 7, 15)

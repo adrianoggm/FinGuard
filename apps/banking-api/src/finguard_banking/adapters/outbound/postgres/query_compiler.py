@@ -14,12 +14,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from finguard_banking.domain.financial_query import Direction, FinancialQuery, GroupBy
+from finguard_banking.domain.constants import MAX_GROUPS, UNCATEGORISED, UNKNOWN_MERCHANT
+from finguard_banking.domain.enums import Direction, GroupBy
+from finguard_banking.domain.financial_query import FinancialQuery
 
 VIEW = "assistant_read.transactions_v1"
-
-# Cap on rows returned per query (vision.md §8.6).
-MAX_GROUPS = 500
 
 
 @dataclass(frozen=True)
@@ -54,11 +53,9 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
         case GroupBy.MONTH:
             return f"to_char(t.occurred_at AT TIME ZONE {tz}, 'YYYY-MM')"
         case GroupBy.CATEGORY:
-            # Contract values, so English: the assistant is the one that phrases
-            # them for a Spanish-speaking user.
-            return "COALESCE(t.category, 'UNCATEGORISED')"
+            return f"COALESCE(t.category, '{UNCATEGORISED}')"
         case GroupBy.MERCHANT:
-            return "COALESCE(t.merchant_name, 'UNKNOWN_MERCHANT')"
+            return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
 
 
 def _amount_expression(direction: Direction) -> str:
