@@ -6,13 +6,13 @@ from finguard_assistant.domain.llm_policy import LlmPolicy
 
 
 class Settings(BaseSettings):
-    """Configuración del servicio. Se sobreescribe con variables ASSISTANT_*."""
+    """Service configuration. Overridden through ASSISTANT_* environment variables."""
 
     model_config = SettingsConfigDict(
         env_prefix="ASSISTANT_", env_file=".env", extra="ignore", protected_namespaces=()
     )
 
-    # Política por defecto al arrancar. En caliente se cambia por HTTP.
+    # Default policy at startup. At runtime it is swapped over HTTP.
     llm_provider: str = "echo"
     llm_model: str = "echo-1"
     llm_temperature: float = 0.2

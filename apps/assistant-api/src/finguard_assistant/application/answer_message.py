@@ -13,10 +13,10 @@ class Answer:
 
 
 class AnswerMessage:
-    """Responde un mensaje con el proveedor que indique la política activa.
+    """Answers a message with whichever provider the active policy names.
 
-    La política se lee una sola vez por petición: si alguien la cambia mientras
-    se genera la respuesta, esta termina con la que tenía al empezar.
+    The policy is read once per request: if someone swaps it while the answer is
+    being generated, that answer finishes with the one it started with.
     """
 
     def __init__(

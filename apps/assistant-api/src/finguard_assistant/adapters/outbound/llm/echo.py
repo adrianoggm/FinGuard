@@ -1,8 +1,8 @@
 class EchoProvider:
-    """Proveedor determinista para desarrollo y tests: no llama a ninguna API.
+    """A deterministic provider for development and tests: it calls no API.
 
-    Devuelve el modelo en la respuesta, así que sirve para comprobar qué política
-    estaba activa cuando se atendió la petición.
+    It echoes the model back in the answer, which makes it useful for checking which
+    policy was active when a request was served.
     """
 
     name = "echo"

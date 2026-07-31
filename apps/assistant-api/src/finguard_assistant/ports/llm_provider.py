@@ -3,10 +3,10 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class LlmProvider(Protocol):
-    """Contrato único que cumple cualquier proveedor de LLM.
+    """The single contract every LLM provider fulfils.
 
-    El resto del servicio solo conoce esta interfaz: cambiar de proveedor no
-    obliga a tocar los casos de uso ni el dominio.
+    The rest of the service only knows this interface: switching provider does not
+    force a change in the use cases or the domain.
     """
 
     name: str
