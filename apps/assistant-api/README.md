@@ -1,43 +1,43 @@
 # assistant-api
 
-Orquestador conversacional. Puerto local `8000`.
+Conversational orchestrator. Local port `8000`.
 
-Mantiene el contexto, interpreta la intención, construye el `FinancialQuery`, selecciona herramientas, coordina consultas y operaciones, genera explicaciones y el plan visual, e integra los proveedores LLM.
+Keeps the context, interprets intent, builds the `FinancialQuery`, selects tools, coordinates queries and operations, produces explanations and the visual plan, and integrates the LLM providers.
 
-No conoce las tablas bancarias ni ejecuta SQL. Llama a `banking-api` mediante el cliente generado desde el contrato.
+It knows nothing about the banking tables and never runs SQL. It calls `banking-api` through the client generated from the contract.
 
-Contrato público: [`packages/contracts/openapi/assistant-api.yaml`](../../packages/contracts/openapi/assistant-api.yaml) (pendiente).
+Public contract: [`packages/contracts/openapi/assistant-api.yaml`](../../packages/contracts/openapi/assistant-api.yaml) (pending).
 
-## Capa de proveedores de LLM
+## LLM provider layer
 
-Todo el servicio habla con un único contrato, [`ports/llm_provider.py`](src/finguard_assistant/ports/llm_provider.py):
+The whole service talks through a single contract, [`ports/llm_provider.py`](src/finguard_assistant/ports/llm_provider.py):
 
 ```python
 async def complete(self, prompt: str, *, model: str, temperature: float) -> str
 ```
 
-Qué proveedor se usa lo decide la **política activa**, que vive en memoria y se cambia **en caliente**, sin reiniciar el servicio. El servicio no es stateless a propósito.
+Which provider is used is decided by the **active policy**, which lives in memory and is swapped **at runtime**, without restarting the service. The service is deliberately not stateless.
 
-| Endpoint | Qué hace |
+| Endpoint | What it does |
 | --- | --- |
-| `GET /admin/llm-policy` | Política activa y proveedores disponibles |
-| `PUT /admin/llm-policy` | La sustituye. `422` si el proveedor no existe, sin tocar el estado |
-| `POST /admin/llm-policy/reset` | Vuelve a la política de arranque |
-| `POST /v1/messages` | Responde con la política activa, y la devuelve en la respuesta |
-| `GET /ready` | `503` si la política apunta a un proveedor que no existe |
+| `GET /admin/llm-policy` | Active policy and available providers |
+| `PUT /admin/llm-policy` | Replaces it. `422` if the provider does not exist, without touching the state |
+| `POST /admin/llm-policy/reset` | Back to the startup policy |
+| `POST /v1/messages` | Answers using the active policy, and returns it alongside the answer |
+| `GET /ready` | `503` if the policy points at a provider that does not exist |
 
-La política de arranque viene de la configuración (`ASSISTANT_LLM_PROVIDER`, `ASSISTANT_LLM_MODEL`, `ASSISTANT_LLM_TEMPERATURE`, `ASSISTANT_LLM_MAX_OUTPUT_TOKENS`).
+The startup policy comes from configuration (`ASSISTANT_LLM_PROVIDER`, `ASSISTANT_LLM_MODEL`, `ASSISTANT_LLM_TEMPERATURE`, `ASSISTANT_LLM_MAX_OUTPUT_TOKENS`).
 
-**Añadir un proveedor real** es escribir un módulo en [`adapters/outbound/llm/`](src/finguard_assistant/adapters/outbound/llm/) que cumpla el puerto y registrarlo en [`registry.py`](src/finguard_assistant/adapters/outbound/llm/registry.py). Ni el dominio ni los casos de uso cambian. Hoy solo está `echo`, determinista y sin llamadas de red, que sirve para desarrollo y tests.
+**Adding a real provider** means writing a module in [`adapters/outbound/llm/`](src/finguard_assistant/adapters/outbound/llm/) that fulfils the port and registering it in [`registry.py`](src/finguard_assistant/adapters/outbound/llm/registry.py). Neither the domain nor the use cases change. Today only `echo` exists: deterministic, no network calls, useful for development and tests.
 
-Dos límites conocidos: la política vive en el proceso, así que con varias réplicas cada una tendría la suya (toca Redis cuando existan), y `/admin/*` todavía no pide credenciales, así que el servicio no puede salir de `localhost` hasta que esté detrás de OAuth con scope de administración.
+Two known limits: the policy lives in the process, so with several replicas each would have its own (Redis, once they exist), and `/admin/*` asks for no credentials yet, so the service cannot leave `localhost` until it sits behind OAuth with an administration scope.
 
-## Ejecutar
+## Running it
 
 ```bash
 just back            # postgres + banking-api + assistant-api
-just serve-assistant # en local con recarga, en el 8000
-just llm-policy      # política activa
+just serve-assistant # locally with autoreload, on port 8000
+just llm-policy      # the active policy
 ```
 
-Siguiente: contexto conversacional y selección de herramientas, Fase 3 del [roadmap](../../docs/roadmap.md).
+Next: conversational context and tool selection, phase 3 of the [roadmap](../../docs/roadmap.md).

@@ -1,56 +1,56 @@
-# Estrategia de repositorio
+# Repository strategy
 
-Un único repositorio Git llamado `finguard`, compuesto por proyectos autónomos y desplegables de manera independiente.
+A single Git repository called `finguard`, made up of autonomous projects that can be deployed independently.
 
-> **Monorepo no significa aplicación monolítica.**
+> **A monorepo is not a monolithic application.**
 
-Cada servicio tendrá sus propias dependencias, lockfile, Dockerfile, pruebas, configuración, migraciones y pipeline. El repositorio raíz solamente coordinará el conjunto.
+Every service has its own dependencies, lockfile, Dockerfile, tests, configuration, migrations and pipeline. The root repository only coordinates the whole.
 
-No se usarán submódulos Git ni repositorios anidados: complicarían demasiado el desarrollo. Cada directorio debe comportarse como un pequeño repositorio independiente y poder extraerse en el futuro sin rehacer el código.
+No Git submodules and no nested repositories: they would complicate development too much. Every directory must behave like a small independent repository and be extractable in the future without rewriting the code.
 
-## Tabla de contenidos
+## Table of contents
 
-1. [Herramientas del monorepo](#1-herramientas-del-monorepo)
-2. [Estructura general](#2-estructura-general)
-3. [Componentes desplegables](#3-componentes-desplegables)
-4. [Diagrama de dependencias](#4-diagrama-de-dependencias)
-5. [Contratos como fuente de verdad](#5-contratos-como-fuente-de-verdad)
-6. [Qué compartiría y qué no](#6-qué-compartiría-y-qué-no)
-7. [Configuración de pnpm](#7-configuración-de-pnpm)
-8. [Configuración raíz de Nx](#8-configuración-raíz-de-nx)
-9. [Configuración Nx de un servicio Python](#9-configuración-nx-de-un-servicio-python)
-10. [Independencia Python](#10-independencia-python)
-11. [Docker Compose por perfiles](#11-docker-compose-por-perfiles)
-12. [Construcción de imágenes](#12-construcción-de-imágenes)
-13. [Pruebas](#13-pruebas)
+1. [Monorepo tooling](#1-monorepo-tooling)
+2. [General structure](#2-general-structure)
+3. [Deployable components](#3-deployable-components)
+4. [Dependency diagram](#4-dependency-diagram)
+5. [Contracts as the source of truth](#5-contracts-as-the-source-of-truth)
+6. [What to share and what not to](#6-what-to-share-and-what-not-to)
+7. [pnpm configuration](#7-pnpm-configuration)
+8. [Nx root configuration](#8-nx-root-configuration)
+9. [Nx configuration for a Python service](#9-nx-configuration-for-a-python-service)
+10. [Python independence](#10-python-independence)
+11. [Docker Compose profiles](#11-docker-compose-profiles)
+12. [Building images](#12-building-images)
+13. [Tests](#13-tests)
 14. [CI/CD](#14-cicd)
-15. [Orden de implementación](#15-orden-de-implementación)
-16. [Reglas que dejaría por escrito](#16-reglas-que-dejaría-por-escrito)
+15. [Implementation order](#15-implementation-order)
+16. [Rules worth writing down](#16-rules-worth-writing-down)
 
 ---
 
-## 1. Herramientas del monorepo
+## 1. Monorepo tooling
 
-| Necesidad | Herramienta |
+| Need | Tool |
 | --- | --- |
-| Orquestación global | Nx |
-| Frontend y paquetes TypeScript | pnpm workspace |
-| Dependencias de cada servicio Python | uv |
-| Desarrollo local | Docker Compose |
-| Construcción de imágenes | Docker Buildx Bake |
-| Contratos | OpenAPI, JSON Schema y AsyncAPI |
+| Global orchestration | Nx |
+| Frontend and TypeScript packages | pnpm workspace |
+| Dependencies of each Python service | uv |
+| Local development | Docker Compose |
+| Image building | Docker Buildx Bake |
+| Contracts | OpenAPI, JSON Schema and AsyncAPI |
 | CI/CD | GitHub Actions |
-| Observabilidad | OpenTelemetry |
+| Observability | OpenTelemetry |
 
-**Nx** actuaría como coordinador políglota. Puede ejecutar comandos arbitrarios por proyecto, aplicar caché y ejecutar únicamente las tareas afectadas por un cambio mediante `nx affected`, por lo que no obliga a que todos los proyectos sean TypeScript.
+**Nx** would act as the polyglot coordinator. It can run arbitrary commands per project, cache them and run only the tasks affected by a change through `nx affected`, so it does not force every project to be TypeScript.
 
-Para TypeScript, **pnpm workspace** administraría el frontend y los paquetes compartidos. pnpm permite agrupar varios proyectos dentro de un repositorio y referenciar paquetes locales explícitamente mediante `workspace:`.
+For TypeScript, a **pnpm workspace** would manage the frontend and the shared packages. pnpm can group several projects inside one repository and reference local packages explicitly through `workspace:`.
 
-Para Python, **no** se utilizaría un único workspace global de uv. Cada microservicio tendría su propio `pyproject.toml` y su propio `uv.lock`. Los workspaces de uv comparten un único lockfile y entorno, y su documentación desaconseja utilizarlos cuando los miembros necesitan dependencias conflictivas o entornos separados. Eso podría ocurrir fácilmente entre voz, A2A, banca y orquestación.
+For Python, a single global uv workspace would **not** be used. Each microservice has its own `pyproject.toml` and its own `uv.lock`. uv workspaces share a single lockfile and environment, and its documentation advises against them when members need conflicting dependencies or separate environments. That could easily happen between voice, A2A, banking and orchestration.
 
 ---
 
-## 2. Estructura general
+## 2. General structure
 
 ```text
 finguard/
@@ -126,11 +126,11 @@ finguard/
 
 ---
 
-## 3. Componentes desplegables
+## 3. Deployable components
 
 ### `apps/web`
 
-Aplicación del cliente.
+The client application.
 
 ```text
 apps/web/
@@ -153,20 +153,20 @@ apps/web/
 └── README.md
 ```
 
-Responsabilidades:
+Responsibilities:
 
-- Chat y streaming.
-- Captura y reproducción de audio.
-- Renderizado de Vega-Lite.
-- Confirmaciones de Bizum.
-- Presentación de movimientos consultados.
-- Gestión de la sesión del usuario.
+- Chat and streaming.
+- Audio capture and playback.
+- Vega-Lite rendering.
+- Bizum confirmations.
+- Displaying the movements that were queried.
+- User session handling.
 
-No contiene reglas financieras ni llama directamente a `banking-api`.
+It holds no financial rules and does not call `banking-api` directly.
 
 ### `apps/assistant-api`
 
-Es el orquestador de FinGuard.
+The FinGuard orchestrator.
 
 ```text
 apps/assistant-api/
@@ -219,22 +219,22 @@ apps/assistant-api/
 └── README.md
 ```
 
-Responsabilidades:
+Responsibilities:
 
-- Mantener contexto conversacional.
-- Interpretar la intención.
-- Crear un `FinancialQuery`.
-- Seleccionar herramientas.
-- Coordinar consultas y operaciones.
-- Generar explicaciones.
-- Crear el plan visual.
-- Integrarse con proveedores LLM.
+- Keeping the conversational context.
+- Interpreting intent.
+- Building a `FinancialQuery`.
+- Selecting tools.
+- Coordinating queries and operations.
+- Producing explanations.
+- Building the visual plan.
+- Integrating with LLM providers.
 
-No conoce las tablas bancarias ni ejecuta SQL directamente.
+It knows nothing about the banking tables and never runs SQL directly.
 
 ### `apps/banking-api`
 
-Es el núcleo financiero determinista.
+The deterministic financial core.
 
 ```text
 apps/banking-api/
@@ -283,20 +283,20 @@ apps/banking-api/
 └── README.md
 ```
 
-Responsabilidades:
+Responsibilities:
 
-- Cuentas.
-- Libro mayor de doble entrada.
-- Saldos.
-- Movimientos.
-- Contactos.
-- Intenciones de pago.
-- Bizum simulado.
-- Idempotencia.
-- Políticas financieras.
-- Eventos de dominio.
+- Accounts.
+- Double-entry ledger.
+- Balances.
+- Movements.
+- Contacts.
+- Payment intents.
+- Simulated Bizum.
+- Idempotency.
+- Financial policies.
+- Domain events.
 
-Este será el único servicio con acceso de escritura a la base financiera.
+This is the only service with write access to the financial database.
 
 ### `apps/voice-gateway`
 
@@ -324,19 +324,19 @@ apps/voice-gateway/
 └── README.md
 ```
 
-Responsabilidades:
+Responsibilities:
 
-- Streaming de audio.
-- Detección de turnos.
-- Transcripción.
-- Síntesis.
-- Interrupciones.
-- Gestión de sesiones de voz.
+- Audio streaming.
+- Turn detection.
+- Transcription.
+- Synthesis.
+- Barge-in.
+- Voice session handling.
 
-No interpreta movimientos ni ejecuta operaciones. Convierte:
+It does not interpret movements and does not execute operations. It converts:
 
 ```text
-Audio → texto → assistant-api → texto → audio
+Audio → text → assistant-api → text → audio
 ```
 
 ### `apps/a2a-gateway`
@@ -377,23 +377,23 @@ apps/a2a-gateway/
 └── README.md
 ```
 
-Este servicio será un adaptador, no el núcleo de FinGuard.
+This service is an adapter, not the core of FinGuard.
 
 ```text
 A2A Task
    ↓
 a2a-gateway
    ↓
-Comando interno
+Internal command
    ↓
 assistant-api
    ↓
-Resultado interno
+Internal result
    ↓
 A2A Artifact
 ```
 
-El protocolo A2A utiliza el Agent Card para declarar identidad, endpoint, capacidades, skills y requisitos de autenticación. El gateway debe publicar la tarjeta y traducir los conceptos A2A sin introducirlos en el dominio financiero.
+The A2A protocol uses the Agent Card to declare identity, endpoint, capabilities, skills and authentication requirements. The gateway must publish the card and translate A2A concepts without letting them into the financial domain.
 
 ### `apps/audit-worker`
 
@@ -413,20 +413,20 @@ apps/audit-worker/
 └── README.md
 ```
 
-Responsabilidades:
+Responsibilities:
 
-- Consumir eventos.
-- Registrar accesos y operaciones.
-- Crear trazabilidad.
-- Construir el historial de una conversación.
-- Detectar eventos duplicados.
-- Comprobar la integridad de la cadena de auditoría.
+- Consuming events.
+- Recording accesses and operations.
+- Building traceability.
+- Reconstructing the history of a conversation.
+- Detecting duplicate events.
+- Checking the integrity of the audit chain.
 
 ---
 
-## 4. Diagrama de dependencias
+## 4. Dependency diagram
 
-### Dependencias permitidas
+### Allowed dependencies
 
 ```text
 web             → assistant-api
@@ -436,27 +436,27 @@ assistant-api   → banking-api
 banking-api     → PostgreSQL
 banking-api     → RabbitMQ
 audit-worker    → RabbitMQ
-audit-worker    → base de auditoría
+audit-worker    → audit database
 ```
 
-### Dependencias prohibidas
+### Forbidden dependencies
 
 ```text
-web             ✗ banking-api directamente
+web             ✗ banking-api directly
 voice-gateway   ✗ banking-api
 a2a-gateway     ✗ PostgreSQL
-assistant-api   ✗ tablas de banking-api
-audit-worker    ✗ modificar el libro mayor
-banking-api     ✗ proveedor LLM
+assistant-api   ✗ banking-api's tables
+audit-worker    ✗ modifying the ledger
+banking-api     ✗ LLM provider
 ```
 
 ---
 
-## 5. Contratos como fuente de verdad
+## 5. Contracts as the source of truth
 
-La pieza central del monorepo debería ser `packages/contracts/`.
+The centrepiece of the monorepo should be `packages/contracts/`.
 
-No se compartirían modelos ORM ni clases internas entre servicios. Se compartirían contratos públicos.
+No ORM models or internal classes are shared between services. Public contracts are.
 
 ```text
 packages/contracts/
@@ -484,32 +484,32 @@ packages/contracts/
     └── typescript/
 ```
 
-El proceso sería:
+The process would be:
 
 ```text
-Contrato OpenAPI o JSON Schema
+OpenAPI or JSON Schema contract
           ↓
-Validación
+Validation
           ↓
-Generación de clientes
-          ├── Cliente Python
-          └── Cliente TypeScript
+Client generation
+          ├── Python client
+          └── TypeScript client
 ```
 
-Así:
+So that:
 
-- `assistant-api` utiliza un cliente generado para llamar a `banking-api`.
-- `web` utiliza un cliente generado para llamar a `assistant-api`.
-- Los eventos se validan contra AsyncAPI o JSON Schema.
-- A2A traduce sus mensajes a contratos internos conocidos.
+- `assistant-api` uses a generated client to call `banking-api`.
+- `web` uses a generated client to call `assistant-api`.
+- Events are validated against AsyncAPI or JSON Schema.
+- A2A translates its messages into known internal contracts.
 
-Esto evita que un cambio en una clase de Python rompa silenciosamente otro servicio.
+This stops a change in one Python class from silently breaking another service.
 
 ---
 
-## 6. Qué compartiría y qué no
+## 6. What to share and what not to
 
-### Compartiría
+### Worth sharing
 
 - `packages/python/finguard-observability`
 - `packages/python/finguard-security`
@@ -518,34 +518,34 @@ Esto evita que un cambio en una clase de Python rompa silenciosamente otro servi
 - `packages/typescript/chart-renderer`
 - `packages/contracts`
 
-Ejemplos:
+Examples:
 
-- Inicialización de OpenTelemetry.
-- Formato común de logs.
-- Propagación de `correlation_id`.
-- Utilidades de autenticación.
-- Fixtures de test.
-- Componentes visuales.
-- Clientes generados.
+- OpenTelemetry initialisation.
+- A common log format.
+- `correlation_id` propagation.
+- Authentication helpers.
+- Test fixtures.
+- Visual components.
+- Generated clients.
 
-### No compartiría
+### Not worth sharing
 
-- Entidades financieras.
-- Repositorios de base de datos.
-- Modelos SQLAlchemy.
-- Casos de uso.
-- Políticas de Bizum.
-- Contexto conversacional.
-- Código específico de Gemini u OpenAI.
-- Acceso directo a tablas.
+- Financial entities.
+- Database repositories.
+- SQLAlchemy models.
+- Use cases.
+- Bizum policies.
+- Conversational context.
+- Gemini- or OpenAI-specific code.
+- Direct table access.
 
-Se evitaría crear `packages/common/`. Los paquetes denominados `common`, `shared` o `utils` suelen convertirse en un contenedor sin límites y terminan acoplando todos los servicios.
+Creating `packages/common/` should be avoided. Packages named `common`, `shared` or `utils` tend to become containers with no boundaries and end up coupling every service.
 
 ---
 
-## 7. Configuración de pnpm
+## 7. pnpm configuration
 
-El workspace TypeScript incluiría solamente el frontend y los paquetes TypeScript:
+The TypeScript workspace would only contain the frontend and the TypeScript packages:
 
 ```yaml
 # pnpm-workspace.yaml
@@ -556,7 +556,7 @@ packages:
   - "packages/contracts/generated/typescript"
 ```
 
-En `apps/web/package.json`:
+In `apps/web/package.json`:
 
 ```json
 {
@@ -568,11 +568,11 @@ En `apps/web/package.json`:
 }
 ```
 
-El protocolo `workspace:` obliga a resolver la dependencia desde el propio monorepo y evita que pnpm utilice accidentalmente una versión publicada diferente.
+The `workspace:` protocol forces the dependency to resolve from the monorepo itself and stops pnpm from accidentally using a different published version.
 
 ---
 
-## 8. Configuración raíz de Nx
+## 8. Nx root configuration
 
 ```json
 {
@@ -597,7 +597,7 @@ El protocolo `workspace:` obliga a resolver la dependencia desde el propio monor
 }
 ```
 
-El `package.json` raíz podría tener:
+The root `package.json` could look like:
 
 ```json
 {
@@ -613,18 +613,18 @@ El `package.json` raíz podría tener:
     "compose:down": "docker compose down"
   },
   "devDependencies": {
-    "nx": "<versión-fijada>"
+    "nx": "<pinned-version>"
   }
 }
 ```
 
-No se pondrían las dependencias Python en el root.
+Python dependencies would not live in the root.
 
 ---
 
-## 9. Configuración Nx de un servicio Python
+## 9. Nx configuration for a Python service
 
-Cada aplicación incluiría un `project.json`. Ejemplo de `apps/banking-api/project.json`:
+Each application would carry a `project.json`. Example of `apps/banking-api/project.json`:
 
 ```json
 {
@@ -682,13 +682,13 @@ Cada aplicación incluiría un `project.json`. Ejemplo de `apps/banking-api/proj
 }
 ```
 
-Nx permite asignar cualquier comando a un target y ejecutarlo para un proyecto, para todos los proyectos o solo para los afectados.
+Nx can map any command to a target and run it for one project, for all of them, or only for the affected ones.
 
 ---
 
-## 10. Independencia Python
+## 10. Python independence
 
-Cada servicio tendría su propio lockfile:
+Each service would carry its own lockfile:
 
 ```text
 apps/assistant-api/uv.lock
@@ -698,7 +698,7 @@ apps/a2a-gateway/uv.lock
 apps/audit-worker/uv.lock
 ```
 
-Y su propio `pyproject.toml`:
+And its own `pyproject.toml`:
 
 ```toml
 # apps/banking-api/pyproject.toml
@@ -724,18 +724,18 @@ dev = [
 ]
 ```
 
-Esto permite que:
+This means that:
 
-- `voice-gateway` utilice librerías de audio sin instalarlas en banca.
-- `a2a-gateway` actualice el SDK A2A sin afectar el libro mayor.
-- `assistant-api` tenga SDK de LLM sin introducirlos en `banking-api`.
-- Cada imagen Docker contenga solo lo que necesita.
+- `voice-gateway` can use audio libraries without installing them in banking.
+- `a2a-gateway` can update the A2A SDK without touching the ledger.
+- `assistant-api` can carry LLM SDKs without bringing them into `banking-api`.
+- Each Docker image contains only what it needs.
 
 ---
 
-## 11. Docker Compose por perfiles
+## 11. Docker Compose profiles
 
-No se levantarían siempre todos los servicios.
+Not every service would be started every time.
 
 ```yaml
 services:
@@ -788,16 +788,16 @@ services:
     profiles: ["events"]
 ```
 
-Comandos:
+Commands:
 
 ```bash
-# Núcleo funcional
+# Functional core
 docker compose --profile core up
 
-# Núcleo y voz
+# Core and voice
 docker compose --profile core --profile voice up
 
-# Sistema completo
+# The whole system
 docker compose \
   --profile core \
   --profile voice \
@@ -806,13 +806,13 @@ docker compose \
   up
 ```
 
-Docker Compose permite habilitar servicios opcionales mediante perfiles, lo que encaja bien para mantener voz, A2A y observabilidad fuera del arranque mínimo.
+Docker Compose can enable optional services through profiles, which fits nicely with keeping voice, A2A and observability out of the minimal startup.
 
 ---
 
-## 12. Construcción de imágenes
+## 12. Building images
 
-Se utilizaría `docker-bake.hcl` para centralizar la construcción:
+`docker-bake.hcl` would centralise the build:
 
 ```hcl
 group "core" {
@@ -852,15 +852,15 @@ docker buildx bake core
 docker buildx bake all
 ```
 
-Bake permite definir de forma declarativa varios targets de construcción y resulta apropiado para construir múltiples imágenes desde un monorepo.
+Bake can declare several build targets and suits building multiple images from a monorepo.
 
 ---
 
-## 13. Pruebas
+## 13. Tests
 
-Las pruebas se separan en dos niveles.
+Tests are split across two levels.
 
-### Dentro de cada servicio
+### Inside each service
 
 ```text
 apps/banking-api/tests/
@@ -870,7 +870,7 @@ apps/banking-api/tests/
 └── concurrency/
 ```
 
-### En la raíz
+### At the root
 
 ```text
 tests/
@@ -902,32 +902,32 @@ tests/
 
 ## 14. CI/CD
 
-Lo que existe hoy es [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), en cada push y en cada PR contra `main`, con dos jobs:
+What exists today is [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), running on every push and on every PR against `main`, with two jobs:
 
-| Job | Qué ejecuta | Con base de datos |
+| Job | What it runs | With a database |
 | --- | --- | --- |
-| `check` | Uno por servicio en paralelo: `uv sync --frozen`, `ruff check`, `ruff format --check`, `mypy src`, `pytest -m "not integration"` | No |
-| `integration` | Crea las bases y roles con el mismo `01-databases.sql` del compose, aplica las migraciones, ejecuta la suite completa, carga el dataset y lo verifica, y comprueba que el generador sigue siendo determinista | PostgreSQL 18 como service container |
+| `check` | One per service in parallel: `uv sync --frozen`, `ruff check`, `ruff format --check`, `mypy src`, `pytest -m "not integration"` | No |
+| `integration` | Creates the databases and roles with the same `01-databases.sql` the compose file uses, applies the migrations, runs the full suite, loads the dataset and verifies it, and checks that the generator is still deterministic | PostgreSQL 18 as a service container |
 
-Dos decisiones:
+Two decisions:
 
-- **`uv sync --frozen`**, no `uv sync`. Si el lock ha divergido del `pyproject.toml`, el job falla en lugar de re-resolver y verificar algo distinto de lo que corre en local.
-- **Sin filtros por ruta ni `nx affected`.** Con dos servicios, la matriz los ejecuta los dos en paralelo y termina antes de lo que tardaría razonar sobre qué cambió. Los filtros entran cuando el tiempo de CI moleste; entonces `dorny/paths-filter` es suficiente y no obliga a meter Nx.
+- **`uv sync --frozen`**, not `uv sync`. If the lock has drifted from `pyproject.toml`, the job fails instead of re-resolving and verifying something different from what runs locally.
+- **No path filters and no `nx affected`.** With two services, the matrix runs both in parallel and finishes sooner than it would take to reason about what changed. Filters come in when CI time starts to hurt; at that point `dorny/paths-filter` is enough and does not force Nx into the repo.
 
-Pendientes, cuando exista lo que verifican:
+Pending, once the things they verify exist:
 
-- **Contratos** — al cambiar `packages/contracts/**`: esquemas válidos, clientes regenerados, cambios incompatibles y tests de consumidores. Hoy la carpeta está vacía.
-- **Imágenes** — construir y publicar solo lo afectado.
-- **Seguridad** — análisis de dependencias y de secretos.
-- **Release** — etiquetado y publicación.
+- **Contracts** — on changes to `packages/contracts/**`: valid schemas, regenerated clients, breaking changes and consumer tests. The folder is empty today.
+- **Images** — build and publish only what is affected.
+- **Security** — dependency and secret scanning.
+- **Release** — tagging and publishing.
 
 ---
 
-## 15. Orden de implementación
+## 15. Implementation order
 
-No se crearían todos los directorios con código vacío desde el primer momento.
+Not every directory would be created with empty code from the first moment.
 
-### Primera iteración
+### First iteration
 
 ```text
 apps/
@@ -942,36 +942,36 @@ infrastructure/
 └── postgres/
 ```
 
-Objetivo:
+Goal:
 
 ```text
-Usuario → web → assistant-api → banking-api → PostgreSQL
+User → web → assistant-api → banking-api → PostgreSQL
 ```
 
-### Segunda iteración
+### Second iteration
 
 - `apps/voice-gateway`
 - `packages/typescript/chart-renderer`
 
-### Tercera iteración
+### Third iteration
 
 - `apps/audit-worker`
 - RabbitMQ
 
-### Cuarta iteración
+### Fourth iteration
 
 - `apps/a2a-gateway`
 - `packages/contracts/a2a`
 
-Así se evita construir una arquitectura enorme antes de disponer del flujo principal.
+This avoids building an enormous architecture before the main flow exists.
 
 ---
 
-## 16. Reglas que dejaría por escrito
+## 16. Rules worth writing down
 
-Las reglas de desarrollo viven en [development-rules.md](development-rules.md).
+The development rules live in [development-rules.md](development-rules.md).
 
-### Estructura mínima que empezaría a crear
+### Minimum structure to start with
 
 ```text
 finguard/
@@ -995,4 +995,4 @@ finguard/
 └── README.md
 ```
 
-Esta estructura ya permite desarrollar el núcleo sin cerrar la puerta a voz, auditoría o A2A. La clave será que FinGuard tenga proyectos independientes dentro de un único repositorio, no múltiples servicios artificiales que compartan código y base de datos como si fueran un monolito distribuido.
+This structure is already enough to develop the core without closing the door on voice, audit or A2A. The key is that FinGuard has independent projects inside a single repository, not several artificial services sharing code and a database like a distributed monolith.

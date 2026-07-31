@@ -1,205 +1,203 @@
-# FinGuard — Roadmap y métricas
+# FinGuard — Roadmap and metrics
 
 ## Roadmap
 
-### Fase 0 — Diseño y preparación
+### Phase 0 — Design and preparation
 
-**30 de julio – 3 de agosto**
+**30 July – 3 August**
 
-- Crear repositorio.
-- Registrar decisiones arquitectónicas.
-- Definir contratos.
-- Preparar Docker Compose.
-- Crear PostgreSQL.
-- Configurar CI.
-- Definir escenarios de demostración.
+- Create the repository.
+- Record the architectural decisions.
+- Define the contracts.
+- Prepare Docker Compose.
+- Create PostgreSQL.
+- Set up CI.
+- Define the demo scenarios.
 
-*Resultado:* estructura ejecutable y arquitectura documentada.
+*Outcome:* a runnable structure and a documented architecture.
 
-### Fase 1 — Núcleo bancario
+### Phase 1 — Banking core
 
-**4 – 10 de agosto**
+**4 – 10 August**
 
-- Implementar cuentas.
-- Implementar libro mayor.
-- Crear saldo proyectado.
-- Generar movimientos sintéticos.
-- Implementar contactos.
-- Implementar API de consulta.
-- Añadir pruebas de integridad.
+- Implement accounts.
+- Implement the ledger.
+- Create the projected balance.
+- Generate synthetic movements.
+- Implement contacts.
+- Implement the query API.
+- Add integrity tests.
 
-*Resultado:* API bancaria determinista sin IA.
+*Outcome:* a deterministic banking API with no AI.
 
-### Fase 2 — Consultas financieras
+### Phase 2 — Financial queries
 
-**11 – 17 de agosto**
+**11 – 17 August**
 
-- Definir `FinancialQuery`.
-- Resolver fechas relativas.
-- Implementar compilador SQL.
-- Crear vistas de lectura.
-- Aplicar rol read-only.
-- Preparar dataset de evaluación.
-- Medir exactitud de ejecución.
+- Define `FinancialQuery`.
+- Resolve relative dates.
+- Implement the SQL compiler.
+- Create the read views.
+- Apply the read-only role.
+- Prepare the evaluation dataset.
+- Measure execution accuracy.
 
-*Resultado:* preguntas financieras resueltas de manera verificable.
+*Outcome:* financial questions answered in a verifiable way.
 
-### Fase 3 — Asistente conversacional
+### Phase 3 — Conversational assistant
 
-**18 – 24 de agosto**
+**18 – 24 August**
 
-- Integrar proveedor LLM.
-- Implementar selección de herramientas.
-- Mantener contexto.
-- Añadir respuestas explicables.
-- Mostrar movimientos utilizados.
-- Implementar streaming textual.
+- Integrate an LLM provider.
+- Implement tool selection.
+- Keep context.
+- Add explainable answers.
+- Show the movements used.
+- Implement text streaming.
 
-*Resultado:* asistente funcional por texto.
+*Outcome:* a working text assistant.
 
-### Fase 4 — Visualización dinámica
+### Phase 4 — Dynamic visualisation
 
-**25 – 31 de agosto**
+**25 – 31 August**
 
-- Implementar planificador visual.
-- Generar Vega-Lite.
-- Validar especificaciones.
-- Incorporar gráficos al chat.
-- Permitir reformulación:
+- Implement the visual planner.
+- Generate Vega-Lite.
+- Validate the specifications.
+- Bring charts into the chat.
+- Allow reformulation:
   - «Muéstralo por semanas».
   - «Mejor en barras».
   - «Compara con junio».
 
-*Resultado:* gráficos generados dinámicamente.
+*Outcome:* dynamically generated charts.
 
-### Fase 5 — Bizum seguro
+### Phase 5 — Secure Bizum
 
-**1 – 7 de septiembre**
+**1 – 7 September**
 
-- Implementar `payment_intents`.
-- Añadir confirmación en dos fases.
-- Añadir idempotencia.
-- Bloquear saldo concurrentemente.
-- Implementar doble entrada.
-- Generar recibo.
-- Registrar auditoría.
+- Implement `payment_intents`.
+- Add two-step confirmation.
+- Add idempotency.
+- Lock the balance under concurrency.
+- Implement double entry.
+- Produce a receipt.
+- Record the audit trail.
 
-*Resultado:* operación Bizum simulada y segura.
+*Outcome:* a simulated, secure Bizum operation.
 
-### Fase 6 — Voz en tiempo real
+### Phase 6 — Real-time voice
 
-**8 – 14 de septiembre**
+**8 – 14 September**
 
-- Capturar audio.
-- Integrar transcripción.
-- Añadir síntesis.
-- Implementar interrupciones.
-- Sincronizar voz, texto y gráficos.
-- Medir latencia.
+- Capture audio.
+- Integrate transcription.
+- Add synthesis.
+- Implement barge-in.
+- Synchronise voice, text and charts.
+- Measure latency.
 
-*Resultado:* conversación multimodal.
+*Outcome:* a multimodal conversation.
 
-### Fase 7 — Preparación A2A
+### Phase 7 — A2A preparation
 
-**15 – 19 de septiembre**
+**15 – 19 September**
 
-- Crear adaptador A2A.
-- Publicar Agent Card.
-- Exponer una skill de consulta.
-- Exponer una skill de preparación de Bizum.
-- Crear un agente externo ficticio.
-- Validar autenticación y tareas.
+- Build the A2A adapter.
+- Publish the Agent Card.
+- Expose a query skill.
+- Expose a Bizum preparation skill.
+- Create a fictional external agent.
+- Validate authentication and tasks.
 
-*Resultado:* demostración de interoperabilidad sin comprometer el núcleo.
+*Outcome:* an interoperability demo that does not compromise the core.
 
-### Fase 8 — Evaluación y seguridad
+### Phase 8 — Evaluation and security
 
-**20 – 23 de septiembre**
+**20 – 23 September**
 
-- Ejecutar benchmark.
-- Probar consultas ambiguas.
-- Probar prompt injection.
-- Probar operaciones duplicadas.
-- Probar concurrencia.
-- Medir latencias.
-- Revisar logs y datos sensibles.
+- Run the benchmark.
+- Test ambiguous queries.
+- Test prompt injection.
+- Test duplicate operations.
+- Test concurrency.
+- Measure latencies.
+- Review logs and sensitive data.
 
-*Resultado:* métricas verificables.
+*Outcome:* verifiable metrics.
 
-### Fase 9 — Entregables
+### Phase 9 — Deliverables
 
-**24 – 27 de septiembre**
+**24 – 27 September**
 
-- Preparar guion del vídeo.
-- Grabar demo.
-- Redactar memoria.
-- Preparar diagramas.
-- Resumir métricas.
-- Documentar limitaciones.
+- Prepare the video script.
+- Record the demo.
+- Write the report.
+- Prepare the diagrams.
+- Summarise the metrics.
+- Document the limitations.
 
-### Margen final
+### Final buffer
 
-**28 – 30 de septiembre**
+**28 – 30 September**
 
-- Correcciones.
-- Regrabación si fuera necesaria.
-- Verificación de entregables.
-- Entrega definitiva.
+- Fixes.
+- Re-recording if needed.
+- Verification of the deliverables.
+- Final submission.
 
----
+## Success metrics
 
-## Métricas de éxito
+**Understanding**
 
-**Comprensión**
+- Intent accuracy.
+- Date extraction accuracy.
+- Category accuracy.
+- Correct resolution of contextual references.
 
-- Exactitud de intención.
-- Exactitud de extracción de fechas.
-- Exactitud de categorías.
-- Resolución correcta de referencias contextuales.
+**Queries**
 
-**Consultas**
-
-- SQL válido.
+- Valid SQL.
 - Execution accuracy.
-- Exactitud del importe.
-- Exactitud de agrupaciones.
-- Ausencia de acceso no autorizado.
+- Amount accuracy.
+- Grouping accuracy.
+- No unauthorised access.
 
-**Operaciones**
+**Operations**
 
-- Cero ejecuciones sin confirmación.
-- Cero operaciones duplicadas.
-- Libro mayor siempre equilibrado.
-- Respuesta correcta ante saldo insuficiente.
-- Comportamiento correcto ante confirmaciones caducadas.
+- Zero executions without confirmation.
+- Zero duplicate operations.
+- A ledger that always balances.
+- Correct behaviour on insufficient funds.
+- Correct behaviour on expired confirmations.
 
-**Visualización**
+**Visualisation**
 
-- Porcentaje de especificaciones válidas.
-- Adecuación del gráfico.
-- Ausencia de campos inventados.
-- Tiempo de generación.
-- Capacidad de reformulación.
+- Percentage of valid specifications.
+- Chart suitability.
+- No invented fields.
+- Generation time.
+- Ability to reformulate.
 
-**Experiencia de usuario**
+**User experience**
 
-- Latencia hasta el primer contenido.
-- Latencia total.
-- Calidad de la respuesta.
-- Interrupción de voz.
-- Claridad de las confirmaciones.
+- Latency to first content.
+- Total latency.
+- Answer quality.
+- Voice barge-in.
+- Clarity of the confirmations.
 
-### Objetivos iniciales
+### Initial targets
 
-| Métrica | Objetivo |
+| Metric | Target |
 | --- | --- |
-| Exactitud de consultas | ≥ 95 % |
-| Consultas SQL seguras | 100 % |
-| Gráficos válidos | ≥ 98 % |
-| Operaciones sin confirmación | 0 |
-| Operaciones duplicadas | 0 |
-| Latencia textual P50 | < 2 s |
-| Latencia de consulta P95 | < 4 s |
-| Libro mayor desequilibrado | 0 |
+| Query accuracy | ≥ 95 % |
+| Safe SQL queries | 100 % |
+| Valid charts | ≥ 98 % |
+| Operations without confirmation | 0 |
+| Duplicate operations | 0 |
+| P50 text latency | < 2 s |
+| P95 query latency | < 4 s |
+| Unbalanced ledger | 0 |
 
-Los resultados finales deberán ser medidos y no estimados.
+The final results must be measured, not estimated.

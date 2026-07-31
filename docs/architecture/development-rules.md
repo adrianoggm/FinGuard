@@ -1,17 +1,17 @@
-# Reglas de desarrollo
+# Development rules
 
-Reglas que aplican a todo el monorepo. Ver [monorepo.md](monorepo.md) para la estructura que las soporta.
+Rules that apply across the whole monorepo. See [monorepo.md](monorepo.md) for the structure that supports them.
 
-1. Cada aplicación se puede construir y probar por separado.
-2. Cada servicio Python tiene su propio `uv.lock`.
-3. Cada servicio es propietario de sus datos.
-4. Ningún servicio consulta directamente la base de datos de otro.
-5. La comunicación se realiza mediante contratos públicos.
-6. Los contratos se definen antes de generar los clientes.
-7. A2A es un adaptador externo, no parte del dominio financiero.
-8. El LLM nunca accede directamente al libro mayor.
-9. Las librerías compartidas no contienen lógica de negocio.
-10. Todo evento y petición incorpora un `correlation_id`.
-11. Todo servicio dispone de `/health`, `/ready` y métricas.
-12. Todo cambio en una operación financiera requiere pruebas de concurrencia e idempotencia.
-13. Las credenciales del repositorio son exclusivamente de desarrollo local: los servicios que las usan no publican puertos fuera de `127.0.0.1`, y ningún despliegue las reutiliza — las inyecta desde un gestor de secretos.
+1. Every application can be built and tested on its own.
+2. Every Python service has its own `uv.lock`.
+3. Every service owns its data.
+4. No service queries another service's database directly.
+5. Communication happens through public contracts.
+6. Contracts are defined before the clients are generated.
+7. A2A is an external adapter, not part of the financial domain.
+8. The LLM never reaches the ledger directly.
+9. Shared libraries contain no business logic.
+10. Every event and request carries a `correlation_id`.
+11. Every service exposes `/health`, `/ready` and metrics.
+12. Any change to a financial operation requires concurrency and idempotency tests.
+13. Credentials in the repository are strictly for local development: the services that use them publish no ports beyond `127.0.0.1`, and no deployment reuses them — deployments inject them from a secret store.
