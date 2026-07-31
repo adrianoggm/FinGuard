@@ -14,8 +14,8 @@ from finguard_banking.application.queries.movement_summary import (
 from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.errors import AccountNotFoundError
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import (
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query_result import (
     FinancialQueryResult,
     Movement,
     QueryGroup,

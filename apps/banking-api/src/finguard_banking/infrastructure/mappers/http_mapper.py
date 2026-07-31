@@ -14,9 +14,10 @@ from finguard_banking.application.queries.movement_summary import (
     SummaryMovement,
     SummaryTrace,
 )
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.relative_period import RelativePeriod, resolve
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
+from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
     FinancialQueryRequest,
@@ -47,7 +48,7 @@ def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery
         date_range=date_range,
         metric=request.metric,
         direction=request.direction,
-        categories=request.categories,
+        categories=tuple(Category(value) for value in request.categories),
         group_by=request.group_by,
         supporting_limit=request.supporting_limit,
         explain=request.explain,

@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from finguard_banking.application.bus.query_bus import Query
-from finguard_banking.domain.balance import Balance
+from finguard_banking.domain.models.balance import Balance
 from finguard_banking.domain.ports.ledger_repository import LedgerRepository
 
 

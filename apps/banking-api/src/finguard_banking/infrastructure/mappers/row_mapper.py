@@ -7,8 +7,8 @@ the conversion could only be exercised by talking to PostgreSQL.
 from typing import Any
 from uuid import UUID
 
-from finguard_banking.domain.balance import Balance
-from finguard_banking.domain.financial_query_result import Movement, QueryGroup
+from finguard_banking.domain.models.balance import Balance
+from finguard_banking.domain.models.financial_query_result import Movement, QueryGroup
 from finguard_banking.domain.value_objects.money import Money
 
 

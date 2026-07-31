@@ -32,7 +32,7 @@ import asyncpg
 import yaml
 
 from finguard_banking.bootstrap.config import get_settings
-from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 from finguard_banking.domain.ports.result_judge import Requirement
 from finguard_banking.infrastructure.dto.banking_dto import FinancialQueryRequest
 from finguard_banking.infrastructure.evaluation.rule_based_judge import RuleBasedJudge

@@ -7,7 +7,8 @@ import pytest
 
 from finguard_banking.domain.enums import Direction, GroupBy
 from finguard_banking.domain.errors import InvalidValueError
-from finguard_banking.domain.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
 from finguard_banking.infrastructure.dto.banking_dto import FinancialQueryRequest
 from finguard_banking.infrastructure.persistence.query_compiler import (
@@ -25,17 +26,20 @@ def query(**kwargs: object) -> FinancialQuery:
 
 
 def test_the_domain_rejects_a_category_with_sql_inside() -> None:
+    # The category validates itself, so a plan can assume every one it holds is valid.
     with pytest.raises(InvalidValueError):
-        query(categories=(INJECTION,))
+        Category(INJECTION)
 
 
 def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None:
     # The object is built without running its invariants: it simulates someone
     # dodging validation. Not even then does the text make it into the SQL.
+    smuggled = object.__new__(Category)
+    object.__setattr__(smuggled, "value", INJECTION)
     plan = object.__new__(FinancialQuery)
     object.__setattr__(plan, "account_id", ACCOUNT)
     object.__setattr__(plan, "date_range", RANGE)
-    object.__setattr__(plan, "categories", (INJECTION,))
+    object.__setattr__(plan, "categories", (smuggled,))
     object.__setattr__(plan, "direction", Direction.EXPENSE)
     object.__setattr__(plan, "group_by", GroupBy.NONE)
     object.__setattr__(plan, "supporting_limit", 20)
@@ -50,7 +54,7 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
 
 def test_no_input_value_appears_in_the_string() -> None:
     compiled = compile_aggregate(
-        query(categories=("GROCERIES",), direction=Direction.EXPENSE), "Europe/Madrid"
+        query(categories=(Category("GROCERIES"),), direction=Direction.EXPENSE), "Europe/Madrid"
     )
 
     assert str(ACCOUNT) not in compiled.sql

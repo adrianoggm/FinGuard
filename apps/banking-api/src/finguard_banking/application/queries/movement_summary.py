@@ -10,8 +10,8 @@ from datetime import datetime
 from uuid import UUID
 
 from finguard_banking.application.bus.query_bus import Query
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import FinancialQueryResult
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 from finguard_banking.domain.ports.financial_query_repository import FinancialQueryRepository
 
 

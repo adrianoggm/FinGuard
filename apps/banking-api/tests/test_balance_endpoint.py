@@ -13,8 +13,8 @@ from finguard_banking.application.queries.get_balance import (
 )
 from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
-from finguard_banking.domain.balance import Balance
 from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.domain.models.balance import Balance
 from finguard_banking.domain.value_objects.money import Money
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")

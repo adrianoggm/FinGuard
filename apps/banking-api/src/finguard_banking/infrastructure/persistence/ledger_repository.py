@@ -5,8 +5,8 @@ from uuid import UUID
 
 import asyncpg
 
-from finguard_banking.domain.balance import Balance
 from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.domain.models.balance import Balance
 from finguard_banking.infrastructure.mappers import row_mapper
 
 # The balance is derived from the entries, never read from a mutable column: the ledger

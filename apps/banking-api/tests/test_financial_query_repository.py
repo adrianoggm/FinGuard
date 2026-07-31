@@ -9,7 +9,8 @@ from support import as_pool, create_account, record_movement
 
 from finguard_banking.domain.enums import Direction, GroupBy
 from finguard_banking.domain.errors import AccountNotFoundError
-from finguard_banking.domain.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
@@ -47,7 +48,7 @@ async def test_it_only_adds_up_the_requested_categories(connection: asyncpg.Conn
     )
 
     result = await repository(connection).run(
-        plan(account, direction=Direction.EXPENSE, categories=("TRANSPORT_FUEL",))
+        plan(account, direction=Direction.EXPENSE, categories=(Category("TRANSPORT_FUEL"),))
     )
 
     # Spending comes back positive: "I spent 77.00", not "-77.00".
@@ -173,7 +174,7 @@ async def test_it_returns_the_movements_backing_the_figure(
     )
 
     result = await repository(connection).run(
-        plan(account, direction=Direction.EXPENSE, categories=("TRANSPORT_FUEL",))
+        plan(account, direction=Direction.EXPENSE, categories=(Category("TRANSPORT_FUEL"),))
     )
 
     assert len(result.supporting_movements) == 1

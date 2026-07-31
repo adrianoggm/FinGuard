@@ -6,8 +6,8 @@ from typing import Any
 import asyncpg
 
 from finguard_banking.domain.errors import AccountNotFoundError
-from finguard_banking.domain.financial_query import FinancialQuery
-from finguard_banking.domain.financial_query_result import FinancialQueryResult, QueryTrace
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.financial_query_result import FinancialQueryResult, QueryTrace
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.mappers import row_mapper
 from finguard_banking.infrastructure.persistence.query_compiler import (

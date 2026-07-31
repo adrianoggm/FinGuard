@@ -7,7 +7,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 
 from pydantic import BaseModel, ConfigDict, Field
 
-MAX_PROMPT_LENGTH = 4000
+from finguard_assistant.domain.constants import MAX_PROMPT_LENGTH
 
 
 class _Payload(BaseModel):
