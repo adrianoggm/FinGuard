@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     # ships with a built-in credential ships with a credential everyone knows.
     dev_tokens: tuple[str, ...] = ()
 
+    # The financial endpoints, off unless a deployment turns them on.
+    #
+    # Not caution for its own sake. The evaluation says the assistant refuses nothing it
+    # cannot express (0% on the held-out set) and that one prompt injection still changes
+    # a field, and both of those produce a confident, plausible, wrong figure rather than
+    # an error. Documenting a risk is not controlling it; a flag is, and it makes turning
+    # this on a decision somebody takes rather than a default nobody chose.
+    #
+    # It comes off when unsupported has a deterministic guard and injection clears the
+    # agreed bar — see docs/next.md.
+    questions_enabled: bool = False
+
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.
@@ -69,6 +81,10 @@ class Settings(BaseSettings):
             if len(parts) != 3:
                 raise ValueError(f"a token entry is token:holder:account_uuid, got {entry!r}")
             token, holder, account = parts
+            if token in table:
+                # Two entries sharing a secret is a typo, and the quiet outcome is the
+                # dangerous one: the token would resolve to whichever account came last.
+                raise ValueError(f"token {token[:6]}... is configured twice")
             table[token] = Caller(holder_reference=holder, account_id=UUID(account))
         return table
 

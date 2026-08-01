@@ -86,11 +86,17 @@ Two things this phase added that were not on the list, both from the review:
 - **An outcome taxonomy.** A plan that is schema-valid and answers a different question
   passes every check and returns a real figure. It is now one of six named outcomes,
   and asking a question back or refusing are correct answers rather than failures.
-- **An evaluation for the step nobody was measuring.** 60 Spanish sentences with the
+- **An evaluation for the step nobody was measuring.** 233 Spanish sentences with the
   plan each one determines, scored per field and by semantic equivalence, with the
   two rates that matter: a plan where a question was due, and the reverse.
 
 *Outcome:* a working text assistant, and a number for how well it understands.
+
+**Not closed.** Review found three defects that could deliver a wrong figure, all fixed,
+and two risks that remain open and measured: the assistant refuses nothing it cannot
+express (0% on the held-out set) and one prompt injection still changes a field. The
+endpoint stays behind ASSISTANT_QUESTIONS_ENABLED until those have a deterministic
+guard or an agreed threshold — a documented risk is not a control.
 
 ### Phase 4 — Dynamic visualisation
 

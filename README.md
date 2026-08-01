@@ -8,7 +8,7 @@ The generative model interprets intent and writes answers, but it never reaches 
 
 ## Status
 
-Banking core working: double-entry ledger with invariants enforced by PostgreSQL, balance derived from the entries, and a query engine that compiles validated plans into parameterised SQL. Phase 2 of the roadmap is closed; the assistant (phase 3) is next.
+Phase 3 (conversational assistant) is implemented and measured; see [docs/next.md](docs/next.md) for what is still open.
 
 ## Documentation
 

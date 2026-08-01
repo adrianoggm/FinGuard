@@ -122,7 +122,19 @@ def test_ready_warns_when_the_active_provider_is_not_built_in() -> None:
     response = client.get("/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "unavailable", "provider": "flaky"}
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["provider"] == "flaky"
+    assert body["checks"]["catalogue_provider"] is False
+
+
+def test_ready_reports_on_what_the_financial_endpoint_needs() -> None:
+    """It used to check only the catalogue's provider, which /v1/questions does not use.
+    With Ollama pointed at a dead port the service answered 200 ok while every financial
+    question would have failed."""
+    body = client.get("/ready").json()
+
+    assert set(body["checks"]) == {"catalogue_provider", "planner", "banking"}
 
 
 def test_the_openapi_document_is_served() -> None:

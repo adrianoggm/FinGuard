@@ -1,6 +1,8 @@
 # What comes next, and why in this order
 
-Phase 3 is done and measured. This is the ordered list of what is still open, written
+Phase 3 is implemented and measured, and **not signed off**: two known risks let it
+answer confidently and wrongly, so `/v1/questions` ships disabled by default. This is
+the ordered list of what is still open, written
 down so the order survives the conversation that produced it. Every item says what it
 unblocks, because that is what makes an ordering an argument rather than a preference.
 

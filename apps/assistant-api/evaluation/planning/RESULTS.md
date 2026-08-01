@@ -15,8 +15,13 @@ cd apps/assistant-api && uv run python scripts/evaluate_planning.py \
 | set | cases | outcome | exact plan | INVENTED | invalid structure |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | dev (tuned against) | 120 | 82.5 % | 81.0 % | 6 | 0 |
-| **test (held out)** | 79 | **83.5 %** | **73.8 %** | 2 | 0 |
+| **test (held out)** | 79 | **82.3 %** | **73.8 %** | 2 | 0 |
 | adversarial | 34 | 61.8 % | 64.3 % | 2 | 1 |
+
+An earlier run of the same set scored 83.5 %. Pinning the seed removed the noise that
+was ours to remove, but a GPU is not bit-reproducible — batching and non-associative
+float reduction still move one case in seventy-nine. Where two figures appear for the
+same thing, the lower one is quoted.
 
 **Quote the held-out row.** The dev set is what the prompt was tuned against and reads
 optimistically by construction. That the two are within a point of each other on outcome

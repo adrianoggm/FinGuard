@@ -57,13 +57,35 @@ class HttpFinancialQuery:
             # The plan was well-formed to us and unacceptable to the authority. This is
             # the drift detector for a vocabulary the two services declare separately.
             raise QueryRejectedError(_detail(response))
-        if response.status_code >= 400:
+        if 400 <= response.status_code < 500:
+            # A 404 is an account that does not exist and a 400 is a body it would not
+            # take. Both are our request being wrong, which reads very differently to the
+            # user than the service being down — and only one of them is worth retrying.
+            raise QueryRejectedError(f"HTTP {response.status_code}: {_detail(response)}")
+        if response.status_code >= 500:
             raise BankingUnavailableError(f"HTTP {response.status_code}: {_detail(response)}")
 
         try:
-            return from_body(response.json())
+            answered = response.json()
+            if isinstance(answered, dict) and (about := answered.get("accountId")):
+                # The answer names the account it is about. Checking it costs nothing and
+                # catches the one failure a caller could never notice: figures from
+                # somebody else's account, which look exactly like their own.
+                if str(about) != str(account_id):
+                    raise BankingUnavailableError(f"answer is about {about}, not {account_id}")
+            return from_body(answered)
         except (ValueError, KeyError, TypeError) as exc:
             raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
+
+    async def ping(self) -> bool:
+        """Whether the ledger answers. Every figure comes from there, so a service that
+        cannot reach it is not ready however healthy its own process looks."""
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{self._base_url}/ready")
+                return response.status_code == 200
+        except httpx.HTTPError:
+            return False
 
 
 def to_body(

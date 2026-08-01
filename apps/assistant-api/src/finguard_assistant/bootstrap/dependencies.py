@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Header, Request
 
 from finguard_assistant.application import AskFinancialQuestionHandler, CommandBus, QueryBus
+from finguard_assistant.domain.errors import FeatureDisabledError
 from finguard_assistant.domain.ports.caller_identity import CallerIdentityPort
 from finguard_assistant.domain.value_objects.caller import Caller
 
@@ -57,3 +58,15 @@ async def authenticated_caller(
     """
     identity: CallerIdentityPort = request.app.state.identity
     return await identity.resolve(authorization)
+
+
+def questions_enabled(request: Request) -> None:
+    """Refuses the financial endpoints unless a deployment opted in.
+
+    A dependency rather than a check inside each route, so a route added later is
+    disabled by forgetting rather than enabled by it.
+    """
+    if not request.app.state.questions_enabled:
+        raise FeatureDisabledError(
+            "financial questions are disabled; set ASSISTANT_QUESTIONS_ENABLED=true"
+        )

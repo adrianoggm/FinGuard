@@ -4,6 +4,7 @@ Translating a domain error into a status code is an inbound-adapter responsibili
 the composition root's. Handlers match on `DomainError.code`, never on message text.
 
     no or unknown credential    401  identity, the first layer of the security stack
+    not this caller's account   403  authorisation, the second
     unknown model or provider   422  the caller asked for something that does not exist
     invalid input               422  the domain rejected the values
     every model failed          503  the service cannot answer right now
@@ -17,13 +18,17 @@ from pydantic import ValidationError
 
 from finguard_assistant.domain.errors import (
     DomainError,
+    FeatureDisabledError,
     NoModelAvailableError,
     NotAuthenticatedError,
+    NotAuthorisedError,
     ProviderFailedError,
 )
 
 _STATUS_BY_CODE = {
+    FeatureDisabledError.code: 503,
     NotAuthenticatedError.code: 401,
+    NotAuthorisedError.code: 403,
     "invalid_input": 422,
     "unknown_model": 422,
     "unknown_provider": 422,

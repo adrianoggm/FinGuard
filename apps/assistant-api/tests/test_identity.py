@@ -55,8 +55,20 @@ async def test_a_known_token_resolves_to_its_own_account() -> None:
     assert caller == LAURA
 
 
-async def test_the_bearer_prefix_is_optional() -> None:
-    assert await identity().resolve("laura-development-token") == LAURA
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "laura-development-token",
+        "Bearer laura-development-token",
+        # HTTP auth schemes are case-insensitive (RFC 7235). This used to resolve to
+        # nobody, so a client following the spec could not log in.
+        "bearer laura-development-token",
+        "BEARER laura-development-token",
+        "  Bearer   laura-development-token  ",
+    ],
+)
+async def test_the_scheme_is_accepted_however_it_is_spelled(credential: str) -> None:
+    assert await identity().resolve(credential) == LAURA
 
 
 @pytest.mark.parametrize("credential", [None, "", "   ", "Bearer ", "Bearer wrong-token"])
@@ -109,3 +121,28 @@ def test_an_empty_token_table_refuses_to_start() -> None:
 def test_a_short_token_refuses_to_start() -> None:
     with pytest.raises(ValueError):
         StaticTokenIdentity({"short": LAURA})
+
+
+def test_a_duplicated_token_refuses_to_start() -> None:
+    """Two entries sharing a secret is a typo, and the quiet outcome is the dangerous
+    one: the token resolves to whichever account was configured last."""
+    from finguard_assistant.bootstrap.config import Settings
+
+    settings = Settings(
+        dev_tokens=(
+            f"shared-development-token:ES-0001:{LAURA.account_id}",
+            f"shared-development-token:ES-0002:{MARTA.account_id}",
+        )
+    )
+
+    with pytest.raises(ValueError, match="twice"):
+        settings.callers()
+
+
+def test_authorisation_is_a_check_and_not_a_comment() -> None:
+    from finguard_assistant.domain.errors import NotAuthorisedError
+
+    LAURA.assert_may_read(LAURA.account_id)
+
+    with pytest.raises(NotAuthorisedError):
+        LAURA.assert_may_read(MARTA.account_id)
