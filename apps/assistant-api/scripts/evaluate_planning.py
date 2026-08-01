@@ -39,7 +39,7 @@ from finguard_assistant.domain.models.planning_result import PlanningResult
 from finguard_assistant.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_assistant.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 
-DATASET = Path(__file__).resolve().parents[1] / "evaluation" / "planning" / "dev.yaml"
+PLANNING = Path(__file__).resolve().parents[1] / "evaluation" / "planning"
 
 # The vocabulary that exists in the seeded data. It belongs to banking; until there is
 # somewhere legitimate to read it from, it is stated here and the drift shows up as an
@@ -101,6 +101,17 @@ def resolve(period: str, n: int | None, today: date) -> tuple[str, str]:
 
 
 @dataclass
+class GroupScore:
+    """One functional capability. A single accuracy number says the assistant is 85%
+    right and nothing about what it is wrong at; this says which capability to fix."""
+
+    cases: int = 0
+    outcome_right: int = 0
+    exact: int = 0
+    plans: int = 0
+
+
+@dataclass
 class Score:
     cases: int = 0
     outcome_right: int = 0
@@ -112,6 +123,11 @@ class Score:
     structural: int = 0
     latencies: list[float] = field(default_factory=list)
     wrong: list[tuple[str, str]] = field(default_factory=list)
+    groups: dict[str, GroupScore] = field(default_factory=dict)
+    # A case and its paraphrase say the same thing differently. Getting one right and
+    # the other wrong is string matching rather than reading, and the aggregate hides it.
+    paraphrase_splits: list[str] = field(default_factory=list)
+    right_by_id: dict[str, bool] = field(default_factory=dict)
 
 
 def expected_fields(plan: dict[str, Any], today: date) -> dict[str, Any]:
@@ -153,6 +169,8 @@ def actual_fields(result: PlanningResult, today: date) -> dict[str, Any]:
 
 def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: date) -> None:
     score.cases += 1
+    group = score.groups.setdefault(case.get("group", "ungrouped"), GroupScore())
+    group.cases += 1
     wanted = case["expect"]
     got = result.outcome
 
@@ -167,6 +185,7 @@ def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: dat
 
     if got is wanted_outcome:
         score.outcome_right += 1
+        group.outcome_right += 1
     elif wanted != "plan" and got is PlanningOutcome.PLANNED:
         score.invented.append(case["id"])
     elif wanted == "plan" and got in (
@@ -182,6 +201,7 @@ def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: dat
     # every field the sentence determined counts as wrong — otherwise refusing
     # everything would leave the per-field table looking untouched.
     expected = expected_fields(case["plan"], today)
+    group.plans += 1
     for name in expected:
         score.field_total[name] += 1
 
@@ -195,11 +215,13 @@ def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: dat
         if name not in mismatches:
             score.field_right[name] += 1
 
+    score.right_by_id[case["id"]] = not mismatches
     if mismatches:
         detail = ", ".join(f"{n}={actual[n]!r} != {expected[n]!r}" for n in mismatches)
         score.wrong.append((case["id"], detail))
     else:
         score.exact += 1
+        group.exact += 1
 
 
 def report(model: str, score: Score) -> None:
@@ -214,6 +236,17 @@ def report(model: str, score: Score) -> None:
     print(f"  missed              {len(score.missed):3}      a question where a plan was due")
     print(f"  invalid structure   {score.structural:3}      should be 0 under constrained decoding")
 
+    if score.groups:
+        # The table worth reading. An aggregate says the assistant is 85% right and
+        # nothing about what it is wrong at; this says which capability to go and fix.
+        print("\n  per group")
+        for name, group in sorted(score.groups.items()):
+            plans = f"{group.exact}/{group.plans}" if group.plans else "-"
+            print(
+                f"    {name:20} outcome {group.outcome_right:3}/{group.cases:<3}"
+                f" {pct(group.outcome_right, group.cases)}   exact {plans:>7}"
+            )
+
     print("\n  per field")
     for name in FIELDS:
         got, want = score.field_right[name], score.field_total[name]
@@ -225,6 +258,11 @@ def report(model: str, score: Score) -> None:
         p50 = statistics.median(ordered)
         p95 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
         print(f"\n  latency  P50 {p50:.2f}s   P95 {p95:.2f}s   max {ordered[-1]:.2f}s")
+
+    if score.paraphrase_splits:
+        print("\n  said differently, answered differently")
+        for pair in score.paraphrase_splits:
+            print(f"    {pair}")
 
     if score.invented:
         print(f"\n  invented: {', '.join(score.invented)}")
@@ -239,9 +277,13 @@ def pct(part: int, whole: int) -> str:
 
 
 async def run(
-    model: str, limit: int | None, base_url: str, collect: list[tuple[int, int]] | None = None
+    model: str,
+    limit: int | None,
+    base_url: str,
+    dataset: str = "dev",
+    collect: list[tuple[int, int]] | None = None,
 ) -> int:
-    data = yaml.safe_load(DATASET.read_text(encoding="utf-8"))
+    data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
     today = data["reference"]
     cases = data["cases"][:limit] if limit else data["cases"]
 
@@ -256,7 +298,7 @@ async def run(
     score = Score()
     for case in cases:
         started = time.perf_counter()
-        result = await planner.plan(case["question"], today=today)
+        result = await planner.plan(case["question"], today=today, previous=case.get("previous"))
         score.latencies.append(time.perf_counter() - started)
 
         if result.outcome is PlanningOutcome.PROVIDER_ERROR:
@@ -265,16 +307,31 @@ async def run(
 
         judge(case, result, score, today)
 
+    _check_paraphrases(cases, score)
+
     if collect is None:
         report(model, score)
     else:
+        # Repeated runs: the first one prints the detail, the rest only add their totals
+        # so the spread can be shown without repeating a page of failures.
         collect.append((score.outcome_right, score.exact))
         if len(collect) == 1:
             report(model, score)
     return 0
 
 
-async def repeated(model: str, limit: int | None, base_url: str, times: int) -> int:
+def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:
+    for case in cases:
+        twin = case.get("paraphrase_of")
+        if twin is None:
+            continue
+        mine, theirs = score.right_by_id.get(case["id"]), score.right_by_id.get(twin)
+        if mine is not None and theirs is not None and mine != theirs:
+            winner, loser = (twin, case["id"]) if theirs else (case["id"], twin)
+            score.paraphrase_splits.append(f"{winner} right, {loser} wrong")
+
+
+async def repeated(model: str, limit: int | None, base_url: str, dataset: str, times: int) -> int:
     """Runs the set `times` over and report the spread as well as the numbers.
 
     A single run is a point estimate of something noisy. Reporting min-max next to the
@@ -282,7 +339,7 @@ async def repeated(model: str, limit: int | None, base_url: str, times: int) -> 
     """
     scores: list[tuple[int, int]] = []
     for attempt in range(times):
-        code = await run(model, limit, base_url, collect=scores)
+        code = await run(model, limit, base_url, dataset, collect=scores)
         if code:
             return code
         if times > 1:
@@ -305,6 +362,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="run only the first N cases")
     parser.add_argument("--base-url", default="http://127.0.0.1:11434")
     parser.add_argument(
+        "--dataset",
+        default="dev",
+        choices=("dev", "test", "adversarial"),
+        help="dev is what the prompt was tuned against and reads optimistically; test "
+        "has never been seen by the prompt and is the number worth quoting.",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -313,7 +377,7 @@ def main() -> int:
         "carries a few points of noise — enough to invent an improvement.",
     )
     args = parser.parse_args()
-    return asyncio.run(repeated(args.model, args.limit, args.base_url, args.repeat))
+    return asyncio.run(repeated(args.model, args.limit, args.base_url, args.dataset, args.repeat))
 
 
 if __name__ == "__main__":
