@@ -11,7 +11,7 @@ Everything wire-shaped stops here. `to_body` is the only place that knows the co
 is camelCase and that a date range is spelled from/to.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Final
 from uuid import UUID
 
@@ -42,8 +42,10 @@ class HttpFinancialQuery:
         self._timeout = timeout_seconds
         self._supporting = supporting_movements
 
-    async def run(self, plan: FinancialPlan, *, account_id: UUID) -> QueryAnswer:
-        body = to_body(plan, account_id=account_id, supporting_movements=self._supporting)
+    async def run(self, plan: FinancialPlan, *, account_id: UUID, today: date) -> QueryAnswer:
+        body = to_body(
+            plan, account_id=account_id, today=today, supporting_movements=self._supporting
+        )
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -64,7 +66,9 @@ class HttpFinancialQuery:
             raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
 
 
-def to_body(plan: FinancialPlan, *, account_id: UUID, supporting_movements: int) -> dict[str, Any]:
+def to_body(
+    plan: FinancialPlan, *, account_id: UUID, today: date, supporting_movements: int
+) -> dict[str, Any]:
     """Plan to request body. The only place that knows the contract is camelCase."""
     body: dict[str, Any] = {
         "accountId": str(account_id),
@@ -76,7 +80,13 @@ def to_body(plan: FinancialPlan, *, account_id: UUID, supporting_movements: int)
     }
 
     if plan.period is not None:
-        period: dict[str, Any] = {"period": plan.period.period.value}
+        # `reference` is what makes both services resolve the window to the same days.
+        # Without it banking uses its own clock and answers a different question with a
+        # perfectly real number.
+        period: dict[str, Any] = {
+            "period": plan.period.period.value,
+            "reference": today.isoformat(),
+        }
         if plan.period.n is not None:
             period["n"] = plan.period.n
         body["period"] = period

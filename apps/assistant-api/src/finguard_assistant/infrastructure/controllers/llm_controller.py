@@ -4,6 +4,7 @@ Routes only: shapes live in dto/, mapping in mappers/, and every route goes thro
 bus — a controller never touches a handler or the policy store directly.
 """
 
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -11,23 +12,31 @@ from fastapi.responses import JSONResponse
 
 from finguard_assistant.application import (
     AnswerMessageQuery,
+    AskFinancialQuestionQuery,
     CommandBus,
     GetLlmCatalogueQuery,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ResetLlmPolicyCommand,
 )
-from finguard_assistant.bootstrap.dependencies import get_command_bus, get_query_bus
+from finguard_assistant.bootstrap.dependencies import (
+    get_command_bus,
+    get_query_bus,
+    reporting_today,
+)
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
     MessageResponse,
     PolicyRequest,
+    QuestionRequest,
+    QuestionResponse,
 )
 from finguard_assistant.infrastructure.mappers import llm_mapper
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
+Today = Annotated[date, Depends(reporting_today)]
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -77,3 +86,23 @@ async def replace_policy(body: PolicyRequest, commands: Commands) -> CatalogueRe
 @admin_router.post("/llm-policy/reset", summary="Back to the startup policy")
 async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
+
+
+@assistant_router.post("/v1/questions", summary="Answer a financial question")
+async def ask(request: QuestionRequest, queries: Queries, today: Today) -> QuestionResponse:
+    """Natural language in, a figure with its evidence out.
+
+    The answer carries the plan that produced it and the movements behind it. That is
+    not debug output: a language model chose the question, so an answer nobody can check
+    is an answer nobody should trust.
+
+    A question the assistant will not guess at comes back with outcome
+    NEEDS_CLARIFICATION and a question of its own, which is a turn in the conversation
+    rather than an error.
+    """
+    result = await queries.ask(
+        AskFinancialQuestionQuery(
+            sentence=request.question, account_id=request.account_id, today=today
+        )
+    )
+    return llm_mapper.question_to_dto(result)
