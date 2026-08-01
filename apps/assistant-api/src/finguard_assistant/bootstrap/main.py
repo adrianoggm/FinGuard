@@ -24,6 +24,7 @@ from finguard_assistant.infrastructure import (
     assistant_router,
     register_error_handlers,
 )
+from finguard_assistant.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_assistant.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 
 DESCRIPTION = """
@@ -53,7 +54,14 @@ def create_app() -> FastAPI:
 
     settings = get_settings()
     catalogue = settings.catalogue()
-    providers = ProviderRegistry()
+    # The registry builds providers with no arguments; the one that needs configuration
+    # gets it here, in the only place allowed to know what the deployment looks like.
+    providers = ProviderRegistry(
+        {
+            EchoLlmProvider.name: EchoLlmProvider,
+            OllamaLlmProvider.name: lambda: OllamaLlmProvider(base_url=settings.ollama_base_url),
+        }
+    )
     # The active policy is created at startup and lives in the application state: the
     # service is deliberately not stateless, its configuration changes at runtime.
     policies = PolicyStore(catalogue, catalogue.default_policy())

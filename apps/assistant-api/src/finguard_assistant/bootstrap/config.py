@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     # 127.0.0.1 (rule 13), and this service is useless without banking anyway.
     banking_base_url: str = "http://127.0.0.1:8001"
 
+    # Where the local runtime listens. Configurable because inside a container 127.0.0.1
+    # is the container: compose points this at host.docker.internal so the service can
+    # reach the daemon on the machine, which is where the GPU is.
+    ollama_base_url: str = "http://127.0.0.1:11434"
+
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.
