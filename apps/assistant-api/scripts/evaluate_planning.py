@@ -281,6 +281,7 @@ async def run(
     limit: int | None,
     base_url: str,
     dataset: str = "dev",
+    think: bool = False,
     collect: list[tuple[int, int]] | None = None,
 ) -> int:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
@@ -288,7 +289,7 @@ async def run(
     cases = data["cases"][:limit] if limit else data["cases"]
 
     planner = LlmQueryPlanner(
-        OllamaLlmProvider(base_url=base_url),
+        OllamaLlmProvider(base_url=base_url, think=think),
         model=model,
         temperature=0.0,
         max_output_tokens=384,
@@ -331,7 +332,9 @@ def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:
             score.paraphrase_splits.append(f"{winner} right, {loser} wrong")
 
 
-async def repeated(model: str, limit: int | None, base_url: str, dataset: str, times: int) -> int:
+async def repeated(
+    model: str, limit: int | None, base_url: str, dataset: str, think: bool, times: int
+) -> int:
     """Runs the set `times` over and report the spread as well as the numbers.
 
     A single run is a point estimate of something noisy. Reporting min-max next to the
@@ -339,7 +342,7 @@ async def repeated(model: str, limit: int | None, base_url: str, dataset: str, t
     """
     scores: list[tuple[int, int]] = []
     for attempt in range(times):
-        code = await run(model, limit, base_url, dataset, collect=scores)
+        code = await run(model, limit, base_url, dataset, think, collect=scores)
         if code:
             return code
         if times > 1:
@@ -362,6 +365,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None, help="run only the first N cases")
     parser.add_argument("--base-url", default="http://127.0.0.1:11434")
     parser.add_argument(
+        "--think",
+        action="store_true",
+        help="let the model reason before answering, on models that support it. Off by "
+        "default: the planner emits ~120 tokens of JSON that nobody reads a rationale "
+        "for. This flag exists so that claim can be checked rather than repeated.",
+    )
+    parser.add_argument(
         "--dataset",
         default="dev",
         choices=("dev", "test", "adversarial"),
@@ -377,7 +387,9 @@ def main() -> int:
         "carries a few points of noise — enough to invent an improvement.",
     )
     args = parser.parse_args()
-    return asyncio.run(repeated(args.model, args.limit, args.base_url, args.dataset, args.repeat))
+    return asyncio.run(
+        repeated(args.model, args.limit, args.base_url, args.dataset, args.think, args.repeat)
+    )
 
 
 if __name__ == "__main__":

@@ -13,7 +13,8 @@ The text is Spanish because it is product data, which is the one exception rule 
 makes.
 """
 
-from finguard_assistant.domain.models.query_answer import QueryAnswer
+from finguard_assistant.domain.enums import Metric
+from finguard_assistant.domain.models.query_answer import Group, QueryAnswer
 from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 
 # How many rows of a breakdown to read out. Past this the answer stops being a sentence
@@ -74,28 +75,47 @@ def describe(plan: FinancialPlan) -> str:
     return ", ".join(parts)
 
 
-def write(answer: QueryAnswer, *, window: str) -> str:
+def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Takes the plan, not just the window, because the metric decides what the answer
+    *is*.
+
+    Passing only the window is how "¿cuántas veces fui al súper?" came back as
+    "123,45 € el mes pasado, en 3 movimientos": the number that was asked for appeared,
+    as an aside, under a headline about money. The evaluation could not see it — it
+    scores plans, and that plan was correct.
+    """
+    window = window_of(plan)
+    counting = plan.metric is Metric.COUNT
+
     if answer.is_empty:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
         # The second is usually a plan that was wrong, and saying so lets the user
         # correct it instead of believing a zero.
         return f"No he encontrado movimientos {window}."
 
-    total = money(answer.total_minor, answer.currency)
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
-    head = f"{total} {window}, en {answer.movement_count} {noun}."
+    if counting:
+        head = f"{answer.movement_count} {noun} {window}."
+    else:
+        total = money(answer.total_minor, answer.currency)
+        head = f"{total} {window}, en {answer.movement_count} {noun}."
 
     if not _is_breakdown(answer):
         return head
 
     shown = answer.groups[:MAX_SPOKEN_GROUPS]
-    lines = "\n".join(
-        f"  · {group.key}: {money(group.total_minor, answer.currency)} ({group.movement_count})"
-        for group in shown
-    )
+    lines = "\n".join(f"  · {group.key}: {_figure(group, answer, counting)}" for group in shown)
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
+
+
+def _figure(group: Group, answer: QueryAnswer, counting: bool) -> str:
+    """A breakdown of a count is counts. Amounts under a "how many" question would be
+    the same mistake again, one row at a time."""
+    if counting:
+        return f"{group.movement_count}"
+    return f"{money(group.total_minor, answer.currency)} ({group.movement_count})"
 
 
 def _is_breakdown(answer: QueryAnswer) -> bool:

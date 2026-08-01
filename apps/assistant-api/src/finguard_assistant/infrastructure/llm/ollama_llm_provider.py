@@ -5,10 +5,23 @@ which is why it lives here and carries its technology in its name.
 
 Three settings on every request are not defaults worth inheriting:
 
-`think: false` — thinking is on by default in the runtimes that support it, so a model
-asked for a 120-token plan would first generate a reasoning pass nobody reads. Verified
-against Ollama 0.32.5 that sending it to a model without thinking is accepted rather
-than rejected, so it can go on every request unconditionally.
+`think: false` — **a correctness requirement, not a latency choice**, which is the
+opposite of why it was originally set. Thinking is on by default in the runtimes that
+support it, and the obvious argument was that a 120-token plan does not need a reasoning
+pass nobody reads. Measuring it found something worse: combined with `format`, the
+schema-constrained JSON is emitted into the *thinking* channel and `response` comes back
+empty.
+
+    think: true + format   ->  thinking: '{"period": "LAST_MONTH", ...}'
+                               response: ''
+
+The planner receives nothing, and the whole dataset fails with PROVIDER_ERROR. What
+catches it is the empty-answer check below, written as generic defence and turned out to
+be load-bearing. Do not "improve" this flag without re-running
+scripts/evaluate_planning.py --think.
+
+Verified against Ollama 0.32.5 that sending it to a model *without* thinking is accepted
+rather than rejected, so it can go on every request unconditionally.
 
 `keep_alive` — the first call to a cold model pays the load. Measured at ~6.9s total
 against ~0.1s once resident, which is the difference between a demo that looks broken
@@ -69,12 +82,14 @@ class OllamaLlmProvider:
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         context_tokens: int = DEFAULT_CONTEXT_TOKENS,
         seed: int = DEFAULT_SEED,
+        think: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._keep_alive = keep_alive
         self._timeout = timeout_seconds
         self._context_tokens = context_tokens
         self._seed = seed
+        self._think = think
 
     async def complete(
         self,
@@ -89,7 +104,7 @@ class OllamaLlmProvider:
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "think": False,
+            "think": self._think,
             "keep_alive": self._keep_alive,
             "options": {
                 "temperature": temperature,

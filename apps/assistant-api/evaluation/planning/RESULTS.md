@@ -45,19 +45,35 @@ answering a question about a ratio nobody can compute from it.
 
 ## Model comparison
 
-All four fit a 6.6 GB laptop GPU and run fully resident at `num_ctx: 4096`. Measured on
-the 60-case version of dev; the ranking has not been re-run against the 120-case set.
+All four fit a 6.6 GB laptop GPU and run **100% resident** at `num_ctx: 4096`. Measured
+on the held-out set with the current prompt, so the rows are comparable to the table
+above and to each other.
 
-| model | size | outcome | exact | INVENTED | over-asks | categories |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **qwen2.5-coder:7b** | 4.7 GB | **88.3 %** | **85.7 %** | 2 | **1** | 92.9 % |
-| granite4:micro | 2.1 GB | 71.7 % | 63.3 % | 1 | 13 | 64.3 % |
-| qwen3.5:4b | 3.4 GB | 68.3 % | 59.2 % | 2 | 16 | 78.6 % |
-| phi4-mini | 2.5 GB | 65.0 % | 59.2 % | 3 | 13 | 78.6 % |
+| model | on disk | resident | outcome | exact plan | INVENTED | over-asks | invalid | P50 | P95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **qwen2.5-coder:7b** | 4.7 GB | 4.7 GB | **82.3 %** | **73.8 %** | 2 | **2** | 0 | 2.18 s | 2.77 s |
+| qwen3.5:4b | 3.4 GB | 3.2 GB | 67.1 % | 56.9 % | **1** | 23 | 0 | 2.65 s | 3.37 s |
+| granite4:micro | 2.1 GB | 3.2 GB | 59.5 % | 46.2 % | 4 | 14 | **3** | **1.35 s** | **1.70 s** |
+| phi4-mini | 2.5 GB | 3.2 GB | 58.2 % | 41.5 % | 2 | 17 | 0 | 1.88 s | 2.25 s |
 
-A coding model beats three instruction-tuned models at reading Spanish. The reason is in
-the over-asks column: the other three abstain on 13–16 of the 49 answerable cases, and no
-newer or larger model fixed that.
+Three things the table says that a single ranking would not:
+
+**A coding model wins at reading Spanish**, by 15 points over the next one. The reason is
+the over-asks column: the three instruction-tuned models refuse between 14 and 23 of the
+65 answerable cases. Nothing about size or recency fixed that.
+
+**Speed and quality are not on the same axis.** granite4:micro is 38 % faster than the
+winner and answers 46 % of plans exactly. Being under the 2 s target is worth nothing if
+the plan is wrong.
+
+**granite4:micro is the only model that broke the constraint** — 3 invalid structures out
+of 79, where every other model scored 0 across every run. Constrained decoding is
+supposed to make that unreachable, so this is a property of that model's integration
+rather than a quality score, and it is disqualifying on its own: a planner whose output
+sometimes is not a plan has no error path that helps.
+
+qwen3.5:4b being **slower than a model almost twice its size** is worth knowing before
+reaching for a smaller one to go faster.
 
 ## What moved the numbers
 
