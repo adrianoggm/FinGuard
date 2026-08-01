@@ -1,7 +1,7 @@
 [project]
 name = "finguard-assistant-api"
 version = "0.1.0"
-description = "Orquestador conversacional de FinGuard"
+description = "Conversational orchestrator of FinGuard"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
