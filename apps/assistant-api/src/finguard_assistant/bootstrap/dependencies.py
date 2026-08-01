@@ -1,9 +1,12 @@
 from datetime import date, datetime
+from typing import Annotated
 from zoneinfo import ZoneInfo
 
-from fastapi import Request
+from fastapi import Header, Request
 
 from finguard_assistant.application import AskFinancialQuestionHandler, CommandBus, QueryBus
+from finguard_assistant.domain.ports.caller_identity import CallerIdentityPort
+from finguard_assistant.domain.value_objects.caller import Caller
 
 # The zone the user's day is measured in. Not UTC: "hoy" means the holder's today, and a
 # purchase at 23:30 in Madrid belongs to that day, not the next one.
@@ -41,3 +44,16 @@ def get_ask_handler(request: Request) -> AskFinancialQuestionHandler:
     """
     handler: AskFinancialQuestionHandler = request.app.state.ask_handler
     return handler
+
+
+async def authenticated_caller(
+    request: Request, authorization: Annotated[str | None, Header()] = None
+) -> Caller:
+    """Identity, the first layer of §12.1 and the one that was missing.
+
+    A dependency rather than middleware, so a route that needs a caller says so in its
+    signature and a route that does not cannot accidentally receive one. The account it
+    carries is where the account now comes from — the request body no longer has a say.
+    """
+    identity: CallerIdentityPort = request.app.state.identity
+    return await identity.resolve(authorization)

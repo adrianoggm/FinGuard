@@ -30,11 +30,13 @@ from finguard_assistant.application import (
     Stage,
 )
 from finguard_assistant.bootstrap.dependencies import (
+    authenticated_caller,
     get_ask_handler,
     get_command_bus,
     get_query_bus,
     reporting_today,
 )
+from finguard_assistant.domain.value_objects.caller import Caller
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
@@ -49,6 +51,7 @@ Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
 Today = Annotated[date, Depends(reporting_today)]
 Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
+Who = Annotated[Caller, Depends(authenticated_caller)]
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -101,7 +104,9 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
 
 
 @assistant_router.post("/v1/questions", summary="Answer a financial question")
-async def ask(request: QuestionRequest, queries: Queries, today: Today) -> QuestionResponse:
+async def ask(
+    request: QuestionRequest, who: Who, queries: Queries, today: Today
+) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
     The answer carries the plan that produced it and the movements behind it. That is
@@ -115,7 +120,7 @@ async def ask(request: QuestionRequest, queries: Queries, today: Today) -> Quest
     result = await queries.ask(
         AskFinancialQuestionQuery(
             sentence=request.question,
-            account_id=request.account_id,
+            account_id=who.account_id,
             today=today,
             previous_plan=request.previous_plan,
         )
@@ -124,7 +129,9 @@ async def ask(request: QuestionRequest, queries: Queries, today: Today) -> Quest
 
 
 @assistant_router.post("/v1/questions/stream", summary="Answer a question, stage by stage")
-async def ask_streaming(request: QuestionRequest, asking: Asking, today: Today) -> Response:
+async def ask_streaming(
+    request: QuestionRequest, who: Who, asking: Asking, today: Today
+) -> Response:
     """The same answer, emitted as it is produced.
 
     Not token-by-token: the answer text comes from a template and exists all at once
@@ -138,7 +145,7 @@ async def ask_streaming(request: QuestionRequest, asking: Asking, today: Today) 
     """
     question = AskFinancialQuestionQuery(
         sentence=request.question,
-        account_id=request.account_id,
+        account_id=who.account_id,
         today=today,
         previous_plan=request.previous_plan,
     )

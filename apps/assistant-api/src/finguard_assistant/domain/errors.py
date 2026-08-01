@@ -82,3 +82,16 @@ class BankingUnavailableError(DomainError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(f"banking unavailable: {reason}")
+
+
+class NotAuthenticatedError(DomainError):
+    """No credential, or one this deployment does not know.
+
+    Deliberately says nothing about which: telling a caller that a token was well-formed
+    but unknown is telling them how to make a better guess.
+    """
+
+    code = "not_authenticated"
+
+    def __init__(self, reason: str = "a valid credential is required") -> None:
+        super().__init__(reason)
