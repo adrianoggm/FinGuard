@@ -7,6 +7,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "pydantic-settings>=2.7",
+    # Runtime, not just tests: the Ollama provider and the banking client speak HTTP.
+    # See tests/test_dependency_provenance.py for why the name is not a typosquat.
+    "httpx2>=2.9",
 ]
 
 [dependency-groups]
@@ -44,5 +47,7 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: needs a running PostgreSQL"]
+# This service has no database. What it needs is a local Ollama daemon, which CI
+# does not have, so the marker names that instead of inheriting banking-api's wording.
+markers = ["integration: needs a running Ollama daemon"]
 asyncio_mode = "auto"

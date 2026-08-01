@@ -13,9 +13,11 @@ from collections.abc import Callable
 from finguard_assistant.domain.errors import UnknownProviderError
 from finguard_assistant.domain.ports.llm_provider import LlmProviderPort
 from finguard_assistant.infrastructure.llm.echo_llm_provider import EchoLlmProvider
+from finguard_assistant.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 
 _BUILDERS: dict[str, Callable[[], LlmProviderPort]] = {
     EchoLlmProvider.name: EchoLlmProvider,
+    OllamaLlmProvider.name: OllamaLlmProvider,
 }
 
 
