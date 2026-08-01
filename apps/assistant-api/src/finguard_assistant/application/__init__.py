@@ -31,6 +31,7 @@ from finguard_assistant.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
     AskFinancialQuestionResult,
+    SpokenPlan,
     Stage,
 )
 from finguard_assistant.application.queries.get_llm_catalogue import (
@@ -48,6 +49,7 @@ __all__ = [
     "AskFinancialQuestionHandler",
     "AskFinancialQuestionQuery",
     "AskFinancialQuestionResult",
+    "SpokenPlan",
     "Stage",
     "CatalogueResult",
     "Command",

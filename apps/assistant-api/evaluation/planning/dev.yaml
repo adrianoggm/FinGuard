@@ -677,7 +677,7 @@ cases:
   - id: follow_category_after_period
     group: follow_up
     question: ¿Y en gasolina?
-    previous: el mes pasado, expense
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE}
     expect: plan
     plan:
       period: {period: LAST_MONTH}
@@ -687,14 +687,14 @@ cases:
   - id: follow_grouping_after_period
     group: follow_up
     question: ¿Y desglosado por categorías?
-    previous: el mes pasado, expense
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE}
     expect: plan
     plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
 
   - id: follow_period_change_keeps_category
     group: follow_up
     question: ¿Y este mes?
-    previous: el mes pasado, expense, transport_fuel
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
     expect: plan
     # The window changes; the category stays.
     plan:
@@ -705,14 +705,14 @@ cases:
   - id: follow_direction_change
     group: follow_up
     question: ¿Y lo que me entró?
-    previous: el mes pasado, expense
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE}
     expect: plan
     plan: {period: {period: LAST_MONTH}, direction: INCOME}
 
   - id: follow_fresh_question_drops_context
     group: follow_up
     question: ¿Cuánto gasté hoy?
-    previous: el mes pasado, expense, por category
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
     expect: plan
     # A complete question. Inheriting CATEGORY would add a breakdown nobody asked for,
     # which is the failure mode of context that carries too much.
@@ -727,7 +727,7 @@ cases:
   - id: follow_metric_change
     group: follow_up
     question: ¿Y cuántas veces?
-    previous: el mes pasado, expense, groceries
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
     expect: plan
     plan:
       period: {period: LAST_MONTH}
@@ -738,7 +738,7 @@ cases:
   - id: follow_narrow_to_week
     group: follow_up
     question: ¿Y solo la semana pasada?
-    previous: el mes pasado, expense, restaurants
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [RESTAURANTS]}
     expect: plan
     plan:
       period: {period: LAST_WEEK}
@@ -748,14 +748,14 @@ cases:
   - id: follow_by_merchant
     group: follow_up
     question: ¿Y por comercios?
-    previous: en lo que va de mes, expense
+    previous: {period: {period: THIS_MONTH}, direction: EXPENSE}
     expect: plan
     plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
 
   - id: follow_ambiguous_stays_ambiguous
     group: follow_up
     question: ¿Y lo normal?
-    previous: el mes pasado, expense
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE}
     expect: clarification
     why: context supplies a window, not a meaning for "normal"
 

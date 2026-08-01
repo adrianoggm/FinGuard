@@ -33,6 +33,25 @@ class SpokenGroup:
 
 
 @dataclass(frozen=True)
+class SpokenPlan:
+    """The plan in fields rather than in words, flat like every other Result piece.
+
+    It exists so a follow-up can carry its context back without the client having to
+    re-type a sentence — and, more to the point, without the *description* travelling,
+    which put a client-supplied string inside the prompt's instructions.
+    """
+
+    direction: str
+    period: str | None = None
+    n: int | None = None
+    start: str | None = None
+    end: str | None = None
+    categories: list[str] = field(default_factory=list)
+    group_by: str = "NONE"
+    metric: str = "SUM"
+
+
+@dataclass(frozen=True)
 class SpokenMovement:
     occurred_at: str
     description: str
@@ -55,6 +74,7 @@ class AskFinancialQuestionResult:
     text: str
     question: str | None = None
     plan: str | None = None
+    plan_context: SpokenPlan | None = None
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None
@@ -68,8 +88,9 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     account_id: UUID
     today: date
     # The plan behind the previous answer, echoed back by the caller. Held by whoever
-    # is having the conversation, not by this service.
-    previous_plan: str | None = None
+    # is having the conversation, not by this service — and already a plan by the time
+    # it arrives here, rather than text that has to be believed.
+    previous_plan: FinancialPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -168,11 +189,26 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
     )
 
 
+def _spoken(plan: FinancialPlan) -> SpokenPlan:
+    """Flattened, so no domain object leaves this layer."""
+    return SpokenPlan(
+        direction=plan.direction.value,
+        period=plan.period.period.value if plan.period else None,
+        n=plan.period.n if plan.period else None,
+        start=plan.date_range.start.isoformat() if plan.date_range else None,
+        end=plan.date_range.end.isoformat() if plan.date_range else None,
+        categories=list(plan.categories),
+        group_by=plan.group_by.value,
+        metric=plan.metric.value,
+    )
+
+
 def _answered(plan: FinancialPlan, answer: QueryAnswer) -> AskFinancialQuestionResult:
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
         text=answer_writer.write(answer, plan),
         plan=answer_writer.describe(plan),
+        plan_context=_spoken(plan),
         currency=answer.currency,
         total_minor=answer.total_minor,
         movement_count=answer.movement_count,

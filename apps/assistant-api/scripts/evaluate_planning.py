@@ -34,8 +34,13 @@ from typing import Any
 
 import yaml
 
-from finguard_assistant.domain.enums import PlanningOutcome
+from finguard_assistant.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_assistant.domain.models.planning_result import PlanningResult
+from finguard_assistant.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_assistant.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_assistant.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 
@@ -128,6 +133,35 @@ class Score:
     # the other wrong is string matching rather than reading, and the aggregate hides it.
     paraphrase_splits: list[str] = field(default_factory=list)
     right_by_id: dict[str, bool] = field(default_factory=dict)
+
+
+def as_plan(spec: dict[str, Any]) -> FinancialPlan:
+    """The dataset's plan shape, built as a plan.
+
+    Used for the `previous` of a follow-up, which the planner now takes as a plan rather
+    than as its description. The dataset says it in the same shape as an expectation, and
+    it goes through the same validation the API does — a context this cannot build is one
+    a client could not send either.
+    """
+    period = spec.get("period")
+    window = spec.get("dateRange")
+    return FinancialPlan(
+        direction=Direction(spec.get("direction", "EXPENSE")),
+        period=(
+            RelativePeriod(period=Period(period["period"]), n=period.get("n")) if period else None
+        ),
+        date_range=(
+            AbsoluteRange(
+                start=date.fromisoformat(str(window["from"])),
+                end=date.fromisoformat(str(window["to"])),
+            )
+            if window
+            else None
+        ),
+        categories=tuple(spec.get("categories", ())),
+        group_by=GroupBy(spec.get("groupBy", "NONE")),
+        metric=Metric(spec.get("metric", "SUM")),
+    )
 
 
 def expected_fields(plan: dict[str, Any], today: date) -> dict[str, Any]:
@@ -299,7 +333,10 @@ async def run(
     score = Score()
     for case in cases:
         started = time.perf_counter()
-        result = await planner.plan(case["question"], today=today, previous=case.get("previous"))
+        context = case.get("previous")
+        result = await planner.plan(
+            case["question"], today=today, previous=as_plan(context) if context else None
+        )
         score.latencies.append(time.perf_counter() - started)
 
         if result.outcome is PlanningOutcome.PROVIDER_ERROR:

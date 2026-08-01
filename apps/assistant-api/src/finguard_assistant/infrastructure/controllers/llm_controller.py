@@ -38,6 +38,7 @@ from finguard_assistant.bootstrap.dependencies import (
     reporting_today,
 )
 from finguard_assistant.domain.value_objects.caller import Caller
+from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
@@ -47,6 +48,7 @@ from finguard_assistant.infrastructure.dto.llm_dto import (
     QuestionResponse,
 )
 from finguard_assistant.infrastructure.mappers import llm_mapper
+from finguard_assistant.infrastructure.mappers.llm_mapper import plan_to_domain
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
@@ -120,6 +122,16 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
 
 
+def _context_of(request: QuestionRequest) -> FinancialPlan | None:
+    """The follow-up context, as a plan.
+
+    Mapped at the edge on purpose: a plan the caller made up is a bad request, and this
+    is the layer that knows how to say so. Nothing further in owns a string it has to
+    take on faith.
+    """
+    return plan_to_domain(request.previous_plan) if request.previous_plan else None
+
+
 @assistant_router.post(
     "/v1/questions",
     summary="Answer a financial question",
@@ -144,7 +156,7 @@ async def ask(
             sentence=request.question,
             account_id=who.account_id,
             today=today,
-            previous_plan=request.previous_plan,
+            previous_plan=_context_of(request),
         )
     )
     return llm_mapper.question_to_dto(result)
@@ -173,7 +185,7 @@ async def ask_streaming(
         sentence=request.question,
         account_id=who.account_id,
         today=today,
-        previous_plan=request.previous_plan,
+        previous_plan=_context_of(request),
     )
 
     async def events() -> AsyncIterator[str]:

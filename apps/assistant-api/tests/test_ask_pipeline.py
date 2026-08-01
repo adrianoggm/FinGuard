@@ -54,10 +54,10 @@ ANSWER = QueryAnswer(
 class FakePlanner:
     def __init__(self, result: PlanningResult) -> None:
         self._result = result
-        self.previous: str | None = None
+        self.previous: FinancialPlan | None = None
 
     async def plan(
-        self, sentence: str, *, today: date, previous: str | None = None
+        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
     ) -> PlanningResult:
         self.previous = previous
         return self._result
@@ -264,17 +264,39 @@ async def test_a_decline_stops_the_stream_without_querying() -> None:
 async def test_the_previous_plan_reaches_the_planner() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     handler = AskFinancialQuestionHandler(planner, FakeLedger(ANSWER))
+    context = plan(categories=("GROCERIES",))
 
     await handler.handle(
         AskFinancialQuestionQuery(
             sentence="¿y en gasolina?",
             account_id=ACCOUNT,
             today=TODAY,
-            previous_plan="el mes pasado, expense",
+            previous_plan=context,
         )
     )
 
-    assert planner.previous == "el mes pasado, expense"
+    assert planner.previous == context
+
+
+async def test_an_answer_carries_the_context_of_the_next_question() -> None:
+    """The follow-up loop closes on a plan and not on a sentence: what comes back in
+    `plan_context` is what goes out as `previous_plan`, so the client never has to
+    reconstruct — or invent — the words."""
+    result = await ask(PlanningResult.planned(plan(metric=Metric.COUNT, categories=("GROCERIES",))))
+
+    assert result.plan_context is not None
+    assert result.plan_context.period == "LAST_MONTH"
+    assert result.plan_context.direction == "EXPENSE"
+    assert result.plan_context.categories == ["GROCERIES"]
+    assert result.plan_context.metric == "COUNT"
+
+
+async def test_a_declined_question_carries_no_context() -> None:
+    # There is no plan behind it, so there is nothing to continue from. An empty one
+    # would invite a follow-up onto a question that was never answered.
+    result = await ask(PlanningResult.needs_clarification("¿de qué mes?"))
+
+    assert result.plan_context is None
 
 
 @pytest.mark.parametrize("metric", [Metric.SUM, Metric.COUNT])

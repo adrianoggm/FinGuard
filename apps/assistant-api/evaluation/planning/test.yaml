@@ -414,7 +414,7 @@ cases:
   - id: t_follow_category
     group: follow_up
     question: ¿Y en el súper?
-    previous: la semana pasada, expense
+    previous: {period: {period: LAST_WEEK}, direction: EXPENSE}
     expect: plan
     plan:
       period: {period: LAST_WEEK}
@@ -424,7 +424,7 @@ cases:
   - id: t_follow_period
     group: follow_up
     question: ¿Y la semana pasada?
-    previous: en lo que va de mes, expense, groceries
+    previous: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
     expect: plan
     plan:
       period: {period: LAST_WEEK}
@@ -434,21 +434,21 @@ cases:
   - id: t_follow_grouping
     group: follow_up
     question: ¿Y repartido por comercios?
-    previous: el mes pasado, expense
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE}
     expect: plan
     plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
 
   - id: t_follow_direction
     group: follow_up
     question: ¿Y lo que cobré?
-    previous: el mes pasado, expense
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE}
     expect: plan
     plan: {period: {period: LAST_MONTH}, direction: INCOME}
 
   - id: t_follow_metric
     group: follow_up
     question: ¿Y cuántas fueron?
-    previous: la semana pasada, expense, restaurants
+    previous: {period: {period: LAST_WEEK}, direction: EXPENSE, categories: [RESTAURANTS]}
     expect: plan
     plan:
       period: {period: LAST_WEEK}
@@ -459,7 +459,7 @@ cases:
   - id: t_follow_fresh_question
     group: follow_up
     question: ¿Cuánto cobré de nómina el mes pasado?
-    previous: esta semana, expense, por merchant
+    previous: {period: {period: THIS_WEEK}, direction: EXPENSE, groupBy: MERCHANT}
     expect: plan
     # Complete on its own. Inheriting MERCHANT would add a breakdown nobody asked for.
     plan:
