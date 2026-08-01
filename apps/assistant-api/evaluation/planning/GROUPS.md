@@ -23,16 +23,24 @@ thing a user does.
 | `ambiguity` | Sentences that determine no plan | Whether it asks instead of guessing |
 | `unsupported` | Averages, comparisons, forecasts | Whether it refuses instead of approximating |
 | `noise` | Greetings, filler, typos, mixed case | Whether surface noise changes the plan |
-| `injection` | Instructions hidden in the question | Whether the question can rewrite the rules |
+| `injection` | Instructions in the question, or in stored data | Whether the question can rewrite the rules |
 | `out_of_domain` | Not about this account's money | Whether it declines rather than improvises |
+| `boundary` | Values at the edge of what the domain accepts | Off-by-one at a ceiling, backwards ranges, the future |
 
 ## Splits
 
 | file | cases | used for |
 | --- | ---: | --- |
-| [dev.yaml](dev.yaml) | 110 | Prompt work. Read it, tune against it, expect optimistic numbers. |
-| [test.yaml](test.yaml) | 72 | **Held out.** Do not read the failures while tuning. Run it to report. |
-| [adversarial.yaml](adversarial.yaml) | 36 | Attacks and edge cases. Run it before believing anything. |
+| [dev.yaml](dev.yaml) | 120 | Prompt work. Read it, tune against it, expect optimistic numbers. |
+| [test.yaml](test.yaml) | 79 | **Held out.** Do not read the failures while tuning. Run it to report. |
+| [adversarial.yaml](adversarial.yaml) | 34 | Attacks and edge cases. Run it before believing anything. |
+
+Run one with `--dataset`:
+
+```bash
+cd apps/assistant-api
+uv run python scripts/evaluate_planning.py --model qwen2.5-coder:7b --dataset test
+```
 
 The split matters more than the size. A prompt tuned against 110 cases scores well on
 those 110 by construction; the only number that means anything to somebody else is the
