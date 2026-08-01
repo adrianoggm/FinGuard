@@ -132,7 +132,7 @@ test-unit:
 # Accuracy of the query engine given a correct plan (phase 2)
 # Accuracy of turning a Spanish sentence into a plan (phase 3). Needs a local Ollama
 # daemon; the model tag is the one you want to compare.
-evaluate-planning model="qwen2.5-coder:7b":
+evaluate-planning model="qwen3.5:9b":
     cd apps/assistant-api && uv run python scripts/evaluate_planning.py --model {{ model }}
 
 # What has to pass before pushing a commit

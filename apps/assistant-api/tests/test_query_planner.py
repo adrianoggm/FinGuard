@@ -10,6 +10,8 @@ import json
 from datetime import date
 from typing import Any
 
+import pytest
+
 from finguard_assistant.domain.enums import Direction, GroupBy, Period, PlanningOutcome
 from finguard_assistant.domain.errors import ProviderFailedError
 from finguard_assistant.infrastructure.planning.llm_query_planner import LlmQueryPlanner
@@ -156,6 +158,22 @@ async def test_the_no_category_marker_never_becomes_a_filter() -> None:
 
     # NONE dropped, and the same category twice is one filter, not two.
     assert result.plan.categories == ("GROCERIES",)
+
+
+@pytest.mark.parametrize("category", ["", "CRYPTO_ASSETS"])
+async def test_a_category_outside_the_schema_is_structural(category: str) -> None:
+    """An invalid category must never become no filter or a guaranteed empty result."""
+    result = await plan_from({**FULL, "categories": [category]})
+
+    assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
+    assert result.plan is None
+
+
+async def test_categories_with_the_wrong_container_are_structural() -> None:
+    result = await plan_from({**FULL, "categories": "GROCERIES"})
+
+    assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
+    assert result.plan is None
 
 
 async def test_a_question_is_carried_back() -> None:

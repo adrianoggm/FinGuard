@@ -40,11 +40,15 @@ class Settings(BaseSettings):
 
     # The financial endpoints, off unless a deployment turns them on.
     #
-    # Not caution for its own sake. The evaluation says the assistant refuses nothing it
-    # cannot express (0% on the held-out set) and that one prompt injection still changes
-    # a field, and both of those produce a confident, plausible, wrong figure rather than
-    # an error. Documenting a risk is not controlling it; a flag is, and it makes turning
+    # Not caution for its own sake. Both reasons produce a confident, plausible, wrong
+    # figure rather than an error, which is the one failure mode nobody downstream
+    # catches. Documenting a risk is not controlling it; a flag is, and it makes turning
     # this on a decision somebody takes rather than a default nobody chose.
+    #
+    # One of the two has moved: refusing what it cannot express was 0% on the held-out
+    # set and is 60% since the planner changed model. Better is not the bar, and it is a
+    # model's disposition rather than a guarantee — two in five still come back as a real
+    # figure answering a question about a ratio. The injection has not moved at all.
     #
     # It comes off when unsupported has a deterministic guard and injection clears the
     # agreed bar — see docs/next.md.
@@ -53,7 +57,17 @@ class Settings(BaseSettings):
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.
-    planner_model: str = "qwen2.5-coder:7b"
+    #
+    # Eleven models were measured. This is not the most accurate of them: qwen2.5-coder
+    # at 14B scores 92.4% held out against this one's 89.9%. It is the one that stopped
+    # answering questions it cannot answer — `unsupported` went from 1/5 to 3/5 without
+    # the over-asking that usually comes with it. A missing answer is visible to the
+    # user; a confident wrong figure is not.
+    #
+    # qwen2.5-coder:7b stays the baseline every change is measured against, and it is
+    # the one to fall back to: 4.7 GB fits a 6.6 GB budget whole, and this does not.
+    # See evaluation/planning/RESULTS.md.
+    planner_model: str = "qwen3.5:9b"
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a
@@ -84,7 +98,10 @@ class Settings(BaseSettings):
             if token in table:
                 # Two entries sharing a secret is a typo, and the quiet outcome is the
                 # dangerous one: the token would resolve to whichever account came last.
-                raise ValueError(f"token {token[:6]}... is configured twice")
+                # Configuration errors often end up in CI and container logs. The
+                # operator already has the table in front of them; repeating even a
+                # prefix of the shared secret there only creates another copy to leak.
+                raise ValueError("a development token is configured twice")
             table[token] = Caller(holder_reference=holder, account_id=UUID(account))
         return table
 

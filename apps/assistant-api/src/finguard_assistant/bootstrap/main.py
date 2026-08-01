@@ -81,7 +81,7 @@ def create_app() -> FastAPI:
     banking = HttpFinancialQuery(base_url=settings.banking_base_url)
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
-            providers.get(OllamaLlmProvider.name),
+            planner_provider,
             model=settings.planner_model,
             temperature=0.0,
             max_output_tokens=384,

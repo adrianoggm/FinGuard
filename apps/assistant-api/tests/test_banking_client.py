@@ -137,6 +137,25 @@ def test_amounts_stay_in_minor_units() -> None:
     assert isinstance(answer.total_minor, int)
 
 
+def test_an_http_answer_must_identify_the_requested_account() -> None:
+    body = {"currency": "EUR", "totalMinor": 142580, "movementCount": 1}
+
+    with pytest.raises(BankingUnavailableError, match="does not identify"):
+        from_body(body, account_id=ACCOUNT)
+
+
+def test_an_http_answer_for_another_account_is_rejected() -> None:
+    body = {
+        "accountId": str(uuid.uuid4()),
+        "currency": "EUR",
+        "totalMinor": 142580,
+        "movementCount": 1,
+    }
+
+    with pytest.raises(BankingUnavailableError, match="answer is about"):
+        from_body(body, account_id=ACCOUNT)
+
+
 # --- the service not being there ---------------------------------------------------
 
 

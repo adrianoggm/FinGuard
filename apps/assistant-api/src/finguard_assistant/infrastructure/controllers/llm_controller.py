@@ -84,6 +84,7 @@ async def ready(request: Request, queries: Queries) -> JSONResponse:
     provider = catalogue.active.model.provider
 
     checks = {
+        "questions_enabled": bool(request.app.state.questions_enabled),
         "catalogue_provider": provider in catalogue.available_providers,
         "planner": await request.app.state.planner_probe.ping(),
         "banking": await request.app.state.banking_probe.ping(),

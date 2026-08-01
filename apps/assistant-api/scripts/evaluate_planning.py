@@ -41,7 +41,10 @@ from finguard_assistant.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_assistant.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
+from finguard_assistant.infrastructure.llm.ollama_llm_provider import (
+    DEFAULT_TIMEOUT_SECONDS,
+    OllamaLlmProvider,
+)
 from finguard_assistant.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 
 PLANNING = Path(__file__).resolve().parents[1] / "evaluation" / "planning"
@@ -291,7 +294,17 @@ def report(model: str, score: Score) -> None:
         ordered = sorted(score.latencies)
         p50 = statistics.median(ordered)
         p95 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.95))]
-        print(f"\n  latency  P50 {p50:.2f}s   P95 {p95:.2f}s   max {ordered[-1]:.2f}s")
+        mean = statistics.fmean(ordered)
+        first, last = score.latencies[0], statistics.fmean(score.latencies[-10:])
+        print(
+            f"\n  latency  P50 {p50:.2f}s   mean {mean:.2f}s   P95 {p95:.2f}s   "
+            f"max {ordered[-1]:.2f}s"
+        )
+        # A laptop GPU under sustained load drops its clock, so a set measured start to
+        # finish is not measured under one condition. Printing the first case beside the
+        # last ten is what makes that visible instead of hiding inside the mean: a cold
+        # load inflates the first, and thermal throttling inflates the last.
+        print(f"           first {first:.2f}s   last ten {last:.2f}s")
 
     if score.paraphrase_splits:
         print("\n  said differently, answered differently")
@@ -317,13 +330,14 @@ async def run(
     dataset: str = "dev",
     think: bool = False,
     collect: list[tuple[int, int]] | None = None,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> int:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
     today = data["reference"]
     cases = data["cases"][:limit] if limit else data["cases"]
 
     planner = LlmQueryPlanner(
-        OllamaLlmProvider(base_url=base_url, think=think),
+        OllamaLlmProvider(base_url=base_url, think=think, timeout_seconds=timeout_seconds),
         model=model,
         temperature=0.0,
         max_output_tokens=384,
@@ -370,7 +384,13 @@ def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:
 
 
 async def repeated(
-    model: str, limit: int | None, base_url: str, dataset: str, think: bool, times: int
+    model: str,
+    limit: int | None,
+    base_url: str,
+    dataset: str,
+    think: bool,
+    times: int,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> int:
     """Runs the set `times` over and report the spread as well as the numbers.
 
@@ -379,7 +399,9 @@ async def repeated(
     """
     scores: list[tuple[int, int]] = []
     for attempt in range(times):
-        code = await run(model, limit, base_url, dataset, think, collect=scores)
+        code = await run(
+            model, limit, base_url, dataset, think, collect=scores, timeout_seconds=timeout_seconds
+        )
         if code:
             return code
         if times > 1:
@@ -416,6 +438,14 @@ def main() -> int:
         "has never been seen by the prompt and is the number worth quoting.",
     )
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="seconds before a request is a PROVIDER_ERROR. The default is a ceiling "
+        'for "something is wrong", not a latency target; a model that does not fit '
+        "the GPU needs it raised or it cannot be measured at all.",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -425,7 +455,15 @@ def main() -> int:
     )
     args = parser.parse_args()
     return asyncio.run(
-        repeated(args.model, args.limit, args.base_url, args.dataset, args.think, args.repeat)
+        repeated(
+            args.model,
+            args.limit,
+            args.base_url,
+            args.dataset,
+            args.think,
+            args.repeat,
+            args.timeout,
+        )
     )
 
 

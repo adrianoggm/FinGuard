@@ -134,7 +134,40 @@ def test_ready_reports_on_what_the_financial_endpoint_needs() -> None:
     question would have failed."""
     body = client.get("/ready").json()
 
-    assert set(body["checks"]) == {"catalogue_provider", "planner", "banking"}
+    assert set(body["checks"]) == {
+        "questions_enabled",
+        "catalogue_provider",
+        "planner",
+        "banking",
+    }
+
+
+def test_ready_is_false_while_financial_questions_are_disabled() -> None:
+    class ReadyProbe:
+        async def ping(self) -> bool:
+            return True
+
+    previous_enabled = app.state.questions_enabled
+    previous_planner = app.state.planner_probe
+    previous_banking = app.state.banking_probe
+    client.put("/admin/llm-policy", json={"model_alias": "backup"})
+    app.state.questions_enabled = False
+    app.state.planner_probe = ReadyProbe()
+    app.state.banking_probe = ReadyProbe()
+    try:
+        response = client.get("/ready")
+    finally:
+        app.state.questions_enabled = previous_enabled
+        app.state.planner_probe = previous_planner
+        app.state.banking_probe = previous_banking
+
+    assert response.status_code == 503
+    assert response.json()["checks"] == {
+        "questions_enabled": False,
+        "catalogue_provider": True,
+        "planner": True,
+        "banking": True,
+    }
 
 
 def test_the_openapi_document_is_served() -> None:
