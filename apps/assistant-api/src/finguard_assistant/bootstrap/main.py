@@ -77,6 +77,8 @@ def create_app() -> FastAPI:
     # The planning path. It does not go through the LLM policy on purpose: the policy
     # chooses who *answers*, and planning is a different job measured a different way
     # (scripts/evaluate_planning.py). One knob per decision beats one knob for both.
+    planner_provider = providers.get(OllamaLlmProvider.name)
+    banking = HttpFinancialQuery(base_url=settings.banking_base_url)
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             providers.get(OllamaLlmProvider.name),
@@ -85,7 +87,7 @@ def create_app() -> FastAPI:
             max_output_tokens=384,
             categories=settings.categories,
         ),
-        HttpFinancialQuery(base_url=settings.banking_base_url),
+        banking,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
 
@@ -101,6 +103,10 @@ def create_app() -> FastAPI:
     app.state.command_bus = command_bus
     # Reached directly by the streaming route: a bus answers once, a stream does not.
     app.state.ask_handler = asking
+    # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
+    app.state.questions_enabled = settings.questions_enabled
+    app.state.planner_probe = planner_provider
+    app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
     app.state.identity = StaticTokenIdentity(settings.callers())

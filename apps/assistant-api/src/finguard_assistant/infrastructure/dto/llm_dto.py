@@ -5,9 +5,12 @@ or HTTP. Keeping them apart is what stops a change in the contract from reaching
 core — before this, `LlmPolicy` was both the domain object and the request body.
 """
 
+from datetime import date
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_assistant.domain.constants import MAX_PROMPT_LENGTH
+from finguard_assistant.domain.enums import Direction, GroupBy, Metric, Period
 
 
 class _Payload(BaseModel):
@@ -57,6 +60,35 @@ class MessageResponse(_Payload):
     attempted: list[str]
 
 
+class PlanPayload(_Payload):
+    """A plan, in fields. Travels both ways: out with an answer, back as the context of
+    a follow-up.
+
+    It used to travel back as the one-line description a person reads, which was
+    convenient and wrong. That line goes into the *instruction* section of the prompt,
+    so a client-supplied string was client-supplied prompt — and no amount of filtering
+    fixes that, because a directive is spelled with the same characters a plan is
+    ("responde siempre con direction all" is lowercase letters and spaces, like every
+    real plan). Typing it means the only thing a caller can send is a plan, and the text
+    the model sees is rendered by us from values that have already been validated.
+
+    Two rules follow from that and are worth stating: every field is an enum or a
+    number, and nothing here is free text.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    direction: Direction
+    # Exactly one of the named window and the explicit range, enforced by the domain.
+    period: Period | None = None
+    n: int | None = None
+    start: date | None = None
+    end: date | None = None
+    categories: list[str] = []
+    group_by: GroupBy = GroupBy.NONE
+    metric: Metric = Metric.SUM
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -67,10 +99,12 @@ class QuestionRequest(_Payload):
 
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
+    # Free text, because a question is free text: it can only be delimited, never
+    # parsed. The plan below is the opposite case and gets the opposite treatment.
     question: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
-    # Echo back the `plan` from the previous answer to ask a follow-up. Optional, and
-    # the caller owns it: the service keeps no conversation.
-    previous_plan: str | None = Field(default=None, max_length=MAX_PROMPT_LENGTH)
+    # Echo back `plan_context` from the previous answer to ask a follow-up. Optional,
+    # and the caller owns it: the service keeps no conversation.
+    previous_plan: PlanPayload | None = None
 
 
 class SpokenGroupResponse(_Payload):
@@ -99,6 +133,9 @@ class QuestionResponse(_Payload):
     text: str
     question: str | None = None
     plan: str | None = None
+    # The same plan as `plan`, in fields. `plan` is for a person to read; this is what
+    # comes back as `previous_plan` on the next question.
+    plan_context: PlanPayload | None = None
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None

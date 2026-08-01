@@ -13,7 +13,7 @@ and carries nothing mutable. Nothing here expires, because nothing here is store
 from dataclasses import dataclass
 from uuid import UUID
 
-from finguard_assistant.domain.errors import InvalidValueError
+from finguard_assistant.domain.errors import InvalidValueError, NotAuthorisedError
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,25 @@ class Caller:
             raise InvalidValueError("an authenticated caller needs a holder reference")
 
     def may_read(self, account_id: UUID) -> bool:
-        """Deny by default (§12.2). Asked explicitly rather than assumed, so the check
-        is visible at the call site instead of being an invariant somebody remembers."""
+        """Deny by default.
+
+        Authorisation here is enforced by construction — the account travels *from* this
+        object into the query, so there is no second account to compare against on the
+        normal path. That makes this method the belt to that braces, and review rightly
+        flagged that an unused authorisation check is worse than none: it reads like a
+        control while enforcing nothing.
+
+        It is called by `assert_may_read`, which the handler path uses, so the guarantee
+        stops depending on every future call site remembering to copy the right field.
+        """
         return account_id == self.account_id
+
+    def assert_may_read(self, account_id: UUID) -> None:
+        """Raises unless the account is this caller's.
+
+        Cheap, and it closes the failure nobody would notice: a future route that takes
+        an account from anywhere else would otherwise read another holder's figures and
+        look completely normal doing it.
+        """
+        if not self.may_read(account_id):
+            raise NotAuthorisedError()

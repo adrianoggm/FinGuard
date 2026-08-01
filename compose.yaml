@@ -74,6 +74,9 @@ services:
       #
       # Only defensible because nothing is published beyond 127.0.0.1 (rule 13). A
       # deployment injects these from a secret store and never from a compose file.
+      # The financial endpoints are off by default while two measured risks stay open
+      # (see docs/next.md). Compose turns them on because this is the demo stack.
+      ASSISTANT_QUESTIONS_ENABLED: "true"
       ASSISTANT_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0"]'
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.

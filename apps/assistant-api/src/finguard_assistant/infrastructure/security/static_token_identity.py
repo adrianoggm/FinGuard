@@ -43,7 +43,10 @@ class StaticTokenIdentity:
         if not credential:
             raise NotAuthenticatedError()
 
-        token = credential.removeprefix("Bearer ").strip()
+        # HTTP auth schemes are case-insensitive (RFC 7235), so "bearer x" is a valid
+        # way to send the same credential and used to resolve to nobody.
+        scheme, _, rest = credential.strip().partition(" ")
+        token = rest.strip() if scheme.lower() == "bearer" else credential.strip()
 
         # Compared against every entry rather than looked up, so the work does not
         # depend on which token was sent. A dict lookup would leak membership through

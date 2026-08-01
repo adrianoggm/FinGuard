@@ -132,6 +132,11 @@ class OllamaLlmProvider:
         except ValueError as exc:
             raise ProviderFailedError(self.name, f"malformed response: {exc}") from exc
 
+        if not isinstance(body, dict):
+            # A JSON array parses fine and then has no .get, which used to surface as a
+            # 500 from a provider whose whole contract is to fail as ProviderFailedError.
+            raise ProviderFailedError(self.name, f"expected an object, got {type(body).__name__}")
+
         # Ollama reports a missing model or a bad option as 200 with an `error` key,
         # so a status check alone would let an error through as if it were an answer.
         if error := body.get("error"):
@@ -141,3 +146,13 @@ class OllamaLlmProvider:
         if not isinstance(answer, str) or not answer.strip():
             raise ProviderFailedError(self.name, "empty answer")
         return answer
+
+    async def ping(self) -> bool:
+        """Whether the daemon answers. Readiness for the planning path, which the
+        catalogue's provider says nothing about."""
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{self._base_url}/api/version")
+                return response.status_code == 200
+        except httpx.HTTPError:
+            return False

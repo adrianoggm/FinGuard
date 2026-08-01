@@ -95,3 +95,20 @@ class NotAuthenticatedError(DomainError):
 
     def __init__(self, reason: str = "a valid credential is required") -> None:
         super().__init__(reason)
+
+
+class NotAuthorisedError(DomainError):
+    """Authenticated, but not for this. Distinct from NotAuthenticatedError because the
+    answers differ: one is "log in", the other is "this is not yours"."""
+
+    code = "not_authorised"
+
+    def __init__(self, reason: str = "not authorised for this account") -> None:
+        super().__init__(reason)
+
+
+class FeatureDisabledError(DomainError):
+    """The deployment has not turned this on. A 503 rather than a 404: the endpoint
+    exists, it is simply not being served here."""
+
+    code = "feature_disabled"

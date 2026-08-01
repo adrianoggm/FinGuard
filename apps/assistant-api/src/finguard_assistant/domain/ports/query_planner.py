@@ -2,6 +2,7 @@ from datetime import date
 from typing import Protocol, runtime_checkable
 
 from finguard_assistant.domain.models.planning_result import PlanningResult
+from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 
 
 @runtime_checkable
@@ -15,8 +16,12 @@ class QueryPlannerPort(Protocol):
     It answers with a PlanningResult and raises nothing — a provider that is down is
     one of the outcomes, not an exception, because the caller has to say something to
     the user either way.
+
+    `previous` is a plan and not a description of one. The sentence is the only free
+    text that reaches an implementation; anything else it is told has been through the
+    domain's own validation first.
     """
 
     async def plan(
-        self, sentence: str, *, today: date, previous: str | None = None
+        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
     ) -> PlanningResult: ...

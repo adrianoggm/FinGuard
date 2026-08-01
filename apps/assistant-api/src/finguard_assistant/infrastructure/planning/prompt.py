@@ -13,9 +13,12 @@ separate — the reference date is mid-month and mid-week precisely so those pai
 accidentally agree.
 """
 
+from dataclasses import replace
 from datetime import date
 from typing import Final
 
+from finguard_assistant.domain.services import answer_writer
+from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 from finguard_assistant.infrastructure.planning.plan_schema import ABSOLUTE, NO_CATEGORY
 
 # What each category is called when a person says it out loud.
@@ -167,34 +170,11 @@ def _glossary(categories: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
-# What a plan description may contain once canonicalised. The previous plan arrives from
-# the client, so it is rebuilt from this alphabet rather than trusted: it used to be
-# spliced straight into the instruction section, where "
-
-## New rule" was a new rule.
-_PLAN_ALPHABET: Final = set("abcdefghijklmnopqrstuvwxyz0123456789 ,/-áéíóúñ")
-
 # The question is fenced. A question containing the closing marker would otherwise end
 # the data block and continue as instructions, so the marker is removed from the text
 # before fencing — there is no escaping to get wrong.
 _OPEN: Final = "<<<QUESTION"
 _CLOSE: Final = "QUESTION>>>"
-
-
-def canonical_plan(previous: str) -> str | None:
-    """Rebuilds the previous plan from a closed alphabet, or refuses it.
-
-    Not sanitising, which is a filter somebody eventually finds a way past: what comes
-    back is assembled from characters that cannot express a heading, a newline or a
-    directive. Anything outside the alphabet means this did not come from `describe()`,
-    and something that did not come from us has no business in the instructions.
-    """
-    trimmed = previous.strip().lower()
-    if not trimmed or len(trimmed) > 200:
-        return None
-    if any(character not in _PLAN_ALPHABET for character in trimmed):
-        return None
-    return trimmed
 
 
 def fence(sentence: str) -> str:
@@ -207,19 +187,24 @@ def build_prompt(
     *,
     today: date,
     categories: tuple[str, ...] = (),
-    previous: str | None = None,
+    previous: FinancialPlan | None = None,
 ) -> str:
-    """`previous` is the plan behind the last answer, in the same one-line form the API
-    hands back. A follow-up carries context the sentence alone does not: "¿y en
-    gasolina?" is not a question about all time, and answering it as one would be a real
-    figure for the wrong window — the same failure as everywhere else in this pipeline.
+    """`previous` is the plan behind the last answer. A follow-up carries context the
+    sentence alone does not: "¿y en gasolina?" is not a question about all time, and
+    answering it as one would be a real figure for the wrong window — the same failure
+    as everywhere else in this pipeline.
 
     It is passed in rather than remembered. No session, no expiry, no eviction, and the
     user can see exactly what is being carried over, which for a financial assistant is
     a feature rather than a limitation.
+
+    The sentence is the only part of this prompt a caller writes. Everything else,
+    including the previous plan, is rendered here from values the domain has already
+    validated — the difference between a prompt with untrusted text in its instructions
+    and one with untrusted text only in its data.
     """
     return _TEMPLATE.format(
-        previous=_previous_section(previous),
+        previous=_previous_section(previous, categories),
         today=today.isoformat(),
         absolute=ABSOLUTE,
         no_category=NO_CATEGORY,
@@ -228,10 +213,18 @@ def build_prompt(
     )
 
 
-def _previous_section(previous: str | None) -> str:
-    """A previous plan that does not canonicalise is dropped, not repaired. Losing the
-    context costs the user a follow-up; keeping a forged one costs them a wrong figure."""
+def _previous_section(previous: FinancialPlan | None, categories: tuple[str, ...]) -> str:
+    """The previous plan, described by us rather than quoted from the caller.
+
+    Every token in that line comes from a closed set: enum values, an integer the plan's
+    own invariant bounds, ISO dates, and category names. Categories are the one field a
+    caller could stuff with something resembling prose — `FinancialPlan` only requires
+    them to be alphanumeric — so an unknown one is dropped here. It is a hint, not the
+    query, and a hint with a name this deployment does not have is worth nothing and
+    could cost something.
+    """
     if previous is None:
         return ""
-    canonical = canonical_plan(previous)
-    return _PREVIOUS.format(previous=canonical) if canonical else ""
+    known = tuple(name for name in previous.categories if name in categories)
+    plan = previous if known == previous.categories else replace(previous, categories=known)
+    return _PREVIOUS.format(previous=answer_writer.describe(plan))

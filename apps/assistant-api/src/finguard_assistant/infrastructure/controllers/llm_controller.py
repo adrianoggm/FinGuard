@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from finguard_assistant.application import (
@@ -34,9 +34,11 @@ from finguard_assistant.bootstrap.dependencies import (
     get_ask_handler,
     get_command_bus,
     get_query_bus,
+    questions_enabled,
     reporting_today,
 )
 from finguard_assistant.domain.value_objects.caller import Caller
+from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
@@ -46,6 +48,7 @@ from finguard_assistant.infrastructure.dto.llm_dto import (
     QuestionResponse,
 )
 from finguard_assistant.infrastructure.mappers import llm_mapper
+from finguard_assistant.infrastructure.mappers.llm_mapper import plan_to_domain
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
@@ -68,13 +71,29 @@ async def health() -> dict[str, str]:
 
 
 @assistant_router.get("/ready", summary="Readiness")
-async def ready(queries: Queries) -> JSONResponse:
-    """Ready to serve: the active model's provider is one this build can talk to."""
+async def ready(request: Request, queries: Queries) -> JSONResponse:
+    """Ready to answer *financial questions*, which is what this service is for.
+
+    It used to check only that the catalogue's active provider was registered. The
+    catalogue chooses who answers /v1/messages; the planner is wired to Ollama and every
+    figure comes from banking. With Ollama pointed at a dead port the answer was
+    200 ok provider echo while every financial question would have failed — a readiness
+    check that reports on a dependency the important endpoint does not use.
+    """
     catalogue = await queries.ask(GetLlmCatalogueQuery())
     provider = catalogue.active.model.provider
-    if provider not in catalogue.available_providers:
-        return JSONResponse({"status": "unavailable", "provider": provider}, status_code=503)
-    return JSONResponse({"status": "ok", "provider": provider})
+
+    checks = {
+        "catalogue_provider": provider in catalogue.available_providers,
+        "planner": await request.app.state.planner_probe.ping(),
+        "banking": await request.app.state.banking_probe.ping(),
+    }
+    body: dict[str, object] = {
+        "status": "ok" if all(checks.values()) else "unavailable",
+        "provider": provider,
+        "checks": checks,
+    }
+    return JSONResponse(body, status_code=200 if all(checks.values()) else 503)
 
 
 @assistant_router.post("/v1/messages", summary="Answer a message")
@@ -103,7 +122,21 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
 
 
-@assistant_router.post("/v1/questions", summary="Answer a financial question")
+def _context_of(request: QuestionRequest) -> FinancialPlan | None:
+    """The follow-up context, as a plan.
+
+    Mapped at the edge on purpose: a plan the caller made up is a bad request, and this
+    is the layer that knows how to say so. Nothing further in owns a string it has to
+    take on faith.
+    """
+    return plan_to_domain(request.previous_plan) if request.previous_plan else None
+
+
+@assistant_router.post(
+    "/v1/questions",
+    summary="Answer a financial question",
+    dependencies=[Depends(questions_enabled)],
+)
 async def ask(
     request: QuestionRequest, who: Who, queries: Queries, today: Today
 ) -> QuestionResponse:
@@ -117,18 +150,23 @@ async def ask(
     NEEDS_CLARIFICATION and a question of its own, which is a turn in the conversation
     rather than an error.
     """
+    who.assert_may_read(who.account_id)
     result = await queries.ask(
         AskFinancialQuestionQuery(
             sentence=request.question,
             account_id=who.account_id,
             today=today,
-            previous_plan=request.previous_plan,
+            previous_plan=_context_of(request),
         )
     )
     return llm_mapper.question_to_dto(result)
 
 
-@assistant_router.post("/v1/questions/stream", summary="Answer a question, stage by stage")
+@assistant_router.post(
+    "/v1/questions/stream",
+    summary="Answer a question, stage by stage",
+    dependencies=[Depends(questions_enabled)],
+)
 async def ask_streaming(
     request: QuestionRequest, who: Who, asking: Asking, today: Today
 ) -> Response:
@@ -147,7 +185,7 @@ async def ask_streaming(
         sentence=request.question,
         account_id=who.account_id,
         today=today,
-        previous_plan=request.previous_plan,
+        previous_plan=_context_of(request),
     )
 
     async def events() -> AsyncIterator[str]:

@@ -10,11 +10,18 @@ from finguard_assistant.application import (
     CatalogueResult,
     ModelRow,
     PolicyRow,
+    SpokenPlan,
+)
+from finguard_assistant.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
 )
 from finguard_assistant.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageResponse,
     ModelResponse,
+    PlanPayload,
     PolicyResponse,
     QuestionResponse,
     SpokenGroupResponse,
@@ -57,12 +64,48 @@ def answer_to_dto(result: AnswerMessageResult) -> MessageResponse:
     )
 
 
+def plan_to_domain(payload: PlanPayload) -> FinancialPlan:
+    """The echoed plan, rebuilt as a plan.
+
+    Pydantic has already refused anything that is not one of the vocabulary's values;
+    the domain now refuses the combinations that are individually valid and jointly
+    wrong — both ends of a range, neither window, `n` on a period that has no count.
+    An InvalidValueError from here is a 422, which is the honest answer: what came back
+    is not something this service ever handed out.
+    """
+    absolute = payload.start is not None and payload.end is not None
+    return FinancialPlan(
+        direction=payload.direction,
+        period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
+        date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
+        categories=tuple(payload.categories),
+        group_by=payload.group_by,
+        metric=payload.metric,
+    )
+
+
+def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
+    return PlanPayload.model_validate(
+        {
+            "direction": plan.direction,
+            "period": plan.period,
+            "n": plan.n,
+            "start": plan.start,
+            "end": plan.end,
+            "categories": plan.categories,
+            "group_by": plan.group_by,
+            "metric": plan.metric,
+        }
+    )
+
+
 def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,
         question=result.question,
         plan=result.plan,
+        plan_context=_plan_to_dto(result.plan_context) if result.plan_context else None,
         currency=result.currency,
         total_minor=result.total_minor,
         movement_count=result.movement_count,

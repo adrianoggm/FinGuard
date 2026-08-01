@@ -69,7 +69,7 @@ class LlmQueryPlanner:
         self._schema = build_schema(categories)
 
     async def plan(
-        self, sentence: str, *, today: date, previous: str | None = None
+        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
     ) -> PlanningResult:
         try:
             answer = await self._provider.complete(
