@@ -18,3 +18,11 @@ MAX_PROMPT_LENGTH = 4000
 MAX_TEMPERATURE = 2.0
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+
+# Mirrored from the banking contract. Same reasoning as the enums: no shared package,
+# so the assistant states the limits it will not exceed, and banking stays the
+# authority that enforces them.
+MAX_CATEGORIES = 20
+MAX_CATEGORY_LENGTH = 40
+MAX_PERIOD_MONTHS = 24
+MAX_PERIOD_DAYS = 366
