@@ -1,0 +1,384 @@
+# Development set: Spanish sentence -> FinancialQuery plan (phase 3).
+#
+# This is the half of the problem nobody measures yet. The banking evaluation
+# (apps/banking-api/evaluation/) checks the engine GIVEN a correct plan; this checks
+# the step that produces the plan, which is where a model that passes every schema
+# check can still answer a question nobody asked.
+#
+# Every case pins reference: 2026-07-15, a Wednesday. That date is not arbitrary — it
+# is what separates the four pairs a model confuses:
+#
+#   THIS_MONTH     2026-07-01 .. 2026-07-15   (partial: ends today)
+#   LAST_MONTH     2026-06-01 .. 2026-06-30   (a whole calendar month)
+#   LAST_N_DAYS 30 2026-06-16 .. 2026-07-15   (overlaps LAST_MONTH by half)
+#   THIS_WEEK      2026-07-13 .. 2026-07-15   LAST_WEEK 2026-07-06 .. 2026-07-12
+#
+# On the 1st of a month, or a Monday, several of these collapse into each other and the
+# case stops discriminating. Do not "simplify" the reference date.
+#
+# `expect` is the outcome class, not a wire format — the schema for clarification and
+# refusal is not designed yet, and this dataset should not pre-empt it:
+#
+#   plan           the sentence determines a query; `plan` lists ONLY the fields it
+#                  actually determines. Unlisted fields are the default, and inventing
+#                  a value for one of them is an error, not a detail.
+#   clarification  genuinely ambiguous. Asking is the correct answer; guessing is not.
+#   unsupported    outside what FinancialQuery can express. Saying so is correct;
+#                  producing the nearest expressible plan is a silent wrong answer.
+#
+# Scoring is per field, not exact match: a plan with the right period and the wrong
+# direction is not "one failure", it is one right and one wrong.
+
+reference: 2026-07-15
+account: ES-0001
+
+cases:
+
+  # --- Periods, named directly -------------------------------------------------------
+
+  - id: period_today
+    question: ¿Cuánto llevo gastado hoy?
+    expect: plan
+    plan: {period: {period: TODAY}, direction: EXPENSE}
+
+  - id: period_yesterday
+    question: ¿Qué gasté ayer?
+    expect: plan
+    plan: {period: {period: YESTERDAY}, direction: EXPENSE}
+
+  - id: period_this_week
+    question: ¿Cuánto he gastado esta semana?
+    expect: plan
+    plan: {period: {period: THIS_WEEK}, direction: EXPENSE}
+
+  - id: period_last_week
+    question: ¿Cuánto gasté la semana pasada?
+    expect: plan
+    plan: {period: {period: LAST_WEEK}, direction: EXPENSE}
+
+  - id: period_this_month
+    question: ¿Cuánto llevo gastado este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE}
+
+  - id: period_last_month
+    question: ¿Cuánto gasté el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: period_this_year
+    question: ¿Cuánto llevo gastado en lo que va de año?
+    expect: plan
+    plan: {period: {period: THIS_YEAR}, direction: EXPENSE}
+
+  - id: period_last_7_days
+    question: ¿Cuánto he gastado en los últimos 7 días?
+    expect: plan
+    plan: {period: {period: LAST_N_DAYS, n: 7}, direction: EXPENSE}
+
+  - id: period_last_3_months
+    question: ¿Cuánto he gastado en los últimos 3 meses?
+    expect: plan
+    plan: {period: {period: LAST_N_MONTHS, n: 3}, direction: EXPENSE}
+
+  - id: period_january_absolute
+    question: ¿Cuánto gasté durante enero?
+    expect: plan
+    # A named month is not a Period: it is an explicit range. A model that forces this
+    # into LAST_N_MONTHS silently answers about six months instead of one.
+    plan: {dateRange: {from: 2026-01-01, to: 2026-01-31}, direction: EXPENSE}
+
+  # --- Periods, the confusable pairs -------------------------------------------------
+
+  - id: confuse_30_days_not_last_month
+    question: ¿Cuánto he gastado en los últimos 30 días?
+    expect: plan
+    # LAST_MONTH here would answer about June. Half the days are different.
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: confuse_last_month_not_30_days
+    question: ¿Cuánto gasté el mes pasado, en junio?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: confuse_this_month_partial
+    question: ¿Cuánto llevo gastado en lo que va de mes?
+    expect: plan
+    # "lo que va de" makes the partial nature explicit; THIS_MONTH already means that.
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE}
+
+  - id: confuse_last_month_full
+    question: ¿Cuánto gasté en el mes completo anterior?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: confuse_this_week_not_7_days
+    question: ¿Cuánto llevo esta semana?
+    expect: plan
+    # THIS_WEEK is Monday-to-today (3 days here), not the last 7 days.
+    plan: {period: {period: THIS_WEEK}, direction: EXPENSE}
+
+  - id: confuse_7_days_not_this_week
+    question: ¿Y en los siete últimos días?
+    expect: plan
+    plan: {period: {period: LAST_N_DAYS, n: 7}, direction: EXPENSE}
+
+  - id: confuse_last_week_closed
+    question: ¿Cuánto gasté de lunes a domingo la semana pasada?
+    expect: plan
+    plan: {period: {period: LAST_WEEK}, direction: EXPENSE}
+
+  - id: confuse_two_months
+    question: ¿Cuánto he gastado en los dos últimos meses?
+    expect: plan
+    # LAST_N_MONTHS counts the current month from its 1st: n=2 is June and July-to-date.
+    plan: {period: {period: LAST_N_MONTHS, n: 2}, direction: EXPENSE}
+
+  # --- Direction ---------------------------------------------------------------------
+
+  - id: direction_gaste
+    question: ¿Cuánto gasté el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: direction_pague
+    question: ¿Cuánto pagué en total el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: direction_me_cobraron
+    question: ¿Cuánto me cobraron el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: direction_recibi
+    question: ¿Cuánto dinero recibí el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: direction_me_ingresaron
+    question: ¿Cuánto me ingresaron en junio?
+    expect: plan
+    plan: {dateRange: {from: 2026-06-01, to: 2026-06-30}, direction: INCOME}
+
+  - id: direction_cobre
+    question: ¿Cuánto cobré el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: direction_movimientos_all
+    question: Enséñame todos los movimientos de la semana pasada, entradas y salidas
+    expect: plan
+    # ALL is correct here and only here: the sentence asks for both sides explicitly.
+    plan: {period: {period: LAST_WEEK}, direction: ALL}
+
+  - id: direction_me_devolvieron
+    question: ¿Me han devuelto algo este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: INCOME}
+
+  # --- Colloquial categories ---------------------------------------------------------
+
+  - id: category_super
+    question: ¿Cuánto me gasto en el súper?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
+
+  - id: category_la_compra
+    question: ¿Cuánto llevo gastado en la compra este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
+
+  - id: category_gasolina
+    question: ¿Cuánto he echado de gasolina este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+  - id: category_alquiler
+    question: ¿Cuánto pagué de alquiler el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [HOUSING_RENT]}
+
+  - id: category_salir_a_comer
+    question: ¿Cuánto me he dejado en salir a comer este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [RESTAURANTS]}
+
+  - id: category_suscripciones
+    question: ¿Cuánto me cuestan las suscripciones al mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [SUBSCRIPTIONS]}
+
+  - id: category_farmacia
+    question: ¿Cuánto he gastado en farmacia este año?
+    expect: plan
+    plan: {period: {period: THIS_YEAR}, direction: EXPENSE, categories: [HEALTH]}
+
+  - id: category_transporte
+    question: ¿Cuánto gasté en transporte público el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [TRANSPORT_PUBLIC]}
+
+  - id: category_ocio
+    question: ¿Cuánto me he gastado en ocio este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [LEISURE]}
+
+  - id: category_two_at_once
+    question: ¿Cuánto llevo entre gasolina y transporte público este mes?
+    expect: plan
+    plan:
+      period: {period: THIS_MONTH}
+      direction: EXPENSE
+      categories: [TRANSPORT_FUEL, TRANSPORT_PUBLIC]
+
+  # --- Metric: SUM vs COUNT ----------------------------------------------------------
+
+  - id: metric_count_visits
+    question: ¿Cuántas veces fui al súper el mes pasado?
+    expect: plan
+    plan:
+      period: {period: LAST_MONTH}
+      direction: EXPENSE
+      categories: [GROCERIES]
+      metric: COUNT
+
+  - id: metric_sum_same_shape
+    question: ¿Cuánto me gasté en el súper el mes pasado?
+    expect: plan
+    # Same sentence shape as the previous one; only "cuántas veces" vs "cuánto" differs.
+    plan:
+      period: {period: LAST_MONTH}
+      direction: EXPENSE
+      categories: [GROCERIES]
+      metric: SUM
+
+  - id: metric_count_movements
+    question: ¿Cuántos movimientos tuve la semana pasada?
+    expect: plan
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+  - id: metric_count_restaurants
+    question: ¿Cuántas veces he comido fuera este mes?
+    expect: plan
+    plan:
+      period: {period: THIS_MONTH}
+      direction: EXPENSE
+      categories: [RESTAURANTS]
+      metric: COUNT
+
+  # --- Grouping ----------------------------------------------------------------------
+
+  - id: group_by_category
+    question: ¿En qué me he gastado el dinero este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: group_by_category_explicit
+    question: Desglósame el gasto del mes pasado por categorías
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: group_by_merchant
+    question: ¿En qué comercios he gastado más este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: group_by_week
+    question: Enséñame el gasto del mes pasado por semanas
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: WEEK}
+
+  - id: group_by_day
+    question: ¿Cuánto he gastado cada día de esta semana?
+    expect: plan
+    plan: {period: {period: THIS_WEEK}, direction: EXPENSE, groupBy: DAY}
+
+  - id: group_by_month
+    question: ¿Cuánto he gastado mes a mes este año?
+    expect: plan
+    plan: {period: {period: THIS_YEAR}, direction: EXPENSE, groupBy: MONTH}
+
+  - id: group_none_default
+    question: ¿Cuánto gasté en total el mes pasado?
+    expect: plan
+    # "en total" is the explicit form of the default. A breakdown here is an error.
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: NONE}
+
+  - id: group_by_category_within_one
+    question: Del mes pasado, ¿cuánto fue en gasolina y cuánto en súper?
+    expect: plan
+    plan:
+      period: {period: LAST_MONTH}
+      direction: EXPENSE
+      categories: [TRANSPORT_FUEL, GROCERIES]
+      groupBy: CATEGORY
+
+  # --- Merchants ---------------------------------------------------------------------
+
+  - id: merchant_mercadona
+    question: ¿Cuánto me he gastado en Mercadona este mes?
+    expect: clarification
+    # There is no merchant filter in FinancialQuery — only groupBy MERCHANT. Answering
+    # with the GROCERIES category silently widens the question to Carrefour, Lidl and Dia.
+    why: schema has no merchant filter; the nearest plan answers a different question
+
+  - id: merchant_netflix
+    question: ¿Cuánto pago al mes por Netflix?
+    expect: clarification
+    why: same — a SUBSCRIPTIONS total also includes Spotify and the gym
+
+  - id: merchant_top_ranking
+    question: ¿Cuál es el comercio donde más gasto?
+    expect: plan
+    # This one IS expressible: group by merchant and read the top row.
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: merchant_repsol_vs_category
+    question: ¿Cuánto he gastado en Repsol este mes?
+    expect: clarification
+    why: TRANSPORT_FUEL would also count Cepsa, BP and Shell
+
+  # --- Ambiguity: asking is the right answer -----------------------------------------
+
+  - id: ambiguous_ultimamente
+    question: ¿Cuánto he gastado últimamente?
+    expect: clarification
+    why: '"últimamente" names no window; every Period is a guess'
+
+  - id: ambiguous_lo_normal
+    question: ¿Estoy gastando lo normal?
+    expect: clarification
+    why: no baseline is defined; "normal" is not a period, a category or a figure
+
+  - id: ambiguous_gastos_grandes
+    question: Enséñame mis gastos grandes
+    expect: clarification
+    why: no threshold given, and the schema has no amount filter
+
+  - id: ambiguous_desde_navidad
+    question: ¿Cuánto llevo gastado desde Navidad?
+    expect: clarification
+    why: which Christmas, and does the range end today — two guesses stacked
+
+  - id: ambiguous_bare_cuanto
+    question: ¿Cuánto?
+    expect: clarification
+    why: no period, no direction, no subject
+
+  # --- Outside what the schema can express -------------------------------------------
+
+  - id: unsupported_monthly_average
+    question: ¿Cuál es mi gasto medio mensual?
+    expect: unsupported
+    why: Metric has SUM and COUNT, no average. A SUM grouped by month is not the answer
+
+  - id: unsupported_comparison
+    question: ¿He gastado más este mes que el anterior?
+    expect: unsupported
+    why: a comparison is two plans; FinancialQuery expresses one
+
+  - id: unsupported_forecast
+    question: ¿Cuánto voy a gastar el mes que viene?
+    expect: unsupported
+    why: prediction, and the ledger only holds what already happened
