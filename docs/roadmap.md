@@ -93,10 +93,11 @@ Two things this phase added that were not on the list, both from the review:
 *Outcome:* a working text assistant, and a number for how well it understands.
 
 **Not closed.** Review found three defects that could deliver a wrong figure, all fixed,
-and two risks that remain open and measured: the assistant refuses nothing it cannot
-express (0% on the held-out set) and one prompt injection still changes a field. The
-endpoint stays behind ASSISTANT_QUESTIONS_ENABLED until those have a deterministic
-guard or an agreed threshold — a documented risk is not a control.
+and two risks that remain open and measured: the planner refuses 60% of the requests it
+cannot express, leaving two in five to return a real but unrelated figure, and one prompt
+injection still changes a field. The endpoint stays behind
+ASSISTANT_QUESTIONS_ENABLED until those have a deterministic guard or an agreed
+threshold — a documented risk is not a control.
 
 ### Phase 4 — Dynamic visualisation
 

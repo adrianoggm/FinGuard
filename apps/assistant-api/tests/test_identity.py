@@ -135,8 +135,10 @@ def test_a_duplicated_token_refuses_to_start() -> None:
         )
     )
 
-    with pytest.raises(ValueError, match="twice"):
+    with pytest.raises(ValueError, match="twice") as caught:
         settings.callers()
+
+    assert "shared-development-token" not in str(caught.value)
 
 
 def test_authorisation_is_a_check_and_not_a_comment() -> None:

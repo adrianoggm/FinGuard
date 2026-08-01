@@ -87,7 +87,7 @@ class LlmQueryPlanner:
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc))
 
-        return _read(answer, today=today)
+        return _read(answer, today=today, categories=self._categories)
 
 
 class _MalformedError(Exception):
@@ -122,7 +122,7 @@ def _texts(body: dict[str, Any], key: str) -> list[str]:
     return value
 
 
-def _read(answer: str, *, today: date) -> PlanningResult:
+def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningResult:
     try:
         body = json.loads(answer)
     except ValueError as exc:
@@ -156,7 +156,7 @@ def _read(answer: str, *, today: date) -> PlanningResult:
             return PlanningResult.unsupported("the question cannot be expressed as a query")
 
         case PlanningOutcome.PLANNED:
-            return _build_plan(body, today=today)
+            return _build_plan(body, today=today, categories=categories)
 
         case _:
             # The three remaining outcomes describe things that happen TO a model; it
@@ -164,9 +164,11 @@ def _read(answer: str, *, today: date) -> PlanningResult:
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
 
 
-def _build_plan(body: dict[str, Any], *, today: date) -> PlanningResult:
+def _build_plan(
+    body: dict[str, Any], *, today: date, categories: tuple[str, ...]
+) -> PlanningResult:
     try:
-        categories = _categories(_texts(body, "categories"))
+        selected_categories = _categories(_texts(body, "categories"), allowed=categories)
         direction, group_by, metric = (
             _text(body, "direction"),
             _text(body, "groupBy"),
@@ -181,7 +183,7 @@ def _build_plan(body: dict[str, Any], *, today: date) -> PlanningResult:
             direction=Direction(direction),
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
-            categories=categories,
+            categories=selected_categories,
             group_by=GroupBy(group_by),
             metric=Metric(metric),
         )
@@ -226,7 +228,7 @@ def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRa
     return RelativePeriod(period=period, n=_count(body, "n"))
 
 
-def _categories(raw: list[str]) -> tuple[str, ...]:
+def _categories(raw: list[str], *, allowed: tuple[str, ...]) -> tuple[str, ...]:
     """NONE is how the schema spells "no filter", so it never reaches the plan. Order is
     kept and duplicates dropped: the same category twice is not two filters.
 
@@ -235,6 +237,12 @@ def _categories(raw: list[str]) -> tuple[str, ...]:
     """
     seen: dict[str, None] = {}
     for value in raw:
-        if value and value != NO_CATEGORY:
-            seen.setdefault(value, None)
+        if value == NO_CATEGORY:
+            continue
+        if value not in allowed:
+            # This value was outside the schema's enum. Treating an empty or invented
+            # category as no filter would broaden the query, while forwarding an
+            # invented one would silently return an empty result from banking.
+            raise _MalformedError(f"categories holds a value outside the catalogue: {value!r}")
+        seen.setdefault(value, None)
     return tuple(seen)

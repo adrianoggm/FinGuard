@@ -67,13 +67,7 @@ class HttpFinancialQuery:
 
         try:
             answered = response.json()
-            if isinstance(answered, dict) and (about := answered.get("accountId")):
-                # The answer names the account it is about. Checking it costs nothing and
-                # catches the one failure a caller could never notice: figures from
-                # somebody else's account, which look exactly like their own.
-                if str(about) != str(account_id):
-                    raise BankingUnavailableError(f"answer is about {about}, not {account_id}")
-            return from_body(answered)
+            return from_body(answered, account_id=account_id)
         except (ValueError, KeyError, TypeError) as exc:
             raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
 
@@ -122,8 +116,23 @@ def to_body(
     return body
 
 
-def from_body(body: dict[str, Any]) -> QueryAnswer:
-    """Response body to the assistant's own model. Nothing wire-shaped travels past here."""
+def from_body(body: Any, *, account_id: UUID | None = None) -> QueryAnswer:
+    """Response body to the assistant's own model. Nothing wire-shaped travels past here.
+
+    When used by the HTTP client, the expected account is mandatory context: a missing
+    account identifier is not safer than a different one, because neither lets us bind
+    the figures to the caller who requested them.
+    """
+    if not isinstance(body, dict):
+        raise BankingUnavailableError(f"expected an object, got {type(body).__name__}")
+
+    if account_id is not None:
+        about = body.get("accountId")
+        if about is None:
+            raise BankingUnavailableError("answer does not identify its account")
+        if str(about) != str(account_id):
+            raise BankingUnavailableError(f"answer is about {about}, not {account_id}")
+
     return QueryAnswer(
         currency=body["currency"],
         total_minor=body["totalMinor"],
