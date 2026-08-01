@@ -53,6 +53,7 @@ class LlmQueryPlanner:
         self._model = model
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
+        self._categories = categories
         self._schema = build_schema(categories)
 
     async def plan(
@@ -60,7 +61,12 @@ class LlmQueryPlanner:
     ) -> PlanningResult:
         try:
             answer = await self._provider.complete(
-                build_prompt(sentence, today=today, previous=previous),
+                build_prompt(
+                    sentence,
+                    today=today,
+                    categories=self._categories,
+                    previous=previous,
+                ),
                 model=self._model,
                 temperature=self._temperature,
                 max_output_tokens=self._max_output_tokens,
