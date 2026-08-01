@@ -112,6 +112,14 @@ real figure answering a different question, which is the failure this design exi
 prevent. Delimiting the question as data fixed the vocabulary-redefinition attack and did
 not fix this one.
 
+This is now the *only* injection vector left, and it is the one that cannot be typed
+away. The other one could: a follow-up used to echo its context back as the sentence a
+person reads, which put client text in the instruction half of the prompt. It is a
+structured, validated plan now, so the section is rendered from values the domain has
+already accepted and every token it can contain is enumerable in advance. A question has
+no schema to parse it against and never will — fencing is all there is — which is why
+these two arrive at opposite defences and why treating both as text was wrong.
+
 Also open: `injection` 50 %, `boundary` 60 % (n=0 and n=5000 are not refused cleanly), and
 one INVALID_STRUCTURE, which should be unreachable under constrained decoding and is worth
 understanding rather than rounding away.
