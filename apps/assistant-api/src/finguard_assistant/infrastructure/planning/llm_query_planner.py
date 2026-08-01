@@ -75,10 +75,10 @@ class LlmQueryPlanner:
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc))
 
-        return _read(answer)
+        return _read(answer, today=today)
 
 
-def _read(answer: str) -> PlanningResult:
+def _read(answer: str, *, today: date) -> PlanningResult:
     try:
         body = json.loads(answer)
     except ValueError as exc:
@@ -107,7 +107,7 @@ def _read(answer: str) -> PlanningResult:
             return PlanningResult.unsupported("the question cannot be expressed as a query")
 
         case PlanningOutcome.PLANNED:
-            return _build_plan(body)
+            return _build_plan(body, today=today)
 
         case _:
             # The three remaining outcomes describe things that happen TO a model; it
@@ -115,9 +115,9 @@ def _read(answer: str) -> PlanningResult:
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
 
 
-def _build_plan(body: dict[str, Any]) -> PlanningResult:
+def _build_plan(body: dict[str, Any], *, today: date) -> PlanningResult:
     try:
-        window = _window(body)
+        window = _window(body, today=today)
         plan = FinancialPlan(
             direction=Direction(str(body.get("direction"))),
             period=window if isinstance(window, RelativePeriod) else None,
@@ -136,14 +136,26 @@ def _build_plan(body: dict[str, Any]) -> PlanningResult:
     return PlanningResult.planned(plan)
 
 
-def _window(body: dict[str, Any]) -> RelativePeriod | AbsoluteRange:
+def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange:
     named = str(body.get("period") or "")
 
+    if not named:
+        # The empty period exists so a model that is asking or refusing has something to
+        # put there. Arriving with PLANNED means it chose to answer and then named no
+        # window, which is not a date-parsing problem and should not read like one.
+        raise InvalidValueError("a plan needs a window and none was named")
+
     if named == ABSOLUTE:
-        return AbsoluteRange(
-            start=date.fromisoformat(str(body.get("from"))),
-            end=date.fromisoformat(str(body.get("to"))),
-        )
+        start, end = str(body.get("from") or ""), str(body.get("to") or "")
+        if not start or not end:
+            raise InvalidValueError("an explicit range needs both ends")
+        window = AbsoluteRange(start=date.fromisoformat(start), end=date.fromisoformat(end))
+        if window.end > today:
+            # Nobody has spent money after today. A range reaching into the future is a
+            # model filling in a calendar year rather than reading the question, and
+            # letting it through would answer about a window that cannot have data.
+            raise InvalidValueError(f"a window cannot end after today: {window.end} > {today}")
+        return window
 
     period = Period(named)
     if period not in PERIODS_NEEDING_COUNT:

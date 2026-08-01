@@ -238,7 +238,9 @@ def pct(part: int, whole: int) -> str:
     return f"{100 * part / whole:5.1f}%" if whole else "    -"
 
 
-async def run(model: str, limit: int | None, base_url: str) -> int:
+async def run(
+    model: str, limit: int | None, base_url: str, collect: list[tuple[int, int]] | None = None
+) -> int:
     data = yaml.safe_load(DATASET.read_text(encoding="utf-8"))
     today = data["reference"]
     cases = data["cases"][:limit] if limit else data["cases"]
@@ -263,7 +265,37 @@ async def run(model: str, limit: int | None, base_url: str) -> int:
 
         judge(case, result, score, today)
 
-    report(model, score)
+    if collect is None:
+        report(model, score)
+    else:
+        collect.append((score.outcome_right, score.exact))
+        if len(collect) == 1:
+            report(model, score)
+    return 0
+
+
+async def repeated(model: str, limit: int | None, base_url: str, times: int) -> int:
+    """Runs the set `times` over and report the spread as well as the numbers.
+
+    A single run is a point estimate of something noisy. Reporting min-max next to the
+    mean is what stops the next person reading a two-point difference as a result.
+    """
+    scores: list[tuple[int, int]] = []
+    for attempt in range(times):
+        code = await run(model, limit, base_url, collect=scores)
+        if code:
+            return code
+        if times > 1:
+            outcome, exact = scores[-1]
+            print(f"  run {attempt + 1}: outcome {outcome}, exact {exact}")
+
+    if times > 1:
+        outcomes = [o for o, _ in scores]
+        exacts = [e for _, e in scores]
+        print(
+            f"\n  over {times} runs   outcome {min(outcomes)}-{max(outcomes)}"
+            f"   exact {min(exacts)}-{max(exacts)}"
+        )
     return 0
 
 
@@ -272,8 +304,16 @@ def main() -> int:
     parser.add_argument("--model", required=True, help="Ollama model tag, e.g. qwen3.5:4b")
     parser.add_argument("--limit", type=int, default=None, help="run only the first N cases")
     parser.add_argument("--base-url", default="http://127.0.0.1:11434")
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="run the whole dataset N times and report the spread. Local inference is "
+        "not bit-reproducible even at temperature 0, so a single run of a 60-case set "
+        "carries a few points of noise — enough to invent an improvement.",
+    )
     args = parser.parse_args()
-    return asyncio.run(run(args.model, args.limit, args.base_url))
+    return asyncio.run(repeated(args.model, args.limit, args.base_url, args.repeat))
 
 
 if __name__ == "__main__":
