@@ -5,8 +5,6 @@ or HTTP. Keeping them apart is what stops a change in the contract from reaching
 core — before this, `LlmPolicy` was both the domain object and the request body.
 """
 
-from uuid import UUID
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_assistant.domain.constants import MAX_PROMPT_LENGTH
@@ -62,15 +60,14 @@ class MessageResponse(_Payload):
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
-    `account_id` travels in the body because there is no authenticated identity yet.
-    When there is (§12), it comes from the token and this field goes away — a caller
-    naming the account it wants to read is exactly what auth exists to stop.
+    There is no account here, and its absence is the point. It used to travel in the
+    body, which meant any caller could read any account; it now comes from the
+    authenticated identity, so there is nowhere left to say whose money you mean.
     """
 
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
     question: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
-    account_id: UUID
     # Echo back the `plan` from the previous answer to ask a follow-up. Optional, and
     # the caller owns it: the service keeps no conversation.
     previous_plan: str | None = Field(default=None, max_length=MAX_PROMPT_LENGTH)

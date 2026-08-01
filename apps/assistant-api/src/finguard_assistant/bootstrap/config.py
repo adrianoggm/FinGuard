@@ -1,8 +1,10 @@
 from functools import lru_cache
 from pathlib import Path
+from uuid import UUID
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from finguard_assistant.domain.value_objects.caller import Caller
 from finguard_assistant.infrastructure import TomlModelCatalogue
 
 
@@ -28,6 +30,14 @@ class Settings(BaseSettings):
     # reach the daemon on the machine, which is where the GPU is.
     ollama_base_url: str = "http://127.0.0.1:11434"
 
+    # Development identity, as "token:holder:account_uuid" entries. Not the design —
+    # §12.2 asks for OAuth 2.0 with short-lived tokens — but the seam is real: the
+    # account comes from the credential, so a caller cannot name someone else's.
+    #
+    # Set through ASSISTANT_DEV_TOKENS. It has no default on purpose: a service that
+    # ships with a built-in credential ships with a credential everyone knows.
+    dev_tokens: tuple[str, ...] = ()
+
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.
@@ -48,6 +58,19 @@ class Settings(BaseSettings):
         "SALARY",
         "TRANSFER_BIZUM",
     )
+
+    def callers(self) -> dict[str, Caller]:
+        """Parses the token table. Fails loudly on a malformed entry rather than
+        skipping it: a silently dropped token is a caller who cannot log in and an
+        afternoon spent looking at the wrong layer."""
+        table: dict[str, Caller] = {}
+        for entry in self.dev_tokens:
+            parts = entry.split(":")
+            if len(parts) != 3:
+                raise ValueError(f"a token entry is token:holder:account_uuid, got {entry!r}")
+            token, holder, account = parts
+            table[token] = Caller(holder_reference=holder, account_id=UUID(account))
+        return table
 
     def catalogue(self) -> TomlModelCatalogue:
         if self.llm_catalogue_file is None:

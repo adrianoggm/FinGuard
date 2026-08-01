@@ -26,6 +26,9 @@ from finguard_assistant.infrastructure import (
 )
 from finguard_assistant.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_assistant.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
+from finguard_assistant.infrastructure.security.static_token_identity import (
+    StaticTokenIdentity,
+)
 
 DESCRIPTION = """
 Conversational orchestrator of FinGuard.
@@ -98,6 +101,9 @@ def create_app() -> FastAPI:
     app.state.command_bus = command_bus
     # Reached directly by the streaming route: a bus answers once, a stream does not.
     app.state.ask_handler = asking
+    # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
+    # and that is a swap of this one line.
+    app.state.identity = StaticTokenIdentity(settings.callers())
 
     app.include_router(assistant_router)
     app.include_router(admin_router)
