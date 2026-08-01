@@ -1,0 +1,153 @@
+"""The hand-written contract, both directions.
+
+`to_body` and `from_body` are pure, so most of this runs with nothing else alive. That
+matters more than usual here: this client exists because we chose not to generate one,
+and the whole cost of that choice is that these two shapes are stated twice. Tests are
+what turns "stated twice" into "checked twice".
+"""
+
+import uuid
+from datetime import UTC, date, datetime
+
+import pytest
+
+from finguard_assistant.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_assistant.domain.errors import BankingUnavailableError
+from finguard_assistant.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
+from finguard_assistant.infrastructure.banking.http_financial_query import (
+    HttpFinancialQuery,
+    from_body,
+    to_body,
+)
+
+ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
+
+
+def body_for(plan: FinancialPlan) -> dict:
+    return to_body(plan, account_id=ACCOUNT, supporting_movements=10)
+
+
+# --- plan to request ---------------------------------------------------------------
+
+
+def test_a_named_period_travels_as_a_period() -> None:
+    body = body_for(
+        FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH))
+    )
+
+    assert body["period"] == {"period": "LAST_MONTH"}
+    # No stray key: banking forbids extras, so an n that does not apply is a 422.
+    assert "dateRange" not in body
+
+
+def test_a_counted_period_carries_its_count() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.LAST_N_DAYS, n=30),
+        )
+    )
+
+    assert body["period"] == {"period": "LAST_N_DAYS", "n": 30}
+
+
+def test_an_absolute_window_uses_the_contract_spelling() -> None:
+    # from/to, not start/end. The one thing a hand-written client gets wrong quietly.
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            date_range=AbsoluteRange(start=date(2026, 1, 1), end=date(2026, 1, 31)),
+        )
+    )
+
+    assert body["dateRange"] == {"from": "2026-01-01", "to": "2026-01-31"}
+    assert "period" not in body
+
+
+def test_the_body_is_camel_case() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.INCOME,
+            period=RelativePeriod(period=Period.THIS_MONTH),
+            categories=("GROCERIES",),
+            group_by=GroupBy.CATEGORY,
+            metric=Metric.COUNT,
+        )
+    )
+
+    assert set(body) >= {"accountId", "groupBy", "supportingLimit"}
+    assert body["direction"] == "INCOME"
+    assert body["groupBy"] == "CATEGORY"
+    assert body["metric"] == "COUNT"
+    assert body["categories"] == ["GROCERIES"]
+
+
+# --- response to model -------------------------------------------------------------
+
+
+def test_a_response_becomes_the_assistants_own_model() -> None:
+    answer = from_body(
+        {
+            "accountId": str(ACCOUNT),
+            "currency": "EUR",
+            "totalMinor": 142580,
+            "movementCount": 16,
+            "groups": [{"key": "GROCERIES", "totalMinor": 20465, "movementCount": 7}],
+            "supportingMovements": [
+                {
+                    "transactionId": str(uuid.uuid4()),
+                    "occurredAt": "2026-07-03T10:12:00Z",
+                    "description": "Compra Mercadona",
+                    "merchantName": "Mercadona",
+                    "category": "GROCERIES",
+                    "amountMinor": -4210,
+                    "direction": "EXPENSE",
+                }
+            ],
+        }
+    )
+
+    assert answer.currency == "EUR"
+    assert answer.total_minor == 142580
+    assert answer.groups[0].key == "GROCERIES"
+    assert answer.movements[0].merchant_name == "Mercadona"
+    # Z parsed as UTC rather than dropped on the floor.
+    assert answer.movements[0].occurred_at == datetime(2026, 7, 3, 10, 12, tzinfo=UTC)
+    assert not answer.is_empty
+
+
+def test_nothing_matched_is_not_the_same_as_zero_spent() -> None:
+    # They read identically to a user and mean different things: the second is usually
+    # a plan that was wrong, which is worth saying out loud instead of reporting 0.
+    answer = from_body({"currency": "EUR", "totalMinor": 0, "movementCount": 0})
+
+    assert answer.is_empty
+    assert answer.groups == ()
+    assert answer.movements == ()
+
+
+def test_amounts_stay_in_minor_units() -> None:
+    # No float anywhere on the path. That is how cents go missing.
+    answer = from_body({"currency": "EUR", "totalMinor": 142580, "movementCount": 1})
+
+    assert isinstance(answer.total_minor, int)
+
+
+# --- the service not being there ---------------------------------------------------
+
+
+async def test_an_unreachable_banking_is_a_domain_error() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.THIS_MONTH)
+    )
+
+    with pytest.raises(BankingUnavailableError) as caught:
+        await HttpFinancialQuery(base_url="http://127.0.0.1:1", timeout_seconds=2.0).run(
+            plan, account_id=ACCOUNT
+        )
+
+    assert caught.value.code == "banking_unavailable"
