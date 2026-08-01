@@ -171,7 +171,7 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
 def _answered(plan: FinancialPlan, answer: QueryAnswer) -> AskFinancialQuestionResult:
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
-        text=answer_writer.write(answer, window=answer_writer.window_of(plan)),
+        text=answer_writer.write(answer, plan),
         plan=answer_writer.describe(plan),
         currency=answer.currency,
         total_minor=answer.total_minor,

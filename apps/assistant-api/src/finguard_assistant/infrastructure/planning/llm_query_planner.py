@@ -7,6 +7,18 @@ decide what a failure means and they would disagree eventually.
 Everything that can go wrong becomes an outcome rather than an exception. The caller
 has to say something to the user whatever happened, so an exception would only move the
 decision somewhere less equipped to make it.
+
+**Nothing here normalises.** A field of the wrong type is INVALID_STRUCTURE, never a
+best-effort reading, because the safe-looking repair is the dangerous one: `categories`
+arriving as the string "GROCERIES" instead of a list used to become an empty tuple, and
+an empty tuple is not a missing filter — it is *no filter at all*, so a question about
+the supermarket came back as every expense there is. A wrong type cannot be repaired
+into a right value when the repair widens the query.
+
+This matters more since the benchmark found a model that breaks the constraint:
+granite4:micro produced 3 invalid structures out of 79. Constrained decoding is a strong
+property of the runtime, not a guarantee of the pipeline, and this layer is what makes
+the difference visible instead of silent.
 """
 
 import json
@@ -78,6 +90,38 @@ class LlmQueryPlanner:
         return _read(answer, today=today)
 
 
+class _MalformedError(Exception):
+    """The answer did not match the schema it was constrained to. Internal to this
+    module: it becomes INVALID_STRUCTURE before anything else sees it."""
+
+
+def _text(body: dict[str, Any], key: str) -> str:
+    value = body.get(key)
+    if not isinstance(value, str):
+        raise _MalformedError(f"{key} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _count(body: dict[str, Any], key: str) -> int:
+    value = body.get(key)
+    # bool is an int in Python and never a count. Excluded explicitly so `true` cannot
+    # arrive as 1.
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise _MalformedError(f"{key} must be an integer, got {type(value).__name__}")
+    return value
+
+
+def _texts(body: dict[str, Any], key: str) -> list[str]:
+    """A list of strings, or nothing. Never a repaired reading of something else."""
+    value = body.get(key)
+    if not isinstance(value, list):
+        raise _MalformedError(f"{key} must be a list, got {type(value).__name__}")
+    for item in value:
+        if not isinstance(item, str):
+            raise _MalformedError(f"{key} holds a {type(item).__name__}, expected strings")
+    return value
+
+
 def _read(answer: str, *, today: date) -> PlanningResult:
     try:
         body = json.loads(answer)
@@ -90,13 +134,18 @@ def _read(answer: str, *, today: date) -> PlanningResult:
         return PlanningResult.invalid_structure(f"expected an object, got {type(body).__name__}")
 
     try:
-        outcome = PlanningOutcome(str(body.get("outcome")))
+        outcome = PlanningOutcome(_text(body, "outcome"))
+    except _MalformedError as exc:
+        return PlanningResult.invalid_structure(str(exc))
     except ValueError:
         return PlanningResult.invalid_structure(f"unknown outcome: {body.get('outcome')!r}")
 
     match outcome:
         case PlanningOutcome.NEEDS_CLARIFICATION:
-            question = str(body.get("question") or "").strip()
+            try:
+                question = _text(body, "question").strip()
+            except _MalformedError as exc:
+                return PlanningResult.invalid_structure(str(exc))
             if not question:
                 # It chose to ask and then asked nothing, which leaves the user at a
                 # dead end. Treat it as malformed rather than inventing the question.
@@ -117,15 +166,27 @@ def _read(answer: str, *, today: date) -> PlanningResult:
 
 def _build_plan(body: dict[str, Any], *, today: date) -> PlanningResult:
     try:
+        categories = _categories(_texts(body, "categories"))
+        direction, group_by, metric = (
+            _text(body, "direction"),
+            _text(body, "groupBy"),
+            _text(body, "metric"),
+        )
+    except _MalformedError as exc:
+        return PlanningResult.invalid_structure(str(exc))
+
+    try:
         window = _window(body, today=today)
         plan = FinancialPlan(
-            direction=Direction(str(body.get("direction"))),
+            direction=Direction(direction),
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
-            categories=_categories(body.get("categories")),
-            group_by=GroupBy(str(body.get("groupBy"))),
-            metric=Metric(str(body.get("metric"))),
+            categories=categories,
+            group_by=GroupBy(group_by),
+            metric=Metric(metric),
         )
+    except _MalformedError as exc:
+        return PlanningResult.invalid_structure(str(exc))
     except InvalidValueError as exc:
         return PlanningResult.invalid_domain(str(exc))
     except ValueError as exc:
@@ -137,7 +198,7 @@ def _build_plan(body: dict[str, Any], *, today: date) -> PlanningResult:
 
 
 def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange:
-    named = str(body.get("period") or "")
+    named = _text(body, "period")
 
     if not named:
         # The empty period exists so a model that is asking or refusing has something to
@@ -146,7 +207,7 @@ def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRa
         raise InvalidValueError("a plan needs a window and none was named")
 
     if named == ABSOLUTE:
-        start, end = str(body.get("from") or ""), str(body.get("to") or "")
+        start, end = _text(body, "from"), _text(body, "to")
         if not start or not end:
             raise InvalidValueError("an explicit range needs both ends")
         window = AbsoluteRange(start=date.fromisoformat(start), end=date.fromisoformat(end))
@@ -162,17 +223,18 @@ def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRa
         # 0 is our sentinel for "unused", not the model getting it wrong, so it is
         # dropped rather than passed on to fail an invariant.
         return RelativePeriod(period=period)
-    return RelativePeriod(period=period, n=int(body.get("n") or 0))
+    return RelativePeriod(period=period, n=_count(body, "n"))
 
 
-def _categories(raw: Any) -> tuple[str, ...]:
-    if not isinstance(raw, list):
-        return ()
-    # NONE is how the schema spells "no filter", so it never reaches the plan. Order is
-    # kept and duplicates dropped: the same category twice is not two filters.
+def _categories(raw: list[str]) -> tuple[str, ...]:
+    """NONE is how the schema spells "no filter", so it never reaches the plan. Order is
+    kept and duplicates dropped: the same category twice is not two filters.
+
+    Takes a list that has already been type-checked. Dropping a malformed entry here
+    would be the widening bug all over again, one element at a time.
+    """
     seen: dict[str, None] = {}
-    for item in raw:
-        value = str(item)
+    for value in raw:
         if value and value != NO_CATEGORY:
             seen.setdefault(value, None)
     return tuple(seen)

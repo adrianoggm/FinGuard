@@ -20,6 +20,7 @@ turns that into one choice per field.
 
 from typing import Any, Final
 
+from finguard_assistant.domain.constants import MAX_PERIOD_DAYS
 from finguard_assistant.domain.enums import (
     Direction,
     GroupBy,
@@ -59,7 +60,10 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
             "outcome": {"type": "string", "enum": [o.value for o in CHOOSABLE_OUTCOMES]},
             "question": {"type": "string"},
             "period": {"type": "string", "enum": [p.value for p in Period] + [ABSOLUTE, ""]},
-            "n": {"type": "integer"},
+            # Bounded here as well as in the domain: a schema that permits 5000 makes
+            # the decoder able to emit it, and every value it cannot emit is one the
+            # rest of the pipeline never has to reject.
+            "n": {"type": "integer", "minimum": 0, "maximum": MAX_PERIOD_DAYS},
             "from": {"type": "string"},
             "to": {"type": "string"},
             "direction": {"type": "string", "enum": [d.value for d in Direction]},
@@ -70,6 +74,7 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
             "groupBy": {"type": "string", "enum": [g.value for g in GroupBy]},
             "metric": {"type": "string", "enum": [m.value for m in Metric]},
         },
+        "additionalProperties": False,
         "required": [
             "outcome",
             "question",

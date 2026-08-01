@@ -167,6 +167,41 @@ def _glossary(categories: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
+# What a plan description may contain once canonicalised. The previous plan arrives from
+# the client, so it is rebuilt from this alphabet rather than trusted: it used to be
+# spliced straight into the instruction section, where "
+
+## New rule" was a new rule.
+_PLAN_ALPHABET: Final = set("abcdefghijklmnopqrstuvwxyz0123456789 ,/-áéíóúñ")
+
+# The question is fenced. A question containing the closing marker would otherwise end
+# the data block and continue as instructions, so the marker is removed from the text
+# before fencing — there is no escaping to get wrong.
+_OPEN: Final = "<<<QUESTION"
+_CLOSE: Final = "QUESTION>>>"
+
+
+def canonical_plan(previous: str) -> str | None:
+    """Rebuilds the previous plan from a closed alphabet, or refuses it.
+
+    Not sanitising, which is a filter somebody eventually finds a way past: what comes
+    back is assembled from characters that cannot express a heading, a newline or a
+    directive. Anything outside the alphabet means this did not come from `describe()`,
+    and something that did not come from us has no business in the instructions.
+    """
+    trimmed = previous.strip().lower()
+    if not trimmed or len(trimmed) > 200:
+        return None
+    if any(character not in _PLAN_ALPHABET for character in trimmed):
+        return None
+    return trimmed
+
+
+def fence(sentence: str) -> str:
+    """The question, with no way to leave its own block."""
+    return sentence.replace(_CLOSE, " ").replace(_OPEN, " ")
+
+
 def build_prompt(
     sentence: str,
     *,
@@ -184,10 +219,19 @@ def build_prompt(
     a feature rather than a limitation.
     """
     return _TEMPLATE.format(
-        previous=_PREVIOUS.format(previous=previous) if previous else "",
+        previous=_previous_section(previous),
         today=today.isoformat(),
         absolute=ABSOLUTE,
         no_category=NO_CATEGORY,
         glossary=_glossary(categories),
-        sentence=sentence,
+        sentence=fence(sentence),
     )
+
+
+def _previous_section(previous: str | None) -> str:
+    """A previous plan that does not canonicalise is dropped, not repaired. Losing the
+    context costs the user a follow-up; keeping a forged one costs them a wrong figure."""
+    if previous is None:
+        return ""
+    canonical = canonical_plan(previous)
+    return _PREVIOUS.format(previous=canonical) if canonical else ""
