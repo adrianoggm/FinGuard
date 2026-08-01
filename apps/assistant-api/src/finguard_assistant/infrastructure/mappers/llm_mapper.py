@@ -6,6 +6,7 @@ here is already flat. This adds the wire format and nothing else.
 
 from finguard_assistant.application import (
     AnswerMessageResult,
+    AskFinancialQuestionResult,
     CatalogueResult,
     ModelRow,
     PolicyRow,
@@ -15,6 +16,9 @@ from finguard_assistant.infrastructure.dto.llm_dto import (
     MessageResponse,
     ModelResponse,
     PolicyResponse,
+    QuestionResponse,
+    SpokenGroupResponse,
+    SpokenMovementResponse,
 )
 
 
@@ -50,4 +54,34 @@ def answer_to_dto(result: AnswerMessageResult) -> MessageResponse:
             max_output_tokens=result.max_output_tokens,
         ),
         attempted=list(result.attempted),
+    )
+
+
+def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
+    return QuestionResponse(
+        outcome=result.outcome,
+        text=result.text,
+        question=result.question,
+        plan=result.plan,
+        currency=result.currency,
+        total_minor=result.total_minor,
+        movement_count=result.movement_count,
+        groups=[
+            SpokenGroupResponse(
+                key=group.key,
+                total_minor=group.total_minor,
+                movement_count=group.movement_count,
+            )
+            for group in result.groups
+        ],
+        movements=[
+            SpokenMovementResponse(
+                occurred_at=movement.occurred_at,
+                description=movement.description,
+                amount_minor=movement.amount_minor,
+                merchant_name=movement.merchant_name,
+                category=movement.category,
+            )
+            for movement in result.movements
+        ],
     )

@@ -19,6 +19,36 @@ class Settings(BaseSettings):
     # catalogue, so the service starts with no file at all.
     llm_catalogue_file: Path | None = None
 
+    # Where the ledger lives. Localhost by default: development credentials never leave
+    # 127.0.0.1 (rule 13), and this service is useless without banking anyway.
+    banking_base_url: str = "http://127.0.0.1:8001"
+
+    # Where the local runtime listens. Configurable because inside a container 127.0.0.1
+    # is the container: compose points this at host.docker.internal so the service can
+    # reach the daemon on the machine, which is where the GPU is.
+    ollama_base_url: str = "http://127.0.0.1:11434"
+
+    # The model that turns a sentence into a plan. Separate from the catalogue on
+    # purpose: the catalogue chooses who *answers*, and planning is a different job with
+    # a different measurement — scripts/evaluate_planning.py is what picks this value.
+    planner_model: str = "qwen2.5-coder:7b"
+
+    # The categories that exist in the data. They belong to banking; until there is a
+    # legitimate place to read them from, they are stated here and drift shows up as a
+    # rejected plan rather than as a wrong figure.
+    categories: tuple[str, ...] = (
+        "GROCERIES",
+        "TRANSPORT_FUEL",
+        "RESTAURANTS",
+        "TRANSPORT_PUBLIC",
+        "HEALTH",
+        "LEISURE",
+        "SUBSCRIPTIONS",
+        "HOUSING_RENT",
+        "SALARY",
+        "TRANSFER_BIZUM",
+    )
+
     def catalogue(self) -> TomlModelCatalogue:
         if self.llm_catalogue_file is None:
             return TomlModelCatalogue.built_in()

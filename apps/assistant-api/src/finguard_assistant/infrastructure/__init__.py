@@ -10,6 +10,7 @@ the registry, never imported by name.
 call site `register(app)` alone did not say what was being registered.
 """
 
+from finguard_assistant.infrastructure.banking.http_financial_query import HttpFinancialQuery
 from finguard_assistant.infrastructure.config.toml_model_catalogue import TomlModelCatalogue
 from finguard_assistant.infrastructure.controllers.llm_controller import (
     admin_router,
@@ -17,8 +18,11 @@ from finguard_assistant.infrastructure.controllers.llm_controller import (
 )
 from finguard_assistant.infrastructure.error_handlers import register as register_error_handlers
 from finguard_assistant.infrastructure.llm.provider_registry import ProviderRegistry
+from finguard_assistant.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 
 __all__ = [
+    "HttpFinancialQuery",
+    "LlmQueryPlanner",
     "ProviderRegistry",
     "TomlModelCatalogue",
     "admin_router",

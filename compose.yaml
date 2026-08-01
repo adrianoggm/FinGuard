@@ -63,6 +63,15 @@ services:
       # fails come from this file, not from code. Mounted read-only so it can change
       # without rebuilding the image.
       ASSISTANT_LLM_CATALOGUE_FILE: /app/config/llm.toml
+      # The ledger, by service name on the compose network.
+      ASSISTANT_BANKING_BASE_URL: http://banking-api:8001
+      # The local model runs on the host, not in a container: that is where the GPU is,
+      # and 127.0.0.1 inside a container is the container. Nothing leaves the machine.
+      ASSISTANT_OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
+      # Stating it keeps the compose file working on both.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./apps/assistant-api/config:/app/config:ro
     ports:
