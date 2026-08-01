@@ -1,25 +1,36 @@
 """HTTP surface of the LLM layer.
 
-Routes only: shapes live in dto/, mapping in mappers/, and every route goes through a
-bus — a controller never touches a handler or the policy store directly.
+Routes only: shapes live in dto/, mapping in mappers/, and a controller never touches
+the policy store directly.
+
+Every route goes through a bus except the streaming one. A bus is one message in, one
+answer out; a stream is a different shape, and widening `ask` to return an async
+iterator would make every query pay for the one that streams. That route takes its
+handler directly and says so, which is a smaller lie than a bus that sometimes answers
+once and sometimes many times.
 """
 
+import json
+from collections.abc import AsyncIterator
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from finguard_assistant.application import (
     AnswerMessageQuery,
+    AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
     CommandBus,
     GetLlmCatalogueQuery,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ResetLlmPolicyCommand,
+    Stage,
 )
 from finguard_assistant.bootstrap.dependencies import (
+    get_ask_handler,
     get_command_bus,
     get_query_bus,
     reporting_today,
@@ -37,6 +48,7 @@ from finguard_assistant.infrastructure.mappers import llm_mapper
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
 Today = Annotated[date, Depends(reporting_today)]
+Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -109,3 +121,36 @@ async def ask(request: QuestionRequest, queries: Queries, today: Today) -> Quest
         )
     )
     return llm_mapper.question_to_dto(result)
+
+
+@assistant_router.post("/v1/questions/stream", summary="Answer a question, stage by stage")
+async def ask_streaming(request: QuestionRequest, asking: Asking, today: Today) -> Response:
+    """The same answer, emitted as it is produced.
+
+    Not token-by-token: the answer text comes from a template and exists all at once
+    the moment the figures land, so streaming its characters would be an animation
+    rather than progress. What takes the time is the model deciding what to ask, and
+    that is what the stages report.
+
+    The order matters as much as the timing. `planned` arrives before any figure, so a
+    plan that misread the question can be seen for what it is while that still helps —
+    rather than arriving as a footnote under a number the user has already read.
+    """
+    question = AskFinancialQuestionQuery(
+        sentence=request.question,
+        account_id=request.account_id,
+        today=today,
+        previous_plan=request.previous_plan,
+    )
+
+    async def events() -> AsyncIterator[str]:
+        async for step in asking.stream(question):
+            if isinstance(step, Stage):
+                payload = {"type": "stage", "name": step.name, "detail": step.detail}
+            else:
+                payload = {"type": "answer", **llm_mapper.question_to_dto(step).model_dump()}
+            # Server-sent events: one JSON object per "data:" line, blank line between.
+            body = json.dumps(payload, ensure_ascii=False, default=str)
+            yield f"data: {body}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")

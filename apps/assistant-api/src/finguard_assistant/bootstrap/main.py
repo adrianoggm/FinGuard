@@ -74,19 +74,17 @@ def create_app() -> FastAPI:
     # The planning path. It does not go through the LLM policy on purpose: the policy
     # chooses who *answers*, and planning is a different job measured a different way
     # (scripts/evaluate_planning.py). One knob per decision beats one knob for both.
-    query_bus.register(
-        AskFinancialQuestionQuery,
-        AskFinancialQuestionHandler(
-            LlmQueryPlanner(
-                providers.get(OllamaLlmProvider.name),
-                model=settings.planner_model,
-                temperature=0.0,
-                max_output_tokens=384,
-                categories=settings.categories,
-            ),
-            HttpFinancialQuery(base_url=settings.banking_base_url),
+    asking = AskFinancialQuestionHandler(
+        LlmQueryPlanner(
+            providers.get(OllamaLlmProvider.name),
+            model=settings.planner_model,
+            temperature=0.0,
+            max_output_tokens=384,
+            categories=settings.categories,
         ),
+        HttpFinancialQuery(base_url=settings.banking_base_url),
     )
+    query_bus.register(AskFinancialQuestionQuery, asking)
 
     command_bus = CommandBus()
     command_bus.register(
@@ -98,6 +96,8 @@ def create_app() -> FastAPI:
 
     app.state.query_bus = query_bus
     app.state.command_bus = command_bus
+    # Reached directly by the streaming route: a bus answers once, a stream does not.
+    app.state.ask_handler = asking
 
     app.include_router(assistant_router)
     app.include_router(admin_router)

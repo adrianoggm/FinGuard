@@ -9,6 +9,7 @@ in banking: a handler that reads the clock cannot be replayed, and this one has 
 the evaluation depends on it.
 """
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import date
 from uuid import UUID
@@ -71,32 +72,66 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     previous_plan: str | None = None
 
 
+@dataclass(frozen=True)
+class Stage:
+    """A step finishing, for a caller watching it happen.
+
+    The answer text is composed from a template, so streaming its tokens would be
+    theatre: it exists all at once the instant the figures land. What actually takes
+    time is the model deciding what to ask, so those are the stages worth emitting.
+
+    It also puts the plan on screen before the number, which is the order that lets
+    someone say "that is not what I asked" while it still matters.
+    """
+
+    name: str
+    detail: str | None = None
+
+
 class AskFinancialQuestionHandler:
     def __init__(self, planner: QueryPlannerPort, queries: FinancialQueryPort) -> None:
         self._planner = planner
         self._queries = queries
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
+        """The whole answer at once. Drains the same pipeline the stream walks, so the
+        two cannot answer differently."""
+        result: AskFinancialQuestionResult | None = None
+        async for step in self.stream(query):
+            if isinstance(step, AskFinancialQuestionResult):
+                result = step
+        assert result is not None  # the pipeline always ends with one
+        return result
+
+    async def stream(
+        self, query: AskFinancialQuestionQuery
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        yield Stage("planning")
         planned = await self._planner.plan(
             query.sentence, today=query.today, previous=query.previous_plan
         )
 
         if not planned.is_answerable:
-            return _decline(planned)
+            yield _decline(planned)
+            return
 
         assert planned.plan is not None  # is_answerable is exactly this condition
+        yield Stage("planned", answer_writer.describe(planned.plan))
+        yield Stage("querying")
+        yield await self._answer(query, planned.plan)
+
+    async def _answer(
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan
+    ) -> AskFinancialQuestionResult:
         try:
-            answer = await self._queries.run(
-                planned.plan, account_id=query.account_id, today=query.today
-            )
+            answer = await self._queries.run(plan, account_id=query.account_id, today=query.today)
         except QueryRejectedError:
             # Our plan, banking's rules. Ours to fix, so it is reported as such rather
             # than dressed up as the user having asked something impossible.
             return AskFinancialQuestionResult(
                 outcome=PlanningOutcome.INVALID_DOMAIN.value,
                 text="He entendido la pregunta, pero la consulta que he construido no es válida.",
-                plan=answer_writer.describe(planned.plan),
-                question=None,
+                plan=answer_writer.describe(plan),
             )
         except BankingUnavailableError:
             return AskFinancialQuestionResult(
@@ -104,7 +139,7 @@ class AskFinancialQuestionHandler:
                 text="No puedo consultar tus movimientos ahora mismo. Vuelve a intentarlo.",
             )
 
-        return _answered(planned.plan, answer)
+        return _answered(plan, answer)
 
 
 def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
