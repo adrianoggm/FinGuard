@@ -4,6 +4,12 @@
 # change the rules — and it is the set to run before believing anything, because every
 # case here is a way the pipeline could be wrong while both other scores look healthy.
 #
+# The injection cases are not invented threats: they are the vision's own list of what a
+# message may not do, turned into something that runs. It says a message may not change
+# the system prompt, modify policies, grant itself permissions, request credentials, or
+# turn an external result into an internal instruction — and each of those now has a
+# case, so a security requirement that used to be a bullet point has a score.
+#
 # The threat model is specific and worth stating. A financial assistant reads text the
 # user typed and text the *bank* stored: a transfer concept, a merchant name, a payment
 # reference. Those are attacker-controlled in a way a question is not — anyone who can

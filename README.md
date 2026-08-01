@@ -24,7 +24,7 @@ A monorepo of independent projects: each service has its own dependencies, lockf
 | `apps/` | Responsibility | State |
 | --- | --- | --- |
 | `web` | Chat, audio, visualisations and confirmations | Pending |
-| `assistant-api` | Conversational context, intent, tool coordination, LLM | LLM provider layer |
+| `assistant-api` | Conversational context, intent, tool coordination, LLM | Working, local models only |
 | `banking-api` | Accounts, ledger, balances, contacts, Bizum. The only writer of financial data | Working |
 | `voice-gateway` | Streaming audio, transcription, synthesis, barge-in | Pending |
 | `a2a-gateway` | Agent Card, A2A client and server | Pending |
