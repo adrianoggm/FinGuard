@@ -49,6 +49,13 @@ DEFAULT_TIMEOUT_SECONDS: Final = 120.0
 # longer fits is silently split with the CPU rather than refused.
 DEFAULT_CONTEXT_TOKENS: Final = 4096
 
+# Sampling seed. Ollama picks a random one unless told, and temperature 0 does not make
+# up for it: measuring the same prompt against the same model twice moved a score by
+# three points, which is enough to invent an improvement that is not there. Pinning it
+# does not make a GPU bit-reproducible — batching and non-associative float reduction
+# still move things — but it removes the one source of noise that was ours to remove.
+DEFAULT_SEED: Final = 0
+
 
 class OllamaLlmProvider:
     """Local inference. No API key, no network egress, no request leaves the machine."""
@@ -61,11 +68,13 @@ class OllamaLlmProvider:
         keep_alive: str = DEFAULT_KEEP_ALIVE,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         context_tokens: int = DEFAULT_CONTEXT_TOKENS,
+        seed: int = DEFAULT_SEED,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._keep_alive = keep_alive
         self._timeout = timeout_seconds
         self._context_tokens = context_tokens
+        self._seed = seed
 
     async def complete(
         self,
@@ -86,6 +95,7 @@ class OllamaLlmProvider:
                 "temperature": temperature,
                 "num_predict": max_output_tokens,
                 "num_ctx": self._context_tokens,
+                "seed": self._seed,
             },
         }
         if schema is not None:

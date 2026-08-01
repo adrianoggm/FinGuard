@@ -40,6 +40,15 @@ _GLOSS: Final = {
     "TRANSFER_BIZUM": "bizum, transferencias entre personas",
 }
 
+# Softening the abstention rule was tried and rejected, so it does not get tried again.
+# Telling the model that "most questions do determine a plan" moved qwen2.5-coder:7b
+# from 2 invented plans to 5 and left the over-asking of the instruct models untouched —
+# a worse trade in the only direction that matters. The over-asking is not caused by
+# this sentence.
+#
+# Everything below is sent to the model. Notes about the prompt belong out here, not in
+# the string: a paragraph of engineering rationale inside the template is another
+# instruction as far as the decoder is concerned, and it measurably changes the answers.
 _TEMPLATE: Final = """\
 You convert one Spanish sentence about a bank account into a query plan.
 
