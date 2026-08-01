@@ -14,6 +14,13 @@ than rejected, so it can go on every request unconditionally.
 against ~0.1s once resident, which is the difference between a demo that looks broken
 and one that does not.
 
+`num_ctx` — the context window, and the setting that cost the most to find. Ollama
+loads a model at its *default* window, which for a current model is 256K tokens. The
+weights of qwen3.5:4b are 3.4GB; at 256K the KV cache takes it to 13GB, so `ollama ps`
+reported "64%/36% CPU/GPU" and two thirds of a 4B model ran on the processor. It
+measured slower than a 7B. Our prompt is around a thousand tokens, so a window sized
+for the job keeps the whole model resident.
+
 `format` — the JSON Schema. This is the whole reason a local runtime is worth it: the
 decoder cannot emit a token that breaks the schema, so structural validity is not
 something the caller hopes for. It says nothing about whether the plan answers the
@@ -36,6 +43,12 @@ DEFAULT_KEEP_ALIVE: Final = "30m"
 # This is a ceiling for "something is wrong", not a latency target.
 DEFAULT_TIMEOUT_SECONDS: Final = 120.0
 
+# Context window. The planner prompt is ~1k tokens and the answer a few hundred, so this
+# is generous for the job — and small enough that the KV cache does not push the model
+# off the GPU. Raising it is not free: the cache grows with it, and a model that no
+# longer fits is silently split with the CPU rather than refused.
+DEFAULT_CONTEXT_TOKENS: Final = 4096
+
 
 class OllamaLlmProvider:
     """Local inference. No API key, no network egress, no request leaves the machine."""
@@ -47,10 +60,12 @@ class OllamaLlmProvider:
         base_url: str = DEFAULT_BASE_URL,
         keep_alive: str = DEFAULT_KEEP_ALIVE,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        context_tokens: int = DEFAULT_CONTEXT_TOKENS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._keep_alive = keep_alive
         self._timeout = timeout_seconds
+        self._context_tokens = context_tokens
 
     async def complete(
         self,
@@ -67,7 +82,11 @@ class OllamaLlmProvider:
             "stream": False,
             "think": False,
             "keep_alive": self._keep_alive,
-            "options": {"temperature": temperature, "num_predict": max_output_tokens},
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_output_tokens,
+                "num_ctx": self._context_tokens,
+            },
         }
         if schema is not None:
             payload["format"] = schema

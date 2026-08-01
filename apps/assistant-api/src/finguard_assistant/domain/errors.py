@@ -56,3 +56,29 @@ class UnknownProviderError(DomainError):
         self.name = name
         self.available = available
         super().__init__(f"unknown LLM provider: {name!r}; available: {available}")
+
+
+class QueryRejectedError(DomainError):
+    """Banking refused the plan.
+
+    It validates independently and it is the authority, so this is where a vocabulary
+    that drifted from the contract shows up — an enum value the assistant declares and
+    banking does not know arrives here rather than passing silently.
+    """
+
+    code = "query_rejected"
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"banking rejected the plan: {detail}")
+
+
+class BankingUnavailableError(DomainError):
+    """Banking could not be reached. Not the user's problem to solve, so it is kept
+    apart from a rejected plan, which is ours and worth showing."""
+
+    code = "banking_unavailable"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"banking unavailable: {reason}")
