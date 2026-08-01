@@ -129,6 +129,12 @@ test:
 test-unit:
     for s in {{ py_services }}; do (cd "$s" && uv run pytest -q -m "not integration"); done
 
+# Accuracy of the query engine given a correct plan (phase 2)
+# Accuracy of turning a Spanish sentence into a plan (phase 3). Needs a local Ollama
+# daemon; the model tag is the one you want to compare.
+evaluate-planning model="qwen2.5-coder:7b":
+    cd apps/assistant-api && uv run python scripts/evaluate_planning.py --model {{ model }}
+
 # What has to pass before pushing a commit
 check: lint typecheck test
 

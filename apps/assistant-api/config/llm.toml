@@ -25,10 +25,15 @@ alias = "echo-2"
 provider = "echo"
 model = "echo-2"
 
-# A real provider is one module in infrastructure/llm/, one line in the registry and
-# one entry here:
+# Local inference. Nothing leaves the machine: no API key, no egress, and a demo that
+# works with the network unplugged.
+#
+# This catalogue chooses who *answers*. It does not choose who *plans* — turning a
+# sentence into a query is a different job with its own measurement, and that model is
+# ASSISTANT_PLANNER_MODEL, picked with scripts/evaluate_planning.py. One knob per
+# decision.
 #
 # [[models]]
-# alias = "gpt-main"
-# provider = "openai"
-# model = "gpt-5"
+# alias = "local"
+# provider = "ollama"
+# model = "qwen2.5-coder:7b"

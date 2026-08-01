@@ -40,14 +40,28 @@
 
 ### Phase 3 — Conversational assistant
 
-- Integrate an LLM provider.
-- Implement tool selection.
-- Keep context.
-- Add explainable answers.
-- Show the movements used.
-- Implement text streaming.
+- Integrate an LLM provider — **done**, Ollama, local only. No API key, no egress.
+- Implement tool selection — **done**. A Spanish sentence becomes a validated plan
+  under a JSON Schema generated from the enums, so an invented category or period is
+  unreachable at decode time rather than caught afterwards.
+- Keep context — **done**, and stateless: the caller echoes back the previous plan, so
+  there is no session to expire and the user can see what carries over.
+- Add explainable answers — **done**. Every answer carries the plan that produced it.
+- Show the movements used — **done**, as part of the answer rather than a debug extra.
+- Implement text streaming — **done** as stage events. The answer text is a template
+  and exists all at once; the model deciding what to ask is 2.2s of a 2.28s request
+  and the ledger is 20ms, so the stages are what there is to stream.
 
-*Outcome:* a working text assistant.
+Two things this phase added that were not on the list, both from the review:
+
+- **An outcome taxonomy.** A plan that is schema-valid and answers a different question
+  passes every check and returns a real figure. It is now one of six named outcomes,
+  and asking a question back or refusing are correct answers rather than failures.
+- **An evaluation for the step nobody was measuring.** 60 Spanish sentences with the
+  plan each one determines, scored per field and by semantic equivalence, with the
+  two rates that matter: a plan where a question was due, and the reverse.
+
+*Outcome:* a working text assistant, and a number for how well it understands.
 
 ### Phase 4 — Dynamic visualisation
 
