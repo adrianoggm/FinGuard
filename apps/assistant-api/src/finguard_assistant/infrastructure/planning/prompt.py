@@ -18,6 +18,28 @@ from typing import Final
 
 from finguard_assistant.infrastructure.planning.plan_schema import ABSOLUTE, NO_CATEGORY
 
+# What each category is called when a person says it out loud.
+#
+# The schema constrains the model to these names and says nothing about what they mean.
+# A category is an English identifier and the question is Spanish, so without this the
+# model is guessing that "el súper" is GROCERIES — and measurably it guesses wrong:
+# gasolina came back as GROCERIES, alquiler as RESTAURANTS, farmacia as SALARY.
+#
+# Only the categories a deployment actually has get rendered, so this cannot describe a
+# category that does not exist. A category with no gloss still appears, by name.
+_GLOSS: Final = {
+    "GROCERIES": "el súper, el supermercado, la compra, comida de casa",
+    "TRANSPORT_FUEL": "gasolina, gasoil, diésel, repostar, la gasolinera",
+    "RESTAURANTS": "restaurantes, bares, comer fuera, cenar fuera, cañas, café",
+    "TRANSPORT_PUBLIC": "transporte público, tren, metro, autobús, taxi, VTC",
+    "HEALTH": "salud, farmacia, médico, dentista, óptica",
+    "LEISURE": "ocio, cine, libros, videojuegos, deporte, compras de capricho",
+    "SUBSCRIPTIONS": "suscripciones, cuotas mensuales, streaming, gimnasio",
+    "HOUSING_RENT": "alquiler, la renta, la casa, la vivienda",
+    "SALARY": "nómina, sueldo, salario, la paga",
+    "TRANSFER_BIZUM": "bizum, transferencias entre personas",
+}
+
 _TEMPLATE: Final = """\
 You convert one Spanish sentence about a bank account into a query plan.
 
@@ -62,6 +84,10 @@ number, not a broader answer.
 
 Choose only from the list in the schema; there are no others. Use ["{no_category}"] \
 when the question is not about a particular kind of spending.
+
+What each one is called in Spanish:
+
+{glossary}
 
 The list has categories, not shops. A question about one shop ("¿cuánto gasté en \
 Mercadona?") cannot be answered by its category, because that category also covers the \
@@ -119,7 +145,19 @@ If the new sentence is a fresh question, ignore the plan above entirely.
 """
 
 
-def build_prompt(sentence: str, *, today: date, previous: str | None = None) -> str:
+def _glossary(categories: tuple[str, ...]) -> str:
+    """One line per category the deployment has. Absent ones are never described."""
+    lines = (f"- {name}: {_GLOSS[name]}" if name in _GLOSS else f"- {name}" for name in categories)
+    return "\n".join(lines)
+
+
+def build_prompt(
+    sentence: str,
+    *,
+    today: date,
+    categories: tuple[str, ...] = (),
+    previous: str | None = None,
+) -> str:
     """`previous` is the plan behind the last answer, in the same one-line form the API
     hands back. A follow-up carries context the sentence alone does not: "¿y en
     gasolina?" is not a question about all time, and answering it as one would be a real
@@ -134,5 +172,6 @@ def build_prompt(sentence: str, *, today: date, previous: str | None = None) -> 
         today=today.isoformat(),
         absolute=ABSOLUTE,
         no_category=NO_CATEGORY,
+        glossary=_glossary(categories),
         sentence=sentence,
     )
