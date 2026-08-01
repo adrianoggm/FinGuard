@@ -17,4 +17,6 @@ class QueryPlannerPort(Protocol):
     the user either way.
     """
 
-    async def plan(self, sentence: str, *, today: date) -> PlanningResult: ...
+    async def plan(
+        self, sentence: str, *, today: date, previous: str | None = None
+    ) -> PlanningResult: ...

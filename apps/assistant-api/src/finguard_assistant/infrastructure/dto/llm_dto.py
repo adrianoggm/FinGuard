@@ -71,6 +71,9 @@ class QuestionRequest(_Payload):
 
     question: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
     account_id: UUID
+    # Echo back the `plan` from the previous answer to ask a follow-up. Optional, and
+    # the caller owns it: the service keeps no conversation.
+    previous_plan: str | None = Field(default=None, max_length=MAX_PROMPT_LENGTH)
 
 
 class SpokenGroupResponse(_Payload):

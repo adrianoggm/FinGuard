@@ -66,6 +66,9 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     sentence: str
     account_id: UUID
     today: date
+    # The plan behind the previous answer, echoed back by the caller. Held by whoever
+    # is having the conversation, not by this service.
+    previous_plan: str | None = None
 
 
 class AskFinancialQuestionHandler:
@@ -74,7 +77,9 @@ class AskFinancialQuestionHandler:
         self._queries = queries
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
-        planned = await self._planner.plan(query.sentence, today=query.today)
+        planned = await self._planner.plan(
+            query.sentence, today=query.today, previous=query.previous_plan
+        )
 
         if not planned.is_answerable:
             return _decline(planned)

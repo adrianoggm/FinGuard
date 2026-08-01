@@ -101,14 +101,36 @@ el mes pasado o los últimos 30 días.", "period": "", "n": 0, "from": "", "to":
 "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", "metric": \
 "SUM"}}
 
-## The sentence
+{previous}## The sentence
 
 {sentence}
 """
 
+_PREVIOUS: Final = """## The previous question
 
-def build_prompt(sentence: str, *, today: date) -> str:
+It was answered with this plan: {previous}
+
+If the new sentence only changes part of it — a different category, a different \
+window, a breakdown — keep everything it does not mention. "¿Y en gasolina?" asked \
+after a question about last month is still a question about last month.
+
+If the new sentence is a fresh question, ignore the plan above entirely.
+
+"""
+
+
+def build_prompt(sentence: str, *, today: date, previous: str | None = None) -> str:
+    """`previous` is the plan behind the last answer, in the same one-line form the API
+    hands back. A follow-up carries context the sentence alone does not: "¿y en
+    gasolina?" is not a question about all time, and answering it as one would be a real
+    figure for the wrong window — the same failure as everywhere else in this pipeline.
+
+    It is passed in rather than remembered. No session, no expiry, no eviction, and the
+    user can see exactly what is being carried over, which for a financial assistant is
+    a feature rather than a limitation.
+    """
     return _TEMPLATE.format(
+        previous=_PREVIOUS.format(previous=previous) if previous else "",
         today=today.isoformat(),
         absolute=ABSOLUTE,
         no_category=NO_CATEGORY,

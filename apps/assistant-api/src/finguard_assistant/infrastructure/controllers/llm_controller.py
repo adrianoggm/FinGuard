@@ -102,7 +102,10 @@ async def ask(request: QuestionRequest, queries: Queries, today: Today) -> Quest
     """
     result = await queries.ask(
         AskFinancialQuestionQuery(
-            sentence=request.question, account_id=request.account_id, today=today
+            sentence=request.question,
+            account_id=request.account_id,
+            today=today,
+            previous_plan=request.previous_plan,
         )
     )
     return llm_mapper.question_to_dto(result)
