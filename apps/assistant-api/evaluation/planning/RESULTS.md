@@ -25,10 +25,11 @@ on the held-out set. It is the one that stopped answering questions it cannot an
 
 ## Why that, and not the highest score
 
-`unsupported` — averages, ratios, forecasts, advice — was **0 % on the baseline**. Every
-one of those came back as a confident plan and a real figure answering a question nobody
-asked. It was the worst open defect in the phase and the reason `/v1/questions` ships
-disabled.
+`unsupported` — averages, ratios, forecasts, advice — was **0 % in the earlier baseline
+measurement** and is **1/5 (20 %) in the current baseline rerun**. Unsupported requests
+still routinely came back as a confident plan and a real figure answering a question
+nobody asked. It was the worst open defect in the phase and the reason `/v1/questions`
+ships disabled.
 
 | | `unsupported`, held out | over-asks (of 65 answerable) |
 | --- | ---: | ---: |

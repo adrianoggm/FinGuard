@@ -48,7 +48,8 @@ class Settings(BaseSettings):
     # One of the two has moved: refusing what it cannot express was 0% on the held-out
     # set and is 60% since the planner changed model. Better is not the bar, and it is a
     # model's disposition rather than a guarantee — two in five still come back as a real
-    # figure answering a question about a ratio. The injection has not moved at all.
+    # figure answering a question about a ratio. The known live injection has not moved
+    # at all, even though the aggregate injection group score changed with the model.
     #
     # It comes off when unsupported has a deterministic guard and injection clears the
     # agreed bar — see docs/next.md.
