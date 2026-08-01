@@ -2,6 +2,35 @@
 
 ## Roadmap
 
+### Security is not a phase
+
+It appears in no phase below on purpose. The security section of the vision is an
+**ordered stack** — Identity → Authorisation → Structural validation → Financial
+policies → Human confirmation → Secure transaction → Audit — and phases 1 to 3 built
+the third layer while skipping the first two. The result was a service where any
+caller could read any account, because the account travelled in the request body.
+
+That is what treating security as a late phase produces: not a missing feature, but an
+architecture that assumes an identity nothing supplies. Every later item depends on
+knowing who is asking — per-holder row-level security, the `/admin` endpoints, and the
+Bizum confirmation in phase 5, which is a human authorising an operation and therefore
+meaningless without an authenticated human.
+
+| layer | state |
+| --- | --- |
+| Identity | Development token table. The account comes from the credential, not the request. |
+| Authorisation | One caller, one account, deny by default. No scopes yet. |
+| Structural validation | Closed schema, domain invariants, parameterised SQL, read-only role. |
+| Financial policies | Ceilings and limits. Amount policies come with phase 5. |
+| Human confirmation | Phase 5. |
+| Secure transaction | Phase 5. |
+| Audit | Not started. |
+
+**Before phase 5, not during it:** OAuth 2.0 with short-lived tokens, per-operation
+scopes, `/admin` behind an administration scope, and per-holder row-level security so
+the database enforces what the application currently promises. A payment confirmed by
+an unauthenticated caller is not a demo, it is a bug with a receipt.
+
 ### Phase 0 — Design and preparation
 
 - Create the repository.
