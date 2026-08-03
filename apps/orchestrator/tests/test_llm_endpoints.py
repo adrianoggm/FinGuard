@@ -196,3 +196,17 @@ def test_the_openapi_document_is_served() -> None:
     assert document["info"]["title"] == "FinGuard Assistant API"
     assert "/v1/messages" in document["paths"]
     assert client.get("/docs").status_code == 200
+
+
+def test_ready_says_whether_payments_are_on_without_that_making_it_unready() -> None:
+    """Reported, not checked. Payments are off by default, so putting the flag in `checks` would
+    make every deployment that answers questions and nothing else report 503 — and a readiness probe
+    that is red on a correctly configured service is a probe somebody switches off.
+
+    It is reported at all because a flag that reaches nothing observable is a flag nobody can prove
+    arrived: "payments are enabled and the endpoint 404s" is a debugging session this prevents.
+    """
+    body = client.get("/ready").json()
+
+    assert body["payments"] is app.state.payments_enabled
+    assert "payments" not in body["checks"]

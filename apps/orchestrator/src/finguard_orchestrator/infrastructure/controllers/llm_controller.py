@@ -108,6 +108,12 @@ async def ready(request: Request, queries: Queries) -> JSONResponse:
     body: dict[str, object] = {
         "status": "ok" if all(checks.values()) else "unavailable",
         "provider": provider,
+        # Reported, deliberately not a check. Payments are off by default, so gating readiness on
+        # this would report 503 on a deployment that only answers questions — and a probe that is
+        # red on a correctly configured service is a probe somebody switches off. It appears at all
+        # because "payments are enabled and the endpoint 404s" is a debugging session, and a flag
+        # that reaches nothing observable is a flag nobody can prove arrived.
+        "payments": bool(request.app.state.payments_enabled),
         "checks": checks,
     }
     return JSONResponse(body, status_code=200 if all(checks.values()) else 503)
