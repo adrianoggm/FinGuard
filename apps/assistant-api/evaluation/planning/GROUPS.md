@@ -32,14 +32,14 @@ thing a user does.
 | file | cases | used for |
 | --- | ---: | --- |
 | [dev.yaml](dev.yaml) | 120 | Prompt work. Read it, tune against it, expect optimistic numbers. |
-| [test.yaml](test.yaml) | 79 | **Held out.** Do not read the failures while tuning. Run it to report. |
+| [validation.yaml](validation.yaml) | 79 | **Was held out, and is not any more.** Eleven models were compared on it and one was chosen partly on its `unsupported` score here, which makes it a model-selection set. Still the honest number for a change to the prompt; no longer a release number. |
 | [adversarial.yaml](adversarial.yaml) | 34 | Attacks and edge cases. Run it before believing anything. |
 
 Run one with `--dataset`:
 
 ```bash
 cd apps/assistant-api
-uv run python scripts/evaluate_planning.py --model qwen2.5-coder:7b --dataset test
+uv run python scripts/evaluate_planning.py --model qwen2.5-coder:7b --dataset validation
 ```
 
 The split matters more than the size. A prompt tuned against 110 cases scores well on

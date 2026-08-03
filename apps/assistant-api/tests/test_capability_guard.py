@@ -26,7 +26,7 @@ def cases(*expects: str) -> list[tuple[str, str]]:
     somebody has to look.
     """
     found = []
-    for name in ("dev", "test", "adversarial"):
+    for name in ("dev", "validation", "adversarial"):
         data = yaml.safe_load((PLANNING / f"{name}.yaml").read_text(encoding="utf-8"))
         found += [(c["id"], c["question"]) for c in data["cases"] if c["expect"] in expects]
     return found

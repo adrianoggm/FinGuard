@@ -36,6 +36,7 @@ import yaml
 
 from finguard_assistant.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_assistant.domain.models.planning_result import PlanningResult
+from finguard_assistant.domain.services import capability_guard, plan_verifier
 from finguard_assistant.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -126,6 +127,15 @@ class Score:
     exact: int = 0
     invented: list[str] = field(default_factory=list)
     missed: list[str] = field(default_factory=list)
+    # Cases where a figure would have reached the user and would not have answered the
+    # question. The accuracy number cannot see this: a plan that never ran and a plan
+    # that ran and was wrong are both "not exact", and only one of them puts a real
+    # euro amount in front of somebody as the answer to something they did not ask.
+    #
+    # Three ways in, and they are one failure: the plan executed and disagreed with the
+    # sentence — because the sentence named a capability we do not have, because it
+    # determined nothing and we guessed, or because the fields came out wrong.
+    unsafe: list[tuple[str, str]] = field(default_factory=list)
     field_right: dict[str, int] = field(default_factory=lambda: dict.fromkeys(FIELDS, 0))
     field_total: dict[str, int] = field(default_factory=lambda: dict.fromkeys(FIELDS, 0))
     structural: int = 0
@@ -165,6 +175,29 @@ def as_plan(spec: dict[str, Any]) -> FinancialPlan:
         group_by=GroupBy(spec.get("groupBy", "NONE")),
         metric=Metric(spec.get("metric", "SUM")),
     )
+
+
+async def _planned(
+    planner: LlmQueryPlanner, case: dict[str, Any], *, today: date, context: Any
+) -> PlanningResult:
+    """One case through the pipeline as it ships, not through the model alone.
+
+    The guard and the verifier are deterministic and they change the outcome, so a score
+    that skipped them would measure a system nobody runs. It also keeps them honest: a
+    rule that refuses too much shows up here as a drop, in the group it damaged.
+    """
+    refused = capability_guard.unsupported_reason(case["question"])
+    if refused is not None:
+        return PlanningResult.unsupported(refused)
+
+    result = await planner.plan(
+        case["question"], today=today, previous=as_plan(context) if context else None
+    )
+    if result.plan is None:
+        return result
+
+    broken = plan_verifier.disagreement(case["question"], result.plan)
+    return PlanningResult.invalid_domain(broken) if broken else result
 
 
 def expected_fields(plan: dict[str, Any], today: date) -> dict[str, Any]:
@@ -225,6 +258,7 @@ def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: dat
         group.outcome_right += 1
     elif wanted != "plan" and got is PlanningOutcome.PLANNED:
         score.invented.append(case["id"])
+        score.unsafe.append((case["id"], f"executed a plan where the dataset says {wanted}"))
     elif wanted == "plan" and got in (
         PlanningOutcome.NEEDS_CLARIFICATION,
         PlanningOutcome.UNSUPPORTED,
@@ -256,6 +290,9 @@ def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: dat
     if mismatches:
         detail = ", ".join(f"{n}={actual[n]!r} != {expected[n]!r}" for n in mismatches)
         score.wrong.append((case["id"], detail))
+        # It ran. Banking answered it. The figure the user reads is about a window, a
+        # direction or a metric they did not ask for, and nothing downstream can tell.
+        score.unsafe.append((case["id"], detail))
     else:
         score.exact += 1
         group.exact += 1
@@ -269,6 +306,14 @@ def report(model: str, score: Score) -> None:
     )
     plans = score.field_total["direction"] or 1
     print(f"  exact plan match    {score.exact:3}/{plans}  {pct(score.exact, plans)}")
+
+    # The headline. Everything above says how close the plan was; this says how often a
+    # euro figure would have reached somebody as the answer to a question they did not
+    # ask. It is the only number here that can be required to be zero.
+    print(
+        f"\n  UNSAFE EXECUTION    {len(score.unsafe):3}/{total}  "
+        f"{pct(len(score.unsafe), total)}   a wrong figure would have been shown"
+    )
     print(f"  INVENTED            {len(score.invented):3}      a plan where a question was due")
     print(f"  missed              {len(score.missed):3}      a question where a plan was due")
     print(f"  invalid structure   {score.structural:3}      should be 0 under constrained decoding")
@@ -311,6 +356,11 @@ def report(model: str, score: Score) -> None:
         for pair in score.paraphrase_splits:
             print(f"    {pair}")
 
+    if score.unsafe:
+        print("\n  unsafe — these would have shown a figure")
+        for case_id, why in score.unsafe:
+            print(f"    {case_id:34} {why}")
+
     if score.invented:
         print(f"\n  invented: {', '.join(score.invented)}")
     if score.wrong:
@@ -348,9 +398,7 @@ async def run(
     for case in cases:
         started = time.perf_counter()
         context = case.get("previous")
-        result = await planner.plan(
-            case["question"], today=today, previous=as_plan(context) if context else None
-        )
+        result = await _planned(planner, case, today=today, context=context)
         score.latencies.append(time.perf_counter() - started)
 
         if result.outcome is PlanningOutcome.PROVIDER_ERROR:
@@ -433,9 +481,10 @@ def main() -> int:
     parser.add_argument(
         "--dataset",
         default="dev",
-        choices=("dev", "test", "adversarial"),
-        help="dev is what the prompt was tuned against and reads optimistically; test "
-        "has never been seen by the prompt and is the number worth quoting.",
+        choices=("dev", "validation", "adversarial"),
+        help="dev is what the prompt was tuned against; validation is what eleven models were "
+        "compared against, so it selected a model and is no longer held out. Neither is a "
+        "release number — see evaluation/planning/RESULTS.md.",
     )
     parser.add_argument(
         "--timeout",
