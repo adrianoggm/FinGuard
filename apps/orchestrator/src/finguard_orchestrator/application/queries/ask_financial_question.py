@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.services import (
     answer_writer,
     capability_guard,
+    category_words,
     explainer,
     intent_router,
     plan_verifier,
@@ -211,8 +212,7 @@ class AskFinancialQuestionHandler:
             # return a real figure. This is the only place that compares the two.
             yield AskFinancialQuestionResult(
                 outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                text="He entendido la pregunta, pero la consulta que he construido no "
-                "se corresponde con ella. ¿Puedes decirla de otra forma?",
+                text=_refusal_for(broken, query.sentence),
                 plan=answer_writer.describe(planned.plan),
                 plan_context=_spoken(planned.plan),
             )
@@ -272,6 +272,38 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
+    )
+
+
+# The generic refusal, for a rule that has nothing specific to say. It asks for a rephrasing because
+# that is the only thing the user can do about it.
+_REPHRASE = (
+    "He entendido la pregunta, pero la consulta que he construido no se corresponde con ella. "
+    "¿Puedes decirla de otra forma?"
+)
+
+
+def _refusal_for(rule: str, sentence: str) -> str:
+    """Why the plan was refused, in words, when the rule knows enough to say.
+
+    A specific refusal is worth writing because the generic one leaves somebody guessing at what to
+    change. `CATEGORY_MISREAD` knows exactly what went wrong — the sentence named a category and the
+    plan filtered by something else — so it names the category it understood.
+
+    It does **not** ask "¿te refieres a ocio?", which is what this said first. Nothing here can act
+    on a "sí" yet: a clarification does not keep the partial plan, so the reply would arrive as a
+    sentence with no context and be re-planned from two letters. Asking a question the system cannot
+    follow up on is the same dishonesty as a button that does nothing, so it suggests a sentence
+    instead — one the user can send and this pipeline can answer.
+    """
+    if rule != "CATEGORY_MISREAD":
+        return _REPHRASE
+    named = category_words.precisely_named_in(sentence)
+    words = " y ".join(category_words.name_of(category) for category in named)
+    return (
+        f"Creo que preguntas por {words}, pero la consulta que he construido filtra por otra cosa, "
+        f"así que no te doy una cifra que estaría mal. Prueba a decírmelo nombrando la categoría: "
+        f"«¿cuánto gasté en {words} el mes pasado?»"
     )
 
 

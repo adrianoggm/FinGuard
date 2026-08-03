@@ -58,9 +58,54 @@ def name_of(category: str) -> str:
     return _NAMES.get(category, category)
 
 
+# The words that mean exactly one category, for the gate that refuses a misread one.
+#
+# A deliberate subset of the glossary above, and the exclusions are the design. "La compra" and "la
+# casa" are in the glossary because a model choosing between ten categories benefits from them;
+# they are not here because somebody asking about "cosas de la casa" may well mean the supermarket,
+# and a gate that forced HOUSING_RENT there would break correct plans in the name of fixing wrong
+# ones. Same for "café" (a coffee or a coffee machine), "deporte" (a gym subscription or a bike),
+# "libros" (leisure or a course) and "la paga" (a salary or pocket money).
+#
+# **Shop names are not here either, and leaving them in was a real mistake.** The first version
+# listed "mercadona" and "carrefour" under GROCERIES, and the gate then refused the two dataset
+# cases whose correct plan filters by *merchant* and names no category at all. A shop is a merchant.
+#
+# "Transporte" is out for the same reason as "la casa": in one dataset question it means the public
+# kind and in another it is the parent of both, and a gate cannot be right about both.
+#
+# What is left is equivalences the product itself defines: cine is ocio the way EUR is euros.
+_PRECISE: Final[dict[str, tuple[str, ...]]] = {
+    "GROCERIES": ("supermercado", "súper"),
+    "TRANSPORT_FUEL": ("gasolina", "gasoil", "diésel", "gasolinera", "repostar"),
+    "RESTAURANTS": ("restaurantes", "restaurante", "comer fuera", "cenar fuera"),
+    "TRANSPORT_PUBLIC": ("transporte público", "metro", "autobús", "taxi"),
+    "HEALTH": ("salud", "farmacia", "dentista", "óptica"),
+    "LEISURE": ("cine", "videojuegos", "ocio"),
+    "SUBSCRIPTIONS": ("suscripciones", "suscripción", "gimnasio", "streaming"),
+    "HOUSING_RENT": ("alquiler",),
+    "SALARY": ("nómina", "sueldo", "salario"),
+    "TRANSFER_BIZUM": ("bizum", "bizums"),
+}
+
+
 def _folded(text: str) -> str:
     stripped = unicodedata.normalize("NFD", text.casefold())
     return "".join(character for character in stripped if not unicodedata.combining(character))
+
+
+def _matches(sentence: str, vocabulary: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    haystack = _folded(sentence)
+    found: dict[str, int] = {}
+    for category, words in vocabulary.items():
+        for word in sorted(words, key=len, reverse=True):
+            match = re.search(rf"(?<![a-z0-9]){re.escape(_folded(word))}(?![a-z0-9])", haystack)
+            if match:
+                # The earliest position at which this category is mentioned, so the order of the
+                # answer follows the order of the question.
+                found.setdefault(category, match.start())
+                break
+    return tuple(sorted(found, key=lambda category: found[category]))
 
 
 def named_in(sentence: str) -> tuple[str, ...]:
@@ -73,14 +118,15 @@ def named_in(sentence: str) -> tuple[str, ...]:
     Case and accents are folded: somebody typing "cafe" or "CINE" means the same thing, and a match
     that needed the exact spelling would answer "I do not know that word" to a word it knows.
     """
-    haystack = _folded(sentence)
-    found: dict[str, int] = {}
-    for category, words in _GLOSS.items():
-        for word in sorted(words, key=len, reverse=True):
-            match = re.search(rf"(?<![a-z0-9]){re.escape(_folded(word))}(?![a-z0-9])", haystack)
-            if match:
-                # The earliest position at which this category is mentioned, so the order of the
-                # answer follows the order of the question.
-                found.setdefault(category, match.start())
-                break
-    return tuple(sorted(found, key=lambda category: found[category]))
+    return _matches(sentence, _GLOSS)
+
+
+def precisely_named_in(sentence: str) -> tuple[str, ...]:
+    """Which categories this sentence names *unambiguously*, in the order they appear.
+
+    The gate reads this rather than `named_in`, and the difference is the point: `named_in` answers
+    "what is this sentence about" for an explanation, where a loose match costs a slightly wrong
+    sentence. This answers "what must the plan filter by", where a loose match costs a refused plan
+    that was right.
+    """
+    return _matches(sentence, _PRECISE)
