@@ -88,20 +88,107 @@ class FinancialPlan:
     def __post_init__(self) -> None:
         if (self.period is None) == (self.date_range is None):
             raise InvalidValueError("a plan needs exactly one of period and dateRange")
-        if len(self.categories) > MAX_CATEGORIES:
-            raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
-        for category in self.categories:
-            _check_category(category)
-        if len(self.merchants) > MAX_MERCHANTS:
-            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
-        for merchant in self.merchants:
-            # Shape only: a name is free text and its content is banking's to match. What is
-            # checked is that it is a name at all, and bounded — an empty one filters nothing
-            # and would silently widen the query, which is the failure this file exists for.
-            if not merchant.strip():
-                raise InvalidValueError("a merchant name cannot be empty")
-            if len(merchant) > MAX_MERCHANT_LENGTH:
-                raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
+        _check_filters(self.categories, self.merchants)
+
+
+@dataclass(frozen=True)
+class FinancialPlanDraft:
+    """A plan the model had already built when it stopped to ask a question.
+
+    That reading used to be thrown away. The planner produced a complete one, noticed the
+    window was missing, and returned the question as a bare string — so the direction, the
+    categories, the metric and the grouping it got right went with it, and the reply "este
+    año" arrived as a two-word sentence with no history. That is why answering the
+    clarification asked for the period again.
+
+    Not a `FinancialPlan`, because a plan needs exactly one window and this has none. The
+    invariant is right; the draft is the honest way to hold something that does not satisfy
+    it yet, rather than relaxing the plan so half-built ones can pretend to be finished.
+
+    **The window is the only slot that can be absent**, which is why this says
+    `needs_a_window` and not `missing_slots`. Every other field in the schema has a value or
+    a sentinel, so the model always names one. If a second slot ever becomes optional this
+    becomes a set and the caller has to ask which — worth doing then, not now.
+    """
+
+    direction: Direction
+    period: RelativePeriod | None = None
+    date_range: AbsoluteRange | None = None
+    categories: tuple[str, ...] = field(default_factory=tuple)
+    merchants: tuple[str, ...] = field(default_factory=tuple)
+    group_by: GroupBy = GroupBy.NONE
+    metric: Metric = Metric.SUM
+
+    def __post_init__(self) -> None:
+        # Neither window is allowed — that is what a draft is for — but not both, for the same
+        # reason the plan refuses it: two windows are two questions, and which one wins would
+        # depend on the reader.
+        if self.period is not None and self.date_range is not None:
+            raise InvalidValueError("a draft cannot carry two windows")
+        # The window is the one invariant a draft relaxes. Everything else is checked exactly as
+        # the plan checks it, because a draft crosses the wire and comes back: leaving the
+        # filters until `with_window` meant a bad category was accepted at the edge and only
+        # noticed a layer deeper, where the honest answer is no longer a 422.
+        _check_filters(self.categories, self.merchants)
+
+    @property
+    def needs_a_window(self) -> bool:
+        """Whether supplying a window is all this needs to become a query.
+
+        False is not "complete": the model can ask about something else — "¿te refieres a
+        ocio?" — with the window already read. Then there is nothing to fill in from a closed
+        vocabulary and the reply goes to the planner like any other sentence.
+        """
+        return self.period is None and self.date_range is None
+
+    def with_window(self, window: "RelativePeriod | AbsoluteRange") -> FinancialPlan:
+        """The plan this draft becomes once the window is known.
+
+        Returns a `FinancialPlan`, so every invariant runs on the way out. The draft itself
+        checks nothing about its categories: it is a half-built thing, and the place worth
+        checking is the one where it becomes a query someone gets a figure from.
+        """
+        return FinancialPlan(
+            direction=self.direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            categories=self.categories,
+            merchants=self.merchants,
+            group_by=self.group_by,
+            metric=self.metric,
+        )
+
+    @classmethod
+    def of(cls, plan: FinancialPlan) -> "FinancialPlanDraft":
+        """A finished plan, read back as a draft. One shape on the wire instead of two."""
+        return cls(
+            direction=plan.direction,
+            period=plan.period,
+            date_range=plan.date_range,
+            categories=plan.categories,
+            merchants=plan.merchants,
+            group_by=plan.group_by,
+            metric=plan.metric,
+        )
+
+
+def _check_filters(categories: tuple[str, ...], merchants: tuple[str, ...]) -> None:
+    """What a plan and a draft check identically. Shared because a draft that checked less
+    would be a way to smuggle a value past the plan's invariants and reach them later."""
+    if len(categories) > MAX_CATEGORIES:
+        raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
+    for category in categories:
+        _check_category(category)
+    if len(merchants) > MAX_MERCHANTS:
+        raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
+    for merchant in merchants:
+        # Shape only: a name is free text and its content is banking's to match. What is
+        # checked is that it is a name at all, and bounded — an empty one filters nothing
+        # and would silently widen the query, which is the failure this file exists for.
+        if not merchant.strip():
+            raise InvalidValueError("a merchant name cannot be empty")
+        if len(merchant) > MAX_MERCHANT_LENGTH:
+            raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
 
 
 def _check_category(value: str) -> None:

@@ -106,6 +106,10 @@ class QuestionRequest(_Payload):
     # Echo back `plan_context` from the previous answer to ask a follow-up. Optional,
     # and the caller owns it: the service keeps no conversation.
     previous_plan: PlanPayload | None = None
+    # Echo back `pending_context` to answer the question the assistant asked. Same shape with
+    # no window, because that is what it is: the reading its question interrupted. Sending it
+    # is how "este año" completes a plan instead of becoming a new question.
+    pending_draft: PlanPayload | None = None
 
 
 class SpokenGroupResponse(_Payload):
@@ -140,6 +144,9 @@ class QuestionResponse(_Payload):
     # The same plan as `plan`, in fields. `plan` is for a person to read; this is what
     # comes back as `previous_plan` on the next question.
     plan_context: PlanPayload | None = None
+    # Present with a question back, absent otherwise. What a client echoes as `pending_draft` so
+    # the reply finishes the plan the question was about.
+    pending_context: PlanPayload | None = None
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None

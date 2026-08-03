@@ -54,7 +54,10 @@ from finguard_orchestrator.domain.enums import GroupBy, PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.services import payment_router, payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+)
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
@@ -73,7 +76,10 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import llm_mapper
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import plan_to_domain
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+    draft_to_domain,
+    plan_to_domain,
+)
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
@@ -235,6 +241,12 @@ def _context_of(request: QuestionRequest) -> FinancialPlan | None:
     take on faith.
     """
     return plan_to_domain(request.previous_plan) if request.previous_plan else None
+
+
+def _pending_of(request: QuestionRequest) -> FinancialPlanDraft | None:
+    """The half-built plan behind the assistant's last question, as a draft. Mapped here for
+    the same reason as the plan above: what a caller sends is checked at the edge or nowhere."""
+    return draft_to_domain(request.pending_draft) if request.pending_draft else None
 
 
 @assistant_router.get(
@@ -460,6 +472,7 @@ async def ask(
             account_id=who.account_id,
             today=today,
             previous_plan=_context_of(request),
+            pending_draft=_pending_of(request),
         )
     )
     return llm_mapper.question_to_dto(result)
@@ -501,6 +514,7 @@ async def ask_streaming(
         account_id=who.account_id,
         today=today,
         previous_plan=_context_of(request),
+        pending_draft=_pending_of(request),
     )
 
     async def events() -> AsyncIterator[str]:

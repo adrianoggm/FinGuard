@@ -22,7 +22,11 @@ from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Perio
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+    RelativePeriod,
+)
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 7, 15)
@@ -365,3 +369,185 @@ async def test_an_empty_answer_says_so_rather_than_reporting_zero(metric: Metric
     result = await ask(PlanningResult.planned(plan(metric=metric)), ledger)
 
     assert "No he encontrado movimientos" in result.text
+
+
+# --- the three answers that never reach the ledger ---------------------------------
+
+
+def spoken(sentence: str, previous: FinancialPlan | None = None):
+    """A query with a sentence of its own. The shared `ask` helper fixes the sentence, and these
+    three tests are entirely about which sentence was said."""
+    return AskFinancialQuestionQuery(
+        sentence=sentence, account_id=ACCOUNT, today=TODAY, previous_plan=previous
+    )
+
+
+async def test_asking_who_it_is_never_reaches_the_planner() -> None:
+    """The one from the real conversation. "¿Quién eres?" used to be answered with "solo consulto lo
+    que ya ha pasado, sin medias, comparaciones ni previsiones" — true about the product, and not an
+    answer to the question."""
+    planner, ledger = FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(spoken("¿quién eres?"))
+
+    assert result.outcome == "IDENTITY"
+    assert "FinGuard" in result.text
+    assert planner.asked is None, "no model was asked"
+    assert ledger.account_id is None, "the ledger was not touched"
+
+
+async def test_explaining_the_last_answer_reads_the_plan_and_not_the_ledger() -> None:
+    planner, ledger = FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(
+        spoken("¿en qué categoría has clasificado el cine?", plan(categories=("RESTAURANTS",)))
+    )
+
+    assert result.outcome == "EXPLANATION"
+    assert "LEISURE" in result.text
+    assert "filtraba por restaurantes" in result.text
+    assert planner.asked is None
+    assert ledger.account_id is None
+
+
+async def test_a_correction_does_not_inherit_the_plan_it_corrects() -> None:
+    """The reason CORRECTION exists as its own intent. Treating it as a follow-up patches a window
+    onto a category the user has just said was wrong."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        spoken("no me has entendido, me refería al alquiler", plan(categories=("RESTAURANTS",)))
+    )
+
+    assert planner.asked == "no me has entendido, me refería al alquiler"
+    assert planner.previous is None, "the wrong plan was dropped rather than patched"
+
+
+async def test_an_ordinary_follow_up_still_inherits() -> None:
+    """The other half: only a correction drops the context. "¿Y este mes?" must still get it, which
+    is the whole point of the client sending it."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    before = plan(categories=("RESTAURANTS",))
+
+    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        spoken("¿y este mes?", before)
+    )
+
+    assert planner.previous == before
+
+
+# --- finishing a clarification ------------------------------------------------------
+
+
+RENT_DRAFT = FinancialPlanDraft(direction=Direction.EXPENSE, categories=("HOUSING_RENT",))
+
+
+async def test_answering_the_period_finishes_the_question_instead_of_restarting_it() -> None:
+    """The failure from the real conversation, end to end.
+
+        "¿Cuánto suelo pagar de alquiler?"  → "¿De qué periodo?"
+        "este año"                          → the period again
+
+    The reply used to arrive as a two-word sentence with no history, so the whole question
+    had to be derived from it and it could not be. Now the draft supplies everything except
+    the window, and the window is read from a closed vocabulary — so the model is not
+    consulted at all.
+    """
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="este año",
+            account_id=ACCOUNT,
+            today=TODAY,
+            pending_draft=RENT_DRAFT,
+        )
+    )
+
+    assert planner.asked is None, "a window from a closed vocabulary went to a model"
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert result.plan_context is not None
+    assert result.plan_context.period == Period.THIS_YEAR.value
+    assert result.plan_context.categories == ["HOUSING_RENT"]
+
+
+async def test_a_reply_that_names_no_window_goes_to_the_model() -> None:
+    """ "No sé" is not a window. The draft cannot be completed from it, so the sentence takes
+    the ordinary path rather than being answered from a guess."""
+    planner = FakePlanner(PlanningResult.needs_clarification("¿De qué periodo?", RENT_DRAFT))
+
+    result = await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        AskFinancialQuestionQuery(
+            sentence="no sé", account_id=ACCOUNT, today=TODAY, pending_draft=RENT_DRAFT
+        )
+    )
+
+    assert planner.asked == "no sé"
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+
+
+async def test_a_reply_that_says_more_than_the_window_goes_to_the_model() -> None:
+    """ "¿Cuántas veces este año?" names a window and changes the metric. Completing the draft
+    would answer with a total where a tally was asked for, and the verifier would then refuse
+    it — a refusal the shortcut itself created. So the shortcut stands aside instead."""
+    planner = FakePlanner(PlanningResult.planned(plan(metric=Metric.COUNT)))
+
+    result = await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántas veces este año?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            pending_draft=RENT_DRAFT,
+        )
+    )
+
+    assert planner.asked == "¿cuántas veces este año?"
+    assert result.outcome == PlanningOutcome.PLANNED.value
+
+
+async def test_a_draft_that_is_not_missing_a_window_is_not_completed() -> None:
+    """The model can ask about something else with the period already read. Then a reply
+    naming a period is a change of mind, not the missing piece, and the model handles it."""
+    complete = FinancialPlanDraft(
+        direction=Direction.EXPENSE, period=LAST_MONTH, categories=("LEISURE",)
+    )
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        AskFinancialQuestionQuery(
+            sentence="este año", account_id=ACCOUNT, today=TODAY, pending_draft=complete
+        )
+    )
+
+    assert planner.asked == "este año"
+
+
+async def test_the_guard_still_runs_before_the_completion() -> None:
+    """A pending draft is not a way past a control. "Este año, ¿y me conviene?" carries a
+    window and a question this product does not answer, and the guard refuses it whether or
+    not something is half-built."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="este año, ¿y qué me recomiendas para ahorrar?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            pending_draft=RENT_DRAFT,
+        )
+    )
+
+    assert ledger.account_id is None
+    assert result.outcome == PlanningOutcome.UNSUPPORTED.value
+
+
+async def test_the_question_back_hands_out_the_draft() -> None:
+    """What the client echoes on the next turn. Without it on the way out there is nothing to
+    send back, and the completion above can never happen."""
+    result = await ask(PlanningResult.needs_clarification("¿De qué periodo?", RENT_DRAFT))
+
+    assert result.pending_context is not None
+    assert result.pending_context.categories == ["HOUSING_RENT"]
+    assert result.pending_context.period is None

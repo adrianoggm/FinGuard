@@ -14,7 +14,10 @@ from dataclasses import dataclass
 
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,10 @@ class PlanningResult:
     plan: FinancialPlan | None = None
     question: str | None = None
     reason: str | None = None
+    # What the model had already read when it stopped to ask. Only a question carries one, and
+    # it may be absent even then: a draft is a convenience for the next turn, never a
+    # precondition for asking.
+    draft: FinancialPlanDraft | None = None
 
     def __post_init__(self) -> None:
         if (self.outcome is PlanningOutcome.PLANNED) != (self.plan is not None):
@@ -32,6 +39,8 @@ class PlanningResult:
             raise InvalidValueError("NEEDS_CLARIFICATION must carry the question to ask")
         if not needs_question and self.question is not None:
             raise InvalidValueError(f"{self.outcome} does not ask a question")
+        if not needs_question and self.draft is not None:
+            raise InvalidValueError(f"{self.outcome} has nothing half-built to carry")
 
     @property
     def is_answerable(self) -> bool:
@@ -45,10 +54,17 @@ class PlanningResult:
         return cls(PlanningOutcome.PLANNED, plan=plan)
 
     @classmethod
-    def needs_clarification(cls, question: str) -> "PlanningResult":
+    def needs_clarification(
+        cls, question: str, draft: FinancialPlanDraft | None = None
+    ) -> "PlanningResult":
         """`question` is shown to the user, so it names the missing piece rather than
-        reporting failure: "which month?" tells them what to do, "ambiguous" does not."""
-        return cls(PlanningOutcome.NEEDS_CLARIFICATION, question=question)
+        reporting failure: "which month?" tells them what to do, "ambiguous" does not.
+
+        `draft` is everything the model had already read. Optional, because a question is
+        worth asking whether or not the rest of the reading survived — but when it is here,
+        the reply can complete it instead of starting the conversation again.
+        """
+        return cls(PlanningOutcome.NEEDS_CLARIFICATION, question=question, draft=draft)
 
     @classmethod
     def unsupported(cls, reason: str) -> "PlanningResult":

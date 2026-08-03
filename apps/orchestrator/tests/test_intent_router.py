@@ -1,0 +1,130 @@
+"""What kind of thing the user just said.
+
+Before this there were two answers — payment or financial query — so everything that was neither
+went to the query planner and came back as a refusal about averages and forecasts. "¿Quién eres?"
+was answered with *"solo consulto lo que ya ha pasado, sin medias, comparaciones ni previsiones"*:
+not wrong about the product, and not an answer to the question.
+
+Deterministic, like the payment router and for the same reason: which conversation this is cannot
+depend on the disposition of whichever model is configured.
+
+The order is the design. Payment first, because money is the one that must not be misread. Then the
+three that are about the assistant or about its last answer, and only what is left is a question for
+the ledger — a sentence that is genuinely about spending should never be captured by a phrase that
+merely resembles a complaint.
+"""
+
+import pytest
+
+from finguard_orchestrator.domain.services import intent_router
+from finguard_orchestrator.domain.services.intent_router import Intent
+
+
+def route(sentence: str, *, answered: bool = True) -> Intent:
+    return intent_router.route(sentence, has_previous=answered)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum de 20 euros a Marta",
+        "mándale 15 euros a Aitor",
+    ],
+)
+def test_a_payment_is_still_a_payment(sentence: str) -> None:
+    """First, and not because it is the most common. It is the one where being wrong costs money."""
+    assert route(sentence) is Intent.PAYMENT
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿quién eres?",
+        "quien eres",
+        "¿qué puedes hacer?",
+        "¿qué sabes hacer?",
+        "ayuda",
+        "¿cómo funcionas?",
+        "¿eres una IA?",
+        "¿eres un bot?",
+        "¿para qué sirves?",
+    ],
+)
+def test_asking_about_the_assistant_is_not_a_question_about_money(sentence: str) -> None:
+    assert route(sentence) is Intent.IDENTITY_OR_HELP
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿por qué me has mostrado restaurantes?",
+        "¿en qué categoría has clasificado el cine?",
+        "¿de dónde sale ese número?",
+        "¿qué consulta has hecho?",
+        "¿cómo has calculado eso?",
+        "no entiendo el desglose",
+        # The sentence from the real conversation, verbatim. The first version of this router missed
+        # it, so it reached the planner and came back asking which period — a question about the
+        # catalogue does not have a period.
+        "¿es que los restaurantes pertenecen a la misma categoría que el cine?",
+        "¿el cine cuenta como ocio?",
+        "¿es lo mismo que restaurantes?",
+        "¿están en la misma categoría?",
+    ],
+)
+def test_asking_about_the_last_answer_reads_the_plan_and_not_the_ledger(sentence: str) -> None:
+    assert route(sentence) is Intent.EXPLAIN_PREVIOUS
+
+
+def test_there_is_nothing_to_explain_before_the_first_answer() -> None:
+    """Without a previous plan the same sentence is not about anything, so it goes where every other
+    unrecognised sentence goes. Answering "the query was…" with no query would be inventing one."""
+    assert route("¿por qué me has mostrado eso?", answered=False) is Intent.FINANCIAL_QUERY
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "no me has entendido",
+        "perdona, no me has entendido",
+        "no, me refería a los restaurantes",
+        "eso no es lo que te he preguntado",
+        "me refiero al alquiler",
+        "no era eso",
+    ],
+)
+def test_a_correction_is_marked_as_one(sentence: str) -> None:
+    """It matters because of what happens next: a correction must not inherit the plan it is
+    correcting. Treating it as an ordinary follow-up patches a window onto a wrong category."""
+    assert route(sentence) is Intent.CORRECTION
+
+
+def test_a_correction_before_any_answer_is_just_a_question() -> None:
+    assert route("no me has entendido", answered=False) is Intent.FINANCIAL_QUERY
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto gasté en gasolina el mes pasado?",
+        "¿en qué me he gastado más este mes?",
+        "¿cuántas veces fui al súper?",
+        "gastos de julio",
+        "¿y este mes?",
+        # The ones that resemble another intent and are not it. A question about what a *shop*
+        # charges is not a question about what the assistant does, and asking for a breakdown is not
+        # complaining about one.
+        "¿qué me cobra Netflix?",
+        "dame el desglose por categorías",
+        "¿por qué gasté tanto en junio?",
+    ],
+)
+def test_everything_else_is_a_question_for_the_ledger(sentence: str) -> None:
+    assert route(sentence) is Intent.FINANCIAL_QUERY
+
+
+def test_a_payment_wins_over_a_complaint() -> None:
+    """A sentence that both complains and asks for money is a payment. Reading it as a correction
+    would drop it into the query path, where it would be refused as an action — annoying, but the
+    reverse would be worse in the other direction, so the order is chosen and not accidental."""
+    assert route("no me has entendido, hazle un bizum de 20 euros a Marta") is Intent.PAYMENT

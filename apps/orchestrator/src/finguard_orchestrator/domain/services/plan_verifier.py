@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Direction, Metric
+from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
@@ -34,11 +35,39 @@ def _count_answered_as_amount(sentence: str, plan: FinancialPlan) -> bool:
     return bool(_COUNTING.search(sentence)) and plan.metric is not Metric.COUNT
 
 
+def _category_misread(sentence: str, plan: FinancialPlan) -> bool:
+    """The sentence names a category unambiguously and the plan filters by something else.
+
+    This is the failure that got through everything else. "¿Cuántas veces fui al cine el mes
+    pasado?" came back as `categories: ["RESTAURANTS"]` with the metric, the direction and the
+    window all correct — structurally valid, accepted by the domain, executed by banking, and
+    answered with a real figure about a different question.
+
+    The category vocabulary is closed and ours, so when a sentence uses one of its unambiguous words
+    there is nothing to infer: cine is ocio the way EUR is euros. Which words qualify is decided in
+    `category_words.precisely_named_in`, and the exclusions there matter more than the inclusions.
+
+    **A subset, not equality, and the dataset settled that.** Requiring the plan to name exactly
+    what was extracted refused ten correct cases: "¿cuánto llevo este mes en súper, gasolina,
+    restaurantes, transporte, salud, ocio, suscripciones y alquiler?" names eight categories and
+    this vocabulary is sure about seven, so the correct plan looked wrong. The honest rule is that
+    everything the sentence says unambiguously has to be in the plan; what the vocabulary does not
+    recognise, it has no opinion about.
+
+    The cost is written down rather than hidden: an *extra* category the question never named is not
+    caught here, because from this side a surplus category cannot be told apart from a word this
+    vocabulary does not know.
+    """
+    named = category_words.precisely_named_in(sentence)
+    return bool(named) and not set(named).issubset(plan.categories)
+
+
 # Same shape as the guard's registry, for the same reasons: named so it can be switched
 # off, switchable so its worth can be measured.
 _RULES: Final[tuple[tuple[str, Callable[[str, FinancialPlan], bool]], ...]] = (
     ("SPENDING_ANSWERED_AS_EVERYTHING", _spending_answered_as_everything),
     ("COUNT_ANSWERED_AS_AMOUNT", _count_answered_as_amount),
+    ("CATEGORY_MISREAD", _category_misread),
 )
 
 RULES: Final = frozenset(name for name, _ in _RULES)

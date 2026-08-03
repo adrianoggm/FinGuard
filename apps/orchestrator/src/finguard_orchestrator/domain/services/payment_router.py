@@ -34,11 +34,20 @@ _ASKING: Final = re.compile(
     re.IGNORECASE,
 )
 
-# Already happened. A payment verb in the past is a statement or a question about it, never an
-# order — and reading it as one would offer to repeat a payment somebody merely mentioned.
+# A *payment* that already happened. A payment verb in the past is a statement or a question about
+# it, never an order — and reading it as one would offer to repeat a payment somebody merely
+# mentioned.
+#
+# An auxiliary only counts as past tense when a payment participle follows it. The first version
+# matched any `has`, which made "no me has entendido, hazle un bizum de 20 euros a Marta" not a
+# payment: a plain instruction, refused as an action because of a complaint in front of it. The past
+# that matters here belongs to the verb that moves money, not to whatever else was said.
 _ALREADY: Final = re.compile(
-    r"\b(he|has|ha|hemos|hab[ée]is|han|hab[ií]a|hice|hiciste|hizo|hecho"
-    r"|mand[eéo]|mandaste|envi[eéo]|envi[aá]ste|pagu[eé]|pag[oó]|transfer[ií])\b",
+    r"\b((he|has|ha|hemos|hab[ée]is|han|hab[ií]a)\s+"
+    r"(mandado|enviado|pagado|transferido|ingresado|devuelto"
+    r"|hecho\s+(un|una)\s+(bizum|transferencia))"
+    r"|mand[eé]|mandaste|envi[eé]|envi[óo]|envi[aá]ste|pagu[eé]|pag[óo]|transfer[ií]"
+    r"|hice|hiciste|hizo)\b",
     re.IGNORECASE,
 )
 

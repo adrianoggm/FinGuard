@@ -41,6 +41,7 @@ from finguard_orchestrator.domain.services.plan_merger import Field
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.planning.plan_schema import (
@@ -167,7 +168,9 @@ def _read(
                 # figure for a question nobody asked. Inventing the words of a refusal commits
                 # to nothing, and the user reads the same sentence either way.
                 question = FALLBACK_QUESTION
-            return PlanningResult.needs_clarification(question)
+            return PlanningResult.needs_clarification(
+                question, _draft(body, today=today, categories=categories)
+            )
 
         case PlanningOutcome.UNSUPPORTED:
             return PlanningResult.unsupported("the question cannot be expressed as a query")
@@ -179,6 +182,52 @@ def _read(
             # The three remaining outcomes describe things that happen TO a model; it
             # cannot report them about itself, and the schema does not offer them.
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
+
+
+def _draft(
+    body: dict[str, Any], *, today: date, categories: tuple[str, ...]
+) -> FinancialPlanDraft | None:
+    """What the model had read by the time it decided to ask a question.
+
+    The schema requires every field on every outcome, so a clarification carries a complete
+    reading of everything except the window — which is normally the thing being asked about.
+    This used to be dropped on the floor, and dropping it is why answering "este año" asked
+    for the period again.
+
+    **Nothing here can fail the clarification.** A question back is useful on its own, so an
+    unreadable draft becomes no draft rather than an error: turning it into INVALID_STRUCTURE
+    would replace a helpful question with an apology, and the model did nothing wrong by
+    asking.
+    """
+    try:
+        direction = Direction(_text(body, "direction"))
+        group_by = GroupBy(_text(body, "groupBy"))
+        metric = Metric(_text(body, "metric"))
+        selected_categories = _categories(_texts(body, "categories"), allowed=categories)
+        merchants = tuple(dict.fromkeys(m.strip() for m in _texts(body, "merchants") if m.strip()))
+    except (_MalformedError, ValueError):
+        return None
+
+    try:
+        window: RelativePeriod | AbsoluteRange | None = _window(body, today=today)
+    except (_MalformedError, InvalidValueError, ValueError):
+        # The expected case, not an error: `period` is "" because the window is what the
+        # question is about. A range that fails to parse lands here too, and no window is the
+        # right reading of both — the next turn supplies one.
+        window = None
+
+    try:
+        return FinancialPlanDraft(
+            direction=direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            categories=selected_categories,
+            merchants=merchants,
+            group_by=group_by,
+            metric=metric,
+        )
+    except InvalidValueError:
+        return None
 
 
 def _flag(body: dict[str, Any], key: str) -> bool:
