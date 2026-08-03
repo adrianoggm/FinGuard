@@ -1,0 +1,78 @@
+"""The wire format of the payment endpoints.
+
+snake_case, like the rest of this service's API. Banking's contract is camelCase and the client
+that speaks it is the only thing that should know that.
+
+There is no account in either body, and its absence is the point: the account comes from the
+credential, so there is nowhere to say whose money you mean.
+"""
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH
+
+# A reply to a confirmation is a word or two. Bounded far below a prompt because it is read by an
+# allow-list of affirmations, and a paragraph is not one — nothing longer can be a yes.
+MAX_REPLY_LENGTH = 200
+
+
+class _Payload(BaseModel):
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+
+class PaymentRequestBody(_Payload):
+    """The sentence in which somebody asks to pay somebody else.
+
+    Free text, because that is what a sentence is: it can be delimited, never parsed. Everything
+    structured about the payment is extracted from it and then checked against it.
+    """
+
+    sentence: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
+
+
+class PreviewPayload(_Payload):
+    """The preview from the previous answer, echoed back.
+
+    Optional, and it changes nothing about whether the payment happens — it is used to repeat the
+    question when a reply is neither yes nor no. The amount that gets paid comes from the intent in
+    banking's own table, never from this body: a client that could restate the figure could restate
+    it differently.
+    """
+
+    recipient: str
+    recipient_phone: str
+    amount_minor: int
+    currency: str
+    balance_after_minor: int
+
+
+class ConfirmPaymentRequest(_Payload):
+    """The user's reply, in their own words.
+
+    Not a boolean. A client that sent `confirmed: true` would be deciding that somebody agreed, and
+    §4.2 puts that decision outside both the model and the client — the words are read here, by an
+    allow-list, and "sí pero mándale 30" is not a yes.
+    """
+
+    reply: str = Field(min_length=1, max_length=MAX_REPLY_LENGTH)
+    preview: PreviewPayload | None = None
+
+
+class PaymentResponse(_Payload):
+    """One shape for every turn: the preview, the receipt, the question, the refusal.
+
+    `outcome` is what a client branches on, and `text` is what it shows. The figures are there so
+    a client can render the payment itself rather than parse the sentence — and because a receipt
+    whose number only exists inside prose cannot be checked against the ledger.
+    """
+
+    outcome: str
+    text: str
+    intent_id: str | None = None
+    recipient: str | None = None
+    recipient_phone: str | None = None
+    amount_minor: int | None = None
+    currency: str | None = None
+    balance_after_minor: int | None = None
+    expires_at: str | None = None
+    transaction_id: str | None = None

@@ -15,6 +15,13 @@ from finguard_orchestrator.application.bus.errors import (
     HandlerNotRegisteredError,
 )
 from finguard_orchestrator.application.bus.query_bus import Query, QueryBus, QueryHandler
+from finguard_orchestrator.application.commands.pay import (
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
+    PaymentAnswer,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
+)
 from finguard_orchestrator.application.commands.replace_llm_policy import (
     ReplaceLlmPolicyCommand,
     ReplaceLlmPolicyHandler,
@@ -43,6 +50,11 @@ from finguard_orchestrator.application.queries.get_llm_catalogue import (
 )
 
 __all__ = [
+    "ConfirmPaymentCommand",
+    "ConfirmPaymentHandler",
+    "PaymentAnswer",
+    "PreparePaymentCommand",
+    "PreparePaymentHandler",
     "AnswerMessageHandler",
     "AnswerMessageQuery",
     "AnswerMessageResult",

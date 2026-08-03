@@ -59,6 +59,27 @@ def questions_enabled(request: Request) -> None:
         )
 
 
+def payments_enabled(request: Request) -> None:
+    """Refuses the payment endpoints unless a deployment opted in.
+
+    Separate from `questions_enabled` because they are separate risks: a deployment that answers
+    questions has not thereby agreed to move money. Off by default, like the other one, so a
+    surface that can pay somebody is something an operator turned on.
+    """
+    if not request.app.state.payments_enabled:
+        raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
+
+
+def payments_available(request: Request) -> bool:
+    """Whether payments are on, without refusing when they are not.
+
+    The chat route needs to *answer* rather than fail: a sentence asking for a payment on a
+    deployment that does not make them is answered with words, not with a 503.
+    """
+    enabled: bool = request.app.state.payments_enabled
+    return enabled
+
+
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
     """What day it is *for this holder*.
 

@@ -94,3 +94,27 @@ class Metric(StrEnum):
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum
 # so a new counted period cannot be added without seeing this.
 PERIODS_NEEDING_COUNT = frozenset({Period.LAST_N_DAYS, Period.LAST_N_MONTHS})
+
+
+class PaymentOutcome(StrEnum):
+    """Where a turn of the payment conversation ended.
+
+    Not the same axis as PlanningOutcome, which is about reading a sentence. This is the state of
+    the conversation, and the reading's outcomes map onto it: a malformed or ungrounded reading both
+    become NOT_UNDERSTOOD, because the difference matters to us and not to the user.
+    """
+
+    # A preview is on the table and nothing has moved. The only state from which a yes pays.
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    PAID = "PAID"
+    CANCELLED = "CANCELLED"
+    # Something is missing, or two things matched. A turn in the conversation, not an error.
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    # Not a payment this assistant makes.
+    UNSUPPORTED = "UNSUPPORTED"
+    # The model's answer was malformed, or did not correspond to the sentence.
+    NOT_UNDERSTOOD = "NOT_UNDERSTOOD"
+    # The bank said no: the balance, or an intent that is no longer live.
+    REFUSED = "REFUSED"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+    BANKING_UNAVAILABLE = "BANKING_UNAVAILABLE"

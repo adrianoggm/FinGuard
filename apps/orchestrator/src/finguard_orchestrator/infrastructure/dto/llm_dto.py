@@ -133,6 +133,9 @@ class QuestionResponse(_Payload):
     outcome: str
     text: str
     question: str | None = None
+    # Present only when the sentence was a payment: what a client echoes back to confirm it. The
+    # chat endpoint answers both kinds of sentence, so the shape has to admit both.
+    intent_id: str | None = None
     plan: str | None = None
     # The same plan as `plan`, in fields. `plan` is for a person to read; this is what
     # comes back as `previous_plan` on the next question.

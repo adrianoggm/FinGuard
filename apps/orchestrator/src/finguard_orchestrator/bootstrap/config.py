@@ -101,6 +101,7 @@ class Settings(BaseSettings):
     # bar of 10%, and one invalid structure survives in the adversarial set where the bar is
     # zero. Both have identified work rather than needing a discovery.
     questions_enabled: bool
+    payments_enabled: bool
 
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
