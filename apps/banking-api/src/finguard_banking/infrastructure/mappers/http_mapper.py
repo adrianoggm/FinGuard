@@ -10,6 +10,7 @@ from uuid import UUID
 
 from finguard_banking.application import (
     GetBalanceResult,
+    ListContactsResult,
     MovementSummaryResult,
     PreparePaymentCommand,
     SummaryGroup,
@@ -24,6 +25,8 @@ from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
+    ContactResponse,
+    ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
     GroupResponse,
@@ -150,4 +153,17 @@ def receipt_to_dto(receipt: PaymentReceipt) -> PaymentReceiptResponse:
         currency=receipt.amount.currency,
         balance_after_minor=receipt.balance_after.amount_minor,
         confirmed_at=receipt.confirmed_at,
+    )
+
+
+def contacts_to_dto(result: ListContactsResult) -> ContactsResponse:
+    return ContactsResponse(
+        contacts=[
+            ContactResponse(
+                contact_id=contact.contact_id,
+                display_name=contact.display_name,
+                phone=contact.phone,
+            )
+            for contact in result.contacts
+        ]
     )

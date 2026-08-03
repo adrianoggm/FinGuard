@@ -19,6 +19,10 @@ CURRENCY_LENGTH = 3
 # confirmation prompt, where a distracted "sí" is all that stands between it and the ledger.
 MAX_PAYMENT_MINOR = 1_000_000
 
+# A recipient's name as the caller wrote or chose it. Long enough for a full Spanish name with two
+# surnames, short enough that the field cannot carry a paragraph into the contact lookup.
+MAX_RECIPIENT_NAME = 120
+
 
 @dataclass(frozen=True)
 class PaymentRequest:
@@ -38,5 +42,9 @@ class PaymentRequest:
             )
         if not self.recipient_name.strip():
             raise InvalidValueError("a payment needs somebody to pay")
+        if len(self.recipient_name) > MAX_RECIPIENT_NAME:
+            raise InvalidValueError(
+                f"a recipient's name is at most {MAX_RECIPIENT_NAME} characters"
+            )
         if len(self.currency) != CURRENCY_LENGTH or not self.currency.isalpha():
             raise InvalidValueError(f"currency must be 3 letters, got {self.currency!r}")

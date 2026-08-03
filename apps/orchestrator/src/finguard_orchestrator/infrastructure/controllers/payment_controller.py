@@ -24,12 +24,14 @@ from fastapi import APIRouter, Depends
 from finguard_orchestrator.application import CommandBus
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
+    PrepareChosenPaymentCommand,
     PreparePaymentCommand,
 )
 from finguard_orchestrator.bootstrap.dependencies import get_command_bus, payments_enabled, requires
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.payment_dto import (
+    ChosenPaymentRequest,
     ConfirmPaymentRequest,
     PaymentRequestBody,
     PaymentResponse,
@@ -60,6 +62,32 @@ async def prepare(
         PreparePaymentCommand(
             sentence=request.sentence,
             account_id=who.account_id,
+            idempotency_key=str(uuid.uuid4()),
+        )
+    )
+    return payment_mapper.answer_to_dto(answer)
+
+
+@payments_router.post("/chosen", summary="Prepare a payment built in a form")
+async def prepare_chosen(
+    request: ChosenPaymentRequest, who: MayPrepare, commands: Commands
+) -> PaymentResponse:
+    """The form path: a contact picked from the list, an amount typed in a field.
+
+    No model and no grounding check, because there is nothing to read — grounding catches a figure a
+    model invented, and here the figure was typed and the recipient was chosen from a list this
+    account was allowed to see. What does not change is the rest of §4.1: the answer is a preview,
+    and it is confirmed through the same route as any other.
+
+    Declared before `/{intent_id}/confirm` would not matter — "chosen" is not a UUID, so the two
+    cannot collide — but it reads in the order the flow happens.
+    """
+    answer = await commands.dispatch(
+        PrepareChosenPaymentCommand(
+            account_id=who.account_id,
+            recipient_name=request.recipient_name,
+            amount_minor=request.amount_minor,
+            currency=request.currency,
             idempotency_key=str(uuid.uuid4()),
         )
     )

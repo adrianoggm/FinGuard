@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Mapping
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from finguard_orchestrator.application import (
@@ -25,13 +25,17 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionQuery,
     CommandBus,
     GetAccountSummaryQuery,
+    GetBreakdownQuery,
     GetLlmCatalogueQuery,
+    GetMovementsQuery,
+    ListContactsQuery,
     PreparePaymentCommand,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ResetLlmPolicyCommand,
     Stage,
 )
+from finguard_orchestrator.application.queries.browse_account import MAX_DAYS, MAX_MOVEMENTS
 from finguard_orchestrator.bootstrap.dependencies import (
     get_ask_handler,
     get_command_bus,
@@ -41,16 +45,20 @@ from finguard_orchestrator.bootstrap.dependencies import (
     reporting_today,
     requires,
 )
-from finguard_orchestrator.domain.enums import PlanningOutcome
+from finguard_orchestrator.domain.enums import GroupBy, PlanningOutcome
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.services import payment_router, payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
+    BreakdownResponse,
     CatalogueResponse,
+    ContactsResponse,
     MessageRequest,
     MessageResponse,
+    MovementsResponse,
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
@@ -240,6 +248,78 @@ async def account_summary(who: Who, queries: Queries, today: Today) -> AccountSu
         )
     )
     return llm_mapper.summary_to_dto(result)
+
+
+@assistant_router.get(
+    "/v1/account/movements",
+    summary="The account's movements, optionally narrowed",
+    dependencies=[Depends(questions_enabled)],
+)
+async def account_movements(
+    who: Who,
+    queries: Queries,
+    today: Today,
+    days: Annotated[int, Query(ge=1, le=MAX_DAYS)] = 90,
+    limit: Annotated[int, Query(ge=1, le=MAX_MOVEMENTS)] = 50,
+    category: Annotated[str | None, Query(max_length=40)] = None,
+    merchant: Annotated[str | None, Query(max_length=140)] = None,
+) -> MovementsResponse:
+    """What the movements screen and its search field read.
+
+    No model: the window, the filter and the limit are all in the request, so a plan built in code
+    says everything there is to say. The figures come from the same compiler as the conversation's,
+    which is what lets a screen and a sentence agree about the same account.
+    """
+    result = await queries.ask(
+        GetMovementsQuery(
+            account_id=who.account_id,
+            today=today,
+            reporting_timezone=who.reporting_timezone,
+            days=days,
+            limit=limit,
+            category=category,
+            merchant=merchant,
+        )
+    )
+    return llm_mapper.movements_to_dto(result)
+
+
+@assistant_router.get(
+    "/v1/account/breakdown",
+    summary="Where the money went, grouped",
+    dependencies=[Depends(questions_enabled)],
+)
+async def account_breakdown(
+    who: Who,
+    queries: Queries,
+    today: Today,
+    by: GroupBy = GroupBy.CATEGORY,
+    days: Annotated[int, Query(ge=1, le=MAX_DAYS)] = 30,
+) -> BreakdownResponse:
+    """The finance screen's figures. `NONE` is refused: a breakdown of nothing is the total again,
+    and answering it would put a one-row chart on screen that restates the number above it."""
+    if by is GroupBy.NONE:
+        raise InvalidValueError("a breakdown needs something to group by")
+    result = await queries.ask(
+        GetBreakdownQuery(
+            account_id=who.account_id,
+            today=today,
+            reporting_timezone=who.reporting_timezone,
+            days=days,
+            group_by=by,
+        )
+    )
+    return llm_mapper.breakdown_to_dto(result)
+
+
+@assistant_router.get("/v1/contacts", summary="Everybody this account can pay")
+async def contacts(who: Who, queries: Queries) -> ContactsResponse:
+    """The list a payment form needs.
+
+    Behind `questions:read` rather than a payment scope: seeing who you could pay is not paying,
+    and a screen that lists contacts is a screen rather than an operation.
+    """
+    return llm_mapper.contacts_to_dto(await queries.ask(ListContactsQuery(who.account_id)))
 
 
 @assistant_router.post(

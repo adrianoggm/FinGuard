@@ -13,6 +13,8 @@ from finguard_banking.application import (
     ConfirmPaymentHandler,
     GetBalanceHandler,
     GetBalanceQuery,
+    ListContactsHandler,
+    ListContactsQuery,
     MovementSummaryHandler,
     MovementSummaryQuery,
     PreparePaymentCommand,
@@ -77,6 +79,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the read-only role reaches the views, and the payment path needs the contact row it
     # is about to point a ledger movement at.
     contacts = PostgresContactRepository(pool)
+    # The contact list is read through the restricted role, like every other read: the
+    # payment path needs the owner pool, and showing a list does not.
+    app.state.query_bus.register(
+        ListContactsQuery, ListContactsHandler(PostgresContactRepository(query_pool))
+    )
     payments = PostgresPaymentRepository(
         pool,
         clearing_reference=settings.clearing_account_reference,

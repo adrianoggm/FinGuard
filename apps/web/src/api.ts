@@ -150,3 +150,91 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     movements: [],
   };
 }
+
+
+export type Contact = { contact_id: string; display_name: string; phone: string };
+
+export type Group = { key: string; total_minor: number; movement_count: number };
+
+export type Movements = {
+  currency: string;
+  total_minor: number;
+  movement_count: number;
+  movements: Movement[];
+};
+
+export type Breakdown = {
+  currency: string;
+  total_minor: number;
+  movement_count: number;
+  groups: Group[];
+};
+
+async function read<T>(path: string): Promise<T> {
+  const response = await fetch(`${BASE}${path}`, { headers: headers() });
+  if (!response.ok) await readError(response);
+  return (await response.json()) as T;
+}
+
+export async function contacts(): Promise<Contact[]> {
+  return (await read<{ contacts: Contact[] }>("/v1/contacts")).contacts;
+}
+
+/**
+ * The movement list, optionally narrowed.
+ *
+ * `category` is an identifier the ledger knows and `merchant` is free text, which is the difference
+ * the search field lives on: a shop name is data, a category is vocabulary.
+ */
+export async function movements(options: {
+  days?: number;
+  limit?: number;
+  category?: string;
+  merchant?: string;
+}): Promise<Movements> {
+  const query = new URLSearchParams();
+  query.set("days", String(options.days ?? 90));
+  query.set("limit", String(options.limit ?? 50));
+  if (options.category) query.set("category", options.category);
+  if (options.merchant) query.set("merchant", options.merchant);
+  return read<Movements>(`/v1/account/movements?${query}`);
+}
+
+export type GroupBy = "CATEGORY" | "MONTH" | "WEEK" | "MERCHANT";
+
+export async function breakdown(by: GroupBy, days: number): Promise<Breakdown> {
+  return read<Breakdown>(`/v1/account/breakdown?by=${by}&days=${days}`);
+}
+
+/**
+ * Prepares a payment built in a form.
+ *
+ * The recipient travels as the name that was *chosen from the list*, not as an identifier: banking
+ * resolves it against this account's own contacts, so two Martas still produce a question instead of
+ * a guess, and a forged id is useless because there is no id to forge.
+ */
+export async function payChosen(recipientName: string, amountMinor: number): Promise<Answer> {
+  const response = await fetch(`${BASE}/v1/payments/chosen`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({
+      recipient_name: recipientName,
+      amount_minor: amountMinor,
+      currency: "EUR",
+    }),
+  });
+  if (!response.ok) await readError(response);
+  const body = await response.json();
+  return {
+    outcome: body.outcome,
+    text: body.text,
+    question: null,
+    intent_id: body.intent_id ?? null,
+    plan: null,
+    currency: body.currency ?? null,
+    total_minor: null,
+    movement_count: null,
+    groups: [],
+    movements: [],
+  };
+}

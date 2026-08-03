@@ -8,8 +8,11 @@ from finguard_orchestrator.application import (
     AccountSummaryResult,
     AnswerMessageResult,
     AskFinancialQuestionResult,
+    BreakdownResult,
     CatalogueResult,
+    ListContactsResult,
     ModelRow,
+    MovementsResult,
     PolicyRow,
     SpokenPlan,
 )
@@ -20,9 +23,14 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
+    BreakdownResponse,
     CatalogueResponse,
+    ContactPayload,
+    ContactsResponse,
+    GroupPayload,
     MessageResponse,
     ModelResponse,
+    MovementsResponse,
     PlanPayload,
     PolicyResponse,
     QuestionResponse,
@@ -150,5 +158,52 @@ def summary_to_dto(result: AccountSummaryResult) -> AccountSummaryResponse:
                 category=movement.category,
             )
             for movement in result.movements
+        ],
+    )
+
+
+def contacts_to_dto(result: ListContactsResult) -> ContactsResponse:
+    return ContactsResponse(
+        contacts=[
+            ContactPayload(
+                contact_id=contact.contact_id,
+                display_name=contact.display_name,
+                phone=contact.phone,
+            )
+            for contact in result.contacts
+        ]
+    )
+
+
+def movements_to_dto(result: MovementsResult) -> MovementsResponse:
+    return MovementsResponse(
+        currency=result.currency,
+        total_minor=result.total_minor,
+        movement_count=result.movement_count,
+        movements=[
+            SummaryMovementResponse(
+                occurred_at=movement.occurred_at,
+                description=movement.description,
+                amount_minor=movement.amount_minor,
+                merchant_name=movement.merchant_name,
+                category=movement.category,
+            )
+            for movement in result.movements
+        ],
+    )
+
+
+def breakdown_to_dto(result: BreakdownResult) -> BreakdownResponse:
+    return BreakdownResponse(
+        currency=result.currency,
+        total_minor=result.total_minor,
+        movement_count=result.movement_count,
+        groups=[
+            GroupPayload(
+                key=group.key,
+                total_minor=group.total_minor,
+                movement_count=group.movement_count,
+            )
+            for group in result.groups
         ],
     )

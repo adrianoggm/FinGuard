@@ -23,6 +23,7 @@ from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
     BankingUnavailableError,
     IntentGoneError,
+    InvalidValueError,
     PaymentRefusedError,
     RecipientNotFoundError,
 )
@@ -31,6 +32,7 @@ from finguard_orchestrator.domain.ports.payment_gateway import PaymentGatewayPor
 from finguard_orchestrator.domain.ports.payment_reader import PaymentReaderPort
 from finguard_orchestrator.domain.services import confirmation, payment_writer
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
 # Banking's code for a balance that does not cover the payment. Matched on the code, never on the
 # sentence: prose across a service boundary is how two services start disagreeing.
@@ -74,6 +76,24 @@ class PreparePaymentCommand(Command[PaymentAnswer]):
 
 
 @dataclass(frozen=True)
+class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
+    """A payment somebody built in a form: a contact picked from a list, an amount typed in a field.
+
+    Separate from the sentence version because there is nothing to read. No model, and therefore no
+    grounding check — grounding exists to catch a figure a model invented, and here the figure was
+    typed and the recipient was chosen. What does *not* change is the rest of §4.1: the preview and
+    the explicit confirmation are the same ones, because they protect against a mistake rather than
+    against a misreading.
+    """
+
+    account_id: UUID
+    recipient_name: str
+    amount_minor: int
+    currency: str
+    idempotency_key: str
+
+
+@dataclass(frozen=True)
 class ConfirmPaymentCommand(Command[PaymentAnswer]):
     """A reply to a preview. `reply` is the user's own words, read deterministically."""
 
@@ -83,6 +103,78 @@ class ConfirmPaymentCommand(Command[PaymentAnswer]):
     # The preview being answered, if the caller echoed it back. Only used to repeat the question
     # when the reply is neither yes nor no — the decision to pay never depends on it.
     preview: PaymentPreview | None = None
+
+
+async def _previewed(
+    bank: PaymentGatewayPort, request: PaymentRequest, *, account_id: UUID, key: str
+) -> PaymentAnswer:
+    """Asks the bank to hold the intent and turns every refusal into something sayable.
+
+    Shared by the two preparation paths. A second copy of this ladder would be a second opinion
+    about what "the bank said no" means, and the sentence path and the form path must not answer
+    a balance refusal differently.
+    """
+    try:
+        preview = await bank.prepare(request, account_id=account_id, key=key)
+    except AmbiguousRecipientError as several:
+        # A question, not an error: the user picks, and they cannot without the names.
+        return PaymentAnswer(
+            outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+            text=payment_writer.ambiguous(several.name, several.candidates),
+            reason=several.code,
+        )
+    except RecipientNotFoundError as nobody:
+        return PaymentAnswer(
+            outcome=PaymentOutcome.REFUSED.value,
+            text=payment_writer.not_a_contact(nobody.name),
+            reason=nobody.code,
+        )
+    except PaymentRefusedError as refused:
+        return _refusal(refused.reason)
+    except BankingUnavailableError as down:
+        return PaymentAnswer(
+            outcome=PaymentOutcome.BANKING_UNAVAILABLE.value,
+            text=payment_writer.bank_unavailable(),
+            reason=str(down),
+        )
+
+    return PaymentAnswer(
+        outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
+        text=payment_writer.confirm_question(preview),
+        intent_id=preview.intent_id,
+        recipient=preview.recipient,
+        recipient_phone=preview.recipient_phone,
+        amount_minor=preview.amount_minor,
+        currency=preview.currency,
+        balance_after_minor=preview.balance_after_minor,
+        expires_at=preview.expires_at.isoformat(),
+    )
+
+
+class PrepareChosenPaymentHandler:
+    """The form path. It builds the request and stops there — no reader, no policy."""
+
+    def __init__(self, bank: PaymentGatewayPort) -> None:
+        self._bank = bank
+
+    async def handle(self, command: PrepareChosenPaymentCommand) -> PaymentAnswer:
+        try:
+            request = PaymentRequest(
+                recipient_name=command.recipient_name.strip(),
+                amount_minor=command.amount_minor,
+                currency=command.currency,
+            )
+        except InvalidValueError as refused:
+            # A payment of nothing, a negative one, or one beyond the ceiling. The same value
+            # object the sentence path builds, so a form cannot ask for what a sentence cannot.
+            return PaymentAnswer(
+                outcome=PaymentOutcome.NOT_UNDERSTOOD.value,
+                text=payment_writer.not_understood(),
+                reason=str(refused),
+            )
+        return await _previewed(
+            self._bank, request, account_id=command.account_id, key=command.idempotency_key
+        )
 
 
 class PreparePaymentHandler:
@@ -104,42 +196,11 @@ class PreparePaymentHandler:
 
         assert reading.request is not None  # is_payable is exactly this condition
 
-        try:
-            preview = await self._bank.prepare(
-                reading.request, account_id=command.account_id, key=command.idempotency_key
-            )
-        except AmbiguousRecipientError as several:
-            # A question, not an error: the user picks, and they cannot without the names.
-            return PaymentAnswer(
-                outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
-                text=payment_writer.ambiguous(several.name, several.candidates),
-                reason=several.code,
-            )
-        except RecipientNotFoundError as nobody:
-            return PaymentAnswer(
-                outcome=PaymentOutcome.REFUSED.value,
-                text=payment_writer.not_a_contact(nobody.name),
-                reason=nobody.code,
-            )
-        except PaymentRefusedError as refused:
-            return _refusal(refused.reason)
-        except BankingUnavailableError as down:
-            return PaymentAnswer(
-                outcome=PaymentOutcome.BANKING_UNAVAILABLE.value,
-                text=payment_writer.bank_unavailable(),
-                reason=str(down),
-            )
-
-        return PaymentAnswer(
-            outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
-            text=payment_writer.confirm_question(preview),
-            intent_id=preview.intent_id,
-            recipient=preview.recipient,
-            recipient_phone=preview.recipient_phone,
-            amount_minor=preview.amount_minor,
-            currency=preview.currency,
-            balance_after_minor=preview.balance_after_minor,
-            expires_at=preview.expires_at.isoformat(),
+        return await _previewed(
+            self._bank,
+            reading.request,
+            account_id=command.account_id,
+            key=command.idempotency_key,
         )
 
 
