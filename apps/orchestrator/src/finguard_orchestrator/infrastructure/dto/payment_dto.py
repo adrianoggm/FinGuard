@@ -10,6 +10,7 @@ credential, so there is nowhere to say whose money you mean.
 from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH
+from finguard_orchestrator.domain.value_objects.payment_request import MAX_RECIPIENT_NAME
 
 # A reply to a confirmation is a word or two. Bounded far below a prompt because it is read by an
 # allow-list of affirmations, and a paragraph is not one — nothing longer can be a yes.
@@ -76,3 +77,16 @@ class PaymentResponse(_Payload):
     balance_after_minor: int | None = None
     expires_at: str | None = None
     transaction_id: str | None = None
+
+
+class ChosenPaymentRequest(_Payload):
+    """A payment built in a form: a contact picked from the list, an amount typed in a field.
+
+    `recipient_name` and not a contact id, deliberately. Banking resolves the name against this
+    account's own contacts, which is the check that makes a forged identifier useless — an id would
+    have to be trusted, and a name is verified against the list the caller was allowed to see.
+    """
+
+    recipient_name: str = Field(min_length=1, max_length=MAX_RECIPIENT_NAME)
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(pattern="^[A-Z]{3}$")

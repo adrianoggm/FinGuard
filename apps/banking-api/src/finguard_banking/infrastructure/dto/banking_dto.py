@@ -175,3 +175,16 @@ class PaymentReceiptResponse(_Payload):
     currency: str
     balance_after_minor: int
     confirmed_at: datetime
+
+
+class ContactResponse(_Payload):
+    contact_id: UUID
+    display_name: str
+    phone: str
+
+
+class ContactsResponse(_Payload):
+    """The whole list. A payment screen shows who you can pay, so a page here would mean the name
+    somebody was looking for is the one that did not fit."""
+
+    contacts: list[ContactResponse] = []

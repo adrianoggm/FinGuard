@@ -166,3 +166,39 @@ class AccountSummaryResponse(_Payload):
     available_minor: int
     as_of: str
     movements: list[SummaryMovementResponse] = []
+
+
+class ContactPayload(_Payload):
+    contact_id: str
+    display_name: str
+    phone: str
+
+
+class ContactsResponse(_Payload):
+    """Everybody this account can pay. The whole list, because the name somebody is looking for is
+    exactly the one a page limit would cut."""
+
+    contacts: list[ContactPayload] = []
+
+
+class MovementsResponse(_Payload):
+    currency: str
+    total_minor: int
+    movement_count: int
+    movements: list[SummaryMovementResponse] = []
+
+
+class GroupPayload(_Payload):
+    key: str
+    total_minor: int
+    movement_count: int
+
+
+class BreakdownResponse(_Payload):
+    """Where the money went, grouped. `total_minor` is the figure the groups add up to, so a screen
+    can draw a bar as a share of it without doing arithmetic the ledger did not do."""
+
+    currency: str
+    total_minor: int
+    movement_count: int
+    groups: list[GroupPayload] = []

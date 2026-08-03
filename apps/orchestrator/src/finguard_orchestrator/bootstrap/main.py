@@ -11,9 +11,17 @@ from finguard_orchestrator.application import (
     ConfirmPaymentHandler,
     GetAccountSummaryHandler,
     GetAccountSummaryQuery,
+    GetBreakdownHandler,
+    GetBreakdownQuery,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
+    GetMovementsHandler,
+    GetMovementsQuery,
+    ListContactsHandler,
+    ListContactsQuery,
     PolicyStore,
+    PrepareChosenPaymentCommand,
+    PrepareChosenPaymentHandler,
     PreparePaymentCommand,
     PreparePaymentHandler,
     QueryBus,
@@ -25,6 +33,7 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.infrastructure import (
     HttpAccountSummary,
+    HttpContacts,
     HttpFinancialQuery,
     HttpPayments,
     LlmPaymentReader,
@@ -115,6 +124,20 @@ def create_app() -> FastAPI:
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
+    # Browsing the account: the movement list, the search field and the breakdown a finance
+    # screen draws. All three build their plan in code — a screen has already said everything
+    # the plan needs, so a model between the tap and the query would only add a way to be wrong.
+    query_bus.register(GetMovementsQuery, GetMovementsHandler(banking))
+    query_bus.register(GetBreakdownQuery, GetBreakdownHandler(banking))
+    query_bus.register(
+        ListContactsQuery,
+        ListContactsHandler(
+            HttpContacts(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
     query_bus.register(
         GetAccountSummaryQuery,
         GetAccountSummaryHandler(
@@ -152,6 +175,16 @@ def create_app() -> FastAPI:
         ResetLlmPolicyCommand, ResetLlmPolicyHandler(policies, catalogue, available)
     )
     command_bus.register(PreparePaymentCommand, paying)
+    # The form path shares the gateway and skips the reader: nothing to read, nothing to ground.
+    command_bus.register(
+        PrepareChosenPaymentCommand,
+        PrepareChosenPaymentHandler(
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
     command_bus.register(
         ConfirmPaymentCommand,
         ConfirmPaymentHandler(

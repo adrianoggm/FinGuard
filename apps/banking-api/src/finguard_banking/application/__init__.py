@@ -28,6 +28,12 @@ from finguard_banking.application.queries.get_balance import (
     GetBalanceQuery,
     GetBalanceResult,
 )
+from finguard_banking.application.queries.list_contacts import (
+    ContactRow,
+    ListContactsHandler,
+    ListContactsQuery,
+    ListContactsResult,
+)
 from finguard_banking.application.queries.movement_summary import (
     MovementSummaryHandler,
     MovementSummaryQuery,
@@ -38,6 +44,10 @@ from finguard_banking.application.queries.movement_summary import (
 )
 
 __all__ = [
+    "ContactRow",
+    "ListContactsHandler",
+    "ListContactsQuery",
+    "ListContactsResult",
     "CancelPaymentCommand",
     "CancelPaymentHandler",
     "Command",

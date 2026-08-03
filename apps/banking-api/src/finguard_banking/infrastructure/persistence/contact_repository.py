@@ -27,6 +27,12 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
 # was not a name.
 _MAX_CANDIDATES = 5
 
+_LIST_SQL = """
+    SELECT contact_id, display_name, phone
+    FROM assistant_read.contacts_v1
+    ORDER BY display_name
+"""
+
 _RESOLVE_SQL = f"""
     SELECT contact_id, display_name, phone
     FROM assistant_read.contacts_v1
@@ -41,6 +47,24 @@ class PostgresContactRepository:
 
     def __init__(self, pool: asyncpg.Pool[Any]) -> None:
         self._pool = pool
+
+    async def all_of(self, account_id: UUID) -> tuple[Contact, ...]:
+        """Everybody this account can pay, in the order a list is read.
+
+        No limit. A contact list is bounded by how many people somebody knows, and a truncated one
+        is worse than a long one: the name that is missing is the one they were looking for.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            rows = await connection.fetch(_LIST_SQL)
+        return tuple(
+            Contact(
+                contact_id=row["contact_id"],
+                display_name=row["display_name"],
+                phone=row["phone"],
+            )
+            for row in rows
+        )
 
     async def resolve(self, account_id: UUID, name: str) -> Contact:
         async with self._pool.acquire() as connection, connection.transaction():

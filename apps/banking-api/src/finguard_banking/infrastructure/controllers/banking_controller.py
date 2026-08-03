@@ -11,7 +11,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from finguard_banking.application import GetBalanceQuery, MovementSummaryQuery, QueryBus
+from finguard_banking.application import (
+    GetBalanceQuery,
+    ListContactsQuery,
+    MovementSummaryQuery,
+    QueryBus,
+)
 from finguard_banking.bootstrap.dependencies import (
     database_answers,
     get_query_bus,
@@ -19,6 +24,7 @@ from finguard_banking.bootstrap.dependencies import (
 )
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
+    ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
 )
@@ -51,6 +57,16 @@ async def ready(database_answers: DatabaseAnswers) -> JSONResponse:
 async def read_balance(account_id: UUID, queries: Queries) -> BalanceResponse:
     """Balance derived from the ledger entries, never from a mutable column."""
     return http_mapper.balance_to_dto(await queries.ask(GetBalanceQuery(account_id)))
+
+
+@accounts_router.get("/{account_id}/contacts", summary="Everybody this account can pay")
+async def read_contacts(account_id: UUID, queries: Queries) -> ContactsResponse:
+    """The whole list, through the same restricted role and view as every other read.
+
+    A payment screen cannot work without it: asking somebody to type a name they can only get right
+    from a list they have not seen is how money reaches the wrong Marta.
+    """
+    return http_mapper.contacts_to_dto(await queries.ask(ListContactsQuery(account_id)))
 
 
 @queries_router.post("", summary="Run a financial query")

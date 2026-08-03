@@ -19,6 +19,8 @@ from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
     PaymentAnswer,
+    PrepareChosenPaymentCommand,
+    PrepareChosenPaymentHandler,
     PreparePaymentCommand,
     PreparePaymentHandler,
 )
@@ -41,6 +43,14 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     Stage,
 )
+from finguard_orchestrator.application.queries.browse_account import (
+    BreakdownResult,
+    GetBreakdownHandler,
+    GetBreakdownQuery,
+    GetMovementsHandler,
+    GetMovementsQuery,
+    MovementsResult,
+)
 from finguard_orchestrator.application.queries.get_account_summary import (
     AccountSummaryResult,
     GetAccountSummaryHandler,
@@ -53,14 +63,30 @@ from finguard_orchestrator.application.queries.get_llm_catalogue import (
     ModelRow,
     PolicyRow,
 )
+from finguard_orchestrator.application.queries.list_contacts import (
+    ListContactsHandler,
+    ListContactsQuery,
+    ListContactsResult,
+)
 
 __all__ = [
     "AccountSummaryResult",
+    "BreakdownResult",
+    "GetBreakdownHandler",
+    "GetBreakdownQuery",
+    "GetMovementsHandler",
+    "GetMovementsQuery",
+    "ListContactsHandler",
+    "ListContactsQuery",
+    "ListContactsResult",
+    "MovementsResult",
     "GetAccountSummaryHandler",
     "GetAccountSummaryQuery",
     "ConfirmPaymentCommand",
     "ConfirmPaymentHandler",
     "PaymentAnswer",
+    "PrepareChosenPaymentCommand",
+    "PrepareChosenPaymentHandler",
     "PreparePaymentCommand",
     "PreparePaymentHandler",
     "AnswerMessageHandler",
