@@ -1,85 +1,167 @@
 /**
- * The bank app behind the conversation: a balance and what happened lately.
+ * The bank app's home screen: two figures, the trend, four shortcuts, and the account.
  *
- * Every figure here comes from `/v1/account/summary`, which reaches the ledger through a plan built
- * in code. That matters more than it looks: if this screen showed mock data, the balance beside the
- * chat's balance would be two numbers on one phone, and the first thing anybody would notice is that
- * they disagree.
+ * Laid out like the app a person already knows — a greeting, "tu dinero" beside what has gone out,
+ * a bar per month, a row of round buttons, then the accounts. What is different is what the numbers
+ * are: every one of them comes from the ledger through `/v1/account/summary` and
+ * `/v1/account/breakdown`, so nothing here is a placeholder waiting to be replaced.
  *
- * The tab bar and the four shortcuts are chrome. They are inert and marked as such rather than being
- * buttons that do nothing when pressed.
+ * **The four shortcuts all go somewhere.** The first version of this screen had four that did
+ * nothing, which is worse than not drawing them: a button that does not respond teaches somebody
+ * that the app is broken, and they are right.
  */
 
-import type { Summary } from "./api";
-import { categoryName, day, glyph, money, signed } from "./format";
+import { useEffect, useState } from "react";
 
-const SHORTCUTS = [
-  ["📲", "Bizum"],
-  ["↗", "Enviar"],
-  ["💳", "Tarjetas"],
-  ["📄", "Recibos"],
-] as const;
-
-const TABS = [
-  ["◧", "Inicio"],
-  ["≡", "Cuentas"],
-  ["📲", "Bizum"],
-  ["⋯", "Más"],
-] as const;
+import { breakdown as fetchBreakdown, type Breakdown, type Summary } from "./api";
+import { categoryName, day, glyph, money, monthName, signed } from "./format";
+import type { Tab } from "./tabs";
 
 type Props = {
   summary: Summary | null;
   error: string | null;
   holder: string;
+  onGo: (tab: Tab) => void;
+  onAsk: () => void;
 };
 
-export function Home({ summary, error, holder }: Props) {
+export function Home({ summary, error, holder, onGo, onAsk }: Props) {
+  const [months, setMonths] = useState<Breakdown | null>(null);
+  const [thisMonth, setThisMonth] = useState<Breakdown | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [byMonth, byCategory] = await Promise.all([
+          fetchBreakdown("MONTH", 365),
+          fetchBreakdown("CATEGORY", 30),
+        ]);
+        setMonths(byMonth);
+        setThisMonth(byCategory);
+      } catch {
+        // The chart is the part of this screen that can be missing without lying. The balance cannot,
+        // and it is handled where it is read.
+        setMonths(null);
+      }
+    })();
+  }, [summary]);
+
+  const bars = months?.groups.slice(-6) ?? [];
+  const biggest = Math.max(1, ...bars.map((group) => group.total_minor));
+
   return (
-    <div className="home">
-      <header className="greeting">
-        <div>
-          <p className="hello">Hola,</p>
-          <h1>{holder}</h1>
-        </div>
-        <div className="avatar" aria-hidden="true">
-          {holder.slice(0, 1)}
-        </div>
+    <div className="screen home">
+      <header className="brand">
+        <span className="mark" aria-hidden="true">
+          ◆
+        </span>
+        <strong>FinGuard</strong>
+        <span className="brand-right">
+          <button onClick={() => onGo("cuentas-buscar")} aria-label="Buscar movimientos">
+            🔍
+          </button>
+          <button onClick={onAsk} aria-label="Hablar con FinGuard">
+            ✨
+          </button>
+        </span>
       </header>
 
-      <section className="account" aria-label="Cuenta">
-        <p className="account-name">Cuenta corriente</p>
-        {summary ? (
-          <>
-            <p className="balance">{money(summary.booked_minor, summary.currency)}</p>
-            <p className="available">
-              Disponible {money(summary.available_minor, summary.currency)}
-            </p>
-          </>
-        ) : (
-          // Never a zero. A balance of 0,00 € is a figure, and showing one while we are still asking
-          // — or because we could not ask — states something false about somebody's money.
-          <p className={error ? "balance-error" : "balance-loading"}>
-            {error ?? "···"}
+      <p className="hello">Hola, {holder}</p>
+
+      <section className="figures" aria-label="Resumen">
+        <div>
+          <p className="figure-label">Tu dinero</p>
+          <p className="figure">
+            {summary ? (
+              money(summary.booked_minor, summary.currency)
+            ) : (
+              // Never a zero while we are still asking: 0,00 € is a statement about somebody's money.
+              <span className="figure-missing">{error ?? "···"}</span>
+            )}
           </p>
-        )}
+        </div>
+        <div>
+          <p className="figure-label">Gastos del mes</p>
+          <p className="figure out">
+            {thisMonth ? (
+              `-${money(thisMonth.total_minor, thisMonth.currency)}`
+            ) : (
+              <span className="figure-missing">···</span>
+            )}
+          </p>
+        </div>
       </section>
 
-      <nav className="shortcuts" aria-label="Accesos" aria-disabled="true">
-        {SHORTCUTS.map(([icon, label]) => (
-          <div className="shortcut" key={label}>
-            <span className="shortcut-icon" aria-hidden="true">
-              {icon}
-            </span>
-            <span>{label}</span>
+      {bars.length > 1 && (
+        <section className="card chart" aria-label="Gasto por mes">
+          <div className="bars">
+            {bars.map((group) => (
+              <div className="bar-slot" key={group.key}>
+                <div
+                  className="bar"
+                  style={{ height: `${Math.round((group.total_minor / biggest) * 100)}%` }}
+                  title={money(group.total_minor, months?.currency ?? "EUR")}
+                />
+                <small>{monthName(group.key)}</small>
+              </div>
+            ))}
           </div>
-        ))}
+          <button className="chart-more" onClick={() => onGo("finanzas")}>
+            Ver mis finanzas →
+          </button>
+        </section>
+      )}
+
+      <nav className="shortcuts" aria-label="Accesos">
+        <button className="shortcut" onClick={() => onGo("bizum")}>
+          <span className="shortcut-icon" aria-hidden="true">
+            📲
+          </span>
+          <span>Bizum</span>
+        </button>
+        <button className="shortcut" onClick={() => onGo("cuentas")}>
+          <span className="shortcut-icon" aria-hidden="true">
+            ≡
+          </span>
+          <span>Movimientos</span>
+        </button>
+        <button className="shortcut" onClick={() => onGo("finanzas")}>
+          <span className="shortcut-icon" aria-hidden="true">
+            📊
+          </span>
+          <span>Finanzas</span>
+        </button>
+        <button className="shortcut" onClick={onAsk}>
+          <span className="shortcut-icon" aria-hidden="true">
+            💬
+          </span>
+          <span>Preguntar</span>
+        </button>
       </nav>
 
-      <section className="movements" aria-label="Movimientos">
-        <h2>Movimientos</h2>
+      <section aria-label="Cuentas">
+        <h2 className="section-head">Cuentas</h2>
+        <button className="account-row" onClick={() => onGo("cuentas")}>
+          <span className="account-who">
+            <strong>Cuenta corriente</strong>
+            <small>ES-0001</small>
+          </span>
+          <span className="account-figure">
+            {summary ? money(summary.booked_minor, summary.currency) : "···"}
+          </span>
+        </button>
+      </section>
+
+      <section className="movements" aria-label="Últimos movimientos">
+        <h2 className="section-head">
+          Últimos movimientos
+          <button className="see-all" onClick={() => onGo("cuentas")}>
+            Ver todos
+          </button>
+        </h2>
         {summary?.movements.length === 0 && <p className="empty">Nada en los últimos días.</p>}
         <ul>
-          {summary?.movements.map((movement, index) => (
+          {summary?.movements.slice(0, 5).map((movement, index) => (
             <li key={`${movement.occurred_at}-${index}`}>
               <span className="glyph" aria-hidden="true">
                 {glyph(movement.category)}
@@ -97,15 +179,6 @@ export function Home({ summary, error, holder }: Props) {
           ))}
         </ul>
       </section>
-
-      <nav className="tabs" aria-label="Secciones" aria-disabled="true">
-        {TABS.map(([icon, label], index) => (
-          <div className={index === 0 ? "tab active" : "tab"} key={label}>
-            <span aria-hidden="true">{icon}</span>
-            <small>{label}</small>
-          </div>
-        ))}
-      </nav>
     </div>
   );
 }

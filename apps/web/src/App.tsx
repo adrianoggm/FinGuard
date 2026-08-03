@@ -1,25 +1,34 @@
 /**
- * The phone. A bank app with a floating button that opens conversation mode.
+ * The phone. A bank app with four screens and a floating button that opens conversation mode.
  *
- * Framed as a device on a wide screen because that is the only way this is ever meant to be looked
- * at: it is a phone app, and a desktop-shaped version of it would be a different product. On an
- * actual phone the frame gets out of the way.
+ * Framed as a device on a wide screen because that is the only way this is meant to be looked at: it
+ * is a phone app, and a desktop-shaped version of it would be a different product. On an actual phone
+ * the frame gets out of the way.
  *
- * The sheet rises over the app rather than replacing it. The point of a floating button is that you
- * do not leave what you were doing, and the balance staying visible behind the conversation is what
- * makes "ask about your money" feel like part of the app instead of a chat bolted onto it.
+ * The sheet rises over whichever screen you are on rather than replacing it. The point of a floating
+ * button is that you do not leave what you were doing — and the figures staying visible behind the
+ * conversation are what make asking about your money part of the app instead of a chat bolted onto it.
+ *
+ * The tab state lives here and nowhere else. There is no router: four destinations reached by tapping
+ * do not need URLs, and a router would be the second dependency in the project for something a
+ * `useState` already does.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { configured, summary as fetchSummary, type Summary } from "./api";
+import { Accounts } from "./Accounts";
+import { Bizum } from "./Bizum";
 import { Conversation } from "./Conversation";
+import { Finances } from "./Finances";
 import { Home } from "./Home";
+import { TABS, tabOf, type Tab } from "./tabs";
 
 export function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [talking, setTalking] = useState(false);
+  const [where, setWhere] = useState<Tab>("inicio");
   const app = useRef<HTMLElement>(null);
   const opened = useRef(false);
 
@@ -31,10 +40,10 @@ export function App() {
     try {
       setSummary(await fetchSummary());
       setError(null);
-    } catch (failure) {
-      // The figure is left absent rather than replaced by a zero. See Home: a balance of 0,00 € is a
-      // statement about somebody's money, and "we could not ask" is not that statement.
-      setError(failure instanceof Error ? "No disponible" : "No disponible");
+    } catch {
+      // The figure is left absent rather than replaced by a zero: a balance of 0,00 € is a statement
+      // about somebody's money, and "we could not ask" is not that statement.
+      setError("No disponible");
     }
   }, []);
 
@@ -45,20 +54,39 @@ export function App() {
   useEffect(() => {
     // The app is not scrollable until the figures arrive, and once it is, Chrome restores whatever
     // position the container had before a reload. On a bank app that means opening halfway down the
-    // movement list instead of on the balance. Once, on the first load — a later refresh after a
-    // payment must not yank the screen away from wherever the user was reading.
+    // movement list instead of on the balance. Once, on the first load only.
     if (summary && !opened.current) {
       opened.current = true;
       app.current?.scrollTo({ top: 0 });
     }
   }, [summary]);
 
+  const go = useCallback((tab: Tab) => {
+    setWhere(tab);
+    // A new screen starts at its top. Keeping the previous scroll position across a tab change is how
+    // a screen opens on its own middle.
+    app.current?.scrollTo({ top: 0 });
+  }, []);
+
   return (
     <div className="stage">
       <div className="phone">
         <StatusBar />
         <main ref={app} className={talking ? "app dimmed" : "app"}>
-          <Home summary={summary} error={error} holder="Laura" />
+          {where === "inicio" && (
+            <Home
+              summary={summary}
+              error={error}
+              holder="Laura"
+              onGo={go}
+              onAsk={() => setTalking(true)}
+            />
+          )}
+          {tabOf(where) === "cuentas" && (
+            <Accounts summary={summary} searching={where === "cuentas-buscar"} />
+          )}
+          {where === "finanzas" && <Finances />}
+          {where === "bizum" && <Bizum onPaid={load} />}
         </main>
 
         {!talking && (
@@ -73,6 +101,20 @@ export function App() {
             <Conversation onClose={() => setTalking(false)} onSettled={load} />
           </>
         )}
+
+        <nav className="tabs" aria-label="Secciones">
+          {TABS.map(([tab, label, icon]) => (
+            <button
+              key={tab}
+              className={tabOf(where) === tab ? "tab active" : "tab"}
+              onClick={() => go(tab)}
+              aria-current={tabOf(where) === tab ? "page" : undefined}
+            >
+              <span aria-hidden="true">{icon}</span>
+              <small>{label}</small>
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
   );

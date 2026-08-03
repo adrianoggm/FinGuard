@@ -71,3 +71,40 @@ export function glyph(category: string | null): string {
 export function categoryName(category: string | null): string {
   return (category && CATEGORIES[category]?.[1]) || "Otros";
 }
+
+
+/**
+ * "12,50" or "12.50" or "12" → 1250. `null` when it is not an amount.
+ *
+ * A lone dot is read as the decimal separator, because a phone keypad gives whichever one the layout
+ * has. A *thousands* separator is refused: "1.200" could be 1200 or 1,2 depending on who typed it,
+ * and the safe answer for money is to ask rather than to pick. The field says so when it refuses.
+ *
+ * Integer arithmetic throughout — `parseFloat` and a multiplication by 100 is how 0,29 € becomes 28
+ * cents.
+ */
+export function minorUnits(typed: string): number | null {
+  const cleaned = typed.trim().replace(/\s/g, "").replace(".", ",");
+  if (!/^\d{1,7}(,\d{0,2})?$/.test(cleaned)) return null;
+  const [whole, cents = ""] = cleaned.split(",");
+  const amount = Number(whole) * 100 + Number(cents.padEnd(2, "0"));
+  return amount > 0 ? amount : null;
+}
+
+/** A month key ("2026-07") as somebody reads it. */
+const MONTH = new Intl.DateTimeFormat("es-ES", { month: "short" });
+
+export function monthName(key: string): string {
+  const [year, month] = key.split("-");
+  if (!year || !month) return key;
+  return MONTH.format(new Date(Number(year), Number(month) - 1, 1)).replace(".", "");
+}
+
+/** Initials for an avatar. Two words at most: "Marta Solis Vega" → "MS". */
+export function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.slice(0, 1).toUpperCase())
+    .join("");
+}
