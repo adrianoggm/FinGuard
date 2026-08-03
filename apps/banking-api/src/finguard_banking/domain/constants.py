@@ -23,6 +23,12 @@ MAX_GROUPS = 500
 MAX_CATEGORIES = 20
 MAX_CATEGORY_LENGTH = 40
 
+# Shops a query may name. Free text, unlike a category, because the ledger's merchant names
+# come from the movements themselves and no enum can enumerate them. Bounded anyway: a filter
+# with fifty names in it is not a question anybody asked.
+MAX_MERCHANTS = 10
+MAX_MERCHANT_LENGTH = 140
+
 # Relative periods.
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366

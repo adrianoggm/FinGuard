@@ -14,6 +14,8 @@ from uuid import UUID
 from finguard_banking.domain.constants import (
     DEFAULT_SUPPORTING_MOVEMENTS,
     MAX_CATEGORIES,
+    MAX_MERCHANT_LENGTH,
+    MAX_MERCHANTS,
     MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_banking.domain.enums import Direction, GroupBy, Metric
@@ -31,6 +33,10 @@ class FinancialQuery:
     # Every category validated itself on construction: the plan only has to bound how
     # many of them there are.
     categories: tuple[Category, ...] = field(default_factory=tuple)
+    # The shops the question is about. The first field in this contract whose values are not
+    # a closed set — a category is an enum and this is whatever somebody typed — so it is
+    # bounded and checked here, and it reaches SQL only as a bound parameter.
+    merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     # How many movements to return as evidence for the figure.
     supporting_limit: int = DEFAULT_SUPPORTING_MOVEMENTS
@@ -49,6 +55,13 @@ class FinancialQuery:
             )
         if len(self.categories) > MAX_CATEGORIES:
             raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
+        if len(self.merchants) > MAX_MERCHANTS:
+            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
+        for merchant in self.merchants:
+            if not merchant.strip():
+                raise InvalidValueError("a merchant name cannot be empty")
+            if len(merchant) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
 
     def category_values(self) -> list[str]:
         """The plain strings, for the one place that needs them: a SQL parameter."""

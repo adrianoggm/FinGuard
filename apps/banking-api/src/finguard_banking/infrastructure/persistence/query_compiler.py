@@ -110,6 +110,15 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
     if query.categories:
         conditions.append(f"t.category = ANY({parameters.bind(query.category_values())})")
 
+    if query.merchants:
+        # Lowered on both sides rather than ILIKE: this is equality, not a pattern, and a
+        # name the user typed must not be read as one — "100%" is a legitimate shop name and
+        # a wildcard in LIKE. Case-insensitive because a filter that needs the ledger's exact
+        # capitalisation answers "no movements" to a real question, which reads as "you spent
+        # nothing there".
+        names = parameters.bind([merchant.strip().lower() for merchant in query.merchants])
+        conditions.append(f"lower(t.merchant_name) = ANY({names})")
+
     return conditions
 
 
