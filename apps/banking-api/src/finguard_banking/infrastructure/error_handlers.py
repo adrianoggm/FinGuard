@@ -28,6 +28,8 @@ from finguard_banking.domain.errors import (
     IntentExpiredError,
     IntentNotConfirmableError,
     IntentNotFoundError,
+    MovementNotFoundError,
+    UnknownCategoryError,
 )
 
 _STATUS_BY_CODE = {
@@ -49,6 +51,9 @@ _STATUS_BY_CODE = {
     IntentNotConfirmableError.code: 409,
     # 409 rather than 422: the request was well formed and the balance is what refused it.
     InsufficientFundsError.code: 409,
+    MovementNotFoundError.code: 404,
+    # 422: the request is well formed and the value is not one this ledger uses.
+    UnknownCategoryError.code: 422,
 }
 _DEFAULT_STATUS = 400
 

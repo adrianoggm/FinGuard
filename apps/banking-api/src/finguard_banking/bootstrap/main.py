@@ -8,6 +8,8 @@ from fastapi import FastAPI
 from finguard_banking.application import (
     CancelPaymentCommand,
     CancelPaymentHandler,
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
     CommandBus,
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
@@ -32,6 +34,7 @@ from finguard_banking.infrastructure import (
     PostgresContactRepository,
     PostgresFinancialQueryRepository,
     PostgresLedgerRepository,
+    PostgresMovementCategoryRepository,
     PostgresPaymentRepository,
     accounts_router,
     health_router,
@@ -103,6 +106,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     bus.register(PreparePaymentCommand, PreparePaymentHandler(contacts, payments))
     bus.register(ConfirmPaymentCommand, ConfirmPaymentHandler(payments))
     bus.register(CancelPaymentCommand, CancelPaymentHandler(payments))
+    # The holder's own category. A write, so it holds the owner pool — and it never touches
+    # the ledger: the opinion goes in a table beside it.
+    bus.register(
+        CategoriseMovementCommand,
+        CategoriseMovementHandler(PostgresMovementCategoryRepository(pool)),
+    )
 
     try:
         yield

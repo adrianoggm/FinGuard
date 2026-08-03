@@ -36,6 +36,10 @@ class BrowsedMovement:
     amount_minor: int
     merchant_name: str | None = None
     category: str | None = None
+    # The ledger's identifier, and whose category is being shown. The movement list is the one
+    # screen that can refile a movement, so it is the one that needs both.
+    transaction_id: str | None = None
+    category_is_custom: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,9 @@ class GetMovementsHandler:
             account_id=query.account_id,
             today=query.today,
             reporting_timezone=query.reporting_timezone,
+            # The screen's count, not the chat's. Before this the limit was accepted and dropped,
+            # so a list asking for fifty got whatever the conversation was configured with.
+            movements=query.limit,
         )
         return MovementsResult(
             currency=answer.currency,
@@ -128,6 +135,8 @@ class GetMovementsHandler:
                     amount_minor=movement.amount_minor,
                     merchant_name=movement.merchant_name,
                     category=movement.category,
+                    transaction_id=movement.transaction_id,
+                    category_is_custom=movement.category_is_custom,
                 )
                 for movement in answer.movements
             ],

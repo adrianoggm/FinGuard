@@ -196,7 +196,13 @@ class Settings(BaseSettings):
             granted = (
                 parts[4].split(",")
                 if len(parts) == 5 and parts[4]
-                else [Scope.QUESTIONS_READ.value, Scope.ASSISTANT_USE.value]
+                else [
+                    Scope.QUESTIONS_READ.value,
+                    Scope.ASSISTANT_USE.value,
+                    # Relabelling your own movement moves no money and is undone by another
+                    # request. A development credential that can read the account can file it.
+                    Scope.MOVEMENTS_CATEGORISE.value,
+                ]
             )
             if token in table:
                 # Two entries sharing a secret is a typo, and the quiet outcome is the

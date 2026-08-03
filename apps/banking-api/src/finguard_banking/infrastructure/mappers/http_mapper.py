@@ -102,6 +102,7 @@ def _movement_to_dto(movement: SummaryMovement) -> MovementResponse:
         description=movement.description,
         merchant_name=movement.merchant_name,
         category=movement.category,
+        category_is_custom=movement.category_is_custom,
         amount_minor=movement.amount_minor,
         direction=movement.direction,
     )

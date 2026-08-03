@@ -15,6 +15,10 @@ from finguard_orchestrator.application.bus.errors import (
     HandlerNotRegisteredError,
 )
 from finguard_orchestrator.application.bus.query_bus import Query, QueryBus, QueryHandler
+from finguard_orchestrator.application.commands.categorise import (
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
+)
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
@@ -80,6 +84,8 @@ from finguard_orchestrator.application.queries.list_contacts import (
 
 __all__ = [
     "AccountSummaryResult",
+    "CategoriseMovementCommand",
+    "CategoriseMovementHandler",
     "CardRow",
     "ChargesResult",
     "GetCardChargesHandler",

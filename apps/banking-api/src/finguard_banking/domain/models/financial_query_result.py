@@ -25,6 +25,11 @@ class Movement:
     category: str | None
     amount: Money
     direction: str
+    # Whether that category is the holder's own rather than what the bank inferred. It travels with
+    # the movement because a label that silently changed is a label nobody trusts twice — a screen
+    # has to be able to say whose opinion it is showing. Last, and with a default, because a
+    # dataclass will not take a defaulted field before a required one.
+    category_is_custom: bool = False
 
 
 @dataclass(frozen=True)

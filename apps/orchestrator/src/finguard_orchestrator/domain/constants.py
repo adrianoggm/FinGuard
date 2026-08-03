@@ -32,3 +32,7 @@ MAX_MERCHANTS = 10
 MAX_MERCHANT_LENGTH = 140
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
+
+# A category name on the wire. The vocabulary is banking's; this only bounds the field so that a
+# paragraph cannot travel where an identifier belongs.
+MAX_CATEGORY_NAME = 40

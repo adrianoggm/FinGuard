@@ -34,4 +34,13 @@ class FinancialQueryPort(Protocol):
         account_id: UUID,
         today: date,
         reporting_timezone: str,
+        movements: int | None = None,
     ) -> QueryAnswer: ...
+
+    """`movements` overrides how many come back with the figure.
+
+    A parameter rather than only a deployment setting, because the two callers want different
+    things: an answer in a chat needs a handful as evidence, and a movement list *is* the
+    movements. It was a screen asking for fifty and silently getting the chat's number that made
+    this necessary — a limit that is accepted and ignored is worse than one that does not exist.
+    """

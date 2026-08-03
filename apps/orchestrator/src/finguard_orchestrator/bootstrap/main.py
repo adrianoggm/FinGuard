@@ -6,6 +6,8 @@ from finguard_orchestrator.application import (
     AnswerMessageQuery,
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
     CommandBus,
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
@@ -40,6 +42,7 @@ from finguard_orchestrator.infrastructure import (
     HttpCards,
     HttpContacts,
     HttpFinancialQuery,
+    HttpMovementCategories,
     HttpPayments,
     LlmPaymentReader,
     LlmQueryPlanner,
@@ -187,6 +190,16 @@ def create_app() -> FastAPI:
     command_bus.register(
         ResetLlmPolicyCommand, ResetLlmPolicyHandler(policies, catalogue, available)
     )
+    # The holder's own category. A write, and the only one here that is not a payment.
+    command_bus.register(
+        CategoriseMovementCommand,
+        CategoriseMovementHandler(
+            HttpMovementCategories(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
     command_bus.register(PreparePaymentCommand, paying)
     # The form path shares the gateway and skips the reader: nothing to read, nothing to ground.
     command_bus.register(
@@ -215,6 +228,9 @@ def create_app() -> FastAPI:
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
     app.state.payments_enabled = settings.payments_enabled
+    # The vocabulary a screen may offer. The same list the decoder is constrained to, so a
+    # category a chip produces is one the assistant can name back.
+    app.state.categories = settings.categories
     app.state.planner_probe = planner_provider
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth

@@ -27,6 +27,9 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
     PostgresFinancialQueryRepository,
 )
 from finguard_banking.infrastructure.persistence.ledger_repository import PostgresLedgerRepository
+from finguard_banking.infrastructure.persistence.movement_category_repository import (
+    PostgresMovementCategoryRepository,
+)
 from finguard_banking.infrastructure.persistence.payment_repository import (
     PostgresPaymentRepository,
 )
@@ -37,6 +40,7 @@ __all__ = [
     "PostgresContactRepository",
     "PostgresFinancialQueryRepository",
     "PostgresLedgerRepository",
+    "PostgresMovementCategoryRepository",
     "PostgresPaymentRepository",
     "accounts_router",
     "health_router",

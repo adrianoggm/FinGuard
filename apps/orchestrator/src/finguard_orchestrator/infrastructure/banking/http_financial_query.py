@@ -50,12 +50,15 @@ class HttpFinancialQuery:
         account_id: UUID,
         today: date,
         reporting_timezone: str,
+        movements: int | None = None,
     ) -> QueryAnswer:
         body = to_body(
             plan,
             account_id=account_id,
             today=today,
-            supporting_movements=self.supporting_movements,
+            # The caller's count when it gave one, the deployment's otherwise. Banking clamps it to
+            # its own ceiling either way, so this cannot ask for half the ledger.
+            supporting_movements=movements if movements is not None else self.supporting_movements,
             reporting_timezone=reporting_timezone,
         )
 
@@ -174,6 +177,8 @@ def from_body(body: Any, *, account_id: UUID | None = None) -> QueryAnswer:
                 amount_minor=movement["amountMinor"],
                 direction=movement["direction"],
                 merchant_name=movement.get("merchantName"),
+                transaction_id=movement.get("transactionId"),
+                category_is_custom=bool(movement.get("categoryIsCustom", False)),
                 category=movement.get("category"),
             )
             for movement in body.get("supportingMovements") or ()

@@ -38,6 +38,7 @@ def to_movement(row: Any, currency: str) -> Movement:
         description=row["description"],
         merchant_name=row["merchant_name"],
         category=row["category"],
+        category_is_custom=bool(row["category_is_custom"]),
         amount=Money(int(row["amount_minor"]), currency),
         direction=row["direction"],
     )

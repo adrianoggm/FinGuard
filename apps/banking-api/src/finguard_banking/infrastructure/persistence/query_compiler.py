@@ -156,6 +156,7 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
             COALESCE(t.description, '') AS description,
             t.merchant_name,
             t.category,
+            t.category_is_custom,
             {_amount_expression(query.direction)} AS amount_minor,
             t.direction
         FROM {VIEW} t

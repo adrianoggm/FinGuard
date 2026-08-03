@@ -129,3 +129,30 @@ class IntentNotConfirmableError(DomainError):
     def __init__(self, intent_id: object, status: str) -> None:
         self.status = status
         super().__init__(f"payment intent {intent_id} is {status}")
+
+
+class UnknownCategoryError(DomainError):
+    """A category this ledger does not use.
+
+    Refused rather than stored. An override the assistant can never name back — because the list it
+    is constrained to does not contain it — is a label that works on one screen and nowhere else.
+    """
+
+    code = "unknown_category"
+
+    def __init__(self, category: str) -> None:
+        self.category = category
+        super().__init__(f"{category!r} is not a category this ledger uses")
+
+
+class MovementNotFoundError(DomainError):
+    """No movement of this account with that identifier.
+
+    Deliberately the same answer whether the movement belongs to somebody else or to nobody: a
+    caller who could tell those apart could enumerate other people's movements one at a time.
+    """
+
+    code = "movement_not_found"
+
+    def __init__(self, transaction_id: object) -> None:
+        super().__init__(f"no movement {transaction_id}")

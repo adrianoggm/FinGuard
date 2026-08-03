@@ -25,6 +25,10 @@ export type Movement = {
   amount_minor: number;
   merchant_name: string | null;
   category: string | null;
+  /** Present on the movement list, which is the only screen that can refile one. */
+  transaction_id?: string | null;
+  /** Whether the category is the holder's own rather than the bank's guess. */
+  category_is_custom?: boolean;
 };
 
 export type Summary = {
@@ -279,4 +283,23 @@ export type Charges = { card_id: string; since: string; charges: Charge[] };
 
 export async function chargesOn(cardId: string, days: number): Promise<Charges> {
   return read<Charges>(`/v1/cards/${cardId}/charges?days=${days}&limit=50`);
+}
+
+export async function categories(): Promise<string[]> {
+  return (await read<{ categories: string[] }>("/v1/categories")).categories;
+}
+
+/**
+ * Files a movement under a category, or hands it back to the bank with `null`.
+ *
+ * `null` is a choice, not an absence: the ledger keeps what it inferred, so there is always something
+ * to fall back to. Which categories exist is banking's answer — this only sends one.
+ */
+export async function categorise(transactionId: string, category: string | null): Promise<void> {
+  const response = await fetch(`${BASE}/v1/movements/${transactionId}/category`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ category }),
+  });
+  if (!response.ok) await readError(response);
 }

@@ -46,6 +46,26 @@ MAX_PAYMENT_MINOR = 1_000_000
 # short enough that the field cannot carry a paragraph into the contact lookup.
 MAX_RECIPIENT_NAME = 120
 
+# The categories the ledger uses. They are the bank's, not the assistant's: a movement's category
+# is a fact about the ledger, and the planner's copy of this list exists so a constrained decoder
+# cannot emit anything else — which is a different job from validating what a holder may assign.
+#
+# A closed list, and that is the answer to "can a user invent one": not today. The list reaches the
+# model's JSON schema, the prompt's glossary and this validation, so a category somebody made up
+# would be a category the assistant could never name back to them.
+CATEGORIES = (
+    "GROCERIES",
+    "TRANSPORT_FUEL",
+    "RESTAURANTS",
+    "TRANSPORT_PUBLIC",
+    "HEALTH",
+    "LEISURE",
+    "SUBSCRIPTIONS",
+    "HOUSING_RENT",
+    "SALARY",
+    "TRANSFER_BIZUM",
+)
+
 # Sentinel keys for grouping rows that carry no category or merchant. They are contract
 # values, so English: the assistant phrases them for the user.
 UNCATEGORISED = "UNCATEGORISED"
