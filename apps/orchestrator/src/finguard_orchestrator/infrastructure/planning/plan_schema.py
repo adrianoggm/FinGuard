@@ -20,7 +20,11 @@ turns that into one choice per field.
 
 from typing import Any, Final
 
-from finguard_orchestrator.domain.constants import MAX_PERIOD_DAYS
+from finguard_orchestrator.domain.constants import (
+    MAX_MERCHANT_LENGTH,
+    MAX_MERCHANTS,
+    MAX_PERIOD_DAYS,
+)
 from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
@@ -28,6 +32,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     PlanningOutcome,
 )
+from finguard_orchestrator.domain.services.plan_merger import Field
 
 # The outcomes a model may choose. The other three are things that happen TO a model —
 # malformed output, a rejected plan, a dead daemon — and it cannot report those about
@@ -71,6 +76,24 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string", "enum": [*categories, NO_CATEGORY]},
             },
+            # The one field with no enum. A merchant name is data rather than vocabulary,
+            # so the decoder is free here in a way it is nowhere else — bounded in length and
+            # count, and the domain checks the shape. What it cannot do is reach SQL as
+            # anything but a bound parameter, which is banking's test to make.
+            "merchants": {
+                "type": "array",
+                "maxItems": MAX_MERCHANTS,
+                "items": {"type": "string", "maxLength": MAX_MERCHANT_LENGTH},
+            },
+            # A follow-up says what it changes instead of restating what it does not. Both
+            # fields are always present because the schema is built once, and they are ignored
+            # when there is no previous plan to inherit from — a question with no context is
+            # its own whole answer.
+            "isFollowUp": {"type": "boolean"},
+            "changed": {
+                "type": "array",
+                "items": {"type": "string", "enum": [f.value for f in Field]},
+            },
             "groupBy": {"type": "string", "enum": [g.value for g in GroupBy]},
             "metric": {"type": "string", "enum": [m.value for m in Metric]},
         },
@@ -84,6 +107,9 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
             "to",
             "direction",
             "categories",
+            "merchants",
+            "isFollowUp",
+            "changed",
             "groupBy",
             "metric",
         ],

@@ -141,7 +141,7 @@ It also makes "los tres comercios donde más gasté" expressible instead of unsu
 and it retires one of the capability guard's refusals — the two items are related and
 this one should land second.
 
-## 4. Follow-ups as a patch, not a re-derivation
+## ~~4. Follow-ups as a patch, not a re-derivation~~ — done
 
 Demo steps 5 and 6, and the weakest measured capability at 71 %. The prompt currently
 asks the model to classify whether the sentence is a follow-up, decide which fields it
@@ -267,19 +267,23 @@ get a tail — either the code enforces them or it does not.
 
 | property | bar | now | how to check |
 | --- | --- | --- | --- |
-| `invalid structure` | **0** on all three sets | ❌ 1 in adversarial | `evaluate_planning --dataset adversarial` |
-| E2E property violations | **0** | ❌ 1 in adversarial, 0/120 dev, 0/79 validation | `just evaluate-e2e <token> adversarial` |
+| `invalid structure` | **0** on all three sets | ✅ 0 on all three | `evaluate_planning --dataset adversarial` |
+| E2E property violations | **0** | ✅ 0/120 dev, 0/79 validation, 0/36 adversarial | `just evaluate-e2e <token> <set>` |
 | Cross-account containment | **0** failures | ✅ 0, four integration tests | `pytest -m integration` in banking |
 | Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` closed | `evaluate_planning --dataset adversarial` |
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 of 216 | `pytest tests/test_capability_guard.py` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
 | Evidence reconciliation | **0** failures | ✅ 0 | the E2E properties |
-| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ⚠️ validation 8.9 %, dev 6.7 %, ❌ adversarial 11.1 % | `evaluate_planning --dataset <set>` |
+| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ✅ validation 7.6 %, dev 5.8 %, adversarial 8.3 % | `evaluate_planning --dataset <set>` |
 
-Two fail. Both have identified work rather than needing a discovery: three of the ten unsafe
-cases are follow-ups, which item 4 addresses; one is `groupBy` picking `CATEGORY`, which is a
-prompt fix; and the single `invalid structure` is one case worth understanding rather than
-rounding away.
+**All eight pass.** They did not when this table was written, and the four changes that
+closed them are worth naming because none was a tuning pass: `groupBy` learned the Spanish
+vocabulary of each value, `merchantFilter` gave the largest source of unsafe execution an
+answer instead of a workaround, follow-ups became a patch the code merges, and the last
+`invalid structure` turned out to be our own mislabel rather than the constraint failing.
+
+Passing is not the same as done. The flag can come off for the demo; gate 2 is where the
+numbers have to be an order of magnitude better and six things have to exist that do not.
 
 **Why every set and not just held out.** The first version of this bar said "held out",
 and the very next change exploited the gap: a prompt fix took validation from 12.7 % to
@@ -305,7 +309,7 @@ Everything in gate 1 at its bar, and then:
 
 | property | bar | now |
 | --- | --- | --- |
-| **Unsafe execution** | **≤ 2 % on every set** | validation 8.9 %, dev 6.7 %, adversarial 11.1 % |
+| **Unsafe execution** | **≤ 2 % on every set** | validation 7.6 %, dev 5.8 %, adversarial 8.3 % |
 | Banking authenticates its callers | required | ❌ it trusts its network; `app.account_id` comes from the request |
 | `BOOKED` transactions sealed | required | ❌ nothing stops appending entries to a booked transaction |
 | An audit event per financial query | required | ❌ §12.4 specifies it, nothing writes it |

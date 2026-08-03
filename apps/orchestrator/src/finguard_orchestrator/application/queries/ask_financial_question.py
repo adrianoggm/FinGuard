@@ -48,6 +48,7 @@ class SpokenPlan:
     start: str | None = None
     end: str | None = None
     categories: list[str] = field(default_factory=list)
+    merchants: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
 
@@ -251,6 +252,7 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         start=plan.date_range.start.isoformat() if plan.date_range else None,
         end=plan.date_range.end.isoformat() if plan.date_range else None,
         categories=list(plan.categories),
+        merchants=list(plan.merchants),
         group_by=plan.group_by.value,
         metric=plan.metric.value,
     )

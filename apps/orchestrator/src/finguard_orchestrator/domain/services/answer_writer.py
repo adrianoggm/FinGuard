@@ -68,6 +68,11 @@ def describe(plan: FinancialPlan) -> str:
     parts = [window_of(plan), plan.direction.value.lower()]
     if plan.categories:
         parts.append("/".join(plan.categories).lower())
+    if plan.merchants:
+        # Shown because a typo is the failure mode here: "Mercadonna" returns an empty answer,
+        # and a reader who sees the name that was searched for can tell that from "you spent
+        # nothing there".
+        parts.append("/".join(plan.merchants))
     if plan.group_by.value != "NONE":
         parts.append(f"por {plan.group_by.value.lower()}")
     if plan.metric.value != "SUM":

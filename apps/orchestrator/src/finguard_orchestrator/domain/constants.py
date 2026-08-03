@@ -24,5 +24,11 @@ DEFAULT_MAX_OUTPUT_TOKENS = 1024
 # authority that enforces them.
 MAX_CATEGORIES = 20
 MAX_CATEGORY_LENGTH = 40
+
+# Shops a plan may name. Mirrors banking's ceiling: the contract is stated twice by decision,
+# and a value this side allows that the other side refuses arrives as a 422 rather than as a
+# wrong figure.
+MAX_MERCHANTS = 10
+MAX_MERCHANT_LENGTH = 140
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366

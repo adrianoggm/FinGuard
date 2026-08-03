@@ -79,6 +79,7 @@ def plan_to_domain(payload: PlanPayload) -> FinancialPlan:
         period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
         date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
         categories=tuple(payload.categories),
+        merchants=tuple(payload.merchants),
         group_by=payload.group_by,
         metric=payload.metric,
     )
@@ -93,6 +94,7 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
             "start": plan.start,
             "end": plan.end,
             "categories": plan.categories,
+            "merchants": plan.merchants,
             "group_by": plan.group_by,
             "metric": plan.metric,
         }

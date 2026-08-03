@@ -388,20 +388,20 @@ cases:
   - id: t_merchant_carrefour
     group: merchant
     question: ¿Cuánto he gastado en Carrefour este mes?
-    expect: clarification
-    why: no merchant filter; GROCERIES also covers Mercadona, Lidl, Dia and Alcampo
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Carrefour]}
 
   - id: t_merchant_spotify
     group: merchant
     question: ¿Cuánto pago de Spotify?
     expect: clarification
-    why: SUBSCRIPTIONS also holds Netflix and the gym
+    why: it names the shop and not the window — the period is still missing
 
   - id: t_merchant_renfe
     group: merchant
     question: ¿Cuánto llevo gastado en Renfe?
     expect: clarification
-    why: TRANSPORT_PUBLIC also covers EMT, Cabify and Uber
+    why: it names the shop and not the window — the period is still missing
 
   - id: t_merchant_top
     group: merchant
