@@ -18,6 +18,12 @@ grants table access, the guarantee is already underneath rather than waiting to 
 remembered. A view is safe because somebody wrote a WHERE; a table is safe because the
 database will not serve the rows.
 
+**Corrected by 0007, twice.** The write policy here is `FOR ALL USING (true)`, and PostgreSQL
+combines permissive policies with OR — so it cancelled the SELECT policy above it for every role
+subject to them. And FORCE, added here so the owner would be subject too, made the ledger's own
+integrity triggers read an empty table once the policies started restricting: one refused to book
+anything, and the balance check summed zero and passed. Read 0007 before trusting this file.
+
 `current_setting('app.account_id', true)` returns NULL when nothing set it, and NULL fails
 every comparison, so a session that forgets to declare its account sees zero rows. The
 fail-safe direction: forgetting to set it costs an empty answer, never somebody else's.

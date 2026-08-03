@@ -210,7 +210,7 @@ questions:read   assistant:use   assistant:admin   payments:prepare   payments:c
 The same mechanism is what phase 5 needs to tell "may read movements" from "may confirm a
 payment", so it is not an extra — it is that phase's first requirement, arriving early.
 
-## 8. Contacts, then phase 5 — secure Bizum
+## 8. ~~Contacts~~ done, then phase 5 — secure Bizum
 
 `payment_intents`, two-step confirmation, idempotency, balance locked under concurrency,
 double entry, receipt, audit trail. Six of the fourteen demo steps, and the contacts table
@@ -223,12 +223,19 @@ trigger passes and the account's balance changes after the fact. `status` is als
 `VARCHAR(30)` with no `CHECK`, so it admits any string.
 
 ```
-DRAFT → BOOKED       entries only while DRAFT, balanced to book
-DRAFT → CANCELLED    both terminal, no route back
+PENDING → BOOKED       entries only while PENDING, balanced and non-empty to book
+PENDING → CANCELLED    both terminal, no route back
 ```
 
-A correction is a compensating transaction. This is a constraint and a trigger, and it
-must exist before the first payment, not after.
+A correction is a compensating transaction. **Done** — migration 0004, and the states are
+PENDING/BOOKED/CANCELLED rather than the review's DRAFT because PENDING already existed and
+meant exactly that.
+
+Doing it found something the review could not have: the seed inserted every transaction as
+BOOKED and added the entries afterwards, so it could not run under these rules — which means
+the dataset never exercised the lifecycle it was supposed to represent. Every test helper did
+the same. Both now create PENDING, add entries, and book, so 1,621 transactions pass through
+the state machine each time the database is built.
 
 ## 9. Phase 4 — visualisation
 

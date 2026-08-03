@@ -83,6 +83,26 @@ HOLDERS = (
 # would be no double entry and the balance trigger would reject each transaction.
 CLEARING = "ES-COMPENSACION"
 
+# Who each holder can pay. Two Martas on purpose, in Laura's list: resolving "Marta" has to be
+# a question rather than a choice, and a dataset where every name is unique would let that go
+# untested until somebody's money went to the wrong person.
+CONTACTS = {
+    "ES-0001": (
+        ("Marta Ruiz Gomez", "+34600111222"),
+        ("Marta Solis Vega", "+34600333444"),
+        ("Aitor Beltran Diaz", "+34611222333"),
+        ("Carmen Nieto Lara", "+34622333444"),
+    ),
+    "ES-0002": (
+        ("Laura Martin Ruiz", "+34633444555"),
+        ("Sergio Vidal Pons", "+34644555666"),
+    ),
+    "ES-0003": (
+        ("Diego Ferrer Gomez", "+34655666777"),
+        ("Elena Prat Mas", "+34666777888"),
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Movement:
@@ -241,7 +261,7 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     lines.append("")
     lines.append("-- The ledger is immutable: it cannot be cleared with DELETE.")
     lines.append("TRUNCATE ledger_entries, ledger_transactions, balance_projections,")
-    lines.append("         accounts, customers;")
+    lines.append("         contacts, accounts, customers;")
     lines.append("")
 
     bank_customer = identifier(rng)
@@ -267,8 +287,19 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     lines.append(",\n".join(f"    {row}" for row in account_rows) + ";")
     lines.append("")
 
+    contact_rows = [
+        f"({quote(str(identifier(rng)))}, {quote(str(accounts[reference]))}, "
+        f"{quote(name)}, {quote(phone)})"
+        for reference, people in CONTACTS.items()
+        for name, phone in people
+    ]
+    lines.append("INSERT INTO contacts (id, account_id, display_name, phone) VALUES")
+    lines.append(",\n".join(f"    {row}" for row in contact_rows) + ";")
+    lines.append("")
+
     clearing = accounts[CLEARING]
     transaction_rows: list[str] = []
+    to_book: list[str] = []
     entry_rows: list[str] = []
 
     for number, movement in enumerate(movements, start=1):
@@ -278,8 +309,14 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
             ensure_ascii=True,
             sort_keys=True,
         )
+        # Created PENDING regardless of where it ends up: migration 0004 only accepts entries
+        # while a transaction is pending, and the ones that should be booked are booked at the
+        # end. The dataset used to insert them already BOOKED and add entries afterwards, which
+        # the ledger now forbids — and which is why nothing noticed it allowed it.
+        if movement.status == "BOOKED":
+            to_book.append(str(transaction))
         transaction_rows.append(
-            f"({quote(str(transaction))}, {quote(movement.kind)}, {quote(movement.status)}, "
+            f"({quote(str(transaction))}, {quote(movement.kind)}, {quote('PENDING')}, "
             f"{quote(f'seed-{number:06d}')}, {quote(movement.description)}, "
             f"{quote(metadata)}::jsonb, {quote(movement.occurred_at.isoformat())}::timestamptz)"
         )
@@ -311,6 +348,16 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
             entry_rows,
         )
     )
+
+    # Booked last, once every entry exists. This is the lifecycle migration 0004 enforces, so
+    # building the dataset now exercises it 1,621 times rather than routing around it.
+    lines.append("")
+    lines.append("-- PENDING -> BOOKED, now that the entries are in place. The lifecycle trigger")
+    lines.append("-- re-checks the balance per transaction, so a dataset that does not add up")
+    lines.append("-- fails here rather than being loaded and believed.")
+    for start in range(0, len(to_book), BATCH):
+        chunk = ", ".join(quote(identifier) for identifier in to_book[start : start + BATCH])
+        lines.append(f"UPDATE ledger_transactions SET status = 'BOOKED' WHERE id IN ({chunk});")
 
     # The balance check runs here, when the transaction closes: the trigger is deferred.
     lines.append("COMMIT;")

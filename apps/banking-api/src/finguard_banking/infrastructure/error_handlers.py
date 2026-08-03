@@ -15,14 +15,21 @@ from pydantic import ValidationError
 
 from finguard_banking.domain.errors import (
     AccountNotFoundError,
+    AmbiguousContactError,
+    ContactNotFoundError,
     CurrencyMismatchError,
     DomainError,
 )
 
 _STATUS_BY_CODE = {
     AccountNotFoundError.code: 404,
+    ContactNotFoundError.code: 404,
     "invalid_input": 422,
     CurrencyMismatchError.code: 409,
+    # 409, not 422: the request is well formed and the state is what makes it unanswerable.
+    # A caller retrying with a fuller name succeeds, which is exactly what a conflict means,
+    # and the candidate names travel in the body so they can.
+    AmbiguousContactError.code: 409,
 }
 _DEFAULT_STATUS = 400
 

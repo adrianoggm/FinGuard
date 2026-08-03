@@ -4,7 +4,7 @@ import uuid
 
 import asyncpg
 import pytest
-from support import as_pool, create_account, create_transaction, post_entry, record_movement
+from support import as_pool, create_account, record_movement
 
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.value_objects.money import Money
@@ -30,9 +30,10 @@ async def test_an_account_without_movements_has_a_zero_balance(
 async def test_a_debit_subtracts_and_a_credit_adds(connection: asyncpg.Connection) -> None:
     source = await create_account(connection)
     target = await create_account(connection)
-    transaction = await create_transaction(connection)
-    await post_entry(connection, transaction, source, "DEBIT", 2500)
-    await post_entry(connection, transaction, target, "CREDIT", 2500)
+    # Booked, through the lifecycle. The balance view filters on BOOKED, so a pending movement
+    # contributes nothing — this test used to pass because the helper's default was BOOKED and
+    # entries could be added afterwards, which migration 0004 now forbids.
+    await record_movement(connection, account=source, counterparty=target, amount_minor=-2500)
     repository = PostgresLedgerRepository(as_pool(connection))
 
     # Sending money is recorded as a debit on the sender's account.
