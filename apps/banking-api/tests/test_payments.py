@@ -25,9 +25,12 @@ from finguard_banking.domain.errors import (
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.ledger_repository import PostgresLedgerRepository
 from finguard_banking.infrastructure.persistence.payment_repository import (
-    CLEARING_REFERENCE,
     PostgresPaymentRepository,
 )
+
+# Read from configuration, like the service does. A literal here would pass while the deployment
+# used a different account, which is the drift this whole change is about.
+CLEARING_REFERENCE = get_settings().clearing_account_reference
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +62,21 @@ async def funded(connection: asyncpg.Connection, cents: int) -> tuple[uuid.UUID,
 
 
 def payments(connection: asyncpg.Connection) -> PostgresPaymentRepository:
-    return PostgresPaymentRepository(as_pool(connection))
+    settings = get_settings()
+    return PostgresPaymentRepository(
+        as_pool(connection),
+        clearing_reference=settings.clearing_account_reference,
+        validity_seconds=settings.payment_validity_seconds,
+    )
+
+
+def _repository(pool: object, settings: object) -> PostgresPaymentRepository:
+    """A repository over a real pool, configured the way the service configures one."""
+    return PostgresPaymentRepository(
+        pool,  # type: ignore[arg-type]
+        clearing_reference=settings.clearing_account_reference,  # type: ignore[attr-defined]
+        validity_seconds=settings.payment_validity_seconds,  # type: ignore[attr-defined]
+    )
 
 
 async def balance_of(connection: asyncpg.Connection, account: uuid.UUID) -> Money:
@@ -245,10 +262,15 @@ async def test_two_confirmations_racing_for_one_balance_pay_once() -> None:
             await record_movement(setup, account=account, counterparty=bank, amount_minor=100_00)
             contact = await create_contact(setup, account, "Marta Ruiz Gomez", "+34600111222")
 
-            first = await PostgresPaymentRepository(as_pool(setup)).prepare(
+            racing = PostgresPaymentRepository(
+                as_pool(setup),
+                clearing_reference=settings.clearing_account_reference,
+                validity_seconds=settings.payment_validity_seconds,
+            )
+            first = await racing.prepare(
                 account_id=account, contact_id=contact, amount=Money(80_00, EUR), key="a"
             )
-            second = await PostgresPaymentRepository(as_pool(setup)).prepare(
+            second = await racing.prepare(
                 account_id=account, contact_id=contact, amount=Money(80_00, EUR), key="b"
             )
 
@@ -260,10 +282,8 @@ async def test_two_confirmations_racing_for_one_balance_pay_once() -> None:
         )
         try:
             outcomes = await asyncio.gather(
-                PostgresPaymentRepository(left).confirm(
-                    account_id=account, intent_id=first.intent_id
-                ),
-                PostgresPaymentRepository(right).confirm(
+                _repository(left, settings).confirm(account_id=account, intent_id=first.intent_id),
+                _repository(right, settings).confirm(
                     account_id=account, intent_id=second.intent_id
                 ),
                 return_exceptions=True,
@@ -354,3 +374,31 @@ async def test_the_sweep_leaves_what_already_happened_alone(
         "SELECT status FROM payment_intents WHERE id = $1", intent.intent_id
     )
     assert status == "CONFIRMED"
+
+
+def test_the_operational_values_of_a_payment_are_configuration() -> None:
+    """How long a preview stands, and which account the money leaves through.
+
+    Both were constants in this module, which means changing either was a commit and a rebuild. They
+    belong to a deployment: the validity is a product decision about how long a quoted balance stays
+    roughly true, and the clearing reference is an account that exists in *this* ledger.
+
+    Public on the adapter because configuration that reaches one without being observable is
+    configuration nobody can prove arrived.
+    """
+    settings = get_settings()
+    repository = PostgresPaymentRepository(
+        as_pool(None),  # type: ignore[arg-type]
+        clearing_reference=settings.clearing_account_reference,
+        validity_seconds=settings.payment_validity_seconds,
+    )
+
+    assert repository.clearing_reference == settings.clearing_account_reference
+    assert repository.validity_seconds == settings.payment_validity_seconds
+
+
+def test_a_payment_cannot_be_prepared_with_values_nobody_chose() -> None:
+    """No defaults, and the absence is the design: an adapter built with numbers nobody chose is an
+    adapter whose behaviour is an accident of what somebody typed once."""
+    with pytest.raises(TypeError):
+        PostgresPaymentRepository(as_pool(None))  # type: ignore[arg-type, call-arg]

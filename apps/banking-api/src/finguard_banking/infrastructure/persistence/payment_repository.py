@@ -45,14 +45,6 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
     _DECLARE_ACCOUNT,
 )
 
-# How long a preview stands. Long enough for somebody to read it and answer, short enough that the
-# balance it quoted is still roughly true.
-DEFAULT_VALIDITY_SECONDS = 300
-
-# The counterparty for money leaving the bank, as the seeded ledger models it: a payment to a phone
-# number has no account here, so the other side of the double entry is the clearing account.
-CLEARING_REFERENCE = "ES-COMPENSACION"
-
 _AWAITING = "AWAITING_CONFIRMATION"
 
 _BALANCE_SQL = """
@@ -63,8 +55,19 @@ _BALANCE_SQL = """
 class PostgresPaymentRepository:
     """Implements the payment flow over PostgreSQL. Runs as the owner: it writes the ledger."""
 
-    def __init__(self, pool: asyncpg.Pool[Any]) -> None:
+    def __init__(
+        self, pool: asyncpg.Pool[Any], *, clearing_reference: str, validity_seconds: int
+    ) -> None:
+        """No defaults, and the absence is the design. How long a preview stands is a product
+        decision and the clearing account is a fact about this ledger; both belong to a deployment,
+        beside the reason each one is what it is, and not here where changing one is a commit.
+
+        Public because configuration that reaches an adapter without being observable is
+        configuration nobody can prove arrived.
+        """
         self._pool = pool
+        self.clearing_reference = clearing_reference
+        self.validity_seconds = validity_seconds
 
     async def prepare(
         self,
@@ -73,7 +76,6 @@ class PostgresPaymentRepository:
         contact_id: UUID,
         amount: Money,
         key: str,
-        valid_for_seconds: int = DEFAULT_VALIDITY_SECONDS,
     ) -> PaymentPreview:
         """Writes the intent and returns what the user is asked to confirm. Moves nothing."""
         async with self._pool.acquire() as connection, connection.transaction():
@@ -102,7 +104,7 @@ class PostgresPaymentRepository:
                 intent_id, expires_at = existing["id"], existing["expires_at"]
             else:
                 intent_id = uuid.uuid4()
-                expires_at = datetime.now(UTC) + timedelta(seconds=valid_for_seconds)
+                expires_at = datetime.now(UTC) + timedelta(seconds=self.validity_seconds)
                 await connection.execute(
                     "INSERT INTO payment_intents "
                     "(id, account_id, contact_id, amount_minor, currency, status, "
@@ -166,7 +168,7 @@ class PostgresPaymentRepository:
                 raise InsufficientFundsError(balance.amount_minor, amount.amount_minor)
 
             clearing = await connection.fetchval(
-                "SELECT id FROM accounts WHERE account_reference = $1", CLEARING_REFERENCE
+                "SELECT id FROM accounts WHERE account_reference = $1", self.clearing_reference
             )
             transaction_id = await self._book(
                 connection,

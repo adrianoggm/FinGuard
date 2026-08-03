@@ -22,15 +22,19 @@ from finguard_banking.application import (
     PreparePaymentCommand,
     PreparePaymentHandler,
 )
+from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.domain.errors import InsufficientFundsError
 from finguard_banking.domain.models.audit_event import AuditEvent
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.audit_log import PostgresAuditLog
 from finguard_banking.infrastructure.persistence.contact_repository import PostgresContactRepository
 from finguard_banking.infrastructure.persistence.payment_repository import (
-    CLEARING_REFERENCE,
     PostgresPaymentRepository,
 )
+
+# Read from configuration, like the service does. A literal here would pass while the deployment
+# used a different account, which is the drift this whole change is about.
+CLEARING_REFERENCE = get_settings().clearing_account_reference
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +63,12 @@ async def audited_bus(connection: asyncpg.Connection, cents: int) -> tuple[Comma
     await create_contact(connection, account, "Marta Ruiz Gomez", "+34600111222")
 
     pool = as_pool(connection)
-    payments = PostgresPaymentRepository(pool)
+    settings = get_settings()
+    payments = PostgresPaymentRepository(
+        pool,
+        clearing_reference=settings.clearing_account_reference,
+        validity_seconds=settings.payment_validity_seconds,
+    )
     bus = CommandBus(audit=PostgresAuditLog(pool))
     bus.register(
         PreparePaymentCommand, PreparePaymentHandler(PostgresContactRepository(pool), payments)

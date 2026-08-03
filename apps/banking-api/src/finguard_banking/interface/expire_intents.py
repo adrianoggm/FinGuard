@@ -26,7 +26,11 @@ async def sweep() -> int:
         settings.database_url, min_size=1, max_size=1
     )
     try:
-        return await PostgresPaymentRepository(pool).expire_stale()
+        return await PostgresPaymentRepository(
+            pool,
+            clearing_reference=settings.clearing_account_reference,
+            validity_seconds=settings.payment_validity_seconds,
+        ).expire_stale()
     finally:
         await pool.close()
 

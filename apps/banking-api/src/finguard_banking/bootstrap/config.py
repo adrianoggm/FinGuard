@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     # at 23:30 in Spain would fall on the next day.
     reporting_timezone: str = "Europe/Madrid"
 
+    # How long a payment preview stands. Long enough for somebody to read it and answer, short
+    # enough that the balance it quoted is still roughly true. A product decision, so it is
+    # configuration rather than a constant in the adapter that uses it.
+    payment_validity_seconds: int = Field(default=300, ge=30, le=3_600)
+
+    # The counterparty for money leaving the bank: a payment to a phone number has no account
+    # here, so the other side of the double entry is the clearing account. It is an account that
+    # exists in *this* ledger, which makes it a deployment fact — the seed creates one with this
+    # reference, and a real bank's would be a real account.
+    clearing_account_reference: str = "ES-COMPENSACION"
+
     # Query limits this deployment applies. They can only narrow the domain ceilings in
     # domain/constants.py, never widen them: a configuration mistake cannot turn into a
     # query that returns half the ledger.
