@@ -36,6 +36,8 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
+from finguard_orchestrator.domain.services import plan_merger
+from finguard_orchestrator.domain.services.plan_merger import Field
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -87,7 +89,7 @@ class LlmQueryPlanner:
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc))
 
-        return _read(answer, today=today, categories=self._categories)
+        return _read(answer, today=today, categories=self._categories, previous=previous)
 
 
 class _MalformedError(Exception):
@@ -122,7 +124,9 @@ def _texts(body: dict[str, Any], key: str) -> list[str]:
     return value
 
 
-def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningResult:
+def _read(
+    answer: str, *, today: date, categories: tuple[str, ...], previous: FinancialPlan | None = None
+) -> PlanningResult:
     try:
         body = json.loads(answer)
     except ValueError as exc:
@@ -156,7 +160,7 @@ def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningR
             return PlanningResult.unsupported("the question cannot be expressed as a query")
 
         case PlanningOutcome.PLANNED:
-            return _build_plan(body, today=today, categories=categories)
+            return _build_plan(body, today=today, categories=categories, previous=previous)
 
         case _:
             # The three remaining outcomes describe things that happen TO a model; it
@@ -164,8 +168,31 @@ def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningR
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
 
 
+def _flag(body: dict[str, Any], key: str) -> bool:
+    value = body.get(key)
+    if not isinstance(value, bool):
+        raise _MalformedError(f"{key} must be a boolean, got {type(value).__name__}")
+    return value
+
+
+def _changed(body: dict[str, Any]) -> frozenset[Field]:
+    """Which fields the follow-up changes. A name outside the set is malformed rather than
+    ignored: silently dropping one means inheriting a field the sentence just changed, which
+    is a real figure for the previous question."""
+    names = _texts(body, "changed")
+    known = {f.value for f in Field}
+    unknown = set(names) - known
+    if unknown:
+        raise _MalformedError(f"changed holds unknown fields: {sorted(unknown)}")
+    return frozenset(Field(name) for name in names)
+
+
 def _build_plan(
-    body: dict[str, Any], *, today: date, categories: tuple[str, ...]
+    body: dict[str, Any],
+    *,
+    today: date,
+    categories: tuple[str, ...],
+    previous: FinancialPlan | None = None,
 ) -> PlanningResult:
     try:
         selected_categories = _categories(_texts(body, "categories"), allowed=categories)
@@ -201,7 +228,23 @@ def _build_plan(
         # carrying a value the domain will not take.
         return PlanningResult.invalid_domain(str(exc))
 
-    return PlanningResult.planned(plan)
+    if previous is None:
+        return PlanningResult.planned(plan)
+
+    try:
+        follow_up, changed = _flag(body, "isFollowUp"), _changed(body)
+    except _MalformedError as exc:
+        return PlanningResult.invalid_structure(str(exc))
+
+    if not follow_up:
+        # A complete question carries its own context. Inheriting here is how a breakdown
+        # nobody asked for survives into the next answer.
+        return PlanningResult.planned(plan)
+
+    try:
+        return PlanningResult.planned(plan_merger.merge(previous, plan, changed=changed))
+    except InvalidValueError as exc:
+        return PlanningResult.invalid_domain(str(exc))
 
 
 def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange:

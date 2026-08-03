@@ -32,6 +32,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     PlanningOutcome,
 )
+from finguard_orchestrator.domain.services.plan_merger import Field
 
 # The outcomes a model may choose. The other three are things that happen TO a model —
 # malformed output, a rejected plan, a dead daemon — and it cannot report those about
@@ -84,6 +85,15 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
                 "maxItems": MAX_MERCHANTS,
                 "items": {"type": "string", "maxLength": MAX_MERCHANT_LENGTH},
             },
+            # A follow-up says what it changes instead of restating what it does not. Both
+            # fields are always present because the schema is built once, and they are ignored
+            # when there is no previous plan to inherit from — a question with no context is
+            # its own whole answer.
+            "isFollowUp": {"type": "boolean"},
+            "changed": {
+                "type": "array",
+                "items": {"type": "string", "enum": [f.value for f in Field]},
+            },
             "groupBy": {"type": "string", "enum": [g.value for g in GroupBy]},
             "metric": {"type": "string", "enum": [m.value for m in Metric]},
         },
@@ -98,6 +108,8 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
             "direction",
             "categories",
             "merchants",
+            "isFollowUp",
+            "changed",
             "groupBy",
             "metric",
         ],
