@@ -123,6 +123,23 @@ async def record_movement(
     return transaction_id
 
 
+async def create_contact(
+    conn: asyncpg.Connection,
+    account: uuid.UUID,
+    display_name: str,
+    phone: str,
+) -> uuid.UUID:
+    contact_id = uuid.uuid4()
+    await conn.execute(
+        "INSERT INTO contacts (id, account_id, display_name, phone) VALUES ($1, $2, $3, $4)",
+        contact_id,
+        account,
+        display_name,
+        phone,
+    )
+    return contact_id
+
+
 async def force_deferred_checks(conn: asyncpg.Connection) -> None:
     """Fires the deferred triggers without committing.
 

@@ -210,7 +210,7 @@ questions:read   assistant:use   assistant:admin   payments:prepare   payments:c
 The same mechanism is what phase 5 needs to tell "may read movements" from "may confirm a
 payment", so it is not an extra — it is that phase's first requirement, arriving early.
 
-## 8. Contacts, then phase 5 — secure Bizum
+## 8. ~~Contacts~~ done, then phase 5 — secure Bizum
 
 `payment_intents`, two-step confirmation, idempotency, balance locked under concurrency,
 double entry, receipt, audit trail. Six of the fourteen demo steps, and the contacts table
