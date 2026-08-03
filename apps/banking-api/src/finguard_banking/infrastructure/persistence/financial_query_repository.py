@@ -17,6 +17,15 @@ from finguard_banking.infrastructure.persistence.query_compiler import (
 
 # The currency and the existence of the account come from the balances view, not from
 # the accounts table: the query role cannot reach it, and that is exactly the point.
+# The account the session may read. `SET LOCAL` scopes it to the transaction, so it cannot
+# leak to the next caller borrowing this pooled connection — a plain SET would.
+#
+# It is set from the plan and the compiler also filters on it: the same fact enforced twice
+# from two independent places, which is the whole point. A compiler that dropped its WHERE
+# would still see nothing, and a session that forgot this sees nothing either, because
+# current_setting(..., true) is NULL and NULL fails every comparison.
+_DECLARE_ACCOUNT = "SELECT set_config('app.account_id', $1::text, true)"
+
 _ACCOUNT_SQL = """
     SELECT b.currency
     FROM assistant_read.account_balances_v1 b
@@ -46,7 +55,11 @@ class PostgresFinancialQueryRepository:
         movements = compile_movements(query, zone)
 
         started = time.perf_counter()
-        async with self._pool.acquire() as connection:
+        async with self._pool.acquire() as connection, connection.transaction():
+            # Declared before anything is read. The views filter on it and row-level
+            # security enforces it underneath, so this is the one statement that decides
+            # whose rows exist for the rest of the transaction.
+            await connection.execute(_DECLARE_ACCOUNT, str(query.account_id))
             currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
             # An account that does not exist is not an account without movements.
             if currency is None:
