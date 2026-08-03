@@ -2,8 +2,8 @@
 
 The client, as a phone. React + TypeScript on Vite, local port `3000`.
 
-Vite rather than Next.js — the vision permits either (§14). This is one screen that talks to
-127.0.0.1, so server rendering and a routing framework would be scaffolding around a single page.
+Vite rather than Next.js — the vision permits either (§14). Four screens reached by tapping do not need
+URLs, so server rendering and a routing framework would be scaffolding around a `useState`.
 
 It holds no financial rules and never calls `banking-api`: only `orchestrator`. Every figure on screen
 arrived through it, which is what makes that claim checkable rather than stated.
@@ -23,38 +23,60 @@ the other half worth seeing.
 
 ## The shape of it
 
-A bank app with a floating button. Tapping it raises **conversation mode** as a sheet over the app,
-which is the point of a floating button: you do not leave what you were doing, and the balance staying
-visible behind the conversation is what makes asking about your money feel like part of the app rather
-than a chat bolted onto it.
+Four screens and a floating button. Tapping the button raises **conversation mode** as a sheet over
+whichever screen you are on, which is the point of a floating button: you do not leave what you were
+doing, and the figures staying visible behind the conversation are what make asking about your money
+part of the app rather than a chat bolted onto it.
 
 ```
-src/App.tsx           the phone: frame, status bar, the button, the sheet
-src/Home.tsx          the bank screen — balance and recent movements
+src/App.tsx           the phone: frame, status bar, tabs, the button, the sheet
+src/Home.tsx          balance, month by month, four shortcuts, accounts, last movements
+src/Accounts.tsx      every movement, with a merchant search and category filters
+src/Finances.tsx      where the money went: by category and by month
+src/Bizum.tsx         pick a contact, type an amount, read the preview, say yes
 src/Conversation.tsx  the sheet: turns, stages, the plan behind each figure, payments
 src/api.ts            the orchestrator. The only file that knows a URL
-src/format.ts         money and dates as Spain writes them
+src/format.ts         money, dates and amounts as Spain writes them
+src/tabs.ts           where the app can be
 src/styles.css        one stylesheet, no framework
 ```
 
-Three decisions in there are not cosmetic.
+**Every button goes somewhere.** The first version of this had four shortcuts and a tab bar that did
+nothing, and that is worse than not drawing them: a button that does not respond teaches somebody the
+app is broken, and they are right.
 
-**The home screen's balance is real.** It comes from `GET /v1/account/summary`, which reaches the
-ledger through a plan built in code with no model involved. Mock data would have put a second balance
-on the phone, and a home screen disagreeing with the chat is the first thing anybody would notice.
+Four decisions in there are not cosmetic.
 
-**The plan travels with every figure.** Each answer carries the query that produced it and the
-movements behind it, one tap away. A number from a pipeline with a language model in it should not
-have to be taken on faith, and that is the control that makes a residual error survivable: somebody
-who asked about this month and reads "el mes pasado" can see it.
+**Every figure is real.** The balance comes from `GET /v1/account/summary`, the lists and the
+breakdowns from `/v1/account/movements` and `/v1/account/breakdown`. All three reach the ledger through
+a plan built in code with no model involved. Mock data would have put a second balance on the phone,
+and a home screen disagreeing with the chat is the first thing anybody would notice.
 
-**A payment is answered in words.** The reply goes to the confirm endpoint as text — including a typed
-one. The buttons exist because "sí" is what most people want to press, but "sí pero mándale 30" has to
-reach the service, which knows that is not a yes. This app never decides that somebody agreed.
+**The plan travels with every figure the conversation produces.** Each answer carries the query behind
+it and the movements behind that, one tap away. A number from a pipeline with a language model in it
+should not have to be taken on faith, and that is the control that makes a residual error survivable:
+somebody who asked about this month and reads "el mes pasado" can see it.
+
+**A payment is answered in words.** In the chat the reply goes to the confirm endpoint as text,
+including a typed one — the buttons exist because "sí" is what most people press, but "sí pero mándale
+30" has to reach the service, which knows that is not a yes. This app never decides that somebody
+agreed.
+
+**The Bizum form has no grounding check, and that is right rather than a shortcut.** Grounding catches a
+figure a model invented; there, the figure was typed into a field and the recipient was chosen from a
+list this account was allowed to see. What does not change is the preview and the confirmation.
 
 ## Not here yet
 
-- **Vega-Lite charts** (phase 4). The dependency is not installed until there is a spec to render.
+- **Vega-Lite charts** (phase 4). The bars are CSS. Installing a charting library to draw six divs
+  would be paying for that decision ahead of making it; the validated spec the service will send is
+  what justifies the dependency.
+- **More than one account.** The credential names exactly one, so `CUENTAS` lists one. Showing several
+  means a credential naming a *customer* and every request naming which account — a change to identity,
+  to the RLS declaration and to every endpoint. It is the only item here with a real architectural cost
+  rather than a screen's worth of work.
+- **Loans and cards.** There is no credit in the ledger, so there is no "tu financiación" to put beside
+  the balance. What is there instead is this month's spending, which is real.
 - **Voice.** §6.1.3 gives it its own service and the roadmap puts it in phase 6. A microphone button
   that does nothing would be worse than its absence.
 - **Tests.** Vitest is installed and there are none. The flows are verified by driving a real browser
