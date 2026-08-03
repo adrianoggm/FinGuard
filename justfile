@@ -4,7 +4,7 @@
 
 set shell := ["bash", "-uc"]
 
-py_services := "apps/banking-api apps/assistant-api"
+py_services := "apps/banking-api apps/orchestrator"
 
 # List the available tasks
 default:
@@ -101,9 +101,9 @@ install:
 serve-banking:
     cd apps/banking-api && uv run uvicorn finguard_banking.bootstrap.main:app --reload --port 8001
 
-# assistant-api with autoreload. Needs port 8000 free
-serve-assistant:
-    cd apps/assistant-api && uv run uvicorn finguard_assistant.bootstrap.main:app --reload --port 8000
+# orchestrator with autoreload. Needs port 8000 free
+serve-orchestrator:
+    cd apps/orchestrator && uv run uvicorn finguard_orchestrator.bootstrap.main:app --reload --port 8000
 
 # The active LLM policy
 llm-policy:
@@ -128,6 +128,18 @@ test:
 # Without a database: skips the integration tests
 test-unit:
     for s in {{ py_services }}; do (cd "$s" && uv run pytest -q -m "not integration"); done
+
+# Accuracy of the query engine given a correct plan (phase 2)
+# Accuracy of turning a Spanish sentence into a plan (phase 3). Needs a local Ollama
+# daemon; the model tag is the one you want to compare.
+evaluate-planning model="qwen2.5-coder:7b":
+    cd apps/orchestrator && uv run python scripts/evaluate_planning.py --model {{ model }}
+
+# The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
+# up, because the point is to exercise the deployed service and not the handler.
+# Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.
+evaluate-e2e token dataset="dev":
+    cd apps/orchestrator && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset {{ dataset }}
 
 # What has to pass before pushing a commit
 check: lint typecheck test

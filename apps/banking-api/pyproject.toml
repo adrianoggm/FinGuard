@@ -1,7 +1,7 @@
 [project]
 name = "finguard-banking-api"
 version = "0.1.0"
-description = "Núcleo financiero determinista de FinGuard"
+description = "Deterministic financial core of FinGuard"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

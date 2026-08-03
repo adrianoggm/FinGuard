@@ -7,7 +7,7 @@ return a GetBalanceResult, with no cast at the call site.
 PEP 695 type parameters rather than Generic[...]: variance is inferred, so the handler
 protocol does not need a covariant TypeVar spelled out.
 
-ponytail: this module is duplicated in assistant-api. Two copies of sixty lines beat a
+ponytail: this module is duplicated in orchestrator. Two copies of sixty lines beat a
 shared package that nothing else uses yet — it moves to packages/python/ when a third
 service needs it.
 """

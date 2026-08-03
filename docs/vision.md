@@ -283,7 +283,7 @@ The system is designed as independent services, but that logical separation does
 
 ### 6.1. Deployable services
 
-#### 6.1.1. `finguard-assistant`
+#### 6.1.1. `finguard-orchestrator`
 
 Responsibilities:
 
@@ -365,7 +365,7 @@ To avoid premature complexity:
 ```text
 Initial phase
 ├── finguard-web
-├── finguard-assistant
+├── finguard-orchestrator
 ├── finguard-banking
 └── PostgreSQL
 
@@ -571,7 +571,7 @@ finguard-banking-db
 ├── idempotency_records
 └── outbox_events
 
-finguard-assistant-db
+finguard-orchestrator-db
 ├── conversations
 ├── messages
 ├── tool_executions
@@ -1127,7 +1127,7 @@ Minimum structure for the first iteration:
 finguard/
 ├── apps/
 │   ├── web/
-│   ├── assistant-api/
+│   ├── orchestrator/
 │   └── banking-api/
 ├── packages/
 │   └── contracts/

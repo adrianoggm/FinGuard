@@ -7,7 +7,7 @@ written would be a race waiting to happen.
 It is the seam phase 5 needs — idempotency, audit and correlation IDs all hook here,
 once, instead of inside every handler.
 
-ponytail: this module is duplicated in assistant-api. Two copies of sixty lines beat a
+ponytail: this module is duplicated in orchestrator. Two copies of sixty lines beat a
 shared package that nothing else uses yet — it moves to packages/python/ when a third
 service needs it.
 """
