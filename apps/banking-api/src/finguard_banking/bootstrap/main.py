@@ -21,6 +21,7 @@ from finguard_banking.application import (
 )
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import (
+    PostgresAuditLog,
     PostgresContactRepository,
     PostgresFinancialQueryRepository,
     PostgresLedgerRepository,
@@ -77,7 +78,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # is about to point a ledger movement at.
     contacts = PostgresContactRepository(pool)
     payments = PostgresPaymentRepository(pool)
-    bus = app.state.command_bus
+    # Rebuilt here rather than in create_app: the trail needs the pool, and every command is
+    # audited by the bus so no handler can be the one that forgets.
+    app.state.command_bus = bus = CommandBus(audit=PostgresAuditLog(pool))
     bus.register(PreparePaymentCommand, PreparePaymentHandler(contacts, payments))
     bus.register(ConfirmPaymentCommand, ConfirmPaymentHandler(payments))
     bus.register(CancelPaymentCommand, CancelPaymentHandler(payments))
