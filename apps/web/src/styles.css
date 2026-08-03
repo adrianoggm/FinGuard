@@ -894,6 +894,7 @@ body {
 
 .fab {
   position: absolute;
+  z-index: 10;
   right: 1.1rem;
   bottom: 4.5rem;
   width: 3.5rem;
@@ -921,9 +922,20 @@ body {
 
 /* --- conversation mode ---------------------------------------------------------- */
 
+/* Above the tab bar, and this is not decoration.
+ *
+ * The tab bar is rendered after the sheet and is also absolutely positioned, so it painted on top of
+ * the composer — which sits at the bottom of the sheet, exactly where the tabs are. Tapping the text
+ * field hit a tab instead: the chat could not be typed in at all, and touching near the bottom of the
+ * sheet silently navigated somewhere else. `elementFromPoint` at the centre of the input returned
+ * BUTTON.tab, which is how this was finally pinned down.
+ *
+ * Stacking by DOM order is the kind of thing that works until somebody adds an element below, so the
+ * modal layer says out loud that it is one. */
 .scrim {
   position: absolute;
   inset: 0;
+  z-index: 20;
   background: rgb(6 18 15 / 35%);
   animation: fade 200ms ease both;
 }
@@ -939,6 +951,8 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
+  /* One above the scrim, which is itself above the tab bar. */
+  z-index: 21;
   height: 78%;
   display: flex;
   flex-direction: column;
