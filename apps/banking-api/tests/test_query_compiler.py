@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from finguard_banking.domain.enums import Direction, GroupBy
+from finguard_banking.domain.enums import Direction, GroupBy, Metric
 from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.value_objects.category import Category
@@ -125,3 +125,38 @@ def test_an_unknown_field_is_rejected() -> None:
                 "sql": "SELECT 1",
             }
         )
+
+
+# --- which groups survive the limit -------------------------------------------------
+
+
+def test_a_breakdown_of_money_is_ordered_by_money() -> None:
+    """`ORDER BY 1` with a LIMIT kept the groups that come first *alphabetically*. Asked
+    "¿en qué me he gastado más?", the answer showed the alphabetically first five
+    categories and called them the biggest — a wrong answer delivered with a straight
+    face, and the demo's own opening question."""
+    compiled = compile_aggregate(
+        query(group_by=GroupBy.CATEGORY, metric=Metric.SUM), "Europe/Madrid"
+    )
+
+    assert "ORDER BY total_minor DESC" in compiled.sql
+
+
+def test_a_breakdown_of_counts_is_ordered_by_counts() -> None:
+    compiled = compile_aggregate(
+        query(group_by=GroupBy.MERCHANT, metric=Metric.COUNT), "Europe/Madrid"
+    )
+
+    assert "ORDER BY movement_count DESC" in compiled.sql
+
+
+@pytest.mark.parametrize("group_by", [GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH])
+def test_a_breakdown_over_time_stays_chronological(group_by: GroupBy) -> None:
+    """Time is the one grouping where the key's own order is the meaningful one. It also
+    happens to be what `ORDER BY 1` did, since the keys are ISO dates — so this is the
+    case the old behaviour got right by accident, and it is worth pinning before somebody
+    "fixes" it into the money ordering too."""
+    compiled = compile_aggregate(query(group_by=group_by, metric=Metric.SUM), "Europe/Madrid")
+
+    assert "ORDER BY key" in compiled.sql
+    assert "DESC" not in compiled.sql.split("ORDER BY key")[1]
