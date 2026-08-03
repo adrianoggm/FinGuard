@@ -99,6 +99,13 @@ FALLBACK_QUESTION: Final = (
     "No he entendido qué quieres consultar de tu cuenta. ¿Puedes decirlo de otra forma?"
 )
 
+# What to ask when the sentence read completely except for its window. The examples are phrases
+# `window_words` can read back, which is what makes the next turn deterministic: suggesting a form
+# the reader does not recognise would send the answer to the model and undo the point of asking.
+WINDOW_QUESTION: Final = (
+    "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
+)
+
 
 class _MalformedError(Exception):
     """The answer did not match the schema it was constrained to. Internal to this
@@ -272,6 +279,36 @@ def _build_plan(
 
     try:
         window = _window(body, today=today)
+    except _MalformedError as exc:
+        return PlanningResult.invalid_structure(str(exc))
+    except (InvalidValueError, ValueError) as exc:
+        # A window that is wrong rather than absent: a range ending after today, an unparseable
+        # date, `n` outside its bounds. Nobody can supply what is already there and incorrect.
+        return PlanningResult.invalid_domain(str(exc))
+
+    follow_up, changed = False, frozenset[Field]()
+    if previous is not None:
+        try:
+            follow_up, changed = _flag(body, "isFollowUp"), _changed(body)
+        except _MalformedError as exc:
+            return PlanningResult.invalid_structure(str(exc))
+
+    inherits_window = follow_up and Field.WINDOW not in changed
+    if window is None and previous is not None and inherits_window:
+        # The prompt says "do not restate the rest", so a follow-up changing the category emits
+        # no window on purpose. The plan used to be built before the merge could supply one, so
+        # "¿y en gasolina?" was refused for missing the single field the model was told to leave
+        # out. Taken as a pair, like the merge does: a plan carries one window or the other.
+        window = previous.period or previous.date_range
+
+    if window is None:
+        # Everything else read fine and one piece is missing, which is a question rather than a
+        # failure. The draft is what makes the answer to it a completion instead of a restart.
+        return PlanningResult.needs_clarification(
+            WINDOW_QUESTION, _draft(body, today=today, categories=categories)
+        )
+
+    try:
         plan = FinancialPlan(
             direction=Direction(direction),
             period=window if isinstance(window, RelativePeriod) else None,
@@ -281,24 +318,14 @@ def _build_plan(
             group_by=GroupBy(group_by),
             metric=Metric(metric),
         )
-    except _MalformedError as exc:
-        return PlanningResult.invalid_structure(str(exc))
     except InvalidValueError as exc:
         return PlanningResult.invalid_domain(str(exc))
     except ValueError as exc:
-        # An enum value outside the schema, or an unparseable date: well-formed JSON
-        # carrying a value the domain will not take.
+        # An enum value outside the schema: well-formed JSON carrying a value the domain
+        # will not take.
         return PlanningResult.invalid_domain(str(exc))
 
-    if previous is None:
-        return PlanningResult.planned(plan)
-
-    try:
-        follow_up, changed = _flag(body, "isFollowUp"), _changed(body)
-    except _MalformedError as exc:
-        return PlanningResult.invalid_structure(str(exc))
-
-    if not follow_up:
+    if previous is None or not follow_up:
         # A complete question carries its own context. Inheriting here is how a breakdown
         # nobody asked for survives into the next answer.
         return PlanningResult.planned(plan)
@@ -309,19 +336,32 @@ def _build_plan(
         return PlanningResult.invalid_domain(str(exc))
 
 
-def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange:
+def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange | None:
+    """The window the model named, or None if it named none.
+
+    None is a reading, not a failure — and telling the two apart is the whole point of this
+    signature. A window that is *missing* can be supplied: by the previous plan on a follow-up,
+    or by the user on the next turn. A window that is *wrong* — a range ending after today, an
+    unparseable date — still raises, because there is nothing for anyone to supply.
+
+    It used to raise for both, and the missing case then arrived as INVALID_DOMAIN. The deployed
+    model answers "¿cuánto suelo pagar de alquiler?" with `period: "ABSOLUTE"` and both ends
+    empty, which is the only way the schema lets it choose PLANNED while having no window — so
+    the reply was "no he entendido la pregunta" to a sentence it had understood entirely.
+    """
     named = _text(body, "period")
 
     if not named:
-        # The empty period exists so a model that is asking or refusing has something to
-        # put there. Arriving with PLANNED means it chose to answer and then named no
-        # window, which is not a date-parsing problem and should not read like one.
-        raise InvalidValueError("a plan needs a window and none was named")
+        # The empty period exists so a model that is asking or refusing has something to put
+        # there. On PLANNED it means it read the sentence and found no window in it.
+        return None
 
     if named == ABSOLUTE:
         start, end = _text(body, "from"), _text(body, "to")
         if not start or not end:
-            raise InvalidValueError("an explicit range needs both ends")
+            # ABSOLUTE with an empty end is the same statement as an empty period, spelled
+            # differently. It is the spelling the deployed model actually uses.
+            return None
         window = AbsoluteRange(start=date.fromisoformat(start), end=date.fromisoformat(end))
         if window.end > today:
             # Nobody has spent money after today. A range reaching into the future is a

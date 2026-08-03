@@ -14,6 +14,11 @@ import pytest
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.services import window_words
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 from finguard_orchestrator.infrastructure.planning.plan_schema import (
     ABSOLUTE,
@@ -342,3 +347,85 @@ async def test_a_draft_that_cannot_be_read_does_not_cost_the_question() -> None:
     assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
     assert result.question == "¿De qué periodo?"
     assert result.draft is None
+
+
+# --- a window nobody named yet ------------------------------------------------------
+
+
+async def test_a_follow_up_inherits_the_window_it_was_told_not_to_restate() -> None:
+    """The prompt says "do not restate the rest", so a follow-up changing the category emits an
+    empty period on purpose. The plan was built before the merge could supply one, so the
+    domain refused it and "¿y en gasolina?" came back as INVALID_DOMAIN — the one field the
+    model was instructed to leave out was the one that failed.
+
+    Nothing covered this: the merger is tested with two complete plans, and the planner's
+    reading of a follow-up was tested with a window in it.
+    """
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_MONTH),
+        categories=("GROCERIES",),
+    )
+    body = {
+        **FULL,
+        "period": "",
+        "categories": ["TRANSPORT_FUEL"],
+        "isFollowUp": True,
+        "changed": ["categories"],
+    }
+
+    result = await planner_for(FakeProvider(answer=json.dumps(body))).plan(
+        "¿y en gasolina?", today=TODAY, previous=previous
+    )
+
+    assert result.outcome is PlanningOutcome.PLANNED
+    assert result.plan is not None
+    assert result.plan.period == RelativePeriod(period=Period.LAST_MONTH)
+    assert result.plan.categories == ("TRANSPORT_FUEL",)
+
+
+async def test_a_plan_with_no_window_asks_for_the_period() -> None:
+    """What the deployed model really answers to "¿cuánto suelo pagar de alquiler?":
+
+        {"outcome": "PLANNED", "period": "ABSOLUTE", "from": "", "to": "",
+         "direction": "EXPENSE", "categories": ["HOUSING_RENT"], "metric": "SUM"}
+
+    It read the sentence perfectly and has no window, which is the only way the schema lets it
+    say so while choosing PLANNED. That became INVALID_DOMAIN and "no he entendido la
+    pregunta" — the opposite of the truth, and a dead end where the missing piece is a single
+    question away.
+    """
+    result = await plan_from({**FULL, "period": ABSOLUTE, "from": "", "to": ""})
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert result.draft is not None
+    assert result.draft.needs_a_window is True
+
+
+async def test_the_period_it_asks_for_is_one_it_can_read_back() -> None:
+    """The examples in the question are phrases `window_words` recognises. Suggesting a form
+    the deterministic reader cannot parse would send the answer back to the model, which is
+    the round trip this whole path exists to avoid."""
+    result = await plan_from({**FULL, "period": ""})
+
+    assert result.question is not None
+    assert window_words.window_in(result.question) is not None
+
+
+async def test_an_empty_period_with_no_category_still_asks() -> None:
+    """A draft with no filters at all is still worth keeping: the direction, the metric and the
+    grouping are in it, and those are what "¿cuánto gasté?" is made of."""
+    result = await plan_from({**FULL, "period": "", "categories": [NO_CATEGORY]})
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert result.draft is not None
+    assert result.draft.categories == ()
+
+
+async def test_a_window_that_is_wrong_rather_than_missing_is_still_refused() -> None:
+    """The distinction this turns on. A range ending after today is a model filling in a
+    calendar instead of reading the question — it named a window and got it wrong, which is
+    not something the user can fix by supplying a period."""
+    result = await plan_from({**FULL, "period": ABSOLUTE, "from": "2026-01-01", "to": "2027-12-31"})
+
+    assert result.outcome is PlanningOutcome.INVALID_DOMAIN

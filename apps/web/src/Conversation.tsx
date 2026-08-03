@@ -49,9 +49,14 @@ export type Thread = {
   plan: PlanContext | null;
   /** The payment waiting for a yes, if any. */
   pending: string | null;
+  /**
+   * The half-built plan behind the assistant's last question, if it asked one. Sending it back is
+   * what turns "este año" into an answer instead of a fresh question with no history.
+   */
+  unfinished: PlanContext | null;
 };
 
-export const EMPTY_THREAD: Thread = { turns: [], plan: null, pending: null };
+export const EMPTY_THREAD: Thread = { turns: [], plan: null, pending: null, unfinished: null };
 
 type Props = {
   thread: Thread;
@@ -87,7 +92,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         const answer = await confirm(before.pending, text);
         onThread(settled(before, [...turns, { who: "assistant", answer }], answer, onSettled));
       } else {
-        for await (const step of ask(text, before.plan)) {
+        for await (const step of ask(text, before.plan, before.unfinished)) {
           if ("name" in step) setStage(STAGES[step.name] ?? null);
           else {
             turns.push({ who: "assistant", answer: step });
@@ -177,6 +182,10 @@ function settled(before: Thread, turns: Turn[], answer: Answer, onSettled: () =>
     turns,
     plan: wasPayment ? null : (answer.plan_context ?? before.plan),
     pending: awaiting,
+    // Not kept, unlike the plan: a draft belongs to the question that was just asked. Carrying a
+    // stale one forward would let a window mentioned three turns later complete a plan the user has
+    // long since moved on from.
+    unfinished: answer.pending_context ?? null,
   };
 }
 
