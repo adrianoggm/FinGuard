@@ -55,6 +55,7 @@ def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery
         metric=request.metric,
         direction=request.direction,
         categories=tuple(Category(value) for value in request.categories),
+        merchants=tuple(request.merchants),
         group_by=request.group_by,
         supporting_limit=request.supporting_limit,
         explain=request.explain,

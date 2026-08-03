@@ -42,6 +42,7 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
     object.__setattr__(plan, "categories", (smuggled,))
     object.__setattr__(plan, "direction", Direction.EXPENSE)
     object.__setattr__(plan, "group_by", GroupBy.NONE)
+    object.__setattr__(plan, "merchants", ())
     object.__setattr__(plan, "supporting_limit", 20)
     object.__setattr__(plan, "explain", False)
 

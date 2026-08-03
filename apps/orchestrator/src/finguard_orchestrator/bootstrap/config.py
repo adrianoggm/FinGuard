@@ -88,19 +88,18 @@ class Settings(BaseSettings):
 
     # The financial endpoints, off unless a deployment turns them on.
     #
-    # Not caution for its own sake. Both reasons produce a confident, plausible, wrong
-    # figure rather than an error, which is the one failure mode nobody downstream
-    # catches. Documenting a risk is not controlling it; a flag is, and it makes turning
-    # this on a decision somebody takes rather than a default nobody chose.
+    # Not caution for its own sake. Both open risks produce a confident, plausible, wrong
+    # figure rather than an error, which is the one failure mode nobody downstream catches.
+    # Documenting a risk is not controlling it; a flag is, and it makes turning this on a
+    # decision somebody takes rather than a default nobody chose.
     #
-    # One of the two has moved: refusing what it cannot express was 0% on the held-out
-    # set and is 60% since the planner changed model. Better is not the bar, and it is a
-    # model's disposition rather than a guarantee — two in five still come back as a real
-    # figure answering a question about a ratio. The known live injection has not moved
-    # at all, even though the aggregate injection group score changed with the model.
+    # The bar is now written down and signed, in docs/next.md — two gates, because a scripted
+    # demo over seeded data and somebody's real balance are not the same risk. Zero for what
+    # deterministic code can guarantee, a number for what a model decides.
     #
-    # It comes off when unsupported has a deterministic guard and injection clears the
-    # agreed bar — see docs/next.md.
+    # As measured today, gate 1 fails on two of eight: unsafe execution is 12.7% against a
+    # bar of 10%, and one invalid structure survives in the adversarial set where the bar is
+    # zero. Both have identified work rather than needing a discovery.
     questions_enabled: bool
 
     # The model that turns a sentence into a plan. Separate from the catalogue on

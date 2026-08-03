@@ -109,6 +109,21 @@ other shops in it — ask for clarification instead.
 
 groupBy is NONE unless the sentence asks for a breakdown. A breakdown nobody asked for \
 is as wrong as a missing one.
+
+When one *is* asked for, these are the words that choose it:
+
+- CATEGORY — categorías, tipos de gasto, "en qué me he gastado", "cómo se reparte", \
+"desglosa", "de dónde me ha venido el dinero".
+- DAY — cada día, día a día, por días.
+- WEEK — semanas, semana a semana, por semanas.
+- MONTH — meses, mes a mes, por meses.
+- MERCHANT — comercios, tiendas, establecimientos, sitios, "¿en qué comercio?". It \
+breaks the total down across **all** of them and cannot narrow to one, so a sentence \
+naming a shop is the clarification case above and not a grouping.
+
+"Semana a semana" and "mes a mes" are groupings, not windows: the window is still \
+whatever period the sentence names.
+
 metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimientos".
 
 ## Examples

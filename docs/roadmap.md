@@ -92,12 +92,19 @@ Two things this phase added that were not on the list, both from the review:
 
 *Outcome:* a working text assistant, and a number for how well it understands.
 
-**Not closed.** Review found three defects that could deliver a wrong figure, all fixed,
-and two risks that remain open and measured: the planner refuses 60% of the requests it
-cannot express, leaving two in five to return a real but unrelated figure, and one prompt
-injection still changes a field. The endpoint stays behind
-ORCHESTRATOR_QUESTIONS_ENABLED until those have a deterministic guard or an agreed
-threshold — a documented risk is not a control.
+**Not closed, and the bar is now written down.** The two risks that kept the endpoint
+disabled have both moved: refusing what cannot be expressed is a deterministic guard rather
+than a model's disposition, and the known injection is refused by a rule that compares the
+plan against the sentence.
+
+What replaced "when it is better" is two signed gates in [next.md](next.md) — zero for what
+deterministic code can guarantee, a number for what a model decides, and a different bar for
+a scripted demo than for somebody's real balance. As measured, gate 1 fails two of eight
+properties: unsafe execution at 12.7% against a bar of 10%, and one invalid structure in the
+adversarial set where the bar is zero.
+
+ORCHESTRATOR_QUESTIONS_ENABLED stays false until both clear. A documented risk is not a
+control, and neither is a threshold nobody agreed.
 
 ### Phase 4 — Dynamic visualisation
 
