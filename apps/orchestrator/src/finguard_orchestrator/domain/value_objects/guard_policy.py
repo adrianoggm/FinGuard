@@ -34,9 +34,13 @@ class GuardPolicy:
 
         # Imported here rather than at the top for that same reason: the rule registries
         # live beside the rules they describe, and this is the direction of the loop.
-        from finguard_orchestrator.domain.services import capability_guard, plan_verifier
+        from finguard_orchestrator.domain.services import (
+            capability_guard,
+            payment_grounding,
+            plan_verifier,
+        )
 
-        known = capability_guard.RULES | plan_verifier.RULES
+        known = capability_guard.RULES | plan_verifier.RULES | payment_grounding.RULES
         unknown = self.disabled - known
         if unknown:
             # A typo must not leave a guard silently on. The quiet outcome is an operator
