@@ -179,7 +179,7 @@ async def test_a_count_breakdown_shows_counts_not_amounts() -> None:
 async def test_a_sum_breakdown_shows_amounts() -> None:
     result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.CATEGORY)))
 
-    assert "GROCERIES: 80,00€ (2)" in result.text
+    assert "GROCERIES: 80,00 € (2)" in result.text
 
 
 # --- every outcome reaches the user as something different --------------------------
