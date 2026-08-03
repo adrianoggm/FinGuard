@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from finguard_orchestrator.application import (
     AnswerMessageHandler,
@@ -8,6 +9,8 @@ from finguard_orchestrator.application import (
     CommandBus,
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
+    GetAccountSummaryHandler,
+    GetAccountSummaryQuery,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
     PolicyStore,
@@ -21,6 +24,7 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.infrastructure import (
+    HttpAccountSummary,
     HttpFinancialQuery,
     HttpPayments,
     LlmPaymentReader,
@@ -110,6 +114,18 @@ def create_app() -> FastAPI:
         settings.guard_policy(),
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
+    # The home screen's figures. Same service, no model: the plan is built in the adapter.
+    query_bus.register(
+        GetAccountSummaryQuery,
+        GetAccountSummaryHandler(
+            HttpAccountSummary(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+                days=settings.summary_days,
+                movements=settings.summary_movements,
+            )
+        ),
+    )
 
     # The payment path. Its own reader, its own prompt and its own schema: extracting who
     # and how much is a different job from planning a query, and sharing one prompt for both
@@ -158,6 +174,19 @@ def create_app() -> FastAPI:
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
     app.state.identity = StaticTokenIdentity(settings.callers())
+
+    # Before the routers, because a rejected preflight never reaches one. The web client cannot
+    # call this service at all without it: a browser refuses a cross-origin request unless the
+    # server says otherwise, which makes this the frontend's first dependency and not a detail.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.web_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        # Spelled out rather than "*": the answer to a preflight is a statement about what this
+        # service accepts, and a wildcard makes that statement unfalsifiable.
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     app.include_router(assistant_router)
     app.include_router(payments_router)

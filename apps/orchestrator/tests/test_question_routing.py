@@ -39,7 +39,7 @@ PAYMENT = "hazle un bizum de 20 euros a Marta"
 
 PREVIEW = PaymentAnswer(
     outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
-    text="Vas a enviar 20,00€ a Marta Solis Vega. ¿Confirmas?",
+    text="Vas a enviar 20,00 € a Marta Solis Vega. ¿Confirmas?",
     intent_id=INTENT,
     recipient="Marta Solis Vega",
     amount_minor=2_000,

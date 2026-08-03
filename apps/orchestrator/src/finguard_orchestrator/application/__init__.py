@@ -41,6 +41,11 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     Stage,
 )
+from finguard_orchestrator.application.queries.get_account_summary import (
+    AccountSummaryResult,
+    GetAccountSummaryHandler,
+    GetAccountSummaryQuery,
+)
 from finguard_orchestrator.application.queries.get_llm_catalogue import (
     CatalogueResult,
     GetLlmCatalogueHandler,
@@ -50,6 +55,9 @@ from finguard_orchestrator.application.queries.get_llm_catalogue import (
 )
 
 __all__ = [
+    "AccountSummaryResult",
+    "GetAccountSummaryHandler",
+    "GetAccountSummaryQuery",
     "ConfirmPaymentCommand",
     "ConfirmPaymentHandler",
     "PaymentAnswer",

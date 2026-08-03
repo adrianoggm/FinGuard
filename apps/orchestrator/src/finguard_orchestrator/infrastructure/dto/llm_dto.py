@@ -145,3 +145,24 @@ class QuestionResponse(_Payload):
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
+
+
+class SummaryMovementResponse(_Payload):
+    occurred_at: str
+    description: str
+    # Signed: negative is money out. A screen that shows absolute values makes a charge and a
+    # payment in look the same, which is the one thing a movement list exists to distinguish.
+    amount_minor: int
+    merchant_name: str | None = None
+    category: str | None = None
+
+
+class AccountSummaryResponse(_Payload):
+    """The home screen's figures. No plan, no outcome and no model: a fixed question, answered from
+    the ledger through a plan built in code."""
+
+    currency: str
+    booked_minor: int
+    available_minor: int
+    as_of: str
+    movements: list[SummaryMovementResponse] = []

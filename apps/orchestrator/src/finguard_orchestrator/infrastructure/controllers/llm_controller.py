@@ -24,6 +24,7 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
     CommandBus,
+    GetAccountSummaryQuery,
     GetLlmCatalogueQuery,
     PreparePaymentCommand,
     QueryBus,
@@ -46,6 +47,7 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    AccountSummaryResponse,
     CatalogueResponse,
     MessageRequest,
     MessageResponse,
@@ -215,6 +217,29 @@ def _context_of(request: QuestionRequest) -> FinancialPlan | None:
     take on faith.
     """
     return plan_to_domain(request.previous_plan) if request.previous_plan else None
+
+
+@assistant_router.get(
+    "/v1/account/summary",
+    summary="The account as a screen needs it",
+    dependencies=[Depends(questions_enabled)],
+)
+async def account_summary(who: Who, queries: Queries, today: Today) -> AccountSummaryResponse:
+    """The balance and the last movements, with no model in the path.
+
+    A bank app's home screen needs a figure before anybody has asked anything. Getting it by
+    asking the assistant "¿cuál es mi saldo?" would put a language model in front of the first
+    number a user reads — and would let the home screen and the conversation disagree, which is
+    two balances on one phone and the worst thing to have on camera.
+
+    No account in the path: it comes from the credential, like everywhere else here.
+    """
+    result = await queries.ask(
+        GetAccountSummaryQuery(
+            account_id=who.account_id, today=today, reporting_timezone=who.reporting_timezone
+        )
+    )
+    return llm_mapper.summary_to_dto(result)
 
 
 @assistant_router.post(

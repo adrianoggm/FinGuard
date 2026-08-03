@@ -5,6 +5,7 @@ here is already flat. This adds the wire format and nothing else.
 """
 
 from finguard_orchestrator.application import (
+    AccountSummaryResult,
     AnswerMessageResult,
     AskFinancialQuestionResult,
     CatalogueResult,
@@ -18,6 +19,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    AccountSummaryResponse,
     CatalogueResponse,
     MessageResponse,
     ModelResponse,
@@ -26,6 +28,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     QuestionResponse,
     SpokenGroupResponse,
     SpokenMovementResponse,
+    SummaryMovementResponse,
 )
 
 
@@ -121,6 +124,25 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         ],
         movements=[
             SpokenMovementResponse(
+                occurred_at=movement.occurred_at,
+                description=movement.description,
+                amount_minor=movement.amount_minor,
+                merchant_name=movement.merchant_name,
+                category=movement.category,
+            )
+            for movement in result.movements
+        ],
+    )
+
+
+def summary_to_dto(result: AccountSummaryResult) -> AccountSummaryResponse:
+    return AccountSummaryResponse(
+        currency=result.currency,
+        booked_minor=result.booked_minor,
+        available_minor=result.available_minor,
+        as_of=result.as_of,
+        movements=[
+            SummaryMovementResponse(
                 occurred_at=movement.occurred_at,
                 description=movement.description,
                 amount_minor=movement.amount_minor,

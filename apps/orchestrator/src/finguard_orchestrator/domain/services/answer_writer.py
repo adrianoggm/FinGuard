@@ -38,7 +38,11 @@ def money(amount_minor: int, currency: str) -> str:
     sign = "-" if amount_minor < 0 else ""
     units, cents = divmod(abs(amount_minor), 100)
     grouped = f"{units:,}".replace(",", ".")
-    symbol = "€" if currency == "EUR" else f" {currency}"
+    # A space before the symbol, which is what Spanish typography asks for and what every other
+    # currency here already got — EUR was the odd one out at "159,46€". It matters beyond taste: the
+    # web client formats its own figures and the two appeared side by side on one screen, spelling
+    # the same amount two ways.
+    symbol = " €" if currency == "EUR" else f" {currency}"
     return f"{sign}{grouped},{cents:02d}{symbol}"
 
 
