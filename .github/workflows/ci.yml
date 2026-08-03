@@ -22,7 +22,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ["3.12", "3.13"]
-        service: [banking-api, assistant-api]
+        service: [banking-api, orchestrator]
     defaults:
       run:
         working-directory: apps/${{ matrix.service }}

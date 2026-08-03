@@ -53,21 +53,21 @@ services:
       retries: 5
       start_period: 10s
 
-  assistant-api:
+  orchestrator:
     build:
       context: .
-      dockerfile: apps/assistant-api/Dockerfile
+      dockerfile: apps/orchestrator/Dockerfile
     profiles: ["core", "poc"]
     environment:
       # Which models exist, which provider serves each one and what happens when one
       # fails come from this file, not from code. Mounted read-only so it can change
       # without rebuilding the image.
-      ASSISTANT_LLM_CATALOGUE_FILE: /app/config/llm.toml
+      ORCHESTRATOR_LLM_CATALOGUE_FILE: /app/config/llm.toml
       # The ledger, by service name on the compose network.
-      ASSISTANT_BANKING_BASE_URL: http://banking-api:8001
+      ORCHESTRATOR_BANKING_BASE_URL: http://banking-api:8001
       # The local model runs on the host, not in a container: that is where the GPU is,
       # and 127.0.0.1 inside a container is the container. Nothing leaves the machine.
-      ASSISTANT_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ORCHESTRATOR_OLLAMA_BASE_URL: http://host.docker.internal:11434
       # Identity, first layer of the security stack (§12.1). A development token table,
       # not the design: §12.2 asks for OAuth with short-lived tokens. What matters is
       # that the account now comes from the credential, so a caller cannot name one.
@@ -76,16 +76,16 @@ services:
       # deployment injects these from a secret store and never from a compose file.
       # The financial endpoints are off by default while two measured risks stay open
       # (see docs/next.md). Compose turns them on because this is the demo stack.
-      ASSISTANT_QUESTIONS_ENABLED: "true"
-      ASSISTANT_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0"]'
+      ORCHESTRATOR_QUESTIONS_ENABLED: "true"
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0"]'
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
       # Stating it keeps the compose file working on both.
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./apps/assistant-api/config:/app/config:ro
+      - ./apps/orchestrator/config:/app/config:ro
     ports:
-      - "127.0.0.1:${ASSISTANT_PORT:-8000}:8000"
+      - "127.0.0.1:${ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
       banking-api:
         condition: service_healthy

@@ -4,7 +4,7 @@ The source of truth for communication between services. Only public contracts ar
 
 | Folder | Contents |
 | --- | --- |
-| `openapi/` | HTTP APIs: `assistant-api.yaml`, `banking-api.yaml`, `voice-gateway.yaml` |
+| `openapi/` | HTTP APIs: `orchestrator.yaml`, `banking-api.yaml`, `voice-gateway.yaml` |
 | `json-schema/` | `financial-query`, `visualization-result`, `payment-preview`, `audit-event` |
 | `asyncapi/` | Domain events (from the 3rd iteration onwards) |
 | `a2a/` | Agent Card and skill schemas (4th iteration) |
