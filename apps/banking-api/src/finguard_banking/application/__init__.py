@@ -15,6 +15,14 @@ from finguard_banking.application.bus.errors import (
     HandlerNotRegisteredError,
 )
 from finguard_banking.application.bus.query_bus import Query, QueryBus, QueryHandler
+from finguard_banking.application.commands.payments import (
+    CancelPaymentCommand,
+    CancelPaymentHandler,
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
+)
 from finguard_banking.application.queries.get_balance import (
     GetBalanceHandler,
     GetBalanceQuery,
@@ -30,9 +38,13 @@ from finguard_banking.application.queries.movement_summary import (
 )
 
 __all__ = [
+    "CancelPaymentCommand",
+    "CancelPaymentHandler",
     "Command",
     "CommandBus",
     "CommandHandler",
+    "ConfirmPaymentCommand",
+    "ConfirmPaymentHandler",
     "GetBalanceHandler",
     "GetBalanceQuery",
     "GetBalanceResult",
@@ -41,6 +53,8 @@ __all__ = [
     "MovementSummaryHandler",
     "MovementSummaryQuery",
     "MovementSummaryResult",
+    "PreparePaymentCommand",
+    "PreparePaymentHandler",
     "Query",
     "QueryBus",
     "QueryHandler",

@@ -16,7 +16,9 @@ from pydantic.alias_generators import to_camel
 
 from finguard_banking.domain.constants import (
     DEFAULT_SUPPORTING_MOVEMENTS,
+    MAX_PAYMENT_MINOR,
     MAX_PERIOD_DAYS,
+    MAX_RECIPIENT_NAME,
     MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_banking.domain.enums import Direction, GroupBy, Metric, Period
@@ -131,3 +133,45 @@ class FinancialQueryResponse(_Payload):
     groups: list[GroupResponse]
     supporting_movements: list[MovementResponse]
     trace: TraceResponse | None = None
+
+
+class PreparePaymentRequest(_Body):
+    """What somebody intends to pay (§4.1).
+
+    No account and no contact identifier: the account is in the path and the recipient is a name
+    resolved against that account's own contacts. A body that could name either would let a caller
+    pay out of an account they do not hold, or to somebody who is not in their list.
+
+    The amount is in minor units, like everywhere else. `gt=0` because a payment of nothing is not
+    a payment, and a negative one is a withdrawal wearing a payment's clothes.
+    """
+
+    recipient_name: str = Field(min_length=1, max_length=MAX_RECIPIENT_NAME)
+    amount_minor: int = Field(gt=0, le=MAX_PAYMENT_MINOR)
+    currency: str = Field(pattern="^[A-Z]{3}$")
+
+
+class PaymentPreviewResponse(_Payload):
+    """What the user is asked to approve. The balance it leaves is part of the question."""
+
+    intent_id: UUID
+    recipient: str
+    recipient_phone: str
+    amount_minor: int
+    currency: str
+    balance_before_minor: int
+    balance_after_minor: int
+    expires_at: datetime
+
+
+class PaymentReceiptResponse(_Payload):
+    """Proof, with the ledger movement to check it against."""
+
+    intent_id: UUID
+    transaction_id: UUID
+    recipient: str
+    recipient_phone: str
+    amount_minor: int
+    currency: str
+    balance_after_minor: int
+    confirmed_at: datetime
