@@ -9,6 +9,8 @@ from finguard_orchestrator.application import (
     CommandBus,
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
+    GetAccountSummaryHandler,
+    GetAccountSummaryQuery,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
     PolicyStore,
@@ -22,6 +24,7 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.infrastructure import (
+    HttpAccountSummary,
     HttpFinancialQuery,
     HttpPayments,
     LlmPaymentReader,
@@ -111,6 +114,18 @@ def create_app() -> FastAPI:
         settings.guard_policy(),
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
+    # The home screen's figures. Same service, no model: the plan is built in the adapter.
+    query_bus.register(
+        GetAccountSummaryQuery,
+        GetAccountSummaryHandler(
+            HttpAccountSummary(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+                days=settings.summary_days,
+                movements=settings.summary_movements,
+            )
+        ),
+    )
 
     # The payment path. Its own reader, its own prompt and its own schema: extracting who
     # and how much is a different job from planning a query, and sharing one prompt for both

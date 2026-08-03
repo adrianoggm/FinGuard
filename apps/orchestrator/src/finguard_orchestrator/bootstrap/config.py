@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Final
 from uuid import UUID
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -102,6 +103,11 @@ class Settings(BaseSettings):
     # zero. Both have identified work rather than needing a discovery.
     questions_enabled: bool
     payments_enabled: bool
+
+    # The home screen's window and movement count. Product decisions about what a bank app shows
+    # when it opens, so configuration rather than constants in the adapter that uses them.
+    summary_days: int = Field(ge=1, le=366)
+    summary_movements: int = Field(ge=1, le=50)
 
     # Browser origins allowed to call this service. Exact origins, never a wildcard: the credential
     # is in a header, and `*` with credentials lets any page a user visits spend their session.
