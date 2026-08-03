@@ -261,7 +261,9 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     lines.append("")
     lines.append("-- The ledger is immutable: it cannot be cleared with DELETE.")
     lines.append("TRUNCATE ledger_entries, ledger_transactions, balance_projections,")
-    lines.append("         contacts, accounts, customers;")
+    # payment_intents references contacts and accounts, and TRUNCATE needs every referencing
+    # table named with them. A dataset that cannot be reloaded is a dataset nobody reloads.
+    lines.append("         payment_intents, contacts, accounts, customers;")
     lines.append("")
 
     bank_customer = identifier(rng)
