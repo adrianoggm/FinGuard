@@ -135,6 +135,12 @@ test-unit:
 evaluate-planning model="qwen2.5-coder:7b":
     cd apps/assistant-api && uv run python scripts/evaluate_planning.py --model {{ model }}
 
+# The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
+# up, because the point is to exercise the deployed service and not the handler.
+# Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.
+evaluate-e2e token dataset="dev":
+    cd apps/assistant-api && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset {{ dataset }}
+
 # What has to pass before pushing a commit
 check: lint typecheck test
 
