@@ -169,6 +169,10 @@ def _build_plan(
 ) -> PlanningResult:
     try:
         selected_categories = _categories(_texts(body, "categories"), allowed=categories)
+        # No `allowed` list: a merchant name is not vocabulary. Blanks are dropped because an
+        # empty name filters nothing, and dropping one is not the widening bug — the others
+        # still narrow, and an all-blank list means the question named no shop.
+        merchants = tuple(dict.fromkeys(m.strip() for m in _texts(body, "merchants") if m.strip()))
         direction, group_by, metric = (
             _text(body, "direction"),
             _text(body, "groupBy"),
@@ -184,6 +188,7 @@ def _build_plan(
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=selected_categories,
+            merchants=merchants,
             group_by=GroupBy(group_by),
             metric=Metric(metric),
         )

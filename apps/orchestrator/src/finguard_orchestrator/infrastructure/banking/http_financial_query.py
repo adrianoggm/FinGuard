@@ -109,6 +109,7 @@ def to_body(
         "groupBy": plan.group_by.value,
         "metric": plan.metric.value,
         "categories": list(plan.categories),
+        "merchants": list(plan.merchants),
         "supportingLimit": supporting_movements,
     }
 

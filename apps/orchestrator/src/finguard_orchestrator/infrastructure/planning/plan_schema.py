@@ -20,7 +20,11 @@ turns that into one choice per field.
 
 from typing import Any, Final
 
-from finguard_orchestrator.domain.constants import MAX_PERIOD_DAYS
+from finguard_orchestrator.domain.constants import (
+    MAX_MERCHANT_LENGTH,
+    MAX_MERCHANTS,
+    MAX_PERIOD_DAYS,
+)
 from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
@@ -71,6 +75,15 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string", "enum": [*categories, NO_CATEGORY]},
             },
+            # The one field with no enum. A merchant name is data rather than vocabulary,
+            # so the decoder is free here in a way it is nowhere else — bounded in length and
+            # count, and the domain checks the shape. What it cannot do is reach SQL as
+            # anything but a bound parameter, which is banking's test to make.
+            "merchants": {
+                "type": "array",
+                "maxItems": MAX_MERCHANTS,
+                "items": {"type": "string", "maxLength": MAX_MERCHANT_LENGTH},
+            },
             "groupBy": {"type": "string", "enum": [g.value for g in GroupBy]},
             "metric": {"type": "string", "enum": [m.value for m in Metric]},
         },
@@ -84,6 +97,7 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
             "to",
             "direction",
             "categories",
+            "merchants",
             "groupBy",
             "metric",
         ],

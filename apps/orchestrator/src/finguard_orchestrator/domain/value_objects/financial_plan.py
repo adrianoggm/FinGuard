@@ -16,6 +16,8 @@ from datetime import date
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
     MAX_CATEGORY_LENGTH,
+    MAX_MERCHANT_LENGTH,
+    MAX_MERCHANTS,
     MAX_PERIOD_DAYS,
     MAX_PERIOD_MONTHS,
 )
@@ -76,6 +78,9 @@ class FinancialPlan:
     period: RelativePeriod | None = None
     date_range: AbsoluteRange | None = None
     categories: tuple[str, ...] = field(default_factory=tuple)
+    # The shops the question is about. Free text, unlike a category — the first field here
+    # whose values the schema cannot enumerate, because the ledger's merchant names are data.
+    merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     explain: bool = False
@@ -87,6 +92,16 @@ class FinancialPlan:
             raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
         for category in self.categories:
             _check_category(category)
+        if len(self.merchants) > MAX_MERCHANTS:
+            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
+        for merchant in self.merchants:
+            # Shape only: a name is free text and its content is banking's to match. What is
+            # checked is that it is a name at all, and bounded — an empty one filters nothing
+            # and would silently widen the query, which is the failure this file exists for.
+            if not merchant.strip():
+                raise InvalidValueError("a merchant name cannot be empty")
+            if len(merchant) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
 
 
 def _check_category(value: str) -> None:

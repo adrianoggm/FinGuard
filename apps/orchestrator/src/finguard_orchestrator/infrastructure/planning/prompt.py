@@ -101,9 +101,20 @@ What each one is called in Spanish:
 
 {glossary}
 
-The list has categories, not shops. A question about one shop ("¿cuánto gasté en \
-Mercadona?") cannot be answered by its category, because that category also covers the \
-other shops in it — ask for clarification instead.
+The list has categories, not shops, and they are different fields. "¿cuánto gasté en el súper?" \
+is the GROCERIES category; "¿cuánto gasté en Mercadona?" is the merchant "Mercadona" and no \
+category at all, because that category would also cover every other shop in it.
+
+## Merchants
+
+"merchants" holds the shops the sentence names, copied as written: Mercadona, Netflix, Repsol, \
+Carrefour. Unlike the categories it is not a list to choose from — any name is allowed, matching \
+ignores capitalisation, and a name nothing matches gives an empty answer rather than a wrong \
+one.
+
+Use it only when the sentence names a shop. A question about a kind of spending uses \
+"categories" and leaves this empty. A question asking which shops stand out uses groupBy \
+MERCHANT and leaves this empty too.
 
 ## Grouping and metric
 
@@ -129,30 +140,35 @@ metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimien
 ## Examples
 
 "¿Cuánto gasté el mes pasado?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_MONTH", "n": 0, "from": "", \
-"to": "", "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", \
+{{"outcome": "PLANNED", "question": "", "period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
 "¿Cuánto he gastado en los últimos 30 días?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_N_DAYS", "n": 30, "from": "", \
-"to": "", "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", \
+{{"outcome": "PLANNED", "question": "", "period": "LAST_N_DAYS", "n": 30, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
 "¿En qué me he gastado el dinero este mes?"
-{{"outcome": "PLANNED", "question": "", "period": "THIS_MONTH", "n": 0, "from": "", \
-"to": "", "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": \
-"CATEGORY", "metric": "SUM"}}
+{{"outcome": "PLANNED", "question": "", "period": "THIS_MONTH", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], "groupBy": "CATEGORY", \
+"metric": "SUM"}}
+
+"¿Cuánto gasté en Mercadona el mes pasado?"
+{{"outcome": "PLANNED", "question": "", "period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": ["Mercadona"], "groupBy": \
+"NONE", "metric": "SUM"}}
 
 "¿Cuánto he gastado últimamente?"
-{{"outcome": "NEEDS_CLARIFICATION", "question": "¿De qué periodo? Por ejemplo este mes, \
-el mes pasado o los últimos 30 días.", "period": "", "n": 0, "from": "", "to": "", \
-"direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", "metric": \
+{{"outcome": "NEEDS_CLARIFICATION", "question": "¿De qué periodo? Por ejemplo este mes, el mes \
+pasado o los últimos 30 días.", "period": "", "n": 0, "from": "", "to": "", "direction": \
+"EXPENSE", "categories": ["{no_category}"], "merchants": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
 "¿Cuál es mi gasto medio mensual?"
 {{"outcome": "UNSUPPORTED", "question": "", "period": "", "n": 0, "from": "", "to": "", \
-"direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", "metric": \
-"SUM"}}
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], "groupBy": "NONE", \
+"metric": "SUM"}}
 
 {previous}## The sentence
 

@@ -85,6 +85,7 @@ class PlanPayload(_Payload):
     start: date | None = None
     end: date | None = None
     categories: list[str] = []
+    merchants: list[str] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
 

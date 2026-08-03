@@ -33,6 +33,7 @@ FULL = {
     "to": "",
     "direction": "EXPENSE",
     "categories": [NO_CATEGORY],
+    "merchants": [],
     "groupBy": "NONE",
     "metric": "SUM",
 }
