@@ -79,6 +79,41 @@ HOLDERS = (
     Holder("Nuria Salas Ortega", "ES-0003", 312_000, 115_000, 260_000),
 )
 
+
+@dataclass(frozen=True)
+class Card:
+    """A card as its holder sees it.
+
+    Four digits and never a number: a PAN belongs in a vault, and nothing in this product needs
+    one — a screen shows the last four so somebody recognises which card, and the payment goes
+    through the account.
+    """
+
+    display_name: str
+    brand: str
+    kind: str
+    last_four: str
+    expires_month: int
+    expires_year: int
+    status: str
+    spending_limit_minor: int | None
+
+
+# Two for Laura, because a card screen with one card cannot show the charges split between them,
+# and that split is most of what the screen is for. Nuria carries a blocked one on purpose: a status
+# that is only ever ACTIVE is a status nobody renders and nobody tests.
+CARDS = {
+    "ES-0001": (
+        Card("LAURA MARTIN RUIZ", "VISA", "DEBIT", "4417", 9, 2028, "ACTIVE", None),
+        Card("LAURA MARTIN RUIZ", "MASTERCARD", "CREDIT", "8302", 3, 2029, "ACTIVE", 150_000),
+    ),
+    "ES-0002": (Card("DIEGO FERRER GOMEZ", "VISA", "DEBIT", "5521", 11, 2027, "ACTIVE", None),),
+    "ES-0003": (
+        Card("NURIA SALAS ORTEGA", "VISA", "DEBIT", "1096", 6, 2030, "ACTIVE", None),
+        Card("NURIA SALAS ORTEGA", "MASTERCARD", "CREDIT", "7734", 1, 2027, "BLOCKED", 90_000),
+    ),
+}
+
 # Counterparty for every operation: the bank's clearing account. Without it there
 # would be no double entry and the balance trigger would reject each transaction.
 CLEARING = "ES-COMPENSACION"
@@ -255,6 +290,15 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
 
 def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int) -> str:
     rng = random.Random(seed ^ 0xC0FFEE)
+    # A generator of its own for the cards, and this is the reason: every draw from `rng` shifts
+    # every draw after it, so assigning cards from it would have changed every amount and date in
+    # the dataset — and the 15 expected figures in evaluation/queries are computed against those. A
+    # separate stream keeps this addition additive: the same movements, now with a card named.
+    card_rng = random.Random(seed ^ 0xCA2D5)
+    cards: dict[uuid.UUID, tuple[tuple[uuid.UUID, Card], ...]] = {
+        accounts[reference]: tuple((identifier(card_rng), card) for card in held)
+        for reference, held in CARDS.items()
+    }
     lines: list[str] = []
 
     lines.append("BEGIN;")
@@ -263,7 +307,8 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     lines.append("TRUNCATE ledger_entries, ledger_transactions, balance_projections,")
     # payment_intents references contacts and accounts, and TRUNCATE needs every referencing
     # table named with them. A dataset that cannot be reloaded is a dataset nobody reloads.
-    lines.append("         payment_intents, contacts, accounts, customers;")
+    # `cards` is referenced by ledger_transactions, so TRUNCATE needs the two named together.
+    lines.append("         payment_intents, contacts, cards, accounts, customers;")
     lines.append("")
 
     bank_customer = identifier(rng)
@@ -299,6 +344,21 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     lines.append(",\n".join(f"    {row}" for row in contact_rows) + ";")
     lines.append("")
 
+    card_rows = [
+        f"({quote(str(card_id))}, {quote(str(account))}, {quote(card.display_name)}, "
+        f"{quote(card.brand)}, {quote(card.kind)}, {quote(card.last_four)}, "
+        f"{card.expires_month}, {card.expires_year}, {quote(card.status)}, "
+        f"{card.spending_limit_minor if card.spending_limit_minor is not None else 'NULL'})"
+        for account, held in cards.items()
+        for card_id, card in held
+    ]
+    lines.append(
+        "INSERT INTO cards (id, account_id, display_name, brand, kind, last_four, "
+        "expires_month, expires_year, status, spending_limit_minor) VALUES"
+    )
+    lines.append(",\n".join(f"    {row}" for row in card_rows) + ";")
+    lines.append("")
+
     clearing = accounts[CLEARING]
     transaction_rows: list[str] = []
     to_book: list[str] = []
@@ -306,6 +366,15 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
 
     for number, movement in enumerate(movements, start=1):
         transaction = identifier(rng)
+        # Which card was charged. Only for a CARD_PAYMENT: the ledger has a CHECK saying a movement
+        # that names a card is a card charge, and a salary is not one. A blocked card still gets
+        # charges, because it was not blocked when they happened.
+        held = cards.get(movement.account, ())
+        card = (
+            card_rng.choice([card_id for card_id, _ in held])
+            if held and movement.kind == "CARD_PAYMENT"
+            else None
+        )
         metadata = json.dumps(
             {"merchant_name": movement.merchant, "category": movement.category},
             ensure_ascii=True,
@@ -320,7 +389,8 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         transaction_rows.append(
             f"({quote(str(transaction))}, {quote(movement.kind)}, {quote('PENDING')}, "
             f"{quote(f'seed-{number:06d}')}, {quote(movement.description)}, "
-            f"{quote(metadata)}::jsonb, {quote(movement.occurred_at.isoformat())}::timestamptz)"
+            f"{quote(metadata)}::jsonb, {quote(movement.occurred_at.isoformat())}::timestamptz, "
+            f"{quote(str(card)) if card else 'NULL'})"
         )
 
         amount = abs(movement.amount_minor)
@@ -339,7 +409,8 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     lines.extend(
         _batches(
             "INSERT INTO ledger_transactions "
-            "(id, transaction_type, status, reference, description, metadata, occurred_at) VALUES",
+            "(id, transaction_type, status, reference, description, metadata, occurred_at, "
+            "card_id) VALUES",
             transaction_rows,
         )
     )

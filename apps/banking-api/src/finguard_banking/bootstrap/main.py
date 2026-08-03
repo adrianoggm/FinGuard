@@ -13,6 +13,8 @@ from finguard_banking.application import (
     ConfirmPaymentHandler,
     GetBalanceHandler,
     GetBalanceQuery,
+    ListCardsHandler,
+    ListCardsQuery,
     ListContactsHandler,
     ListContactsQuery,
     MovementSummaryHandler,
@@ -24,6 +26,7 @@ from finguard_banking.application import (
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import (
     PostgresAuditLog,
+    PostgresCardRepository,
     PostgresContactRepository,
     PostgresFinancialQueryRepository,
     PostgresLedgerRepository,
@@ -83,6 +86,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # payment path needs the owner pool, and showing a list does not.
     app.state.query_bus.register(
         ListContactsQuery, ListContactsHandler(PostgresContactRepository(query_pool))
+    )
+    app.state.query_bus.register(
+        ListCardsQuery, ListCardsHandler(PostgresCardRepository(query_pool))
     )
     payments = PostgresPaymentRepository(
         pool,

@@ -17,6 +17,9 @@ from finguard_banking.infrastructure.controllers.banking_controller import (
 from finguard_banking.infrastructure.controllers.payments_controller import payments_router
 from finguard_banking.infrastructure.error_handlers import register as register_error_handlers
 from finguard_banking.infrastructure.persistence.audit_log import PostgresAuditLog
+from finguard_banking.infrastructure.persistence.card_repository import (
+    PostgresCardRepository,
+)
 from finguard_banking.infrastructure.persistence.contact_repository import (
     PostgresContactRepository,
 )
@@ -30,6 +33,7 @@ from finguard_banking.infrastructure.persistence.payment_repository import (
 
 __all__ = [
     "PostgresAuditLog",
+    "PostgresCardRepository",
     "PostgresContactRepository",
     "PostgresFinancialQueryRepository",
     "PostgresLedgerRepository",

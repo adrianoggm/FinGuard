@@ -4,15 +4,16 @@ Shapes live in dto/, conversion in mappers/, and every route delegates to a use 
 a controller never reaches a repository.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from finguard_banking.application import (
     GetBalanceQuery,
+    ListCardsQuery,
     ListContactsQuery,
     MovementSummaryQuery,
     QueryBus,
@@ -22,8 +23,10 @@ from finguard_banking.bootstrap.dependencies import (
     get_query_bus,
     reporting_today,
 )
+from finguard_banking.domain.constants import MAX_CARD_WINDOW_DAYS
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
+    CardsResponse,
     ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
@@ -57,6 +60,24 @@ async def ready(database_answers: DatabaseAnswers) -> JSONResponse:
 async def read_balance(account_id: UUID, queries: Queries) -> BalanceResponse:
     """Balance derived from the ledger entries, never from a mutable column."""
     return http_mapper.balance_to_dto(await queries.ask(GetBalanceQuery(account_id)))
+
+
+@accounts_router.get("/{account_id}/cards", summary="The cards this account holds")
+async def read_cards(
+    account_id: UUID,
+    queries: Queries,
+    today: Today,
+    days: Annotated[int, Query(ge=1, le=MAX_CARD_WINDOW_DAYS)] = 30,
+) -> CardsResponse:
+    """Each card with what has been charged to it in the window, computed in the reporting zone.
+
+    A rolling window rather than "this month", and the answer says which date it starts from. A
+    month is what a caller assumes when nothing says otherwise, and a figure labelled as a month
+    that is really thirty days is wrong on the 1st by everything that happened on the 31st.
+    """
+    since = today - timedelta(days=days)
+    result = await queries.ask(ListCardsQuery(account_id=account_id, since=since))
+    return http_mapper.cards_to_dto(result)
 
 
 @accounts_router.get("/{account_id}/contacts", summary="Everybody this account can pay")

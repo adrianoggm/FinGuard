@@ -29,6 +29,10 @@ MAX_CATEGORY_LENGTH = 40
 MAX_MERCHANTS = 10
 MAX_MERCHANT_LENGTH = 140
 
+# How far back a card screen may ask. A card is a thing somebody checks about now, and a
+# five-year window is a statement, not a screen.
+MAX_CARD_WINDOW_DAYS = 366
+
 # Relative periods.
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
