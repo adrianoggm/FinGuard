@@ -15,13 +15,20 @@ from datetime import date
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.domain.enums import PlanningOutcome
+from finguard_orchestrator.domain.enums import PlanningOutcome, Spoken
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
-from finguard_orchestrator.domain.services import answer_writer, capability_guard, plan_verifier
+from finguard_orchestrator.domain.services import (
+    answer_writer,
+    capability_guard,
+    explainer,
+    intent_router,
+    plan_verifier,
+)
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
@@ -153,6 +160,33 @@ class AskFinancialQuestionHandler:
     async def stream(
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        intent = intent_router.route(query.sentence, has_previous=query.previous_plan is not None)
+        previous = query.previous_plan
+
+        if intent is Intent.IDENTITY_OR_HELP:
+            # Answered from here, never from the ledger and never from a model. "¿Quién eres?" used
+            # to reach the planner and come back as a refusal about averages and forecasts: true
+            # about the product, and not an answer to the question.
+            yield AskFinancialQuestionResult(outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY)
+            return
+
+        if intent is Intent.EXPLAIN_PREVIOUS:
+            # The previous plan and the catalogue know this. Asking a model why *we* answered
+            # something would be asking it to guess at a fact we hold.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.EXPLANATION.value,
+                text=explainer.explain(query.sentence, previous),
+                plan=answer_writer.describe(previous) if previous else None,
+                plan_context=_spoken(previous) if previous else None,
+            )
+            return
+
+        if intent is Intent.CORRECTION:
+            # The plan being corrected is dropped, which is the whole point of recognising this. A
+            # correction treated as an ordinary follow-up patches a window onto a category the user
+            # has just said was wrong.
+            previous = None
+
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         if refused is not None:
             # Before the model, on purpose. Refusing here is a control; refusing after is
@@ -162,9 +196,7 @@ class AskFinancialQuestionHandler:
             return
 
         yield Stage("planning")
-        planned = await self._planner.plan(
-            query.sentence, today=query.today, previous=query.previous_plan
-        )
+        planned = await self._planner.plan(query.sentence, today=query.today, previous=previous)
 
         if not planned.is_answerable:
             yield _decline(planned)

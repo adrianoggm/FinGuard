@@ -365,3 +365,68 @@ async def test_an_empty_answer_says_so_rather_than_reporting_zero(metric: Metric
     result = await ask(PlanningResult.planned(plan(metric=metric)), ledger)
 
     assert "No he encontrado movimientos" in result.text
+
+
+# --- the three answers that never reach the ledger ---------------------------------
+
+
+def spoken(sentence: str, previous: FinancialPlan | None = None):
+    """A query with a sentence of its own. The shared `ask` helper fixes the sentence, and these
+    three tests are entirely about which sentence was said."""
+    return AskFinancialQuestionQuery(
+        sentence=sentence, account_id=ACCOUNT, today=TODAY, previous_plan=previous
+    )
+
+
+async def test_asking_who_it_is_never_reaches_the_planner() -> None:
+    """The one from the real conversation. "¿Quién eres?" used to be answered with "solo consulto lo
+    que ya ha pasado, sin medias, comparaciones ni previsiones" — true about the product, and not an
+    answer to the question."""
+    planner, ledger = FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(spoken("¿quién eres?"))
+
+    assert result.outcome == "IDENTITY"
+    assert "FinGuard" in result.text
+    assert planner.asked is None, "no model was asked"
+    assert ledger.account_id is None, "the ledger was not touched"
+
+
+async def test_explaining_the_last_answer_reads_the_plan_and_not_the_ledger() -> None:
+    planner, ledger = FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(
+        spoken("¿en qué categoría has clasificado el cine?", plan(categories=("RESTAURANTS",)))
+    )
+
+    assert result.outcome == "EXPLANATION"
+    assert "LEISURE" in result.text
+    assert "filtraba por restaurantes" in result.text
+    assert planner.asked is None
+    assert ledger.account_id is None
+
+
+async def test_a_correction_does_not_inherit_the_plan_it_corrects() -> None:
+    """The reason CORRECTION exists as its own intent. Treating it as a follow-up patches a window
+    onto a category the user has just said was wrong."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        spoken("no me has entendido, me refería al alquiler", plan(categories=("RESTAURANTS",)))
+    )
+
+    assert planner.asked == "no me has entendido, me refería al alquiler"
+    assert planner.previous is None, "the wrong plan was dropped rather than patched"
+
+
+async def test_an_ordinary_follow_up_still_inherits() -> None:
+    """The other half: only a correction drops the context. "¿Y este mes?" must still get it, which
+    is the whole point of the client sending it."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    before = plan(categories=("RESTAURANTS",))
+
+    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER)).handle(
+        spoken("¿y este mes?", before)
+    )
+
+    assert planner.previous == before

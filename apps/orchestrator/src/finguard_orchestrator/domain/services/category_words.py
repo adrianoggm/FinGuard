@@ -1,0 +1,86 @@
+"""What each category is called when a person says it out loud.
+
+This lived inside the planner's prompt, which was the right place while the prompt was the only
+thing that needed it. Two things need it now: the prompt still tells the model that "el súper" is
+GROCERIES, and the explainer has to answer "¿en qué categoría has clasificado el cine?" without
+asking a model what its own catalogue means.
+
+Spanish, because these are the words users type — the one exception the English-everywhere rule
+makes. The keys are the ledger's identifiers, which are data.
+
+It is deliberately not a two-way mapping built by splitting the glosses. `words_for` renders the
+line the prompt shows; `named_in` finds which categories a sentence mentions, and it needs word
+boundaries and a longest-match rule that a naive split would not give — "el súper" and "super" are
+the same category, and "compras de capricho" must not be found inside a sentence about "la compra".
+"""
+
+import re
+import unicodedata
+from typing import Final
+
+_GLOSS: Final[dict[str, tuple[str, ...]]] = {
+    "GROCERIES": ("el súper", "el supermercado", "la compra", "comida de casa", "supermercado"),
+    "TRANSPORT_FUEL": ("gasolina", "gasoil", "diésel", "repostar", "la gasolinera"),
+    "RESTAURANTS": ("restaurantes", "bares", "comer fuera", "cenar fuera", "cañas", "café"),
+    "TRANSPORT_PUBLIC": ("transporte público", "tren", "metro", "autobús", "taxi", "VTC"),
+    "HEALTH": ("salud", "farmacia", "médico", "dentista", "óptica"),
+    "LEISURE": ("ocio", "cine", "libros", "videojuegos", "deporte", "compras de capricho"),
+    "SUBSCRIPTIONS": ("suscripciones", "cuotas mensuales", "streaming", "gimnasio"),
+    "HOUSING_RENT": ("alquiler", "la renta", "la casa", "la vivienda"),
+    "SALARY": ("nómina", "sueldo", "salario", "la paga"),
+    "TRANSFER_BIZUM": ("bizum", "transferencias entre personas"),
+}
+
+# What a category is called in a sentence the user reads. Not the gloss: a list of five synonyms is
+# for a model choosing between them, and a person reading an explanation wants one word.
+_NAMES: Final[dict[str, str]] = {
+    "GROCERIES": "supermercado",
+    "TRANSPORT_FUEL": "gasolina",
+    "RESTAURANTS": "restaurantes",
+    "TRANSPORT_PUBLIC": "transporte público",
+    "HEALTH": "salud",
+    "LEISURE": "ocio",
+    "SUBSCRIPTIONS": "suscripciones",
+    "HOUSING_RENT": "alquiler",
+    "SALARY": "nómina",
+    "TRANSFER_BIZUM": "bizum",
+}
+
+
+def words_for(category: str) -> str | None:
+    """The gloss the prompt shows, or None for a category nobody described."""
+    words = _GLOSS.get(category)
+    return ", ".join(words) if words else None
+
+
+def name_of(category: str) -> str:
+    """One word for a person. Falls back to the identifier, which beats inventing a word."""
+    return _NAMES.get(category, category)
+
+
+def _folded(text: str) -> str:
+    stripped = unicodedata.normalize("NFD", text.casefold())
+    return "".join(character for character in stripped if not unicodedata.combining(character))
+
+
+def named_in(sentence: str) -> tuple[str, ...]:
+    """Which categories this sentence mentions, in the order their words appear.
+
+    Longest gloss first, so "compras de capricho" is found as LEISURE before "la compra" can claim
+    the same words for GROCERIES. Word boundaries, so "café" is not found inside a merchant name
+    that merely contains it.
+
+    Case and accents are folded: somebody typing "cafe" or "CINE" means the same thing, and a match
+    that needed the exact spelling would answer "I do not know that word" to a word it knows.
+    """
+    haystack = _folded(sentence)
+    found: dict[str, int] = {}
+    for category, words in _GLOSS.items():
+        for word in sorted(words, key=len, reverse=True):
+            match = re.search(rf"(?<![a-z0-9]){re.escape(_folded(word))}(?![a-z0-9])", haystack)
+            if match:
+                # The earliest position at which this category is mentioned, so the order of the
+                # answer follows the order of the question.
+                found.setdefault(category, match.start())
+                break
+    return tuple(sorted(found, key=lambda category: found[category]))

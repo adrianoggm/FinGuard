@@ -118,3 +118,17 @@ class PaymentOutcome(StrEnum):
     REFUSED = "REFUSED"
     PROVIDER_ERROR = "PROVIDER_ERROR"
     BANKING_UNAVAILABLE = "BANKING_UNAVAILABLE"
+
+
+class Spoken(StrEnum):
+    """Answers the assistant gives without asking the ledger anything.
+
+    Separate from PlanningOutcome, which is about reading a sentence into a plan. Nothing here was
+    planned: the answer was already in this repository or in the previous plan, so counting these as
+    planning outcomes would put two different things in the metric that measures one.
+    """
+
+    # About the assistant: what it is, what it can do.
+    IDENTITY = "IDENTITY"
+    # About the previous answer: which query ran, and what a category means.
+    EXPLANATION = "EXPLANATION"
