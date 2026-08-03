@@ -59,16 +59,24 @@ class Settings(BaseSettings):
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.
     #
-    # Eleven models were measured. This is not the most accurate of them: qwen2.5-coder
-    # at 14B scores 92.4% held out against this one's 89.9%. It is the one that stopped
-    # answering questions it cannot answer — `unsupported` went from 1/5 to 3/5 without
-    # the over-asking that usually comes with it. A missing answer is visible to the
-    # user; a confident wrong figure is not.
+    # Eleven models were measured and this one is fourth on accuracy. It is here because
+    # the reason to prefer the others stopped being a model property.
     #
-    # qwen2.5-coder:7b stays the baseline every change is measured against, and it is
-    # the one to fall back to: 4.7 GB fits a 6.6 GB budget whole, and this does not.
-    # See evaluation/planning/RESULTS.md.
-    planner_model: str = "qwen3.5:9b"
+    # qwen3.5:9b was chosen for `unsupported` — 3/5 held out against this one's 1/5, the
+    # worst open defect in the phase. The capability guard now refuses those before a
+    # model is consulted, deterministically and identically whichever model is
+    # configured, so that 2-case advantage is gone and 6.4 points of accuracy are what
+    # remains on one side.
+    #
+    # On the other side is the only property here that is not a percentage: 4.7 GB fits
+    # an 8 GB card whole and 6.6 GB does not, which puts 14% of the layers on the CPU on
+    # every single request. Measured under offload before, a 4B ran slower than a 7B.
+    #
+    # So this is the fast, fully resident model, and the accuracy gap is now a known
+    # cost rather than a risk — the guard and the verifier catch what it gets wrong in
+    # the directions that matter. Revisit when the GPU changes or when the gap shows up
+    # in a group the guard does not cover. See evaluation/planning/RESULTS.md.
+    planner_model: str = "qwen2.5-coder:7b"
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

@@ -10,7 +10,8 @@
 # about what it is wrong at.
 #
 # THE PROMPT IS TUNED AGAINST THIS FILE, so its scores are an upper bound. The number to
-# quote to anybody else comes from test.yaml, which the prompt has never seen.
+# quote to anybody else comes from validation.yaml, which the prompt has never been
+# tuned against — though a model was selected on it, so it is not a release number.
 #
 # Every case pins reference: 2026-07-15, a Wednesday. That date is not arbitrary — it is
 # what separates the pairs a model conflates:

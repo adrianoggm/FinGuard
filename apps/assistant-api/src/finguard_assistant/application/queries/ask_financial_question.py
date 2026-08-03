@@ -21,7 +21,7 @@ from finguard_assistant.domain.models.planning_result import PlanningResult
 from finguard_assistant.domain.models.query_answer import QueryAnswer
 from finguard_assistant.domain.ports.financial_query import FinancialQueryPort
 from finguard_assistant.domain.ports.query_planner import QueryPlannerPort
-from finguard_assistant.domain.services import answer_writer
+from finguard_assistant.domain.services import answer_writer, capability_guard, plan_verifier
 from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 
 
@@ -127,6 +127,14 @@ class AskFinancialQuestionHandler:
     async def stream(
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        refused = capability_guard.unsupported_reason(query.sentence)
+        if refused is not None:
+            # Before the model, on purpose. Refusing here is a control; refusing after is
+            # whatever disposition the configured model happens to have, and that moved
+            # by 60 points between two models we measured.
+            yield _decline(PlanningResult.unsupported(refused))
+            return
+
         yield Stage("planning")
         planned = await self._planner.plan(
             query.sentence, today=query.today, previous=query.previous_plan
@@ -137,6 +145,21 @@ class AskFinancialQuestionHandler:
             return
 
         assert planned.plan is not None  # is_answerable is exactly this condition
+
+        broken = plan_verifier.disagreement(query.sentence, planned.plan)
+        if broken is not None:
+            # The plan is well formed, the domain accepts it, and it answers a different
+            # question from the one asked. Nothing downstream can tell: banking would
+            # return a real figure. This is the only place that compares the two.
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido la pregunta, pero la consulta que he construido no "
+                "se corresponde con ella. ¿Puedes decirla de otra forma?",
+                plan=answer_writer.describe(planned.plan),
+                plan_context=_spoken(planned.plan),
+            )
+            return
+
         yield Stage("planned", answer_writer.describe(planned.plan))
         yield Stage("querying")
         yield await self._answer(query, planned.plan)
