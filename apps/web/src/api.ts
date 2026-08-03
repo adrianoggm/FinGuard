@@ -66,6 +66,9 @@ export type Answer = {
   intent_id: string | null;
   plan: string | null;
   plan_context: PlanContext | null;
+  // Present with a question back: the reading that question interrupted. Echoed on the next turn
+  // so the reply finishes the plan instead of starting a new one.
+  pending_context: PlanContext | null;
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
@@ -115,13 +118,19 @@ export async function summary(): Promise<Summary> {
 export async function* ask(
   sentence: string,
   previousPlan: PlanContext | null = null,
+  pendingDraft: PlanContext | null = null,
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
     headers: headers(),
-    // The plan behind the last answer travels with the question. The service does not remember it:
-    // the conversation is held by whoever is having it, which is why this parameter exists at all.
-    body: JSON.stringify({ question: sentence, previous_plan: previousPlan }),
+    // The plan behind the last answer travels with the question, and so does the half-built one
+    // behind the last question back. The service remembers neither: the conversation is held by
+    // whoever is having it, which is why both parameters exist at all.
+    body: JSON.stringify({
+      question: sentence,
+      previous_plan: previousPlan,
+      pending_draft: pendingDraft,
+    }),
   });
   if (!response.ok || !response.body) await readError(response);
 
@@ -173,8 +182,10 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
-    // A payment has no query behind it, so there is nothing to carry into the next turn.
+    // A payment has no query behind it, so there is nothing to carry into the next turn — and
+    // nothing half-built either: a payment asks for a confirmation, not for a missing field.
     plan_context: null,
+    pending_context: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
@@ -263,8 +274,10 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
-    // A payment has no query behind it, so there is nothing to carry into the next turn.
+    // A payment has no query behind it, so there is nothing to carry into the next turn — and
+    // nothing half-built either: a payment asks for a confirmation, not for a missing field.
     plan_context: null,
+    pending_context: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
