@@ -30,15 +30,16 @@ from finguard_orchestrator.application import (
     Stage,
 )
 from finguard_orchestrator.bootstrap.dependencies import (
-    authenticated_caller,
     get_ask_handler,
     get_command_bus,
     get_query_bus,
     questions_enabled,
     reporting_today,
+    requires,
 )
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     MessageRequest,
@@ -54,14 +55,23 @@ Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
 Today = Annotated[date, Depends(reporting_today)]
 Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
-Who = Annotated[Caller, Depends(authenticated_caller)]
+Who = Annotated[Caller, Depends(requires(Scope.QUESTIONS_READ))]
 
 assistant_router = APIRouter(tags=["assistant"])
 
-# ponytail: these endpoints change how the assistant behaves and today they ask for no
-# credentials. Before the service is exposed beyond localhost they have to sit behind
-# OAuth with an administration scope (§12 of the vision).
-admin_router = APIRouter(prefix="/admin", tags=["admin"])
+# These change which model answers every question, for everybody. They now need a scope
+# nothing grants by default — a development token gets the two read permissions and not
+# this one, so swapping the planner is something somebody was allowed to do rather than
+# something anybody on the network can do.
+#
+# Still not OAuth: the credential is a development token (§12.2 asks for short-lived tokens
+# from an issuer). What is real is the seam — the permission is checked, and swapping the
+# issuer is a change of adapter.
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(requires(Scope.ASSISTANT_ADMIN))],
+)
 
 
 @assistant_router.get("/health", summary="Liveness")
@@ -97,7 +107,11 @@ async def ready(request: Request, queries: Queries) -> JSONResponse:
     return JSONResponse(body, status_code=200 if all(checks.values()) else 503)
 
 
-@assistant_router.post("/v1/messages", summary="Answer a message")
+@assistant_router.post(
+    "/v1/messages",
+    summary="Answer a message",
+    dependencies=[Depends(requires(Scope.ASSISTANT_USE))],
+)
 async def send_message(body: MessageRequest, queries: Queries) -> MessageResponse:
     """Answers with the active model, falling back if the catalogue says so."""
     return llm_mapper.answer_to_dto(await queries.ask(AnswerMessageQuery(body.prompt)))

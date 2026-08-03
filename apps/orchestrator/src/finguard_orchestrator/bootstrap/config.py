@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
+from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure import TomlModelCatalogue
 
 # The values live in .env.defaults, versioned and free of secrets, beside the reason each
@@ -159,13 +160,34 @@ class Settings(BaseSettings):
     def callers(self) -> dict[str, Caller]:
         """Parses the token table. Fails loudly on a malformed entry rather than
         skipping it: a silently dropped token is a caller who cannot log in and an
-        afternoon spent looking at the wrong layer."""
+        afternoon spent looking at the wrong layer.
+
+        The zone is the optional fourth field. Optional because most holders share the
+        deployment's, present because "hoy" belongs to whoever is asking — a holder in the
+        Canaries has a different one for an hour every night, and being told about the wrong
+        day is a real figure answering a question nobody asked.
+        """
         table: dict[str, Caller] = {}
         for entry in self.dev_tokens:
-            parts = entry.split(":")
-            if len(parts) != 3:
-                raise ValueError(f"a token entry is token:holder:account_uuid, got {entry!r}")
-            token, holder, account = parts
+            # maxsplit, because a scope name contains a colon: "questions:read" would
+            # otherwise be split into two fields and the entry rejected as malformed. The
+            # scopes are last precisely so they can keep their own separator.
+            parts = entry.split(":", 4)
+            if len(parts) not in (3, 4, 5):
+                raise ValueError(
+                    f"a token entry is token:holder:account_uuid[:timezone[:scopes]], got {entry!r}"
+                )
+            token, holder, account = parts[:3]
+            zone = parts[3] if len(parts) > 3 and parts[3] else "Europe/Madrid"
+            # Comma-separated, because the entry is already colon-delimited. Absent means
+            # the two read permissions, which is what a development credential needs and
+            # deliberately not the admin one: swapping the model that answers every
+            # question for everybody has to be granted on purpose.
+            granted = (
+                parts[4].split(",")
+                if len(parts) == 5 and parts[4]
+                else [Scope.QUESTIONS_READ.value, Scope.ASSISTANT_USE.value]
+            )
             if token in table:
                 # Two entries sharing a secret is a typo, and the quiet outcome is the
                 # dangerous one: the token would resolve to whichever account came last.
@@ -173,7 +195,12 @@ class Settings(BaseSettings):
                 # operator already has the table in front of them; repeating even a
                 # prefix of the shared secret there only creates another copy to leak.
                 raise ValueError("a development token is configured twice")
-            table[token] = Caller(holder_reference=holder, account_id=UUID(account))
+            table[token] = Caller(
+                holder_reference=holder,
+                account_id=UUID(account),
+                reporting_timezone=zone,
+                scopes=frozenset(granted),
+            )
         return table
 
     def guard_policy(self) -> GuardPolicy:

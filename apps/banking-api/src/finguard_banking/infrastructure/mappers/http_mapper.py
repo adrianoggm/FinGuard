@@ -30,7 +30,13 @@ from finguard_banking.infrastructure.dto.banking_dto import (
 
 def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery:
     """Builds the plan. A relative period is resolved here, at the edge, because this is
-    where the clock lives — the domain only ever sees absolute dates."""
+    where the clock lives — the domain only ever sees absolute dates.
+
+    `today` is this service's own idea of the day, used only when the caller did not send a
+    reference. When it did, the caller's date and zone travel together and win: the window
+    a figure is about has to be the one whoever asked was thinking of.
+    """
+    zone = request.period.timezone if request.period is not None else None
     if request.date_range is not None:
         date_range = DateRange(start=request.date_range.start, end=request.date_range.end)
     elif request.period is not None:
@@ -52,6 +58,7 @@ def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery
         group_by=request.group_by,
         supporting_limit=request.supporting_limit,
         explain=request.explain,
+        reporting_timezone=zone,
     )
 
 

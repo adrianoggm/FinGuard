@@ -88,6 +88,10 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     sentence: str
     account_id: UUID
     today: date
+    # The zone `today` was measured in. It travels with the date because neither describes a
+    # window alone, and it belongs to the holder rather than the deployment: between
+    # midnight and 01:00 peninsular time, today in the Canaries is yesterday in Madrid.
+    reporting_timezone: str = "Europe/Madrid"
     # The plan behind the previous answer, echoed back by the caller. Held by whoever
     # is having the conversation, not by this service — and already a plan by the time
     # it arrives here, rather than text that has to be believed.
@@ -189,7 +193,12 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan
     ) -> AskFinancialQuestionResult:
         try:
-            answer = await self._queries.run(plan, account_id=query.account_id, today=query.today)
+            answer = await self._queries.run(
+                plan,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
         except QueryRejectedError:
             # Our plan, banking's rules. Ours to fix, so it is reported as such rather
             # than dressed up as the user having asked something impossible.

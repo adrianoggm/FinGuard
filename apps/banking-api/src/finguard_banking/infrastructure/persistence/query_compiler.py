@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from finguard_banking.domain.constants import MAX_GROUPS, UNCATEGORISED, UNKNOWN_MERCHANT
-from finguard_banking.domain.enums import Direction, GroupBy
+from finguard_banking.domain.enums import Direction, GroupBy, Metric
 from finguard_banking.domain.models.financial_query import FinancialQuery
 
 VIEW = "assistant_read.transactions_v1"
@@ -59,6 +59,29 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
             return f"COALESCE(t.category, '{UNCATEGORISED}')"
         case GroupBy.MERCHANT:
             return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
+
+
+def _group_ordering(group_by: GroupBy, metric: Metric) -> str:
+    """Which groups survive the limit.
+
+    This was `ORDER BY 1`, which with a LIMIT keeps the groups whose *key* sorts first.
+    For a category or a merchant that is alphabetical, so "¿en qué me he gastado más?"
+    returned the first five names and presented them as the largest. A wrong answer with
+    no error anywhere, and the demo's opening question.
+
+    Derived from the plan rather than carried in the contract, deliberately. The correct
+    ordering is a function of what was asked in every case the dataset has, so deriving it
+    is always right, while three new contract fields would be three more things for a model
+    to choose wrongly. `limit` is the separable part — "los tres comercios donde más gasté"
+    needs it — and it can arrive when top-N is actually wanted.
+    """
+    if group_by in (GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH):
+        # Time is the one grouping whose key carries the meaning. A month is not more
+        # interesting for being expensive, and a series out of order is not a series.
+        return "key"
+    if metric is Metric.COUNT:
+        return "movement_count DESC"
+    return "total_minor DESC"
 
 
 def _amount_expression(direction: Direction) -> str:
@@ -105,7 +128,7 @@ def compile_aggregate(
         FROM {VIEW} t
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
-        ORDER BY 1
+        ORDER BY {_group_ordering(query.group_by, query.metric)}
         LIMIT {min(group_limit, MAX_GROUPS)}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)

@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Conversational orchestrator of FinGuard"
 requires-python = ">=3.12"
 dependencies = [
+    # The holder's zone decides which day a purchase belongs to, and python-slim ships no
+    # tz database: without this, ZoneInfo("Europe/Madrid") raises in the container while
+    # working on a developer's machine. banking already depends on it for the same reason.
+    "tzdata>=2025.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "pydantic-settings>=2.7",

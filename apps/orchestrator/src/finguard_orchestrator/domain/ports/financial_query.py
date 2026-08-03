@@ -27,4 +27,11 @@ class FinancialQueryPort(Protocol):
     the user's problem to solve.
     """
 
-    async def run(self, plan: FinancialPlan, *, account_id: UUID, today: date) -> QueryAnswer: ...
+    async def run(
+        self,
+        plan: FinancialPlan,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+    ) -> QueryAnswer: ...

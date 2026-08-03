@@ -36,6 +36,11 @@ class FinancialQuery:
     supporting_limit: int = DEFAULT_SUPPORTING_MOVEMENTS
     # The trace (compiled SQL and parameters) is opt-in: it never travels by default.
     explain: bool = False
+    # The zone the caller's day was measured in, when the caller said. None means the
+    # deployment's own, which is the right fallback and the wrong default to rely on: a
+    # date without a zone does not say what "hoy" means, and two services each using their
+    # own setting can bin the same purchase on different days.
+    reporting_timezone: str | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.supporting_limit <= MAX_SUPPORTING_MOVEMENTS:
