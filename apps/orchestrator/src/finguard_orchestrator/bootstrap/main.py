@@ -13,6 +13,8 @@ from finguard_orchestrator.application import (
     GetAccountSummaryQuery,
     GetBreakdownHandler,
     GetBreakdownQuery,
+    GetCardChargesHandler,
+    GetCardChargesQuery,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
     GetMovementsHandler,
@@ -134,15 +136,12 @@ def create_app() -> FastAPI:
     query_bus.register(GetBreakdownQuery, GetBreakdownHandler(banking))
     # The cards, and the contacts a payment form offers. Both are reads through banking's own
     # restricted role, and neither has a model anywhere in it.
-    query_bus.register(
-        ListCardsQuery,
-        ListCardsHandler(
-            HttpCards(
-                base_url=settings.banking_base_url,
-                timeout_seconds=settings.banking_timeout_seconds,
-            )
-        ),
+    cards = HttpCards(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
     )
+    query_bus.register(ListCardsQuery, ListCardsHandler(cards))
+    query_bus.register(GetCardChargesQuery, GetCardChargesHandler(cards))
     query_bus.register(
         ListContactsQuery,
         ListContactsHandler(

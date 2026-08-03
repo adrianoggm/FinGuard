@@ -10,6 +10,7 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionResult,
     BreakdownResult,
     CatalogueResult,
+    ChargesResult,
     ListContactsResult,
     ModelRow,
     MovementsResult,
@@ -27,6 +28,8 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     BreakdownResponse,
     CardPayload,
     CatalogueResponse,
+    ChargePayload,
+    ChargesResponse,
     ContactPayload,
     ContactsResponse,
     GroupPayload,
@@ -229,5 +232,23 @@ def wallet_to_dto(result: WalletResult) -> WalletResponse:
                 charge_count=card.charge_count,
             )
             for card in result.cards
+        ],
+    )
+
+
+def charges_to_dto(result: ChargesResult) -> ChargesResponse:
+    return ChargesResponse(
+        card_id=result.card_id,
+        since=result.since,
+        charges=[
+            ChargePayload(
+                transaction_id=charge.transaction_id,
+                occurred_at=charge.occurred_at,
+                description=charge.description,
+                merchant_name=charge.merchant_name,
+                category=charge.category,
+                amount_minor=charge.amount_minor,
+            )
+            for charge in result.charges
         ],
     )

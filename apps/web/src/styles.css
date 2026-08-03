@@ -720,6 +720,29 @@ body {
   opacity: 0.75;
 }
 
+.plastic-more {
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 10%);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* The charges sit under their card rather than in a separate screen: the total and the movements
+   behind it belong in one place, which is the whole point of showing them. */
+.charges {
+  margin-top: 0.5rem;
+}
+
+.charges ul {
+  border-radius: 1rem;
+}
+
 .plastic-status {
   margin: 0.5rem 0 0;
   font-size: 0.75rem;

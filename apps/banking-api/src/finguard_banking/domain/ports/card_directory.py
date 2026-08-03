@@ -2,7 +2,7 @@ from datetime import date
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from finguard_banking.domain.models.card import Card
+from finguard_banking.domain.models.card import Card, CardCharge
 
 
 @runtime_checkable
@@ -16,3 +16,14 @@ class CardDirectoryPort(Protocol):
     """
 
     async def all_of(self, account_id: UUID, *, since: date, timezone: str) -> tuple[Card, ...]: ...
+
+    async def charges_on(
+        self, account_id: UUID, card_id: UUID, *, since: date, timezone: str, limit: int
+    ) -> tuple[CardCharge, ...]: ...
+
+    """What was bought with one card.
+
+    The account is a parameter as well as the card, and it is not redundant: a card id that belongs
+    to somebody else must come back empty rather than come back at all, and the view filters on the
+    declared account regardless of what card is asked for.
+    """

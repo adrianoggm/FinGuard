@@ -15,7 +15,7 @@ from uuid import UUID
 
 import asyncpg
 
-from finguard_banking.domain.models.card import Card
+from finguard_banking.domain.models.card import Card, CardCharge
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
     _DECLARE_ACCOUNT,
 )
@@ -43,6 +43,16 @@ _SQL = """
     -- Active first, then by brand: a blocked card belongs at the bottom of the list rather than
     -- wherever its digits happen to sort.
     ORDER BY (c.status = 'ACTIVE') DESC, c.brand, c.last_four
+"""
+
+
+_CHARGES_SQL = """
+    SELECT transaction_id, occurred_at, description, merchant_name, category, amount_minor
+    FROM assistant_read.card_charges_v1
+    WHERE card_id = $1
+      AND (occurred_at AT TIME ZONE $2)::date >= $3
+    ORDER BY occurred_at DESC
+    LIMIT $4
 """
 
 
@@ -74,6 +84,32 @@ class PostgresCardRepository:
                 # back as Decimal — the same edge the payment repository already hit.
                 spent_minor=int(row["spent_minor"]),
                 charge_count=int(row["charge_count"]),
+            )
+            for row in rows
+        )
+
+    async def charges_on(
+        self, account_id: UUID, card_id: UUID, *, since: date, timezone: str, limit: int
+    ) -> tuple[CardCharge, ...]:
+        """What was bought with one card, newest first.
+
+        The card is named in the WHERE and the account in the declaration, and both matter: the view
+        already filters on the declared account, so another holder's card id selects nothing rather
+        than selecting their charges. That is the containment property, and it does not depend on
+        this method being careful.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            rows = await connection.fetch(_CHARGES_SQL, card_id, timezone, since, limit)
+
+        return tuple(
+            CardCharge(
+                transaction_id=row["transaction_id"],
+                occurred_at=row["occurred_at"],
+                description=row["description"],
+                merchant_name=row["merchant_name"],
+                category=row["category"],
+                amount_minor=int(row["amount_minor"]),
             )
             for row in rows
         )

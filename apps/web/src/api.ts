@@ -264,3 +264,19 @@ export type Wallet = {
 export async function cards(days: number): Promise<Wallet> {
   return read<Wallet>(`/v1/cards?days=${days}`);
 }
+
+export type Charge = {
+  transaction_id: string;
+  occurred_at: string;
+  description: string;
+  merchant_name: string | null;
+  category: string | null;
+  /** Unsigned: every charge is money out, and the screen writes the minus. */
+  amount_minor: number;
+};
+
+export type Charges = { card_id: string; since: string; charges: Charge[] };
+
+export async function chargesOn(cardId: string, days: number): Promise<Charges> {
+  return read<Charges>(`/v1/cards/${cardId}/charges?days=${days}&limit=50`);
+}

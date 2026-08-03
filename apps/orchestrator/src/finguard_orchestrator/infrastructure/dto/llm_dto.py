@@ -230,3 +230,20 @@ class WalletResponse(_Payload):
 
     since: str
     cards: list[CardPayload] = []
+
+
+class ChargePayload(_Payload):
+    """One charge on a card. Unsigned: every row is money out, and the screen writes the minus."""
+
+    transaction_id: str
+    occurred_at: str
+    description: str
+    merchant_name: str | None
+    category: str | None
+    amount_minor: int
+
+
+class ChargesResponse(_Payload):
+    card_id: str
+    since: str
+    charges: list[ChargePayload] = []

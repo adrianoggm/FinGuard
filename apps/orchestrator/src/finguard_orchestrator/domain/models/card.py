@@ -8,7 +8,7 @@ is implicit is a total somebody eventually labels as a month.
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 
@@ -32,3 +32,19 @@ class Card:
 class Wallet:
     since: date
     cards: tuple[Card, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class CardCharge:
+    """One charge on a card.
+
+    Unsigned, because every charge is money out: a sign would be decoration on a list where nothing
+    can be positive, and the screen is what writes the minus.
+    """
+
+    transaction_id: UUID
+    occurred_at: datetime
+    description: str
+    merchant_name: str | None
+    category: str | None
+    amount_minor: int

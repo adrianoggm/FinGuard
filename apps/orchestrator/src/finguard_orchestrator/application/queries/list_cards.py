@@ -65,3 +65,53 @@ class ListCardsHandler:
                 for card in wallet.cards
             ],
         )
+
+
+@dataclass(frozen=True)
+class ChargeRow:
+    transaction_id: str
+    occurred_at: str
+    description: str
+    merchant_name: str | None
+    category: str | None
+    amount_minor: int
+
+
+@dataclass(frozen=True)
+class ChargesResult:
+    card_id: str
+    since: str
+    charges: list[ChargeRow] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class GetCardChargesQuery(Query[ChargesResult]):
+    account_id: UUID
+    card_id: UUID
+    since: date
+    limit: int
+
+
+class GetCardChargesHandler:
+    def __init__(self, cards: CardDirectoryPort) -> None:
+        self._cards = cards
+
+    async def handle(self, query: GetCardChargesQuery) -> ChargesResult:
+        found = await self._cards.charges_on(
+            query.account_id, query.card_id, since=query.since, limit=query.limit
+        )
+        return ChargesResult(
+            card_id=str(query.card_id),
+            since=query.since.isoformat(),
+            charges=[
+                ChargeRow(
+                    transaction_id=str(charge.transaction_id),
+                    occurred_at=charge.occurred_at.isoformat(),
+                    description=charge.description,
+                    merchant_name=charge.merchant_name,
+                    category=charge.category,
+                    amount_minor=charge.amount_minor,
+                )
+                for charge in found
+            ],
+        )

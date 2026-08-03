@@ -15,6 +15,7 @@ import uuid
 from collections.abc import AsyncIterator, Mapping
 from datetime import date, timedelta
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -26,6 +27,7 @@ from finguard_orchestrator.application import (
     CommandBus,
     GetAccountSummaryQuery,
     GetBreakdownQuery,
+    GetCardChargesQuery,
     GetLlmCatalogueQuery,
     GetMovementsQuery,
     ListCardsQuery,
@@ -56,6 +58,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownResponse,
     CatalogueResponse,
+    ChargesResponse,
     ContactsResponse,
     MessageRequest,
     MessageResponse,
@@ -334,6 +337,38 @@ async def cards(
         ListCardsQuery(account_id=who.account_id, since=today - timedelta(days=days))
     )
     return llm_mapper.wallet_to_dto(result)
+
+
+@assistant_router.get(
+    "/v1/cards/{card_id}/charges",
+    summary="What was bought with one card",
+    dependencies=[Depends(questions_enabled)],
+)
+async def card_charges(
+    card_id: UUID,
+    who: Who,
+    queries: Queries,
+    today: Today,
+    days: Annotated[int, Query(ge=1, le=MAX_DAYS)] = 30,
+    limit: Annotated[int, Query(ge=1, le=MAX_MOVEMENTS)] = 50,
+) -> ChargesResponse:
+    """The movements behind a card's total.
+
+    A screen that states "437,92 € en 10 cargos" and cannot show the ten is asking to be trusted,
+    which is the objection this product exists to answer.
+
+    A card that is not this account's comes back with an empty list, because that is what banking
+    answers: its view filters on the declared account, so the id selects nothing.
+    """
+    result = await queries.ask(
+        GetCardChargesQuery(
+            account_id=who.account_id,
+            card_id=card_id,
+            since=today - timedelta(days=days),
+            limit=limit,
+        )
+    )
+    return llm_mapper.charges_to_dto(result)
 
 
 @assistant_router.get("/v1/contacts", summary="Everybody this account can pay")

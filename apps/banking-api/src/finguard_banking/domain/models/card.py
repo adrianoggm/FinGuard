@@ -9,6 +9,7 @@ to say which card the money went out of.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 
@@ -26,3 +27,22 @@ class Card:
     spending_limit_minor: int | None
     spent_minor: int
     charge_count: int
+
+
+@dataclass(frozen=True)
+class CardCharge:
+    """One charge on a card, as a person reads it.
+
+    A card screen that shows "437,92 € en 10 cargos" and cannot then show the ten is a screen asking
+    to be trusted, which is the objection this whole product is built against.
+
+    `amount_minor` is unsigned, deliberately: every row is a debit on the holder's side, so a sign
+    would be decoration on a list where nothing can be positive. The screen writes the minus.
+    """
+
+    transaction_id: UUID
+    occurred_at: datetime
+    description: str
+    merchant_name: str | None
+    category: str | None
+    amount_minor: int

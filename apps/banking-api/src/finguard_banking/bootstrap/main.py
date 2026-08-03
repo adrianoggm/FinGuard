@@ -13,6 +13,8 @@ from finguard_banking.application import (
     ConfirmPaymentHandler,
     GetBalanceHandler,
     GetBalanceQuery,
+    ListCardChargesHandler,
+    ListCardChargesQuery,
     ListCardsHandler,
     ListCardsQuery,
     ListContactsHandler,
@@ -87,9 +89,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.query_bus.register(
         ListContactsQuery, ListContactsHandler(PostgresContactRepository(query_pool))
     )
-    app.state.query_bus.register(
-        ListCardsQuery, ListCardsHandler(PostgresCardRepository(query_pool))
-    )
+    cards = PostgresCardRepository(query_pool)
+    app.state.query_bus.register(ListCardsQuery, ListCardsHandler(cards))
+    app.state.query_bus.register(ListCardChargesQuery, ListCardChargesHandler(cards))
     payments = PostgresPaymentRepository(
         pool,
         clearing_reference=settings.clearing_account_reference,

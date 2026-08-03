@@ -4,14 +4,14 @@ Nothing is interpreted here and nothing can move money: a card list is a read, t
 restricted role and its own views.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError
-from finguard_orchestrator.domain.models.card import Card, Wallet
+from finguard_orchestrator.domain.models.card import Card, CardCharge, Wallet
 
 
 class HttpCards:
@@ -65,3 +65,44 @@ class HttpCards:
             # An empty wallet is an answer; an unreadable one is not. A screen showing no cards
             # because the body was malformed looks exactly like an account with none.
             raise BankingUnavailableError(f"unreadable cards: {exc}") from exc
+
+    async def charges_on(
+        self, account_id: UUID, card_id: UUID, *, since: date, limit: int
+    ) -> tuple[CardCharge, ...]:
+        days = max(1, (date.today() - since).days)
+        url = (
+            f"{self._base_url}/v1/accounts/{account_id}/cards/{card_id}/charges"
+            f"?days={days}&limit={limit}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise BankingUnavailableError(f"{url}: {exc}") from exc
+
+        if response.status_code != 200:
+            raise BankingUnavailableError(f"HTTP {response.status_code} reading the charges")
+
+        try:
+            body: Any = response.json()
+            return tuple(
+                CardCharge(
+                    transaction_id=UUID(row["transactionId"]),
+                    occurred_at=_moment(row["occurredAt"]),
+                    description=row["description"],
+                    merchant_name=row.get("merchantName"),
+                    category=row.get("category"),
+                    amount_minor=int(row["amountMinor"]),
+                )
+                for row in body["charges"]
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            # An empty list is an answer — a card of another account, or a card nobody used. An
+            # unreadable body is not, and a screen showing no charges for either reason looks
+            # identical.
+            raise BankingUnavailableError(f"unreadable charges: {exc}") from exc
+
+
+def _moment(written: str) -> datetime:
+    """Banking writes UTC with a Z. Explicit, so a timestamp never silently becomes naive."""
+    return datetime.fromisoformat(written.replace("Z", "+00:00"))

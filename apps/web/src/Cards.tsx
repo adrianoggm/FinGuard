@@ -1,12 +1,16 @@
 /**
- * The cards, drawn as cards.
+ * The cards, drawn as cards, each one openable.
  *
  * Four digits and never a number: that is what the service sends, because a PAN belongs in a vault and
  * a person only needs enough to recognise which card is theirs.
  *
- * Every figure says which window it is from, in words, next to the number. A total labelled "este mes"
- * that is really the last thirty days is wrong on the 1st by everything that happened on the 31st, and
- * the service deliberately answers a rolling window with its start date rather than claiming a month.
+ * **Tapping a card shows its charges**, and that is not a nicety. A screen that states "437,92 € en 10
+ * cargos" and cannot then show the ten is asking to be trusted, which is the objection this whole
+ * product is built against. The same reason every figure in the chat carries its plan.
+ *
+ * Every figure says which window it is from, in words, next to the number. The service answers a
+ * rolling window with its start date rather than claiming a month, and a total labelled "este mes" that
+ * is really the last thirty days is wrong on the 1st by everything that happened on the 31st.
  *
  * A credit card gets a bar against its limit; a debit card does not, because its limit is the balance
  * and drawing a full bar for that would be inventing a ceiling.
@@ -14,8 +18,14 @@
 
 import { useEffect, useState } from "react";
 
-import { cards as fetchCards, type Card, type Wallet } from "./api";
-import { money } from "./format";
+import {
+  cards as fetchCards,
+  chargesOn,
+  type Card,
+  type Charge,
+  type Wallet,
+} from "./api";
+import { categoryName, day, glyph, money } from "./format";
 
 const WINDOWS = [
   [30, "30 días"],
@@ -34,6 +44,7 @@ export function Cards() {
   const [days, setDays] = useState(30);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -79,7 +90,13 @@ export function Cards() {
       <ul className="wallet">
         {wallet?.cards.map((card) => (
           <li key={card.card_id}>
-            <Plastic card={card} window={label} />
+            <Plastic
+              card={card}
+              window={label}
+              open={open === card.card_id}
+              onToggle={() => setOpen(open === card.card_id ? null : card.card_id)}
+            />
+            {open === card.card_id && <ChargeList cardId={card.card_id} days={days} />}
           </li>
         ))}
       </ul>
@@ -87,7 +104,14 @@ export function Cards() {
   );
 }
 
-function Plastic({ card, window: label }: { card: Card; window: string }) {
+type PlasticProps = {
+  card: Card;
+  window: string;
+  open: boolean;
+  onToggle: () => void;
+};
+
+function Plastic({ card, window: label, open, onToggle }: PlasticProps) {
   const blocked = card.status !== "ACTIVE";
   const share =
     card.spending_limit_minor && card.spending_limit_minor > 0
@@ -136,7 +160,61 @@ function Plastic({ card, window: label }: { card: Card; window: string }) {
           </>
         )}
         {blocked && <p className="plastic-status">{STATUSES[card.status] ?? card.status}</p>}
+        <button className="plastic-more" onClick={onToggle} aria-expanded={open}>
+          {open ? "Ocultar los movimientos" : `Ver los ${card.charge_count} movimientos`}
+        </button>
       </div>
     </article>
+  );
+}
+
+function ChargeList({ cardId, days }: { cardId: string; days: number }) {
+  const [charges, setCharges] = useState<Charge[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    (async () => {
+      try {
+        const answer = await chargesOn(cardId, days);
+        if (current) {
+          setCharges(answer.charges);
+          setError(null);
+        }
+      } catch {
+        if (current) setError("No he podido cargar los movimientos.");
+      }
+    })();
+    return () => {
+      current = false;
+    };
+  }, [cardId, days]);
+
+  return (
+    <section className="movements charges" aria-label="Movimientos de la tarjeta">
+      {error && <p className="empty">{error}</p>}
+      {!error && charges === null && <p className="empty">Cargando…</p>}
+      {charges?.length === 0 && <p className="empty">Ningún cargo en este periodo.</p>}
+      {charges && charges.length > 0 && (
+        <ul>
+          {charges.map((charge) => (
+            <li key={charge.transaction_id}>
+              <span className="glyph" aria-hidden="true">
+                {glyph(charge.category)}
+              </span>
+              <span className="what">
+                <strong>{charge.merchant_name ?? charge.description}</strong>
+                <small>
+                  {day(charge.occurred_at)} · {categoryName(charge.category)}
+                </small>
+              </span>
+              {/* The minus is written here: the service sends unsigned amounts because on this list
+                  nothing can be positive, and a sign in the data would be decoration. */}
+              <span className="out">-{money(charge.amount_minor)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
