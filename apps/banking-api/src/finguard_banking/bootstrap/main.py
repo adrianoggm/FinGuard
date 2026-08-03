@@ -6,19 +6,29 @@ import asyncpg
 from fastapi import FastAPI
 
 from finguard_banking.application import (
+    CancelPaymentCommand,
+    CancelPaymentHandler,
     CommandBus,
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
     GetBalanceHandler,
     GetBalanceQuery,
     MovementSummaryHandler,
     MovementSummaryQuery,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
     QueryBus,
 )
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import (
+    PostgresAuditLog,
+    PostgresContactRepository,
     PostgresFinancialQueryRepository,
     PostgresLedgerRepository,
+    PostgresPaymentRepository,
     accounts_router,
     health_router,
+    payments_router,
     queries_router,
     register_error_handlers,
 )
@@ -63,6 +73,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.query_bus.register(GetBalanceQuery, GetBalanceHandler(ledger))
     app.state.query_bus.register(MovementSummaryQuery, MovementSummaryHandler(financial_queries))
 
+    # Payments write, so they hold the owner pool. Contacts are resolved through it too:
+    # the read-only role reaches the views, and the payment path needs the contact row it
+    # is about to point a ledger movement at.
+    contacts = PostgresContactRepository(pool)
+    payments = PostgresPaymentRepository(pool)
+    # Rebuilt here rather than in create_app: the trail needs the pool, and every command is
+    # audited by the bus so no handler can be the one that forgets.
+    app.state.command_bus = bus = CommandBus(audit=PostgresAuditLog(pool))
+    bus.register(PreparePaymentCommand, PreparePaymentHandler(contacts, payments))
+    bus.register(ConfirmPaymentCommand, ConfirmPaymentHandler(payments))
+    bus.register(CancelPaymentCommand, CancelPaymentHandler(payments))
+
     try:
         yield
     finally:
@@ -81,6 +103,7 @@ def create_app() -> FastAPI:
             {"name": "health", "description": "Liveness and readiness."},
             {"name": "accounts", "description": "Accounts and balances (§13.1)."},
             {"name": "queries", "description": "Financial queries over the ledger (§13.2)."},
+            {"name": "payments", "description": "Payments: prepare, then confirm (§4.1)."},
         ],
         docs_url="/docs",
         redoc_url="/redoc",
@@ -95,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(accounts_router)
     app.include_router(queries_router)
+    app.include_router(payments_router)
     register_error_handlers(app)
     return app
 

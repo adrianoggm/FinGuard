@@ -6,17 +6,21 @@ flat. What this adds is the wire format: camelCase, `from`/`to`, and the `amount
 """
 
 from datetime import date
+from uuid import UUID
 
 from finguard_banking.application import (
     GetBalanceResult,
     MovementSummaryResult,
+    PreparePaymentCommand,
     SummaryGroup,
     SummaryMovement,
     SummaryTrace,
 )
 from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
+from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
@@ -24,6 +28,9 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     FinancialQueryResponse,
     GroupResponse,
     MovementResponse,
+    PaymentPreviewResponse,
+    PaymentReceiptResponse,
+    PreparePaymentRequest,
     TraceResponse,
 )
 
@@ -104,4 +111,43 @@ def summary_to_dto(result: MovementSummaryResult) -> FinancialQueryResponse:
         groups=[_group_to_dto(group) for group in result.groups],
         supporting_movements=[_movement_to_dto(m) for m in result.movements],
         trace=_trace_to_dto(result.trace) if result.trace is not None else None,
+    )
+
+
+def payment_from_dto(
+    body: PreparePaymentRequest, account_id: UUID, key: str
+) -> PreparePaymentCommand:
+    """The account comes from the path and the key from a header, so neither can be forged in the
+    body. `Money` is built here: the domain never sees a loose amount/currency pair."""
+    return PreparePaymentCommand(
+        account_id=account_id,
+        recipient_name=body.recipient_name,
+        amount=Money(body.amount_minor, body.currency),
+        idempotency_key=key,
+    )
+
+
+def preview_to_dto(preview: PaymentPreview) -> PaymentPreviewResponse:
+    return PaymentPreviewResponse(
+        intent_id=preview.intent_id,
+        recipient=preview.recipient,
+        recipient_phone=preview.recipient_phone,
+        amount_minor=preview.amount.amount_minor,
+        currency=preview.amount.currency,
+        balance_before_minor=preview.balance_before.amount_minor,
+        balance_after_minor=preview.balance_after.amount_minor,
+        expires_at=preview.expires_at,
+    )
+
+
+def receipt_to_dto(receipt: PaymentReceipt) -> PaymentReceiptResponse:
+    return PaymentReceiptResponse(
+        intent_id=receipt.intent_id,
+        transaction_id=receipt.transaction_id,
+        recipient=receipt.recipient,
+        recipient_phone=receipt.recipient_phone,
+        amount_minor=receipt.amount.amount_minor,
+        currency=receipt.amount.currency,
+        balance_after_minor=receipt.balance_after.amount_minor,
+        confirmed_at=receipt.confirmed_at,
     )

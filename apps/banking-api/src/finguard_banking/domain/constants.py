@@ -33,6 +33,15 @@ MAX_MERCHANT_LENGTH = 140
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
 
+# A single payment, in minor units: 10.000 €. The ceiling, not the policy — a deployment lowers it
+# and the balance is what actually limits a payment. It is here because the request arrives from a
+# sentence somebody spoke, and a misheard amount should hit a wall well before the balance does.
+MAX_PAYMENT_MINOR = 1_000_000
+
+# A recipient's name as the caller wrote it. Long enough for a full Spanish name with two surnames,
+# short enough that the field cannot carry a paragraph into the contact lookup.
+MAX_RECIPIENT_NAME = 120
+
 # Sentinel keys for grouping rows that carry no category or merchant. They are contract
 # values, so English: the assistant phrases them for the user.
 UNCATEGORISED = "UNCATEGORISED"

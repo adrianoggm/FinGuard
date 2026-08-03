@@ -14,17 +14,29 @@ from finguard_banking.infrastructure.controllers.banking_controller import (
     health_router,
     queries_router,
 )
+from finguard_banking.infrastructure.controllers.payments_controller import payments_router
 from finguard_banking.infrastructure.error_handlers import register as register_error_handlers
+from finguard_banking.infrastructure.persistence.audit_log import PostgresAuditLog
+from finguard_banking.infrastructure.persistence.contact_repository import (
+    PostgresContactRepository,
+)
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
     PostgresFinancialQueryRepository,
 )
 from finguard_banking.infrastructure.persistence.ledger_repository import PostgresLedgerRepository
+from finguard_banking.infrastructure.persistence.payment_repository import (
+    PostgresPaymentRepository,
+)
 
 __all__ = [
+    "PostgresAuditLog",
+    "PostgresContactRepository",
     "PostgresFinancialQueryRepository",
     "PostgresLedgerRepository",
+    "PostgresPaymentRepository",
     "accounts_router",
     "health_router",
+    "payments_router",
     "queries_router",
     "register_error_handlers",
 ]
