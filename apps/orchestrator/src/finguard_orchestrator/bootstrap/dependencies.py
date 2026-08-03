@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import date
 from typing import Annotated
 
@@ -7,6 +8,7 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, Comma
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.scope import Scope
 
 
 def get_query_bus(request: Request) -> QueryBus:
@@ -70,3 +72,18 @@ def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> da
     zone travels to banking beside the date.
     """
     return who.today_in()
+
+
+def requires(scope: Scope) -> Callable[[Caller], Caller]:
+    """A dependency that authenticates and then checks one permission.
+
+    Declared on the route rather than checked in the handler, so the permission a route
+    needs is visible where somebody reads what the route is — and so a new route without one
+    is a missing dependency rather than a missing `if` nobody notices.
+    """
+
+    def guard(who: Annotated[Caller, Depends(authenticated_caller)]) -> Caller:
+        who.assert_may(scope)
+        return who
+
+    return guard

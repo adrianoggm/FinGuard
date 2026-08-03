@@ -183,7 +183,7 @@ The E2E gap belongs here too: the assistant's full pipeline is tested against fa
 Standing both services up with a deterministic planner — no Ollama in CI — tests the one
 seam that fakes cannot.
 
-## 6. Row-level security per holder
+## ~~6. Row-level security per holder~~ — done, per account
 
 The assistant resolves an identity and only ever passes that caller's account. That is a
 promise the application keeps and the database does not: anything holding a connection
@@ -197,7 +197,7 @@ Cheap now and expensive later: policies written before three services read the l
 policies written once. It is also what makes a future bug in the compiler or the HTTP
 adapter unable to return someone else's movements.
 
-## 7. Scopes, and `/admin` behind one
+## ~~7. Scopes, and `/admin` behind one~~ — done
 
 `/admin/llm-policy` changes which model answers and asks for no credentials; the code says
 so. `/v1/messages` sends prompts straight to a model with no limit. Both are defensible

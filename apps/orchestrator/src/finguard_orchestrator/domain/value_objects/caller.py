@@ -16,6 +16,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from finguard_orchestrator.domain.errors import InvalidValueError, NotAuthorisedError
+from finguard_orchestrator.domain.value_objects.scope import Scope
 
 
 @dataclass(frozen=True)
@@ -35,10 +36,22 @@ class Caller:
     # 01:00 peninsular time, today in the Canaries is yesterday in Madrid, and a figure for
     # the wrong day is a real figure answering a question nobody asked.
     reporting_timezone: str = "Europe/Madrid"
+    # What this credential may do. Empty is a legitimate credential that authenticates and
+    # is allowed nothing, which is the correct reading of "granted nothing" and the right
+    # default: a permission somebody has to grant is a permission somebody decided.
+    scopes: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.holder_reference.strip():
             raise InvalidValueError("an authenticated caller needs a holder reference")
+        unknown = self.scopes - {scope.value for scope in Scope}
+        if unknown:
+            # At construction, so a typo in the token table stops the service rather than
+            # granting nothing quietly. A caller who believes they have a permission and
+            # does not is a support call; an unvalidated string is worse — it becomes a real
+            # permission the day somebody adds a scope with that spelling.
+            raise InvalidValueError(f"unknown scopes: {sorted(unknown)}")
+
         try:
             ZoneInfo(self.reporting_timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -78,3 +91,17 @@ class Caller:
         """
         if not self.may_read(account_id):
             raise NotAuthorisedError()
+
+    def may(self, scope: str) -> bool:
+        """Deny by default, like may_read. Nothing is implied by anything else: a scope
+        hierarchy is a place for a surprise, and there are five of them."""
+        return scope in self.scopes
+
+    def assert_may(self, scope: str) -> None:
+        """Raises unless this credential was granted the scope.
+
+        A distinct error from not being authenticated, because the answers differ: one is
+        "log in", the other is "you are logged in and this is not yours to do".
+        """
+        if not self.may(scope):
+            raise NotAuthorisedError(f"this credential is not allowed {scope}")

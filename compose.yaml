@@ -93,7 +93,7 @@ services:
       # Two holders, because one cannot express containment. The seed always had three;
       # the token table had one entry, so "a caller cannot read another account" was a
       # claim with no way to test it. Diego is in a different zone on purpose.
-      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary"]'
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin"]'
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
       # Stating it keeps the compose file working on both.

@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
+from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure import TomlModelCatalogue
 
 # The values live in .env.defaults, versioned and free of secrets, beside the reason each
@@ -168,13 +169,25 @@ class Settings(BaseSettings):
         """
         table: dict[str, Caller] = {}
         for entry in self.dev_tokens:
-            parts = entry.split(":")
-            if len(parts) not in (3, 4):
+            # maxsplit, because a scope name contains a colon: "questions:read" would
+            # otherwise be split into two fields and the entry rejected as malformed. The
+            # scopes are last precisely so they can keep their own separator.
+            parts = entry.split(":", 4)
+            if len(parts) not in (3, 4, 5):
                 raise ValueError(
-                    f"a token entry is token:holder:account_uuid[:timezone], got {entry!r}"
+                    f"a token entry is token:holder:account_uuid[:timezone[:scopes]], got {entry!r}"
                 )
             token, holder, account = parts[:3]
-            zone = parts[3] if len(parts) == 4 else "Europe/Madrid"
+            zone = parts[3] if len(parts) > 3 and parts[3] else "Europe/Madrid"
+            # Comma-separated, because the entry is already colon-delimited. Absent means
+            # the two read permissions, which is what a development credential needs and
+            # deliberately not the admin one: swapping the model that answers every
+            # question for everybody has to be granted on purpose.
+            granted = (
+                parts[4].split(",")
+                if len(parts) == 5 and parts[4]
+                else [Scope.QUESTIONS_READ.value, Scope.ASSISTANT_USE.value]
+            )
             if token in table:
                 # Two entries sharing a secret is a typo, and the quiet outcome is the
                 # dangerous one: the token would resolve to whichever account came last.
@@ -183,7 +196,10 @@ class Settings(BaseSettings):
                 # prefix of the shared secret there only creates another copy to leak.
                 raise ValueError("a development token is configured twice")
             table[token] = Caller(
-                holder_reference=holder, account_id=UUID(account), reporting_timezone=zone
+                holder_reference=holder,
+                account_id=UUID(account),
+                reporting_timezone=zone,
+                scopes=frozenset(granted),
             )
         return table
 
