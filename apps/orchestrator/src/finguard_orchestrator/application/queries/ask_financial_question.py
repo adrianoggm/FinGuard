@@ -16,7 +16,11 @@ from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
 from finguard_orchestrator.domain.enums import PlanningOutcome, Spoken
-from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
+from finguard_orchestrator.domain.errors import (
+    BankingUnavailableError,
+    InvalidValueError,
+    QueryRejectedError,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
@@ -28,9 +32,13 @@ from finguard_orchestrator.domain.services import (
     explainer,
     intent_router,
     plan_verifier,
+    window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+)
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
 
@@ -85,6 +93,10 @@ class AskFinancialQuestionResult:
     question: str | None = None
     plan: str | None = None
     plan_context: SpokenPlan | None = None
+    # Present with a question back: the reading the question interrupted. The client echoes it
+    # as `pending_draft` so the reply completes the plan instead of starting over. Same shape as
+    # `plan_context` with no window, because that is exactly what it is.
+    pending_context: SpokenPlan | None = None
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None
@@ -105,6 +117,11 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # is having the conversation, not by this service — and already a plan by the time
     # it arrives here, rather than text that has to be believed.
     previous_plan: FinancialPlan | None = None
+    # The half-built plan behind the last question back, echoed by the caller the same way.
+    # Separate from `previous_plan` because they mean different things: one is a question that
+    # was answered, the other a question that was asked. Both can be present — a follow-up can
+    # be the one that gets clarified.
+    pending_draft: FinancialPlanDraft | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +213,15 @@ class AskFinancialQuestionHandler:
             yield _decline(PlanningResult.unsupported(refused))
             return
 
+        finished = self._finish_pending(query)
+        if finished is not None:
+            # No model. The question back was about the window, the reply names one, and a
+            # window is a closed vocabulary — so there is nothing here to infer.
+            yield Stage("planned", answer_writer.describe(finished))
+            yield Stage("querying")
+            yield await self._answer(query, finished)
+            return
+
         yield Stage("planning")
         planned = await self._planner.plan(query.sentence, today=query.today, previous=previous)
 
@@ -221,6 +247,44 @@ class AskFinancialQuestionHandler:
         yield Stage("planned", answer_writer.describe(planned.plan))
         yield Stage("querying")
         yield await self._answer(query, planned.plan)
+
+    def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+        """The plan a reply to "¿de qué periodo?" completes, or None if this is not that.
+
+        Three conditions, and each of them is a reason this shortcut is safe rather than a
+        precaution. There has to be a draft that is missing its window; the reply has to name
+        a window this vocabulary is sure about; and the resulting plan has to survive the same
+        verifier every other plan does.
+
+        The verifier is the interesting one. "¿Cuántas veces este año?" names a window *and*
+        changes the metric — completing the draft would answer with a total where a tally was
+        asked for, and the verifier would then refuse a plan the shortcut itself got wrong.
+        Standing aside sends it to the model, which can read both things.
+
+        A reply that goes to the model loses the draft, which is today's behaviour and not yet
+        better than it: threading a half-built plan into the prompt is the next step, and it
+        needs the prompt to be able to say "these fields are settled" without inviting the
+        model to restate them.
+        """
+        draft = query.pending_draft
+        if draft is None or not draft.needs_a_window:
+            return None
+
+        window = window_words.window_in(query.sentence)
+        if window is None:
+            return None
+
+        try:
+            finished = draft.with_window(window)
+        except InvalidValueError:
+            # The draft crossed the wire, so it is input rather than something we still hold.
+            # A plan that will not build from it is not an error to report: the sentence goes
+            # to the model like any other.
+            return None
+
+        if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
+            return None
+        return finished
 
     async def _answer(
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan
@@ -272,6 +336,9 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
+        # Only a clarification carries one, and the client needs it to answer: without the draft
+        # on the way out there is nothing to echo back, and the reply is a fresh question again.
+        pending_context=_drafted(planned.draft) if planned.draft else None,
     )
 
 
@@ -304,6 +371,22 @@ def _refusal_for(rule: str, sentence: str) -> str:
         f"Creo que preguntas por {words}, pero la consulta que he construido filtra por otra cosa, "
         f"así que no te doy una cifra que estaría mal. Prueba a decírmelo nombrando la categoría: "
         f"«¿cuánto gasté en {words} el mes pasado?»"
+    )
+
+
+def _drafted(draft: FinancialPlanDraft) -> SpokenPlan:
+    """The draft in the plan's shape. One wire type, with the window empty — which is the
+    difference between the two and the only one a client has to notice."""
+    return SpokenPlan(
+        direction=draft.direction.value,
+        period=draft.period.period.value if draft.period else None,
+        n=draft.period.n if draft.period else None,
+        start=draft.date_range.start.isoformat() if draft.date_range else None,
+        end=draft.date_range.end.isoformat() if draft.date_range else None,
+        categories=list(draft.categories),
+        merchants=list(draft.merchants),
+        group_by=draft.group_by.value,
+        metric=draft.metric.value,
     )
 
 
