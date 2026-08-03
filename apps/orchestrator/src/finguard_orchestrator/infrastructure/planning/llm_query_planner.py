@@ -23,7 +23,7 @@ the difference visible instead of silent.
 
 import json
 from datetime import date
-from typing import Any
+from typing import Any, Final
 
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
@@ -92,6 +92,13 @@ class LlmQueryPlanner:
         return _read(answer, today=today, categories=self._categories, previous=previous)
 
 
+# What to ask when the model chose to ask and did not say what. Spanish because it reaches
+# the user, which is the one exception rule 14 makes.
+FALLBACK_QUESTION: Final = (
+    "No he entendido qué quieres consultar de tu cuenta. ¿Puedes decirlo de otra forma?"
+)
+
+
 class _MalformedError(Exception):
     """The answer did not match the schema it was constrained to. Internal to this
     module: it becomes INVALID_STRUCTURE before anything else sees it."""
@@ -151,9 +158,15 @@ def _read(
             except _MalformedError as exc:
                 return PlanningResult.invalid_structure(str(exc))
             if not question:
-                # It chose to ask and then asked nothing, which leaves the user at a
-                # dead end. Treat it as malformed rather than inventing the question.
-                return PlanningResult.invalid_structure("clarification with no question")
+                # It chose to ask and did not say what. The JSON is valid and every field is
+                # present, so this is not a structural failure — calling it one claimed the
+                # constraint had broken when it had not, and a false positive in that signal
+                # hides the real thing it exists to detect.
+                #
+                # The words are supplied instead. Inventing a *plan* would be dangerous: a
+                # figure for a question nobody asked. Inventing the words of a refusal commits
+                # to nothing, and the user reads the same sentence either way.
+                question = FALLBACK_QUESTION
             return PlanningResult.needs_clarification(question)
 
         case PlanningOutcome.UNSUPPORTED:
