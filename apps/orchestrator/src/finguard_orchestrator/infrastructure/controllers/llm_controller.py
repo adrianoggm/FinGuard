@@ -12,7 +12,7 @@ once and sometimes many times.
 
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import date
 from typing import Annotated
 
@@ -170,6 +170,37 @@ async def _as_payment(
     )
 
 
+def _payment_events(
+    sentence: str, who: Caller, commands: CommandBus, payments_on: bool
+) -> StreamingResponse:
+    """The payment path as server-sent events: one stage, then the answer.
+
+    Two events rather than a streamed payment pipeline, because there is nothing in between worth
+    reporting — reading the sentence and asking the bank to hold an intent is one wait, not several.
+    What matters is that the stage arrives first: preparing involves a model call and a call to the
+    bank, and silence until the preview lands is the problem the stages exist to solve.
+
+    The answer is produced by the same function the non-streaming route uses, so the two cannot
+    answer differently. That is the property this whole change is about.
+    """
+
+    async def events() -> AsyncIterator[str]:
+        yield _sse({"type": "stage", "name": "reading", "detail": None})
+        answer = await _as_payment(sentence, who, commands, payments_on)
+        yield _sse({"type": "answer", **answer.model_dump()})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+def _sse(payload: Mapping[str, object]) -> str:
+    """One JSON object per `data:` line, blank line between.
+
+    A Mapping rather than a dict because dict is invariant in its value type: the stage payloads are
+    `dict[str, str | None]`, and asking for a dict here would make each caller widen its own.
+    """
+    return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+
+
 def _context_of(request: QuestionRequest) -> FinancialPlan | None:
     """The follow-up context, as a plan.
 
@@ -227,7 +258,12 @@ async def ask(
     dependencies=[Depends(questions_enabled)],
 )
 async def ask_streaming(
-    request: QuestionRequest, who: Who, asking: Asking, today: Today
+    request: QuestionRequest,
+    who: Who,
+    asking: Asking,
+    today: Today,
+    commands: Commands,
+    payments_on: PaymentsOn,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -240,6 +276,13 @@ async def ask_streaming(
     plan that misread the question can be seen for what it is while that still helps —
     rather than arriving as a footnote under a number the user has already read.
     """
+    if payment_router.is_payment(request.question):
+        # Routed here too, and not only on the other route. A demo that shows stages on screen uses
+        # the stream, so leaving this out made the endpoint the user actually types into the one
+        # that could not pay — the same sentence answering differently depending on which endpoint
+        # a client happened to call.
+        return _payment_events(request.question, who, commands, payments_on)
+
     question = AskFinancialQuestionQuery(
         sentence=request.question,
         account_id=who.account_id,
@@ -253,8 +296,6 @@ async def ask_streaming(
                 payload = {"type": "stage", "name": step.name, "detail": step.detail}
             else:
                 payload = {"type": "answer", **llm_mapper.question_to_dto(step).model_dump()}
-            # Server-sent events: one JSON object per "data:" line, blank line between.
-            body = json.dumps(payload, ensure_ascii=False, default=str)
-            yield f"data: {body}\n\n"
+            yield _sse(payload)
 
     return StreamingResponse(events(), media_type="text/event-stream")

@@ -16,6 +16,7 @@ did not choose their credential, and "no puedo hacer pagos" is the honest answer
 assistant cannot make them.
 """
 
+import json
 import uuid
 
 import pytest
@@ -138,3 +139,63 @@ def test_a_question_is_never_routed_to_the_payment_path(question: str) -> None:
     client.post("/v1/questions", json={"question": question})
 
     assert preparing.sentences == []
+
+
+def events_of(response) -> list[dict]:
+    """The SSE payloads, in order."""
+    return [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+def test_the_stream_answers_a_payment_the_same_way_the_other_route_does() -> None:
+    """Same sentence, same answer, whichever endpoint a client used.
+
+    The streaming route existed first and sent everything into the question pipeline, so "hazle un
+    bizum de 20 euros a Marta" came back as the capability refusal there and as a preview on
+    `/v1/questions`. A demo that shows stages on screen uses the stream, so the endpoint the user
+    actually types into was the one that could not pay.
+    """
+    client, preparing = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
+
+    streamed = events_of(client.post("/v1/questions/stream", json={"question": PAYMENT}))
+    direct = client.post("/v1/questions", json={"question": PAYMENT}).json()
+
+    answer = [event for event in streamed if event["type"] == "answer"]
+    assert len(answer) == 1
+    assert answer[0]["outcome"] == direct["outcome"] == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert answer[0]["intent_id"] == direct["intent_id"] == str(INTENT)
+    assert preparing.sentences == [PAYMENT, PAYMENT]
+
+
+def test_the_stream_says_what_it_is_doing_before_the_preview_arrives() -> None:
+    """A stage first, like the question path. Preparing involves a model call and a call to the
+    bank, so silence until the preview lands is the problem the stages exist to solve."""
+    client, _ = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
+
+    streamed = events_of(client.post("/v1/questions/stream", json={"question": PAYMENT}))
+
+    assert streamed[0]["type"] == "stage"
+    assert streamed[-1]["type"] == "answer"
+
+
+def test_the_stream_refuses_without_the_scope_like_the_other_route() -> None:
+    client, preparing = client_for(Scope.QUESTIONS_READ)
+
+    streamed = events_of(client.post("/v1/questions/stream", json={"question": PAYMENT}))
+
+    assert [e for e in streamed if e["type"] == "answer"][0]["outcome"] == "UNSUPPORTED"
+    assert preparing.sentences == []
+
+
+def test_the_stream_still_streams_a_question() -> None:
+    """The stages are what this route is for, and routing a payment must not cost them."""
+    client, _ = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
+
+    streamed = events_of(
+        client.post("/v1/questions/stream", json={"question": "¿cuánto gasté en junio?"})
+    )
+
+    assert [event["type"] for event in streamed].count("stage") >= 1
