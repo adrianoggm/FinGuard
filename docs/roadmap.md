@@ -96,7 +96,7 @@ Two things this phase added that were not on the list, both from the review:
 and two risks that remain open and measured: the planner refuses 60% of the requests it
 cannot express, leaving two in five to return a real but unrelated figure, and one prompt
 injection still changes a field. The endpoint stays behind
-ASSISTANT_QUESTIONS_ENABLED until those have a deterministic guard or an agreed
+ORCHESTRATOR_QUESTIONS_ENABLED until those have a deterministic guard or an agreed
 threshold — a documented risk is not a control.
 
 ### Phase 4 — Dynamic visualisation

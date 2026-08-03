@@ -6,7 +6,7 @@ ordered list of what is still open, written down so the order survives the conve
 that produced it. Every item says what it unblocks, because that is what makes an
 ordering an argument rather than a preference.
 
-Measured state at the time of writing: [planning results](../apps/assistant-api/evaluation/planning/RESULTS.md).
+Measured state at the time of writing: [planning results](../apps/orchestrator/evaluation/planning/RESULTS.md).
 
 ## Where the list came from
 
@@ -57,7 +57,7 @@ reading the repository should find a deliberate deferral rather than an omission
 ## 1. The capability guard and the plan verifier
 
 **Why first: it is not new scope, it is the key to a lock we already fitted.**
-`ASSISTANT_QUESTIONS_ENABLED` defaults to false and the code says it comes off "when
+`ORCHESTRATOR_QUESTIONS_ENABLED` defaults to false and the code says it comes off "when
 unsupported has a deterministic guard and injection clears the agreed bar". Until this
 exists the feature does not ship, so it is the critical path for everything the demo
 shows.
@@ -172,7 +172,7 @@ which is better than a wrong number and still an error found by a user.
 
 ```
 packages/contracts/openapi/banking-api.yaml
-packages/contracts/openapi/assistant-api.yaml
+packages/contracts/openapi/orchestrator.yaml
 ```
 
 With provider tests against banking, consumer tests against the assistant, and a

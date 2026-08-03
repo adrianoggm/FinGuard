@@ -24,7 +24,7 @@ A monorepo of independent projects: each service has its own dependencies, lockf
 | `apps/` | Responsibility | State |
 | --- | --- | --- |
 | `web` | Chat, audio, visualisations and confirmations | Pending |
-| `assistant-api` | Conversational context, intent, tool coordination, LLM | Working, local models only |
+| `orchestrator` | Conversational context, intent, tool coordination, LLM | Working, local models only |
 | `banking-api` | Accounts, ledger, balances, contacts, Bizum. The only writer of financial data | Working |
 | `voice-gateway` | Streaming audio, transcription, synthesis, barge-in | Pending |
 | `a2a-gateway` | Agent Card, A2A client and server | Pending |
@@ -34,7 +34,7 @@ A monorepo of independent projects: each service has its own dependencies, lockf
 
 ```bash
 just hooks     # installs the pre-commit hook. Once per clone
-just back      # postgres + banking-api + assistant-api
+just back      # postgres + banking-api + orchestrator
 just migrate   # applies the migrations
 just seed      # loads the synthetic dataset and checks that it adds up
 just check     # ruff + mypy + tests
@@ -43,7 +43,7 @@ just evaluate  # execution accuracy of the query engine
 
 `just` on its own lists every task. Requires Docker, [uv](https://docs.astral.sh/uv/) and [just](https://just.systems/).
 
-Everything is published on `127.0.0.1` only — PostgreSQL on **5442**, `banking-api` on **8001**, `assistant-api` on **8000** — because the development credentials are trivial. One database and one role per service, and no role can connect to another service's database.
+Everything is published on `127.0.0.1` only — PostgreSQL on **5442**, `banking-api` on **8001**, `orchestrator` on **8000** — because the development credentials are trivial. One database and one role per service, and no role can connect to another service's database.
 
 ## Stack
 
