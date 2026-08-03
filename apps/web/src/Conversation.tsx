@@ -1,22 +1,30 @@
 /**
  * Conversation mode: the sheet that rises over the bank app.
  *
- * Two things here are not decoration.
+ * **The conversation is state, and it lives in `App` rather than here.** Two things depended on that
+ * and both were broken: closing the sheet unmounted this component and threw away every turn, and
+ * nothing carried the plan behind the last answer into the next question. The service has the whole
+ * merge machinery — `previous_plan`, `plan_merger`, the changed-field set — and the web was calling it
+ * with a bare sentence, so "¿y este mes?" arrived with no category, no metric and no window to patch.
+ *
+ * Three more things here are not decoration.
  *
  * **The plan travels with every figure.** A number from a pipeline with a language model in it should
- * never have to be taken on faith, so each answer carries the query that produced it and the
- * movements behind it, both one tap away. That is the control that makes a residual error survivable:
- * somebody who asked about this month and reads "el mes pasado" can see it.
+ * never have to be taken on faith, so each answer carries the query that produced it and the movements
+ * behind it, both one tap away. That is the control that makes a residual error survivable: somebody
+ * who asked about this month and reads "el mes pasado" can see it.
  *
  * **A payment is answered in words.** When an answer is a preview, the reply goes to the confirm
  * endpoint — including a typed one. Buttons are there because "sí" is what most people want to press,
- * but "sí pero mándale 30" has to reach the service, which knows that is not a yes. This app never
- * decides that somebody agreed.
+ * but "sí pero mándale 30" has to reach the service, which knows that is not a yes.
+ *
+ * **A payment clears the query context.** They are different conversations: after a bizum, "¿y este
+ * mes?" is not a follow-up to the bizum, and merging a window onto a payment means nothing.
  */
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, confirm, type Answer } from "./api";
+import { ask, confirm, type Answer, type PlanContext } from "./api";
 import { money, signed, day } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
@@ -29,64 +37,70 @@ const STAGES: Record<string, string> = {
 
 const AWAITING = "AWAITING_CONFIRMATION";
 
-type Turn =
+export type Turn =
   | { who: "user"; text: string }
   | { who: "assistant"; answer: Answer }
   | { who: "error"; text: string };
 
-type Props = { onClose: () => void; onSettled: () => void };
+/** What the client remembers between turns. The service remembers nothing. */
+export type Thread = {
+  turns: Turn[];
+  /** The plan behind the last answered question, or null if there has not been one. */
+  plan: PlanContext | null;
+  /** The payment waiting for a yes, if any. */
+  pending: string | null;
+};
 
-export function Conversation({ onClose, onSettled }: Props) {
-  const [turns, setTurns] = useState<Turn[]>([]);
+export const EMPTY_THREAD: Thread = { turns: [], plan: null, pending: null };
+
+type Props = {
+  thread: Thread;
+  onThread: (next: Thread) => void;
+  onClose: () => void;
+  onSettled: () => void;
+};
+
+export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [draft, setDraft] = useState("");
   const [stage, setStage] = useState<string | null>(null);
-  const [pending, setPending] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [turns, stage]);
+  }, [thread.turns, stage]);
 
   async function send(text: string) {
     if (!text.trim() || busy) return;
-    setTurns((previous) => [...previous, { who: "user", text }]);
+    // Read once: the prop is a snapshot, and everything below is computed from this rather than from
+    // a value that may already have been replaced.
+    const before = thread;
+    const turns: Turn[] = [...before.turns, { who: "user", text }];
+    onThread({ ...before, turns });
     setDraft("");
     setBusy(true);
+
     try {
-      // A payment on the table takes the reply, whatever it says. Routing a typed answer back to the
-      // question path would lose the confirmation the user is in the middle of giving.
-      if (pending) {
-        const answer = await confirm(pending, text);
-        setTurns((previous) => [...previous, { who: "assistant", answer }]);
-        settle(answer);
+      if (before.pending) {
+        // A payment on the table takes the reply, whatever it says. Routing a typed answer back to
+        // the question path would lose the confirmation the user is in the middle of giving.
+        const answer = await confirm(before.pending, text);
+        onThread(settled(before, [...turns, { who: "assistant", answer }], answer, onSettled));
       } else {
-        for await (const step of ask(text)) {
+        for await (const step of ask(text, before.plan)) {
           if ("name" in step) setStage(STAGES[step.name] ?? null);
           else {
-            setTurns((previous) => [...previous, { who: "assistant", answer: step }]);
-            settle(step);
+            turns.push({ who: "assistant", answer: step });
+            onThread(settled(before, [...turns], step, onSettled));
           }
         }
       }
     } catch (failure) {
-      setTurns((previous) => [
-        ...previous,
-        { who: "error", text: message(failure) },
-      ]);
+      onThread({ ...before, turns: [...turns, { who: "error", text: message(failure) }] });
     } finally {
       setStage(null);
       setBusy(false);
     }
-  }
-
-  function settle(answer: Answer) {
-    const awaiting = answer.outcome === AWAITING ? answer.intent_id : null;
-    setPending(awaiting);
-    // The balance on the screen behind changed if money moved. Refreshed on any settled payment
-    // rather than only on PAID: a refusal we misread as a payment would otherwise leave a stale
-    // figure on the home screen, which is the direction that misleads.
-    if (!awaiting && answer.intent_id) onSettled();
   }
 
   return (
@@ -103,8 +117,8 @@ export function Conversation({ onClose, onSettled }: Props) {
       </header>
 
       <div className="turns">
-        {turns.length === 0 && <Suggestions onPick={send} />}
-        {turns.map((turn, index) => (
+        {thread.turns.length === 0 && <Suggestions onPick={send} />}
+        {thread.turns.map((turn, index) => (
           <Bubble key={index} turn={turn} />
         ))}
         {stage && (
@@ -112,7 +126,7 @@ export function Conversation({ onClose, onSettled }: Props) {
             {stage}
           </p>
         )}
-        {pending && !busy && (
+        {thread.pending && !busy && (
           <div className="confirm">
             <button className="yes" onClick={() => send("sí")}>
               Sí, enviar
@@ -135,7 +149,7 @@ export function Conversation({ onClose, onSettled }: Props) {
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={pending ? "Responde sí o no" : "Escribe tu pregunta…"}
+          placeholder={thread.pending ? "Responde sí o no" : "Escribe tu pregunta…"}
           aria-label="Mensaje"
           autoFocus
         />
@@ -145,6 +159,25 @@ export function Conversation({ onClose, onSettled }: Props) {
       </form>
     </section>
   );
+}
+
+/**
+ * The thread after an answer: the turns, the plan to carry forward, and any pending payment.
+ *
+ * The plan is *kept* when an answer does not bring a new one — a refusal or a clarifying question
+ * should not erase the context of the question before it, or "¿y este mes?" after one bad turn starts
+ * from nothing. A payment is the exception and clears it, because a bizum and a query are not the same
+ * conversation.
+ */
+function settled(before: Thread, turns: Turn[], answer: Answer, onSettled: () => void): Thread {
+  const awaiting = answer.outcome === AWAITING ? answer.intent_id : null;
+  const wasPayment = answer.intent_id !== null;
+  if (!awaiting && wasPayment) onSettled();
+  return {
+    turns,
+    plan: wasPayment ? null : (answer.plan_context ?? before.plan),
+    pending: awaiting,
+  };
 }
 
 const EXAMPLES = [

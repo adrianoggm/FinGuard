@@ -20,7 +20,7 @@ import { configured, summary as fetchSummary, type Summary } from "./api";
 import { Accounts } from "./Accounts";
 import { Bizum } from "./Bizum";
 import { Cards } from "./Cards";
-import { Conversation } from "./Conversation";
+import { Conversation, EMPTY_THREAD, type Thread } from "./Conversation";
 import { Finances } from "./Finances";
 import { Home } from "./Home";
 import { TABS, tabOf, type Tab } from "./tabs";
@@ -29,6 +29,9 @@ export function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [talking, setTalking] = useState(false);
+  // The conversation lives here, not in the sheet. Closing the sheet unmounted it and threw away
+  // every turn — and with them the plan the next question needs to be a follow-up at all.
+  const [thread, setThread] = useState<Thread>(EMPTY_THREAD);
   const [where, setWhere] = useState<Tab>("inicio");
   const app = useRef<HTMLElement>(null);
   const opened = useRef(false);
@@ -100,7 +103,12 @@ export function App() {
         {talking && (
           <>
             <div className="scrim" onClick={() => setTalking(false)} />
-            <Conversation onClose={() => setTalking(false)} onSettled={load} />
+            <Conversation
+              thread={thread}
+              onThread={setThread}
+              onClose={() => setTalking(false)}
+              onSettled={load}
+            />
           </>
         )}
 
