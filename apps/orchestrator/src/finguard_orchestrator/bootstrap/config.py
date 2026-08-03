@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     questions_enabled: bool
     payments_enabled: bool
 
+    # Browser origins allowed to call this service. Exact origins, never a wildcard: the credential
+    # is in a header, and `*` with credentials lets any page a user visits spend their session.
+    web_origins: tuple[str, ...]
+
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.

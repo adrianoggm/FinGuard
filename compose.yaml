@@ -90,6 +90,9 @@ services:
       # sentence somebody typed ends in a bank transfer. It is behind a preview, an explicit
       # confirmation read by an allow-list, and two scopes.
       ORCHESTRATOR_PAYMENTS_ENABLED: "true"
+      # The web client's origins. Loopback only (rule 13), and exact rather than `*` because the
+      # credential travels in a header.
+      ORCHESTRATOR_WEB_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000","http://127.0.0.1:5173","http://localhost:5173"]'
       # token:holder:account[:timezone]. The zone is the holder's, not the deployment's:
       # between midnight and 01:00 peninsular time "hoy" in the Canaries is the previous
       # day, and it travels to banking beside the reference date so both services bin the

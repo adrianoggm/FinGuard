@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from finguard_orchestrator.application import (
     AnswerMessageHandler,
@@ -158,6 +159,19 @@ def create_app() -> FastAPI:
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
     app.state.identity = StaticTokenIdentity(settings.callers())
+
+    # Before the routers, because a rejected preflight never reaches one. The web client cannot
+    # call this service at all without it: a browser refuses a cross-origin request unless the
+    # server says otherwise, which makes this the frontend's first dependency and not a detail.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.web_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        # Spelled out rather than "*": the answer to a preflight is a statement about what this
+        # service accepts, and a wildcard makes that statement unfalsifiable.
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     app.include_router(assistant_router)
     app.include_router(payments_router)
