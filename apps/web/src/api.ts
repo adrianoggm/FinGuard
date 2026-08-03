@@ -238,3 +238,29 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     movements: [],
   };
 }
+
+
+export type Card = {
+  card_id: string;
+  display_name: string;
+  brand: string;
+  kind: string;
+  last_four: string;
+  /** Already "09/28": how it is written on the card, assembled by the service exactly once. */
+  expires: string;
+  status: string;
+  /** null means the balance is the limit, which is a debit card — not a limit of zero. */
+  spending_limit_minor: number | null;
+  spent_minor: number;
+  charge_count: number;
+};
+
+export type Wallet = {
+  /** The date the figures start from. It travels with them so no screen has to remember. */
+  since: string;
+  cards: Card[];
+};
+
+export async function cards(days: number): Promise<Wallet> {
+  return read<Wallet>(`/v1/cards?days=${days}`);
+}

@@ -10,6 +10,7 @@
 export const TABS = [
   ["inicio", "Inicio", "◧"],
   ["cuentas", "Cuentas", "≡"],
+  ["tarjetas", "Tarjetas", "💳"],
   ["finanzas", "Finanzas", "📊"],
   ["bizum", "Bizum", "📲"],
 ] as const;

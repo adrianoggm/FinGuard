@@ -15,6 +15,7 @@ from finguard_orchestrator.application import (
     MovementsResult,
     PolicyRow,
     SpokenPlan,
+    WalletResult,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -24,6 +25,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownResponse,
+    CardPayload,
     CatalogueResponse,
     ContactPayload,
     ContactsResponse,
@@ -37,6 +39,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
+    WalletResponse,
 )
 
 
@@ -205,5 +208,26 @@ def breakdown_to_dto(result: BreakdownResult) -> BreakdownResponse:
                 movement_count=group.movement_count,
             )
             for group in result.groups
+        ],
+    )
+
+
+def wallet_to_dto(result: WalletResult) -> WalletResponse:
+    return WalletResponse(
+        since=result.since,
+        cards=[
+            CardPayload(
+                card_id=card.card_id,
+                display_name=card.display_name,
+                brand=card.brand,
+                kind=card.kind,
+                last_four=card.last_four,
+                expires=card.expires,
+                status=card.status,
+                spending_limit_minor=card.spending_limit_minor,
+                spent_minor=card.spent_minor,
+                charge_count=card.charge_count,
+            )
+            for card in result.cards
         ],
     )

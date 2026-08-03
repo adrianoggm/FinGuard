@@ -613,6 +613,121 @@ body {
   font-size: 0.7rem;
 }
 
+/* --- the wallet ------------------------------------------------------------------ */
+
+.wallet {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.plastic {
+  border-radius: 1.1rem;
+  padding: 1rem;
+  color: #fff;
+  background: linear-gradient(140deg, #14806a 0%, var(--brand) 55%, #0a2c26 100%);
+  box-shadow: var(--shadow);
+}
+
+/* A blocked card is still a card and still has history. Greyed, not hidden. */
+.plastic.blocked {
+  background: linear-gradient(140deg, #6b7a76 0%, #46524f 60%, #2c3532 100%);
+}
+
+.plastic header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.plastic-brand {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: 0.9rem;
+}
+
+.plastic-kind {
+  font-size: 0.7rem;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.plastic-number {
+  margin: 1.1rem 0 0.9rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plastic footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+
+.plastic footer span {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.plastic footer small {
+  font-size: 0.6rem;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.plastic-spend {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgb(255 255 255 / 22%);
+}
+
+.plastic-spend p {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+}
+
+.plastic-spend strong {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.plastic-spend small {
+  opacity: 0.75;
+}
+
+.plastic-spend .track {
+  /* `display: block`, because a span is inline and height does nothing to an inline box. In the
+     category list the same class lands inside a grid, which blockifies it — here it does not, so the
+     limit bar was 0px tall and only the percentage underneath gave it away. */
+  display: block;
+  background: rgb(255 255 255 / 22%);
+}
+
+.plastic-spend .fill {
+  background: #fff;
+}
+
+.limit {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.plastic-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 /* --- bizum ----------------------------------------------------------------------- */
 
 .people {
@@ -746,7 +861,8 @@ body {
   right: 0;
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Five, since Tarjetas joined. At 24rem that is 4.8rem each, which still fits a label. */
+  grid-template-columns: repeat(5, 1fr);
   padding: 0.5rem 0 max(0.5rem, env(safe-area-inset-bottom));
   background: rgb(255 255 255 / 92%);
   backdrop-filter: blur(0.5rem);

@@ -13,7 +13,7 @@ once and sometimes many times.
 import json
 import uuid
 from collections.abc import AsyncIterator, Mapping
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -28,6 +28,7 @@ from finguard_orchestrator.application import (
     GetBreakdownQuery,
     GetLlmCatalogueQuery,
     GetMovementsQuery,
+    ListCardsQuery,
     ListContactsQuery,
     PreparePaymentCommand,
     QueryBus,
@@ -62,6 +63,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
+    WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import llm_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import plan_to_domain
@@ -310,6 +312,28 @@ async def account_breakdown(
         )
     )
     return llm_mapper.breakdown_to_dto(result)
+
+
+@assistant_router.get(
+    "/v1/cards",
+    summary="The cards this account holds",
+    dependencies=[Depends(questions_enabled)],
+)
+async def cards(
+    who: Who,
+    queries: Queries,
+    today: Today,
+    days: Annotated[int, Query(ge=1, le=MAX_DAYS)] = 30,
+) -> WalletResponse:
+    """Each card with what was charged to it in the window, and the date the window starts.
+
+    No model: a card list is a read. The window is rolling and says so — a figure labelled as a
+    month that is really thirty days is wrong on the 1st by everything that happened on the 31st.
+    """
+    result = await queries.ask(
+        ListCardsQuery(account_id=who.account_id, since=today - timedelta(days=days))
+    )
+    return llm_mapper.wallet_to_dto(result)
 
 
 @assistant_router.get("/v1/contacts", summary="Everybody this account can pay")

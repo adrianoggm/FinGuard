@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { configured, summary as fetchSummary, type Summary } from "./api";
 import { Accounts } from "./Accounts";
 import { Bizum } from "./Bizum";
+import { Cards } from "./Cards";
 import { Conversation } from "./Conversation";
 import { Finances } from "./Finances";
 import { Home } from "./Home";
@@ -85,6 +86,7 @@ export function App() {
           {tabOf(where) === "cuentas" && (
             <Accounts summary={summary} searching={where === "cuentas-buscar"} />
           )}
+          {where === "tarjetas" && <Cards />}
           {where === "finanzas" && <Finances />}
           {where === "bizum" && <Bizum onPaid={load} />}
         </main>

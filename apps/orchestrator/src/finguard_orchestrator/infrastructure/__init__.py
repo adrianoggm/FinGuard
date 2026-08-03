@@ -11,6 +11,7 @@ call site `register(app)` alone did not say what was being registered.
 """
 
 from finguard_orchestrator.infrastructure.banking.http_account_summary import HttpAccountSummary
+from finguard_orchestrator.infrastructure.banking.http_cards import HttpCards
 from finguard_orchestrator.infrastructure.banking.http_contacts import HttpContacts
 from finguard_orchestrator.infrastructure.banking.http_financial_query import HttpFinancialQuery
 from finguard_orchestrator.infrastructure.banking.http_payments import HttpPayments
@@ -27,6 +28,7 @@ from finguard_orchestrator.infrastructure.planning.llm_query_planner import LlmQ
 
 __all__ = [
     "HttpAccountSummary",
+    "HttpCards",
     "HttpContacts",
     "HttpFinancialQuery",
     "HttpPayments",
