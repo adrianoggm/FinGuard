@@ -37,7 +37,11 @@ async def create_account(conn: asyncpg.Connection, currency: str = "EUR") -> uui
 
 async def create_transaction(
     conn: asyncpg.Connection,
-    status: str = TransactionStatus.BOOKED.value,
+    # PENDING, because that is what a transaction is when it is created — entries can only be
+    # added while it is, and migration 0004 enforces that. The default used to be BOOKED,
+    # which let every test add entries to a booked transaction and is why nobody noticed the
+    # ledger allowed it.
+    status: str = TransactionStatus.PENDING.value,
     *,
     category: str | None = None,
     merchant: str | None = None,
@@ -96,13 +100,26 @@ async def record_movement(
     amount_minor: int,
     **kwargs: Any,
 ) -> uuid.UUID:
-    """A complete, balanced movement. A positive amount means money into `account`."""
-    transaction_id = await create_transaction(conn, **kwargs)
+    """A complete, balanced movement. A positive amount means money into `account`.
+
+    Through the lifecycle rather than around it: created PENDING, entries added, then booked.
+    It used to create the transaction already BOOKED and add entries afterwards, which
+    migration 0004 now forbids — and the fact that every test did it that way is why nothing
+    noticed that a booked transaction could still grow.
+    """
+    status = kwargs.pop("status", TransactionStatus.BOOKED.value)
+    transaction_id = await create_transaction(
+        conn, status=TransactionStatus.PENDING.value, **kwargs
+    )
     incoming = amount_minor > 0
     amount = abs(amount_minor)
     debit, credit = EntryType.DEBIT.value, EntryType.CREDIT.value
     await post_entry(conn, transaction_id, account, credit if incoming else debit, amount)
     await post_entry(conn, transaction_id, counterparty, debit if incoming else credit, amount)
+    if status != TransactionStatus.PENDING.value:
+        await conn.execute(
+            "UPDATE ledger_transactions SET status = $2 WHERE id = $1", transaction_id, status
+        )
     return transaction_id
 
 

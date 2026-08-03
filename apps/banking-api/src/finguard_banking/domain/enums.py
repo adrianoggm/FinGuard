@@ -19,8 +19,17 @@ class EntryType(StrEnum):
 
 
 class TransactionStatus(StrEnum):
-    BOOKED = "BOOKED"
+    """Where a transaction is in its life, and the database enforces the transitions.
+
+    PENDING is where every transaction starts and the only state that accepts entries.
+    BOOKED and CANCELLED are terminal: a correction is a compensating transaction, which
+    leaves the mistake and the fix both in the record. Migration 0004 has the triggers, and
+    the read views only ever show BOOKED.
+    """
+
     PENDING = "PENDING"
+    BOOKED = "BOOKED"
+    CANCELLED = "CANCELLED"
 
 
 class AccountStatus(StrEnum):

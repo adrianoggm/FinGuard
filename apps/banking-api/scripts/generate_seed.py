@@ -269,6 +269,7 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
 
     clearing = accounts[CLEARING]
     transaction_rows: list[str] = []
+    to_book: list[str] = []
     entry_rows: list[str] = []
 
     for number, movement in enumerate(movements, start=1):
@@ -278,8 +279,14 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
             ensure_ascii=True,
             sort_keys=True,
         )
+        # Created PENDING regardless of where it ends up: migration 0004 only accepts entries
+        # while a transaction is pending, and the ones that should be booked are booked at the
+        # end. The dataset used to insert them already BOOKED and add entries afterwards, which
+        # the ledger now forbids — and which is why nothing noticed it allowed it.
+        if movement.status == "BOOKED":
+            to_book.append(str(transaction))
         transaction_rows.append(
-            f"({quote(str(transaction))}, {quote(movement.kind)}, {quote(movement.status)}, "
+            f"({quote(str(transaction))}, {quote(movement.kind)}, {quote('PENDING')}, "
             f"{quote(f'seed-{number:06d}')}, {quote(movement.description)}, "
             f"{quote(metadata)}::jsonb, {quote(movement.occurred_at.isoformat())}::timestamptz)"
         )
@@ -311,6 +318,16 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
             entry_rows,
         )
     )
+
+    # Booked last, once every entry exists. This is the lifecycle migration 0004 enforces, so
+    # building the dataset now exercises it 1,621 times rather than routing around it.
+    lines.append("")
+    lines.append("-- PENDING -> BOOKED, now that the entries are in place. The lifecycle trigger")
+    lines.append("-- re-checks the balance per transaction, so a dataset that does not add up")
+    lines.append("-- fails here rather than being loaded and believed.")
+    for start in range(0, len(to_book), BATCH):
+        chunk = ", ".join(quote(identifier) for identifier in to_book[start : start + BATCH])
+        lines.append(f"UPDATE ledger_transactions SET status = 'BOOKED' WHERE id IN ({chunk});")
 
     # The balance check runs here, when the transaction closes: the trigger is deferred.
     lines.append("COMMIT;")

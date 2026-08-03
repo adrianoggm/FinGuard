@@ -223,12 +223,19 @@ trigger passes and the account's balance changes after the fact. `status` is als
 `VARCHAR(30)` with no `CHECK`, so it admits any string.
 
 ```
-DRAFT → BOOKED       entries only while DRAFT, balanced to book
-DRAFT → CANCELLED    both terminal, no route back
+PENDING → BOOKED       entries only while PENDING, balanced and non-empty to book
+PENDING → CANCELLED    both terminal, no route back
 ```
 
-A correction is a compensating transaction. This is a constraint and a trigger, and it
-must exist before the first payment, not after.
+A correction is a compensating transaction. **Done** — migration 0004, and the states are
+PENDING/BOOKED/CANCELLED rather than the review's DRAFT because PENDING already existed and
+meant exactly that.
+
+Doing it found something the review could not have: the seed inserted every transaction as
+BOOKED and added the entries afterwards, so it could not run under these rules — which means
+the dataset never exercised the lifecycle it was supposed to represent. Every test helper did
+the same. Both now create PENDING, add entries, and book, so 1,621 transactions pass through
+the state machine each time the database is built.
 
 ## 9. Phase 4 — visualisation
 
