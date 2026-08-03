@@ -11,6 +11,7 @@ once and sometimes many times.
 """
 
 import json
+import uuid
 from collections.abc import AsyncIterator
 from datetime import date
 from typing import Annotated
@@ -24,6 +25,7 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionQuery,
     CommandBus,
     GetLlmCatalogueQuery,
+    PreparePaymentCommand,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ResetLlmPolicyCommand,
@@ -33,10 +35,13 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_ask_handler,
     get_command_bus,
     get_query_bus,
+    payments_available,
     questions_enabled,
     reporting_today,
     requires,
 )
+from finguard_orchestrator.domain.enums import PlanningOutcome
+from finguard_orchestrator.domain.services import payment_router, payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -56,6 +61,7 @@ Commands = Annotated[CommandBus, Depends(get_command_bus)]
 Today = Annotated[date, Depends(reporting_today)]
 Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
 Who = Annotated[Caller, Depends(requires(Scope.QUESTIONS_READ))]
+PaymentsOn = Annotated[bool, Depends(payments_available)]
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -137,6 +143,33 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
 
 
+async def _as_payment(
+    sentence: str, who: Caller, commands: CommandBus, payments_on: bool
+) -> QuestionResponse:
+    """The payment path, reached from the chat.
+
+    The scope is checked here rather than declared on the route, and deliberately: a route-level
+    dependency would answer 403 to somebody whose credential cannot pay, and the user did not choose
+    their credential. "No puedo hacer pagos" is the honest answer; a 403 is a fact about our
+    configuration that they can do nothing with. Same for a deployment with payments switched off —
+    503 would read as "try again later" for something that is not coming back.
+    """
+    if not payments_on or not who.may(Scope.PAYMENTS_PREPARE):
+        return QuestionResponse(
+            outcome=PlanningOutcome.UNSUPPORTED.value, text=payment_writer.cannot_pay()
+        )
+    answer = await commands.dispatch(
+        PreparePaymentCommand(
+            sentence=sentence, account_id=who.account_id, idempotency_key=str(uuid.uuid4())
+        )
+    )
+    return QuestionResponse(
+        outcome=answer.outcome,
+        text=answer.text,
+        intent_id=str(answer.intent_id) if answer.intent_id else None,
+    )
+
+
 def _context_of(request: QuestionRequest) -> FinancialPlan | None:
     """The follow-up context, as a plan.
 
@@ -153,7 +186,12 @@ def _context_of(request: QuestionRequest) -> FinancialPlan | None:
     dependencies=[Depends(questions_enabled)],
 )
 async def ask(
-    request: QuestionRequest, who: Who, queries: Queries, today: Today
+    request: QuestionRequest,
+    who: Who,
+    queries: Queries,
+    today: Today,
+    commands: Commands,
+    payments_on: PaymentsOn,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -166,6 +204,12 @@ async def ask(
     rather than an error.
     """
     who.assert_may_read(who.account_id)
+
+    if payment_router.is_payment(request.question):
+        # One chat box, two paths, and the decision is deterministic — a client cannot make it,
+        # because making it is what this router is for.
+        return await _as_payment(request.question, who, commands, payments_on)
+
     result = await queries.ask(
         AskFinancialQuestionQuery(
             sentence=request.question,

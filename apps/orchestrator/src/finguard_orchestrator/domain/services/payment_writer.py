@@ -88,3 +88,12 @@ def provider_error() -> str:
 
 def bank_unavailable() -> str:
     return "No puedo hablar con el banco ahora mismo, así que no he enviado nada."
+
+
+def cannot_pay() -> str:
+    """For a credential without the payment scope, or a deployment that has not turned payments on.
+
+    The same sentence for both, because the difference is ours: the user did not choose their
+    credential and cannot act on which of the two it was.
+    """
+    return "No puedo hacer pagos con esta cuenta. Puedo consultar tus movimientos y tus gastos."

@@ -70,6 +70,16 @@ def payments_enabled(request: Request) -> None:
         raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
 
 
+def payments_available(request: Request) -> bool:
+    """Whether payments are on, without refusing when they are not.
+
+    The chat route needs to *answer* rather than fail: a sentence asking for a payment on a
+    deployment that does not make them is answered with words, not with a 503.
+    """
+    enabled: bool = request.app.state.payments_enabled
+    return enabled
+
+
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
     """What day it is *for this holder*.
 
