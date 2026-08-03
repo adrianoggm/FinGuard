@@ -279,3 +279,66 @@ async def test_a_real_structural_failure_is_still_one() -> None:
     result = await plan_from({**FULL, "outcome": "NEEDS_CLARIFICATION", "question": 42})
 
     assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
+
+
+# --- what the question back keeps ---------------------------------------------------
+
+
+async def test_a_clarification_keeps_the_plan_it_had_already_read() -> None:
+    """ "¿Cuánto suelo pagar de alquiler?" is missing one thing: the period. Everything else
+    the model read — the direction, the category, the metric — used to be discarded with the
+    question, so the reply "este año" had to rebuild the whole question from two words.
+
+    The draft is what makes the reply a completion instead of a restart.
+    """
+    result = await plan_from(
+        {
+            **FULL,
+            "outcome": "NEEDS_CLARIFICATION",
+            "question": "¿De qué periodo?",
+            "period": "",
+            "categories": ["HOUSING_RENT"],
+        }
+    )
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert result.draft is not None
+    assert result.draft.needs_a_window is True
+    assert result.draft.categories == ("HOUSING_RENT",)
+    assert result.draft.direction is Direction.EXPENSE
+
+
+async def test_a_clarification_about_something_other_than_the_window_keeps_its_window() -> None:
+    """The model can ask about the category with the period already read. The draft says so,
+    and the caller can then tell that a bare "este año" is not the missing piece."""
+    result = await plan_from(
+        {
+            **FULL,
+            "outcome": "NEEDS_CLARIFICATION",
+            "question": "¿De qué categoría?",
+            "period": "LAST_MONTH",
+        }
+    )
+
+    assert result.draft is not None
+    assert result.draft.needs_a_window is False
+    assert result.draft.period is not None
+    assert result.draft.period.period is Period.LAST_MONTH
+
+
+async def test_a_draft_that_cannot_be_read_does_not_cost_the_question() -> None:
+    """A question back is useful on its own. If the other fields are unreadable the draft is
+    dropped and the user still gets asked — turning an unreadable draft into a structural
+    failure would replace a helpful question with an apology."""
+    result = await plan_from(
+        {
+            **FULL,
+            "outcome": "NEEDS_CLARIFICATION",
+            "question": "¿De qué periodo?",
+            "categories": "GROCERIES",
+        }
+    )
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert result.question == "¿De qué periodo?"
+    assert result.draft is None
