@@ -244,6 +244,89 @@ rewritten the night before.
 
 ---
 
+## The gates for turning `/v1/questions` on
+
+`ORCHESTRATOR_QUESTIONS_ENABLED` defaults to false and the code has said "until the open
+risks clear an agreed bar" without anybody agreeing one. A threshold nobody signs is not a
+threshold, so these are signed, with the reasoning, and with the command that produces each
+number so a claim can be checked rather than repeated.
+
+**There are two gates, not one.** A scripted demo over seeded data on localhost and
+somebody's real money are not the same risk, and one bar for both would either block the
+demo or wave through production. The review's proposal was explicitly "to enable this
+outside a POC" — that is the second gate.
+
+### The principle
+
+**Zero for what deterministic code can guarantee. A number, never zero, for what a language
+model decides.** An overall accuracy target is the wrong instrument: natural language has a
+long tail and there will always be a sentence nobody anticipated. Safety properties do not
+get a tail — either the code enforces them or it does not.
+
+### Gate 1 — the demo. Seeded data, localhost, a scripted scenario
+
+| property | bar | now | how to check |
+| --- | --- | --- | --- |
+| `invalid structure` | **0** on all three sets | ❌ 1 in adversarial | `evaluate_planning --dataset adversarial` |
+| E2E property violations | **0** | ❌ 1 in adversarial, 0/120 dev, 0/79 validation | `just evaluate-e2e <token> adversarial` |
+| Cross-account containment | **0** failures | ✅ 0, four integration tests | `pytest -m integration` in banking |
+| Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` closed | `evaluate_planning --dataset adversarial` |
+| Over-refusal by the guard | **0** on answerable cases | ✅ 0 of 216 | `pytest tests/test_capability_guard.py` |
+| Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
+| Evidence reconciliation | **0** failures | ✅ 0 | the E2E properties |
+| **Unsafe execution** | **≤ 10 %** held out | ❌ **12.7 %** (10 of 79) | `evaluate_planning --dataset validation` |
+
+Two fail. Both have identified work rather than needing a discovery: three of the ten unsafe
+cases are follow-ups, which item 4 addresses; one is `groupBy` picking `CATEGORY`, which is a
+prompt fix; and the single `invalid structure` is one case worth understanding rather than
+rounding away.
+
+**Why 10 % and not 0.** Unsafe execution includes "the model chose the wrong window", which
+is exactly the long tail. What makes a residual survivable is that **every answer carries the
+plan that produced it**: a user who asked about this month and reads "el mes pasado" can see
+it. One in ten makes "check the plan" a reasonable thing to expect of a reader. One in five
+does not — at that rate the plan beside the figure stops being a control and becomes an
+alibi.
+
+**Why not lower for the demo.** Because the demo is scripted over seeded data, and every
+step of it is in `dev.yaml`. The risk a demo carries is that somebody asks something off
+script, and 10 % with the plan visible is a defensible answer to that.
+
+### Gate 2 — real data. Somebody's actual balance
+
+Everything in gate 1 at its bar, and then:
+
+| property | bar | now |
+| --- | --- | --- |
+| **Unsafe execution** | **≤ 2 %** held out | 12.7 % |
+| Banking authenticates its callers | required | ❌ it trusts its network; `app.account_id` comes from the request |
+| `BOOKED` transactions sealed | required | ❌ nothing stops appending entries to a booked transaction |
+| An audit event per financial query | required | ❌ §12.4 specifies it, nothing writes it |
+| OAuth with short-lived tokens | required | ❌ development token table |
+| Rate limiting on `/v1/messages` | required | ❌ a prompt straight to a model, unlimited |
+| Contract verified in CI | required | ❌ drift arrives as a runtime 422 |
+
+**Why 2 % and not 0.** Same reason as above, one order of magnitude tighter because the plan
+beside the figure is a control for somebody paying attention and real money does not assume
+attention. Below 2 % the residual is comparable to the rate at which a person misreads their
+own bank statement, which is the honest comparison — not perfection, which no system with
+natural language in it can offer.
+
+**Why banking's identity is on this gate and not the demo's.** Per-account isolation is
+enforced twice in the database now, and both enforcements key on what the request says. That
+stops a bug in our own code, which is what a demo risks. It does not stop a caller on
+banking's network, which is what real data risks.
+
+### What is not a gate
+
+- **Overall accuracy.** 88.6 % held out is a number to improve and not a bar to clear.
+  Making it one would reward refusing everything, which the `missed` count exists to catch.
+- **Latency.** A slow answer is visible to whoever is waiting. It gates the demo's quality,
+  not its safety.
+- **Follow-up accuracy.** It is the weakest capability at 57–70 % and its failures are
+  already counted where they belong: as unsafe execution when a figure is shown, as
+  over-refusal when it is not.
+
 ## Worth doing whenever there is a gap
 
 Correct, agreed, and not load-bearing for a date:
