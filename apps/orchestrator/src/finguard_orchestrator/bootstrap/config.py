@@ -159,13 +159,22 @@ class Settings(BaseSettings):
     def callers(self) -> dict[str, Caller]:
         """Parses the token table. Fails loudly on a malformed entry rather than
         skipping it: a silently dropped token is a caller who cannot log in and an
-        afternoon spent looking at the wrong layer."""
+        afternoon spent looking at the wrong layer.
+
+        The zone is the optional fourth field. Optional because most holders share the
+        deployment's, present because "hoy" belongs to whoever is asking — a holder in the
+        Canaries has a different one for an hour every night, and being told about the wrong
+        day is a real figure answering a question nobody asked.
+        """
         table: dict[str, Caller] = {}
         for entry in self.dev_tokens:
             parts = entry.split(":")
-            if len(parts) != 3:
-                raise ValueError(f"a token entry is token:holder:account_uuid, got {entry!r}")
-            token, holder, account = parts
+            if len(parts) not in (3, 4):
+                raise ValueError(
+                    f"a token entry is token:holder:account_uuid[:timezone], got {entry!r}"
+                )
+            token, holder, account = parts[:3]
+            zone = parts[3] if len(parts) == 4 else "Europe/Madrid"
             if token in table:
                 # Two entries sharing a secret is a typo, and the quiet outcome is the
                 # dangerous one: the token would resolve to whichever account came last.
@@ -173,7 +182,9 @@ class Settings(BaseSettings):
                 # operator already has the table in front of them; repeating even a
                 # prefix of the shared secret there only creates another copy to leak.
                 raise ValueError("a development token is configured twice")
-            table[token] = Caller(holder_reference=holder, account_id=UUID(account))
+            table[token] = Caller(
+                holder_reference=holder, account_id=UUID(account), reporting_timezone=zone
+            )
         return table
 
     def guard_policy(self) -> GuardPolicy:

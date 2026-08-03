@@ -9,8 +9,9 @@ mapper is the only thing that knows both shapes.
 from datetime import date, datetime
 from typing import Self
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 from finguard_banking.domain.constants import (
@@ -42,6 +43,24 @@ class RelativePeriodRequest(_Body):
     period: Period
     n: int | None = Field(default=None, ge=1, le=MAX_PERIOD_DAYS)
     reference: date | None = None
+    # The zone `reference` was measured in. Optional for compatibility, and the pair is
+    # what actually describes a window: a caller in the Canaries and one in Madrid do not
+    # share a "today" between midnight and 01:00.
+    timezone: str | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, value: str | None) -> str | None:
+        """Refused rather than ignored. Falling back silently is the dangerous outcome:
+        the caller believes it asked about Canarian days and is answered about peninsular
+        ones, with a real figure and no error."""
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown time zone: {value!r}") from exc
+        return value
 
 
 class FinancialQueryRequest(_Body):

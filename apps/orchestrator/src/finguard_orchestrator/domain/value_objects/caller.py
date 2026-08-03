@@ -11,7 +11,9 @@ and carries nothing mutable. Nothing here expires, because nothing here is store
 """
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from finguard_orchestrator.domain.errors import InvalidValueError, NotAuthorisedError
 
@@ -28,10 +30,30 @@ class Caller:
 
     holder_reference: str
     account_id: UUID
+    # The zone this holder's day is measured in. It belongs here rather than to the
+    # deployment because "hoy" is a property of whoever is asking: between midnight and
+    # 01:00 peninsular time, today in the Canaries is yesterday in Madrid, and a figure for
+    # the wrong day is a real figure answering a question nobody asked.
+    reporting_timezone: str = "Europe/Madrid"
 
     def __post_init__(self) -> None:
         if not self.holder_reference.strip():
             raise InvalidValueError("an authenticated caller needs a holder reference")
+        try:
+            ZoneInfo(self.reporting_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            # At construction, so a misconfigured token table fails at startup rather than
+            # answering about a zone nobody has.
+            raise InvalidValueError(f"unknown time zone: {self.reporting_timezone!r}") from exc
+
+    def today_in(self) -> date:
+        """What day it is for this holder.
+
+        The one place the clock is read on the request path. It used to be a module
+        constant, which meant every holder shared a day and the zone could silently differ
+        from the one banking bins timestamps with.
+        """
+        return datetime.now(ZoneInfo(self.reporting_timezone)).date()
 
     def may_read(self, account_id: UUID) -> bool:
         """Deny by default.

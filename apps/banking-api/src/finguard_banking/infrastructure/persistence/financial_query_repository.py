@@ -33,12 +33,17 @@ class PostgresFinancialQueryRepository:
         self._group_limit = group_limit
 
     async def run(self, query: FinancialQuery) -> FinancialQueryResult:
+        # The caller's zone when it sent one, this deployment's otherwise. Which day a
+        # purchase at 23:30 belongs to is decided here, so binning in a zone other than the
+        # one the window was chosen in answers a different question with a real figure.
+        zone = query.reporting_timezone or self._timezone
+
         aggregate = (
-            compile_aggregate(query, self._timezone, self._group_limit)
+            compile_aggregate(query, zone, self._group_limit)
             if self._group_limit is not None
-            else compile_aggregate(query, self._timezone)
+            else compile_aggregate(query, zone)
         )
-        movements = compile_movements(query, self._timezone)
+        movements = compile_movements(query, zone)
 
         started = time.perf_counter()
         async with self._pool.acquire() as connection:

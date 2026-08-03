@@ -43,9 +43,20 @@ class HttpFinancialQuery:
         self.timeout_seconds = timeout_seconds
         self.supporting_movements = supporting_movements
 
-    async def run(self, plan: FinancialPlan, *, account_id: UUID, today: date) -> QueryAnswer:
+    async def run(
+        self,
+        plan: FinancialPlan,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+    ) -> QueryAnswer:
         body = to_body(
-            plan, account_id=account_id, today=today, supporting_movements=self.supporting_movements
+            plan,
+            account_id=account_id,
+            today=today,
+            supporting_movements=self.supporting_movements,
+            reporting_timezone=reporting_timezone,
         )
 
         try:
@@ -84,7 +95,12 @@ class HttpFinancialQuery:
 
 
 def to_body(
-    plan: FinancialPlan, *, account_id: UUID, today: date, supporting_movements: int
+    plan: FinancialPlan,
+    *,
+    account_id: UUID,
+    today: date,
+    supporting_movements: int,
+    reporting_timezone: str,
 ) -> dict[str, Any]:
     """Plan to request body. The only place that knows the contract is camelCase."""
     body: dict[str, Any] = {
@@ -103,6 +119,10 @@ def to_body(
         period: dict[str, Any] = {
             "period": plan.period.period.value,
             "reference": today.isoformat(),
+            # The two travel together because neither describes a window alone. A date
+            # without a zone asks the other service to guess the half we did not send, and
+            # its guess is a deployment setting that can differ from ours.
+            "timezone": reporting_timezone,
         }
         if plan.period.n is not None:
             period["n"] = plan.period.n

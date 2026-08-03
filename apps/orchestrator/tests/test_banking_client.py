@@ -28,7 +28,13 @@ ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 def body_for(plan: FinancialPlan) -> dict:
-    return to_body(plan, account_id=ACCOUNT, today=date(2026, 7, 15), supporting_movements=10)
+    return to_body(
+        plan,
+        account_id=ACCOUNT,
+        today=date(2026, 7, 15),
+        supporting_movements=10,
+        reporting_timezone="Europe/Madrid",
+    )
 
 
 # --- plan to request ---------------------------------------------------------------
@@ -39,7 +45,12 @@ def test_a_named_period_travels_as_a_period() -> None:
         FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH))
     )
 
-    assert body["period"] == {"period": "LAST_MONTH", "reference": "2026-07-15"}
+    # The zone travels with the date, because neither describes a window alone.
+    assert body["period"] == {
+        "period": "LAST_MONTH",
+        "reference": "2026-07-15",
+        "timezone": "Europe/Madrid",
+    }
     # No stray key: banking forbids extras, so an n that does not apply is a 422.
     assert "dateRange" not in body
 
@@ -52,7 +63,12 @@ def test_a_counted_period_carries_its_count() -> None:
         )
     )
 
-    assert body["period"] == {"period": "LAST_N_DAYS", "reference": "2026-07-15", "n": 30}
+    assert body["period"] == {
+        "period": "LAST_N_DAYS",
+        "reference": "2026-07-15",
+        "timezone": "Europe/Madrid",
+        "n": 30,
+    }
 
 
 def test_an_absolute_window_uses_the_contract_spelling() -> None:
@@ -167,6 +183,11 @@ async def test_an_unreachable_banking_is_a_domain_error() -> None:
     with pytest.raises(BankingUnavailableError) as caught:
         await HttpFinancialQuery(
             base_url="http://127.0.0.1:1", timeout_seconds=2.0, supporting_movements=10
-        ).run(plan, account_id=ACCOUNT, today=date(2026, 7, 15))
+        ).run(
+            plan,
+            account_id=ACCOUNT,
+            today=date(2026, 7, 15),
+            reporting_timezone="Europe/Madrid",
+        )
 
     assert caught.value.code == "banking_unavailable"

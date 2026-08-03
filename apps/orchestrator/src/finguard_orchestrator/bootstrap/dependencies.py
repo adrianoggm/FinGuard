@@ -1,17 +1,12 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
-from fastapi import Header, Request
+from fastapi import Depends, Header, Request
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, CommandBus, QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
-
-# The zone the user's day is measured in. Not UTC: "hoy" means the holder's today, and a
-# purchase at 23:30 in Madrid belongs to that day, not the next one.
-REPORTING_TIMEZONE = "Europe/Madrid"
 
 
 def get_query_bus(request: Request) -> QueryBus:
@@ -23,16 +18,6 @@ def get_query_bus(request: Request) -> QueryBus:
 def get_command_bus(request: Request) -> CommandBus:
     bus: CommandBus = request.app.state.command_bus
     return bus
-
-
-def reporting_today(request: Request) -> date:
-    """What day it is where the money is.
-
-    The clock lives here and nowhere deeper, exactly as in banking: the planner takes
-    today as an argument, so a question asked on the 15th resolves the same way when the
-    evaluation replays it in March.
-    """
-    return datetime.now(ZoneInfo(REPORTING_TIMEZONE)).date()
 
 
 def get_ask_handler(request: Request) -> AskFinancialQuestionHandler:
@@ -70,3 +55,18 @@ def questions_enabled(request: Request) -> None:
         raise FeatureDisabledError(
             "financial questions are disabled; set ORCHESTRATOR_QUESTIONS_ENABLED=true"
         )
+
+
+def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
+    """What day it is *for this holder*.
+
+    The clock lives here and nowhere deeper, exactly as in banking: the planner takes today
+    as an argument, so a question asked on the 15th resolves the same way when the
+    evaluation replays it in March.
+
+    It used to read a module constant, which gave every holder the same day and left the
+    zone able to differ silently from the one banking bins timestamps with. It now comes
+    from the credential, so a holder in the Canaries is answered about their own day and the
+    zone travels to banking beside the date.
+    """
+    return who.today_in()

@@ -70,9 +70,18 @@ class FakeLedger:
         self._failure = failure
         self.account_id: uuid.UUID | None = None
         self.today: date | None = None
+        self.reporting_timezone: str | None = None
 
-    async def run(self, plan: FinancialPlan, *, account_id: uuid.UUID, today: date) -> QueryAnswer:
+    async def run(
+        self,
+        plan: FinancialPlan,
+        *,
+        account_id: uuid.UUID,
+        today: date,
+        reporting_timezone: str = "Europe/Madrid",
+    ) -> QueryAnswer:
         self.account_id, self.today = account_id, today
+        self.reporting_timezone = reporting_timezone
         if self._failure is not None:
             raise self._failure
         assert self._answer is not None
