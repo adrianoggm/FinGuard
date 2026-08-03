@@ -55,11 +55,12 @@ class FakePlanner:
     def __init__(self, result: PlanningResult) -> None:
         self._result = result
         self.previous: FinancialPlan | None = None
+        self.asked: str | None = None
 
     async def plan(
         self, sentence: str, *, today: date, previous: FinancialPlan | None = None
     ) -> PlanningResult:
-        self.previous = previous
+        self.previous, self.asked = previous, sentence
         return self._result
 
 
@@ -90,6 +91,30 @@ async def ask(result: PlanningResult, ledger: FakeLedger | None = None, **kwargs
         **kwargs,  # type: ignore[arg-type]
     )
     return await handler_for(result, ledger).handle(query)
+
+
+# --- the guard runs before the model ------------------------------------------------
+
+
+async def test_a_question_we_cannot_express_never_reaches_the_model() -> None:
+    """Cheapest possible refusal, and the only one that is a control rather than a
+    disposition. The model is not consulted, so it cannot produce a confident plan for a
+    question about a ratio."""
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER)
+    handler = AskFinancialQuestionHandler(planner, ledger)
+
+    result = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿Qué porcentaje de mi sueldo se va en ocio?",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+
+    assert planner.asked is None, "the model was asked about something we cannot express"
+    assert ledger.account_id is None
+    assert result.outcome == PlanningOutcome.UNSUPPORTED.value
 
 
 # --- the metric survives the whole way ---------------------------------------------

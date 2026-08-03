@@ -21,7 +21,7 @@ from finguard_assistant.domain.models.planning_result import PlanningResult
 from finguard_assistant.domain.models.query_answer import QueryAnswer
 from finguard_assistant.domain.ports.financial_query import FinancialQueryPort
 from finguard_assistant.domain.ports.query_planner import QueryPlannerPort
-from finguard_assistant.domain.services import answer_writer
+from finguard_assistant.domain.services import answer_writer, capability_guard
 from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
 
 
@@ -127,6 +127,14 @@ class AskFinancialQuestionHandler:
     async def stream(
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        refused = capability_guard.unsupported_reason(query.sentence)
+        if refused is not None:
+            # Before the model, on purpose. Refusing here is a control; refusing after is
+            # whatever disposition the configured model happens to have, and that moved
+            # by 60 points between two models we measured.
+            yield _decline(PlanningResult.unsupported(refused))
+            return
+
         yield Stage("planning")
         planned = await self._planner.plan(
             query.sentence, today=query.today, previous=query.previous_plan
