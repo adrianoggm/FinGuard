@@ -202,3 +202,48 @@ class BreakdownResponse(_Payload):
     total_minor: int
     movement_count: int
     groups: list[GroupPayload] = []
+
+
+class CardPayload(_Payload):
+    """A card as a screen needs it. Four digits, never a number.
+
+    `expires` is already "09/28": how it is written on the card, assembled once rather than in every
+    place it is shown.
+    """
+
+    card_id: str
+    display_name: str
+    brand: str
+    kind: str
+    last_four: str
+    expires: str
+    status: str
+    # null means the balance is the limit, which is a debit card — not a limit of zero.
+    spending_limit_minor: int | None
+    spent_minor: int
+    charge_count: int
+
+
+class WalletResponse(_Payload):
+    """`since` travels with the figures: a total whose window is implicit is a total somebody
+    eventually labels as a month."""
+
+    since: str
+    cards: list[CardPayload] = []
+
+
+class ChargePayload(_Payload):
+    """One charge on a card. Unsigned: every row is money out, and the screen writes the minus."""
+
+    transaction_id: str
+    occurred_at: str
+    description: str
+    merchant_name: str | None
+    category: str | None
+    amount_minor: int
+
+
+class ChargesResponse(_Payload):
+    card_id: str
+    since: str
+    charges: list[ChargePayload] = []

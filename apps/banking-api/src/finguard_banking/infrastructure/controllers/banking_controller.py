@@ -4,15 +4,17 @@ Shapes live in dto/, conversion in mappers/, and every route delegates to a use 
 a controller never reaches a repository.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from finguard_banking.application import (
     GetBalanceQuery,
+    ListCardChargesQuery,
+    ListCardsQuery,
     ListContactsQuery,
     MovementSummaryQuery,
     QueryBus,
@@ -22,8 +24,11 @@ from finguard_banking.bootstrap.dependencies import (
     get_query_bus,
     reporting_today,
 )
+from finguard_banking.domain.constants import MAX_CARD_WINDOW_DAYS, MAX_SUPPORTING_MOVEMENTS
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
+    CardChargesResponse,
+    CardsResponse,
     ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
@@ -57,6 +62,55 @@ async def ready(database_answers: DatabaseAnswers) -> JSONResponse:
 async def read_balance(account_id: UUID, queries: Queries) -> BalanceResponse:
     """Balance derived from the ledger entries, never from a mutable column."""
     return http_mapper.balance_to_dto(await queries.ask(GetBalanceQuery(account_id)))
+
+
+@accounts_router.get("/{account_id}/cards", summary="The cards this account holds")
+async def read_cards(
+    account_id: UUID,
+    queries: Queries,
+    today: Today,
+    days: Annotated[int, Query(ge=1, le=MAX_CARD_WINDOW_DAYS)] = 30,
+) -> CardsResponse:
+    """Each card with what has been charged to it in the window, computed in the reporting zone.
+
+    A rolling window rather than "this month", and the answer says which date it starts from. A
+    month is what a caller assumes when nothing says otherwise, and a figure labelled as a month
+    that is really thirty days is wrong on the 1st by everything that happened on the 31st.
+    """
+    since = today - timedelta(days=days)
+    result = await queries.ask(ListCardsQuery(account_id=account_id, since=since))
+    return http_mapper.cards_to_dto(result)
+
+
+@accounts_router.get(
+    "/{account_id}/cards/{card_id}/charges", summary="What was bought with one card"
+)
+async def read_card_charges(
+    account_id: UUID,
+    card_id: UUID,
+    queries: Queries,
+    today: Today,
+    days: Annotated[int, Query(ge=1, le=MAX_CARD_WINDOW_DAYS)] = 30,
+    limit: Annotated[int, Query(ge=1, le=MAX_SUPPORTING_MOVEMENTS)] = 50,
+) -> CardChargesResponse:
+    """The charges behind a card's total, newest first.
+
+    A card screen that states a total and cannot show the movements behind it is asking to be
+    trusted, which is the objection this product is built against.
+
+    A card belonging to another account answers with an empty list rather than a 404: the view
+    filters on the declared account, so the id selects nothing. That is also the honest answer —
+    telling a caller that a card exists but is not theirs is telling them something.
+    """
+    result = await queries.ask(
+        ListCardChargesQuery(
+            account_id=account_id,
+            card_id=card_id,
+            since=today - timedelta(days=days),
+            limit=limit,
+        )
+    )
+    return http_mapper.card_charges_to_dto(result)
 
 
 @accounts_router.get("/{account_id}/contacts", summary="Everybody this account can pay")

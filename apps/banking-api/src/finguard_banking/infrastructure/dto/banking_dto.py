@@ -188,3 +188,46 @@ class ContactsResponse(_Payload):
     somebody was looking for is the one that did not fit."""
 
     contacts: list[ContactResponse] = []
+
+
+class CardResponse(_Payload):
+    """A card as a screen needs it. Four digits and never a number.
+
+    `spentMinor` is what was charged since `since`, which travels beside it: a figure whose window
+    is implicit is a figure somebody will eventually label as a month.
+    """
+
+    card_id: UUID
+    display_name: str
+    brand: str
+    kind: str
+    last_four: str
+    expires_month: int
+    expires_year: int
+    status: str
+    # null means the balance is the limit, which is a debit card — not a limit of zero.
+    spending_limit_minor: int | None
+    spent_minor: int
+    charge_count: int
+
+
+class CardsResponse(_Payload):
+    since: str
+    cards: list[CardResponse] = []
+
+
+class CardChargeResponse(_Payload):
+    """One charge on a card. Unsigned: every row is money out, and the screen writes the minus."""
+
+    transaction_id: UUID
+    occurred_at: datetime
+    description: str
+    merchant_name: str | None
+    category: str | None
+    amount_minor: int
+
+
+class CardChargesResponse(_Payload):
+    card_id: UUID
+    since: str
+    charges: list[CardChargeResponse] = []

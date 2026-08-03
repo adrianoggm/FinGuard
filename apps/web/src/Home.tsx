@@ -125,11 +125,11 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
           </span>
           <span>Movimientos</span>
         </button>
-        <button className="shortcut" onClick={() => onGo("finanzas")}>
+        <button className="shortcut" onClick={() => onGo("tarjetas")}>
           <span className="shortcut-icon" aria-hidden="true">
-            📊
+            💳
           </span>
-          <span>Finanzas</span>
+          <span>Tarjetas</span>
         </button>
         <button className="shortcut" onClick={onAsk}>
           <span className="shortcut-icon" aria-hidden="true">

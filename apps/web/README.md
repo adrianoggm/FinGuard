@@ -2,8 +2,8 @@
 
 The client, as a phone. React + TypeScript on Vite, local port `3000`.
 
-Vite rather than Next.js — the vision permits either (§14). Four screens reached by tapping do not need
-URLs, so server rendering and a routing framework would be scaffolding around a `useState`.
+Vite rather than Next.js — the vision permits either (§14). Five screens reached by tapping do not
+need URLs, so server rendering and a routing framework would be scaffolding around a `useState`.
 
 It holds no financial rules and never calls `banking-api`: only `orchestrator`. Every figure on screen
 arrived through it, which is what makes that claim checkable rather than stated.
@@ -23,7 +23,7 @@ the other half worth seeing.
 
 ## The shape of it
 
-Four screens and a floating button. Tapping the button raises **conversation mode** as a sheet over
+Five screens and a floating button. Tapping the button raises **conversation mode** as a sheet over
 whichever screen you are on, which is the point of a floating button: you do not leave what you were
 doing, and the figures staying visible behind the conversation are what make asking about your money
 part of the app rather than a chat bolted onto it.
@@ -32,6 +32,7 @@ part of the app rather than a chat bolted onto it.
 src/App.tsx           the phone: frame, status bar, tabs, the button, the sheet
 src/Home.tsx          balance, month by month, four shortcuts, accounts, last movements
 src/Accounts.tsx      every movement, with a merchant search and category filters
+src/Cards.tsx         the cards, with what each one was charged in the window
 src/Finances.tsx      where the money went: by category and by month
 src/Bizum.tsx         pick a contact, type an amount, read the preview, say yes
 src/Conversation.tsx  the sheet: turns, stages, the plan behind each figure, payments
@@ -48,8 +49,8 @@ app is broken, and they are right.
 Four decisions in there are not cosmetic.
 
 **Every figure is real.** The balance comes from `GET /v1/account/summary`, the lists and the
-breakdowns from `/v1/account/movements` and `/v1/account/breakdown`. All three reach the ledger through
-a plan built in code with no model involved. Mock data would have put a second balance on the phone,
+breakdowns from `/v1/account/movements` and `/v1/account/breakdown`, the cards from `/v1/cards`. All
+of them reach the ledger through a plan or a view, with no model involved. Mock data would have put a second balance on the phone,
 and a home screen disagreeing with the chat is the first thing anybody would notice.
 
 **The plan travels with every figure the conversation produces.** Each answer carries the query behind
@@ -75,8 +76,10 @@ list this account was allowed to see. What does not change is the preview and th
   means a credential naming a *customer* and every request naming which account — a change to identity,
   to the RLS declaration and to every endpoint. It is the only item here with a real architectural cost
   rather than a screen's worth of work.
-- **Loans and cards.** There is no credit in the ledger, so there is no "tu financiación" to put beside
-  the balance. What is there instead is this month's spending, which is real.
+- **Loans.** There is no credit in the ledger, so there is no "tu financiación" to put beside the
+  balance. What is there instead is this month's spending, which is real. The cards are real now —
+  migration 0009 gave them a table and tied each charge to one — but a credit card's *balance owed* is
+  not modelled, so the screen shows what was charged rather than what is owed.
 - **Voice.** §6.1.3 gives it its own service and the roadmap puts it in phase 6. A microphone button
   that does nothing would be worse than its absence.
 - **Tests.** Vitest is installed and there are none. The flows are verified by driving a real browser

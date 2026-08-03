@@ -13,10 +13,14 @@ from finguard_orchestrator.application import (
     GetAccountSummaryQuery,
     GetBreakdownHandler,
     GetBreakdownQuery,
+    GetCardChargesHandler,
+    GetCardChargesQuery,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
     GetMovementsHandler,
     GetMovementsQuery,
+    ListCardsHandler,
+    ListCardsQuery,
     ListContactsHandler,
     ListContactsQuery,
     PolicyStore,
@@ -33,6 +37,7 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.infrastructure import (
     HttpAccountSummary,
+    HttpCards,
     HttpContacts,
     HttpFinancialQuery,
     HttpPayments,
@@ -129,6 +134,14 @@ def create_app() -> FastAPI:
     # the plan needs, so a model between the tap and the query would only add a way to be wrong.
     query_bus.register(GetMovementsQuery, GetMovementsHandler(banking))
     query_bus.register(GetBreakdownQuery, GetBreakdownHandler(banking))
+    # The cards, and the contacts a payment form offers. Both are reads through banking's own
+    # restricted role, and neither has a model anywhere in it.
+    cards = HttpCards(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
+    query_bus.register(ListCardsQuery, ListCardsHandler(cards))
+    query_bus.register(GetCardChargesQuery, GetCardChargesHandler(cards))
     query_bus.register(
         ListContactsQuery,
         ListContactsHandler(

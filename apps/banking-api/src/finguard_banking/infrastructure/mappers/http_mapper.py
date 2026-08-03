@@ -10,6 +10,8 @@ from uuid import UUID
 
 from finguard_banking.application import (
     GetBalanceResult,
+    ListCardChargesResult,
+    ListCardsResult,
     ListContactsResult,
     MovementSummaryResult,
     PreparePaymentCommand,
@@ -25,6 +27,10 @@ from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
+    CardChargeResponse,
+    CardChargesResponse,
+    CardResponse,
+    CardsResponse,
     ContactResponse,
     ContactsResponse,
     FinancialQueryRequest,
@@ -166,4 +172,44 @@ def contacts_to_dto(result: ListContactsResult) -> ContactsResponse:
             )
             for contact in result.contacts
         ]
+    )
+
+
+def cards_to_dto(result: ListCardsResult) -> CardsResponse:
+    return CardsResponse(
+        since=result.since,
+        cards=[
+            CardResponse(
+                card_id=card.card_id,
+                display_name=card.display_name,
+                brand=card.brand,
+                kind=card.kind,
+                last_four=card.last_four,
+                expires_month=card.expires_month,
+                expires_year=card.expires_year,
+                status=card.status,
+                spending_limit_minor=card.spending_limit_minor,
+                spent_minor=card.spent_minor,
+                charge_count=card.charge_count,
+            )
+            for card in result.cards
+        ],
+    )
+
+
+def card_charges_to_dto(result: ListCardChargesResult) -> CardChargesResponse:
+    return CardChargesResponse(
+        card_id=result.card_id,
+        since=result.since,
+        charges=[
+            CardChargeResponse(
+                transaction_id=charge.transaction_id,
+                occurred_at=charge.occurred_at,
+                description=charge.description,
+                merchant_name=charge.merchant_name,
+                category=charge.category,
+                amount_minor=charge.amount_minor,
+            )
+            for charge in result.charges
+        ],
     )

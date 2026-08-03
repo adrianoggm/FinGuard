@@ -10,11 +10,13 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionResult,
     BreakdownResult,
     CatalogueResult,
+    ChargesResult,
     ListContactsResult,
     ModelRow,
     MovementsResult,
     PolicyRow,
     SpokenPlan,
+    WalletResult,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -24,7 +26,10 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownResponse,
+    CardPayload,
     CatalogueResponse,
+    ChargePayload,
+    ChargesResponse,
     ContactPayload,
     ContactsResponse,
     GroupPayload,
@@ -37,6 +42,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
+    WalletResponse,
 )
 
 
@@ -205,5 +211,44 @@ def breakdown_to_dto(result: BreakdownResult) -> BreakdownResponse:
                 movement_count=group.movement_count,
             )
             for group in result.groups
+        ],
+    )
+
+
+def wallet_to_dto(result: WalletResult) -> WalletResponse:
+    return WalletResponse(
+        since=result.since,
+        cards=[
+            CardPayload(
+                card_id=card.card_id,
+                display_name=card.display_name,
+                brand=card.brand,
+                kind=card.kind,
+                last_four=card.last_four,
+                expires=card.expires,
+                status=card.status,
+                spending_limit_minor=card.spending_limit_minor,
+                spent_minor=card.spent_minor,
+                charge_count=card.charge_count,
+            )
+            for card in result.cards
+        ],
+    )
+
+
+def charges_to_dto(result: ChargesResult) -> ChargesResponse:
+    return ChargesResponse(
+        card_id=result.card_id,
+        since=result.since,
+        charges=[
+            ChargePayload(
+                transaction_id=charge.transaction_id,
+                occurred_at=charge.occurred_at,
+                description=charge.description,
+                merchant_name=charge.merchant_name,
+                category=charge.category,
+                amount_minor=charge.amount_minor,
+            )
+            for charge in result.charges
         ],
     )
