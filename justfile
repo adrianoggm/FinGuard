@@ -141,6 +141,12 @@ evaluate-planning model="qwen2.5-coder:7b":
 evaluate-e2e token dataset="dev":
     cd apps/orchestrator && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset {{ dataset }}
 
+# Several turns of one conversation, echoed back the way the client does it. The defects this
+# catches live *between* sentences — a clarification that restarts, a follow-up that loses its
+# window — and nothing single-turn can see any of them.
+evaluate-conversations token:
+    cd apps/orchestrator && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset conversations
+
 # What has to pass before pushing a commit
 check: lint typecheck test
 
