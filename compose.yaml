@@ -86,6 +86,10 @@ services:
       # The financial endpoints are off by default while two measured risks stay open
       # (see docs/next.md). Compose turns them on because this is the demo stack.
       ORCHESTRATOR_QUESTIONS_ENABLED: "true"
+      # Payments too, separately, because they are a separate risk: this is the surface where a
+      # sentence somebody typed ends in a bank transfer. It is behind a preview, an explicit
+      # confirmation read by an allow-list, and two scopes.
+      ORCHESTRATOR_PAYMENTS_ENABLED: "true"
       # token:holder:account[:timezone]. The zone is the holder's, not the deployment's:
       # between midnight and 01:00 peninsular time "hoy" in the Canaries is the previous
       # day, and it travels to banking beside the reference date so both services bin the
@@ -93,7 +97,13 @@ services:
       # Two holders, because one cannot express containment. The seed always had three;
       # the token table had one entry, so "a caller cannot read another account" was a
       # claim with no way to test it. Diego is in a different zone on purpose.
-      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin"]'
+      #
+      # A fourth entry holds the payment scopes, and Laura's ordinary token does not: the demo
+      # can move money only with a credential issued for it. `payments:prepare` and
+      # `payments:confirm` travel together there because the account holder is one person doing
+      # two turns — the split exists so a credential *can* be issued with only the first, for an
+      # integration that drafts payments somebody else approves.
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,payments:prepare,payments:confirm"]'
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
       # Stating it keeps the compose file working on both.

@@ -6,9 +6,13 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
     CommandBus,
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
     PolicyStore,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ReplaceLlmPolicyHandler,
@@ -18,10 +22,13 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.infrastructure import (
     HttpFinancialQuery,
+    HttpPayments,
+    LlmPaymentReader,
     LlmQueryPlanner,
     ProviderRegistry,
     admin_router,
     assistant_router,
+    payments_router,
     register_error_handlers,
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
@@ -104,12 +111,39 @@ def create_app() -> FastAPI:
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
 
+    # The payment path. Its own reader, its own prompt and its own schema: extracting who
+    # and how much is a different job from planning a query, and sharing one prompt for both
+    # would mean tuning either one moved the other.
+    paying = PreparePaymentHandler(
+        LlmPaymentReader(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        ),
+        HttpPayments(
+            base_url=settings.banking_base_url,
+            timeout_seconds=settings.banking_timeout_seconds,
+        ),
+        settings.guard_policy(),
+    )
+
     command_bus = CommandBus()
     command_bus.register(
         ReplaceLlmPolicyCommand, ReplaceLlmPolicyHandler(policies, catalogue, available)
     )
     command_bus.register(
         ResetLlmPolicyCommand, ResetLlmPolicyHandler(policies, catalogue, available)
+    )
+    command_bus.register(PreparePaymentCommand, paying)
+    command_bus.register(
+        ConfirmPaymentCommand,
+        ConfirmPaymentHandler(
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
     )
 
     app.state.query_bus = query_bus
@@ -118,6 +152,7 @@ def create_app() -> FastAPI:
     app.state.ask_handler = asking
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
+    app.state.payments_enabled = settings.payments_enabled
     app.state.planner_probe = planner_provider
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
@@ -125,6 +160,7 @@ def create_app() -> FastAPI:
     app.state.identity = StaticTokenIdentity(settings.callers())
 
     app.include_router(assistant_router)
+    app.include_router(payments_router)
     app.include_router(admin_router)
     register_error_handlers(app)
     return app

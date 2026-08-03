@@ -59,6 +59,17 @@ def questions_enabled(request: Request) -> None:
         )
 
 
+def payments_enabled(request: Request) -> None:
+    """Refuses the payment endpoints unless a deployment opted in.
+
+    Separate from `questions_enabled` because they are separate risks: a deployment that answers
+    questions has not thereby agreed to move money. Off by default, like the other one, so a
+    surface that can pay somebody is something an operator turned on.
+    """
+    if not request.app.state.payments_enabled:
+        raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
+
+
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
     """What day it is *for this holder*.
 
