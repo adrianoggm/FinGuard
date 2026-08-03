@@ -42,6 +42,7 @@ from finguard_assistant.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_assistant.domain.value_objects.guard_policy import GuardPolicy
 from finguard_assistant.infrastructure.llm.ollama_llm_provider import (
     DEFAULT_TIMEOUT_SECONDS,
     OllamaLlmProvider,
@@ -175,6 +176,28 @@ def as_plan(spec: dict[str, Any]) -> FinancialPlan:
         group_by=GroupBy(spec.get("groupBy", "NONE")),
         metric=Metric(spec.get("metric", "SUM")),
     )
+
+
+def _gated(
+    case: dict[str, Any], raw: PlanningResult, policy: GuardPolicy, *, today: date
+) -> PlanningResult:
+    """The deterministic gates applied to one recorded model answer.
+
+    Split out from the model call because the gates are pure: given the model's raw result,
+    every policy is a function of it. That is what makes the ablation nearly free — one
+    inference pass, then as many policies as there are rules, replayed offline.
+
+    The order matters and mirrors the handler. The guard sees the sentence before the model
+    does, so a guard refusal wins even though the model was asked anyway to record what it
+    would have said.
+    """
+    refused = capability_guard.unsupported_reason(case["question"], policy)
+    if refused is not None:
+        return PlanningResult.unsupported(refused)
+    if raw.plan is None:
+        return raw
+    broken = plan_verifier.disagreement(case["question"], raw.plan, policy)
+    return PlanningResult.invalid_domain(broken) if broken else raw
 
 
 async def _planned(
@@ -466,6 +489,80 @@ async def repeated(
     return 0
 
 
+async def ablate(model: str, base_url: str, dataset: str, timeout_seconds: float) -> int:
+    """What each rule is worth, in unsafe executions prevented and good answers lost.
+
+    One inference pass over the dataset records what the model says with no gate in front
+    of it. Every policy is then replayed over those recordings, which is exact rather than
+    approximate: the gates are pure functions of the sentence and the plan, so replaying
+    them cannot differ from having run them.
+
+    Two columns, because a rule has two effects and only reporting the flattering one is
+    how a guard grows until it refuses everything. `prevented` is unsafe executions it
+    stops. `cost` is answerable questions it turns into refusals — the expensive kind of
+    wrong, since the pipeline had those right.
+    """
+    data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
+    today = data["reference"]
+    cases = data["cases"]
+
+    planner = LlmQueryPlanner(
+        OllamaLlmProvider(base_url=base_url, think=False, timeout_seconds=timeout_seconds),
+        model=model,
+        temperature=0.0,
+        max_output_tokens=384,
+        categories=CATEGORIES,
+    )
+
+    print(f"recording {len(cases)} answers with every gate off...", file=sys.stderr)
+    recorded: list[tuple[dict[str, Any], PlanningResult]] = []
+    for case in cases:
+        context = case.get("previous")
+        raw = await planner.plan(
+            case["question"], today=today, previous=as_plan(context) if context else None
+        )
+        if raw.outcome is PlanningOutcome.PROVIDER_ERROR:
+            print(f"provider failed on {case['id']}: {raw.reason}", file=sys.stderr)
+            return 2
+        recorded.append((case, raw))
+
+    def measure(policy: GuardPolicy) -> Score:
+        score = Score()
+        for case, raw in recorded:
+            judge(case, _gated(case, raw, policy, today=today), score, today)
+        return score
+
+    every = capability_guard.RULES | plan_verifier.RULES
+    full = measure(GuardPolicy())
+    none = measure(GuardPolicy(disabled=frozenset(every)))
+
+    print(f"\n=== ablation · {model} · {dataset} · {len(cases)} cases ===\n")
+    print(f"{'policy':38}{'outcome':>9}{'unsafe':>8}{'prevented':>11}{'cost':>7}")
+    print(f"{'every rule on':38}{full.outcome_right:>8}{len(full.unsafe):>8}{'-':>11}{'-':>7}")
+    print(f"{'every rule off':38}{none.outcome_right:>8}{len(none.unsafe):>8}{'-':>11}{'-':>7}")
+    print()
+
+    for rule in sorted(every):
+        # One rule removed and the rest left on. That measures the rule's *marginal*
+        # contribution, which is the honest question: a rule whose cases another rule also
+        # catches is worth less than measuring it alone would suggest.
+        without = measure(GuardPolicy(disabled=frozenset({rule})))
+        prevented = len(without.unsafe) - len(full.unsafe)
+        cost = len(full.missed) - len(without.missed)
+        print(
+            f"{'without ' + rule:38}{without.outcome_right:>8}{len(without.unsafe):>8}"
+            f"{prevented:>+11}{cost:>+7}"
+        )
+
+    print(
+        "\n  prevented: unsafe executions this rule stops."
+        "\n  cost: answerable questions it turns into refusals."
+        "\n  A rule with prevented 0 and cost 0 is dead weight measured on this dataset,"
+        "\n  which is not the same as safe to remove — the dataset is not the world."
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, help="Ollama model tag, e.g. qwen3.5:4b")
@@ -495,6 +592,13 @@ def main() -> int:
         "the GPU needs it raised or it cannot be measured at all.",
     )
     parser.add_argument(
+        "--ablate",
+        action="store_true",
+        help="measure what each deterministic rule is worth. Records the model's answers "
+        "once with every gate off, then replays each policy over them — exact rather "
+        "than approximate, because the gates are pure functions of their inputs.",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=1,
@@ -503,6 +607,8 @@ def main() -> int:
         "carries a few points of noise — enough to invent an improvement.",
     )
     args = parser.parse_args()
+    if args.ablate:
+        return asyncio.run(ablate(args.model, args.base_url, args.dataset, args.timeout))
     return asyncio.run(
         repeated(
             args.model,

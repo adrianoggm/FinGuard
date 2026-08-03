@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_assistant.domain.value_objects.caller import Caller
+from finguard_assistant.domain.value_objects.guard_policy import GuardPolicy
 from finguard_assistant.infrastructure import TomlModelCatalogue
 
 
@@ -78,6 +79,21 @@ class Settings(BaseSettings):
     # in a group the guard does not cover. See evaluation/planning/RESULTS.md.
     planner_model: str = "qwen2.5-coder:7b"
 
+    # Deterministic rules to switch off, by name. Empty means every rule is on, which is
+    # the only sane default: a guard that is off by accident reads like a control while
+    # enforcing nothing.
+    #
+    # It exists so each rule's worth can be measured rather than argued. Every one of them
+    # refuses something, so every one can be wrong in the expensive direction — turning a
+    # question the pipeline answers into a dead end — and "is this rule earning its place?"
+    # deserves a number. `scripts/evaluate_planning.py --ablate` produces that number by
+    # replaying each policy over one recorded set of model answers.
+    #
+    # A name this build does not have is a startup error, not a shrug: the quiet outcome
+    # is an operator who believes a rule is off, measures with it on, and concludes it is
+    # worthless.
+    disabled_guards: tuple[str, ...] = ()
+
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a
     # rejected plan rather than as a wrong figure.
@@ -113,6 +129,10 @@ class Settings(BaseSettings):
                 raise ValueError("a development token is configured twice")
             table[token] = Caller(holder_reference=holder, account_id=UUID(account))
         return table
+
+    def guard_policy(self) -> GuardPolicy:
+        """Validates the names as it builds it, so a typo fails at startup."""
+        return GuardPolicy(disabled=frozenset(self.disabled_guards))
 
     def catalogue(self) -> TomlModelCatalogue:
         if self.llm_catalogue_file is None:

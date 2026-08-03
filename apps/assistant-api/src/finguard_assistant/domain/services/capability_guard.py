@@ -32,6 +32,8 @@ product data.
 import re
 from typing import Final
 
+from finguard_assistant.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+
 # Each entry is a capability the domain has no representation for. The name travels with
 # the refusal so the answer can say which one, rather than "no puedo con eso".
 _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
@@ -82,13 +84,22 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 )
 
 
-def unsupported_reason(sentence: str) -> str | None:
+# The names, for whoever needs to enumerate them: an ablation loop, a configuration file,
+# and the policy that validates its own input.
+RULES: Final = frozenset(name for name, _ in _FAMILIES)
+
+
+def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str | None:
     """The capability the sentence needs and the domain does not have, or None.
 
     None means "no known-missing capability was named", not "answerable". The model still
     decides that, and everything after it still checks.
+
+    `policy` exists so a rule can be switched off and the difference measured. It defaults
+    to everything on, because a guard that is off by accident is worse than one that was
+    never written — it reads like a control.
     """
     for name, pattern in _FAMILIES:
-        if pattern.search(sentence):
+        if policy.allows(name) and pattern.search(sentence):
             return name
     return None

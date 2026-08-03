@@ -88,6 +88,9 @@ def create_app() -> FastAPI:
             categories=settings.categories,
         ),
         banking,
+        # Validated here, so a rule name this build does not have stops the service
+        # rather than silently leaving the rule on.
+        settings.guard_policy(),
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
 

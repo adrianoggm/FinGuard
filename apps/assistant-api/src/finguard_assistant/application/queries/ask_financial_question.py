@@ -23,6 +23,7 @@ from finguard_assistant.domain.ports.financial_query import FinancialQueryPort
 from finguard_assistant.domain.ports.query_planner import QueryPlannerPort
 from finguard_assistant.domain.services import answer_writer, capability_guard, plan_verifier
 from finguard_assistant.domain.value_objects.financial_plan import FinancialPlan
+from finguard_assistant.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
 
 @dataclass(frozen=True)
@@ -110,9 +111,29 @@ class Stage:
 
 
 class AskFinancialQuestionHandler:
-    def __init__(self, planner: QueryPlannerPort, queries: FinancialQueryPort) -> None:
+    """Question in, figure and sentence out, with two deterministic gates around the model.
+
+        question → capability guard → planner → plan verifier → ledger → sentence
+
+    The gates are composed here rather than inside the planner on purpose. The planner's
+    job is to produce the best plan it can; deciding whether a plan may run is policy, and
+    policy belongs to the layer that also decides what each outcome means. It also keeps
+    them measurable: they are pure functions of their inputs, so the evaluation can replay
+    any combination of them over one recorded set of model answers.
+
+    `policy` says which rules are on. It defaults to all of them, because a guard that is
+    off by accident is worse than one never written — it reads like a control.
+    """
+
+    def __init__(
+        self,
+        planner: QueryPlannerPort,
+        queries: FinancialQueryPort,
+        policy: GuardPolicy = EVERY_RULE,
+    ) -> None:
         self._planner = planner
         self._queries = queries
+        self._policy = policy
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
         """The whole answer at once. Drains the same pipeline the stream walks, so the
@@ -127,7 +148,7 @@ class AskFinancialQuestionHandler:
     async def stream(
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
-        refused = capability_guard.unsupported_reason(query.sentence)
+        refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         if refused is not None:
             # Before the model, on purpose. Refusing here is a control; refusing after is
             # whatever disposition the configured model happens to have, and that moved
@@ -146,7 +167,7 @@ class AskFinancialQuestionHandler:
 
         assert planned.plan is not None  # is_answerable is exactly this condition
 
-        broken = plan_verifier.disagreement(query.sentence, planned.plan)
+        broken = plan_verifier.disagreement(query.sentence, planned.plan, self._policy)
         if broken is not None:
             # The plan is well formed, the domain accepts it, and it answers a different
             # question from the one asked. Nothing downstream can tell: banking would
