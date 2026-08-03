@@ -274,12 +274,19 @@ get a tail — either the code enforces them or it does not.
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 of 216 | `pytest tests/test_capability_guard.py` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
 | Evidence reconciliation | **0** failures | ✅ 0 | the E2E properties |
-| **Unsafe execution** | **≤ 10 %** held out | ❌ **12.7 %** (10 of 79) | `evaluate_planning --dataset validation` |
+| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ⚠️ validation 8.9 %, dev 6.7 %, ❌ adversarial 11.1 % | `evaluate_planning --dataset <set>` |
 
 Two fail. Both have identified work rather than needing a discovery: three of the ten unsafe
 cases are follow-ups, which item 4 addresses; one is `groupBy` picking `CATEGORY`, which is a
 prompt fix; and the single `invalid structure` is one case worth understanding rather than
 rounding away.
+
+**Why every set and not just held out.** The first version of this bar said "held out",
+and the very next change exploited the gap: a prompt fix took validation from 12.7 % to
+8.9 % while pushing adversarial from 8.3 % to 11.1 %, and the gate would have called that a
+pass. Adversarial is where unsafe execution matters most — those are the sentences written to
+produce exactly this failure — so a bar that excludes it is a bar that measures the easy
+half.
 
 **Why 10 % and not 0.** Unsafe execution includes "the model chose the wrong window", which
 is exactly the long tail. What makes a residual survivable is that **every answer carries the
@@ -298,7 +305,7 @@ Everything in gate 1 at its bar, and then:
 
 | property | bar | now |
 | --- | --- | --- |
-| **Unsafe execution** | **≤ 2 %** held out | 12.7 % |
+| **Unsafe execution** | **≤ 2 % on every set** | validation 8.9 %, dev 6.7 %, adversarial 11.1 % |
 | Banking authenticates its callers | required | ❌ it trusts its network; `app.account_id` comes from the request |
 | `BOOKED` transactions sealed | required | ❌ nothing stops appending entries to a booked transaction |
 | An audit event per financial query | required | ❌ §12.4 specifies it, nothing writes it |
