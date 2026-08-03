@@ -56,7 +56,7 @@ For Python, a single global uv workspace would **not** be used. Each microservic
 finguard/
 ├── apps/
 │   ├── web/
-│   ├── assistant-api/
+│   ├── orchestrator/
 │   ├── banking-api/
 │   ├── voice-gateway/
 │   ├── a2a-gateway/
@@ -164,14 +164,14 @@ Responsibilities:
 
 It holds no financial rules and does not call `banking-api` directly.
 
-### `apps/assistant-api`
+### `apps/orchestrator`
 
 The FinGuard orchestrator.
 
 ```text
-apps/assistant-api/
+apps/orchestrator/
 ├── src/
-│   └── finguard_assistant/
+│   └── finguard_orchestrator/
 │       ├── domain/
 │       │   ├── conversation.py
 │       │   ├── message.py
@@ -336,7 +336,7 @@ Responsibilities:
 It does not interpret movements and does not execute operations. It converts:
 
 ```text
-Audio → text → assistant-api → text → audio
+Audio → text → orchestrator → text → audio
 ```
 
 ### `apps/a2a-gateway`
@@ -386,7 +386,7 @@ a2a-gateway
    ↓
 Internal command
    ↓
-assistant-api
+orchestrator
    ↓
 Internal result
    ↓
@@ -429,10 +429,10 @@ Responsibilities:
 ### Allowed dependencies
 
 ```text
-web             → assistant-api
-voice-gateway   → assistant-api
-a2a-gateway     → assistant-api
-assistant-api   → banking-api
+web             → orchestrator
+voice-gateway   → orchestrator
+a2a-gateway     → orchestrator
+orchestrator   → banking-api
 banking-api     → PostgreSQL
 banking-api     → RabbitMQ
 audit-worker    → RabbitMQ
@@ -445,7 +445,7 @@ audit-worker    → audit database
 web             ✗ banking-api directly
 voice-gateway   ✗ banking-api
 a2a-gateway     ✗ PostgreSQL
-assistant-api   ✗ banking-api's tables
+orchestrator   ✗ banking-api's tables
 audit-worker    ✗ modifying the ledger
 banking-api     ✗ LLM provider
 ```
@@ -461,7 +461,7 @@ No ORM models or internal classes are shared between services. Public contracts 
 ```text
 packages/contracts/
 ├── openapi/
-│   ├── assistant-api.yaml
+│   ├── orchestrator.yaml
 │   ├── banking-api.yaml
 │   └── voice-gateway.yaml
 │
@@ -484,8 +484,8 @@ packages/contracts/
 
 So that:
 
-- `assistant-api` calls `banking-api` through a hand-written client that follows the contract.
-- `web` calls `assistant-api` the same way.
+- `orchestrator` calls `banking-api` through a hand-written client that follows the contract.
+- `web` calls `orchestrator` the same way.
 - Events are validated against AsyncAPI or JSON Schema.
 - A2A translates its messages into known internal contracts.
 
@@ -677,7 +677,7 @@ Nx can map any command to a target and run it for one project, for all of them, 
 Each service would carry its own lockfile:
 
 ```text
-apps/assistant-api/uv.lock
+apps/orchestrator/uv.lock
 apps/banking-api/uv.lock
 apps/voice-gateway/uv.lock
 apps/a2a-gateway/uv.lock
@@ -714,7 +714,7 @@ This means that:
 
 - `voice-gateway` can use audio libraries without installing them in banking.
 - `a2a-gateway` can update the A2A SDK without touching the ledger.
-- `assistant-api` can carry LLM SDKs without bringing them into `banking-api`.
+- `orchestrator` can carry LLM SDKs without bringing them into `banking-api`.
 - Each Docker image contains only what it needs.
 
 ---
@@ -739,10 +739,10 @@ services:
       dockerfile: apps/banking-api/Dockerfile
     profiles: ["core"]
 
-  assistant-api:
+  orchestrator:
     build:
       context: .
-      dockerfile: apps/assistant-api/Dockerfile
+      dockerfile: apps/orchestrator/Dockerfile
     profiles: ["core"]
 
   web:
@@ -804,7 +804,7 @@ Docker Compose can enable optional services through profiles, which fits nicely 
 group "core" {
   targets = [
     "web",
-    "assistant-api",
+    "orchestrator",
     "banking-api"
   ]
 }
@@ -812,7 +812,7 @@ group "core" {
 group "all" {
   targets = [
     "web",
-    "assistant-api",
+    "orchestrator",
     "banking-api",
     "voice-gateway",
     "a2a-gateway",
@@ -826,10 +826,10 @@ target "banking-api" {
   tags       = ["finguard/banking-api:local"]
 }
 
-target "assistant-api" {
+target "orchestrator" {
   context    = "."
-  dockerfile = "apps/assistant-api/Dockerfile"
-  tags       = ["finguard/assistant-api:local"]
+  dockerfile = "apps/orchestrator/Dockerfile"
+  tags       = ["finguard/orchestrator:local"]
 }
 ```
 
@@ -918,7 +918,7 @@ Not every directory would be created with empty code from the first moment.
 ```text
 apps/
 ├── web/
-├── assistant-api/
+├── orchestrator/
 └── banking-api/
 
 packages/
@@ -931,7 +931,7 @@ infrastructure/
 Goal:
 
 ```text
-User → web → assistant-api → banking-api → PostgreSQL
+User → web → orchestrator → banking-api → PostgreSQL
 ```
 
 ### Second iteration
@@ -963,7 +963,7 @@ The development rules live in [development-rules.md](development-rules.md).
 finguard/
 ├── apps/
 │   ├── web/
-│   ├── assistant-api/
+│   ├── orchestrator/
 │   └── banking-api/
 ├── packages/
 │   └── contracts/

@@ -37,12 +37,23 @@ class TransactionType(StrEnum):
 
 
 class Metric(StrEnum):
+    """What is being asked for.
+
+    SUM: how much money. COUNT: how many movements. "How many times did I go to
+    Mercadona" is COUNT; "how much did I spend at Mercadona" is SUM.
+    """
+
     SUM = "SUM"
     COUNT = "COUNT"
 
 
 class Direction(StrEnum):
-    """Which side of the movement matters, from the account holder's point of view."""
+    """Which side of the movement matters, from the account holder's point of view.
+
+    EXPENSE: money leaving. INCOME: money arriving. ALL: both, and it is the wrong
+    answer to "how much did I spend" — a question about spending that returns income
+    too is a silent error, not a broader answer.
+    """
 
     EXPENSE = "EXPENSE"
     INCOME = "INCOME"
@@ -50,6 +61,9 @@ class Direction(StrEnum):
 
 
 class GroupBy(StrEnum):
+    """How the total is broken down. NONE means a single figure and is the default:
+    a breakdown nobody asked for is as wrong as a missing one."""
+
     NONE = "NONE"
     DAY = "DAY"
     WEEK = "WEEK"
@@ -59,6 +73,22 @@ class GroupBy(StrEnum):
 
 
 class Period(StrEnum):
+    """Named windows. The exact boundaries are in `relative_period.resolve`, which is
+    the only thing that computes them — this list is what may be *named*.
+
+    These four pairs are what a language model actually gets wrong, so the difference
+    is spelled out rather than left to the name:
+
+    - THIS_MONTH ends **today**, not at the end of the month. It is a partial month.
+    - LAST_MONTH is the whole previous calendar month, and is **not** the same as
+      LAST_N_DAYS with n=30: on the 15th of July they share only half their days.
+    - LAST_N_DAYS **includes today** — "the last 7 days" is today plus the 6 before.
+    - THIS_WEEK starts on Monday and ends today; LAST_WEEK is a full Monday-to-Sunday.
+
+    An expression that names no period at all ("lately", "usually") is not a period:
+    it is a question that needs clarifying before any of these can be chosen.
+    """
+
     TODAY = "TODAY"
     YESTERDAY = "YESTERDAY"
     THIS_WEEK = "THIS_WEEK"

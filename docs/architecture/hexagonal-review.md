@@ -1,6 +1,6 @@
 # Hexagonal review before phase 3
 
-Review of `banking-api` and `assistant-api` as they stand at commit `854ab05`, before
+Review of `banking-api` and `orchestrator` as they stand at commit `854ab05`, before
 wiring the LLM service. Every finding carries the evidence it came from, so it can be
 argued with instead of believed.
 
@@ -35,7 +35,7 @@ aliases.
 
 **Change.** The domain becomes frozen dataclasses with explicit invariants and no
 Pydantic. Pydantic stays where it belongs — in the inbound adapters, as DTOs — and one
-mapper per adapter converts DTO → domain. `assistant-api` has the identical problem:
+mapper per adapter converts DTO → domain. `orchestrator` has the identical problem:
 `LlmPolicy` is a Pydantic model in the domain **and** the request body of
 `PUT /admin/llm-policy`.
 
@@ -160,7 +160,7 @@ endpoints. It is the file that will grow fastest in phase 3.
 ### H9 — Error-to-HTTP mapping lives in the composition root · low
 
 `bootstrap/main.py` registers the handlers for `AccountNotFoundError` → 404 and
-`ValidationError` → 422; `assistant-api` does the same for `UnknownProviderError` in its
+`ValidationError` → 422; `orchestrator` does the same for `UnknownProviderError` in its
 own `main.py`. Translating a domain error into a status code is an inbound-adapter
 responsibility, not the composition root's, and there is no shared convention between
 the two services.
@@ -232,7 +232,7 @@ Each step leaves the suite green and is a commit of its own.
 | 5 | `Money` value object and its arithmetic | H6 |
 | 6 | Error handlers in the HTTP adapter | H9 |
 | 7 | `tests/support/` package | H10 |
-| 8 | The same treatment for `assistant-api` (`LlmPolicy` is domain + wire) | H1 |
+| 8 | The same treatment for `orchestrator` (`LlmPolicy` is domain + wire) | H1 |
 
 Steps 1, 2 and 3 are worth doing before the LLM integration: step 3 changes the shape
 of every DTO, and phase 3 is going to add several.
