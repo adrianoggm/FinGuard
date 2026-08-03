@@ -337,11 +337,12 @@ Everything in gate 1 at its bar, and then:
 | --- | --- | --- |
 | **Unsafe execution** | **≤ 2 % on every set** | validation 7.6 %, dev 5.8 %, adversarial 8.3 % |
 | Banking authenticates its callers | required | ❌ it trusts its network; `app.account_id` comes from the request |
-| `BOOKED` transactions sealed | required | ❌ nothing stops appending entries to a booked transaction |
-| An audit event per financial query | required | ❌ §12.4 specifies it, nothing writes it |
+| `BOOKED` transactions sealed | required | ✅ migration 0004: entries only while PENDING, both terminal states final |
+| An audit event per financial query | required | ⚠️ the trail exists and records every *command*; the read path writes nothing |
 | OAuth with short-lived tokens | required | ❌ development token table |
 | Rate limiting on `/v1/messages` | required | ❌ a prompt straight to a model, unlimited |
 | Contract verified in CI | required | ❌ drift arrives as a runtime 422 |
+| A payment dataset, scored like the questions | required | ❌ nine sentences checked by hand against one model |
 
 **Why 2 % and not 0.** Same reason as above, one order of magnitude tighter because the plan
 beside the figure is a control for somebody paying attention and real money does not assume

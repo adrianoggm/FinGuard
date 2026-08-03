@@ -77,7 +77,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the read-only role reaches the views, and the payment path needs the contact row it
     # is about to point a ledger movement at.
     contacts = PostgresContactRepository(pool)
-    payments = PostgresPaymentRepository(pool)
+    payments = PostgresPaymentRepository(
+        pool,
+        clearing_reference=settings.clearing_account_reference,
+        validity_seconds=settings.payment_validity_seconds,
+    )
     # Rebuilt here rather than in create_app: the trail needs the pool, and every command is
     # audited by the bus so no handler can be the one that forgets.
     app.state.command_bus = bus = CommandBus(audit=PostgresAuditLog(pool))
