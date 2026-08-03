@@ -68,6 +68,15 @@ services:
       # The local model runs on the host, not in a container: that is where the GPU is,
       # and 127.0.0.1 inside a container is the container. Nothing leaves the machine.
       ORCHESTRATOR_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Operational numbers, each a measurement rather than a preference — see
+      # apps/orchestrator/evaluation/planning/RESULTS.md. Stated here rather than left
+      # to the defaults so the knobs are visible to whoever runs this.
+      ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS: "4096"
+      ORCHESTRATOR_OLLAMA_SEED: "0"
+      ORCHESTRATOR_OLLAMA_KEEP_ALIVE: 30m
+      ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
+      ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
+      ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
       # Identity, first layer of the security stack (§12.1). A development token table,
       # not the design: §12.2 asks for OAuth with short-lived tokens. What matters is
       # that the account now comes from the credential, so a caller cannot name one.

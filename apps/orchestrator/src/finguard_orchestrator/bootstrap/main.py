@@ -62,7 +62,13 @@ def create_app() -> FastAPI:
     providers = ProviderRegistry(
         {
             EchoLlmProvider.name: EchoLlmProvider,
-            OllamaLlmProvider.name: lambda: OllamaLlmProvider(base_url=settings.ollama_base_url),
+            OllamaLlmProvider.name: lambda: OllamaLlmProvider(
+                base_url=settings.ollama_base_url,
+                keep_alive=settings.ollama_keep_alive,
+                timeout_seconds=settings.ollama_timeout_seconds,
+                context_tokens=settings.ollama_context_tokens,
+                seed=settings.ollama_seed,
+            ),
         }
     )
     # The active policy is created at startup and lives in the application state: the
@@ -78,13 +84,17 @@ def create_app() -> FastAPI:
     # chooses who *answers*, and planning is a different job measured a different way
     # (scripts/evaluate_planning.py). One knob per decision beats one knob for both.
     planner_provider = providers.get(OllamaLlmProvider.name)
-    banking = HttpFinancialQuery(base_url=settings.banking_base_url)
+    banking = HttpFinancialQuery(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+        supporting_movements=settings.supporting_movements,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
             model=settings.planner_model,
-            temperature=0.0,
-            max_output_tokens=384,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
             categories=settings.categories,
         ),
         banking,

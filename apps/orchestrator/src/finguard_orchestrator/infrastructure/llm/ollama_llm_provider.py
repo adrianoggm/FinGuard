@@ -85,11 +85,13 @@ class OllamaLlmProvider:
         think: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._keep_alive = keep_alive
-        self._timeout = timeout_seconds
-        self._context_tokens = context_tokens
-        self._seed = seed
-        self._think = think
+        # Public because they are configuration, and configuration that reaches an adapter
+        # without being observable is configuration nobody can prove arrived.
+        self.keep_alive = keep_alive
+        self.timeout_seconds = timeout_seconds
+        self.context_tokens = context_tokens
+        self.seed = seed
+        self.think = think
 
     async def complete(
         self,
@@ -104,27 +106,29 @@ class OllamaLlmProvider:
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "think": self._think,
-            "keep_alive": self._keep_alive,
+            "think": self.think,
+            "keep_alive": self.keep_alive,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_output_tokens,
-                "num_ctx": self._context_tokens,
-                "seed": self._seed,
+                "num_ctx": self.context_tokens,
+                "seed": self.seed,
             },
         }
         if schema is not None:
             payload["format"] = schema
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(f"{self._base_url}/api/generate", json=payload)
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPStatusError as exc:
             raise ProviderFailedError(self.name, f"HTTP {exc.response.status_code}") from exc
         except httpx.TimeoutException as exc:
-            raise ProviderFailedError(self.name, f"timed out after {self._timeout}s") from exc
+            raise ProviderFailedError(
+                self.name, f"timed out after {self.timeout_seconds}s"
+            ) from exc
         except httpx.HTTPError as exc:
             # Daemon down, wrong port, DNS: all the same to the caller — this provider
             # cannot answer, and the fallback policy decides what that means.

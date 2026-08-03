@@ -8,6 +8,13 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.infrastructure import TomlModelCatalogue
 
+# The adapters keep their own defaults so each stays usable on its own — a test builds one
+# without a Settings object. Importing them here means the number lives in exactly one
+# place: the adapter that documents why it is that number, not a copy beside it that will
+# drift.
+from finguard_orchestrator.infrastructure.banking import http_financial_query as banking_defaults
+from finguard_orchestrator.infrastructure.llm import ollama_llm_provider as ollama_defaults
+
 
 class Settings(BaseSettings):
     """Service configuration. Overridden through ORCHESTRATOR_* environment variables."""
@@ -26,10 +33,32 @@ class Settings(BaseSettings):
     # 127.0.0.1 (rule 13), and this service is useless without banking anyway.
     banking_base_url: str = "http://127.0.0.1:8001"
 
+    # How long to wait for the ledger, and how many movements to carry back as evidence.
+    # Both were constants inside the adapter, which made them parameters and not
+    # configuration — a slower machine needed a commit.
+    banking_timeout_seconds: float = banking_defaults.DEFAULT_TIMEOUT_SECONDS
+    supporting_movements: int = banking_defaults.DEFAULT_SUPPORTING_MOVEMENTS
+
     # Where the local runtime listens. Configurable because inside a container 127.0.0.1
     # is the container: compose points this at host.docker.internal so the service can
     # reach the daemon on the machine, which is where the GPU is.
     ollama_base_url: str = "http://127.0.0.1:11434"
+
+    # The operational numbers of local inference. Each default is a measurement rather
+    # than a preference and the adapter's module docstring says which — `num_ctx: 4096`
+    # took P50 from 5.28s to 2.58s by keeping the model resident, and the pinned seed
+    # removed a three-point swing between identical runs. They are configurable because
+    # the next GPU will want different ones, not because these were guesses.
+    ollama_keep_alive: str = ollama_defaults.DEFAULT_KEEP_ALIVE
+    ollama_timeout_seconds: float = ollama_defaults.DEFAULT_TIMEOUT_SECONDS
+    ollama_context_tokens: int = ollama_defaults.DEFAULT_CONTEXT_TOKENS
+    ollama_seed: int = ollama_defaults.DEFAULT_SEED
+
+    # Planner sampling. These were literals at the composition root, which is the same
+    # defect one layer up. Temperature 0 is deliberate: the planner is not being creative,
+    # and a plan that varies between identical questions cannot be measured.
+    planner_temperature: float = 0.0
+    planner_max_output_tokens: int = 384
 
     # Development identity, as "token:holder:account_uuid" entries. Not the design —
     # §12.2 asks for OAuth 2.0 with short-lived tokens — but the seam is real: the

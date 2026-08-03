@@ -82,6 +82,31 @@ See [`config/llm.toml`](config/llm.toml) for the annotated file used in developm
 
 Known limit: the policy lives in this process, so with several replicas each would have its own. `/admin/*` asks for no credentials yet, which is why nothing is published beyond `localhost`.
 
+## Operational settings
+
+Everything below is an `ORCHESTRATOR_*` environment variable. They used to be constants
+inside the adapters, which made them parameters rather than configuration: changing a
+timeout meant a commit.
+
+Each default is a measurement rather than a preference, and
+[RESULTS.md](evaluation/planning/RESULTS.md) says which experiment produced it. They are
+configurable because the next machine will want different ones, not because these were
+guesses — so before overriding one, read what it bought.
+
+| variable | default | what it is |
+| --- | --- | --- |
+| `ORCHESTRATOR_PLANNER_MODEL` | `qwen2.5-coder:7b` | The model that turns a sentence into a plan |
+| `ORCHESTRATOR_PLANNER_TEMPERATURE` | `0.0` | Zero on purpose: a plan that varies between identical questions cannot be measured |
+| `ORCHESTRATOR_PLANNER_MAX_OUTPUT_TOKENS` | `384` | The plan is ~120 tokens; this is headroom, not a target |
+| `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS` | `4096` | Raising it grows the KV cache, and a model that no longer fits is **silently** split with the CPU. This one took P50 from 5.28s to 2.58s |
+| `ORCHESTRATOR_OLLAMA_SEED` | `0` | Pinned. Unpinned, the same prompt against the same model moved a score by three points |
+| `ORCHESTRATOR_OLLAMA_KEEP_ALIVE` | `30m` | How long the model stays resident. A cold load is ~7s against ~0.1s warm |
+| `ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS` | `120` | A ceiling for "something is wrong", not a latency target. A model that does not fit the GPU needs it raised |
+| `ORCHESTRATOR_BANKING_TIMEOUT_SECONDS` | `10` | |
+| `ORCHESTRATOR_SUPPORTING_MOVEMENTS` | `10` | Movements returned as evidence. Enough to show the figure is real, few enough that a chat reply is not a statement |
+| `ORCHESTRATOR_DISABLED_GUARDS` | *(none)* | Deterministic rules to switch off, by name. A name this build does not have stops the service |
+| `ORCHESTRATOR_QUESTIONS_ENABLED` | `false` | The financial endpoints. Off until the open risks clear an agreed bar |
+
 ## Running it
 
 ```bash

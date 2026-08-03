@@ -39,16 +39,18 @@ class HttpFinancialQuery:
         supporting_movements: int = DEFAULT_SUPPORTING_MOVEMENTS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._timeout = timeout_seconds
-        self._supporting = supporting_movements
+        # Public because they are configuration, and configuration that reaches an adapter
+        # without being observable is configuration nobody can prove arrived.
+        self.timeout_seconds = timeout_seconds
+        self.supporting_movements = supporting_movements
 
     async def run(self, plan: FinancialPlan, *, account_id: UUID, today: date) -> QueryAnswer:
         body = to_body(
-            plan, account_id=account_id, today=today, supporting_movements=self._supporting
+            plan, account_id=account_id, today=today, supporting_movements=self.supporting_movements
         )
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(f"{self._base_url}/v1/financial-queries", json=body)
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{self._base_url}: {exc}") from exc
