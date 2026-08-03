@@ -88,20 +88,7 @@ class FinancialPlan:
     def __post_init__(self) -> None:
         if (self.period is None) == (self.date_range is None):
             raise InvalidValueError("a plan needs exactly one of period and dateRange")
-        if len(self.categories) > MAX_CATEGORIES:
-            raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
-        for category in self.categories:
-            _check_category(category)
-        if len(self.merchants) > MAX_MERCHANTS:
-            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
-        for merchant in self.merchants:
-            # Shape only: a name is free text and its content is banking's to match. What is
-            # checked is that it is a name at all, and bounded — an empty one filters nothing
-            # and would silently widen the query, which is the failure this file exists for.
-            if not merchant.strip():
-                raise InvalidValueError("a merchant name cannot be empty")
-            if len(merchant) > MAX_MERCHANT_LENGTH:
-                raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
+        _check_filters(self.categories, self.merchants)
 
 
 @dataclass(frozen=True)
@@ -138,6 +125,11 @@ class FinancialPlanDraft:
         # depend on the reader.
         if self.period is not None and self.date_range is not None:
             raise InvalidValueError("a draft cannot carry two windows")
+        # The window is the one invariant a draft relaxes. Everything else is checked exactly as
+        # the plan checks it, because a draft crosses the wire and comes back: leaving the
+        # filters until `with_window` meant a bad category was accepted at the edge and only
+        # noticed a layer deeper, where the honest answer is no longer a 422.
+        _check_filters(self.categories, self.merchants)
 
     @property
     def needs_a_window(self) -> bool:
@@ -178,6 +170,25 @@ class FinancialPlanDraft:
             group_by=plan.group_by,
             metric=plan.metric,
         )
+
+
+def _check_filters(categories: tuple[str, ...], merchants: tuple[str, ...]) -> None:
+    """What a plan and a draft check identically. Shared because a draft that checked less
+    would be a way to smuggle a value past the plan's invariants and reach them later."""
+    if len(categories) > MAX_CATEGORIES:
+        raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
+    for category in categories:
+        _check_category(category)
+    if len(merchants) > MAX_MERCHANTS:
+        raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
+    for merchant in merchants:
+        # Shape only: a name is free text and its content is banking's to match. What is
+        # checked is that it is a name at all, and bounded — an empty one filters nothing
+        # and would silently widen the query, which is the failure this file exists for.
+        if not merchant.strip():
+            raise InvalidValueError("a merchant name cannot be empty")
+        if len(merchant) > MAX_MERCHANT_LENGTH:
+            raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
 
 
 def _check_category(value: str) -> None:

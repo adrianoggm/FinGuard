@@ -21,6 +21,7 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
@@ -102,6 +103,26 @@ def plan_to_domain(payload: PlanPayload) -> FinancialPlan:
     )
 
 
+def draft_to_domain(payload: PlanPayload) -> FinancialPlanDraft:
+    """The echoed draft, rebuilt as a draft.
+
+    The same payload as a plan and a different type on the way out: a draft is allowed to
+    carry no window, which is the one invariant a plan will not relax. Everything else is
+    checked identically — Pydantic has already refused values outside the vocabulary, and
+    two windows at once is as wrong here as it is there.
+    """
+    absolute = payload.start is not None and payload.end is not None
+    return FinancialPlanDraft(
+        direction=payload.direction,
+        period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
+        date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
+        categories=tuple(payload.categories),
+        merchants=tuple(payload.merchants),
+        group_by=payload.group_by,
+        metric=payload.metric,
+    )
+
+
 def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
     return PlanPayload.model_validate(
         {
@@ -125,6 +146,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         question=result.question,
         plan=result.plan,
         plan_context=_plan_to_dto(result.plan_context) if result.plan_context else None,
+        pending_context=(_plan_to_dto(result.pending_context) if result.pending_context else None),
         currency=result.currency,
         total_minor=result.total_minor,
         movement_count=result.movement_count,

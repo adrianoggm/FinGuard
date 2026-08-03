@@ -86,14 +86,25 @@ def test_a_draft_cannot_hold_two_windows() -> None:
         )
 
 
-def test_the_completed_plan_is_validated() -> None:
-    """`with_window` returns a `FinancialPlan`, so every invariant runs on the way out. The
-    draft itself checks nothing about its categories — it is a half-built thing, and the place
-    that matters is the one where it becomes a query."""
-    drafted = FinancialPlanDraft(direction=Direction.EXPENSE, categories=("no válida",))
+def test_the_window_is_the_only_invariant_a_draft_relaxes() -> None:
+    """A category is checked here, not left until the window arrives.
+
+    It was left until then at first, and that made the draft weaker than the plan it sits
+    beside on the wire: an echoed draft naming a category that is not one was accepted at the
+    edge and only refused a layer deeper, where the honest answer is no longer a 422. A draft
+    is half-built, not half-checked.
+    """
+    with pytest.raises(InvalidValueError):
+        FinancialPlanDraft(direction=Direction.EXPENSE, categories=("no válida",))
+
+
+def test_the_completed_plan_is_validated_too() -> None:
+    """`with_window` returns a `FinancialPlan`, so the invariants that need a window — the
+    period's count, a range that ends before it starts — run on the way out."""
+    drafted = FinancialPlanDraft(direction=Direction.EXPENSE)
 
     with pytest.raises(InvalidValueError):
-        drafted.with_window(RelativePeriod(period=Period.THIS_YEAR))
+        drafted.with_window(RelativePeriod(period=Period.THIS_YEAR, n=3))
 
 
 def test_a_plan_can_be_read_back_as_a_draft() -> None:
