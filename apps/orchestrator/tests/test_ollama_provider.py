@@ -24,19 +24,38 @@ SCHEMA = {
 }
 
 # Nothing listens on port 1, so this is an unreachable daemon without stubbing one.
+LOCAL = "http://127.0.0.1:11434"
+
+
+def provider_at(base_url: str, *, timeout_seconds: float = 120.0) -> OllamaLlmProvider:
+    """The provider has no defaults any more — its numbers belong to a deployment and live
+    in .env.defaults. A test states its own rather than reading that file: what is under
+    test here is the adapter's behaviour, and pinning the values keeps the test independent
+    of a configuration change it has no opinion about."""
+    return OllamaLlmProvider(
+        base_url=base_url,
+        keep_alive="30m",
+        timeout_seconds=timeout_seconds,
+        context_tokens=4096,
+        seed=0,
+    )
+
+
 UNREACHABLE = "http://127.0.0.1:1"
 
 
-def test_the_provider_is_registered() -> None:
-    # Registering a provider is one line; forgetting it is silent until a catalogue
-    # entry names it and the whole request fails at runtime.
-    assert "ollama" in ProviderRegistry().available()
+def test_only_providers_that_need_no_configuration_are_built_in() -> None:
+    """Ollama used to be in the default registry, which meant a zero-argument builder had
+    to invent a base URL, a timeout and a context window — a second source of truth for
+    numbers that now live in .env.defaults. A provider nobody configured can no longer be
+    built, so bootstrap supplies this one with the settings."""
+    assert ProviderRegistry().available() == ["echo"]
 
 
 async def test_an_unreachable_daemon_is_a_domain_error() -> None:
     """Not an httpx exception. The fallback policy reacts to ProviderFailedError, so a
     transport error that escapes as itself would bypass the fallback entirely."""
-    provider = OllamaLlmProvider(base_url=UNREACHABLE, timeout_seconds=2.0)
+    provider = provider_at(UNREACHABLE, timeout_seconds=2.0)
 
     with pytest.raises(ProviderFailedError) as caught:
         await provider.complete("hola", model="whatever", temperature=0.0, max_output_tokens=8)
@@ -81,7 +100,7 @@ async def test_a_real_daemon_honours_the_schema() -> None:
     """
     import json
 
-    answer = await OllamaLlmProvider().complete(
+    answer = await provider_at(LOCAL).complete(
         "El usuario pregunta cuánto gastó en gasolina el mes pasado.",
         model="qwen2.5-coder:7b",
         temperature=0.0,

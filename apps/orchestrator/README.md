@@ -84,14 +84,21 @@ Known limit: the policy lives in this process, so with several replicas each wou
 
 ## Operational settings
 
-Everything below is an `ORCHESTRATOR_*` environment variable. They used to be constants
-inside the adapters, which made them parameters rather than configuration: changing a
-timeout meant a commit.
+The values live in [`.env.defaults`](.env.defaults) — versioned, free of secrets, and the
+only place they exist. There is no number in the Python: the settings fields declare a type
+and nothing else, and the adapters take them as required arguments, so a provider nobody
+configured cannot be built.
 
-Each default is a measurement rather than a preference, and
-[RESULTS.md](evaluation/planning/RESULTS.md) says which experiment produced it. They are
-configurable because the next machine will want different ones, not because these were
-guesses — so before overriding one, read what it bought.
+`.env` is loaded after it and wins. That is where a token table or a real credential goes,
+and it is gitignored.
+
+**Without configuration the service refuses to start**, field by field, rather than
+inventing a timeout. That is deliberate: a service that guesses its own operational numbers
+is a service nobody configured.
+
+Each value is a measurement rather than a preference, and the file says which experiment
+produced it beside the value — because a default with no reason next to it is the next thing
+somebody changes.
 
 | variable | default | what it is |
 | --- | --- | --- |

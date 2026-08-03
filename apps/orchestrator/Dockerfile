@@ -14,6 +14,12 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY apps/orchestrator/src ./src
 RUN uv sync --frozen --no-dev
 
+# The operational values, and the only place they exist. The settings fields have no
+# defaults, so without this the service refuses to start rather than inventing a timeout —
+# which is the intended failure and a poor way to discover a missing COPY. Anything private
+# still comes from the environment, which is loaded after this and wins.
+COPY apps/orchestrator/.env.defaults ./.env.defaults
+
 
 FROM python:3.13-slim
 

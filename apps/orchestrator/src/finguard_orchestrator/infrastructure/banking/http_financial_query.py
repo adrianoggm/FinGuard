@@ -12,7 +12,7 @@ is camelCase and that a date range is spelled from/to.
 """
 
 from datetime import date, datetime
-from typing import Any, Final
+from typing import Any
 from uuid import UUID
 
 import httpx2 as httpx
@@ -21,23 +21,22 @@ from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRe
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
-DEFAULT_BASE_URL: Final = "http://127.0.0.1:8001"
-DEFAULT_TIMEOUT_SECONDS: Final = 10.0
-
-# How many movements to ask for as evidence. Enough to show the answer is real, few
-# enough that a chat reply does not become a statement.
-DEFAULT_SUPPORTING_MOVEMENTS: Final = 10
-
 
 class HttpFinancialQuery:
     """Implements FinancialQueryPort over the banking HTTP API."""
 
     def __init__(
         self,
-        base_url: str = DEFAULT_BASE_URL,
-        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-        supporting_movements: int = DEFAULT_SUPPORTING_MOVEMENTS,
+        *,
+        base_url: str,
+        timeout_seconds: float,
+        supporting_movements: int,
     ) -> None:
+        """No defaults, and the absence is the design. These are operational numbers that
+        belong to a deployment, so they live in .env.defaults beside the reason each one is
+        what it is — not here, where changing one is a commit and reading one means reading
+        Python. Required rather than optional so an adapter cannot be built with numbers
+        nobody chose."""
         self._base_url = base_url.rstrip("/")
         # Public because they are configuration, and configuration that reaches an adapter
         # without being observable is configuration nobody can prove arrived.

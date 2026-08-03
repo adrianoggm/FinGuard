@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Final
 from uuid import UUID
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,19 +9,35 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.infrastructure import TomlModelCatalogue
 
-# The adapters keep their own defaults so each stays usable on its own — a test builds one
-# without a Settings object. Importing them here means the number lives in exactly one
-# place: the adapter that documents why it is that number, not a copy beside it that will
-# drift.
-from finguard_orchestrator.infrastructure.banking import http_financial_query as banking_defaults
-from finguard_orchestrator.infrastructure.llm import ollama_llm_provider as ollama_defaults
+# The values live in .env.defaults, versioned and free of secrets, beside the reason each
+# one is what it is. `.env` is loaded after it and wins, which is where a token table or a
+# real credential goes — that file is gitignored.
+#
+# Anchored to the package rather than the working directory. `env_file="..."` resolves
+# against the CWD, so a script run from the repository root would silently read no
+# configuration at all and fall back to whatever the field defaults happened to be. There
+# are no field defaults for the operational numbers, so it would fail loudly instead — but
+# failing loudly for the wrong reason still costs somebody an afternoon.
+_HERE: Final = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
-    """Service configuration. Overridden through ORCHESTRATOR_* environment variables."""
+    """Service configuration.
+
+    No operational number appears in this file. Each one is declared here with its type and
+    read from .env.defaults, so the value and its justification sit together in one place
+    that is not code, and changing a timeout is a configuration change rather than a commit.
+
+    The fields below have no defaults on purpose. A service that invents its own timeouts is
+    a service nobody configured, and the failure mode of a missing configuration file should
+    be a refusal to start rather than a set of numbers somebody has to go and discover.
+    """
 
     model_config = SettingsConfigDict(
-        env_prefix="ORCHESTRATOR_", env_file=".env", extra="ignore", protected_namespaces=()
+        env_prefix="ORCHESTRATOR_",
+        env_file=(_HERE / ".env.defaults", _HERE / ".env"),
+        extra="ignore",
+        protected_namespaces=(),
     )
 
     # Path to the model catalogue. Which models exist, which provider serves each one
@@ -31,34 +48,34 @@ class Settings(BaseSettings):
 
     # Where the ledger lives. Localhost by default: development credentials never leave
     # 127.0.0.1 (rule 13), and this service is useless without banking anyway.
-    banking_base_url: str = "http://127.0.0.1:8001"
+    banking_base_url: str
 
     # How long to wait for the ledger, and how many movements to carry back as evidence.
     # Both were constants inside the adapter, which made them parameters and not
     # configuration — a slower machine needed a commit.
-    banking_timeout_seconds: float = banking_defaults.DEFAULT_TIMEOUT_SECONDS
-    supporting_movements: int = banking_defaults.DEFAULT_SUPPORTING_MOVEMENTS
+    banking_timeout_seconds: float
+    supporting_movements: int
 
     # Where the local runtime listens. Configurable because inside a container 127.0.0.1
     # is the container: compose points this at host.docker.internal so the service can
     # reach the daemon on the machine, which is where the GPU is.
-    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_base_url: str
 
     # The operational numbers of local inference. Each default is a measurement rather
     # than a preference and the adapter's module docstring says which — `num_ctx: 4096`
     # took P50 from 5.28s to 2.58s by keeping the model resident, and the pinned seed
     # removed a three-point swing between identical runs. They are configurable because
     # the next GPU will want different ones, not because these were guesses.
-    ollama_keep_alive: str = ollama_defaults.DEFAULT_KEEP_ALIVE
-    ollama_timeout_seconds: float = ollama_defaults.DEFAULT_TIMEOUT_SECONDS
-    ollama_context_tokens: int = ollama_defaults.DEFAULT_CONTEXT_TOKENS
-    ollama_seed: int = ollama_defaults.DEFAULT_SEED
+    ollama_keep_alive: str
+    ollama_timeout_seconds: float
+    ollama_context_tokens: int
+    ollama_seed: int
 
     # Planner sampling. These were literals at the composition root, which is the same
     # defect one layer up. Temperature 0 is deliberate: the planner is not being creative,
     # and a plan that varies between identical questions cannot be measured.
-    planner_temperature: float = 0.0
-    planner_max_output_tokens: int = 384
+    planner_temperature: float
+    planner_max_output_tokens: int
 
     # Development identity, as "token:holder:account_uuid" entries. Not the design —
     # §12.2 asks for OAuth 2.0 with short-lived tokens — but the seam is real: the
@@ -83,7 +100,7 @@ class Settings(BaseSettings):
     #
     # It comes off when unsupported has a deterministic guard and injection clears the
     # agreed bar — see docs/next.md.
-    questions_enabled: bool = False
+    questions_enabled: bool
 
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
@@ -106,7 +123,7 @@ class Settings(BaseSettings):
     # cost rather than a risk — the guard and the verifier catch what it gets wrong in
     # the directions that matter. Revisit when the GPU changes or when the gap shows up
     # in a group the guard does not cover. See evaluation/planning/RESULTS.md.
-    planner_model: str = "qwen2.5-coder:7b"
+    planner_model: str
 
     # Deterministic rules to switch off, by name. Empty means every rule is on, which is
     # the only sane default: a guard that is off by accident reads like a control while
@@ -171,4 +188,8 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    """Every field without a default is supplied by .env.defaults, which mypy cannot see —
+    the pydantic plugin reads the class and not the environment, so it asks for arguments
+    the environment provides. The alternative is giving the fields defaults, which is the
+    thing this change removed."""
+    return Settings()  # type: ignore[call-arg]

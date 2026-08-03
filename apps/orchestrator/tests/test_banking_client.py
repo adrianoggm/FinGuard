@@ -165,8 +165,8 @@ async def test_an_unreachable_banking_is_a_domain_error() -> None:
     )
 
     with pytest.raises(BankingUnavailableError) as caught:
-        await HttpFinancialQuery(base_url="http://127.0.0.1:1", timeout_seconds=2.0).run(
-            plan, account_id=ACCOUNT, today=date(2026, 7, 15)
-        )
+        await HttpFinancialQuery(
+            base_url="http://127.0.0.1:1", timeout_seconds=2.0, supporting_movements=10
+        ).run(plan, account_id=ACCOUNT, today=date(2026, 7, 15))
 
     assert caught.value.code == "banking_unavailable"

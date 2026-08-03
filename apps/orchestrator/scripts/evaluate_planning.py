@@ -34,6 +34,7 @@ from typing import Any
 
 import yaml
 
+from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.services import capability_guard, plan_verifier
@@ -43,10 +44,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
-from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import (
-    DEFAULT_TIMEOUT_SECONDS,
-    OllamaLlmProvider,
-)
+from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 
 PLANNING = Path(__file__).resolve().parents[1] / "evaluation" / "planning"
@@ -175,6 +173,25 @@ def as_plan(spec: dict[str, Any]) -> FinancialPlan:
         categories=tuple(spec.get("categories", ())),
         group_by=GroupBy(spec.get("groupBy", "NONE")),
         metric=Metric(spec.get("metric", "SUM")),
+    )
+
+
+def _provider(base_url: str, think: bool, timeout_seconds: float) -> OllamaLlmProvider:
+    """Built from the deployment's own configuration, with two overrides the command line
+    needs: a different daemon, and a longer ceiling for a model that does not fit the GPU.
+
+    Reading .env.defaults rather than restating the numbers is what makes the score a
+    measurement of the system that ships. A benchmark with its own context window and its
+    own seed measures a system nobody runs.
+    """
+    settings = get_settings()
+    return OllamaLlmProvider(
+        base_url=base_url,
+        keep_alive=settings.ollama_keep_alive,
+        timeout_seconds=timeout_seconds,
+        context_tokens=settings.ollama_context_tokens,
+        seed=settings.ollama_seed,
+        think=think,
     )
 
 
@@ -400,17 +417,17 @@ async def run(
     model: str,
     limit: int | None,
     base_url: str,
+    timeout_seconds: float,
     dataset: str = "dev",
     think: bool = False,
     collect: list[tuple[int, int]] | None = None,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> int:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
     today = data["reference"]
     cases = data["cases"][:limit] if limit else data["cases"]
 
     planner = LlmQueryPlanner(
-        OllamaLlmProvider(base_url=base_url, think=think, timeout_seconds=timeout_seconds),
+        _provider(base_url, think, timeout_seconds),
         model=model,
         temperature=0.0,
         max_output_tokens=384,
@@ -461,7 +478,7 @@ async def repeated(
     dataset: str,
     think: bool,
     times: int,
-    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    timeout_seconds: float,
 ) -> int:
     """Runs the set `times` over and report the spread as well as the numbers.
 
@@ -470,9 +487,7 @@ async def repeated(
     """
     scores: list[tuple[int, int]] = []
     for attempt in range(times):
-        code = await run(
-            model, limit, base_url, dataset, think, collect=scores, timeout_seconds=timeout_seconds
-        )
+        code = await run(model, limit, base_url, timeout_seconds, dataset, think, collect=scores)
         if code:
             return code
         if times > 1:
@@ -507,7 +522,7 @@ async def ablate(model: str, base_url: str, dataset: str, timeout_seconds: float
     cases = data["cases"]
 
     planner = LlmQueryPlanner(
-        OllamaLlmProvider(base_url=base_url, think=False, timeout_seconds=timeout_seconds),
+        _provider(base_url, False, timeout_seconds),
         model=model,
         temperature=0.0,
         max_output_tokens=384,
@@ -586,7 +601,7 @@ def main() -> int:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=DEFAULT_TIMEOUT_SECONDS,
+        default=get_settings().ollama_timeout_seconds,
         help="seconds before a request is a PROVIDER_ERROR. The default is a ceiling "
         'for "something is wrong", not a latency target; a model that does not fit '
         "the GPU needs it raised or it cannot be measured at all.",

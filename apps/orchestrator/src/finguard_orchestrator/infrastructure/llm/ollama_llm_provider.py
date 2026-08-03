@@ -40,34 +40,11 @@ something the caller hopes for. It says nothing about whether the plan answers t
 question asked; only the evaluation dataset says that.
 """
 
-from typing import Any, Final
+from typing import Any
 
 import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
-
-DEFAULT_BASE_URL: Final = "http://127.0.0.1:11434"
-
-# How long the model stays resident after a request. Long enough that a demo never pays
-# a cold load between questions.
-DEFAULT_KEEP_ALIVE: Final = "30m"
-
-# A local model on a laptop GPU is slower than an API, and a cold load is slower still.
-# This is a ceiling for "something is wrong", not a latency target.
-DEFAULT_TIMEOUT_SECONDS: Final = 120.0
-
-# Context window. The planner prompt is ~1k tokens and the answer a few hundred, so this
-# is generous for the job — and small enough that the KV cache does not push the model
-# off the GPU. Raising it is not free: the cache grows with it, and a model that no
-# longer fits is silently split with the CPU rather than refused.
-DEFAULT_CONTEXT_TOKENS: Final = 4096
-
-# Sampling seed. Ollama picks a random one unless told, and temperature 0 does not make
-# up for it: measuring the same prompt against the same model twice moved a score by
-# three points, which is enough to invent an improvement that is not there. Pinning it
-# does not make a GPU bit-reproducible — batching and non-associative float reduction
-# still move things — but it removes the one source of noise that was ours to remove.
-DEFAULT_SEED: Final = 0
 
 
 class OllamaLlmProvider:
@@ -77,13 +54,21 @@ class OllamaLlmProvider:
 
     def __init__(
         self,
-        base_url: str = DEFAULT_BASE_URL,
-        keep_alive: str = DEFAULT_KEEP_ALIVE,
-        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
-        context_tokens: int = DEFAULT_CONTEXT_TOKENS,
-        seed: int = DEFAULT_SEED,
+        *,
+        base_url: str,
+        keep_alive: str,
+        timeout_seconds: float,
+        context_tokens: int,
+        seed: int,
         think: bool = False,
     ) -> None:
+        """No defaults except `think`, and the absence is the design. Every number here is
+        a measurement that belongs to a deployment, so it lives in .env.defaults with the
+        experiment that produced it written beside it. Required rather than optional so an
+        adapter cannot be built with numbers nobody chose.
+
+        `think` keeps its default because it is not a tuning knob: false is a correctness
+        requirement, for the reason in the module docstring."""
         self._base_url = base_url.rstrip("/")
         # Public because they are configuration, and configuration that reaches an adapter
         # without being observable is configuration nobody can prove arrived.
