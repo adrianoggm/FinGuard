@@ -94,3 +94,43 @@ async def test_declaring_an_account_that_does_not_exist_reveals_nothing(
         )
 
         assert await connection.fetchval(VIEW) == 0
+
+
+# --- what protects what -------------------------------------------------------------
+
+
+async def test_the_reader_cannot_reach_the_base_tables_at_all(
+    reader_connection: asyncpg.Connection,
+) -> None:
+    """The barrier that actually protects the query path, and it is a privilege rather than a
+    policy: the reader holds SELECT on the two views and nothing else, so the tables do not
+    exist as far as it is concerned.
+
+    Worth asserting because it is the reason row-level security on those tables is dormant, and
+    a future migration that grants table access to make something convenient would silently
+    change which mechanism is load-bearing.
+    """
+    for table in ("ledger_entries", "contacts", "accounts", "payment_intents"):
+        with pytest.raises((asyncpg.InsufficientPrivilegeError, asyncpg.UndefinedTableError)):
+            await reader_connection.fetchval(f"SELECT count(*) FROM {table}")
+
+
+async def test_the_reader_sees_nothing_through_the_views_without_declaring_an_account(
+    reader_connection: asyncpg.Connection,
+) -> None:
+    """And the view is where the account is enforced for it. No declaration, no rows — the
+    fail-safe direction, on the committed seed rather than on a fixture's data."""
+    assert (
+        await reader_connection.fetchval("SELECT count(*) FROM assistant_read.transactions_v1") == 0
+    )
+    assert await reader_connection.fetchval("SELECT count(*) FROM assistant_read.contacts_v1") == 0
+
+
+# Row-level security on the base tables is not tested here, and that is a statement rather than
+# an omission. The reader cannot reach those tables at all, and the owner is deliberately not
+# subject to the policies — its triggers enforce the ledger's invariants and have to see whole
+# transactions. There is no role in this deployment the policy expression applies to, so it is
+# dormant: correct, in place, and enforcing nothing today.
+#
+# It stops being dormant the moment a role gets table access, which is exactly when somebody will
+# be glad it is already written. The test to add then is the one that cannot be written now.
