@@ -70,6 +70,18 @@ def payments_enabled(request: Request) -> None:
         raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
 
 
+def known_categories(request: Request) -> tuple[str, ...]:
+    """The categories a screen may offer.
+
+    Read from the application state rather than imported from the config: a controller that imports
+    the composition root closes a circle — `bootstrap.config` is reached through `infrastructure`,
+    which is where the controllers live, and the service refused to start with a partially
+    initialised module. The same reason every other setting arrives this way.
+    """
+    categories: tuple[str, ...] = request.app.state.categories
+    return categories
+
+
 def payments_available(request: Request) -> bool:
     """Whether payments are on, without refusing when they are not.
 

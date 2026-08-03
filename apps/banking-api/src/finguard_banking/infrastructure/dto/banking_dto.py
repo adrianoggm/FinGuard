@@ -16,6 +16,7 @@ from pydantic.alias_generators import to_camel
 
 from finguard_banking.domain.constants import (
     DEFAULT_SUPPORTING_MOVEMENTS,
+    MAX_CATEGORY_LENGTH,
     MAX_PAYMENT_MINOR,
     MAX_PERIOD_DAYS,
     MAX_RECIPIENT_NAME,
@@ -115,6 +116,8 @@ class MovementResponse(_Payload):
     description: str
     merchant_name: str | None
     category: str | None
+    # Whose opinion the category is. False means the bank's.
+    category_is_custom: bool = False
     amount_minor: int
     direction: str
 
@@ -231,3 +234,21 @@ class CardChargesResponse(_Payload):
     card_id: UUID
     since: str
     charges: list[CardChargeResponse] = []
+
+
+class CategoryRequest(_Body):
+    """What a movement should be filed under.
+
+    `null` clears the override, which falls back to what the bank inferred. That is a different
+    request from "file it under nothing", and there is no way to express the second — a movement
+    always has a category, and the only question is whose.
+    """
+
+    category: str | None = Field(default=None, max_length=MAX_CATEGORY_LENGTH)
+
+
+class CategoriesResponse(_Payload):
+    """The categories this ledger uses. A closed list, and the same one the planner is constrained
+    to: a category the assistant could not name back is not one a screen should offer."""
+
+    categories: list[str] = []

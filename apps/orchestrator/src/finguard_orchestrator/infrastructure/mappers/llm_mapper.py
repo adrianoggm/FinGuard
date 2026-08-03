@@ -193,6 +193,8 @@ def movements_to_dto(result: MovementsResult) -> MovementsResponse:
                 amount_minor=movement.amount_minor,
                 merchant_name=movement.merchant_name,
                 category=movement.category,
+                transaction_id=movement.transaction_id,
+                category_is_custom=movement.category_is_custom,
             )
             for movement in result.movements
         ],

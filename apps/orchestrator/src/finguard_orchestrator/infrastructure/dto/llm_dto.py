@@ -9,7 +9,7 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH
+from finguard_orchestrator.domain.constants import MAX_CATEGORY_NAME, MAX_PROMPT_LENGTH
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 
 
@@ -155,6 +155,10 @@ class SummaryMovementResponse(_Payload):
     amount_minor: int
     merchant_name: str | None = None
     category: str | None = None
+    # Only the movement list fills these: it is the one screen that can refile a movement, so it
+    # needs the ledger's identifier to do it and the flag to say whose category it is showing.
+    transaction_id: str | None = None
+    category_is_custom: bool = False
 
 
 class AccountSummaryResponse(_Payload):
@@ -247,3 +251,22 @@ class ChargesResponse(_Payload):
     card_id: str
     since: str
     charges: list[ChargePayload] = []
+
+
+class CategoryRequest(_Payload):
+    """What a movement should be filed under. `null` lets the bank decide again.
+
+    Bounded and shape-checked here; whether the value is a category this ledger uses is banking's
+    answer, because the vocabulary belongs to whoever owns the movements.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    category: str | None = Field(default=None, max_length=MAX_CATEGORY_NAME)
+
+
+class CategoriesResponse(_Payload):
+    """The categories a screen may offer. The same closed list the planner is constrained to, so a
+    category the assistant could not name back is not one a chip can produce."""
+
+    categories: list[str] = []

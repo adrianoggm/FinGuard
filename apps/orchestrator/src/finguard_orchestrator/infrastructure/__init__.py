@@ -14,6 +14,9 @@ from finguard_orchestrator.infrastructure.banking.http_account_summary import Ht
 from finguard_orchestrator.infrastructure.banking.http_cards import HttpCards
 from finguard_orchestrator.infrastructure.banking.http_contacts import HttpContacts
 from finguard_orchestrator.infrastructure.banking.http_financial_query import HttpFinancialQuery
+from finguard_orchestrator.infrastructure.banking.http_movement_categories import (
+    HttpMovementCategories,
+)
 from finguard_orchestrator.infrastructure.banking.http_payments import HttpPayments
 from finguard_orchestrator.infrastructure.config.toml_model_catalogue import TomlModelCatalogue
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
@@ -31,6 +34,7 @@ __all__ = [
     "HttpCards",
     "HttpContacts",
     "HttpFinancialQuery",
+    "HttpMovementCategories",
     "HttpPayments",
     "LlmPaymentReader",
     "LlmQueryPlanner",

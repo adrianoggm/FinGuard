@@ -35,6 +35,15 @@ class Scope(StrEnum):
     ASSISTANT_ADMIN = "assistant:admin"
     """Change which model answers, for everybody. The one that most needed a scope."""
 
+    MOVEMENTS_CATEGORISE = "movements:categorise"
+    """File one of your own movements under a different category.
+
+    A write, and a separate name because scopes here are per operation. Granted to a development
+    credential that can already read the account, because it moves no money, reads nothing new and
+    is reversible — a wrong label is undone by another request. Withholdable all the same: a
+    credential issued to look and not touch does not need it.
+    """
+
     PAYMENTS_PREPARE = "payments:prepare"
     """Build a payment intent and see its preview. Moves no money."""
 

@@ -24,6 +24,7 @@ from finguard_orchestrator.application import (
     AnswerMessageQuery,
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    CategoriseMovementCommand,
     CommandBus,
     GetAccountSummaryQuery,
     GetBreakdownQuery,
@@ -43,6 +44,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_ask_handler,
     get_command_bus,
     get_query_bus,
+    known_categories,
     payments_available,
     questions_enabled,
     reporting_today,
@@ -58,6 +60,8 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownResponse,
     CatalogueResponse,
+    CategoriesResponse,
+    CategoryRequest,
     ChargesResponse,
     ContactsResponse,
     MessageRequest,
@@ -77,6 +81,7 @@ Today = Annotated[date, Depends(reporting_today)]
 Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
 Who = Annotated[Caller, Depends(requires(Scope.QUESTIONS_READ))]
 PaymentsOn = Annotated[bool, Depends(payments_available)]
+Categories = Annotated[tuple[str, ...], Depends(known_categories)]
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -369,6 +374,44 @@ async def card_charges(
         )
     )
     return llm_mapper.charges_to_dto(result)
+
+
+@assistant_router.get(
+    "/v1/categories",
+    summary="The categories a movement can be filed under",
+    dependencies=[Depends(questions_enabled)],
+)
+async def categories(who: Who, known: Categories) -> CategoriesResponse:
+    """The closed list, which is the honest answer to "can I invent one": not today.
+
+    It is the same list the decoder is constrained to, so every category a screen offers is one the
+    assistant can name back. `who` requires a credential rather than picking the list — the
+    vocabulary is the deployment's, not the holder's.
+    """
+    return CategoriesResponse(categories=list(known))
+
+
+@assistant_router.put(
+    "/v1/movements/{transaction_id}/category",
+    status_code=204,
+    summary="File a movement under a category, or let the bank decide",
+    dependencies=[Depends(questions_enabled), Depends(requires(Scope.MOVEMENTS_CATEGORISE))],
+)
+async def categorise(
+    transaction_id: UUID, body: CategoryRequest, who: Who, commands: Commands
+) -> Response:
+    """The holder's own category, stored beside the bank's rather than over it.
+
+    A `null` clears it and falls back to what the bank inferred. Nothing here decides whether the
+    category exists: banking owns the movements and therefore the vocabulary, and a value it does
+    not use comes back as a rejected request.
+    """
+    await commands.dispatch(
+        CategoriseMovementCommand(
+            account_id=who.account_id, transaction_id=transaction_id, category=body.category
+        )
+    )
+    return Response(status_code=204)
 
 
 @assistant_router.get("/v1/contacts", summary="Everybody this account can pay")

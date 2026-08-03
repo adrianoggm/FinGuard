@@ -27,6 +27,10 @@ class Movement:
     direction: str
     merchant_name: str | None = None
     category: str | None = None
+    # The ledger's identifier, needed by the one screen that can refile a movement.
+    transaction_id: str | None = None
+    # Whether the category is the holder's own rather than the bank's guess.
+    category_is_custom: bool = False
 
 
 @dataclass(frozen=True)

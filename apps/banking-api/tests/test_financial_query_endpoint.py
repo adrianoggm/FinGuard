@@ -98,6 +98,9 @@ def test_it_answers_with_the_contract_names() -> None:
                 "description": "Compra en Repsol",
                 "merchantName": "Repsol",
                 "category": "TRANSPORT_FUEL",
+                # False here because this fake movement carries no override. The flag is on the
+                # contract so a screen can say whose opinion the category is.
+                "categoryIsCustom": False,
                 "amountMinor": 3_420,
                 "direction": "EXPENSE",
             }

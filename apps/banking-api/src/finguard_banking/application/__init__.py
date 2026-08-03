@@ -15,6 +15,10 @@ from finguard_banking.application.bus.errors import (
     HandlerNotRegisteredError,
 )
 from finguard_banking.application.bus.query_bus import Query, QueryBus, QueryHandler
+from finguard_banking.application.commands.categorise_movement import (
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
+)
 from finguard_banking.application.commands.payments import (
     CancelPaymentCommand,
     CancelPaymentHandler,
@@ -57,6 +61,8 @@ from finguard_banking.application.queries.movement_summary import (
 
 __all__ = [
     "CardChargeRow",
+    "CategoriseMovementCommand",
+    "CategoriseMovementHandler",
     "CardRow",
     "ListCardChargesHandler",
     "ListCardChargesQuery",

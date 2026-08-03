@@ -25,6 +25,10 @@ export type Movement = {
   amount_minor: number;
   merchant_name: string | null;
   category: string | null;
+  /** Present on the movement list, which is the only screen that can refile one. */
+  transaction_id?: string | null;
+  /** Whether the category is the holder's own rather than the bank's guess. */
+  category_is_custom?: boolean;
 };
 
 export type Summary = {
@@ -35,12 +39,33 @@ export type Summary = {
   movements: Movement[];
 };
 
+/**
+ * The plan behind an answer, in fields.
+ *
+ * It goes back on the next question as `previous_plan`, which is how a follow-up works: the service
+ * merges the fields the new sentence changes onto this instead of re-deriving the whole plan from
+ * three words. Without it "¿y este mes?" loses the category, the metric and everything else — the
+ * merge machinery exists on the server and this is the half that feeds it.
+ */
+export type PlanContext = {
+  direction: string;
+  period: string | null;
+  n: number | null;
+  start: string | null;
+  end: string | null;
+  categories: string[];
+  merchants: string[];
+  group_by: string;
+  metric: string;
+};
+
 export type Answer = {
   outcome: string;
   text: string;
   question: string | null;
   intent_id: string | null;
   plan: string | null;
+  plan_context: PlanContext | null;
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
@@ -87,11 +112,16 @@ export async function summary(): Promise<Summary> {
  * and `planned` arrives before any figure so a plan that misread the question can be seen while
  * that still helps.
  */
-export async function* ask(sentence: string): AsyncGenerator<Stage | Answer> {
+export async function* ask(
+  sentence: string,
+  previousPlan: PlanContext | null = null,
+): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ question: sentence }),
+    // The plan behind the last answer travels with the question. The service does not remember it:
+    // the conversation is held by whoever is having it, which is why this parameter exists at all.
+    body: JSON.stringify({ question: sentence, previous_plan: previousPlan }),
   });
   if (!response.ok || !response.body) await readError(response);
 
@@ -143,6 +173,8 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
+    // A payment has no query behind it, so there is nothing to carry into the next turn.
+    plan_context: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
@@ -231,6 +263,8 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
+    // A payment has no query behind it, so there is nothing to carry into the next turn.
+    plan_context: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
@@ -279,4 +313,23 @@ export type Charges = { card_id: string; since: string; charges: Charge[] };
 
 export async function chargesOn(cardId: string, days: number): Promise<Charges> {
   return read<Charges>(`/v1/cards/${cardId}/charges?days=${days}&limit=50`);
+}
+
+export async function categories(): Promise<string[]> {
+  return (await read<{ categories: string[] }>("/v1/categories")).categories;
+}
+
+/**
+ * Files a movement under a category, or hands it back to the bank with `null`.
+ *
+ * `null` is a choice, not an absence: the ledger keeps what it inferred, so there is always something
+ * to fall back to. Which categories exist is banking's answer — this only sends one.
+ */
+export async function categorise(transactionId: string, category: string | null): Promise<void> {
+  const response = await fetch(`${BASE}/v1/movements/${transactionId}/category`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({ category }),
+  });
+  if (!response.ok) await readError(response);
 }

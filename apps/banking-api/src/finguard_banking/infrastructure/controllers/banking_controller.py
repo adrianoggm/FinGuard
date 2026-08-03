@@ -8,10 +8,12 @@ from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 
 from finguard_banking.application import (
+    CategoriseMovementCommand,
+    CommandBus,
     GetBalanceQuery,
     ListCardChargesQuery,
     ListCardsQuery,
@@ -21,14 +23,18 @@ from finguard_banking.application import (
 )
 from finguard_banking.bootstrap.dependencies import (
     database_answers,
+    get_command_bus,
     get_query_bus,
     reporting_today,
 )
+from finguard_banking.domain import constants
 from finguard_banking.domain.constants import MAX_CARD_WINDOW_DAYS, MAX_SUPPORTING_MOVEMENTS
 from finguard_banking.infrastructure.dto.banking_dto import (
     BalanceResponse,
     CardChargesResponse,
     CardsResponse,
+    CategoriesResponse,
+    CategoryRequest,
     ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
@@ -36,6 +42,7 @@ from finguard_banking.infrastructure.dto.banking_dto import (
 from finguard_banking.infrastructure.mappers import http_mapper
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
+Commands = Annotated[CommandBus, Depends(get_command_bus)]
 DatabaseAnswers = Annotated[bool, Depends(database_answers)]
 Today = Annotated[date, Depends(reporting_today)]
 
@@ -121,6 +128,41 @@ async def read_contacts(account_id: UUID, queries: Queries) -> ContactsResponse:
     from a list they have not seen is how money reaches the wrong Marta.
     """
     return http_mapper.contacts_to_dto(await queries.ask(ListContactsQuery(account_id)))
+
+
+@accounts_router.put(
+    "/{account_id}/movements/{transaction_id}/category",
+    status_code=204,
+    summary="File a movement under a category, or let the bank decide",
+)
+async def categorise_movement(
+    account_id: UUID, transaction_id: UUID, body: CategoryRequest, commands: Commands
+) -> Response:
+    """The holder's own category, stored beside the bank's rather than over it.
+
+    A `null` category clears the override and falls back to what the bank inferred — the ledger is
+    never edited, so there is always something to fall back to.
+
+    204, because the answer is that it happened. Returning the movement would mean reading it back
+    through a different path than the one the screen will use anyway.
+    """
+    await commands.dispatch(
+        CategoriseMovementCommand(
+            account_id=account_id, transaction_id=transaction_id, category=body.category
+        )
+    )
+    return Response(status_code=204)
+
+
+@queries_router.get("/categories", summary="The categories this ledger uses")
+async def read_categories() -> CategoriesResponse:
+    """A closed list, and the same one the planner is constrained to.
+
+    It comes from here because a movement's category is a fact about the ledger. The assistant keeps
+    its own copy to build the decoder's schema at startup; this is what a screen should offer, and
+    the two disagreeing shows up as a rejected override rather than as a wrong figure.
+    """
+    return CategoriesResponse(categories=list(constants.CATEGORIES))
 
 
 @queries_router.post("", summary="Run a financial query")
