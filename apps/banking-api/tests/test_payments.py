@@ -291,3 +291,66 @@ async def test_two_confirmations_racing_for_one_balance_pay_once() -> None:
             await setup.execute("DELETE FROM payment_intents WHERE account_id = $1", account)
             await setup.execute("DELETE FROM contacts WHERE account_id = $1", account)
         await setup.close()
+
+
+async def test_the_sweep_writes_the_state_nothing_else_writes(
+    connection: asyncpg.Connection,
+) -> None:
+    """`EXPIRED` exists in the state machine, and until this nothing ever wrote it.
+
+    Confirming already refuses an intent past its expiry, so this is not what makes expiry safe —
+    it is what makes it *true in the data*. An intent nobody ever confirms would otherwise sit
+    AWAITING_CONFIRMATION for ever, and a table where the status contradicts the timestamp beside
+    it is a table nobody can read.
+    """
+    account, contact = await funded(connection, 100_00)
+    stale = await payments(connection).prepare(
+        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="stale"
+    )
+    fresh = await payments(connection).prepare(
+        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="fresh"
+    )
+    await connection.execute(
+        "UPDATE payment_intents "
+        "SET created_at = NOW() - INTERVAL '2 hours', expires_at = NOW() - INTERVAL '1 hour' "
+        "WHERE id = $1",
+        stale.intent_id,
+    )
+
+    swept = await payments(connection).expire_stale()
+
+    assert swept == 1, "only the one past its expiry"
+    statuses = dict(
+        await connection.fetch(
+            "SELECT id, status FROM payment_intents WHERE id = ANY($1::uuid[])",
+            [stale.intent_id, fresh.intent_id],
+        )
+    )
+    assert statuses[stale.intent_id] == "EXPIRED"
+    assert statuses[fresh.intent_id] == "AWAITING_CONFIRMATION"
+
+
+async def test_the_sweep_leaves_what_already_happened_alone(
+    connection: asyncpg.Connection,
+) -> None:
+    """A confirmed intent is past its expiry too, and expiring it would rewrite a payment that
+    happened into one that never did."""
+    account, contact = await funded(connection, 100_00)
+    intent = await payments(connection).prepare(
+        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+    )
+    await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
+    # Both timestamps, because `expires_at > created_at` applies to updates too — the same
+    # constraint the expiry test above runs into.
+    await connection.execute(
+        "UPDATE payment_intents "
+        "SET created_at = NOW() - INTERVAL '2 hours', expires_at = NOW() - INTERVAL '1 hour' "
+        "WHERE id = $1",
+        intent.intent_id,
+    )
+
+    assert await payments(connection).expire_stale() == 0
+    status = await connection.fetchval(
+        "SELECT status FROM payment_intents WHERE id = $1", intent.intent_id
+    )
+    assert status == "CONFIRMED"

@@ -214,6 +214,30 @@ class PostgresPaymentRepository:
                 "UPDATE payment_intents SET status = 'CANCELLED' WHERE id = $1", intent_id
             )
 
+    async def expire_stale(self) -> int:
+        """Closes the intents nobody answered, and returns how many.
+
+        Not what makes expiry safe — `confirm` already refuses an intent past its expiry, and it
+        does so without trusting this to have run. What this makes true is the *data*: `EXPIRED`
+        exists in the state machine and until this nothing ever wrote it, so an intent nobody
+        confirmed sat AWAITING_CONFIRMATION for ever with a timestamp beside it saying otherwise.
+
+        `status = AWAITING_CONFIRMATION` in the WHERE, not just the expiry: a confirmed intent is
+        past its expiry too, and expiring it would rewrite a payment that happened into one that
+        never did.
+
+        ponytail: nothing schedules this yet. Run it by hand or from cron —
+        `python -m finguard_banking.interface.expire_intents`. A sweep every minute buys nothing
+        while the confirm path refuses expired intents on its own.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            swept = await connection.fetch(
+                f"UPDATE payment_intents SET status = 'EXPIRED' "
+                f"WHERE status = '{_AWAITING}' AND expires_at <= NOW() "
+                f"RETURNING id"
+            )
+        return len(swept)
+
     async def _balance(self, connection: Any, account_id: UUID) -> Money:
         row = await connection.fetchrow(_BALANCE_SQL, account_id)
         if row is None:
