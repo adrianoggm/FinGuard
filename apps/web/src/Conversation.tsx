@@ -174,7 +174,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
  * from nothing. A payment is the exception and clears it, because a bizum and a query are not the same
  * conversation.
  */
-function settled(before: Thread, turns: Turn[], answer: Answer, onSettled: () => void): Thread {
+export function settled(before: Thread, turns: Turn[], answer: Answer, onSettled: () => void): Thread {
   const awaiting = answer.outcome === AWAITING ? answer.intent_id : null;
   const wasPayment = answer.intent_id !== null;
   if (!awaiting && wasPayment) onSettled();

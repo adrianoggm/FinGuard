@@ -48,6 +48,36 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest -q -m "not integration"
 
+  # The client, which until now was verified by opening it and looking. It holds the whole
+  # conversation — the service keeps none — so a mistake there deletes context and the model
+  # then answers a question nobody asked. That is worth a build breaking over.
+  #
+  # No Python, no database and no service: the client talks to an orchestrator that is not
+  # running here. What this can check is that it compiles, that its types agree with the
+  # payloads it claims to receive, and that the state machine holding the conversation still
+  # follows its four rules.
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      # `ci` rather than `install`: it fails if the lock has drifted from the manifest, the
+      # same property `uv sync --frozen` gives the Python jobs.
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   # What can only be checked against a real PostgreSQL: the ledger invariants, the
   # query compiler, and that the dataset loads and adds up.
   #

@@ -208,6 +208,11 @@ cuántas veces?" changes metric.
 Removing a filter is a change too: "¿y en general?" is changed ["categories"] with an \
 empty list.
 
+A sentence that names only a period — "el mes pasado", "este año", "los últimos 30 días" \
+— is always a follow-up that changes the window and nothing else. It is not a question on \
+its own: on its own it asks about every movement there is, which is never what somebody \
+answering "¿de qué periodo?" meant.
+
 Set "isFollowUp" to false when the new sentence is a complete question on its own, and \
 the plan above is then ignored entirely. "¿Cuánto gasté hoy?" determines everything it \
 needs, so inheriting a breakdown from the previous question would add one nobody asked \

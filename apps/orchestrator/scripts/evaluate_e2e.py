@@ -143,13 +143,138 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
     return 1 if failures else 0
 
 
+# --- conversations ------------------------------------------------------------------
+
+
+def _window_of(context: dict[str, Any]) -> tuple[Any, ...]:
+    """The window as one value, because a plan carries a period or a range and never both."""
+    return (context.get("period"), context.get("n"), context.get("start"), context.get("end"))
+
+
+def _kept(field: str, before: dict[str, Any], after: dict[str, Any]) -> bool:
+    if field == "window":
+        return _window_of(before) == _window_of(after)
+    if field == "categories":
+        return sorted(before.get("categories") or []) == sorted(after.get("categories") or [])
+    if field == "metric":
+        return before.get("metric") == after.get("metric")
+    raise SystemExit(f"conversations.yaml asks about a field this cannot check: {field}")
+
+
+def turn_violations(
+    turn: dict[str, Any], body: dict[str, Any], asked_before: bool, plan_before: dict[str, Any]
+) -> list[str]:
+    """What is wrong with this turn *given the ones before it*.
+
+    Everything single-turn is checked by `violations`; this only adds what needs history. Each
+    property is an implication, so a model that answers where it could have asked does not fail
+    a case — it takes a different branch of the same rule.
+    """
+    broken: list[str] = []
+    outcome = body.get("outcome")
+    context = body.get("plan_context") or {}
+
+    expected = turn.get("expect")
+    if expected and outcome != expected:
+        # Only where no model is involved: the intent router, the capability guard, the
+        # deterministic completion. Those outcomes are ours to guarantee.
+        broken.append(f"EXPECTED_{expected}")
+
+    if outcome == "NEEDS_CLARIFICATION" and not body.get("pending_context"):
+        # Without the draft on the way out the client has nothing to echo, so the next turn is a
+        # fresh question however well it is phrased. This is the defect, at its source.
+        broken.append("QUESTION_WITHOUT_A_DRAFT")
+
+    if turn.get("completes") and asked_before and outcome == "NEEDS_CLARIFICATION":
+        # It asked, the reply supplied exactly what it asked for, and it asked again. This is
+        # what the report described and what nothing before this could detect.
+        broken.append("CLARIFICATION_RESTARTED")
+
+    for field in turn.get("keeps") or []:
+        if not plan_before:
+            continue
+        if outcome != "PLANNED":
+            # A turn that declined has no plan to compare, and whether it should have declined is
+            # the model's judgement rather than a property.
+            continue
+        if not _kept(field, plan_before, context):
+            broken.append(f"LOST_{field.upper()}")
+
+    return broken
+
+
+async def run_conversations(base_url: str, token: str, limit: int | None) -> int:
+    """Each conversation replayed the way the client has one: the plan and the draft echoed
+    back, nothing kept on the server."""
+    data = yaml.safe_load((PLANNING / "conversations.yaml").read_text(encoding="utf-8"))
+    cases = data["conversations"][:limit] if limit else data["conversations"]
+    failures: list[tuple[str, list[str], str]] = []
+    turns_run = 0
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        for case in cases:
+            plan: dict[str, Any] | None = None
+            pending: dict[str, Any] | None = None
+            asked = False
+
+            for index, turn in enumerate(case["turns"], start=1):
+                plan_before = plan or {}
+                where = f"{case['id']}#{index}"
+                try:
+                    response = await client.post(
+                        f"{base_url}/v1/questions",
+                        json={
+                            "question": turn["say"],
+                            "previous_plan": plan,
+                            "pending_draft": pending,
+                        },
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                except httpx.HTTPError as exc:
+                    failures.append((where, ["TRANSPORT"], str(exc)))
+                    break
+
+                if response.status_code != 200:
+                    failures.append((where, [f"HTTP_{response.status_code}"], response.text[:80]))
+                    break
+
+                body = response.json()
+                turns_run += 1
+                broken = violations(body) + turn_violations(turn, body, asked, plan_before)
+                if broken:
+                    failures.append((where, broken, (body.get("text") or "")[:60]))
+
+                # Exactly what the client does, and the reason this runs over HTTP: the contract
+                # is what the client implements, not what the handler would accept.
+                plan = body.get("plan_context") or plan
+                pending = body.get("pending_context")
+                asked = body.get("outcome") == "NEEDS_CLARIFICATION"
+
+    print()
+    print(f"=== conversations · {len(cases)} threads · {turns_run} turns ===")
+    print()
+    print(f"  PROPERTY VIOLATIONS   {len(failures):3}")
+    if failures:
+        print()
+        print("  what broke")
+        for where, broken, detail in failures:
+            print(f"    {where:32} {','.join(broken):28} {detail}")
+    return 1 if failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--token", required=True, help="a development token from the token table")
-    parser.add_argument("--dataset", default="dev", choices=("dev", "validation", "adversarial"))
+    parser.add_argument(
+        "--dataset",
+        default="dev",
+        choices=("dev", "validation", "adversarial", "conversations"),
+    )
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()
+    if args.dataset == "conversations":
+        return asyncio.run(run_conversations(args.base_url, args.token, args.limit))
     return asyncio.run(run(args.base_url, args.token, args.dataset, args.limit))
 
 

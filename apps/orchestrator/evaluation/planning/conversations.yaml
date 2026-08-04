@@ -1,0 +1,88 @@
+# Conversations, not questions.
+#
+# Every other dataset here is one sentence with one expected plan, and the whole class of defect
+# that reached the report lives between sentences: a clarification that restarted instead of
+# completing, a follow-up that lost its window, an identity question that erased the thread.
+# Nothing single-turn can see any of it.
+#
+# **The expectations are implications, not outcomes.** A local model asked twice about the same
+# sentence does not always answer the same way — "¿cuánto pago de alquiler?" comes back as a
+# question about the period on one run and as a plan for July on the next, and both are
+# defensible readings. So a case that demanded NEEDS_CLARIFICATION would fail for the model
+# having a good day. What is asserted instead holds either way: *if* it asks, the answer must
+# finish the question; *if* the previous turn was answered, a follow-up must keep what it did
+# not mention.
+#
+# `expect` is only used where no model is involved and the outcome is therefore ours to
+# guarantee — the intent router, the capability guard, the deterministic window completion.
+#
+# Turn keys:
+#   say          the sentence, as a person types it
+#   completes    this sentence supplies what the previous turn asked for
+#   keeps        fields that must survive from the previous plan (window, categories, metric)
+#   expect       an outcome a deterministic path owes us
+
+conversations:
+  - id: rent_then_period
+    why: >
+      The conversation from the report. "Este año" arrived as a two-word sentence with no
+      history and came back asking for the period again.
+    turns:
+      - say: ¿Cuánto pago de alquiler?
+      - say: este año
+        completes: true
+        keeps: [categories]
+
+  - id: rent_then_last_month
+    why: A different window, to keep the completion from passing on one lucky phrase.
+    turns:
+      - say: ¿Cuánto suelo pagar de alquiler?
+      - say: el mes pasado
+        completes: true
+        keeps: [categories]
+
+  - id: fuel_then_groceries
+    why: >
+      The follow-up the prompt asks for: it changes the category and says nothing about the
+      window, which is the field it was told not to restate.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿y en el supermercado?
+        keeps: [window]
+
+  - id: fuel_then_count
+    why: The other axis. "¿Y cuántas veces?" changes the metric and keeps everything else.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿y cuántas veces?
+        keeps: [window, categories]
+
+  - id: cinema_refused_then_rephrased
+    why: >
+      The category gate, and what the user does about it. The refusal names a sentence they can
+      send, so sending it has to work.
+    turns:
+      - say: ¿cuántas veces fui al cine el mes pasado?
+      - say: ¿cuánto gasté en ocio el mes pasado?
+
+  - id: identity_does_not_erase_the_thread
+    why: >
+      "¿Quién eres?" is answered without a model and without the ledger. It must not become the
+      context of the next question, and it must not delete the context of the last one.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿quién eres?
+        expect: IDENTITY
+      - say: ¿y en el supermercado?
+        keeps: [window]
+
+  - id: an_unanswerable_question_keeps_the_context
+    why: >
+      A refusal is a turn, not a reset. The guard declines before the model, and the question
+      before it is still the context of the question after it.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿Qué porcentaje de mi sueldo se va en ocio?
+        expect: UNSUPPORTED
+      - say: ¿y en el supermercado?
+        keeps: [window]
