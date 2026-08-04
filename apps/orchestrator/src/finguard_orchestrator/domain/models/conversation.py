@@ -129,6 +129,7 @@ class PaymentConfirmation:
     recipient: str
     amount_minor: int
     currency: str = "EUR"
+    concept: str | None = None
 
 
 type ActiveWorkflow = (
@@ -150,6 +151,10 @@ class Conversation:
     # things a follow-up inherits from — "¿y en gasolina?" narrows either — so this is the union
     # rather than a field per kind, which would let both be set and neither mean anything.
     last_plan: PlannedQuery | None = None
+    # A validated read that could not reach banking. It is memory, not a workflow: a suspended
+    # payment may coexist with it, and retrying must execute this exact plan instead of asking the
+    # model to interpret "reintenta" as a new financial question.
+    retry_plan: PlannedQuery | None = None
 
     @property
     def awaiting(self) -> Slot | None:
@@ -171,11 +176,33 @@ class Conversation:
         second. A payment starting while a clarification is open ends the clarification, which is
         also what happens in the conversation.
         """
-        return Conversation(active=active, last_plan=self.last_plan)
+        return Conversation(
+            active=active,
+            last_plan=self.last_plan,
+            retry_plan=self.retry_plan,
+        )
+
+    def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
+        """Remember the exact validated read that banking could not execute."""
+        return Conversation(active=self.active, last_plan=self.last_plan, retry_plan=plan)
+
+    def without_retry(self) -> "Conversation":
+        """Abandon a failed read while preserving the rest of the conversation."""
+        return Conversation(active=self.active, last_plan=self.last_plan)
 
     def answered(self, plan: PlannedQuery) -> "Conversation":
-        """A financial question was answered: it becomes the memory and nothing is left open."""
-        return Conversation(active=None, last_plan=plan)
+        """Remember a financial answer and close only the workflow that answer resolves.
+
+        A suspended payment belongs to the conversation before this answer and deliberately stepped
+        aside for it. It survives; a financial clarification or refusal does not, because the new
+        answer supersedes it.
+        """
+        active = (
+            self.active
+            if isinstance(self.active, PaymentInProgress) and self.active.suspended
+            else None
+        )
+        return Conversation(active=active, last_plan=plan)
 
     def suspend(self) -> "Conversation":
         """The active payment steps aside for a turn about something else.
@@ -185,7 +212,11 @@ class Conversation:
         plan the user had moved on from.
         """
         if not isinstance(self.active, PaymentInProgress):
-            return Conversation(active=None, last_plan=self.last_plan)
+            return Conversation(
+                active=None,
+                last_plan=self.last_plan,
+                retry_plan=self.retry_plan,
+            )
         return Conversation(
             active=PaymentInProgress(
                 draft=self.active.draft,
@@ -194,6 +225,7 @@ class Conversation:
                 suspended=True,
             ),
             last_plan=self.last_plan,
+            retry_plan=self.retry_plan,
         )
 
 

@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.models.conversation import (
     ActiveWorkflow,
     Conversation,
     FinancialClarification,
+    PaymentInProgress,
     Slot,
     UnsupportedCapability,
 )
@@ -53,6 +54,11 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+
+# Reads have no side effects, so one immediate retry can recover a short transport interruption.
+# A second failure becomes visible state and lets the user decide whether to try again; commands
+# deliberately do not use this policy because their outcome may be indeterminate after a timeout.
+BANK_READ_ATTEMPTS = 2
 
 
 @dataclass(frozen=True)
@@ -222,10 +228,52 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
+        retry_control = (
+            query_recovery.retry_action(query.sentence) if was.retry_plan is not None else None
+        )
+        if retry_control is query_recovery.RetryAction.RETRY:
+            # Execute the validated plan verbatim. Re-planning the word "reintenta" would make a
+            # transient bank outage change the question, which is the opposite of a retry.
+            retry = was.retry_plan
+            assert retry is not None
+            yield Stage("planned", answer_writer.describe(retry))
+            yield Stage("querying")
+            if isinstance(retry, TopMovements):
+                yield await self._ranked(query, retry)
+            else:
+                yield await self._answer(query, retry)
+            return
+        if retry_control in {
+            query_recovery.RetryAction.CHANGE,
+            query_recovery.RetryAction.CANCEL,
+        }:
+            changing = retry_control is query_recovery.RetryAction.CHANGE
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    "De acuerdo. Dime qué movimientos quieres consultar."
+                    if changing
+                    else "De acuerdo, he descartado esa consulta."
+                ),
+                conversation=was.without_retry(),
+            )
+            return
+        if was.retry_plan is not None:
+            # Any other sentence starts a different turn. It must not leave a stale retry behind
+            # that a later bare "reintenta" could unexpectedly revive.
+            was = was.without_retry()
+            query = replace(query, conversation=was)
+
         previous = was.last_plan
         planning_previous = previous if isinstance(previous, FinancialPlan) else None
         force_follow_up = False
         intent = intent_router.route(query.sentence, has_previous=previous is not None)
+
+        if isinstance(was.active, PaymentInProgress) and intent is not Intent.LIST_CONTACTS:
+            # This turn belongs to another subject. Keep the half-built Bizum, but mark that it
+            # stepped aside so a later bare amount or name cannot resume it without warning.
+            was = was.suspend()
+            query = replace(query, conversation=was)
 
         relaxed = query_recovery.relaxation(query.sentence, previous)
         if relaxed is not None:
@@ -243,8 +291,8 @@ class AskFinancialQuestionHandler:
             # Answered from here, never from the ledger and never from a model. "¿Quién eres?" used
             # to reach the planner and come back as a refusal about averages and forecasts: true
             # about the product, and not an answer to the question.
-            # An aside: whatever was under way stays under way, including a payment. Asking what
-            # the assistant is does not abandon a bizum.
+            # An aside does not abandon a Bizum. It does pause it, because the next bare amount
+            # should not silently jump back to a payment after the subject changed.
             yield AskFinancialQuestionResult(
                 outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY, conversation=was
             )
@@ -594,26 +642,37 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery, ranking: TopMovements
     ) -> AskFinancialQuestionResult:
         """One movement, named. The figure alone would send the user to the movement list."""
-        try:
-            found = await self._queries.ranked(
-                ranking,
-                account_id=query.account_id,
-                today=query.today,
-                reporting_timezone=query.reporting_timezone,
-            )
-        except QueryRejectedError:
-            return AskFinancialQuestionResult(
-                outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                text="He entendido la pregunta, pero la consulta que he construido no es válida.",
-                plan=answer_writer.describe(ranking),
-                conversation=query.conversation,
-            )
-        except BankingUnavailableError:
-            return AskFinancialQuestionResult(
-                outcome="BANKING_UNAVAILABLE",
-                text="No puedo consultar tus movimientos ahora mismo. Vuelve a intentarlo.",
-                conversation=query.conversation,
-            )
+        for attempt in range(BANK_READ_ATTEMPTS):
+            try:
+                found = await self._queries.ranked(
+                    ranking,
+                    account_id=query.account_id,
+                    today=query.today,
+                    reporting_timezone=query.reporting_timezone,
+                )
+                break
+            except QueryRejectedError:
+                return AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                    text=(
+                        "He entendido la pregunta, pero la consulta que he construido no es válida."
+                    ),
+                    plan=answer_writer.describe(ranking),
+                    conversation=query.conversation,
+                )
+            except BankingUnavailableError:
+                if attempt + 1 < BANK_READ_ATTEMPTS:
+                    continue
+                return AskFinancialQuestionResult(
+                    outcome="BANKING_UNAVAILABLE",
+                    text=(
+                        "El banco no ha respondido. He conservado esta consulta para que puedas "
+                        "reintentarlo sin volver a escribirla."
+                    ),
+                    plan=answer_writer.describe(ranking),
+                    conversation=query.conversation.awaiting_retry(ranking),
+                    suggestions=query_recovery.retry_suggestions(),
+                )
 
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
@@ -643,30 +702,39 @@ class AskFinancialQuestionHandler:
     async def _answer(
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan
     ) -> AskFinancialQuestionResult:
-        try:
-            answer = await self._queries.run(
-                plan,
-                account_id=query.account_id,
-                today=query.today,
-                reporting_timezone=query.reporting_timezone,
-            )
-        except QueryRejectedError:
-            # Our plan, banking's rules. Ours to fix, so it is reported as such rather
-            # than dressed up as the user having asked something impossible.
-            return AskFinancialQuestionResult(
-                outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                text="He entendido la pregunta, pero la consulta que he construido no es válida.",
-                plan=answer_writer.describe(plan),
-                conversation=query.conversation,
-            )
-        except BankingUnavailableError:
-            return AskFinancialQuestionResult(
-                outcome="BANKING_UNAVAILABLE",
-                text="No puedo consultar tus movimientos ahora mismo. Vuelve a intentarlo.",
-                # Nothing changes: the question was fine and the bank was not there, so the next
-                # turn should be able to say "inténtalo otra vez" and keep its context.
-                conversation=query.conversation,
-            )
+        for attempt in range(BANK_READ_ATTEMPTS):
+            try:
+                answer = await self._queries.run(
+                    plan,
+                    account_id=query.account_id,
+                    today=query.today,
+                    reporting_timezone=query.reporting_timezone,
+                )
+                break
+            except QueryRejectedError:
+                # Our plan, banking's rules. Ours to fix, so it is reported as such rather
+                # than dressed up as the user having asked something impossible.
+                return AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                    text=(
+                        "He entendido la pregunta, pero la consulta que he construido no es válida."
+                    ),
+                    plan=answer_writer.describe(plan),
+                    conversation=query.conversation,
+                )
+            except BankingUnavailableError:
+                if attempt + 1 < BANK_READ_ATTEMPTS:
+                    continue
+                return AskFinancialQuestionResult(
+                    outcome="BANKING_UNAVAILABLE",
+                    text=(
+                        "El banco no ha respondido. He conservado esta consulta para que puedas "
+                        "reintentarlo sin volver a escribirla."
+                    ),
+                    plan=answer_writer.describe(plan),
+                    conversation=query.conversation.awaiting_retry(plan),
+                    suggestions=query_recovery.retry_suggestions(),
+                )
 
         return _answered(plan, answer, query.conversation)
 

@@ -125,6 +125,67 @@ async def test_the_amount_completes_a_pending_payment_without_a_model() -> None:
     assert answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
 
 
+async def test_a_revised_amount_replaces_the_previewed_one_and_keeps_the_rest() -> None:
+    answer, reader, gateway = await prepare(
+        "mejor 20 euros",
+        pending=PaymentDraft(
+            recipient_name="Marta Solis Vega",
+            amount_minor=1_500,
+            concept="tapas",
+        ),
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].amount_minor == 2_000
+    assert gateway.prepared[0].recipient_name == "Marta Solis Vega"
+    assert gateway.prepared[0].concept == "tapas"
+    assert answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+
+
+async def test_a_revised_recipient_is_resolved_again_and_keeps_amount_and_concept() -> None:
+    answer, reader, gateway = await prepare(
+        "era para Aitor Beltran",
+        pending=PaymentDraft(amount_minor=1_500, concept="tapas"),
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].recipient_name == "Aitor Beltran Diaz"
+    assert gateway.prepared[0].amount_minor == 1_500
+    assert gateway.prepared[0].concept == "tapas"
+    assert answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+
+
+async def test_a_revised_concept_replaces_only_the_note() -> None:
+    answer, reader, gateway = await prepare(
+        "cambia el concepto a cena del viernes",
+        pending=PaymentDraft(
+            recipient_name="Marta Solis Vega",
+            amount_minor=1_500,
+            concept="tapas",
+        ),
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].recipient_name == "Marta Solis Vega"
+    assert gateway.prepared[0].amount_minor == 1_500
+    assert gateway.prepared[0].concept == "cena del viernes"
+    assert "cena del viernes" in answer.text
+
+
+async def test_a_concept_can_be_removed_explicitly() -> None:
+    _, reader, gateway = await prepare(
+        "quita el concepto",
+        pending=PaymentDraft(
+            recipient_name="Marta Solis Vega",
+            amount_minor=1_500,
+            concept="tapas",
+        ),
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].concept is None
+
+
 async def test_a_name_completes_a_payment_that_only_needed_one() -> None:
     answer, reader, gateway = await prepare(
         "Marta Solis Vega", pending=PaymentDraft(amount_minor=1_500)

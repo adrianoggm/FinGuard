@@ -72,6 +72,15 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     assert back.last_plan == LAST_MONTH
 
 
+def test_a_query_waiting_for_a_bank_retry_survives_without_becoming_an_answer() -> None:
+    out = Conversation(last_plan=None, retry_plan=LAST_MONTH)
+
+    back = there_and_back(out)
+
+    assert back.retry_plan == LAST_MONTH
+    assert back.last_plan is None
+
+
 def test_a_clarification_survives_with_its_slot() -> None:
     out = IDLE.with_active(FinancialClarification(draft=FUEL_THIS_YEAR, awaiting=Slot.CATEGORY))
 

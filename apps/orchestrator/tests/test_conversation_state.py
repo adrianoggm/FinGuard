@@ -130,6 +130,19 @@ def test_a_payment_suspends_rather_than_vanishing() -> None:
     assert aside.active.awaiting is Slot.AMOUNT, "and it still knows what it was asking"
 
 
+def test_answering_the_aside_remembers_it_without_erasing_the_suspended_payment() -> None:
+    building = IDLE.with_active(
+        PaymentInProgress(draft=PaymentDraft(recipient_name="Marta"), awaiting=Slot.AMOUNT)
+    )
+
+    answered = building.suspend().answered(LAST_MONTH)
+
+    assert isinstance(answered.active, PaymentInProgress)
+    assert answered.active.suspended is True
+    assert answered.active.draft.recipient_name == "Marta"
+    assert answered.last_plan == LAST_MONTH
+
+
 def test_a_clarification_does_not_suspend() -> None:
     """Asymmetric on purpose. A question about a query is answered on the next turn or it is not;
     keeping one alive across a change of subject is how "este año" completed a plan the user had

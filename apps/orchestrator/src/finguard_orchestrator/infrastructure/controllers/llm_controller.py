@@ -64,7 +64,12 @@ from finguard_orchestrator.domain.models.conversation import (
     Slot,
     slot_for,
 )
-from finguard_orchestrator.domain.services import confirmation, payment_router, payment_writer
+from finguard_orchestrator.domain.services import (
+    confirmation,
+    payment_router,
+    payment_words,
+    payment_writer,
+)
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -233,7 +238,11 @@ async def _as_payment(
         outcome=answer.outcome,
         text=answer.text,
         intent_id=str(answer.intent_id) if answer.intent_id else None,
-        conversation=conversation_mapper.to_payload(was.with_active(_payment_state(answer))),
+        # Starting a payment is choosing a different operation. Do not carry an older, invisible
+        # failed-query retry through it and let a later bare "reintenta" revive stale context.
+        conversation=conversation_mapper.to_payload(
+            was.without_retry().with_active(_payment_state(answer))
+        ),
     )
 
 
@@ -256,6 +265,7 @@ def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
             recipient=answer.recipient or "",
             amount_minor=answer.amount_minor or 0,
             currency=answer.currency or "EUR",
+            concept=answer.concept,
         )
     if answer.draft is None:
         return None
@@ -324,6 +334,54 @@ async def _as_confirmation(
             outcome=PaymentOutcome.UNSUPPORTED.value,
             text=payment_writer.cannot_pay(),
             conversation=conversation_mapper.to_payload(was),
+        )
+
+    revises_amount = payment_words.amount_in(reply) is not None
+    revises_concept = payment_words.concept_in(reply) is not None or payment_words.clears_concept(
+        reply
+    )
+    revises_recipient = payment_words.changes_recipient(reply)
+    if revises_amount or revises_concept or revises_recipient:
+        # A correction is not a confirmation and never mutates an intent already held by banking.
+        # Cancel that offer, rebuild a draft from the facts the user kept and prepare a new preview.
+        # The second explicit yes is mandatory whichever field changed.
+        cancelled = await commands.dispatch(
+            ConfirmPaymentCommand(
+                reply="no",
+                account_id=who.account_id,
+                intent_id=active.intent_id,
+            )
+        )
+        if cancelled.outcome != PaymentOutcome.CANCELLED.value:
+            still_waiting = cancelled.outcome == PaymentOutcome.BANKING_UNAVAILABLE.value
+            conversation = was if still_waiting else was.with_active(None)
+            return QuestionResponse(
+                outcome=cancelled.outcome,
+                text=cancelled.text,
+                intent_id=str(cancelled.intent_id) if cancelled.intent_id else None,
+                conversation=conversation_mapper.to_payload(conversation),
+                currency=cancelled.currency,
+            )
+        replacement = PaymentDraft(
+            # A named recipient correction reopens this slot. The payment handler resolves the
+            # name in the reply against the account's contact directory and exposes ambiguity.
+            recipient_name=None if revises_recipient else active.recipient,
+            amount_minor=active.amount_minor,
+            currency=active.currency,
+            # Clearing is an explicit value. A new written concept is merged from `reply` by the
+            # same deterministic continuation reader used while a payment is being built.
+            concept=None if payment_words.clears_concept(reply) else active.concept,
+        )
+        revised = await _as_payment(
+            reply,
+            who,
+            commands,
+            payments_on,
+            was.with_active(None),
+            replacement,
+        )
+        return revised.model_copy(
+            update={"text": f"He descartado el Bizum anterior. {revised.text}"}
         )
 
     answer = await commands.dispatch(
@@ -397,6 +455,39 @@ def _open_payment_reply(
     return None
 
 
+async def _paused_payment_reply(
+    sentence: str,
+    was: Conversation,
+    active: PaymentInProgress,
+    who: Caller,
+    queries: QueryBus,
+) -> QuestionResponse | None:
+    """Stop a slot value from silently reviving a payment after another conversation.
+
+    The same amount or contact would have completed an active draft. Once suspended, it becomes an
+    ambiguous turn: it may have been written about the intervening subject. The payment stays intact
+    and the answer names the explicit instruction that resumes it.
+    """
+    if (
+        not active.suspended
+        or payment_router.resumes(sentence)
+        or payment_router.is_payment(sentence)
+    ):
+        return None
+    directory = await queries.ask(ListContactsQuery(account_id=who.account_id))
+    contacts = tuple(
+        Contact(uuid.UUID(row.contact_id), row.display_name, row.phone)
+        for row in directory.contacts
+    )
+    if not payment_router.continues(sentence, active.draft, contacts):
+        return None
+    return QuestionResponse(
+        outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+        text=payment_writer.paused(active.draft),
+        conversation=conversation_mapper.to_payload(was),
+    )
+
+
 def _open_payment_events(answer: QuestionResponse) -> StreamingResponse:
     """The streaming representation of an immediate draft-control answer."""
 
@@ -450,9 +541,9 @@ async def _continues_a_payment(
         return drafted if payment_router.resumes(question) else None
     if drafted.recipient_contact_id is not None and drafted.recipient_name is None:
         # A contact the user tapped and this service has not applied yet. It fills the recipient
-        # slot, so the draft below looks complete â€” and "complete means a preview already exists"
+        # slot, so the draft below looks complete — and "complete means a preview already exists"
         # sent the tap to the financial planner, which answered a button with "eso no puedo
-        # calcularlo todavÃ­a". The preview is exactly what this turn is asking for.
+        # calcularlo todavía". The preview is exactly what this turn is asking for.
         return drafted
     if not drafted.missing:
         # Nothing left to fill, so there is nothing to continue: a complete payment has already
@@ -688,6 +779,9 @@ async def ask(
         return await _as_confirmation(request.question, who, commands, payments_on, was, was.active)
 
     if isinstance(was.active, PaymentInProgress):
+        paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
+        if paused is not None:
+            return paused
         immediate = _open_payment_reply(request.question, was, was.active)
         if immediate is not None:
             return immediate
@@ -748,6 +842,9 @@ async def ask_streaming(
         return _confirmation_events(request.question, who, commands, payments_on, was, was.active)
 
     if isinstance(was.active, PaymentInProgress):
+        paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
+        if paused is not None:
+            return _open_payment_events(paused)
         immediate = _open_payment_reply(request.question, was, was.active)
         if immediate is not None:
             return _open_payment_events(immediate)

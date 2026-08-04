@@ -90,6 +90,24 @@ def unsure(draft: PaymentDraft) -> str:
     return f"No pasa nada. {still_missing(draft)} También puedes cancelar el bizum."
 
 
+def paused(draft: PaymentDraft) -> str:
+    """A slot value arrived after the payment had stepped aside for another conversation.
+
+    Repeat what is settled, but do not treat the new value as consent to resume. The explicit
+    phrase is deliberately stable so a button or a person can send exactly the same instruction.
+    """
+    if draft.recipient_name:
+        payment = f"El Bizum a {draft.recipient_name}"
+    elif draft.amount_minor is not None:
+        payment = f"El Bizum de {money(draft.amount_minor, draft.currency)}"
+    else:
+        payment = "El Bizum"
+    return (
+        f"{payment} está pausado. Para retomarlo, escribe «continuar con el Bizum»; "
+        "para descartarlo, responde «no»."
+    )
+
+
 def ambiguous(name: str, candidates: tuple[str, ...]) -> str:
     """Two people answer to that name, so the user picks. Choosing for them would be the assistant
     deciding who gets the money.

@@ -224,6 +224,22 @@ conversations:
         expect: AWAITING_CONFIRMATION
         says: tapas
 
+  - id: a_previewed_amount_can_be_corrected_without_paying_the_old_one
+    why: >
+      A different amount at confirmation is a replacement, never a yes. The held intent is
+      cancelled, the recipient and concept survive, and the replacement requires confirmation.
+    turns:
+      - say: hazle un bizum de 15 euros a Marta Solis Vega con concepto tapas
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
+      - say: mejor 20 euros
+        expect: AWAITING_CONFIRMATION
+        says: 20,00
+      # Quoted, because YAML reads a bare `no` as false and the request then carries a boolean
+      # where the question goes — a 422 the harness reports as a broken thread.
+      - say: "no"
+        expect: CANCELLED
+
   - id: a_question_in_the_middle_of_a_bizum_is_still_a_question
     why: >
       The rule that keeps the state machine honest. A payment under way must not swallow everything
@@ -233,6 +249,23 @@ conversations:
         keeps_payment: true
       - say: ¿cuánto gasté en gasolina el mes pasado?
         says: gasolina
+
+  - id: a_bizum_does_not_resume_silently_after_a_change_of_subject
+    why: >
+      A payment that stepped aside used to accept the next bare amount as if no other conversation
+      had happened. It now survives visibly paused and requires an explicit resumption.
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        keeps_payment: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        says: gasolina
+        keeps_payment: true
+      - say: 15 euros
+        says: pausado
+        keeps_payment: true
+      - say: continuar con el bizum, 15 euros
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
 
   - id: the_largest_expense_and_the_next_one
     why: >

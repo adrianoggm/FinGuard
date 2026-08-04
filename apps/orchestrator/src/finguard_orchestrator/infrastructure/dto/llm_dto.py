@@ -157,6 +157,9 @@ class ConversationPayload(_Payload):
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
+    # The validated query banking could not execute. Kept separately from `last_plan`: a failed
+    # read is retryable context, not an answer a later "y este mes" should inherit from.
+    retry_plan: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
     # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
@@ -171,6 +174,7 @@ class ConversationPayload(_Payload):
     intent_id: str | None = None
     recipient: str | None = Field(default=None, max_length=MAX_RECIPIENT_NAME)
     amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
+    concept: str | None = None
 
 
 class QuestionRequest(_Payload):

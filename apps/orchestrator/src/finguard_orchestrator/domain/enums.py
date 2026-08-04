@@ -156,3 +156,6 @@ class Spoken(StrEnum):
     CONTACTS = "CONTACTS"
     # Which product categories a financial query can filter by. Repository data, not account data.
     CATEGORIES = "CATEGORIES"
+    # A deterministic conversation control such as abandoning a saved retry. No model or ledger
+    # produced it, so it belongs with the other spoken outcomes rather than planning failures.
+    GUIDANCE = "GUIDANCE"

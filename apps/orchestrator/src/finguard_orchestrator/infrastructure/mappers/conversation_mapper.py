@@ -105,12 +105,16 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     """
     if payload is None or payload.workflow is None:
         return Conversation(
-            last_plan=query_to_domain(payload.last_plan) if payload and payload.last_plan else None
+            last_plan=query_to_domain(payload.last_plan) if payload and payload.last_plan else None,
+            retry_plan=(
+                query_to_domain(payload.retry_plan) if payload and payload.retry_plan else None
+            ),
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
+    retry_plan = query_to_domain(payload.retry_plan) if payload.retry_plan else None
     active = _active(payload)
-    return Conversation(active=active, last_plan=last_plan)
+    return Conversation(active=active, last_plan=last_plan, retry_plan=retry_plan)
 
 
 def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
@@ -143,6 +147,7 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
                 intent_id=uuid.UUID(payload.intent_id),
                 recipient=payload.recipient,
                 amount_minor=payload.amount_minor,
+                concept=payload.concept,
             )
         case _:
             return None
@@ -170,6 +175,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
         workflow=workflow_of(conversation.active),
         awaiting=conversation.awaiting,
         last_plan=plan_payload(conversation.last_plan) if conversation.last_plan else None,
+        retry_plan=plan_payload(conversation.retry_plan) if conversation.retry_plan else None,
     )
     active = conversation.active
 
@@ -204,6 +210,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 "intent_id": str(active.intent_id),
                 "recipient": active.recipient,
                 "amount_minor": active.amount_minor,
+                "concept": active.concept,
             }
         )
     return payload
