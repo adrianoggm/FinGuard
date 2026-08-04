@@ -43,6 +43,7 @@ from finguard_orchestrator.domain.services import (
     capability_guard,
     category_words,
     explainer,
+    explicit_facts,
     intent_router,
     plan_verifier,
     query_recovery,
@@ -442,7 +443,24 @@ class AskFinancialQuestionHandler:
 
         assert planned.plan is not None  # is_answerable is exactly this condition
 
-        checked = planned.plan
+        # What the sentence stated outright wins over both the model's opinion about which fields
+        # changed and the plan it inherited from. "Los últimos 3 meses" was answered over five
+        # because the model emitted `changed: ["categories"]` and the merge is arithmetic on that
+        # list — a real figure about a window the user had written down and nobody read.
+        facts = explicit_facts.read(query.sentence, today=query.today)
+        checked = explicit_facts.enforce(planned.plan, facts)
+        correcting = force_follow_up or facts.corrects
+        if correcting and planning_previous is not None and isinstance(checked, FinancialPlan):
+            # A correction patches. The same turn that lost the window also lost the category the
+            # correction never mentioned, and an empty list from a model cannot be told apart from
+            # a filter it simply did not copy.
+            #
+            # `facts.corrects` and not only the router's intent: "no, durante todo el año 2025"
+            # rejects *and* replaces, which the router deliberately does not treat as a bare
+            # correction — that path is for a rejection with nothing behind it. The sentence is
+            # still a patch, and its unmentioned fields still have to survive.
+            checked = explicit_facts.restored_filters(checked, planning_previous, facts)
+
         broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
         if broken is not None:
             # The plan is well formed, the domain accepts it, and it answers a different
