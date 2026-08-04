@@ -83,6 +83,31 @@ _WIDENS: Final = re.compile(
 # mention to survive, and that is what this flag is for.
 _REJECTS: Final = re.compile(r"^(no|mejor|en realidad|que va)\b.+|\bsino\b|\bmas bien\b")
 
+# A question about *when*, not about how much. Two of them in one reported conversation:
+#
+#     "¿Cuándo me suelen ingresar la nómina?"        → 17.383,97 €
+#     "¿Cuándo suelo ir al supermercado a comprar?"  → 3.508,91 €
+#
+# Both figures were correct and neither was an answer. The dates were on screen underneath, in the
+# movement list — the question had been answered and the headline said something else.
+#
+# "Cuánto" is excluded by the word boundary rather than by luck: they differ by one letter and the
+# sentence is folded before it gets here, so `cuando` cannot match inside `cuanto`.
+_ASKS_WHEN: Final = re.compile(
+    r"\bcuando\b|\bcada\s+cuanto\b|\bque\s+dias?\b|\bcon\s+que\s+frecuencia\b"
+    r"|\bcada\s+cuantos\s+dias\b|\bsuelo\s+ir\b|\ben\s+que\s+fechas?\b"
+)
+
+
+def asks_when(sentence: str) -> bool:
+    """Whether the sentence asks *when* something happens rather than how much of it there was.
+
+    Separate from `read` because it changes the sentence the assistant writes rather than the query
+    it runs. The plan is the same either way — the same movements over the same window — and only
+    the headline is wrong.
+    """
+    return bool(_ASKS_WHEN.search(spanish.folded(sentence)))
+
 
 @dataclass(frozen=True)
 class ExplicitFacts:
@@ -96,6 +121,9 @@ class ExplicitFacts:
     names_a_category: bool = False
     widens: bool = False
     corrects: bool = False
+    # Whether the question is about *when* rather than how much. It changes the answer rather than
+    # the plan, so `enforce` does nothing with it and the writer reads it.
+    asks_when: bool = False
 
 
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
@@ -111,6 +139,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         names_a_category=bool(category_words.precisely_named_in(sentence)),
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),
+        asks_when=asks_when(sentence),
     )
 
 
@@ -135,6 +164,38 @@ def enforce[T: FinancialPlan | TopMovements](plan: T, facts: ExplicitFacts) -> T
     if facts.group_by is not None and isinstance(plan, FinancialPlan):
         plan = replace(plan, group_by=facts.group_by)
     return plan
+
+
+def without_the_inherited_category(
+    plan: FinancialPlan, previous: FinancialPlan | None, facts: ExplicitFacts
+) -> FinancialPlan | None:
+    """The same query without a category the user never named, or None to leave it alone.
+
+    From the report. Five turns after a question about health, and through a clarification loop
+    that answered nothing:
+
+        "¿Qué gastos tengo históricamente en el Mercadona?"
+        → "No he encontrado movimientos en Mercadona en los últimos 3 meses."
+        → the plan was `expense, health, Mercadona`
+
+    `health` came from a question five turns earlier. The user then pressed "buscar sin categoría"
+    and got their answer, so the machinery was right and the work was theirs.
+
+    **Only on an empty result, and only when the sentence introduced a shop.** Both conditions
+    carry their weight. Dropping an inherited category whenever the sentence does not name one
+    would break the ordinary follow-up — "¿y la semana pasada?" after a question about fuel keeps
+    the fuel, and answering it about everything would be a different question. Introducing a
+    merchant is what makes the pair suspicious: a shop the previous question did not have, and
+    nothing found, is the shape of two filters that do not belong together.
+
+    Nothing is guessed. This is the button the user pressed, pressed for them.
+    """
+    if facts.names_a_category or not plan.categories:
+        return None
+    introduced_a_shop = bool(plan.merchants) and not (previous and previous.merchants)
+    if not introduced_a_shop:
+        return None
+    return replace(plan, categories=())
 
 
 def restored_filters(

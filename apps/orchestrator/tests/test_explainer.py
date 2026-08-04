@@ -25,11 +25,19 @@ def plan(*categories: str, metric: Metric = Metric.SUM) -> FinancialPlan:
 
 def test_the_identity_says_what_it_cannot_do_too() -> None:
     """An assistant that lists only its talents is one whose limits somebody discovers by being
-    surprised. Averages and comparisons are named because they are the two people ask for."""
-    assert "FinGuard" in explainer.IDENTITY
-    assert "bizum" in explainer.IDENTITY
-    assert "medias" in explainer.IDENTITY
-    assert "no comparo periodos" in explainer.IDENTITY.replace("\n", " ")
+    surprised.
+
+    Transfers are named now because a user asked for them by name — "¿puedes hacer transferencias
+    o solo bizums?" — and got "¿de qué periodo?" three turns running. The recogniser was the bug;
+    an answer that did not mention transfers would have been the next one.
+    """
+    said = explainer.IDENTITY.replace("\n", " ")
+
+    assert "FinGuard" in said
+    assert "bizum" in said
+    assert "medias" in said
+    assert "transferencias" in said
+    assert "comparar dos periodos" in said
 
 
 def test_explaining_restates_the_query_that_ran() -> None:

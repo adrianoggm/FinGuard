@@ -819,7 +819,7 @@ class AskFinancialQuestionHandler:
         )
 
     async def _answer(
-        self, query: AskFinancialQuestionQuery, plan: FinancialPlan
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, widened: bool = False
     ) -> AskFinancialQuestionResult:
         for attempt in range(BANK_READ_ATTEMPTS):
             try:
@@ -855,7 +855,33 @@ class AskFinancialQuestionHandler:
                     suggestions=query_recovery.retry_suggestions(),
                 )
 
-        return _answered(plan, answer, query.conversation)
+        if answer.is_empty and not widened:
+            previous = query.conversation.last_plan
+            wider = explicit_facts.without_the_inherited_category(
+                plan,
+                previous if isinstance(previous, FinancialPlan) else None,
+                explicit_facts.read(query.sentence, today=query.today),
+            )
+            if wider is not None:
+                # A shop the question introduced, a category it never named, and nothing found.
+                # The user used to be shown "buscar sin categoría" and had to press it; this is
+                # that press, made for them. `widened` stops it recursing: one relaxation per
+                # turn, and if the wider query is empty too then the answer really is nothing.
+                retried = await self._answer(query, wider, widened=True)
+                if retried.outcome == PlanningOutcome.PLANNED.value and retried.movement_count:
+                    # Named from the categories rather than `filter_of`, which answers with the
+                    # merchant when a plan has both — and the merchant is the filter that stayed.
+                    dropped = " y ".join(category_words.name_of(c) for c in plan.categories)
+                    return replace(
+                        retried,
+                        text=(
+                            f"{retried.text}\n"
+                            f"(He quitado el filtro de {dropped}, que venía de la pregunta"
+                            f" anterior.)"
+                        ),
+                    )
+
+        return _answered(plan, answer, query.conversation, query.sentence)
 
 
 # One sentence per missing capability, keyed by the guard's family name.
@@ -1028,11 +1054,19 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
 
 
 def _answered(
-    plan: FinancialPlan, answer: QueryAnswer, was: Conversation
+    plan: FinancialPlan, answer: QueryAnswer, was: Conversation, sentence: str
 ) -> AskFinancialQuestionResult:
+    # "¿Cuándo me ingresan la nómina?" ran the right query and was reported as a total. The
+    # question decides which sentence the same figures become, so the reading happens here rather
+    # than in the writer — a writer that inspected the question would be a writer with a parser
+    # in it.
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
-        text=answer_writer.write(answer, plan),
+        text=(
+            answer_writer.when(answer, plan)
+            if explicit_facts.asks_when(sentence)
+            else answer_writer.write(answer, plan)
+        ),
         plan=answer_writer.describe(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.

@@ -289,6 +289,52 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     return f"{head}\n{lines}{tail}"
 
 
+def when(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """The same figures, answering *when* instead of how much.
+
+    From a real conversation:
+
+        "¿Cuándo me suelen ingresar la nómina?"  → "17.383,97 € en nómina en lo que va de año."
+
+    A correct number and not an answer. What makes it worth its own writer rather than a refusal is
+    that the answer was already on screen: the seven payslips were listed underneath with their
+    dates, 28 jan, 28 feb, 25 mar… The question had been answered and the headline said something
+    else, which is the same defect as a count reported as an amount, one level up.
+
+    **A pattern is only claimed when the evidence supports one.** Monthly means as many movements as
+    distinct months — seven payslips across seven months. Sixty-four supermarket trips across seven
+    months are not monthly, and only ten of them came back, so inferring "between the 6th and the
+    25th" from a sample would be a shape invented out of whatever the limit happened to include.
+
+    ponytail: monthly is the only recurrence this recognises, by counting months. Weekly,
+    fortnightly and "every other Tuesday" need a domain concept for recurrence rather than a wider
+    heuristic here — this one is right because it is arithmetic on complete evidence, and a
+    fourth branch guessing at cadence would not be.
+    """
+    window = window_of(plan)
+    about = filter_of(plan)
+    if answer.is_empty:
+        return f"No he encontrado movimientos{about} {window}."
+
+    count = answer.movement_count
+    noun = "vez" if count == 1 else "veces"
+    # `movements` is capped by the deployment's evidence limit, so fewer than the count means this
+    # is a sample and any pattern read off it is a fact about the limit.
+    complete = len(answer.movements) == count
+    months = {(m.occurred_at.year, m.occurred_at.month) for m in answer.movements}
+
+    if complete and count >= 2 and len(months) == count:
+        days = sorted({m.occurred_at.day for m in answer.movements})
+        on = f"el día {days[0]}" if len(days) == 1 else f"entre el día {days[0]} y el {days[-1]}"
+        return f"{count} {noun}{about} {window}, una al mes, {on}."
+    if complete:
+        return f"{count} {noun}{about} {window}. Tienes las fechas debajo."
+    return (
+        f"{count} {noun}{about} {window} — demasiados para verte un patrón. "
+        f"Prueba con un periodo más corto."
+    )
+
+
 def _figure(group: Group, answer: QueryAnswer, counting: bool) -> str:
     """A breakdown of a count is counts. Amounts under a "how many" question would be
     the same mistake again, one row at a time."""

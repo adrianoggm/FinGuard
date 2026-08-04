@@ -18,6 +18,8 @@ unit test of the extractor would have passed before the bug existed.
 import uuid
 from datetime import date, datetime
 
+import pytest
+
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import Conversation
@@ -235,3 +237,205 @@ def test_the_direction_is_left_to_the_verifier() -> None:
     planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.LAST_MONTH))
 
     assert explicit_facts.enforce(planned, facts).direction is Direction.ALL
+
+
+# --- when, not how much -----------------------------------------------------------------
+
+
+def payslips(count: int) -> QueryAnswer:
+    """One a month, on days a payroll actually lands on."""
+    days = [(1, 28), (2, 28), (3, 25), (4, 27), (5, 25), (6, 28), (7, 28)][:count]
+    return QueryAnswer(
+        currency="EUR",
+        total_minor=244_287 * count,
+        movement_count=count,
+        movements=tuple(
+            Movement(
+                occurred_at=datetime(2026, month, day, 9, 0),
+                description="Nómina",
+                amount_minor=244_287,
+                direction="INCOME",
+                merchant_name="Innovasur SL",
+            )
+            for month, day in days
+        ),
+    )
+
+
+def test_asking_when_is_not_answered_with_a_total() -> None:
+    """From the report: "¿Cuándo me suelen ingresar la nómina?" → "17.383,97 € en nómina en lo que
+    va de año". Correct number, and the dates were already on screen underneath it."""
+    from finguard_orchestrator.domain.services import answer_writer
+
+    salary = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("SALARY",),
+    )
+
+    said = answer_writer.when(payslips(7), salary)
+
+    assert "una al mes" in said
+    assert "entre el día 25 y el 28" in said
+    assert "€" not in said, "the question was when, not how much"
+
+
+def test_a_pattern_is_only_claimed_when_the_evidence_is_complete() -> None:
+    """Sixty-four supermarket trips came back as ten. Reading a cadence off the ten would be a
+    fact about the evidence limit wearing an answer's clothes."""
+    from finguard_orchestrator.domain.services import answer_writer
+
+    sampled = QueryAnswer(
+        currency="EUR",
+        total_minor=350_891,
+        movement_count=64,
+        movements=payslips(7).movements,
+    )
+    groceries = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES",),
+    )
+
+    said = answer_writer.when(sampled, groceries)
+
+    assert "patrón" in said
+    assert "una al mes" not in said
+
+
+def test_movements_that_are_not_monthly_are_not_called_monthly() -> None:
+    """Two in the same month is not a monthly pattern, however complete the evidence is."""
+    from finguard_orchestrator.domain.services import answer_writer
+
+    twice_in_july = QueryAnswer(
+        currency="EUR",
+        total_minor=10_000,
+        movement_count=2,
+        movements=(
+            Movement(datetime(2026, 7, 3, 9, 0), "Compra", 5_000, "EXPENSE"),
+            Movement(datetime(2026, 7, 19, 9, 0), "Compra", 5_000, "EXPENSE"),
+        ),
+    )
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_YEAR))
+
+    said = answer_writer.when(twice_in_july, plan)
+
+    assert "una al mes" not in said
+    assert "fechas debajo" in said
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuándo me suelen ingresar la nómina?",
+        "cuando suelo ir al supermercado a comprar?",
+        "¿cada cuánto pago el alquiler?",
+        "¿en qué fechas me cobran las suscripciones?",
+    ],
+)
+def test_a_question_about_time_is_recognised(sentence: str) -> None:
+    assert explicit_facts.asks_when(sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # One letter apart from "cuándo", and the sentence is folded before it is read — so the
+        # boundary is what keeps a question about money out of the writer for questions about time.
+        "¿cuánto gasté el mes pasado?",
+        "¿cuántas veces fui al súper?",
+        "¿cuánto me han ingresado este año?",
+    ],
+)
+def test_a_question_about_amount_is_not_one_about_time(sentence: str) -> None:
+    assert not explicit_facts.asks_when(sentence)
+
+
+# --- a filter that outlived its question ---------------------------------------------
+
+
+class EmptyThenFull:
+    """Empty while the category is there, and an answer once it is gone — the Mercadona case."""
+
+    def __init__(self) -> None:
+        self.plans: list[FinancialPlan] = []
+
+    async def run(self, plan, *, account_id, today, reporting_timezone="Europe/Madrid", **kw):
+        self.plans.append(plan)
+        if plan.categories:
+            return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+        return QueryAnswer(currency="EUR", total_minor=21_778, movement_count=3)
+
+    async def ranked(self, ranking, *, account_id, today, reporting_timezone):
+        return None
+
+
+HEALTH_LAST_QUARTER = FinancialPlan(
+    direction=Direction.EXPENSE, period=THREE_MONTHS, categories=("HEALTH",)
+)
+
+
+async def test_a_category_from_five_turns_ago_does_not_empty_a_question_about_a_shop() -> None:
+    """The reported turn. `health` came from a question five turns earlier, survived a
+    clarification loop that answered nothing, and made a question about Mercadona come back empty
+    — with "buscar sin categoría" offered as a button the user then had to press."""
+    both = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=THREE_MONTHS,
+        categories=("HEALTH",),
+        merchants=("Mercadona",),
+    )
+    ledger = EmptyThenFull()
+
+    result = await ask(
+        "¿Qué gastos tengo históricamente en el Mercadona?",
+        FakePlanner(PlanningResult.planned(both)),
+        ledger,  # type: ignore[arg-type]
+        conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
+    )
+
+    assert [p.categories for p in ledger.plans] == [("HEALTH",), ()]
+    assert result.movement_count == 3
+    assert "salud" in result.text, "it says which filter it dropped"
+
+
+async def test_an_ordinary_follow_up_keeps_its_category_even_when_empty() -> None:
+    """The case that makes the rule narrow. "¿Y la semana pasada?" after a question about health
+    names no category either, and answering it about every expense would be a different question.
+    Only a shop the previous plan did not have makes the pair suspicious."""
+    narrower = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_WEEK),
+        categories=("HEALTH",),
+    )
+    ledger = EmptyThenFull()
+
+    result = await ask(
+        "¿y la semana pasada?",
+        FakePlanner(PlanningResult.planned(narrower)),
+        ledger,  # type: ignore[arg-type]
+        conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
+    )
+
+    assert [p.categories for p in ledger.plans] == [("HEALTH",)], "asked once, kept the filter"
+    assert result.movement_count == 0
+
+
+async def test_a_category_the_sentence_names_is_never_dropped() -> None:
+    """Naming it is the whole difference between an inherited filter and a chosen one."""
+    named = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=THREE_MONTHS,
+        categories=("HEALTH",),
+        merchants=("Mercadona",),
+    )
+    ledger = EmptyThenFull()
+
+    await ask(
+        "¿cuánto he gastado en salud en el Mercadona?",
+        FakePlanner(PlanningResult.planned(named)),
+        ledger,  # type: ignore[arg-type]
+        conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
+    )
+
+    assert [p.categories for p in ledger.plans] == [("HEALTH",)]
