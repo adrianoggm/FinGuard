@@ -54,9 +54,11 @@ from finguard_orchestrator.infrastructure import (
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
+from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
+from finguard_orchestrator.observability import configure_logging
 
 DESCRIPTION = """
 Conversational orchestrator of FinGuard.
@@ -70,6 +72,12 @@ code.
 
 def create_app() -> FastAPI:
     """Composition root: the only place that wires concrete implementations."""
+    # First, before anything can want to say something. Uvicorn has already configured its own
+    # loggers by now and this takes them over deliberately — two formats interleaved in one stream
+    # is a stream nothing can parse.
+    logging_settings = get_settings()
+    configure_logging(level=logging_settings.log_level, as_json=logging_settings.log_json)
+
     app = FastAPI(
         title="FinGuard Assistant API",
         version="0.1.0",
@@ -262,6 +270,11 @@ def create_app() -> FastAPI:
         # service accepts, and a wildcard makes that statement unfalsifiable.
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Outermost, so it sees the status a handler's exception turns into and the ones CORS answers
+    # by itself. Every request accounted for is the property; a decorator per route would account
+    # for the ones somebody remembered.
+    register_request_logging(app)
 
     app.include_router(assistant_router)
     app.include_router(payments_router)

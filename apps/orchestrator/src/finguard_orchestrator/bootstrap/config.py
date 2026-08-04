@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     # is in a header, and `*` with credentials lets any page a user visits spend their session.
     web_origins: tuple[str, ...]
 
+    # How loud, and in which shape. Operational policy, so configuration — a developer wants lines
+    # they can read in a terminal and a deployment wants objects something can index. What is *in*
+    # a record is not configurable and never should be: see the redaction note in observability.py.
+    log_level: str = "INFO"
+    log_json: bool = True
+
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.

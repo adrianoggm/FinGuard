@@ -9,6 +9,8 @@ in banking: a handler that reads the clock cannot be replayed, and this one has 
 the evaluation depends on it.
 """
 
+import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -31,6 +33,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PlannedQuery,
     Slot,
     UnsupportedCapability,
+    workflow_of,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
@@ -56,11 +59,14 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.observability import account_ref
 
 # Reads have no side effects, so one immediate retry can recover a short transport interruption.
 # A second failure becomes visible state and lets the user decide whether to try again; commands
 # deliberately do not use this policy because their outcome may be indeterminate after a timeout.
 BANK_READ_ATTEMPTS = 2
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -227,6 +233,36 @@ class AskFinancialQuestionHandler:
         return result
 
     async def stream(
+        self, query: AskFinancialQuestionQuery
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        """The pipeline, with one record per turn wrapped around it.
+
+        A wrapper rather than a log call in each branch: `_steps` ends in a dozen places and the
+        interesting fact is the same one every time — what this turn decided and how long it took.
+        `handle` drains this, so both routes are covered by writing it once.
+
+        Nothing the holder wrote is in the record. See `observability` for the list and why.
+        """
+        started = time.perf_counter()
+        outcome = "INCOMPLETE"
+        try:
+            async for step in self._steps(query):
+                if isinstance(step, AskFinancialQuestionResult):
+                    outcome = step.outcome
+                yield step
+        finally:
+            logger.info(
+                "turn",
+                extra={
+                    "account": account_ref(query.account_id),
+                    "outcome": outcome,
+                    "had_workflow": workflow_of(query.conversation.active),
+                    "had_plan": query.conversation.last_plan is not None,
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                },
+            )
+
+    async def _steps(
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
@@ -449,6 +485,22 @@ class AskFinancialQuestionHandler:
         # list — a real figure about a window the user had written down and nobody read.
         facts = explicit_facts.read(query.sentence, today=query.today)
         checked = explicit_facts.enforce(planned.plan, facts)
+        if facts.window is not None:
+            # The record that makes a degraded conversation readable after the fact. Three windows
+            # in one line — what the sentence said, what the model produced, what ran — so the turn
+            # where "los últimos 3 meses" became five is visible without reproducing it.
+            #
+            # A window is a period name and a count, or two dates. None of that is anything the
+            # holder wrote: it is this service's own vocabulary, which is why it may be logged when
+            # the sentence it came from may not.
+            logger.info(
+                "turn.window",
+                extra={
+                    "explicit": _window_of(checked),
+                    "planned": _window_of(planned.plan),
+                    "inherited": _window_of(planning_previous),
+                },
+            )
         correcting = force_follow_up or facts.corrects
         if correcting and planning_previous is not None and isinstance(checked, FinancialPlan):
             # A correction patches. The same turn that lost the window also lost the category the
@@ -943,6 +995,21 @@ def _refusal_for(rule: str, sentence: str) -> str:
         f"así que no te doy una cifra que estaría mal. Prueba a decírmelo nombrando la categoría: "
         f"«¿cuánto gasté en {words} el mes pasado?»"
     )
+
+
+def _window_of(plan: PlannedQuery | None) -> str | None:
+    """A window as one short string, for a log line.
+
+    `None` when there is no plan to read one off, which is itself the interesting value: it is
+    what "nothing was inherited" looks like in the record.
+    """
+    if plan is None:
+        return None
+    if plan.period is not None:
+        named = plan.period.period.value
+        return f"{named}:{plan.period.n}" if plan.period.n else named
+    assert plan.date_range is not None  # the plan's own invariant guarantees one
+    return f"{plan.date_range.start}..{plan.date_range.end}"
 
 
 def _spoken(plan: FinancialPlan) -> SpokenPlan:
