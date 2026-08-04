@@ -60,6 +60,26 @@ conversations:
       - say: ¿y cuántas veces?
         keeps: [window, categories]
 
+  - id: a_correction_changes_only_what_it_names
+    why: >
+      A correction is a patch, not a restart. The user replaces the category and does not have
+      to repeat a period the previous plan already understood.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: No me has entendido, me refería al alquiler
+        keeps: [window]
+
+  - id: a_bare_correction_can_be_completed_on_the_next_turn
+    why: >
+      "No es eso" contains nothing a planner can turn into a query. The assistant asks what to
+      change, saves the valid plan, and applies the answer without losing its period.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: Perdona, no me has entendido
+        expect: NEEDS_CLARIFICATION
+      - say: Me refería al alquiler
+        keeps: [window]
+
   - id: cinema_refused_then_rephrased
     why: >
       The category gate, and what the user does about it. The refusal names a sentence they can

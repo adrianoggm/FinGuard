@@ -75,6 +75,24 @@ def test_a_draft_that_already_has_a_window_needs_none() -> None:
     assert drafted.needs_a_window is False
 
 
+def test_a_complete_draft_can_become_a_plan_without_replacing_its_window() -> None:
+    drafted = FinancialPlanDraft(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_MONTH),
+        categories=("LEISURE",),
+    )
+
+    plan = drafted.into_plan()
+
+    assert plan is not None
+    assert plan.period == RelativePeriod(period=Period.LAST_MONTH)
+    assert plan.categories == ("LEISURE",)
+
+
+def test_an_incomplete_draft_cannot_become_a_plan() -> None:
+    assert RENT.into_plan() is None
+
+
 def test_a_draft_cannot_hold_two_windows() -> None:
     """Same rule as the plan, and for the same reason: two windows are two questions, and
     which one wins would depend on the reader."""

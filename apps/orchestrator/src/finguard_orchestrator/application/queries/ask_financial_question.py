@@ -273,11 +273,14 @@ class AskFinancialQuestionHandler:
             if isinstance(previous, FinancialPlan) and intent_router.is_bare_correction(
                 query.sentence
             ):
-                # There is nothing to patch yet. Keep the validated plan visible in the state so
-                # the next turn can name one replacement without having to restate every good field.
+                # There is nothing to patch yet. Keep the validated plan in the state so the next
+                # turn can name one replacement without having to restate every good field.
                 yield AskFinancialQuestionResult(
                     outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                    text=("¿Qué debería corregir: el periodo, la categoría o el tipo de cálculo?"),
+                    text=(
+                        "Entendido. ¿Qué debería cambiar: el periodo, gastos o ingresos, "
+                        "la categoría, el comercio o el tipo de cálculo?"
+                    ),
                     conversation=was.with_active(
                         FinancialClarification(
                             draft=FinancialPlanDraft.of(previous),
@@ -352,27 +355,39 @@ class AskFinancialQuestionHandler:
 
         assert planned.plan is not None  # is_answerable is exactly this condition
 
-        broken = plan_verifier.disagreement(query.sentence, planned.plan, self._policy)
+        checked = planned.plan
+        broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
         if broken is not None:
             # The plan is well formed, the domain accepts it, and it answers a different
             # question from the one asked. Nothing downstream can tell: banking would
             # return a real figure. This is the only place that compares the two.
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                text=_refusal_for(broken, query.sentence),
-                plan=answer_writer.describe(planned.plan),
-                # The plan is shown but not remembered: it is the one that misread the question,
-                # and inheriting from it would carry the misreading into the next turn.
-                conversation=was,
-            )
-            return
+            #
+            # Some of those disagreements have one correction, and taking it is better than
+            # asking the user to rephrase a sentence we understood: "cuantos fueron en el
+            # supermercado" was planned with the right filter and the wrong metric. Only taken
+            # when it verifies — a repair that moved the disagreement rather than resolving it
+            # would be a guess with a correction's confidence.
+            mended = plan_verifier.repaired(broken, checked)
+            if mended is not None and plan_verifier.disagreement(query.sentence, mended) is None:
+                checked = mended
+            else:
+                yield AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                    text=_refusal_for(broken, query.sentence),
+                    plan=answer_writer.describe(checked),
+                    # The plan is shown but not remembered: it is the one that misread the
+                    # question, and inheriting from it would carry the misreading into the
+                    # next turn.
+                    conversation=was,
+                )
+                return
 
-        yield Stage("planned", answer_writer.describe(planned.plan))
+        yield Stage("planned", answer_writer.describe(checked))
         yield Stage("querying")
-        if isinstance(planned.plan, TopMovements):
-            yield await self._ranked(query, planned.plan)
+        if isinstance(checked, TopMovements):
+            yield await self._ranked(query, checked)
             return
-        yield await self._answer(query, planned.plan)
+        yield await self._answer(query, checked)
 
     def _declined(self, capability: str, was: Conversation) -> AskFinancialQuestionResult:
         """A refusal that remembers what it was about.
@@ -468,10 +483,8 @@ class AskFinancialQuestionHandler:
         asked for, and the verifier would then refuse a plan the shortcut itself got wrong.
         Standing aside sends it to the model, which can read both things.
 
-        A reply that goes to the model loses the draft, which is today's behaviour and not yet
-        better than it: threading a half-built plan into the prompt is the next step, and it
-        needs the prompt to be able to say "these fields are settled" without inviting the
-        model to restate them.
+        A reply that goes to the model is handled just below as a forced patch. That path completes
+        any window it can read here, then tells the model which existing fields are settled.
         """
         active = query.conversation.active
         if not isinstance(active, FinancialClarification):

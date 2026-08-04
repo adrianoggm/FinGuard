@@ -81,6 +81,20 @@ def test_a_clarification_survives_with_its_slot() -> None:
     assert back.awaiting is Slot.CATEGORY
 
 
+def test_a_correction_request_survives_with_the_plan_it_will_patch() -> None:
+    plan = FUEL_THIS_YEAR.into_plan()
+    assert plan is not None
+    out = IDLE.answered(plan).with_active(
+        FinancialClarification(draft=FUEL_THIS_YEAR, awaiting=Slot.CORRECTION)
+    )
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert back.awaiting is Slot.CORRECTION
+    assert back.last_plan == plan
+
+
 def test_a_refusal_survives_with_the_family_it_named() -> None:
     """Which the answer needs: "no hago previsiones" and "no comparo dos periodos" are different
     sentences, and a round trip that lost the family would flatten them into "no puedo con eso"."""

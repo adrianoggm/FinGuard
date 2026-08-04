@@ -15,10 +15,11 @@ import pytest
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.services.plan_merger import Field, merge
+from finguard_orchestrator.domain.services.plan_merger import Field, merge, merge_draft
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 
@@ -114,3 +115,28 @@ def test_metric_and_grouping_are_inherited_independently() -> None:
 
     assert merged.metric is Metric.COUNT
     assert merged.group_by is GroupBy.CATEGORY
+
+
+def test_a_clarifying_patch_keeps_every_field_it_did_not_name() -> None:
+    """A correction can still need clarification. Its incomplete draft must not erase the
+    valid category, direction or metric from the plan it is correcting."""
+    draft = FinancialPlanDraft(direction=Direction.ALL, metric=Metric.COUNT)
+
+    merged = merge_draft(PREVIOUS, draft, changed=frozenset({Field.METRIC}))
+
+    assert merged.period == THIS_MONTH
+    assert merged.categories == ("GROCERIES",)
+    assert merged.direction is Direction.EXPENSE
+    assert merged.metric is Metric.COUNT
+
+
+def test_a_clarifying_patch_can_explicitly_remove_the_window() -> None:
+    """When the window itself is what needs clarification, an absent emitted window is data:
+    the draft remains incomplete while every unrelated field survives."""
+    draft = FinancialPlanDraft(direction=Direction.ALL)
+
+    merged = merge_draft(PREVIOUS, draft, changed=frozenset({Field.WINDOW}))
+
+    assert merged.needs_a_window is True
+    assert merged.categories == ("GROCERIES",)
+    assert merged.direction is Direction.EXPENSE
