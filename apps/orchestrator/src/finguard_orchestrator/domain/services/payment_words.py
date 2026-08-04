@@ -83,29 +83,39 @@ def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact,
     Marta Solis Vega and "manana" does not find Ana. Accents and case are folded, because the
     directory spells "Solís" and nobody types it.
 
-    **A whole name beats the parts of another.** "Marta Solis Vega" contains "Marta", which is also
-    Marta Ruiz Gomez's name, so matching on parts alone made the sentence that *resolves* the
-    ambiguity report it again. When any contact is named in full, only those are returned — the same
-    longest-match rule the category vocabulary uses, for the same reason.
+    **The most specific match wins**, measured as how much of a name the sentence gets right. That
+    rule is what makes the ambiguity resolvable, and the first version did not have it: matching on
+    any single part made "Marta Vega" match Marta Ruiz Gomez on "marta" and Marta Solis Vega on
+    "marta" and "vega", so the sentence that *resolves* which Marta reported the same ambiguity
+    again, forever. Three turns of the reported conversation are that loop.
+
+    Two parts beat one, so "Marta Vega" is Marta Solis Vega; "Marta" alone still names both,
+    because they tie on one and the tie is real. Order does not matter — what is counted is the
+    parts the sentence gets right, not the order it puts them in.
     """
     haystack = spanish.folded(sentence)
 
-    def names(contact: Contact) -> bool:
-        whole = spanish.folded(contact.display_name)
-        return bool(re.search(rf"(?<![a-z0-9]){re.escape(whole)}(?![a-z0-9])", haystack))
-
-    def names_a_part(contact: Contact) -> bool:
-        # Each word of the name on its own, so a first name or a surname is enough. The particles
-        # are skipped by name rather than by length: "Ana" is three letters and a real first name,
-        # while "del" is three letters and appears in every other Spanish sentence.
-        parts = [
+    def parts_of(contact: Contact) -> list[str]:
+        # The whole name counts as one part beyond the words, so "Marta Solis Vega" written in full
+        # outscores any partial reading of it. The particles are skipped by name rather than by
+        # length: "Ana" is three letters and a real first name, while "del" is three letters and
+        # appears in every other Spanish sentence.
+        words = [
             part
             for part in spanish.folded(contact.display_name).split()
             if len(part) > 2 and part not in _PARTICLES
         ]
-        return any(
-            re.search(rf"(?<![a-z0-9]){re.escape(part)}(?![a-z0-9])", haystack) for part in parts
+        return [*words, spanish.folded(contact.display_name)]
+
+    def score(contact: Contact) -> int:
+        return sum(
+            1
+            for part in parts_of(contact)
+            if re.search(rf"(?<![a-z0-9]){re.escape(part)}(?![a-z0-9])", haystack)
         )
 
-    exact = tuple(contact for contact in directory if names(contact))
-    return exact or tuple(contact for contact in directory if names_a_part(contact))
+    scored = [(score(contact), contact) for contact in directory]
+    best = max((points for points, _ in scored), default=0)
+    if best == 0:
+        return ()
+    return tuple(contact for points, contact in scored if points == best)

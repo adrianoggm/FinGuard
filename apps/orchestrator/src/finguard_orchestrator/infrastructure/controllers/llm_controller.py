@@ -232,7 +232,11 @@ async def _as_payment(
 
 
 def _payment_events(
-    sentence: str, who: Caller, commands: CommandBus, payments_on: bool
+    sentence: str,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    pending: PaymentDraft | None = None,
 ) -> StreamingResponse:
     """The payment path as server-sent events: one stage, then the answer.
 
@@ -247,7 +251,7 @@ def _payment_events(
 
     async def events() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "reading", "detail": None})
-        answer = await _as_payment(sentence, who, commands, payments_on)
+        answer = await _as_payment(sentence, who, commands, payments_on, pending)
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -561,6 +565,10 @@ async def ask_streaming(
     today: Today,
     commands: Commands,
     payments_on: PaymentsOn,
+    # For the contact directory, which is what resolves a recipient when a payment is being
+    # continued. This route takes its own handler rather than the bus for the answer itself; the
+    # directory is an ordinary query and goes through the bus like everything else.
+    queries: Queries,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -573,6 +581,14 @@ async def ask_streaming(
     plan that misread the question can be seen for what it is while that still helps —
     rather than arriving as a footnote under a number the user has already read.
     """
+    continuing = await _continues_a_payment(request, who, queries)
+    if continuing is not None:
+        # Here as well as on the other route, and for the reason written below: the web client types
+        # into *this* endpoint, so a payment that could only be continued on the other one was a
+        # payment that could not be continued at all. The first version of this change wired the
+        # routing into `/v1/questions` alone and the browser conversation still broke.
+        return _payment_events(request.question, who, commands, payments_on, continuing)
+
     if payment_router.is_payment(request.question):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one

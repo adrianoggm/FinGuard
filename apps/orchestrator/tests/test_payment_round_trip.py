@@ -38,6 +38,7 @@ from finguard_orchestrator.application.queries.list_contacts import (
 )
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
+    get_ask_handler,
     get_command_bus,
     get_query_bus,
 )
@@ -79,13 +80,24 @@ class FakePreparing:
         return self._answer
 
 
+ANSWERED = AskFinancialQuestionResult(outcome="PLANNED", text="1.895,97 € el mes pasado.")
+
+
 class FakeAsking:
+    """Both shapes, because the two endpoints reach the question path differently: /v1/questions
+    goes through the bus and the stream takes the handler directly. Testing one and not the other is
+    how the endpoints diverged twice."""
+
     def __init__(self) -> None:
         self.sentences: list[str] = []
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
         self.sentences.append(query.sentence)
-        return AskFinancialQuestionResult(outcome="PLANNED", text="1.895,97 € el mes pasado.")
+        return ANSWERED
+
+    async def stream(self, query: AskFinancialQuestionQuery):
+        self.sentences.append(query.sentence)
+        yield ANSWERED
 
 
 class FakeContacts:
@@ -102,6 +114,7 @@ def client_for(answer: PaymentAnswer = PREVIEWED) -> tuple[TestClient, FakePrepa
     queries.register(ListContactsQuery, FakeContacts())
     app.dependency_overrides[get_command_bus] = lambda: commands
     app.dependency_overrides[get_query_bus] = lambda: queries
+    app.dependency_overrides[get_ask_handler] = lambda: asking
     app.dependency_overrides[authenticated_caller] = lambda: Caller(
         holder_reference="ES-0001",
         account_id=ACCOUNT,
@@ -250,3 +263,43 @@ def test_a_draft_carrying_an_absurd_amount_is_a_bad_request() -> None:
 
     assert response.status_code == 422
     assert preparing.commands == []
+
+
+def test_the_streaming_endpoint_continues_a_payment_too() -> None:
+    """The web client types into this one, so a payment that could only be continued on the other
+    route was a payment that could not be continued at all.
+
+    The first version of the continuation wired the routing into /v1/questions alone, and the
+    browser conversation still asked "¿de qué periodo?" — the same divergence between the two
+    endpoints that had already been fixed once for starting a payment.
+    """
+    client, preparing, asking = client_for()
+
+    with client.stream(
+        "POST",
+        "/v1/questions/stream",
+        json={"question": "15 euros", "payment_draft": {"recipient_name": "Marta Solis Vega"}},
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert asking.sentences == [], "the stream sent a payment reply to the financial planner"
+    assert len(preparing.commands) == 1
+    assert preparing.commands[0].pending is not None
+    assert str(INTENT) in body
+
+
+def test_the_streaming_endpoint_still_lets_a_question_through() -> None:
+    client, preparing, asking = client_for()
+
+    with client.stream(
+        "POST",
+        "/v1/questions/stream",
+        json={
+            "question": "¿cuánto gasté el mes pasado?",
+            "payment_draft": {"recipient_name": "Marta Solis Vega"},
+        },
+    ) as response:
+        list(response.iter_text())
+
+    assert preparing.commands == []
+    assert asking.sentences == ["¿cuánto gasté el mes pasado?"]

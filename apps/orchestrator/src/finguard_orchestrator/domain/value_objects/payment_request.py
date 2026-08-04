@@ -36,6 +36,12 @@ class PaymentRequest:
     # What the payment is for, in the user's own words. Optional, because a payment without one is
     # still a payment — and it was read out of "con el concepto tapas" and then dropped on the
     # floor, because this field did not exist.
+    #
+    # **It reaches the confirmation prompt and no further.** Banking's prepare endpoint takes a
+    # recipient, an amount and a currency, so the note is shown to the user at the moment they say
+    # yes and is not stored on the intent or on the movement. Finishing that means a column, a
+    # migration and a field on banking's own contract; until then this is honest about where it
+    # stops, rather than implying the ledger remembers it.
     concept: str | None = None
 
     def __post_init__(self) -> None:
