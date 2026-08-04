@@ -20,18 +20,14 @@ value refused at the edge is a 422 and one refused three layers in is an apology
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Final
 
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.payment_request import (
+    MAX_CONCEPT,
     MAX_PAYMENT_MINOR,
     MAX_RECIPIENT_NAME,
     PaymentRequest,
 )
-
-# What the user may add to a concept. Long enough for "cena del viernes con Marta y Aitor", short
-# enough that the field cannot carry a paragraph into the ledger's description.
-MAX_CONCEPT: Final = 140
 
 
 class PaymentField(StrEnum):
@@ -119,4 +115,5 @@ class PaymentDraft:
             recipient_name=self.recipient_name,
             amount_minor=self.amount_minor,
             currency=self.currency,
+            concept=self.concept,
         )

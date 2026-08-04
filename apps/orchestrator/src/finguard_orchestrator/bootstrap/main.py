@@ -188,6 +188,9 @@ def create_app() -> FastAPI:
             timeout_seconds=settings.banking_timeout_seconds,
         ),
         settings.guard_policy(),
+        # The same directory the conversation and the payment form read. A recipient is resolved
+        # against it without a model, which is what lets "Marta Solis Vega" answer "¿a quién?".
+        contacts=contacts,
     )
 
     command_bus = CommandBus()

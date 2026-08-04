@@ -165,15 +165,27 @@ async def test_an_answer_outside_the_schema_is_a_structural_failure(answer: str)
     assert reading.request is None
 
 
-async def test_an_amount_of_zero_with_a_payment_outcome_is_not_a_payment() -> None:
-    """0 is the schema's sentinel for "unused". Arriving with PLANNED means it chose to pay and
-    named no amount, which the value object refuses rather than the reader interpreting."""
+async def test_an_amount_of_zero_is_a_missing_amount_rather_than_a_bad_one() -> None:
+    """0 is the schema's sentinel for "unused", so PLANNED with 0 means it read a payment and the
+    sentence did not say how much.
+
+    This used to be INVALID_DOMAIN, and the sentence the user read was "no lo he entendido" — about
+    a sentence that was understood except for one field. It is a question, and it carries what was
+    read so the answer can complete it instead of starting again.
+
+    What does not change is the safety half: no request is built, so nothing reaches the bank and
+    no confirmation prompt appears.
+    """
     engine, _ = reader({**READ, "amountMinor": 0})
 
     reading = await engine.read(SENTENCE)
 
-    assert reading.outcome is PlanningOutcome.INVALID_DOMAIN
+    assert reading.outcome is PlanningOutcome.NEEDS_CLARIFICATION
     assert reading.request is None
+    assert reading.question is not None and "cuánto" in reading.question.lower()
+    assert reading.draft is not None
+    assert reading.draft.recipient_name == READ["recipient"]
+    assert reading.draft.amount_minor is None
 
 
 async def test_an_absurd_amount_never_reaches_a_confirmation_prompt() -> None:
