@@ -19,6 +19,7 @@ from finguard_banking.application import (
     SummaryMovement,
     SummaryTrace,
 )
+from finguard_banking.application.queries.ranked_movement import RankedMovementResult
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.category import Category
@@ -40,6 +41,8 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     PaymentPreviewResponse,
     PaymentReceiptResponse,
     PreparePaymentRequest,
+    RankedMovementRequest,
+    RankedMovementResponse,
     TraceResponse,
 )
 
@@ -76,6 +79,36 @@ def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery
         supporting_limit=request.supporting_limit,
         explain=request.explain,
         reporting_timezone=zone,
+    )
+
+
+def ranked_plan_from_dto(request: RankedMovementRequest, today: date) -> FinancialQuery:
+    """The filters of a ranking, as a plan.
+
+    The same window resolution as a query, reusing the same helper: a relative period becomes
+    absolute here because this is where the clock lives. `metric` and `group_by` take their
+    defaults — a ranking has no aggregate — and `supporting_limit` is zero, because the movement
+    *is* the answer rather than evidence beside one.
+    """
+    return plan_from_dto(
+        FinancialQueryRequest(
+            account_id=request.account_id,
+            direction=request.direction,
+            categories=request.categories,
+            merchants=request.merchants,
+            date_range=request.date_range,
+            period=request.period,
+            supporting_limit=0,
+        ),
+        today,
+    )
+
+
+def ranked_to_dto(result: RankedMovementResult) -> RankedMovementResponse:
+    return RankedMovementResponse(
+        account_id=result.account_id,
+        rank=result.rank,
+        movement=_movement_to_dto(result.movement) if result.movement is not None else None,
     )
 
 
