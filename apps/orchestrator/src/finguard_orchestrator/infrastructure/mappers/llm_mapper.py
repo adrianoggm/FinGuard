@@ -172,6 +172,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
                 occurred_at=movement.occurred_at,
                 description=movement.description,
                 amount_minor=movement.amount_minor,
+                direction=movement.direction,
                 merchant_name=movement.merchant_name,
                 category=movement.category,
             )

@@ -121,7 +121,10 @@ class SpokenGroupResponse(_Payload):
 class SpokenMovementResponse(_Payload):
     occurred_at: str
     description: str
+    # Unsigned, with the direction beside it. A client deriving the sign from the amount alone
+    # showed every expense as an income, because a query filtered by EXPENSE returns positives.
     amount_minor: int
+    direction: str
     merchant_name: str | None = None
     category: str | None = None
 

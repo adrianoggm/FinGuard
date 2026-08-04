@@ -27,6 +27,19 @@ export function money(amountMinor: number, currency = "EUR"): string {
 }
 
 /** Signed on purpose: a movement list exists to tell a charge from a payment in. */
+/**
+ * Money out, whichever way the service spelled it.
+ *
+ * Two shapes reach this. The movement list sends signed amounts, where the sign carries the
+ * meaning; a chat answer sends unsigned amounts with a direction, because banking returns positives
+ * for a query filtered by EXPENSE. Reading only the sign turned every expense in the chat into an
+ * income, which is the one distinction a movement list exists to make.
+ */
+export function outgoing(movement: { amount_minor: number; direction?: string }): boolean {
+  if (movement.direction) return movement.direction === "EXPENSE";
+  return movement.amount_minor < 0;
+}
+
 export function signed(amountMinor: number, currency = "EUR"): string {
   const sign = amountMinor > 0 ? "+" : "";
   return `${sign}${money(amountMinor, currency)}`;

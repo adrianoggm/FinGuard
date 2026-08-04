@@ -89,7 +89,11 @@ class SpokenContact:
 class SpokenMovement:
     occurred_at: str
     description: str
+    # Unsigned, as banking returns it: a query filtered by EXPENSE comes back with positive
+    # amounts and the direction beside them. The direction is what makes the sign, and dropping
+    # it here is why every expense in the chat rendered as "+22,11 €" — money coming in.
     amount_minor: int
+    direction: str
     merchant_name: str | None = None
     category: str | None = None
 
@@ -573,6 +577,7 @@ def _answered(plan: FinancialPlan, answer: QueryAnswer) -> AskFinancialQuestionR
                 occurred_at=m.occurred_at.isoformat(),
                 description=m.description,
                 amount_minor=m.amount_minor,
+                direction=m.direction,
                 merchant_name=m.merchant_name,
                 category=m.category,
             )
