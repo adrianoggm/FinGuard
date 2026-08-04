@@ -17,8 +17,18 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
-import { awaitingConfirmation, pendingIntent, settled, type Thread } from "./Conversation";
+import {
+  Conversation,
+  awaitingConfirmation,
+  pendingIntent,
+  recipientChoices,
+  settled,
+  withChoice,
+  type Thread,
+} from "./Conversation";
 import type { Answer, ConversationState, PlanContext } from "./api";
 
 const LAST_MONTH: PlanContext = {
@@ -47,6 +57,7 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
     intent_id: null,
     recipient: null,
     amount_minor: null,
+    concept: null,
     ...fields,
   };
 }
@@ -103,6 +114,27 @@ describe("the state the service sent", () => {
     expect(after.conversation).toBe(now);
   });
 
+  it("closes a confirmed payment when the service returns an idle conversation", () => {
+    const before = state({
+      workflow: "PAYMENT_CONFIRMATION",
+      awaiting: "CONFIRMATION",
+      intent_id: "intent-1",
+      recipient: "Marta Solis Vega",
+      amount_minor: 1_500,
+    });
+    const idle = state({ last_plan: LAST_MONTH });
+
+    const after = settled(
+      thread({ conversation: before }),
+      [],
+      answer({ outcome: "PAID", intent_id: "intent-1", conversation: idle }),
+      noop,
+    );
+
+    expect(awaitingConfirmation(after)).toBe(false);
+    expect(after.conversation).toBe(idle);
+  });
+
   it("keeps the last one when an answer carries none", () => {
     // The payment endpoints answer about a payment rather than about a conversation, so they send
     // no state. Dropping it there would end the conversation because a bizum was confirmed.
@@ -137,6 +169,50 @@ describe("what the client still works out for itself", () => {
 
     expect(awaitingConfirmation(building)).toBe(false);
     expect(pendingIntent(building)).toBeNull();
+  });
+
+  it("offers the structured contacts when the payment asks for a recipient choice", () => {
+    const candidates = [
+      { contact_id: "contact-1", display_name: "Marta Ruiz Gomez", phone: "+34600111222" },
+      { contact_id: "contact-2", display_name: "Marta Solis Vega", phone: "+34600333444" },
+    ];
+    const choosing = thread({
+      conversation: state({
+        workflow: "PAYMENT_IN_PROGRESS",
+        awaiting: "RECIPIENT_CHOICE",
+        candidates,
+      }),
+    });
+
+    expect(recipientChoices(choosing)).toBe(candidates);
+    expect(recipientChoices(thread())).toEqual([]);
+  });
+
+  it("renders every recipient choice as a button with identifying details", () => {
+    const choosing = thread({
+      conversation: state({
+        workflow: "PAYMENT_IN_PROGRESS",
+        awaiting: "RECIPIENT_CHOICE",
+        candidates: [
+          { contact_id: "contact-1", display_name: "Marta Ruiz Gomez", phone: "+34600111222" },
+          { contact_id: "contact-2", display_name: "Marta Solis Vega", phone: "+34600333444" },
+        ],
+      }),
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: choosing,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Marta Ruiz Gomez");
+    expect(markup).toContain("+34600111222");
+    expect(markup).toContain("Marta Solis Vega");
+    expect(markup).toContain('aria-label="Elige el contacto"');
   });
 
   it("tells the screens to reload when a payment resolved", () => {
@@ -179,5 +255,43 @@ describe("what the client still works out for itself", () => {
     });
 
     expect(reloaded).toBe(0);
+  });
+});
+
+describe("the one field this client writes", () => {
+  it("puts the tapped contact on the half-built payment", () => {
+    const choosing = thread({
+      conversation: state({
+        workflow: "PAYMENT_IN_PROGRESS",
+        awaiting: "RECIPIENT_CHOICE",
+        payment: {
+          recipient_name: null,
+          recipient_contact_id: null,
+          amount_minor: 1_500,
+          currency: "EUR",
+          concept: "comida",
+        },
+        candidates: [
+          { contact_id: "contact-2", display_name: "Marta Solis Vega", phone: "+34600333444" },
+        ],
+      }),
+    });
+
+    const chosen = withChoice(choosing, "contact-2");
+
+    expect(chosen.conversation?.payment?.recipient_contact_id).toBe("contact-2");
+    // Everything else is the service's, and a client that rewrote any of it would be back to
+    // deciding what the conversation means.
+    expect(chosen.conversation?.payment?.amount_minor).toBe(1_500);
+    expect(chosen.conversation?.payment?.concept).toBe("comida");
+    expect(chosen.conversation?.awaiting).toBe("RECIPIENT_CHOICE");
+  });
+
+  it("changes nothing when there is no payment to choose for", () => {
+    // A tap cannot arrive without candidates, and inventing a payment to hang an identifier on
+    // would send the service a state it never issued.
+    const idle = thread();
+
+    expect(withChoice(idle, "contact-2")).toBe(idle);
   });
 });

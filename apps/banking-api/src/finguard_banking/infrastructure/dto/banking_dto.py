@@ -178,17 +178,33 @@ class FinancialQueryResponse(_Payload):
 class PreparePaymentRequest(_Body):
     """What somebody intends to pay (§4.1).
 
-    No account and no contact identifier: the account is in the path and the recipient is a name
-    resolved against that account's own contacts. A body that could name either would let a caller
-    pay out of an account they do not hold, or to somebody who is not in their list.
+    No account: it is in the path, and a body that could name one would let a caller pay out of an
+    account they do not hold.
+
+    The recipient is a name *or* the identifier of a contact the caller was shown, and exactly one
+    of the two. The identifier is here because a name can be ambiguous forever — two contacts called
+    Marta Solis Vega are a question no spelling answers — and it is safe for the same reason the
+    name is: both are resolved against this account's own contacts, through a view that does not
+    contain anybody else's.
+
+    Exactly one, enforced here rather than in the handler. Both would be two answers to "who gets
+    paid" with no rule about which wins; neither is a payment to nobody. 422 is the honest answer to
+    a body that cannot be read one way.
 
     The amount is in minor units, like everywhere else. `gt=0` because a payment of nothing is not
     a payment, and a negative one is a withdrawal wearing a payment's clothes.
     """
 
-    recipient_name: str = Field(min_length=1, max_length=MAX_RECIPIENT_NAME)
     amount_minor: int = Field(gt=0, le=MAX_PAYMENT_MINOR)
     currency: str = Field(pattern="^[A-Z]{3}$")
+    recipient_name: str | None = Field(default=None, min_length=1, max_length=MAX_RECIPIENT_NAME)
+    recipient_contact_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_recipient(self) -> "PreparePaymentRequest":
+        if (self.recipient_name is None) == (self.recipient_contact_id is None):
+            raise ValueError("name the recipient either as recipientName or as recipientContactId")
+        return self
 
 
 class PaymentPreviewResponse(_Payload):

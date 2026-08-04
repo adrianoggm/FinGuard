@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from finguard_banking.application.bus.command_bus import Command
+from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_banking.domain.ports.payment_gateway import PaymentGatewayPort
@@ -23,14 +24,27 @@ from finguard_banking.domain.value_objects.money import Money
 class PreparePaymentCommand(Command[PaymentPreview]):
     """A payment somebody intends to make. Nothing moves.
 
-    The recipient arrives as a name, resolved against this account's own contacts. An identifier
-    would let a caller pay somebody who is not in their list.
+    The recipient arrives as a name or as the identifier of a contact the caller was shown, and
+    exactly one of the two. Either way it is resolved against this account's own contacts: an
+    identifier taken on faith would let a caller pay somebody who is not in their list, and one
+    read back through the account-scoped view cannot.
+
+    Both set would be two answers to "who gets paid" with no rule about which wins, and neither
+    set is a payment to nobody. Refused on construction, because a command that can be built
+    wrong defers the decision to whichever handler reads the fields in which order.
     """
 
     account_id: UUID
-    recipient_name: str
     amount: Money
     idempotency_key: str
+    recipient_name: str | None = None
+    recipient_contact_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if (self.recipient_name is None) == (self.recipient_contact_id is None):
+            raise InvalidValueError(
+                "a payment names its recipient either by name or by contact identifier"
+            )
 
 
 @dataclass(frozen=True)
@@ -53,7 +67,11 @@ class PreparePaymentHandler:
         self._payments = payments
 
     async def handle(self, command: PreparePaymentCommand) -> PaymentPreview:
-        contact = await self._contacts.resolve(command.account_id, command.recipient_name)
+        if command.recipient_contact_id is not None:
+            contact = await self._contacts.one(command.account_id, command.recipient_contact_id)
+        else:
+            assert command.recipient_name is not None  # the command's own invariant
+            contact = await self._contacts.resolve(command.account_id, command.recipient_name)
         return await self._payments.prepare(
             account_id=command.account_id,
             contact_id=contact.contact_id,

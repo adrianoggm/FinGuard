@@ -165,6 +165,7 @@ def payment_from_dto(
     return PreparePaymentCommand(
         account_id=account_id,
         recipient_name=body.recipient_name,
+        recipient_contact_id=body.recipient_contact_id,
         amount=Money(body.amount_minor, body.currency),
         idempotency_key=key,
     )

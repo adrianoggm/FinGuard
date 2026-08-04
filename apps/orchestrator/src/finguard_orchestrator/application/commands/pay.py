@@ -14,7 +14,7 @@ yes. Every other path — a question, an ungrounded reading, a "sí pero 30", a 
 ends in a sentence and no movement.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.command_bus import Command
@@ -52,6 +52,9 @@ class SpokenPaymentDraft:
     """
 
     recipient_name: str | None = None
+    # As a string, like every identifier that leaves this layer. The client sends back the one it
+    # drew a button for.
+    recipient_contact_id: str | None = None
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
@@ -146,6 +149,9 @@ def _drafted(draft: PaymentDraft) -> SpokenPaymentDraft:
     """Flattened, so no domain object leaves this layer."""
     return SpokenPaymentDraft(
         recipient_name=draft.recipient_name,
+        recipient_contact_id=(
+            str(draft.recipient_contact_id) if draft.recipient_contact_id else None
+        ),
         amount_minor=draft.amount_minor,
         currency=draft.currency,
         concept=draft.concept,
@@ -305,6 +311,29 @@ class PreparePaymentHandler:
             directory=await self._contacts.all_of(command.account_id),
         )
 
+    async def _chosen(
+        self, pending: PaymentDraft, account_id: UUID
+    ) -> "PaymentDraft | PaymentAnswer":
+        """The draft with the picked contact's name on it, or a refusal.
+
+        The identifier came back from a client, so it is looked up in this account's own
+        directory rather than believed. Banking checks it again — that is the boundary that
+        matters — and doing it here answers an unknown contact with a sentence, not a round trip.
+
+        The name is filled in from the directory because everything downstream says it: the
+        confirmation prompt, the grounding check, the question that asks for the amount. What the
+        identifier changes is who gets paid, not what the assistant calls them.
+        """
+        directory = await self._contacts.all_of(account_id)
+        found = next((c for c in directory if c.contact_id == pending.recipient_contact_id), None)
+        if found is None:
+            return PaymentAnswer(
+                outcome=PaymentOutcome.REFUSED.value,
+                text=payment_writer.not_a_contact_chosen(),
+                reason="contact_not_found",
+            )
+        return replace(pending, recipient_name=found.display_name)
+
     async def _continue(self, command: PreparePaymentCommand) -> PaymentAnswer | None:
         """The pending payment plus whatever this sentence adds, or None if it adds nothing.
 
@@ -313,6 +342,17 @@ class PreparePaymentHandler:
         """
         assert command.pending is not None
         pending = command.pending
+        # An identifier with no name beside it is a choice that has not been applied yet: this
+        # service fills the name in from its own directory, so a draft carrying both has been
+        # through here already. That is what makes the choice *this turn's* new information without
+        # anything having to remember which turn it arrived on — and it is why a later sentence
+        # about something else still falls through to the ordinary path.
+        chose = pending.recipient_contact_id is not None and pending.recipient_name is None
+        if chose:
+            chosen = await self._chosen(pending, command.account_id)
+            if isinstance(chosen, PaymentAnswer):
+                return chosen
+            pending = chosen
         missing = pending.missing
 
         amount = payment_words.amount_in(command.sentence)
@@ -325,7 +365,7 @@ class PreparePaymentHandler:
                 command.sentence, await self._contacts.all_of(command.account_id)
             )
 
-        if amount is None and not named:
+        if amount is None and not named and not chose:
             return None
 
         if len(named) > 1:

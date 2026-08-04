@@ -16,6 +16,15 @@ class ContactDirectoryPort(Protocol):
 
     async def resolve(self, account_id: UUID, name: str) -> Contact: ...
 
+    async def one(self, account_id: UUID, contact_id: UUID) -> Contact: ...
+
+    """The contact somebody picked, by identifier, within this account.
+
+    Not an optimisation of `resolve`: a name can be ambiguous forever, and two contacts called
+    Marta Solis Vega can only ever be told apart by an identifier. Raises like `resolve` does, and
+    for the same reason — an id that belongs to another account is not found rather than refused.
+    """
+
     async def all_of(self, account_id: UUID) -> tuple[Contact, ...]: ...
 
     """Everybody this account can pay.

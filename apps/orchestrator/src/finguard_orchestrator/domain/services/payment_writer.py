@@ -114,6 +114,16 @@ def not_a_contact(name: str) -> str:
     return f"No tengo a {name} en tus contactos, así que no puedo enviarle nada."
 
 
+def not_a_contact_chosen() -> str:
+    """A picked contact that is not in the account's list.
+
+    No name in it, because there is nothing the user typed to quote back — they tapped something,
+    and either the list has changed underneath them or the identifier did not come from us. Asking
+    them to say who, rather than reporting on an identifier they never saw.
+    """
+    return "Ese contacto ya no está en tu lista. Dime a quién quieres enviarle el dinero."
+
+
 def insufficient_funds() -> str:
     return "No he enviado nada: tu saldo no cubre ese pago."
 

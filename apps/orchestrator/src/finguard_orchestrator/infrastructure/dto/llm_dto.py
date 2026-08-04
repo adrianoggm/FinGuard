@@ -6,6 +6,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 """
 
 from datetime import date
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -108,11 +109,16 @@ class PaymentDraftPayload(_Payload):
     Typed for the same reason the plan is: what a caller sends has to be a payment and nothing else.
     A recipient is free text because a name is data, and it is resolved against the account's own
     contacts before anything is prepared.
+
+    The chosen contact is a UUID rather than a string, so a body that puts a sentence there is a 422
+    instead of a lookup that finds nobody. It is still resolved against those same contacts: what it
+    buys is that two people with one name can be told apart, not that a caller can name anybody.
     """
 
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
     recipient_name: str | None = None
+    recipient_contact_id: UUID | None = None
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None

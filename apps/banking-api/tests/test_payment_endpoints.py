@@ -77,11 +77,19 @@ RECEIPT = PaymentReceipt(
 class FakeContacts:
     def __init__(self, error: Exception | None = None) -> None:
         self._error = error
+        self.asked_by: str | None = None
 
     async def resolve(self, account_id: uuid.UUID, name: str) -> Contact:
+        self.asked_by = "name"
         if self._error is not None:
             raise self._error
         return Contact(contact_id=CONTACT, display_name="Marta Solis Vega", phone="+34600333444")
+
+    async def one(self, account_id: uuid.UUID, contact_id: uuid.UUID) -> Contact:
+        self.asked_by = "identifier"
+        if self._error is not None:
+            raise self._error
+        return Contact(contact_id=contact_id, display_name="Marta Solis Vega", phone="+34600333444")
 
 
 class FakeGateway:
@@ -262,12 +270,58 @@ def test_a_payment_outside_the_contract_is_rejected(field: str, value: object) -
 
 
 @pytest.mark.parametrize("smuggled", ["contactId", "accountId", "intentId"])
-def test_the_body_cannot_name_who_it_pays_or_who_pays(smuggled: str) -> None:
-    """`recipientName` is resolved against the caller's own contacts and the account comes from
-    the path. Accepting an identifier here would let a caller pay somebody who is not in their
-    list, or pay out of an account that is not the one they addressed."""
+def test_the_body_cannot_name_who_pays_or_pick_its_own_field_names(smuggled: str) -> None:
+    """The account comes from the path, so a body naming one could pay out of an account the caller
+    does not hold. `contactId` is refused as well, for a duller reason: the field that carries a
+    chosen contact is `recipientContactId`, and a body guessing at a name is a caller improvising
+    rather than one using this contract."""
     response = client_for(FakeGateway()).post(
         PAYMENTS, json={**BODY, smuggled: str(CONTACT)}, headers=KEY
     )
+
+    assert response.status_code == 422
+
+
+# --- paying the contact the user picked ----------------------------------------------
+
+
+CHOSEN = {"recipientContactId": str(CONTACT), "amountMinor": 2_000, "currency": "EUR"}
+
+
+def test_a_chosen_contact_is_paid_by_identifier() -> None:
+    """What ends the "Marta Vega" loop: the choice is a contact, not a name to be resolved a second
+    time. Two contacts with the same display name have no other answer."""
+    contacts, gateway = FakeContacts(), FakeGateway()
+
+    response = client_for(gateway, contacts).post(PAYMENTS, json=CHOSEN, headers=KEY)
+
+    assert response.status_code == 200
+    assert contacts.asked_by == "identifier", "a chosen contact was resolved by name again"
+    assert gateway.prepared["contact_id"] == CONTACT
+
+
+def test_a_chosen_contact_that_is_not_in_the_list_is_not_found() -> None:
+    """The security property at the edge. The identifier is read back through the account-scoped
+    view, so somebody else's contact is 404 — the same answer as an id that never existed."""
+    contacts = FakeContacts(ContactNotFoundError(str(CONTACT)))
+
+    response = client_for(FakeGateway(), contacts).post(PAYMENTS, json=CHOSEN, headers=KEY)
+
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**CHOSEN, "recipientName": "Marta Solis"},
+        {"amountMinor": 2_000, "currency": "EUR"},
+        {**CHOSEN, "recipientContactId": "not-a-uuid"},
+    ],
+    ids=["both", "neither", "not a uuid"],
+)
+def test_a_recipient_is_named_exactly_one_way(body: dict[str, object]) -> None:
+    """422 rather than a guess. Both is two answers to "who gets paid", neither is a payment to
+    nobody, and refusing at the edge is the difference between a rejection and an apology."""
+    response = client_for(FakeGateway()).post(PAYMENTS, json=body, headers=KEY)
 
     assert response.status_code == 422

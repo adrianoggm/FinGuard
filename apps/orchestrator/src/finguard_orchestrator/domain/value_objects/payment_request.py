@@ -9,6 +9,7 @@ and a negative one is a withdrawal wearing a payment's clothes.
 """
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from finguard_orchestrator.domain.errors import InvalidValueError
 
@@ -43,6 +44,11 @@ class PaymentRequest:
     # migration and a field on banking's own contract; until then this is honest about where it
     # stops, rather than implying the ledger remembers it.
     concept: str | None = None
+    # Set when the user picked the recipient from a list rather than naming them. Banking prepares
+    # against the identifier when it is here, which is the only way two contacts with the same
+    # display name are ever told apart. The name stays because it is what the sentence is checked
+    # against and what the assistant says while the payment is being built.
+    recipient_contact_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.amount_minor, int) or isinstance(self.amount_minor, bool):
