@@ -58,8 +58,16 @@ from finguard_banking.application.queries.movement_summary import (
     SummaryMovement,
     SummaryTrace,
 )
+from finguard_banking.application.queries.ranked_movement import (
+    RankedMovementHandler,
+    RankedMovementQuery,
+    RankedMovementResult,
+)
 
 __all__ = [
+    "RankedMovementResult",
+    "RankedMovementQuery",
+    "RankedMovementHandler",
     "CardChargeRow",
     "CategoriseMovementCommand",
     "CategoriseMovementHandler",

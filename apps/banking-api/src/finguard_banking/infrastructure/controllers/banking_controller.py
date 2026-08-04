@@ -20,6 +20,7 @@ from finguard_banking.application import (
     ListContactsQuery,
     MovementSummaryQuery,
     QueryBus,
+    RankedMovementQuery,
 )
 from finguard_banking.bootstrap.dependencies import (
     database_answers,
@@ -38,6 +39,8 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
+    RankedMovementRequest,
+    RankedMovementResponse,
 )
 from finguard_banking.infrastructure.mappers import http_mapper
 
@@ -163,6 +166,24 @@ async def read_categories() -> CategoriesResponse:
     the two disagreeing shows up as a rejected override rather than as a wrong figure.
     """
     return CategoriesResponse(categories=list(constants.CATEGORIES))
+
+
+@queries_router.post("/ranked", summary="The nth largest movement of a period")
+async def post_ranked_movement(
+    body: RankedMovementRequest, queries: Queries, today: Today
+) -> RankedMovementResponse:
+    """One movement, chosen by size (§9.2 does not cover this, and that was the gap).
+
+    Its own route rather than a flag on the query above: the two answers have nothing in common — a
+    total with groups against a single row — so one response would carry half its fields null on
+    either side.
+
+    A period with fewer movements than the rank comes back with none, and that is not an error: "el
+    quinto" of three has no answer, and 404 would say the account does not exist.
+    """
+    plan = http_mapper.ranked_plan_from_dto(body, today)
+    result = await queries.ask(RankedMovementQuery(plan, rank=body.rank))
+    return http_mapper.ranked_to_dto(result)
 
 
 @queries_router.post("", summary="Run a financial query")

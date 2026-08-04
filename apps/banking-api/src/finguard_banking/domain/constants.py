@@ -70,3 +70,7 @@ CATEGORIES = (
 # values, so English: the assistant phrases them for the user.
 UNCATEGORISED = "UNCATEGORISED"
 UNKNOWN_MERCHANT = "UNKNOWN_MERCHANT"
+
+# How far down a ranking a caller may ask. It becomes an OFFSET, so this is the difference between
+# a question and a scan: "el gasto número 40000" is the second.
+MAX_RANK = 100

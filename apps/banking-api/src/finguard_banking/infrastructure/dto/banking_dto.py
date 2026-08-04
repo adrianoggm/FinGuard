@@ -19,6 +19,7 @@ from finguard_banking.domain.constants import (
     MAX_CATEGORY_LENGTH,
     MAX_PAYMENT_MINOR,
     MAX_PERIOD_DAYS,
+    MAX_RANK,
     MAX_RECIPIENT_NAME,
     MAX_SUPPORTING_MOVEMENTS,
 )
@@ -120,6 +121,42 @@ class MovementResponse(_Payload):
     category_is_custom: bool = False
     amount_minor: int
     direction: str
+
+
+class RankedMovementRequest(_Body):
+    """The same filters as a query, plus which position is being asked about.
+
+    It reuses the query's shape deliberately: the filters of "the largest fuel expense this year"
+    are the filters of "how much did I spend on fuel this year", and a second declaration of them
+    would be a second place to get the window wrong.
+
+    `metric`, `group_by` and `supporting_limit` are absent because they mean nothing here — there is
+    no aggregate to group and no total to support. A field with no meaning is a field a caller will
+    eventually set.
+    """
+
+    account_id: UUID
+    direction: Direction = Direction.ALL
+    categories: tuple[str, ...] = ()
+    merchants: tuple[str, ...] = ()
+    date_range: DateRangeRequest | None = None
+    period: RelativePeriodRequest | None = None
+    reporting_timezone: str | None = None
+    # 1 is the largest. Bounded because it becomes an OFFSET.
+    rank: int = Field(default=1, ge=1, le=MAX_RANK)
+
+
+class RankedMovementResponse(_Payload):
+    """One movement, or none.
+
+    `movement` is absent when the period holds fewer than `rank` of them. Absent rather than a row
+    of zeros: "el quinto" of three has no answer, and a shape that always carries a movement would
+    make the caller invent one.
+    """
+
+    account_id: UUID
+    rank: int
+    movement: MovementResponse | None = None
 
 
 class TraceResponse(_Payload):

@@ -26,6 +26,8 @@ from finguard_banking.application import (
     PreparePaymentCommand,
     PreparePaymentHandler,
     QueryBus,
+    RankedMovementHandler,
+    RankedMovementQuery,
 )
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import (
@@ -82,6 +84,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.query_bus.register(GetBalanceQuery, GetBalanceHandler(ledger))
     app.state.query_bus.register(MovementSummaryQuery, MovementSummaryHandler(financial_queries))
+    # The ranking shares the repository with the aggregate: same filters, same containment, one
+    # place where the account is declared.
+    app.state.query_bus.register(RankedMovementQuery, RankedMovementHandler(financial_queries))
 
     # Payments write, so they hold the owner pool. Contacts are resolved through it too:
     # the read-only role reaches the views, and the payment path needs the contact row it

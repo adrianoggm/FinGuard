@@ -165,3 +165,41 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
         LIMIT {limit}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
+
+
+def compile_ranked(query: FinancialQuery, reporting_timezone: str, *, rank: int) -> CompiledQuery:
+    """The nth largest movement of the period, or nothing when the period has fewer than n.
+
+    A different statement from `compile_movements` in two places: the ordering, and the offset. It
+    shares `_conditions` with everything else here, which is the point — the filters of "the largest
+    expense in fuel this year" are exactly the filters of "how much did I spend on fuel this year",
+    and two copies of them would be two places for the account to be forgotten.
+
+    **The ordering is total.** `amount_minor DESC` alone leaves ties to the plan, so "el segundo"
+    would be either of two equal charges and could differ between two runs of the same question. The
+    date breaks the tie and the identifier breaks the rest.
+
+    `rank` becomes an OFFSET and travels as a parameter, like every other value here. It is a number
+    a model chose, and §9.3 does not care how harmless a number looks.
+    """
+    parameters = _Parameters()
+    tz = parameters.bind(reporting_timezone)
+    conditions = _conditions(query, parameters, tz)
+    offset = parameters.bind(max(0, rank - 1))
+
+    sql = f"""
+        SELECT
+            t.transaction_id,
+            t.occurred_at,
+            COALESCE(t.description, '') AS description,
+            t.merchant_name,
+            t.category,
+            t.category_is_custom,
+            {_amount_expression(query.direction)} AS amount_minor,
+            t.direction
+        FROM {VIEW} t
+        WHERE {" AND ".join(conditions)}
+        ORDER BY amount_minor DESC, t.occurred_at DESC, t.transaction_id
+        LIMIT 1 OFFSET {offset}
+    """
+    return CompiledQuery(sql=sql, parameters=parameters.values)
