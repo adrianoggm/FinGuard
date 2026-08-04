@@ -114,6 +114,19 @@ class FeatureDisabledError(DomainError):
     code = "feature_disabled"
 
 
+class RecipientHasNoAccountError(DomainError):
+    """A contact this account can Bizum and cannot transfer to.
+
+    Its own error rather than a not-found, because the two need different sentences. "No tengo a
+    Elena en tus contactos" is wrong about somebody in the holder's own list, and the thing that is
+    actually missing — an account number — is a thing they can supply.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"no account number saved for {name}")
+        self.name = name
+
+
 class RecipientNotFoundError(DomainError):
     """Nobody in this account's contacts answers to that name.
 

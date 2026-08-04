@@ -56,6 +56,8 @@ class ContactHasNoAccountError(DomainError):
     an account number, which is a thing they can go and add.
     """
 
+    code = "contact_has_no_account"
+
     def __init__(self, display_name: str) -> None:
         super().__init__(f"no account number saved for {display_name}")
         self.display_name = display_name

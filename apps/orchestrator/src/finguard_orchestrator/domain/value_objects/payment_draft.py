@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_PAYMENT_MINOR,
     MAX_RECIPIENT_NAME,
 )
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
@@ -53,6 +54,9 @@ class PaymentDraft:
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
+    # How the money leaves. On the draft rather than re-read every turn: "hazme una transferencia a
+    # Elena" then "200 euros" must still be a transfer, and the second sentence names no rail.
+    rail: Rail = Rail.BIZUM
 
     def __post_init__(self) -> None:
         # 0 is the schema's sentinel for "no amount in the sentence" and arrives here from the
@@ -116,6 +120,10 @@ class PaymentDraft:
             ),
             amount_minor=turn.amount_minor if turn.amount_minor is not None else self.amount_minor,
             concept=turn.concept or self.concept,
+            # A later turn only ever *names* a rail; it cannot un-name one. "200 euros" after
+            # "hazme una transferencia" says nothing about how the money leaves, and reading
+            # its default as an answer would quietly turn the transfer into a Bizum.
+            rail=turn.rail if turn.rail is not Rail.BIZUM else self.rail,
         )
 
     def into_request(self) -> PaymentRequest | None:
@@ -133,4 +141,5 @@ class PaymentDraft:
             amount_minor=self.amount_minor,
             currency=self.currency,
             concept=self.concept,
+            rail=self.rail,
         )

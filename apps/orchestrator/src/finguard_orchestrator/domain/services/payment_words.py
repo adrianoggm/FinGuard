@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_CONCEPT,
     MAX_PAYMENT_MINOR,
 )
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.services import spanish
 
@@ -184,3 +185,20 @@ def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact,
     if best == 0:
         return ()
     return tuple(contact for points, contact in scored if points == best)
+
+
+# Which rail a sentence names. A closed vocabulary of two, so it is read here rather than asked of
+# a model: choosing between a Bizum and a transfer is choosing how money leaves an account, and it
+# is decidable from the words. The payment prompt is not told about rails at all.
+#
+# Bizum is the default and says so. Every sentence this product has ever handled was one, the word
+# is what people say when they mean it, and an unrecognised sentence becoming a transfer would send
+# money down a rail nobody named.
+_A_TRANSFER: Final = re.compile(
+    r"\btransferencia|\btransferir\b|\btransfi[eé]re|\btransfi[ée]rele\b|\bpor\s+banco\b"
+)
+
+
+def rail_in(sentence: str) -> Rail:
+    """The rail this sentence asks for. BIZUM unless it names a transfer."""
+    return Rail.TRANSFER if _A_TRANSFER.search(spanish.folded(sentence)) else Rail.BIZUM

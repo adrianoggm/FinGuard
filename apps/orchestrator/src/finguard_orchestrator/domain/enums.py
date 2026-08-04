@@ -102,6 +102,22 @@ class GroupBy(StrEnum):
     MERCHANT = "MERCHANT"
 
 
+class Rail(StrEnum):
+    """How the money leaves.
+
+    Mirrored from the banking contract, like `Period` and `GroupBy`: no shared package, so this
+    side states the values it will emit and banking stays the authority. A value that drifts comes
+    back as a refusal rather than as a payment down the wrong rail.
+
+    Which one a sentence means is read deterministically — "bizum" and "transferencia" are a closed
+    vocabulary of two, and a model choosing between them would be a model deciding how money
+    leaves an account.
+    """
+
+    BIZUM = "BIZUM"
+    TRANSFER = "TRANSFER"
+
+
 class Metric(StrEnum):
     SUM = "SUM"
     COUNT = "COUNT"

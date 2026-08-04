@@ -18,13 +18,14 @@ from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.command_bus import Command
-from finguard_orchestrator.domain.enums import PaymentOutcome, PlanningOutcome
+from finguard_orchestrator.domain.enums import PaymentOutcome, PlanningOutcome, Rail
 from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
     BankingUnavailableError,
     IntentGoneError,
     InvalidValueError,
     PaymentRefusedError,
+    RecipientHasNoAccountError,
     RecipientNotFoundError,
 )
 from finguard_orchestrator.domain.models.contact import Contact
@@ -132,6 +133,7 @@ class PrepareChosenPaymentCommand(Command[PaymentAnswer]):
     amount_minor: int
     currency: str
     idempotency_key: str
+    rail: Rail = Rail.BIZUM
 
 
 @dataclass(frozen=True)
@@ -144,6 +146,22 @@ class ConfirmPaymentCommand(Command[PaymentAnswer]):
     # The preview being answered, if the caller echoed it back. Only used to repeat the question
     # when the reply is neither yes nor no — the decision to pay never depends on it.
     preview: PaymentPreview | None = None
+
+
+def _as_draft(request: PaymentRequest) -> PaymentDraft:
+    """A request read back as the draft it came from.
+
+    Used when banking refuses a transfer for want of an account number: everything else about the
+    payment is settled and asking for it again would make the holder retype what they just said.
+    """
+    return PaymentDraft(
+        recipient_name=request.recipient_name,
+        recipient_contact_id=request.recipient_contact_id,
+        amount_minor=request.amount_minor,
+        currency=request.currency,
+        concept=request.concept,
+        rail=request.rail,
+    )
 
 
 def _drafted(draft: PaymentDraft) -> SpokenPaymentDraft:
@@ -215,6 +233,16 @@ async def _previewed(
             text=payment_writer.not_a_contact(nobody.name),
             reason=nobody.code,
         )
+    except RecipientHasNoAccountError as unreachable:
+        # Not a refusal and not a not-found. The person exists, the holder chose them, and what
+        # is missing is a number they can supply — so the conversation stays open on the draft
+        # rather than ending on an apology.
+        return PaymentAnswer(
+            outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+            text=payment_writer.no_account_for(unreachable.name),
+            draft=_drafted(_as_draft(request)),
+            reason=unreachable.code,
+        )
     except PaymentRefusedError as refused:
         return _refusal(refused.reason)
     except BankingUnavailableError as down:
@@ -250,6 +278,7 @@ class PrepareChosenPaymentHandler:
                 recipient_name=command.recipient_name.strip(),
                 amount_minor=command.amount_minor,
                 currency=command.currency,
+                rail=command.rail,
             )
         except InvalidValueError as refused:
             # A payment of nothing, a negative one, or one beyond the ceiling. The same value
@@ -299,14 +328,24 @@ class PreparePaymentHandler:
 
         reading = await self._reader.read(command.sentence, policy=self._policy)
 
+        # Stamped here, from the sentence, on whatever the reader produced. The rail is not
+        # in the prompt and not in the schema: "bizum" and "transferencia" are a closed
+        # vocabulary of two, and letting a decoder choose between them would be letting it
+        # choose how money leaves an account. The reader reads who and how much.
+        rail = payment_words.rail_in(command.sentence)
+
         if not reading.is_payable:
-            return _declined(reading.outcome, reading.question, reading.reason, reading.draft)
+            # On the draft too, so the rail survives the turn that asks for the amount:
+            # "hazme una transferencia a Elena" then "200 euros" is still a transfer, and
+            # the second sentence names no rail at all.
+            drafted = replace(reading.draft, rail=rail) if reading.draft else None
+            return _declined(reading.outcome, reading.question, reading.reason, drafted)
 
         assert reading.request is not None  # is_payable is exactly this condition
 
         return await _previewed(
             self._bank,
-            reading.request,
+            replace(reading.request, rail=rail),
             account_id=command.account_id,
             key=command.idempotency_key,
             # So an ambiguous name comes back with identifiers rather than as prose to retype.
