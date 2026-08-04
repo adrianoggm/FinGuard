@@ -23,11 +23,11 @@ Whichever phrase is longer is the one the person actually said.
 """
 
 import re
-import unicodedata
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Period
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import RelativePeriod
 
 # Phrases that name a window on their own, longest first. Folded, so accents and case do not matter.
@@ -57,18 +57,13 @@ _UNIT: Final[dict[str, Period]] = {
 }
 
 
-def _folded(text: str) -> str:
-    stripped = unicodedata.normalize("NFD", text.casefold())
-    return "".join(character for character in stripped if not unicodedata.combining(character))
-
-
 def window_in(sentence: str) -> RelativePeriod | None:
     """The window this sentence names, or None when it names none this vocabulary is sure about.
 
     None is the useful answer as often as a window is: it means "send this to the model", which is
     where a sentence this does not recognise belongs.
     """
-    folded = _folded(sentence)
+    folded = spanish.folded(sentence)
 
     counted = _COUNTED.search(folded)
     if counted:
