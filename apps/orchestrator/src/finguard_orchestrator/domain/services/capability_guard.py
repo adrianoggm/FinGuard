@@ -13,7 +13,9 @@ Two consequences of that framing are deliberate.
 
 **A false refusal costs more than a miss.** Anything this returns never reaches the
 model, so a rule that fires on a question the system *can* answer converts working
-behaviour into a dead end. Every family below is therefore narrower than the plain
+behaviour into a dead end. LARGEST_MOVEMENT lived here until the capability existed, and
+removing it is what that change looks like from this side: a family here is a debt, not a
+feature. Every family below is therefore narrower than the plain
 reading of its name — the discriminating case is "más", which means a comparison in
 "¿gasté más este mes que el anterior?" and a ranking in "¿dónde gasto más?", and only the
 first is beyond us.
@@ -47,39 +49,15 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         re.compile(r"(\bporcentaje\b|\bque parte de\b|\bque proporcion\b|%)", re.IGNORECASE),
     ),
     (
-        # One extreme movement, not an aggregate of many. This produced the worst answer the
-        # system has given: "¿cuál ha sido el mayor gasto?" came back as *3.977,37 € en los
-        # últimos 3 meses, en 56 movimientos* — the sum of every expense in the window, offered
-        # as the answer to a question about one of them. Nothing downstream could tell, because
-        # the plan was valid and the figure is real; it answers a different question.
-        #
-        # `Metric` is SUM or COUNT, so the maximum is not expressible. Until it is, refusing is
-        # the only honest option: a total in place of a maximum is not approximate, it is false.
-        #
-        # **The discriminator is grammatical.** A superlative attached to a noun asks for one
-        # movement — "el gasto más alto", "la compra más cara", "mayor importe". "Gasté más" and
-        # "gasto más" are verbs and ask which group is largest, which `groupBy` expresses and the
-        # COMPARISON note below already argues must not be refused.
-        #
-        # **Before COMPARISON, and that ordering is load-bearing.** "El pago más grande *que* he
-        # hecho este año" contains "más … que" and is not a comparison: the "que" introduces a
-        # relative clause, not a second term. No pattern tells those apart, so the sentence that
-        # names a superlative noun is read as being about that noun. Both outcomes refuse, but
-        # the family name is what the refusal says out loud, and the wrong name explains the
-        # wrong thing.
-        "LARGEST_MOVEMENT",
-        re.compile(
-            r"\b(mayor|maxim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
-            r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura)s?\s+"
-            r"(mas|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
-            re.IGNORECASE,
-        ),
-    ),
-    (
         # "más" alone is not a comparison: "¿dónde gasto más?" asks which group is
         # largest inside one window, which groupBy expresses. What the domain cannot do
         # is relate two windows, and in Spanish that needs the second term — "más X *que*
         # Y". Comparing without "que" is possible but it is phrased with these words.
+        #
+        # `_A_SUPERLATIVE_NOUN` below is the exception, and it used to be a family of its
+        # own: "el pago más grande *que* he hecho este año" carries "más … que" with a
+        # relative pronoun rather than a second term. That knowledge was here to *refuse*
+        # the sentence; now that rankings are answered it keeps this rule off one.
         "COMPARISON",
         re.compile(r"(\bmas\b.*\bque\b|\bcomparad|\bcomparacion\b|\bfrente a\b)", re.IGNORECASE),
     ),
@@ -129,17 +107,31 @@ _ONLY_A_CONTINUATION: Final = re.compile(
 RULES: Final = frozenset(name for name, _ in _FAMILIES)
 
 
-def continues_a_refusal(sentence: str) -> bool:
-    """Whether this sentence is nothing but a continuation of the previous turn.
+# A superlative attached to a noun: one movement, not two windows compared. "El gasto más alto",
+# "la compra más cara", "el pago de mayor importe".
+#
+# This was a refusal family until RANK_MOVEMENTS existed. It stays because COMPARISON would
+# otherwise claim these sentences — they carry "más … que" where the "que" opens a relative
+# clause — and a question with a real answer would come back as "no comparo dos periodos".
+_A_SUPERLATIVE_NOUN: Final = re.compile(
+    r"\b(mayor|maxim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
+    r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura)s?\s+"
+    r"(mas|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
+    re.IGNORECASE,
+)
 
-    "¿Y el segundo?" after "no sé buscar el movimiento más alto" asks for the second largest, and
-    says nothing about size — so no pattern above can see it, and the planner read it as an ordinary
-    follow-up with no window. That started a clarification about a period which could never lead
-    anywhere: three turns of the reported conversation are that loop.
+
+def continues_an_ordinal(sentence: str) -> bool:
+    """Whether this sentence is nothing but "and the next one".
+
+    Written when "¿y el segundo?" could only be met with a repeated refusal — the capability did not
+    exist, and the planner read the sentence as a follow-up missing a window, which started a
+    clarification about a period that could never lead anywhere. Now it asks for the next row of a
+    ranking, which is the same reading with an answer behind it.
 
     **Narrow on purpose.** Only an ordinal or a bare pronoun with no content of its own. A sentence
-    that carries its own question is a new question, and a refusal that spread forward would answer
-    "¿cuánto gasté?" with an apology about maximums.
+    carrying its own question is a new question, and reading "¿cuánto gasté?" as a continuation
+    would answer it with the second largest expense.
     """
     return bool(_ONLY_A_CONTINUATION.fullmatch(spanish.folded(sentence).strip(" ?¿.!¡")))
 
@@ -158,7 +150,13 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
     # chat box: the verifier's count rule needed one and therefore never fired on the sentence
     # that produced the worst answer in the reported conversation.
     folded = spanish.folded(sentence)
+    ranking = bool(_A_SUPERLATIVE_NOUN.search(folded))
     for name, pattern in _FAMILIES:
-        if policy.allows(name) and pattern.search(folded):
+        if not policy.allows(name):
+            continue
+        if ranking and name == "COMPARISON":
+            # It is asking for one movement, not relating two windows. See the note on the family.
+            continue
+        if pattern.search(folded):
             return name
     return None

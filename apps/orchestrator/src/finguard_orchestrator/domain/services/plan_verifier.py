@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.enums import Direction, Metric
 from finguard_orchestrator.domain.services import category_words, spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 _SPENDING: Final = re.compile(r"\bgast")
 
@@ -28,17 +29,21 @@ _SPENDING: Final = re.compile(r"\bgast")
 _COUNTING: Final = re.compile(r"\bcuant[oa]s\b")
 
 
-def _spending_answered_as_everything(sentence: str, plan: FinancialPlan) -> bool:
+def _spending_answered_as_everything(sentence: str, plan: FinancialPlan | TopMovements) -> bool:
     """Adding income to a spending total is a wrong number, not a broader answer. This is
     also what the live prompt injection has to get past, without being about injections."""
     return bool(_SPENDING.search(spanish.folded(sentence))) and (plan.direction is Direction.ALL)
 
 
-def _count_answered_as_amount(sentence: str, plan: FinancialPlan) -> bool:
+def _count_answered_as_amount(sentence: str, plan: FinancialPlan | TopMovements) -> bool:
+    if isinstance(plan, TopMovements):
+        # A ranking has no metric to disagree with. `_RANKING_RULES` excludes this rule before it is
+        # reached; the check is here so the function is total on its own type.
+        return False
     return bool(_COUNTING.search(spanish.folded(sentence))) and (plan.metric is not Metric.COUNT)
 
 
-def _category_misread(sentence: str, plan: FinancialPlan) -> bool:
+def _category_misread(sentence: str, plan: FinancialPlan | TopMovements) -> bool:
     """The sentence names a category unambiguously and the plan filters by something else.
 
     This is the failure that got through everything else. "¿Cuántas veces fui al cine el mes
@@ -67,7 +72,7 @@ def _category_misread(sentence: str, plan: FinancialPlan) -> bool:
 
 # Same shape as the guard's registry, for the same reasons: named so it can be switched
 # off, switchable so its worth can be measured.
-_RULES: Final[tuple[tuple[str, Callable[[str, FinancialPlan], bool]], ...]] = (
+_RULES: Final[tuple[tuple[str, Callable[[str, FinancialPlan | TopMovements], bool]], ...]] = (
     ("SPENDING_ANSWERED_AS_EVERYTHING", _spending_answered_as_everything),
     ("COUNT_ANSWERED_AS_AMOUNT", _count_answered_as_amount),
     ("CATEGORY_MISREAD", _category_misread),
@@ -75,12 +80,26 @@ _RULES: Final[tuple[tuple[str, Callable[[str, FinancialPlan], bool]], ...]] = (
 
 RULES: Final = frozenset(name for name, _ in _RULES)
 
+# Which of them mean anything for a ranking. Named rather than derived, so adding a rule forces the
+# question "does this apply to a maximum?" instead of silently answering yes.
+_RANKING_RULES: Final = frozenset({"SPENDING_ANSWERED_AS_EVERYTHING", "CATEGORY_MISREAD"})
+
 
 def disagreement(
-    sentence: str, plan: FinancialPlan, policy: GuardPolicy = EVERY_RULE
+    sentence: str, plan: FinancialPlan | TopMovements, policy: GuardPolicy = EVERY_RULE
 ) -> str | None:
-    """The rule the plan breaks against the sentence, or None."""
+    """The rule the plan breaks against the sentence, or None.
+
+    A ranking is checked by the rules that apply to it. CATEGORY_MISREAD does — a maximum filtered
+    by the wrong category is as wrong as a total filtered by it — and COUNT_ANSWERED_AS_AMOUNT does
+    not, because a ranking has no metric to disagree with. Applying a rule to a type it cannot be
+    about would be a refusal nobody could act on.
+    """
     for name, broken in _RULES:
-        if policy.allows(name) and broken(sentence, plan):
+        if not policy.allows(name):
+            continue
+        if isinstance(plan, TopMovements) and name not in _RANKING_RULES:
+            continue
+        if broken(sentence, plan):
             return name
     return None

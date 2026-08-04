@@ -13,12 +13,16 @@ The text is Spanish because it is product data, which is the one exception rule 
 makes.
 """
 
-from finguard_orchestrator.domain.enums import Metric
+from datetime import datetime
+from typing import Final
+
+from finguard_orchestrator.domain.enums import Direction, Metric
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 # How many rows of a breakdown to read out. Past this the answer stops being a sentence
 # and becomes a table nobody reads in a chat.
@@ -79,7 +83,7 @@ def contacts(found: tuple[Contact, ...]) -> str:
     return f"Tienes {plural} para enviar dinero: {names}."
 
 
-def filter_of(plan: FinancialPlan) -> str:
+def filter_of(plan: FinancialPlan | TopMovements) -> str:
     """What the figure is a figure *of*, in words, or "" when the question named no filter.
 
     Two answers in a row that differ only in a number nobody can attribute is what made the
@@ -109,7 +113,75 @@ def _listed(names: tuple[str, ...]) -> str:
     return f"{', '.join(names[:-1])} y {names[-1]}"
 
 
-def window_of(plan: FinancialPlan) -> str:
+# Spanish months, for naming the day a movement happened. Written out rather than taken from the
+# locale: a service's locale is a deployment accident, and "14 de marzo" should not depend on it.
+_MONTHS: Final = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+
+# Ordinals a person would actually say. They stop being useful somewhere around the tenth, and
+# "duodécimo" reads as a machine trying too hard — past this the position is said as a number.
+_ORDINALS: Final = {
+    2: "El segundo",
+    3: "El tercero",
+    4: "El cuarto",
+    5: "El quinto",
+    6: "El sexto",
+    7: "El séptimo",
+    8: "El octavo",
+    9: "El noveno",
+    10: "El décimo",
+}
+
+
+def ranked(movement: Movement | None, ranking: TopMovements) -> str:
+    """The nth largest movement, in words.
+
+    Names the shop and the date, not just the figure. A bare amount would send the user to the
+    movement list to work out which charge it was, which is most of the work they asked to avoid.
+
+    The first answer restates the question — the window and the filter — because it stands alone.
+    The ones after it do not: "el segundo" is read directly under the answer it follows, and
+    repeating the whole question there is how an assistant starts sounding like a form.
+    """
+    if movement is None:
+        # "El quinto" of three movements has no answer. Saying which position could not be found
+        # beats reporting a zero, which reads as a movement of nothing.
+        return f"No hay {_position(ranking.rank).lower()} movimiento en ese periodo."
+
+    amount = money(movement.amount_minor, "EUR")
+    what = movement.merchant_name or movement.description
+    when = _spoken_date(movement.occurred_at)
+
+    if ranking.rank == 1:
+        noun = "ingreso" if ranking.direction is Direction.INCOME else "gasto"
+        about = f"{filter_of(ranking)} {window_of(ranking)}"
+        return f"Tu mayor {noun}{about} fue de {amount}: {what}, el {when}."
+    return f"{_position(ranking.rank)} fue de {amount}: {what}, el {when}."
+
+
+def _position(rank: int) -> str:
+    return _ORDINALS.get(rank, f"El número {rank}")
+
+
+def _spoken_date(moment: datetime) -> str:
+    """ "14 de marzo", with no year: the window already said which one, and repeating it makes the
+    sentence read like a receipt."""
+    return f"{moment.day} de {_MONTHS[moment.month - 1]}"
+
+
+def window_of(plan: FinancialPlan | TopMovements) -> str:
     """The window in words. Names it, never computes it: what LAST_MONTH covers is
     banking's business, and saying it twice is how the two start disagreeing."""
     if plan.date_range is not None:
@@ -124,7 +196,7 @@ def window_of(plan: FinancialPlan) -> str:
     return f"en los últimos {count} {unit}"
 
 
-def describe(plan: FinancialPlan) -> str:
+def describe(plan: FinancialPlan | TopMovements) -> str:
     """The plan in one readable line.
 
     Shown with every answer on purpose. A figure whose derivation the user cannot
@@ -133,6 +205,10 @@ def describe(plan: FinancialPlan) -> str:
     oracle.
     """
     parts = [window_of(plan), plan.direction.value.lower()]
+    if isinstance(plan, TopMovements):
+        # The rank is the whole point of a ranking, so a description without it would show the same
+        # line for "el más caro" and "el segundo más caro".
+        parts.append(f"nº {plan.rank} por importe")
     if plan.categories:
         parts.append("/".join(plan.categories).lower())
     if plan.merchants:
@@ -140,10 +216,13 @@ def describe(plan: FinancialPlan) -> str:
         # and a reader who sees the name that was searched for can tell that from "you spent
         # nothing there".
         parts.append("/".join(plan.merchants))
-    if plan.group_by.value != "NONE":
-        parts.append(f"por {plan.group_by.value.lower()}")
-    if plan.metric.value != "SUM":
-        parts.append(plan.metric.value.lower())
+    if isinstance(plan, FinancialPlan):
+        # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
+        # appended above — where the reader is looking for what makes the two lines different.
+        if plan.group_by.value != "NONE":
+            parts.append(f"por {plan.group_by.value.lower()}")
+        if plan.metric.value != "SUM":
+            parts.append(plan.metric.value.lower())
     return ", ".join(parts)
 
 

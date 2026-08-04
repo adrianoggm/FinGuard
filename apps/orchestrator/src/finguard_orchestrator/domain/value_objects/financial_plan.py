@@ -88,7 +88,7 @@ class FinancialPlan:
     def __post_init__(self) -> None:
         if (self.period is None) == (self.date_range is None):
             raise InvalidValueError("a plan needs exactly one of period and dateRange")
-        _check_filters(self.categories, self.merchants)
+        check_filters(self.categories, self.merchants)
 
 
 @dataclass(frozen=True)
@@ -129,7 +129,7 @@ class FinancialPlanDraft:
         # the plan checks it, because a draft crosses the wire and comes back: leaving the
         # filters until `with_window` meant a bad category was accepted at the edge and only
         # noticed a layer deeper, where the honest answer is no longer a 422.
-        _check_filters(self.categories, self.merchants)
+        check_filters(self.categories, self.merchants)
 
     @property
     def needs_a_window(self) -> bool:
@@ -172,9 +172,12 @@ class FinancialPlanDraft:
         )
 
 
-def _check_filters(categories: tuple[str, ...], merchants: tuple[str, ...]) -> None:
-    """What a plan and a draft check identically. Shared because a draft that checked less
-    would be a way to smuggle a value past the plan's invariants and reach them later."""
+def check_filters(categories: tuple[str, ...], merchants: tuple[str, ...]) -> None:
+    """What a plan, a draft and a ranking check identically.
+
+    Shared rather than copied: a type that checked less would be a way to smuggle a value past the
+    plan's invariants and reach them a layer later, where the honest answer is no longer a 422.
+    """
     if len(categories) > MAX_CATEGORIES:
         raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
     for category in categories:

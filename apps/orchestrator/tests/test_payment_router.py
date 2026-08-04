@@ -70,3 +70,18 @@ def test_a_past_payment_is_a_question_not_an_order() -> None:
     assert not payment_router.is_payment("le mandé 20 euros a Marta la semana pasada")
     assert not payment_router.is_payment("le he mandado 20 euros a Marta")
     assert not payment_router.is_payment("le envié 20 euros a Marta el martes")
+
+
+@pytest.mark.parametrize(
+    "reply", ["no sé", "No lo se.", "ni idea", "no estoy segura", "todavía no lo sé"]
+)
+def test_a_bare_uncertain_reply_is_recognised(reply: str) -> None:
+    assert payment_router.is_uncertain(reply)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["no sé a quién tengo en contactos", "no sé, quizá Marta", "¿cuánto gasté?"],
+)
+def test_a_sentence_with_a_subject_is_not_reduced_to_uncertainty(reply: str) -> None:
+    assert not payment_router.is_uncertain(reply)

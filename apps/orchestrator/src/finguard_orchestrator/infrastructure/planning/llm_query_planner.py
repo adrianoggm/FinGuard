@@ -27,6 +27,7 @@ from typing import Any, Final
 
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
+    Action,
     Direction,
     GroupBy,
     Metric,
@@ -45,6 +46,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlanDraft,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.planning.plan_schema import (
     ABSOLUTE,
     NO_CATEGORY,
@@ -194,6 +196,19 @@ def _read(
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
 
 
+def _action(body: dict[str, Any]) -> Action:
+    """Which kind of query the model chose.
+
+    Defaults to the aggregate rather than failing: it is what almost every question is, and a
+    malformed tag is not worth turning a readable plan into an error. Under constrained decoding the
+    value cannot be outside the enum, and if it ever is, this is where it stops mattering.
+    """
+    try:
+        return Action(_text(body, "action"))
+    except (_MalformedError, ValueError):
+        return Action.AGGREGATE
+
+
 def _awaiting(body: dict[str, Any]) -> Slot:
     """Which slot the question is about.
 
@@ -328,6 +343,23 @@ def _build_plan(
             # field: this branch runs because no window was named.
             Slot.WINDOW,
         )
+
+    if _action(body) is Action.RANK_MOVEMENTS:
+        # A ranking, and it does not go through the follow-up merge: that vocabulary is expressed
+        # over an aggregate's fields, and there is nothing sensible to inherit into a maximum.
+        try:
+            return PlanningResult.planned(
+                TopMovements(
+                    direction=Direction(direction),
+                    period=window if isinstance(window, RelativePeriod) else None,
+                    date_range=window if isinstance(window, AbsoluteRange) else None,
+                    categories=selected_categories,
+                    merchants=merchants,
+                    rank=_count(body, "rank") or 1,
+                )
+            )
+        except (_MalformedError, InvalidValueError, ValueError) as exc:
+            return PlanningResult.invalid_domain(str(exc))
 
     try:
         plan = FinancialPlan(

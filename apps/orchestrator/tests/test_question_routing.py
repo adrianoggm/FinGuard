@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from finguard_orchestrator.application.bus.command_bus import CommandBus
 from finguard_orchestrator.application.commands.pay import (
+    ConfirmPaymentCommand,
     PaymentAnswer,
     PreparePaymentCommand,
 )
@@ -51,16 +52,50 @@ PREVIEW = PaymentAnswer(
 class FakePreparing:
     def __init__(self) -> None:
         self.sentences: list[str] = []
+        self.confirmations: list[str] = []
 
     async def handle(self, command: PreparePaymentCommand) -> PaymentAnswer:
         self.sentences.append(command.sentence)
         return PREVIEW
 
 
+class FakeConfirming:
+    def __init__(self, record: FakePreparing) -> None:
+        self._record = record
+
+    async def handle(self, command: ConfirmPaymentCommand) -> PaymentAnswer:
+        self._record.confirmations.append(command.reply)
+        if command.reply == "sí":
+            return PaymentAnswer(
+                outcome=PaymentOutcome.PAID.value,
+                text="Hecho.",
+                intent_id=INTENT,
+                currency="EUR",
+            )
+        if command.reply == "no":
+            return PaymentAnswer(
+                outcome=PaymentOutcome.CANCELLED.value,
+                text="No he enviado nada.",
+                intent_id=INTENT,
+            )
+        if command.reply == "reintenta":
+            return PaymentAnswer(
+                outcome=PaymentOutcome.BANKING_UNAVAILABLE.value,
+                text="No he podido comprobar el pago; reintenta.",
+                intent_id=INTENT,
+            )
+        return PaymentAnswer(
+            outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
+            text="Responde sí o no.",
+            intent_id=INTENT,
+        )
+
+
 def client_for(*scopes: str, payments: bool = True) -> tuple[TestClient, FakePreparing]:
     preparing = FakePreparing()
     bus = CommandBus()
     bus.register(PreparePaymentCommand, preparing)
+    bus.register(ConfirmPaymentCommand, FakeConfirming(preparing))
     app.dependency_overrides[get_command_bus] = lambda: bus
     app.dependency_overrides[authenticated_caller] = lambda: Caller(
         holder_reference="ES-0001", account_id=ACCOUNT, scopes=frozenset(scopes)
@@ -148,6 +183,49 @@ def events_of(response) -> list[dict]:
         for line in response.text.splitlines()
         if line.startswith("data: ")
     ]
+
+
+def confirmation_conversation() -> dict:
+    return {
+        "workflow": "PAYMENT_CONFIRMATION",
+        "awaiting": "CONFIRMATION",
+        "intent_id": str(INTENT),
+        "recipient": "Marta Solis Vega",
+        "amount_minor": 2_000,
+    }
+
+
+@pytest.mark.parametrize(
+    ("reply", "outcome", "workflow"),
+    [
+        ("sí", PaymentOutcome.PAID.value, None),
+        ("no", PaymentOutcome.CANCELLED.value, None),
+        ("¿cuánto era?", PaymentOutcome.AWAITING_CONFIRMATION.value, "PAYMENT_CONFIRMATION"),
+        ("reintenta", PaymentOutcome.BANKING_UNAVAILABLE.value, "PAYMENT_CONFIRMATION"),
+    ],
+)
+def test_the_stream_returns_the_state_after_a_payment_confirmation(
+    reply: str, outcome: str, workflow: str | None
+) -> None:
+    """A terminal reply closes the buttons; an unclear one keeps the same preview available."""
+    client, payments = client_for(
+        Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE, Scope.PAYMENTS_CONFIRM
+    )
+
+    response = client.post(
+        "/v1/questions/stream",
+        json={"question": reply, "conversation": confirmation_conversation()},
+    )
+
+    answer = events_of(response)[-1]
+    assert answer["outcome"] == outcome
+    assert answer["conversation"]["workflow"] == workflow
+    assert payments.confirmations == [reply]
+    if outcome == PaymentOutcome.AWAITING_CONFIRMATION.value:
+        assert "Marta Solis Vega" in answer["text"]
+        assert "20,00" in answer["text"]
+    if outcome == PaymentOutcome.BANKING_UNAVAILABLE.value:
+        assert "reintenta" in answer["text"]
 
 
 def test_the_stream_answers_a_payment_the_same_way_the_other_route_does() -> None:

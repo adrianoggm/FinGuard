@@ -91,17 +91,16 @@ def test_the_guard_refuses_nothing_the_system_can_answer(case_id: str, question:
     assert unsupported_reason(question) is None, f"{case_id}: {question}"
 
 
-# --- the largest single movement ----------------------------------------------------
+# --- what used to be refused here ----------------------------------------------------
 #
-# The worst answer the system has produced. "En los últimos 3 meses, ¿cuál ha sido el mayor
-# gasto que he realizado?" came back as *3.977,37 € en los últimos 3 meses, en 56 movimientos*
-# — the sum of every expense in the window, presented as the answer to a question about one of
-# them. Nothing downstream could tell: the plan was valid, banking executed it, the figure is
-# real. It is simply the answer to a different question.
+# LARGEST_MOVEMENT lived in this file until the capability existed. "¿Cuál ha sido el mayor gasto?"
+# was refused because `Metric` is SUM or COUNT, so a total in place of a maximum was the only thing
+# the domain could express — and a total presented as a maximum is a real number about a different
+# question.
 #
-# The capability does not exist: `Metric` is SUM or COUNT, so the largest single movement is not
-# something a plan can ask for. Until it is, this refuses — because a total in place of a
-# maximum is not a rough answer, it is a false one.
+# It is answered now, by RANK_MOVEMENTS. What is left here is the discrimination that family had to
+# respect, which still matters: a *ranking of groups* is neither a comparison nor a refusal, and the
+# guard must keep its hands off it.
 
 
 @pytest.mark.parametrize(
@@ -109,34 +108,29 @@ def test_the_guard_refuses_nothing_the_system_can_answer(case_id: str, question:
     [
         "En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?",
         "¿cuál fue mi mayor gasto del mes pasado?",
-        "¿cuál ha sido el gasto más alto de este mes?",
         "¿cuál fue la compra más cara?",
         "el movimiento de mayor importe de julio",
         "¿cuál es el pago más grande que he hecho este año?",
-        "mi compra más grande en Mercadona",
     ],
 )
-def test_asking_for_one_extreme_movement_is_refused(question: str) -> None:
-    assert unsupported_reason(question) == "LARGEST_MOVEMENT"
+def test_asking_for_one_extreme_movement_is_no_longer_refused(question: str) -> None:
+    """The guard is a list of capabilities the domain does not have. This one it has, so a rule here
+    would be a dead end in front of a working answer — the failure this file's own docstring calls
+    the expensive one."""
+    assert unsupported_reason(question) is None
 
 
 @pytest.mark.parametrize(
     "question",
     [
-        # A ranking of groups, which `groupBy` expresses. The discriminator is grammatical: a
-        # superlative attached to a *noun* asks for one movement, while "gasté más" and "gasto
-        # más" are verbs and ask which group is largest.
+        # A ranking of groups, which `groupBy` expresses, and a plain aggregation. Neither was ever
+        # refusable and both stay that way.
         "¿en qué categoría he gastado más este mes?",
         "¿qué categoría es la que más he gastado?",
         "¿dónde gasto más?",
-        "¿cuál es el comercio donde más gasto este mes?",
-        "¿en qué me he gastado más este mes?",
-        # Plain aggregations, which must not be caught by a pattern about size.
         "¿cuánto gasté en el supermercado el mes pasado?",
         "¿cuántas compras hice en Mercadona?",
     ],
 )
-def test_a_ranking_or_a_total_is_not_an_extreme_movement(question: str) -> None:
-    """A false refusal here is worse than the miss it prevents: it takes a question the system
-    answers correctly today and turns it into a dead end before any model sees it."""
-    assert unsupported_reason(question) != "LARGEST_MOVEMENT"
+def test_a_ranking_of_groups_or_a_total_is_not_refused(question: str) -> None:
+    assert unsupported_reason(question) is None

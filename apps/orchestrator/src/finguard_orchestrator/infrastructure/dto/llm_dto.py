@@ -10,7 +10,7 @@ from datetime import date
 from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_orchestrator.domain.constants import MAX_CATEGORY_NAME, MAX_PROMPT_LENGTH
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import Action, Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.conversation import MAX_RANK, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.payment_request import (
     MAX_PAYMENT_MINOR,
@@ -93,6 +93,12 @@ class PlanPayload(_Payload):
     merchants: list[str] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    # Which kind of query this is. AGGREGATE totals or counts movements; RANK_MOVEMENTS picks one
+    # out by size, and then `rank` says which position while the grouping and the metric mean
+    # nothing. The tag decides, not the fields: a payload carrying both a rank and a grouping is a
+    # caller improvising, and reading the tag keeps the two shapes from being blended.
+    action: Action = Action.AGGREGATE
+    rank: int | None = Field(default=None, ge=1, le=MAX_RANK)
 
 
 class PaymentDraftPayload(_Payload):

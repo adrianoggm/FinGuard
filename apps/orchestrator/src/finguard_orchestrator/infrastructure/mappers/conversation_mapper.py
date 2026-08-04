@@ -12,6 +12,7 @@ layers in with an apology.
 
 import uuid
 
+from finguard_orchestrator.domain.enums import Action
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     ActiveWorkflow,
@@ -25,10 +26,13 @@ from finguard_orchestrator.domain.models.conversation import (
     workflow_of,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     FinancialPlanDraft,
+    RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ConversationPayload,
     PaymentDraftPayload,
@@ -41,13 +45,13 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 )
 
 
-def plan_payload(plan: FinancialPlan | FinancialPlanDraft) -> PlanPayload:
+def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> PlanPayload:
     """A plan or a half-built one, in fields.
 
     One function for both because the payload is the same shape and the difference is exactly what
     the payload already allows: a draft has no window, and `period` and the range are optional.
     """
-    return PlanPayload(
+    common = PlanPayload(
         direction=plan.direction,
         period=plan.period.period if plan.period else None,
         n=plan.period.n if plan.period else None,
@@ -55,9 +59,38 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft) -> PlanPayload:
         end=plan.date_range.end if plan.date_range else None,
         categories=list(plan.categories),
         merchants=list(plan.merchants),
-        group_by=plan.group_by,
-        metric=plan.metric,
     )
+    if isinstance(plan, TopMovements):
+        # No grouping and no metric: the payload keeps their defaults rather than inventing values a
+        # caller could echo back into an aggregate.
+        return common.model_copy(update={"action": Action.RANK_MOVEMENTS, "rank": plan.rank})
+    return common.model_copy(
+        update={
+            "group_by": plan.group_by,
+            "metric": plan.metric,
+            "action": Action.AGGREGATE,
+        }
+    )
+
+
+def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
+    """The last answered question, whichever kind it was.
+
+    The tag decides, not the fields: a payload with a rank *and* a grouping is a caller
+    improvising, and the tag keeps the two shapes from blending into something neither service
+    issues.
+    """
+    if payload.action is Action.RANK_MOVEMENTS:
+        absolute = payload.start is not None and payload.end is not None
+        return TopMovements(
+            direction=payload.direction,
+            period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
+            date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
+            categories=tuple(payload.categories),
+            merchants=tuple(payload.merchants),
+            rank=payload.rank or 1,
+        )
+    return plan_to_domain(payload)
 
 
 def to_domain(payload: ConversationPayload | None) -> Conversation:
@@ -72,10 +105,10 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     """
     if payload is None or payload.workflow is None:
         return Conversation(
-            last_plan=plan_to_domain(payload.last_plan) if payload and payload.last_plan else None
+            last_plan=query_to_domain(payload.last_plan) if payload and payload.last_plan else None
         )
 
-    last_plan = plan_to_domain(payload.last_plan) if payload.last_plan else None
+    last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
     active = _active(payload)
     return Conversation(active=active, last_plan=last_plan)
 

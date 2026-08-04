@@ -55,8 +55,6 @@ def test_a_count_question_is_caught_with_or_without_accents(sentence: str) -> No
 @pytest.mark.parametrize(
     ("sentence", "family"),
     [
-        ("cual fue la compra mas cara", "LARGEST_MOVEMENT"),
-        ("¿cuál fue la compra más cara?", "LARGEST_MOVEMENT"),
         ("he gastado mas este mes que el anterior", "COMPARISON"),
         ("¿he gastado más este mes que el anterior?", "COMPARISON"),
         ("que parte de mi sueldo se va en ocio", "RATIO"),

@@ -19,12 +19,20 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+
+# What a sentence can turn into. The two answer with different shapes — a total with groups against
+# a single row with a date and a shop — so they are two types rather than one with a mode flag, and
+# this alias is where the pair is named.
+type PlannedQuery = FinancialPlan | TopMovements
 
 
 @dataclass(frozen=True)
 class PlanningResult:
     outcome: PlanningOutcome
-    plan: FinancialPlan | None = None
+    # Either an aggregate or a ranking. One field rather than two, because exactly one of them
+    # exists per answer and a pair of optionals would let both — or neither — be set.
+    plan: PlannedQuery | None = None
     question: str | None = None
     reason: str | None = None
     # What the model had already read when it stopped to ask. Only a question carries one, and
@@ -54,7 +62,7 @@ class PlanningResult:
         return self.outcome is PlanningOutcome.PLANNED
 
     @classmethod
-    def planned(cls, plan: FinancialPlan) -> "PlanningResult":
+    def planned(cls, plan: PlannedQuery) -> "PlanningResult":
         return cls(PlanningOutcome.PLANNED, plan=plan)
 
     @classmethod

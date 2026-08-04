@@ -71,6 +71,24 @@ pasado" — and it can only be read against the field it answers.
 UNSUPPORTED — the query cannot be expressed at all. There is no average, no comparison \
 between two periods, and no forecast: only what already happened.
 
+## Which kind of question: "action"
+
+AGGREGATE — how much, or how many. A total, a count, a breakdown. Almost every question.
+RANK_MOVEMENTS — **one** movement, chosen by size. "El gasto más caro", "la compra más \
+alta", "el pago de mayor importe". Set "rank" to which position: 1 for the largest, 2 for \
+the second.
+
+The pair that decides it:
+
+- "¿cuánto gasté en gasolina?" totals every fuel movement. AGGREGATE, rank 0.
+- "¿cuál fue el gasto más caro en gasolina?" asks for one of them. RANK_MOVEMENTS, rank 1.
+
+A superlative on a noun — "el gasto más alto", "la compra más cara" — is a ranking. "Gasté \
+más" and "gasto más" are verbs and ask which *group* is largest: that is AGGREGATE with \
+groupBy.
+
+"rank" is 0 for AGGREGATE. Nothing else uses it.
+
 ## The window: exactly one
 
 Either "period" names one of the windows, or "period" is "{absolute}" and "from"/"to" \
@@ -145,28 +163,34 @@ metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimien
 ## Examples
 
 "¿Cuánto gasté el mes pasado?"
-{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
 "period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
+"¿Cuál fue el gasto más caro del año en gasolina?"
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "RANK_MOVEMENTS", \
+"rank": 1, "period": "THIS_YEAR", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["TRANSPORT_FUEL"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": "SUM"}}
+
 "¿Cuánto he gastado en los últimos 30 días?"
-{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
 "period": "LAST_N_DAYS", "n": 30, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
 "¿En qué me he gastado el dinero este mes?"
-{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
 "period": "THIS_MONTH", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "CATEGORY", \
 "metric": "SUM"}}
 
 "¿Cuánto gasté en Mercadona el mes pasado?"
-{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
 "period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": ["Mercadona"], \
 "isFollowUp": false, "changed": [], "groupBy": \
@@ -174,14 +198,15 @@ metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimien
 
 "¿Cuánto he gastado últimamente?"
 {{"outcome": "NEEDS_CLARIFICATION", "question": "¿De qué periodo? Por ejemplo este mes, el mes \
-pasado o los últimos 30 días.", "awaiting": "WINDOW", "period": "", "n": 0, "from": "", "to": "", \
+pasado o los últimos 30 días.", "awaiting": "WINDOW", "action": "AGGREGATE", "rank": 0, \
+"period": "", "n": 0, "from": "", "to": "", \
 "direction": \
 "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
 "¿Cuál es mi gasto medio mensual?"
-{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", \
+{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
 "period": "", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", \

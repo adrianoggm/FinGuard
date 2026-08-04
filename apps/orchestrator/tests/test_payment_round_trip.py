@@ -14,6 +14,7 @@ The last line matters as much: a payment under way must not swallow a genuine ch
 "¿Cuánto gasté este mes?" in the middle of a bizum is still a question.
 """
 
+import json
 import uuid
 
 import pytest
@@ -196,18 +197,55 @@ def test_a_change_of_subject_is_still_a_question() -> None:
     assert asking.sentences == ["¿cuánto gasté el mes pasado?"]
 
 
-def test_a_reply_that_fills_nothing_is_not_a_continuation() -> None:
-    """ "No sé" names no contact and no amount. It is not a payment turn this can advance, so it
-    takes the ordinary path."""
+def test_uncertainty_repeats_the_missing_field_instead_of_becoming_a_financial_question() -> None:
+    """The draft cannot advance, but the conversation can still give the user a useful next step."""
     client, preparing, asking = client_for()
 
-    client.post(
+    body = client.post(
         "/v1/questions",
         json={"question": "no sé", "conversation": PAYING_MARTA},
-    )
+    ).json()
 
     assert preparing.commands == []
-    assert asking.sentences == ["no sé"]
+    assert asking.sentences == []
+    assert body["outcome"] == PaymentOutcome.NEEDS_CLARIFICATION.value
+    assert "Marta Solis Vega" in body["text"]
+    assert body["conversation"]["workflow"] == "PAYMENT_IN_PROGRESS"
+
+
+def test_uncertainty_about_the_recipient_offers_the_contact_list() -> None:
+    client, preparing, asking = client_for()
+
+    body = client.post(
+        "/v1/questions",
+        json={"question": "ni idea", "conversation": paying(amount_minor=1_500)},
+    ).json()
+
+    assert preparing.commands == []
+    assert asking.sentences == []
+    assert "contactos" in body["text"]
+    assert "15,00" in body["text"]
+    assert body["conversation"]["workflow"] == "PAYMENT_IN_PROGRESS"
+
+
+@pytest.mark.parametrize("reply", ["no", "cancela", "mejor no"])
+def test_an_incomplete_payment_can_be_abandoned(reply: str) -> None:
+    client, preparing, asking = client_for()
+
+    response = client.post(
+        "/v1/questions/stream",
+        json={"question": reply, "conversation": PAYING_MARTA},
+    )
+    answer = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ][-1]
+
+    assert preparing.commands == []
+    assert asking.sentences == []
+    assert answer["outcome"] == PaymentOutcome.CANCELLED.value
+    assert answer["conversation"]["workflow"] is None
 
 
 def test_the_question_the_payment_asks_carries_the_draft_out() -> None:
