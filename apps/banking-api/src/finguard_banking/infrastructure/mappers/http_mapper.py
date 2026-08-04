@@ -24,6 +24,8 @@ from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
+from finguard_banking.domain.value_objects.destination import Destination, ToAccount, ToPhone
+from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
 from finguard_banking.infrastructure.dto.banking_dto import (
@@ -167,6 +169,11 @@ def payment_from_dto(
         account_id=account_id,
         recipient_name=body.recipient_name,
         recipient_contact_id=body.recipient_contact_id,
+        rail=body.rail,
+        # Parsed here, at the edge, like every other window and amount: `Iban` refuses anything
+        # that fails its check digits, so a mistyped account is a 422 rather than a preview of a
+        # payment to nowhere.
+        recipient_iban=Iban.parse(body.recipient_iban) if body.recipient_iban else None,
         amount=Money(body.amount_minor, body.currency),
         idempotency_key=key,
     )
@@ -175,8 +182,10 @@ def payment_from_dto(
 def preview_to_dto(preview: PaymentPreview) -> PaymentPreviewResponse:
     return PaymentPreviewResponse(
         intent_id=preview.intent_id,
-        recipient=preview.recipient,
-        recipient_phone=preview.recipient_phone,
+        rail=preview.rail.value,
+        recipient=preview.to.name,
+        recipient_phone=_phone_of(preview.to),
+        recipient_iban=_iban_of(preview.to),
         amount_minor=preview.amount.amount_minor,
         currency=preview.amount.currency,
         balance_before_minor=preview.balance_before.amount_minor,
@@ -189,8 +198,10 @@ def receipt_to_dto(receipt: PaymentReceipt) -> PaymentReceiptResponse:
     return PaymentReceiptResponse(
         intent_id=receipt.intent_id,
         transaction_id=receipt.transaction_id,
-        recipient=receipt.recipient,
-        recipient_phone=receipt.recipient_phone,
+        rail=receipt.rail.value,
+        recipient=receipt.to.name,
+        recipient_phone=_phone_of(receipt.to),
+        recipient_iban=_iban_of(receipt.to),
         amount_minor=receipt.amount.amount_minor,
         currency=receipt.amount.currency,
         balance_after_minor=receipt.balance_after.amount_minor,
@@ -249,3 +260,18 @@ def card_charges_to_dto(result: ListCardChargesResult) -> CardChargesResponse:
             for charge in result.charges
         ],
     )
+
+
+def _phone_of(destination: Destination) -> str | None:
+    """The number a Bizum went to. None for a transfer, which has an account instead."""
+    return destination.phone if isinstance(destination, ToPhone) else None
+
+
+def _iban_of(destination: Destination) -> str | None:
+    """The account a transfer went to, whole and unmasked.
+
+    Somebody approving a transfer is being asked to recognise twenty-four characters. Four of them
+    with dots in between is not a thing anybody can check, so the preview carries all of it and the
+    grouping is the client's to draw.
+    """
+    return str(destination.iban) if isinstance(destination, ToAccount) else None

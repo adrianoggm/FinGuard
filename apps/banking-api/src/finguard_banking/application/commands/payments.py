@@ -13,10 +13,13 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from finguard_banking.application.bus.command_bus import Command
-from finguard_banking.domain.errors import InvalidValueError
+from finguard_banking.domain.enums import Rail
+from finguard_banking.domain.errors import ContactHasNoAccountError, InvalidValueError
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_banking.domain.ports.payment_gateway import PaymentGatewayPort
+from finguard_banking.domain.value_objects.destination import Destination, ToAccount, ToPhone
+from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 
 
@@ -39,8 +42,23 @@ class PreparePaymentCommand(Command[PaymentPreview]):
     idempotency_key: str
     recipient_name: str | None = None
     recipient_contact_id: UUID | None = None
+    rail: Rail = Rail.BIZUM
+    # An account the holder typed rather than one this service had. Already checked by the time it
+    # arrives — `Iban` refuses anything that fails its check digits — so what is left here is which
+    # combinations name a destination at all.
+    recipient_iban: Iban | None = None
 
     def __post_init__(self) -> None:
+        if self.recipient_iban is not None:
+            if self.rail is not Rail.TRANSFER:
+                raise InvalidValueError("an account number is only a destination for a transfer")
+            if self.recipient_contact_id is not None:
+                raise InvalidValueError(
+                    "a transfer goes to a saved contact or to a typed account, not both"
+                )
+            if self.recipient_name is None:
+                raise InvalidValueError("a transfer to a typed account needs a name")
+            return
         if (self.recipient_name is None) == (self.recipient_contact_id is None):
             raise InvalidValueError(
                 "a payment names its recipient either by name or by contact identifier"
@@ -67,16 +85,44 @@ class PreparePaymentHandler:
         self._payments = payments
 
     async def handle(self, command: PreparePaymentCommand) -> PaymentPreview:
+        return await self._payments.prepare(
+            account_id=command.account_id,
+            to=await self._destination(command),
+            amount=command.amount,
+            key=command.idempotency_key,
+        )
+
+    async def _destination(self, command: PreparePaymentCommand) -> Destination:
+        """Who or what gets the money, resolved before anything is written.
+
+        An account the holder typed needs no lookup and gets none: there is no contact to find, and
+        inventing one to satisfy a shape would put a row in the directory that nobody asked to save.
+
+        Everything else goes through this account's own contacts, by identifier or by name, and a
+        transfer additionally needs that contact to *have* an account. Saying "no tengo la cuenta de
+        Marta" is a better answer than a transfer that fails at the gateway with somebody's money
+        already in flight.
+        """
+        if command.recipient_iban is not None:
+            assert command.recipient_name is not None  # the command's own invariant
+            return ToAccount(name=command.recipient_name, iban=command.recipient_iban)
+
         if command.recipient_contact_id is not None:
             contact = await self._contacts.one(command.account_id, command.recipient_contact_id)
         else:
             assert command.recipient_name is not None  # the command's own invariant
             contact = await self._contacts.resolve(command.account_id, command.recipient_name)
-        return await self._payments.prepare(
-            account_id=command.account_id,
+
+        if command.rail is Rail.BIZUM:
+            return ToPhone(
+                contact_id=contact.contact_id, name=contact.display_name, phone=contact.phone
+            )
+        if contact.iban is None:
+            raise ContactHasNoAccountError(contact.display_name)
+        return ToAccount(
+            name=contact.display_name,
+            iban=Iban(contact.iban),
             contact_id=contact.contact_id,
-            amount=command.amount,
-            key=command.idempotency_key,
         )
 
 

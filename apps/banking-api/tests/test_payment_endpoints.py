@@ -37,6 +37,7 @@ from finguard_banking.domain.errors import (
 )
 from finguard_banking.domain.models.contact import Contact
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
+from finguard_banking.domain.value_objects.destination import Destination, ToPhone
 from finguard_banking.domain.value_objects.money import Money
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -54,10 +55,11 @@ BODY = {
 }
 KEY = {"Idempotency-Key": "bizum-1"}
 
+MARTA = ToPhone(contact_id=CONTACT, name="Marta Solis Vega", phone="+34600333444")
+
 PREVIEW = PaymentPreview(
     intent_id=INTENT,
-    recipient="Marta Solis Vega",
-    recipient_phone="+34600333444",
+    to=MARTA,
     amount=Money(2_000, "EUR"),
     balance_before=Money(1_037_042, "EUR"),
     balance_after=Money(1_035_042, "EUR"),
@@ -66,8 +68,7 @@ PREVIEW = PaymentPreview(
 RECEIPT = PaymentReceipt(
     intent_id=INTENT,
     transaction_id=TRANSACTION,
-    recipient="Marta Solis Vega",
-    recipient_phone="+34600333444",
+    to=MARTA,
     amount=Money(2_000, "EUR"),
     balance_after=Money(1_035_042, "EUR"),
     confirmed_at=datetime(2026, 8, 3, 10, 1, tzinfo=UTC),
@@ -105,13 +106,16 @@ class FakeGateway:
         self,
         *,
         account_id: uuid.UUID,
-        contact_id: uuid.UUID,
+        to: Destination,
         amount: Money,
         key: str,
     ) -> PaymentPreview:
         if self._error is not None:
             raise self._error
-        self.prepared = {"account_id": account_id, "contact_id": contact_id, "key": key}
+        # The destination is recorded whole. It arrives resolved, so what these tests can now
+        # check is *which* destination the route decided on — which is the decision that matters
+        # and the one the old `contact_id` could only half express.
+        self.prepared = {"account_id": account_id, "to": to, "key": key}
         return PREVIEW
 
     async def confirm(self, *, account_id: uuid.UUID, intent_id: uuid.UUID) -> PaymentReceipt:
@@ -145,8 +149,12 @@ def test_preparing_answers_with_the_contract_names() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "intentId": str(INTENT),
+        # The rail is on the contract now, and the account beside the phone. Exactly one of the
+        # two is ever present: a Bizum names a person, a transfer names an account.
+        "rail": "BIZUM",
         "recipient": "Marta Solis Vega",
         "recipientPhone": "+34600333444",
+        "recipientIban": None,
         "amountMinor": 2_000,
         "currency": "EUR",
         "balanceBeforeMinor": 1_037_042,
@@ -180,8 +188,10 @@ def test_confirming_answers_with_the_receipt() -> None:
     assert response.json() == {
         "intentId": str(INTENT),
         "transactionId": str(TRANSACTION),
+        "rail": "BIZUM",
         "recipient": "Marta Solis Vega",
         "recipientPhone": "+34600333444",
+        "recipientIban": None,
         "amountMinor": 2_000,
         "currency": "EUR",
         "balanceAfterMinor": 1_035_042,
@@ -297,7 +307,7 @@ def test_a_chosen_contact_is_paid_by_identifier() -> None:
 
     assert response.status_code == 200
     assert contacts.asked_by == "identifier", "a chosen contact was resolved by name again"
-    assert gateway.prepared["contact_id"] == CONTACT
+    assert gateway.prepared["to"] == MARTA, "the identifier became a resolved destination"
 
 
 def test_a_chosen_contact_that_is_not_in_the_list_is_not_found() -> None:

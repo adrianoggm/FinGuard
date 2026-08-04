@@ -17,11 +17,14 @@ import pytest
 from support import as_pool, create_account, create_contact, record_movement
 
 from finguard_banking.bootstrap.config import get_settings
+from finguard_banking.domain.enums import Rail
 from finguard_banking.domain.errors import (
     InsufficientFundsError,
     IntentExpiredError,
     IntentNotConfirmableError,
 )
+from finguard_banking.domain.value_objects.destination import ToAccount, ToPhone
+from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.ledger_repository import PostgresLedgerRepository
 from finguard_banking.infrastructure.persistence.payment_repository import (
@@ -87,33 +90,40 @@ async def balance_of(connection: asyncpg.Connection, account: uuid.UUID) -> Mone
         return (await PostgresLedgerRepository(as_pool(connection)).balance_of(account)).booked
 
 
+# The seeded contact, as the destination a Bizum names. `prepare` takes a resolved destination now
+# rather than an identifier: turning a contact into a recipient is a decision the use case makes,
+# and the gateway is handed the answer with no room to interpret it.
+def bizum_to(contact: uuid.UUID) -> ToPhone:
+    return ToPhone(contact_id=contact, name="Marta Ruiz Gomez", phone="+34600111222")
+
+
 async def test_preparing_moves_no_money(connection: asyncpg.Connection) -> None:
     """The whole point of two steps. If preparing moved anything, the confirmation would be
     theatre."""
     account, contact = await funded(connection, 100_00)
 
     preview = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
 
     assert await balance_of(connection, account) == Money(100_00, EUR)
     assert preview.balance_before == Money(100_00, EUR)
     assert preview.balance_after == Money(70_00, EUR), "the preview has to say what it leaves"
-    assert preview.recipient == "Marta Ruiz Gomez"
-    assert preview.recipient_phone == "+34600111222"
+    assert preview.to.name == "Marta Ruiz Gomez"
+    assert preview.to.phone == "+34600111222"
 
 
 async def test_confirming_moves_it_once(connection: asyncpg.Connection) -> None:
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
 
     receipt = await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
 
     assert await balance_of(connection, account) == Money(70_00, EUR)
     assert receipt.amount == Money(30_00, EUR)
-    assert receipt.recipient == "Marta Ruiz Gomez"
+    assert receipt.to.name == "Marta Ruiz Gomez"
 
 
 async def test_a_resent_prepare_is_the_same_intent(connection: asyncpg.Connection) -> None:
@@ -121,11 +131,11 @@ async def test_a_resent_prepare_is_the_same_intent(connection: asyncpg.Connectio
     intention is how somebody confirms a payment they thought they had cancelled."""
     account, contact = await funded(connection, 100_00)
     first = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="same-key"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="same-key"
     )
 
     second = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="same-key"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="same-key"
     )
 
     assert second.intent_id == first.intent_id
@@ -134,7 +144,7 @@ async def test_a_resent_prepare_is_the_same_intent(connection: asyncpg.Connectio
 async def test_confirming_twice_pays_once(connection: asyncpg.Connection) -> None:
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
     await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
 
@@ -147,7 +157,7 @@ async def test_confirming_twice_pays_once(connection: asyncpg.Connection) -> Non
 async def test_a_payment_beyond_the_balance_is_refused(connection: asyncpg.Connection) -> None:
     account, contact = await funded(connection, 20_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
 
     with pytest.raises(InsufficientFundsError):
@@ -165,7 +175,7 @@ async def test_the_balance_is_checked_at_confirmation_not_at_preparation(
     account, contact = await funded(connection, 100_00)
     bank = await clearing(connection)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(80_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(80_00, EUR), key="k1"
     )
     # The money leaves by another route between preparing and confirming.
     await record_movement(connection, account=account, counterparty=bank, amount_minor=-90_00)
@@ -177,7 +187,7 @@ async def test_the_balance_is_checked_at_confirmation_not_at_preparation(
 async def test_an_expired_intent_cannot_be_confirmed(connection: asyncpg.Connection) -> None:
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
     # The whole row is aged, both timestamps. `CHECK (expires_at > created_at)` refuses an intent
     # that is dead on arrival — correct, and it applies to updates too, so moving only the expiry
@@ -196,7 +206,7 @@ async def test_an_expired_intent_cannot_be_confirmed(connection: asyncpg.Connect
 async def test_a_cancelled_intent_cannot_be_confirmed(connection: asyncpg.Connection) -> None:
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
     await payments(connection).cancel(account_id=account, intent_id=intent.intent_id)
 
@@ -209,7 +219,7 @@ async def test_the_payment_is_double_entry_and_booked(connection: asyncpg.Connec
     refuses anything else, so this asserts the shape rather than the invariant."""
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
 
     receipt = await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
@@ -234,7 +244,7 @@ async def test_the_intent_and_the_ledger_cannot_disagree(connection: asyncpg.Con
     that says it did not, and the retry pays again."""
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
 
     with pytest.raises(asyncpg.PostgresError):
@@ -268,10 +278,10 @@ async def test_two_confirmations_racing_for_one_balance_pay_once() -> None:
                 validity_seconds=settings.payment_validity_seconds,
             )
             first = await racing.prepare(
-                account_id=account, contact_id=contact, amount=Money(80_00, EUR), key="a"
+                account_id=account, to=bizum_to(contact), amount=Money(80_00, EUR), key="a"
             )
             second = await racing.prepare(
-                account_id=account, contact_id=contact, amount=Money(80_00, EUR), key="b"
+                account_id=account, to=bizum_to(contact), amount=Money(80_00, EUR), key="b"
             )
 
         left: asyncpg.Pool[object] = await asyncpg.create_pool(
@@ -325,10 +335,10 @@ async def test_the_sweep_writes_the_state_nothing_else_writes(
     """
     account, contact = await funded(connection, 100_00)
     stale = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="stale"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="stale"
     )
     fresh = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="fresh"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="fresh"
     )
     await connection.execute(
         "UPDATE payment_intents "
@@ -360,7 +370,7 @@ async def test_the_sweep_leaves_what_already_happened_alone(
     happened into one that never did."""
     account, contact = await funded(connection, 100_00)
     intent = await payments(connection).prepare(
-        account_id=account, contact_id=contact, amount=Money(30_00, EUR), key="k1"
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="k1"
     )
     await payments(connection).confirm(account_id=account, intent_id=intent.intent_id)
     # Both timestamps, because `expires_at > created_at` applies to updates too — the same
@@ -407,3 +417,92 @@ def test_a_payment_cannot_be_prepared_with_values_nobody_chose() -> None:
     adapter whose behaviour is an accident of what somebody typed once."""
     with pytest.raises(TypeError):
         PostgresPaymentRepository(as_pool(None))  # type: ignore[arg-type, call-arg]
+
+
+# --- transfers ------------------------------------------------------------------------
+#
+# The second rail. A Bizum names a person and the bank finds the account; a transfer names the
+# account, and everything that follows from that difference is asserted here.
+
+ELENA_IBAN = "ES9121000418450200051332"
+OTHER_IBAN = "ES7921000813610123456789"
+
+
+def transfer_to(iban: str, *, contact: uuid.UUID | None = None) -> ToAccount:
+    return ToAccount(name="Elena Marín", iban=Iban(iban), contact_id=contact)
+
+
+async def test_a_transfer_goes_to_an_account_and_carries_no_phone(
+    connection: asyncpg.Connection,
+) -> None:
+    account, _ = await funded(connection, 100_00)
+
+    preview = await payments(connection).prepare(
+        account_id=account, to=transfer_to(ELENA_IBAN), amount=Money(30_00, EUR), key="t1"
+    )
+
+    assert preview.rail is Rail.TRANSFER
+    assert isinstance(preview.to, ToAccount)
+    assert str(preview.to.iban) == ELENA_IBAN
+
+
+async def test_a_transfer_to_a_typed_account_needs_no_contact(
+    connection: asyncpg.Connection,
+) -> None:
+    """The reason `contact_id` became nullable. An account the holder typed has nobody behind it in
+    the directory and never will, and an intent that required one could not have been written."""
+    account, _ = await funded(connection, 100_00)
+    gateway = payments(connection)
+
+    intent = await gateway.prepare(
+        account_id=account, to=transfer_to(ELENA_IBAN), amount=Money(30_00, EUR), key="t2"
+    )
+    receipt = await gateway.confirm(account_id=account, intent_id=intent.intent_id)
+
+    assert receipt.rail is Rail.TRANSFER
+    assert await balance_of(connection, account) == Money(70_00, EUR)
+
+
+async def test_confirming_reads_the_account_the_preview_showed(
+    connection: asyncpg.Connection,
+) -> None:
+    """The substantive invariant of this whole change.
+
+    A transfer to a favourite could read the IBAN back from `contacts` at confirmation. If the
+    contact is edited in between — a slip, a second device, somebody who should not have the
+    session — the money would go where the row says rather than where the screen said. The intent
+    snapshots the destination, so editing the contact afterwards moves nothing.
+    """
+    account = await create_account(connection)
+    bank = await clearing(connection)
+    await record_movement(connection, account=account, counterparty=bank, amount_minor=100_00)
+    elena = await create_contact(connection, account, "Elena Marín", "+34600999888", ELENA_IBAN)
+    gateway = payments(connection)
+
+    intent = await gateway.prepare(
+        account_id=account,
+        to=transfer_to(ELENA_IBAN, contact=elena),
+        amount=Money(30_00, EUR),
+        key="t3",
+    )
+    # Somebody changes where Elena's money goes, after the preview was approved.
+    await connection.execute("UPDATE contacts SET iban = $1 WHERE id = $2", OTHER_IBAN, elena)
+
+    receipt = await gateway.confirm(account_id=account, intent_id=intent.intent_id)
+
+    assert isinstance(receipt.to, ToAccount)
+    assert str(receipt.to.iban) == ELENA_IBAN, "the account the user approved, not the current one"
+
+
+async def test_a_bizum_still_names_a_person(connection: asyncpg.Connection) -> None:
+    """The rail that already existed, unchanged. Its intent carries a contact and no account, and
+    the schema's destination check is what makes the pair impossible to get wrong."""
+    account, contact = await funded(connection, 100_00)
+
+    preview = await payments(connection).prepare(
+        account_id=account, to=bizum_to(contact), amount=Money(30_00, EUR), key="b1"
+    )
+
+    assert preview.rail is Rail.BIZUM
+    assert isinstance(preview.to, ToPhone)
+    assert preview.to.phone == "+34600111222"

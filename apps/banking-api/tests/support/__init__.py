@@ -128,14 +128,18 @@ async def create_contact(
     account: uuid.UUID,
     display_name: str,
     phone: str,
+    iban: str | None = None,
 ) -> uuid.UUID:
+    """Somebody this account can pay. With an account number they can also be transferred to."""
     contact_id = uuid.uuid4()
     await conn.execute(
-        "INSERT INTO contacts (id, account_id, display_name, phone) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO contacts (id, account_id, display_name, phone, iban) "
+        "VALUES ($1, $2, $3, $4, $5)",
         contact_id,
         account,
         display_name,
         phone,
+        iban,
     )
     return contact_id
 

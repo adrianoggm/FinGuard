@@ -48,6 +48,19 @@ class AccountNotFoundError(DomainError):
 BankingError = DomainError
 
 
+class ContactHasNoAccountError(DomainError):
+    """A contact who can receive a Bizum and not a transfer.
+
+    Its own error rather than a not-found: the person exists and the holder chose them, and telling
+    them "no existe" about somebody in their own contact list is a wrong answer. What is missing is
+    an account number, which is a thing they can go and add.
+    """
+
+    def __init__(self, display_name: str) -> None:
+        super().__init__(f"no account number saved for {display_name}")
+        self.display_name = display_name
+
+
 class ContactNotFoundError(DomainError):
     """No contact of this account answers to that name.
 

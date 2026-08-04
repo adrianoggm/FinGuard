@@ -40,6 +40,13 @@ from finguard_banking.domain.errors import (
     IntentNotFoundError,
 )
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
+from finguard_banking.domain.value_objects.destination import (
+    Destination,
+    ToAccount,
+    ToPhone,
+    rail_of,
+)
+from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
     _DECLARE_ACCOUNT,
@@ -73,22 +80,29 @@ class PostgresPaymentRepository:
         self,
         *,
         account_id: UUID,
-        contact_id: UUID,
+        to: Destination,
         amount: Money,
         key: str,
     ) -> PaymentPreview:
-        """Writes the intent and returns what the user is asked to confirm. Moves nothing."""
+        """Writes the intent and returns what the user is asked to confirm. Moves nothing.
+
+        The destination arrives resolved. A contact is still re-read for a Bizum, so a caller
+        cannot name somebody else's; a typed account has nothing to re-read against, which is
+        the whole difference between the two rails at this layer.
+        """
+        rail = rail_of(to)
         async with self._pool.acquire() as connection, connection.transaction():
             await connection.execute(_DECLARE_ACCOUNT, str(account_id))
 
-            contact = await connection.fetchrow(
-                "SELECT display_name, phone FROM assistant_read.contacts_v1 WHERE contact_id = $1",
-                contact_id,
-            )
-            if contact is None:
-                # Not "not authorised": a contact of another account does not exist here, and a
-                # caller who could tell those apart could enumerate other people's contacts.
-                raise ContactNotFoundError(str(contact_id))
+            if isinstance(to, ToPhone):
+                known = await connection.fetchrow(
+                    "SELECT contact_id FROM assistant_read.contacts_v1 WHERE contact_id = $1",
+                    to.contact_id,
+                )
+                if known is None:
+                    # Not "not authorised": a contact of another account does not exist here,
+                    # and a caller who could tell those apart could enumerate other people's.
+                    raise ContactNotFoundError(str(to.contact_id))
 
             balance = await self._balance(connection, account_id)
 
@@ -107,17 +121,22 @@ class PostgresPaymentRepository:
                 expires_at = datetime.now(UTC) + timedelta(seconds=self.validity_seconds)
                 await connection.execute(
                     "INSERT INTO payment_intents "
-                    "(id, account_id, contact_id, rail, amount_minor, currency, status, "
-                    " idempotency_key, expires_at) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                    "(id, account_id, contact_id, rail, recipient_name, recipient_iban, "
+                    " amount_minor, currency, status, idempotency_key, expires_at) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                     intent_id,
                     account_id,
-                    contact_id,
+                    to.contact_id,
                     # Named rather than defaulted. The column carried `DEFAULT 'BIZUM'` only long
                     # enough to backfill the rows that existed; a rail nobody chose is a rail
                     # somebody forgets to send, and this is the one statement that decides where
                     # money goes.
-                    Rail.BIZUM.value,
+                    rail.value,
+                    # The destination as the preview will show it. A transfer to a favourite
+                    # could read the contact's account back at confirmation; snapshotting is
+                    # what makes the approval binding on the account the user actually saw.
+                    to.name if isinstance(to, ToAccount) else None,
+                    str(to.iban) if isinstance(to, ToAccount) else None,
                     amount.amount_minor,
                     amount.currency,
                     _AWAITING,
@@ -127,8 +146,7 @@ class PostgresPaymentRepository:
 
         return PaymentPreview(
             intent_id=intent_id,
-            recipient=contact["display_name"],
-            recipient_phone=contact["phone"],
+            to=to,
             amount=amount,
             balance_before=balance,
             balance_after=Money(balance.amount_minor - amount.amount_minor, balance.currency),
@@ -149,9 +167,12 @@ class PostgresPaymentRepository:
                 raise AccountNotFoundError(account_id)
 
             intent = await connection.fetchrow(
-                "SELECT i.id, i.amount_minor, i.currency, i.status, i.expires_at, "
+                "SELECT i.id, i.amount_minor, i.currency, i.status, i.expires_at, i.rail, "
+                "       i.contact_id, i.recipient_name, i.recipient_iban, "
                 "       c.display_name, c.phone "
-                "FROM payment_intents i JOIN contacts c ON c.id = i.contact_id "
+                # LEFT, because a transfer to a typed account has no contact and an inner
+                # join would leave its intent unconfirmable: money approved, row invisible.
+                "FROM payment_intents i LEFT JOIN contacts c ON c.id = i.contact_id "
                 "WHERE i.id = $1 AND i.account_id = $2 FOR UPDATE OF i",
                 intent_id,
                 account_id,
@@ -165,6 +186,10 @@ class PostgresPaymentRepository:
             if intent["expires_at"] <= datetime.now(UTC):
                 raise IntentExpiredError(intent_id)
 
+            # Off the intent, never off the contact. A favourite edited between preparing and
+            # confirming must not move money approved against the old account, and the inner
+            # join this replaced would have read exactly that.
+            destination = _destination_of(intent)
             amount = Money(intent["amount_minor"], intent["currency"])
             balance = await self._balance(connection, account_id)
             if balance.amount_minor < amount.amount_minor:
@@ -180,8 +205,8 @@ class PostgresPaymentRepository:
                 payer=account_id,
                 clearing=clearing,
                 amount=amount,
-                recipient=intent["display_name"],
-                phone=intent["phone"],
+                recipient=destination.name,
+                phone=destination.phone if isinstance(destination, ToPhone) else None,
             )
 
             confirmed_at = datetime.now(UTC)
@@ -197,8 +222,7 @@ class PostgresPaymentRepository:
         return PaymentReceipt(
             intent_id=intent_id,
             transaction_id=transaction_id,
-            recipient=intent["display_name"],
-            recipient_phone=intent["phone"],
+            to=destination,
             amount=amount,
             balance_after=after,
             confirmed_at=confirmed_at,
@@ -262,7 +286,7 @@ class PostgresPaymentRepository:
         clearing: UUID,
         amount: Money,
         recipient: str,
-        phone: str,
+        phone: str | None,
     ) -> UUID:
         """One transaction through the lifecycle: PENDING, both entries, BOOKED.
 
@@ -306,3 +330,23 @@ class PostgresPaymentRepository:
             TransactionStatus.BOOKED.value,
         )
         return transaction_id
+
+
+def _destination_of(intent: Any) -> Destination:
+    """The destination an intent was approved against, rebuilt from its own row.
+
+    The schema guarantees the pairing — a BIZUM has a contact and no account, a TRANSFER has an
+    account and a name — so the branches here restate an invariant rather than guessing at one, and
+    a row that satisfied neither could not have been written.
+    """
+    if intent["rail"] == Rail.BIZUM.value:
+        return ToPhone(
+            contact_id=intent["contact_id"],
+            name=intent["display_name"],
+            phone=intent["phone"],
+        )
+    return ToAccount(
+        name=intent["recipient_name"],
+        iban=Iban(intent["recipient_iban"]),
+        contact_id=intent["contact_id"],
+    )
