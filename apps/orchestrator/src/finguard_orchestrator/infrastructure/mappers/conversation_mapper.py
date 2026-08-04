@@ -147,6 +147,7 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
                 intent_id=uuid.UUID(payload.intent_id),
                 recipient=payload.recipient,
                 amount_minor=payload.amount_minor,
+                concept=payload.concept,
             )
         case _:
             return None
@@ -209,6 +210,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 "intent_id": str(active.intent_id),
                 "recipient": active.recipient,
                 "amount_minor": active.amount_minor,
+                "concept": active.concept,
             }
         )
     return payload

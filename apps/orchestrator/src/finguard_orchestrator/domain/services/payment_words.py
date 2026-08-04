@@ -47,9 +47,26 @@ _NOT_AN_AMOUNT: Final = re.compile(
 # "concepto: X". It ends at the recipient, because "a Marta" is a different slot and "para" is how
 # the next clause usually starts.
 _CONCEPT: Final = re.compile(
-    r"(?:en|con)?\s*(?:el\s+)?concepto\s*(?:de\s+|:\s*)?(.+?)"
+    r"(?:en|con)?\s*(?:el\s+)?concepto\s*(?:de\s+|a\s+|:\s*)?(.+?)"
     r"(?=\s+(?:a|para|al)\s+\S|$)",
     re.IGNORECASE | re.DOTALL,
+)
+
+# Changing a recipient while a preview is open must be explicit. A contact name alone may be a
+# question or part of a concept; cancelling a held intent on that guess would be destructive. These
+# forms name the relationship that changes and are narrow enough to act on deterministically.
+_RECIPIENT_CORRECTION: Final = re.compile(
+    r"\b(?:era|es)\s+(?:para|a)\s+\S"
+    r"|\bmejor\s+(?:para|a)\s+\S"
+    r"|\b(?:cambia|cambiar|corrige|corregir|rectifica|rectificar)"
+    r"\s+(?:el\s+|la\s+)?(?:destinatario|contacto|persona)\s+(?:a|por)\s+\S",
+    re.IGNORECASE,
+)
+
+_CLEAR_CONCEPT: Final = re.compile(
+    r"\b(?:quita|quitar|elimina|eliminar|borra|borrar)\s+(?:el\s+)?concepto\b"
+    r"|\b(?:sin|ningun)\s+concepto\b",
+    re.IGNORECASE,
 )
 
 # Words that appear inside Spanish names and inside every Spanish sentence. Matching a contact on
@@ -108,6 +125,16 @@ def concept_in(sentence: str) -> str | None:
         # user wrote, and the model path can ask about it instead.
         return None
     return written
+
+
+def clears_concept(sentence: str) -> bool:
+    """Whether the user explicitly asks for the replacement payment to carry no concept."""
+    return _CLEAR_CONCEPT.search(spanish.folded(sentence)) is not None
+
+
+def changes_recipient(sentence: str) -> bool:
+    """Whether a reply to a preview explicitly replaces who receives the payment."""
+    return _RECIPIENT_CORRECTION.search(spanish.folded(sentence)) is not None
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:

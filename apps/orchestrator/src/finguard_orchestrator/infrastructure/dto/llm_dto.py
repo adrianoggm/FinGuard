@@ -174,6 +174,7 @@ class ConversationPayload(_Payload):
     intent_id: str | None = None
     recipient: str | None = Field(default=None, max_length=MAX_RECIPIENT_NAME)
     amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
+    concept: str | None = None
 
 
 class QuestionRequest(_Payload):

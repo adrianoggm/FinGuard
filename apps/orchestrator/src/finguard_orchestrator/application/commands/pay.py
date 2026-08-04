@@ -86,6 +86,7 @@ class PaymentAnswer:
     recipient_phone: str | None = None
     amount_minor: int | None = None
     currency: str | None = None
+    concept: str | None = None
     balance_after_minor: int | None = None
     expires_at: str | None = None
     transaction_id: UUID | None = None
@@ -231,6 +232,7 @@ async def _previewed(
         recipient_phone=preview.recipient_phone,
         amount_minor=preview.amount_minor,
         currency=preview.currency,
+        concept=request.concept,
         balance_after_minor=preview.balance_after_minor,
         expires_at=preview.expires_at.isoformat(),
     )
@@ -356,6 +358,8 @@ class PreparePaymentHandler:
         missing = pending.missing
 
         amount = payment_words.amount_in(command.sentence)
+        concept = payment_words.concept_in(command.sentence)
+        clears_concept = payment_words.clears_concept(command.sentence)
         named: tuple[Contact, ...] = ()
         if PaymentField.RECIPIENT in missing:
             # Only when the recipient is what is missing. Otherwise a sentence that happens to
@@ -365,8 +369,13 @@ class PreparePaymentHandler:
                 command.sentence, await self._contacts.all_of(command.account_id)
             )
 
-        if amount is None and not named and not chose:
+        if amount is None and not named and not chose and concept is None and not clears_concept:
             return None
+
+        if clears_concept:
+            # `filled_with` treats None as "not supplied", correctly for ordinary continuations.
+            # Here absence is the explicit new value, so apply it before merging the other fields.
+            pending = replace(pending, concept=None)
 
         if len(named) > 1:
             # Ambiguous, and this is the one place that can say so with the names in hand. Banking
@@ -392,7 +401,7 @@ class PreparePaymentHandler:
             # Read on the same turn as the amount, because it arrives in the same breath: "pues 15
             # euros con concepto de comida a Marta" answered the amount question and carried the
             # note, and reading one without the other lost it exactly where it was written.
-            concept=payment_words.concept_in(command.sentence),
+            concept=concept,
         )
         drafted = pending.filled_with(turn)
         request = drafted.into_request()

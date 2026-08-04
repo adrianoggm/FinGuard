@@ -67,6 +67,7 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.services import (
     confirmation,
     payment_router,
+    payment_words,
     payment_writer,
 )
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -264,6 +265,7 @@ def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
             recipient=answer.recipient or "",
             amount_minor=answer.amount_minor or 0,
             currency=answer.currency or "EUR",
+            concept=answer.concept,
         )
     if answer.draft is None:
         return None
@@ -332,6 +334,54 @@ async def _as_confirmation(
             outcome=PaymentOutcome.UNSUPPORTED.value,
             text=payment_writer.cannot_pay(),
             conversation=conversation_mapper.to_payload(was),
+        )
+
+    revises_amount = payment_words.amount_in(reply) is not None
+    revises_concept = payment_words.concept_in(reply) is not None or payment_words.clears_concept(
+        reply
+    )
+    revises_recipient = payment_words.changes_recipient(reply)
+    if revises_amount or revises_concept or revises_recipient:
+        # A correction is not a confirmation and never mutates an intent already held by banking.
+        # Cancel that offer, rebuild a draft from the facts the user kept and prepare a new preview.
+        # The second explicit yes is mandatory whichever field changed.
+        cancelled = await commands.dispatch(
+            ConfirmPaymentCommand(
+                reply="no",
+                account_id=who.account_id,
+                intent_id=active.intent_id,
+            )
+        )
+        if cancelled.outcome != PaymentOutcome.CANCELLED.value:
+            still_waiting = cancelled.outcome == PaymentOutcome.BANKING_UNAVAILABLE.value
+            conversation = was if still_waiting else was.with_active(None)
+            return QuestionResponse(
+                outcome=cancelled.outcome,
+                text=cancelled.text,
+                intent_id=str(cancelled.intent_id) if cancelled.intent_id else None,
+                conversation=conversation_mapper.to_payload(conversation),
+                currency=cancelled.currency,
+            )
+        replacement = PaymentDraft(
+            # A named recipient correction reopens this slot. The payment handler resolves the
+            # name in the reply against the account's contact directory and exposes ambiguity.
+            recipient_name=None if revises_recipient else active.recipient,
+            amount_minor=active.amount_minor,
+            currency=active.currency,
+            # Clearing is an explicit value. A new written concept is merged from `reply` by the
+            # same deterministic continuation reader used while a payment is being built.
+            concept=None if payment_words.clears_concept(reply) else active.concept,
+        )
+        revised = await _as_payment(
+            reply,
+            who,
+            commands,
+            payments_on,
+            was.with_active(None),
+            replacement,
+        )
+        return revised.model_copy(
+            update={"text": f"He descartado el Bizum anterior. {revised.text}"}
         )
 
     answer = await commands.dispatch(

@@ -53,8 +53,10 @@ class FakePreparing:
     def __init__(self) -> None:
         self.sentences: list[str] = []
         self.confirmations: list[str] = []
+        self.commands: list[PreparePaymentCommand] = []
 
     async def handle(self, command: PreparePaymentCommand) -> PaymentAnswer:
+        self.commands.append(command)
         self.sentences.append(command.sentence)
         return PREVIEW
 
@@ -207,7 +209,60 @@ def confirmation_conversation() -> dict:
         "intent_id": str(INTENT),
         "recipient": "Marta Solis Vega",
         "amount_minor": 2_000,
+        "concept": "tapas",
     }
+
+
+def test_changing_the_amount_cancels_the_old_intent_and_prepares_a_new_preview() -> None:
+    client, payments = client_for(
+        Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE, Scope.PAYMENTS_CONFIRM
+    )
+
+    body = client.post(
+        "/v1/questions",
+        json={"question": "mejor 30 euros", "conversation": confirmation_conversation()},
+    ).json()
+
+    assert payments.confirmations == ["no"]
+    assert len(payments.commands) == 1
+    pending = payments.commands[0].pending
+    assert pending is not None
+    assert pending.recipient_name == "Marta Solis Vega"
+    assert pending.amount_minor == 2_000
+    assert pending.concept == "tapas"
+    assert body["outcome"] == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert body["conversation"]["workflow"] == "PAYMENT_CONFIRMATION"
+
+
+@pytest.mark.parametrize(
+    ("correction", "recipient", "concept"),
+    [
+        ("era para María", None, "tapas"),
+        ("cambia el concepto a cena", "Marta Solis Vega", "tapas"),
+        ("quita el concepto", "Marta Solis Vega", None),
+    ],
+)
+def test_changing_recipient_or_concept_discards_the_old_intent_before_rebuilding(
+    correction: str, recipient: str | None, concept: str | None
+) -> None:
+    client, payments = client_for(
+        Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE, Scope.PAYMENTS_CONFIRM
+    )
+
+    body = client.post(
+        "/v1/questions",
+        json={"question": correction, "conversation": confirmation_conversation()},
+    ).json()
+
+    assert payments.confirmations == ["no"]
+    assert len(payments.commands) == 1
+    assert payments.commands[0].pending is not None
+    assert payments.commands[0].pending.recipient_name == recipient
+    assert payments.commands[0].pending.amount_minor == 2_000
+    assert payments.commands[0].pending.concept == concept
+    assert body["outcome"] == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert body["conversation"]["workflow"] == "PAYMENT_CONFIRMATION"
+    assert body["text"].startswith("He descartado el Bizum anterior.")
 
 
 @pytest.mark.parametrize(
