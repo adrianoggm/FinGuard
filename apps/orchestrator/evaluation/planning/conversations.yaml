@@ -200,3 +200,29 @@ conversations:
         keeps_payment: true
       - say: ¿cuánto gasté en gasolina el mes pasado?
         says: gasolina
+
+  - id: a_refused_capability_stays_refused
+    why: >
+      "¿Y el segundo?" asks for the second largest movement — the capability just refused — and says
+      nothing about size, so no guard rule could see it. It reached the planner, which asked which
+      period, and the next two replies were a loop over a window nothing could use.
+    turns:
+      - say: Cual fue el gasto más caro en el año de gasolina
+        expect: UNSUPPORTED
+      - say: Y el segundo ?
+        expect: UNSUPPORTED
+        says: más alto
+
+  - id: which_marta_can_actually_be_answered
+    why: >
+      Three turns of the report were the same question. "Marta Vega" matched both Martas on the
+      first name, so the sentence that resolves the ambiguity reported it again, forever.
+    turns:
+      - say: Bueno hagamos un bizum
+        keeps_payment: true
+      - say: pues 15 euros con concepto de comida a Marta
+        keeps_payment: true
+        says: Marta Solis Vega
+      - say: Marta Vega
+        expect: AWAITING_CONFIRMATION
+        says: comida
