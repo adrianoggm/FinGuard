@@ -39,6 +39,7 @@ CEPSA = Movement(
     direction="EXPENSE",
     merchant_name="Cepsa",
     category="TRANSPORT_FUEL",
+    currency="EUR",
 )
 REPSOL = Movement(
     occurred_at=datetime(2026, 6, 22, 19, 0),
@@ -47,6 +48,18 @@ REPSOL = Movement(
     direction="EXPENSE",
     merchant_name="Repsol",
     category="TRANSPORT_FUEL",
+    currency="EUR",
+)
+# The same account, denominated in something else. It exists to prove the currency travels rather
+# than being written here — a ranking used to answer "EUR" whatever the ledger said.
+BROADWAY = Movement(
+    occurred_at=datetime(2026, 5, 2, 21, 0),
+    description="Teatro",
+    amount_minor=19_500,
+    direction="EXPENSE",
+    merchant_name="Broadway",
+    category="LEISURE",
+    currency="USD",
 )
 
 
@@ -162,6 +175,18 @@ async def test_walking_down_the_list_keeps_working() -> None:
 
     assert [r.rank for r in ledger.rankings] == [2, 3]
     assert "no hay" in result.text.lower(), "there were only two, and it says so"
+
+
+async def test_the_currency_of_a_ranked_movement_comes_from_the_ledger() -> None:
+    """It was written here as "EUR" whatever the account held, so a charge on a dollar account was
+    labelled in euros beside a figure that was perfectly correct."""
+    result = await ask(
+        "¿cuál fue mi gasto más caro del año en gasolina?",
+        FakePlanner(PlanningResult.planned(FUEL)),
+        FakeLedger(BROADWAY),
+    )
+
+    assert result.currency == "USD"
 
 
 async def test_an_ordinal_after_an_aggregate_is_not_a_ranking() -> None:

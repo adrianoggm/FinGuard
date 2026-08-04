@@ -157,6 +157,10 @@ class RankedMovementResponse(_Payload):
     account_id: UUID
     rank: int
     movement: MovementResponse | None = None
+    # Beside the movement rather than inside it, exactly like the aggregate's: it is a fact about
+    # the account, not about the row. Absent when no movement matched, because there is then no
+    # amount to denominate.
+    currency: str | None = None
 
 
 class TraceResponse(_Payload):
