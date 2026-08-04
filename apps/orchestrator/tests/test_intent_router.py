@@ -57,6 +57,24 @@ def test_asking_about_the_assistant_is_not_a_question_about_money(sentence: str)
 @pytest.mark.parametrize(
     "sentence",
     [
+        "¿qué categorías entiendes?",
+        "¿qué categorías manejas?",
+        "dime las categorías disponibles",
+        "lista de categorías",
+        "¿qué opciones de categoría hay?",
+    ],
+)
+def test_asking_for_the_category_catalogue_is_not_a_financial_query(sentence: str) -> None:
+    assert route(sentence) is Intent.LIST_CATEGORIES
+
+
+def test_asking_how_the_previous_answer_was_classified_is_not_the_catalogue() -> None:
+    assert route("¿en qué categoría has clasificado el cine?") is Intent.EXPLAIN_PREVIOUS
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
         "¿por qué me has mostrado restaurantes?",
         "¿en qué categoría has clasificado el cine?",
         "¿de dónde sale ese número?",

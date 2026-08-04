@@ -10,7 +10,7 @@ the evaluation depends on it.
 """
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Final
 from uuid import UUID
@@ -233,6 +233,16 @@ class AskFinancialQuestionHandler:
             # the assistant is does not abandon a bizum.
             yield AskFinancialQuestionResult(
                 outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY, conversation=was
+            )
+            return
+
+        if intent is Intent.LIST_CATEGORIES:
+            # The catalogue is product data. Keep any open clarification so the user can inspect
+            # the options and answer it on the following turn.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.CATEGORIES.value,
+                text=explainer.category_catalogue(),
+                conversation=was,
             )
             return
 
@@ -490,6 +500,18 @@ class AskFinancialQuestionHandler:
         if not isinstance(active, FinancialClarification):
             return None
         draft = active.draft
+        if active.awaiting is Slot.CATEGORY:
+            # A category answer is a closed-vocabulary completion just like a named period. Only
+            # exact product terms take this shortcut; ambiguous words still go to the planner.
+            named = category_words.precisely_named_in(query.sentence)
+            if not named or draft.needs_a_window:
+                return None
+            finished = replace(draft, categories=named).into_plan()
+            if finished is None:
+                return None
+            if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
+                return None
+            return finished
         if not draft.needs_a_window:
             return None
 
