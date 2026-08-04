@@ -33,6 +33,12 @@ _LIST_SQL = """
     ORDER BY display_name
 """
 
+_ONE_SQL = """
+    SELECT contact_id, display_name, phone
+    FROM assistant_read.contacts_v1
+    WHERE contact_id = $1
+"""
+
 _RESOLVE_SQL = f"""
     SELECT contact_id, display_name, phone
     FROM assistant_read.contacts_v1
@@ -64,6 +70,29 @@ class PostgresContactRepository:
                 phone=row["phone"],
             )
             for row in rows
+        )
+
+    async def one(self, account_id: UUID, contact_id: UUID) -> Contact:
+        """The contact somebody picked from a list this account was shown.
+
+        Resolved, not trusted: the identifier came back from a client, and it goes through the same
+        declaration and the same view as a name. A contact of another account does not appear there,
+        so a forged id raises `ContactNotFoundError` — the same answer as a typo, which is all a
+        caller probing for other people's contacts should be able to learn.
+
+        No ambiguity to report, which is the whole point of asking by identifier: two contacts with
+        the same display name are one row each here and a permanent question to `resolve`.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            row = await connection.fetchrow(_ONE_SQL, contact_id)
+
+        if row is None:
+            raise ContactNotFoundError(str(contact_id))
+        return Contact(
+            contact_id=row["contact_id"],
+            display_name=row["display_name"],
+            phone=row["phone"],
         )
 
     async def resolve(self, account_id: UUID, name: str) -> Contact:
