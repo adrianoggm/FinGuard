@@ -349,3 +349,93 @@ def test_a_question_about_time_is_recognised(sentence: str) -> None:
 )
 def test_a_question_about_amount_is_not_one_about_time(sentence: str) -> None:
     assert not explicit_facts.asks_when(sentence)
+
+
+# --- a filter that outlived its question ---------------------------------------------
+
+
+class EmptyThenFull:
+    """Empty while the category is there, and an answer once it is gone — the Mercadona case."""
+
+    def __init__(self) -> None:
+        self.plans: list[FinancialPlan] = []
+
+    async def run(self, plan, *, account_id, today, reporting_timezone="Europe/Madrid", **kw):
+        self.plans.append(plan)
+        if plan.categories:
+            return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+        return QueryAnswer(currency="EUR", total_minor=21_778, movement_count=3)
+
+    async def ranked(self, ranking, *, account_id, today, reporting_timezone):
+        return None
+
+
+HEALTH_LAST_QUARTER = FinancialPlan(
+    direction=Direction.EXPENSE, period=THREE_MONTHS, categories=("HEALTH",)
+)
+
+
+async def test_a_category_from_five_turns_ago_does_not_empty_a_question_about_a_shop() -> None:
+    """The reported turn. `health` came from a question five turns earlier, survived a
+    clarification loop that answered nothing, and made a question about Mercadona come back empty
+    — with "buscar sin categoría" offered as a button the user then had to press."""
+    both = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=THREE_MONTHS,
+        categories=("HEALTH",),
+        merchants=("Mercadona",),
+    )
+    ledger = EmptyThenFull()
+
+    result = await ask(
+        "¿Qué gastos tengo históricamente en el Mercadona?",
+        FakePlanner(PlanningResult.planned(both)),
+        ledger,  # type: ignore[arg-type]
+        conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
+    )
+
+    assert [p.categories for p in ledger.plans] == [("HEALTH",), ()]
+    assert result.movement_count == 3
+    assert "salud" in result.text, "it says which filter it dropped"
+
+
+async def test_an_ordinary_follow_up_keeps_its_category_even_when_empty() -> None:
+    """The case that makes the rule narrow. "¿Y la semana pasada?" after a question about health
+    names no category either, and answering it about every expense would be a different question.
+    Only a shop the previous plan did not have makes the pair suspicious."""
+    narrower = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_WEEK),
+        categories=("HEALTH",),
+    )
+    ledger = EmptyThenFull()
+
+    result = await ask(
+        "¿y la semana pasada?",
+        FakePlanner(PlanningResult.planned(narrower)),
+        ledger,  # type: ignore[arg-type]
+        conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
+    )
+
+    assert [p.categories for p in ledger.plans] == [("HEALTH",)], "asked once, kept the filter"
+    assert result.movement_count == 0
+
+
+async def test_a_category_the_sentence_names_is_never_dropped() -> None:
+    """Naming it is the whole difference between an inherited filter and a chosen one."""
+    named = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=THREE_MONTHS,
+        categories=("HEALTH",),
+        merchants=("Mercadona",),
+    )
+    ledger = EmptyThenFull()
+
+    await ask(
+        "¿cuánto he gastado en salud en el Mercadona?",
+        FakePlanner(PlanningResult.planned(named)),
+        ledger,  # type: ignore[arg-type]
+        conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
+    )
+
+    assert [p.categories for p in ledger.plans] == [("HEALTH",)]

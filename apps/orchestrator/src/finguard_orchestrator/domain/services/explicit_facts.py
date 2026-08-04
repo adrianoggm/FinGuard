@@ -166,6 +166,38 @@ def enforce[T: FinancialPlan | TopMovements](plan: T, facts: ExplicitFacts) -> T
     return plan
 
 
+def without_the_inherited_category(
+    plan: FinancialPlan, previous: FinancialPlan | None, facts: ExplicitFacts
+) -> FinancialPlan | None:
+    """The same query without a category the user never named, or None to leave it alone.
+
+    From the report. Five turns after a question about health, and through a clarification loop
+    that answered nothing:
+
+        "¿Qué gastos tengo históricamente en el Mercadona?"
+        → "No he encontrado movimientos en Mercadona en los últimos 3 meses."
+        → the plan was `expense, health, Mercadona`
+
+    `health` came from a question five turns earlier. The user then pressed "buscar sin categoría"
+    and got their answer, so the machinery was right and the work was theirs.
+
+    **Only on an empty result, and only when the sentence introduced a shop.** Both conditions
+    carry their weight. Dropping an inherited category whenever the sentence does not name one
+    would break the ordinary follow-up — "¿y la semana pasada?" after a question about fuel keeps
+    the fuel, and answering it about everything would be a different question. Introducing a
+    merchant is what makes the pair suspicious: a shop the previous question did not have, and
+    nothing found, is the shape of two filters that do not belong together.
+
+    Nothing is guessed. This is the button the user pressed, pressed for them.
+    """
+    if facts.names_a_category or not plan.categories:
+        return None
+    introduced_a_shop = bool(plan.merchants) and not (previous and previous.merchants)
+    if not introduced_a_shop:
+        return None
+    return replace(plan, categories=())
+
+
 def restored_filters(
     plan: FinancialPlan, previous: FinancialPlan, facts: ExplicitFacts
 ) -> FinancialPlan:
