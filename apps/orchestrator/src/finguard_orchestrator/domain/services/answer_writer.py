@@ -14,7 +14,10 @@ makes.
 """
 
 from finguard_orchestrator.domain.enums import Metric
+from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
 # How many rows of a breakdown to read out. Past this the answer stops being a sentence
@@ -44,6 +47,66 @@ def money(amount_minor: int, currency: str) -> str:
     # the same amount two ways.
     symbol = " €" if currency == "EUR" else f" {currency}"
     return f"{sign}{grouped},{cents:02d}{symbol}"
+
+
+def balance(summary: AccountSummary) -> str:
+    """How much money there is, in words.
+
+    Two figures or one, and the difference matters. Booked is what the ledger has settled and
+    available is what can be spent; when something is pending they differ, and showing one under
+    the other's name tells somebody they have money they do not. When they agree, saying the same
+    number twice under two labels reads like a discrepancy the user has to work out — so it is
+    said once.
+    """
+    available = money(summary.available_minor, summary.currency)
+    if summary.available_minor == summary.booked_minor:
+        return f"Tienes {available} en tu cuenta."
+    booked = money(summary.booked_minor, summary.currency)
+    return f"Tienes {available} disponibles en tu cuenta. El saldo contabilizado es de {booked}."
+
+
+def contacts(found: tuple[Contact, ...]) -> str:
+    """Who can be paid, in words.
+
+    Names only. The phone number travels beside this as data — it is what tells two Martas
+    apart — but a chat line carrying both numbers buries the answer in digits nobody asked
+    for. Disambiguating is the client's job, with the identifiers it also receives.
+    """
+    if not found:
+        return "Todavía no tienes contactos guardados para enviar dinero."
+    names = ", ".join(contact.display_name for contact in found)
+    plural = "estos contactos" if len(found) > 1 else "este contacto"
+    return f"Tienes {plural} para enviar dinero: {names}."
+
+
+def filter_of(plan: FinancialPlan) -> str:
+    """What the figure is a figure *of*, in words, or "" when the question named no filter.
+
+    Two answers in a row that differ only in a number nobody can attribute is what made the
+    conversation feel poor while being correct: "449,62 € el mes pasado" and "44,59 € el mes
+    pasado" were the supermarket and the cinema, and neither said so. The filter was in the plan
+    and only visible behind "Ver la consulta", spelled GROCERIES.
+
+    A merchant wins over a category when both are present. "En Mercadona y en supermercado" reads
+    as two unrelated things when it is one filter narrowing another, and the shop is the more
+    specific of the two.
+
+    Spanish, from the vocabulary the prompt already uses: GROCERIES is an identifier and
+    "supermercado" is what the user said. A category nobody wrote words for falls back to its
+    identifier — worse than a name, much better than an invented one.
+    """
+    if plan.merchants:
+        return f" en {_listed(plan.merchants)}"
+    if plan.categories:
+        return f" en {_listed(tuple(category_words.name_of(c) for c in plan.categories))}"
+    return ""
+
+
+def _listed(names: tuple[str, ...]) -> str:
+    """Spanish enumeration: "a", "a y b", "a, b y c"."""
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} y {names[-1]}"
 
 
 def window_of(plan: FinancialPlan) -> str:
@@ -95,19 +158,21 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     """
     window = window_of(plan)
     counting = plan.metric is Metric.COUNT
+    # What the figure is of. Empty for a question that named no filter, which is most of them.
+    about = filter_of(plan)
 
     if answer.is_empty:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
         # The second is usually a plan that was wrong, and saying so lets the user
         # correct it instead of believing a zero.
-        return f"No he encontrado movimientos {window}."
+        return f"No he encontrado movimientos{about} {window}."
 
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
     if counting:
-        head = f"{answer.movement_count} {noun} {window}."
+        head = f"{answer.movement_count} {noun}{about} {window}."
     else:
         total = money(answer.total_minor, answer.currency)
-        head = f"{total} {window}, en {answer.movement_count} {noun}."
+        head = f"{total}{about} {window}, en {answer.movement_count} {noun}."
 
     if not _is_breakdown(answer):
         return head

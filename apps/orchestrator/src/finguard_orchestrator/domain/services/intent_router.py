@@ -11,11 +11,15 @@ need no model at all, because the answer is in the previous plan or in this repo
 
 **The order is the design.**
 
-    PAYMENT            first. It is the one where being wrong costs money.
+    LIST_CONTACTS      who can be paid. *Before* PAYMENT, which is the one place that rule is
+                       reversed — see the pattern for why it is safe.
+    PAYMENT            then this. It is the one where being wrong costs money.
     IDENTITY_OR_HELP   about the assistant. Answered from here, never from the ledger.
     CORRECTION         "no me has entendido". What matters is what happens next: a correction must
                        not inherit the plan it is correcting.
     EXPLAIN_PREVIOUS   about the last answer. Reads the plan, not the ledger.
+    ACCOUNT_BALANCE    how much money there is. A state, not a sum over a window — and the one
+                       question the financial planner cannot express at all.
     FINANCIAL_QUERY    everything left.
 
 `has_previous` gates the two that only mean something after an answer. "¿Por qué me has mostrado
@@ -35,7 +39,60 @@ class Intent(StrEnum):
     IDENTITY_OR_HELP = "IDENTITY_OR_HELP"
     CORRECTION = "CORRECTION"
     EXPLAIN_PREVIOUS = "EXPLAIN_PREVIOUS"
+    ACCOUNT_BALANCE = "ACCOUNT_BALANCE"
+    LIST_CONTACTS = "LIST_CONTACTS"
     FINANCIAL_QUERY = "FINANCIAL_QUERY"
+
+
+# How much money there is, which is a state and not a sum over a window.
+#
+# The first question of the reported conversation — "¿podrías decirme cuánto dinero tengo en mis
+# cuentas?" — came back as *"no he encontrado movimientos del 2026-08-04 al 2026-08-04"*. This is
+# where that starts: there were five intents and none of them was the balance, so it fell through
+# to the financial planner, and `FinancialPlan` cannot express a balance at all. The model built the
+# nearest thing available to it, which was today's movements.
+#
+# **The discriminator is the verb.** "Tengo", "queda", "dispongo" and "saldo" are about a state;
+# "gasté", "ingresé" and "he gastado" are sums over a period. The two overlap in "¿cuántos
+# movimientos tengo este mes?", so anything counting movements is excluded explicitly: that is a
+# question the planner answers well, and answering it with a balance would be the same class of
+# error this fixes — a real figure about something else.
+_ABOUT_THE_BALANCE: Final = re.compile(
+    r"\bsaldos?\b"
+    r"|\bcu[áa]nto\s+(dinero\s+)?(tengo|ten[íi]a|me\s+queda|hay)\b"
+    r"|\bcu[áa]nto\s+(tengo\s+)?disponible\b"
+    r"|\bde\s+cu[áa]nto\s+dispongo\b"
+    r"|\bdinero\s+(disponible|tengo)\b",
+    re.IGNORECASE,
+)
+
+# What "tengo" means when it is not about the balance. Checked first, so a question that counts
+# movements or lists things keeps going to the path that can answer it.
+_NOT_THE_BALANCE: Final = re.compile(
+    r"\bcu[áa]nt[oa]s?\s+(movimientos|compras|cargos|pagos|operaciones|veces|bizums?)\b"
+    r"|\bgast[éeoa]|\bingres[éeoa]|\bhe\s+gastado\b|\bme\s+he\s+gastado\b"
+    r"|\bqu[ée]\s+(contactos|tarjetas|cuentas)\b",
+    re.IGNORECASE,
+)
+
+
+# Who can be paid, which is a question and not an order.
+#
+# From the reported conversation: "¿podrías decirme qué contactos tengo para mandar bizum?" was read
+# as a payment — "bizum" is a payment word — so the assistant asked for the recipient of a payment
+# nobody had asked to make. The list has been on /v1/contacts since it was written; the conversation
+# could not reach it.
+#
+# **Checked before PAYMENT**, reversing the rule that payments come first. That rule exists because
+# being wrong about a payment costs money, and listing contacts cannot move any — so here the risk
+# runs the other way, and the expensive mistake is refusing to answer a question. What keeps it safe
+# is narrowness: it needs the word "contactos", or an explicit "a quién puedo". No order to pay
+# contains either, which is asserted rather than assumed.
+_ABOUT_CONTACTS: Final = re.compile(
+    r"\bcontactos?\b"
+    r"|\ba\s+qui[ée]n\s+(le\s+)?(puedo|podr[íi]a|puedes|se\s+(le\s+)?puede)\b",
+    re.IGNORECASE,
+)
 
 
 # About the assistant rather than about the account. `puedes hacer` and not a bare `puedes`, because
@@ -83,6 +140,10 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
     gates the two intents that are *about* that answer, so the same words mean different things on
     the first turn and on the second, which is what "conversation" means.
     """
+    if _ABOUT_CONTACTS.search(sentence):
+        # Before the payment check, and the comment on the pattern is the argument for why. A
+        # sentence naming a contact list is asking who exists, even when it also says "bizum".
+        return Intent.LIST_CONTACTS
     if payment_router.is_payment(sentence):
         # Before everything else. A sentence that both complains and asks for money is a payment:
         # the preview and the confirmation are still in front of it, and the other reading would
@@ -94,4 +155,9 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
         return Intent.CORRECTION
     if has_previous and _ABOUT_THE_ANSWER.search(sentence):
         return Intent.EXPLAIN_PREVIOUS
+    if _ABOUT_THE_BALANCE.search(sentence) and not _NOT_THE_BALANCE.search(sentence):
+        # Last of the deterministic ones, and not gated on `has_previous`: "¿cuánto tengo?" is a
+        # whole question on the first turn. The exclusion is what keeps "¿cuántos movimientos
+        # tengo este mes?" on the path that can answer it.
+        return Intent.ACCOUNT_BALANCE
     return Intent.FINANCIAL_QUERY

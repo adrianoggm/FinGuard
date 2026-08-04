@@ -32,6 +32,7 @@ product data.
 import re
 from typing import Final
 
+from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
 # Each entry is a capability the domain has no representation for. The name travels with
@@ -43,7 +44,7 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ),
     (
         "RATIO",
-        re.compile(r"(\bporcentaje\b|\bqué parte de\b|\bqué proporción\b|%)", re.IGNORECASE),
+        re.compile(r"(\bporcentaje\b|\bque parte de\b|\bque proporcion\b|%)", re.IGNORECASE),
     ),
     (
         # One extreme movement, not an aggregate of many. This produced the worst answer the
@@ -68,9 +69,9 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         # wrong thing.
         "LARGEST_MOVEMENT",
         re.compile(
-            r"\b(mayor|m[áa]xim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
+            r"\b(mayor|maxim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
             r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura)s?\s+"
-            r"(m[áa]s|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
+            r"(mas|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
             re.IGNORECASE,
         ),
     ),
@@ -80,14 +81,14 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         # is relate two windows, and in Spanish that needs the second term — "más X *que*
         # Y". Comparing without "que" is possible but it is phrased with these words.
         "COMPARISON",
-        re.compile(r"(\bmás\b.*\bque\b|\bcomparad|\bcomparación\b|\bfrente a\b)", re.IGNORECASE),
+        re.compile(r"(\bmas\b.*\bque\b|\bcomparad|\bcomparacion\b|\bfrente a\b)", re.IGNORECASE),
     ),
     (
         # Only what already happened is in the ledger.
         "FORECAST",
         re.compile(
-            r"(\bvoy a\b|\bllegaré\b|\ba este ritmo\b|\bprevisión\b|\bpreveo\b"
-            r"|\bacabaré\b|\bterminaré\b)",
+            r"(\bvoy a\b|\bllegare\b|\ba este ritmo\b|\bprevision\b|\bpreveo\b"
+            r"|\bacabare\b|\bterminare\b)",
             re.IGNORECASE,
         ),
     ),
@@ -96,8 +97,8 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         # regulatory rather than technical.
         "ADVICE",
         re.compile(
-            r"(\bdebería\b|\bpodría ahorrar\b|\brecortar\b|\baconsej|\basesor"
-            r"|\bqué hacer con\b|\bme recomiendas\b|\blímite de gasto\b|\bpresupuesto\b)",
+            r"(\bdeberia\b|\bpodria ahorrar\b|\brecortar\b|\baconsej|\basesor"
+            r"|\bque hacer con\b|\bme recomiendas\b|\blimite de gasto\b|\bpresupuesto\b)",
             re.IGNORECASE,
         ),
     ),
@@ -106,7 +107,7 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         # step; until it does, and after, this path only answers questions.
         "ACTION",
         re.compile(
-            r"\b(hazle|haz un|hazme|envía|manda|mándale|transfiere|paga|cámbiame|cambia)\b",
+            r"\b(hazle|haz un|hazme|envia|manda|mandale|transfiere|paga|cambiame|cambia)\b",
             re.IGNORECASE,
         ),
     ),
@@ -128,7 +129,11 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
     to everything on, because a guard that is off by accident is worse than one that was
     never written — it reads like a control.
     """
+    # Folded once, and every pattern above is written unaccented. Nobody types accents into a
+    # chat box: the verifier's count rule needed one and therefore never fired on the sentence
+    # that produced the worst answer in the reported conversation.
+    folded = spanish.folded(sentence)
     for name, pattern in _FAMILIES:
-        if policy.allows(name) and pattern.search(sentence):
+        if policy.allows(name) and pattern.search(folded):
             return name
     return None

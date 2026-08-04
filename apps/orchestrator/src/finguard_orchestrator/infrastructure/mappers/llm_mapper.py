@@ -40,6 +40,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PlanPayload,
     PolicyResponse,
     QuestionResponse,
+    SpokenContactResponse,
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
@@ -146,6 +147,14 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         question=result.question,
         plan=result.plan,
         plan_context=_plan_to_dto(result.plan_context) if result.plan_context else None,
+        contacts=[
+            SpokenContactResponse(
+                contact_id=contact.contact_id,
+                display_name=contact.display_name,
+                phone=contact.phone,
+            )
+            for contact in result.contacts
+        ],
         pending_context=(_plan_to_dto(result.pending_context) if result.pending_context else None),
         currency=result.currency,
         total_minor=result.total_minor,
@@ -163,6 +172,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
                 occurred_at=movement.occurred_at,
                 description=movement.description,
                 amount_minor=movement.amount_minor,
+                direction=movement.direction,
                 merchant_name=movement.merchant_name,
                 category=movement.category,
             )

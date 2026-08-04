@@ -132,3 +132,9 @@ class Spoken(StrEnum):
     IDENTITY = "IDENTITY"
     # About the previous answer: which query ran, and what a category means.
     EXPLANATION = "EXPLANATION"
+    # How much money there is. Read from the ledger, but through the fixed question the home
+    # screen asks rather than through a plan, so no model is involved in choosing it.
+    BALANCE = "BALANCE"
+    # Who this account can pay. A list, from banking's own restricted role — the question
+    # "¿a quién puedo hacer un bizum?" has an answer that needs no interpreting.
+    CONTACTS = "CONTACTS"

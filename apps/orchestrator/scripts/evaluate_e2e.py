@@ -33,6 +33,12 @@ PLANNING = Path(__file__).resolve().parents[1] / "evaluation" / "planning"
 # separates "gastaste 449,62 €" from "8 movimientos".
 _MONEY = re.compile(r"\d[\d.]*,\d{2}\s*(€|[A-Z]{3})")
 
+# Outcomes that are an answer and may therefore carry a figure. PLANNED was the only one when the
+# rule below was written; BALANCE is one too, and it arrives with the figure it is about. The rule
+# is about a *decline* carrying a number, which is the shape where the text says no and the payload
+# says 10.370,42.
+_ANSWERING = frozenset({"PLANNED", "BALANCE"})
+
 
 def violations(body: dict[str, Any]) -> list[str]:
     """Everything wrong with one answer, as property names.
@@ -65,7 +71,7 @@ def violations(body: dict[str, Any]) -> list[str]:
         # out if that ever stops being true.
         broken.append(str(body["outcome"]))
 
-    if body.get("outcome") != "PLANNED" and body.get("total_minor") is not None:
+    if body.get("outcome") not in _ANSWERING and body.get("total_minor") is not None:
         # A declined question carrying a figure is the worst shape available: the text
         # says no and the payload says a number.
         broken.append("FIGURE_WITHOUT_AN_ANSWER")
@@ -179,6 +185,20 @@ def turn_violations(
         # Only where no model is involved: the intent router, the capability guard, the
         # deterministic completion. Those outcomes are ours to guarantee.
         broken.append(f"EXPECTED_{expected}")
+
+    said = turn.get("says")
+    if said and said.lower() not in (body.get("text") or "").lower():
+        # For the half of an answer that is not a plan. A correct figure under a sentence that
+        # does not say what it is a figure of was the most common complaint about this assistant,
+        # and no property about outcomes or windows can see it.
+        broken.append("DOES_NOT_SAY")
+
+    refused = turn.get("not_says")
+    if refused and refused.lower() in (body.get("text") or "").lower():
+        # For a turn where several outcomes are acceptable and one shape is not. "How many"
+        # answered with a euro figure is the reported defect, and it is true of every phrasing and
+        # every model mood — where demanding a particular outcome would not be.
+        broken.append("SAYS_WHAT_IT_MUST_NOT")
 
     if outcome == "NEEDS_CLARIFICATION" and not body.get("pending_context"):
         # Without the draft on the way out the client has nothing to echo, so the next turn is a

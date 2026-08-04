@@ -21,6 +21,8 @@
 #   completes    this sentence supplies what the previous turn asked for
 #   keeps        fields that must survive from the previous plan (window, categories, metric)
 #   expect       an outcome a deterministic path owes us
+#   says         a phrase the answer has to contain, for the prose rather than the plan
+#   not_says     a phrase it must never contain, for turns where several outcomes are fine
 
 conversations:
   - id: rent_then_period
@@ -86,3 +88,74 @@ conversations:
         expect: UNSUPPORTED
       - say: ¿y en el supermercado?
         keeps: [window]
+
+  - id: the_balance_is_not_todays_movements
+    why: >
+      The first question of the reported conversation. It came back as "no he encontrado
+      movimientos del 2026-08-04 al 2026-08-04" — a plan the model built because the router had
+      no intent for a balance and FinancialPlan cannot express one.
+    turns:
+      - say: Buenos días, ¿podrías decirme cuánto dinero tengo en mis cuentas?
+        expect: BALANCE
+        says: Tienes
+      - say: ¿Qué gastos he realizado el último mes?
+        says: el mes pasado
+
+  - id: the_balance_does_not_erase_the_thread
+    why: A turn, not a reset. The follow-up after it must still know the window.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿cuánto dinero tengo?
+        expect: BALANCE
+      - say: ¿y en el supermercado?
+        keeps: [window]
+
+  - id: the_contacts_are_listed_not_paid
+    why: >
+      "¿Qué contactos tengo para mandar bizum?" was read as a payment, so the assistant asked who
+      to pay about a payment nobody had ordered.
+    turns:
+      - say: Perdona, ¿podrías decirme qué contactos tengo para mandar bizum?
+        expect: CONTACTS
+        says: Marta
+
+  - id: the_largest_expense_is_refused_not_totalled
+    why: >
+      The worst answer the system gave: the sum of 56 movements offered as the largest one. Until
+      the capability exists this refuses, and says why rather than giving a number.
+    turns:
+      - say: En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?
+        expect: UNSUPPORTED
+        says: no es lo que has preguntado
+
+  - id: the_answer_says_what_the_figure_is_of
+    why: >
+      Two answers in a row differing only in a number nobody can attribute. The filter was in the
+      plan and only visible behind "Ver la consulta", spelled GROCERIES.
+    turns:
+      - say: ¿Qué gastos he realizado el último mes?
+      - say: De esos gastos, ¿cuánto gasté en el supermercado?
+        says: supermercado
+        keeps: [window]
+
+  - id: how_many_is_never_answered_with_a_total
+    why: >
+      Typed exactly as it was in the reported conversation, without the accent. The verifier's
+      count rule read "\bcuánt[oa]s\b" and never fired, so "cuantos fueron en el supermercado"
+      came back as 449,62 € — a total presented as the answer to "how many".
+
+      Either outcome is acceptable and one thing is not: a count question must never be answered
+      with an amount, whether by counting correctly or by declining.
+    turns:
+      - say: Que gastos he realizado el ultimo mes
+      - say: De esos gastos cuantos fueron en el supermercado ?
+        not_says: €
+
+  - id: an_average_is_refused_by_name
+    why: >
+      Every refusal used to read "sin medias, comparaciones ni previsiones" — a list of three
+      things, at least two of which the user had not asked for.
+    turns:
+      - say: ¿Cuál es el gasto medio mensual que gasto en el coche?
+        expect: UNSUPPORTED
+        says: medias

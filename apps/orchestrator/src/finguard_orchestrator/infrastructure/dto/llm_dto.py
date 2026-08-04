@@ -121,9 +121,18 @@ class SpokenGroupResponse(_Payload):
 class SpokenMovementResponse(_Payload):
     occurred_at: str
     description: str
+    # Unsigned, with the direction beside it. A client deriving the sign from the amount alone
+    # showed every expense as an income, because a query filtered by EXPENSE returns positives.
     amount_minor: int
+    direction: str
     merchant_name: str | None = None
     category: str | None = None
+
+
+class SpokenContactResponse(_Payload):
+    contact_id: str
+    display_name: str
+    phone: str
 
 
 class QuestionResponse(_Payload):
@@ -152,6 +161,9 @@ class QuestionResponse(_Payload):
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
+    # Filled only by a question about who can be paid. The identifier is what lets a client offer
+    # a choice and send back *which* contact instead of a name to be interpreted a second time.
+    contacts: list[SpokenContactResponse] = []
 
 
 class SummaryMovementResponse(_Payload):

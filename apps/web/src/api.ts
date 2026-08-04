@@ -21,8 +21,15 @@ function headers(): Record<string, string> {
 export type Movement = {
   occurred_at: string;
   description: string;
-  /** Signed: negative is money out. The sign is the difference between a charge and a payment in. */
+  /**
+   * Signed on the movement list, unsigned in a chat answer — a query filtered by EXPENSE comes back
+   * from banking with positive amounts and the direction beside them. Read `direction` when it is
+   * there and fall back to the sign when it is not: deriving it from the amount alone is what showed
+   * every expense in the chat as "+22,11 €".
+   */
   amount_minor: number;
+  /** "EXPENSE" or "INCOME". Present in chat answers; absent on screens that send signed amounts. */
+  direction?: string;
   merchant_name: string | null;
   category: string | null;
   /** Present on the movement list, which is the only screen that can refile one. */

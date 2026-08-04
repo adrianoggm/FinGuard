@@ -15,8 +15,9 @@ the same category, and "compras de capricho" must not be found inside a sentence
 """
 
 import re
-import unicodedata
 from typing import Final
+
+from finguard_orchestrator.domain.services import spanish
 
 _GLOSS: Final[dict[str, tuple[str, ...]]] = {
     "GROCERIES": ("el súper", "el supermercado", "la compra", "comida de casa", "supermercado"),
@@ -89,17 +90,14 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
 }
 
 
-def _folded(text: str) -> str:
-    stripped = unicodedata.normalize("NFD", text.casefold())
-    return "".join(character for character in stripped if not unicodedata.combining(character))
-
-
 def _matches(sentence: str, vocabulary: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
-    haystack = _folded(sentence)
+    haystack = spanish.folded(sentence)
     found: dict[str, int] = {}
     for category, words in vocabulary.items():
         for word in sorted(words, key=len, reverse=True):
-            match = re.search(rf"(?<![a-z0-9]){re.escape(_folded(word))}(?![a-z0-9])", haystack)
+            match = re.search(
+                rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?![a-z0-9])", haystack
+            )
             if match:
                 # The earliest position at which this category is mentioned, so the order of the
                 # answer follows the order of the question.

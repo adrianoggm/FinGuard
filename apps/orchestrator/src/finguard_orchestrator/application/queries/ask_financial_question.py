@@ -24,6 +24,8 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
+from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.services import (
@@ -71,10 +73,27 @@ class SpokenPlan:
 
 
 @dataclass(frozen=True)
+class SpokenContact:
+    """Somebody who can be paid, flat like every Result piece.
+
+    The identifier is here so a client can offer a choice and send back *which* contact rather
+    than a name to be interpreted again — which is how money reaches the wrong Marta.
+    """
+
+    contact_id: str
+    display_name: str
+    phone: str
+
+
+@dataclass(frozen=True)
 class SpokenMovement:
     occurred_at: str
     description: str
+    # Unsigned, as banking returns it: a query filtered by EXPENSE comes back with positive
+    # amounts and the direction beside them. The direction is what makes the sign, and dropping
+    # it here is why every expense in the chat rendered as "+22,11 €" — money coming in.
     amount_minor: int
+    direction: str
     merchant_name: str | None = None
     category: str | None = None
 
@@ -103,6 +122,9 @@ class AskFinancialQuestionResult:
     movement_count: int | None = None
     groups: list[SpokenGroup] = field(default_factory=list)
     movements: list[SpokenMovement] = field(default_factory=list)
+    # Filled only by a question about who can be paid. Data as well as prose, so a client
+    # can draw one button per contact instead of parsing names out of a paragraph.
+    contacts: list[SpokenContact] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -161,10 +183,20 @@ class AskFinancialQuestionHandler:
         planner: QueryPlannerPort,
         queries: FinancialQueryPort,
         policy: GuardPolicy = EVERY_RULE,
+        *,
+        accounts: AccountSummaryPort,
+        contacts: ContactDirectoryPort,
     ) -> None:
         self._planner = planner
         self._queries = queries
         self._policy = policy
+        self._accounts = accounts
+        self._contacts = contacts
+
+    # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
+    # handler without it would fall back to the planner, which is the bug this exists to fix — and
+    # it would do so silently. Required means mypy finds an unwired build instead of a user
+    # finding it.
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
         """The whole answer at once. Drains the same pipeline the stream walks, so the
@@ -198,6 +230,21 @@ class AskFinancialQuestionHandler:
                 plan=answer_writer.describe(previous) if previous else None,
                 plan_context=_spoken(previous) if previous else None,
             )
+            return
+
+        if intent is Intent.LIST_CONTACTS:
+            # "¿Qué contactos tengo para mandar bizum?" used to be read as a payment, because
+            # "bizum" is a payment word — so the assistant asked who to pay, about a payment
+            # nobody had ordered. The list needs no model and no plan.
+            yield await self._contact_list(query, previous)
+            return
+
+        if intent is Intent.ACCOUNT_BALANCE:
+            # Not a plan and not a model. `FinancialPlan` expresses aggregations over movements —
+            # window, direction, categories, merchants, grouping, SUM or COUNT — and a balance is
+            # none of those, so asking a model for one got the nearest expressible thing: today's
+            # movements. The figure was already there, on the port the home screen reads.
+            yield await self._balance(query, previous)
             return
 
         if intent is Intent.CORRECTION:
@@ -248,6 +295,72 @@ class AskFinancialQuestionHandler:
         yield Stage("planned", answer_writer.describe(planned.plan))
         yield Stage("querying")
         yield await self._answer(query, planned.plan)
+
+    async def _contact_list(
+        self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None
+    ) -> AskFinancialQuestionResult:
+        """Who can be paid. Carries `previous` through for the same reason the balance does: a
+        question about the address book is a turn in the conversation, not a reset."""
+        try:
+            found = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tus contactos ahora mismo. Vuelve a intentarlo.",
+                plan=answer_writer.describe(previous) if previous else None,
+                plan_context=_spoken(previous) if previous else None,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.CONTACTS.value,
+            text=answer_writer.contacts(found),
+            plan=answer_writer.describe(previous) if previous else None,
+            plan_context=_spoken(previous) if previous else None,
+            contacts=[
+                SpokenContact(
+                    contact_id=str(contact.contact_id),
+                    display_name=contact.display_name,
+                    phone=contact.phone,
+                )
+                for contact in found
+            ],
+        )
+
+    async def _balance(
+        self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None
+    ) -> AskFinancialQuestionResult:
+        """How much money there is, from the fixed question rather than a planned one.
+
+        `previous` is carried straight through. A balance question is a turn in the conversation,
+        not a reset: asking it in the middle of an analysis of last month must not cost the window
+        of the question before it.
+        """
+        try:
+            summary = await self._accounts.of(
+                query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except BankingUnavailableError:
+            # The one figure that must never be invented. "Tienes 0,00 €" for "we could not ask"
+            # is the worst wrong answer a bank can give, so nothing numeric goes out.
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tu saldo ahora mismo. Vuelve a intentarlo.",
+                plan=answer_writer.describe(previous) if previous else None,
+                plan_context=_spoken(previous) if previous else None,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.BALANCE.value,
+            text=answer_writer.balance(summary),
+            plan=answer_writer.describe(previous) if previous else None,
+            plan_context=_spoken(previous) if previous else None,
+            currency=summary.currency,
+            # The available balance, which is the figure the sentence leads with. A client showing
+            # it should not have to parse the sentence to find it.
+            total_minor=summary.available_minor,
+        )
 
     def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         """The plan a reply to "¿de qué periodo?" completes, or None if this is not that.
@@ -464,6 +577,7 @@ def _answered(plan: FinancialPlan, answer: QueryAnswer) -> AskFinancialQuestionR
                 occurred_at=m.occurred_at.isoformat(),
                 description=m.description,
                 amount_minor=m.amount_minor,
+                direction=m.direction,
                 merchant_name=m.merchant_name,
                 category=m.category,
             )

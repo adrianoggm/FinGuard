@@ -25,7 +25,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ask, confirm, type Answer, type PlanContext } from "./api";
-import { money, signed, day } from "./format";
+import { money, outgoing, signed, day } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
@@ -233,15 +233,27 @@ function Bubble({ turn }: { turn: Turn }) {
               <li key={index}>
                 <span>{day(movement.occurred_at)}</span>
                 <span>{movement.merchant_name ?? movement.description}</span>
-                <span className={movement.amount_minor < 0 ? "out" : "in"}>
-                  {signed(movement.amount_minor, answer.currency ?? "EUR")}
+                <span className={outgoing(movement) ? "out" : "in"}>
+                  {signed(
+                    outgoing(movement)
+                      ? -Math.abs(movement.amount_minor)
+                      : Math.abs(movement.amount_minor),
+                    answer.currency ?? "EUR",
+                  )}
                 </span>
               </li>
             ))}
           </ul>
-          {/* Said plainly: these prove the data is real, they do not add up to the total. */}
+          {/*
+            Only when it *is* a sample. The line was rendered whenever there were any movements,
+            so an answer showing both of its two movements still said it was showing some of
+            them — a caveat that is false is worse than none, because it makes the true ones
+            unbelievable.
+          */}
           <p className="caveat">
-            Una muestra de los movimientos, no todos los que suman el total.
+            {answer.movement_count !== null && answer.movements.length < answer.movement_count
+              ? "Una muestra de los movimientos, no todos los que suman el total."
+              : `Se muestran los ${answer.movements.length} movimientos encontrados.`}
           </p>
         </details>
       )}
