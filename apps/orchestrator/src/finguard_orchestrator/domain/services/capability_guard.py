@@ -157,9 +157,17 @@ RULES: Final = frozenset(name for name, _ in _FAMILIES)
 # This was a refusal family until RANK_MOVEMENTS existed. It stays because COMPARISON would
 # otherwise claim these sentences — they carry "más … que" where the "que" opens a relative
 # clause — and a question with a real answer would come back as "no comparo dos periodos".
+#
+# The noun list is not decoration. It held only the generic words for money leaving an account —
+# gasto, compra, pago, movimiento, cargo, importe, factura — so "¿cuál es el Bizum más alto que he
+# realizado?" carried "más … que", matched nothing here, and came back as "todavía no comparo dos
+# periodos" to a question containing one period. A ranking subject is whatever kind of movement the
+# holder names, so the transfer words belong here as much as "compra" does.
 _A_SUPERLATIVE_NOUN: Final = re.compile(
-    r"\b(mayor|maxim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
-    r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura)s?\s+"
+    r"\b(mayor|maxim[oa])\s+"
+    r"(gasto|compra|pago|movimiento|cargo|importe|cantidad|bizum|transferencia|ingreso|cobro|recibo)"
+    r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura"
+    r"|bizum|transferencia|ingreso|cobro|recibo)s?\s+"
     r"(mas|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
     re.IGNORECASE,
 )

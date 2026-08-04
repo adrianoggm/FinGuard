@@ -137,6 +137,24 @@ def test_a_ranking_of_groups_or_a_total_is_not_refused(question: str) -> None:
     assert unsupported_reason(question) is None
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "¿Cuál es el Bizum más alto que he realizado?",
+        "¿cuál ha sido la transferencia más alta?",
+        "¿cuál fue mi mayor ingreso este año?",
+        "el bizum de mayor importe",
+        "¿cuál fue el recibo más caro?",
+    ],
+)
+def test_a_superlative_about_any_kind_of_movement_is_not_a_comparison(question: str) -> None:
+    """The exception list of nouns was only the generic words for money going out — gasto, compra,
+    pago, movimiento, cargo, importe, factura. So "el Bizum más alto que he realizado" carried
+    "más … que", matched nothing, and came back as "todavía no comparo dos periodos" to a question
+    containing exactly one period. A ranking subject is whatever the holder calls the movement."""
+    assert unsupported_reason(question) is None
+
+
 # --- which row a continuation asks for ------------------------------------------------
 
 
