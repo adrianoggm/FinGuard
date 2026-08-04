@@ -6,8 +6,8 @@ answered with *"solo consulto lo que ya ha pasado, sin medias, comparaciones ni 
 about the product, and not an answer to the question.
 
 Deterministic, like the payment router and for the same reason. Which conversation this is must
-not depend on the disposition of whichever model happens to be configured — and three of these five
-need no model at all, because the answer is in the previous plan or in this repository.
+not depend on the disposition of whichever model happens to be configured. Several need no model at
+all, because the answer is in the previous plan or in this repository.
 
 **The order is the design.**
 
@@ -15,8 +15,8 @@ need no model at all, because the answer is in the previous plan or in this repo
                        reversed — see the pattern for why it is safe.
     PAYMENT            then this. It is the one where being wrong costs money.
     IDENTITY_OR_HELP   about the assistant. Answered from here, never from the ledger.
-    CORRECTION         "no me has entendido". What matters is what happens next: a correction must
-                       not inherit the plan it is correcting.
+    CORRECTION         "no me has entendido". It patches the plan it corrects and keeps every field
+                       the user did not replace.
     EXPLAIN_PREVIOUS   about the last answer. Reads the plan, not the ledger.
     ACCOUNT_BALANCE    how much money there is. A state, not a sum over a window — and the one
                        question the financial planner cannot express at all.
@@ -31,7 +31,7 @@ import re
 from enum import StrEnum
 from typing import Final
 
-from finguard_orchestrator.domain.services import payment_router
+from finguard_orchestrator.domain.services import payment_router, spanish
 
 
 class Intent(StrEnum):
@@ -114,6 +114,15 @@ _CORRECTING: Final = re.compile(
     re.IGNORECASE,
 )
 
+# A rejection with no replacement in it. These start a correction workflow rather than asking the
+# planner to derive a new query from "no es eso", which contains no financial information at all.
+_BARE_CORRECTION: Final = re.compile(
+    r"(?:perdona[\s,]+)?(no\s+me\s+has\s+entendido|no\s+(es|era)\s+eso|"
+    r"eso\s+no\s+es\s+lo\s+que(\s+te)?\s+pregunte|"
+    r"te\s+has\s+equivocado|no\s+te\s+he\s+preguntado\s+eso|"
+    r"me\s+(referia|refiero)|queria\s+decir)"
+)
+
 # About the previous answer: how it was reached, or what it was filed under. The `por qué` case is
 # narrowed to what *the assistant* did — "¿por qué gasté tanto en junio?" is a question about money,
 # and it is not one this pipeline can answer either, but the refusal it deserves is a different one.
@@ -161,3 +170,9 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
         # tengo este mes?" on the path that can answer it.
         return Intent.ACCOUNT_BALANCE
     return Intent.FINANCIAL_QUERY
+
+
+def is_bare_correction(sentence: str) -> bool:
+    """Whether the sentence rejects the previous answer without supplying a replacement."""
+    cleaned = spanish.folded(sentence).strip(" ¿?¡!.,")
+    return _BARE_CORRECTION.fullmatch(cleaned) is not None

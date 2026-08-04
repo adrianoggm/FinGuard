@@ -93,6 +93,7 @@ export type Slot =
   | "WINDOW"
   | "YEAR"
   | "CATEGORY"
+  | "CORRECTION"
   | "AMOUNT"
   | "RECIPIENT"
   | "RECIPIENT_CHOICE"

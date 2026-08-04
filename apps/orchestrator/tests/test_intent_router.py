@@ -94,13 +94,39 @@ def test_there_is_nothing_to_explain_before_the_first_answer() -> None:
     ],
 )
 def test_a_correction_is_marked_as_one(sentence: str) -> None:
-    """It matters because of what happens next: a correction must not inherit the plan it is
-    correcting. Treating it as an ordinary follow-up patches a window onto a wrong category."""
+    """It matters because of what happens next: a correction patches only the fields the user
+    replaces instead of deriving a fresh plan or silently repeating the wrong answer."""
     assert route(sentence) is Intent.CORRECTION
 
 
 def test_a_correction_before_any_answer_is_just_a_question() -> None:
     assert route("no me has entendido", answered=False) is Intent.FINANCIAL_QUERY
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "no me has entendido",
+        "Perdona, no me has entendido.",
+        "No era eso.",
+        "te has equivocado",
+        "eso no es lo que te pregunté",
+    ],
+)
+def test_a_bare_correction_contains_no_replacement(sentence: str) -> None:
+    assert intent_router.is_bare_correction(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "no me has entendido, me refería al alquiler",
+        "no era este mes, era el anterior",
+        "me refiero a los restaurantes",
+    ],
+)
+def test_a_correction_with_new_information_is_not_bare(sentence: str) -> None:
+    assert intent_router.is_bare_correction(sentence) is False
 
 
 @pytest.mark.parametrize(

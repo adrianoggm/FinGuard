@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -382,6 +382,36 @@ async def test_a_follow_up_inherits_the_window_it_was_told_not_to_restate() -> N
     assert result.plan is not None
     assert result.plan.period == RelativePeriod(period=Period.LAST_MONTH)
     assert result.plan.categories == ("TRANSPORT_FUEL",)
+
+
+async def test_a_forced_patch_merges_even_when_the_model_calls_it_a_new_question() -> None:
+    """The application knows this sentence answers an active clarification. That state wins over
+    the model's conversational classification; only the fields named in `changed` are replaced."""
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("HOUSING_RENT",),
+    )
+    body = {
+        **FULL,
+        "period": "THIS_YEAR",
+        "metric": "COUNT",
+        "isFollowUp": False,
+        "changed": ["metric"],
+    }
+
+    result = await planner_for(FakeProvider(answer=json.dumps(body))).plan(
+        "¿cuántas veces este año?",
+        today=TODAY,
+        previous=previous,
+        force_follow_up=True,
+    )
+
+    assert result.outcome is PlanningOutcome.PLANNED
+    assert result.plan is not None
+    assert result.plan.period == RelativePeriod(Period.THIS_YEAR)
+    assert result.plan.categories == ("HOUSING_RENT",)
+    assert result.plan.metric is Metric.COUNT
 
 
 async def test_a_plan_with_no_window_asks_for_the_period() -> None:

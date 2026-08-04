@@ -108,6 +108,12 @@ def test_the_previous_plan_is_described_by_us_not_quoted() -> None:
     assert "It was answered with this plan: el mes pasado, expense" in text
 
 
+def test_a_forced_patch_tells_the_model_the_sentence_belongs_to_the_context() -> None:
+    text = instructions(prompt(previous=LAST_MONTH, force_follow_up=True))
+
+    assert "must be treated as a follow-up" in text
+
+
 def test_no_previous_plan_means_no_section_at_all() -> None:
     assert "The previous question" not in prompt()
 

@@ -256,6 +256,12 @@ for.
 
 """
 
+_FORCED_FOLLOW_UP: Final = """The conversation state says this sentence completes or corrects the \
+plan above. It **must be treated as a follow-up**, even if it could look complete by itself. Set \
+"isFollowUp" to true and list only the fields this sentence changes.
+
+"""
+
 
 def _glossary(categories: tuple[str, ...]) -> str:
     """One line per category the deployment has. Absent ones are never described."""
@@ -281,6 +287,7 @@ def build_prompt(
     today: date,
     categories: tuple[str, ...] = (),
     previous: FinancialPlan | None = None,
+    force_follow_up: bool = False,
 ) -> str:
     """`previous` is the plan behind the last answer. A follow-up carries context the
     sentence alone does not: "¿y en gasolina?" is not a question about all time, and
@@ -297,7 +304,7 @@ def build_prompt(
     and one with untrusted text only in its data.
     """
     return _TEMPLATE.format(
-        previous=_previous_section(previous, categories),
+        previous=_previous_section(previous, categories, force_follow_up=force_follow_up),
         today=today.isoformat(),
         absolute=ABSOLUTE,
         no_category=NO_CATEGORY,
@@ -306,7 +313,12 @@ def build_prompt(
     )
 
 
-def _previous_section(previous: FinancialPlan | None, categories: tuple[str, ...]) -> str:
+def _previous_section(
+    previous: FinancialPlan | None,
+    categories: tuple[str, ...],
+    *,
+    force_follow_up: bool = False,
+) -> str:
     """The previous plan, described by us rather than quoted from the caller.
 
     Every token in that line comes from a closed set: enum values, an integer the plan's
@@ -320,4 +332,5 @@ def _previous_section(previous: FinancialPlan | None, categories: tuple[str, ...
         return ""
     known = tuple(name for name in previous.categories if name in categories)
     plan = previous if known == previous.categories else replace(previous, categories=known)
-    return _PREVIOUS.format(previous=answer_writer.describe(plan))
+    section = _PREVIOUS.format(previous=answer_writer.describe(plan))
+    return section + (_FORCED_FOLLOW_UP if force_follow_up else "")

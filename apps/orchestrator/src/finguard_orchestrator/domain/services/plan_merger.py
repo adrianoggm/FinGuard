@@ -19,7 +19,10 @@ list of changed fields is data the model emits rather than something read out of
 from dataclasses import replace
 from enum import StrEnum
 
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+)
 
 
 class Field(StrEnum):
@@ -55,6 +58,30 @@ def merge(
 
     return replace(
         previous,
+        period=source.period,
+        date_range=source.date_range,
+        direction=emitted.direction if Field.DIRECTION in changed else previous.direction,
+        categories=emitted.categories if Field.CATEGORIES in changed else previous.categories,
+        merchants=emitted.merchants if Field.MERCHANTS in changed else previous.merchants,
+        group_by=emitted.group_by if Field.GROUP_BY in changed else previous.group_by,
+        metric=emitted.metric if Field.METRIC in changed else previous.metric,
+    )
+
+
+def merge_draft(
+    previous: FinancialPlan,
+    emitted: FinancialPlanDraft,
+    *,
+    changed: frozenset[Field],
+) -> FinancialPlanDraft:
+    """Apply the same patch to a clarification that has not become a query yet.
+
+    A model may ask another question while correcting an existing plan. The new draft can be
+    incomplete, but every field it did not ask to replace must still come from the validated plan.
+    """
+    source = emitted if Field.WINDOW in changed else previous
+    return replace(
+        emitted,
         period=source.period,
         date_range=source.date_range,
         direction=emitted.direction if Field.DIRECTION in changed else previous.direction,

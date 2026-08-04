@@ -149,39 +149,13 @@ def test_suspending_an_idle_conversation_changes_nothing_that_matters() -> None:
 # --- what a refusal remembers --------------------------------------------------------
 
 
-def test_a_refusal_keeps_what_was_understood() -> None:
-    """Remembering only "LARGEST_MOVEMENT" lost the period, the category and the position asked for,
-    so "¿y el segundo?" had to re-read them from a sentence containing none of them."""
-    refused = IDLE.with_active(
-        UnsupportedCapability(
-            capability="LARGEST_MOVEMENT",
-            draft=FinancialPlanDraft(
-                direction=Direction.EXPENSE,
-                period=RelativePeriod(period=Period.THIS_YEAR),
-                categories=("TRANSPORT_FUEL",),
-            ),
-            rank=1,
-        )
-    )
+def test_a_refusal_waits_for_nothing() -> None:
+    """It is a dead end by construction: naming a capability we do not have is the whole state, and
+    a slot would promise the next sentence can complete something."""
+    refused = IDLE.with_active(UnsupportedCapability(capability="FORECAST"))
 
-    assert isinstance(refused.active, UnsupportedCapability)
-    assert refused.active.draft is not None
-    assert refused.active.draft.categories == ("TRANSPORT_FUEL",)
-    assert refused.active.rank == 1
-    assert refused.awaiting is None, "a refusal is not waiting for a slot to be filled"
-
-
-def test_the_rank_is_the_only_thing_a_follow_up_changes() -> None:
-    """ "¿Y el segundo?" is a patch of one field. Nothing else about the question has to be read
-    again, which is what makes it robust to how the follow-up is phrased."""
-    refused = UnsupportedCapability(capability="LARGEST_MOVEMENT", draft=RENT, rank=1)
-
-    second = UnsupportedCapability(
-        capability=refused.capability, draft=refused.draft, rank=refused.rank + 1
-    )
-
-    assert second.rank == 2
-    assert second.draft == refused.draft
+    assert refused.awaiting is None
+    assert refused.last_plan is None, "and it is not remembered as an answered question"
 
 
 # --- which question a payment asks ---------------------------------------------------

@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.models.conversation import (
     ActiveWorkflow,
     Conversation,
     FinancialClarification,
+    Slot,
     UnsupportedCapability,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
@@ -47,6 +48,7 @@ from finguard_orchestrator.domain.services import (
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
+    FinancialPlanDraft,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -219,6 +221,8 @@ class AskFinancialQuestionHandler:
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
         previous = was.last_plan
+        planning_previous = previous if isinstance(previous, FinancialPlan) else None
+        force_follow_up = False
         intent = intent_router.route(query.sentence, has_previous=previous is not None)
 
         if intent is Intent.IDENTITY_OR_HELP:
@@ -266,10 +270,34 @@ class AskFinancialQuestionHandler:
             return
 
         if intent is Intent.CORRECTION:
-            # The plan being corrected is dropped, which is the whole point of recognising this. A
-            # correction treated as an ordinary follow-up patches a window onto a category the user
-            # has just said was wrong.
-            previous = None
+            if isinstance(previous, FinancialPlan) and intent_router.is_bare_correction(
+                query.sentence
+            ):
+                # There is nothing to patch yet. Keep the validated plan in the state so the next
+                # turn can name one replacement without having to restate every good field.
+                yield AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                    text=(
+                        "Entendido. ¿Qué debería cambiar: el periodo, gastos o ingresos, "
+                        "la categoría, el comercio o el tipo de cálculo?"
+                    ),
+                    conversation=was.with_active(
+                        FinancialClarification(
+                            draft=FinancialPlanDraft.of(previous),
+                            awaiting=Slot.CORRECTION,
+                        )
+                    ),
+                )
+                return
+            if isinstance(previous, FinancialPlan):
+                # The correction supplies a replacement. It is a patch even if its wording looks
+                # like a complete sentence; the fields it does not correct remain authoritative.
+                planning_previous = previous
+                force_follow_up = True
+            else:
+                # Ranking patches have a different shape. Until they are expressible, re-read the
+                # correction rather than pretending an aggregate context can represent one.
+                planning_previous = None
 
         deeper = self._next_in_ranking(query)
         if deeper is not None:
@@ -298,15 +326,28 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, finished)
             return
 
+        pending_base = self._pending_patch_base(query)
+        if pending_base is not None:
+            planning_previous = pending_base
+            force_follow_up = True
+
         yield Stage("planning")
-        planned = await self._planner.plan(
-            query.sentence,
-            today=query.today,
-            # The follow-up merge is expressed over an aggregate's fields, so a ranking is not
-            # context the prompt can inherit from. An ordinal follow-up is handled above, before
-            # the model, which is the case that matters.
-            previous=previous if isinstance(previous, FinancialPlan) else None,
-        )
+        if force_follow_up:
+            planned = await self._planner.plan(
+                query.sentence,
+                today=query.today,
+                previous=planning_previous,
+                force_follow_up=True,
+            )
+        else:
+            planned = await self._planner.plan(
+                query.sentence,
+                today=query.today,
+                # The follow-up merge is expressed over an aggregate's fields, so a ranking is not
+                # context the prompt can inherit from. An ordinal follow-up is handled above, before
+                # the model, which is the case that matters.
+                previous=planning_previous,
+            )
 
         if not planned.is_answerable:
             yield _decline(planned, was)
@@ -314,27 +355,39 @@ class AskFinancialQuestionHandler:
 
         assert planned.plan is not None  # is_answerable is exactly this condition
 
-        broken = plan_verifier.disagreement(query.sentence, planned.plan, self._policy)
+        checked = planned.plan
+        broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
         if broken is not None:
             # The plan is well formed, the domain accepts it, and it answers a different
             # question from the one asked. Nothing downstream can tell: banking would
             # return a real figure. This is the only place that compares the two.
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                text=_refusal_for(broken, query.sentence),
-                plan=answer_writer.describe(planned.plan),
-                # The plan is shown but not remembered: it is the one that misread the question,
-                # and inheriting from it would carry the misreading into the next turn.
-                conversation=was,
-            )
-            return
+            #
+            # Some of those disagreements have one correction, and taking it is better than
+            # asking the user to rephrase a sentence we understood: "cuantos fueron en el
+            # supermercado" was planned with the right filter and the wrong metric. Only taken
+            # when it verifies — a repair that moved the disagreement rather than resolving it
+            # would be a guess with a correction's confidence.
+            mended = plan_verifier.repaired(broken, checked)
+            if mended is not None and plan_verifier.disagreement(query.sentence, mended) is None:
+                checked = mended
+            else:
+                yield AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                    text=_refusal_for(broken, query.sentence),
+                    plan=answer_writer.describe(checked),
+                    # The plan is shown but not remembered: it is the one that misread the
+                    # question, and inheriting from it would carry the misreading into the
+                    # next turn.
+                    conversation=was,
+                )
+                return
 
-        yield Stage("planned", answer_writer.describe(planned.plan))
+        yield Stage("planned", answer_writer.describe(checked))
         yield Stage("querying")
-        if isinstance(planned.plan, TopMovements):
-            yield await self._ranked(query, planned.plan)
+        if isinstance(checked, TopMovements):
+            yield await self._ranked(query, checked)
             return
-        yield await self._answer(query, planned.plan)
+        yield await self._answer(query, checked)
 
     def _declined(self, capability: str, was: Conversation) -> AskFinancialQuestionResult:
         """A refusal that remembers what it was about.
@@ -430,10 +483,8 @@ class AskFinancialQuestionHandler:
         asked for, and the verifier would then refuse a plan the shortcut itself got wrong.
         Standing aside sends it to the model, which can read both things.
 
-        A reply that goes to the model loses the draft, which is today's behaviour and not yet
-        better than it: threading a half-built plan into the prompt is the next step, and it
-        needs the prompt to be able to say "these fields are settled" without inviting the
-        model to restate them.
+        A reply that goes to the model is handled just below as a forced patch. That path completes
+        any window it can read here, then tells the model which existing fields are settled.
         """
         active = query.conversation.active
         if not isinstance(active, FinancialClarification):
@@ -459,6 +510,29 @@ class AskFinancialQuestionHandler:
         if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
             return None
         return finished
+
+    def _pending_patch_base(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+        """The validated fields behind an active clarification, completed as far as this turn can.
+
+        A compound reply such as "este año, pero cuéntalas" supplies the missing window and also
+        changes the metric. `_finish_pending` correctly refuses to execute the old metric; this
+        method then gives the completed draft to the planner as a forced patch instead of losing it.
+        """
+        active = query.conversation.active
+        if not isinstance(active, FinancialClarification):
+            return None
+        draft = active.draft
+        complete = draft.into_plan()
+        if complete is not None:
+            return complete
+
+        window = window_words.window_in(query.sentence, asked_for=active.awaiting)
+        if window is None:
+            return None
+        try:
+            return draft.with_window(window)
+        except InvalidValueError:
+            return None
 
     def _next_in_ranking(self, query: AskFinancialQuestionQuery) -> TopMovements | None:
         """The ranking one position deeper, when that is what the sentence asks for.

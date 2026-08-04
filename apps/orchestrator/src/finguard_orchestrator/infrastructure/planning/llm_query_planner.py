@@ -75,7 +75,12 @@ class LlmQueryPlanner:
         self._schema = build_schema(categories)
 
     async def plan(
-        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
+        self,
+        sentence: str,
+        *,
+        today: date,
+        previous: FinancialPlan | None = None,
+        force_follow_up: bool = False,
     ) -> PlanningResult:
         try:
             answer = await self._provider.complete(
@@ -84,6 +89,7 @@ class LlmQueryPlanner:
                     today=today,
                     categories=self._categories,
                     previous=previous,
+                    force_follow_up=force_follow_up,
                 ),
                 model=self._model,
                 temperature=self._temperature,
@@ -93,7 +99,13 @@ class LlmQueryPlanner:
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc))
 
-        return _read(answer, today=today, categories=self._categories, previous=previous)
+        return _read(
+            answer,
+            today=today,
+            categories=self._categories,
+            previous=previous,
+            force_follow_up=force_follow_up,
+        )
 
 
 # What to ask when the model chose to ask and did not say what. Spanish because it reaches
@@ -143,7 +155,12 @@ def _texts(body: dict[str, Any], key: str) -> list[str]:
 
 
 def _read(
-    answer: str, *, today: date, categories: tuple[str, ...], previous: FinancialPlan | None = None
+    answer: str,
+    *,
+    today: date,
+    categories: tuple[str, ...],
+    previous: FinancialPlan | None = None,
+    force_follow_up: bool = False,
 ) -> PlanningResult:
     try:
         body = json.loads(answer)
@@ -178,9 +195,15 @@ def _read(
                 # figure for a question nobody asked. Inventing the words of a refusal commits
                 # to nothing, and the user reads the same sentence either way.
                 question = FALLBACK_QUESTION
+            draft = _draft(body, today=today, categories=categories)
+            if previous is not None and force_follow_up and draft is not None:
+                try:
+                    draft = plan_merger.merge_draft(previous, draft, changed=_changed(body))
+                except (_MalformedError, InvalidValueError) as exc:
+                    return PlanningResult.invalid_structure(str(exc))
             return PlanningResult.needs_clarification(
                 question,
-                _draft(body, today=today, categories=categories),
+                draft,
                 _awaiting(body),
             )
 
@@ -188,7 +211,13 @@ def _read(
             return PlanningResult.unsupported("the question cannot be expressed as a query")
 
         case PlanningOutcome.PLANNED:
-            return _build_plan(body, today=today, categories=categories, previous=previous)
+            return _build_plan(
+                body,
+                today=today,
+                categories=categories,
+                previous=previous,
+                force_follow_up=force_follow_up,
+            )
 
         case _:
             # The three remaining outcomes describe things that happen TO a model; it
@@ -294,6 +323,7 @@ def _build_plan(
     today: date,
     categories: tuple[str, ...],
     previous: FinancialPlan | None = None,
+    force_follow_up: bool = False,
 ) -> PlanningResult:
     try:
         selected_categories = _categories(_texts(body, "categories"), allowed=categories)
@@ -321,7 +351,10 @@ def _build_plan(
     follow_up, changed = False, frozenset[Field]()
     if previous is not None:
         try:
-            follow_up, changed = _flag(body, "isFollowUp"), _changed(body)
+            follow_up, changed = (
+                force_follow_up or _flag(body, "isFollowUp"),
+                _changed(body),
+            )
         except _MalformedError as exc:
             return PlanningResult.invalid_structure(str(exc))
 

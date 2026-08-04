@@ -10,6 +10,7 @@ injection produces.
 
 import re
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Direction, Metric
@@ -83,6 +84,26 @@ RULES: Final = frozenset(name for name, _ in _RULES)
 # Which of them mean anything for a ranking. Named rather than derived, so adding a rule forces the
 # question "does this apply to a maximum?" instead of silently answering yes.
 _RANKING_RULES: Final = frozenset({"SPENDING_ANSWERED_AS_EVERYTHING", "CATEGORY_MISREAD"})
+
+
+def repaired(
+    broken: str, plan: FinancialPlan | TopMovements
+) -> FinancialPlan | TopMovements | None:
+    """The plan the sentence asked for, when the rule it broke has one determinate correction.
+
+    A rule certain enough to refuse a well-formed plan is certain enough to correct one — where the
+    correction exists. COUNT_ANSWERED_AS_AMOUNT is the case: it fires because Spanish agreement is
+    unambiguous about "cuántos", and the field that has to change to satisfy it is the field the
+    rule reads. Refusing while holding the answer is the assistant reporting on itself.
+
+    None for everything else, which is most of it. A misread category could be *changed* to what
+    the sentence names, and that is a guess wearing a correction's confidence: the vocabulary is
+    sure the word was said, not that the plan's other category was wrong. The caller refuses
+    instead, which is what it did before this existed.
+    """
+    if broken == "COUNT_ANSWERED_AS_AMOUNT" and isinstance(plan, FinancialPlan):
+        return replace(plan, metric=Metric.COUNT)
+    return None
 
 
 def disagreement(

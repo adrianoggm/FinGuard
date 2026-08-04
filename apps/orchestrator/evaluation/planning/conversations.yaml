@@ -60,6 +60,26 @@ conversations:
       - say: ¿y cuántas veces?
         keeps: [window, categories]
 
+  - id: a_correction_changes_only_what_it_names
+    why: >
+      A correction is a patch, not a restart. The user replaces the category and does not have
+      to repeat a period the previous plan already understood.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: No me has entendido, me refería al alquiler
+        keeps: [window]
+
+  - id: a_bare_correction_can_be_completed_on_the_next_turn
+    why: >
+      "No es eso" contains nothing a planner can turn into a query. The assistant asks what to
+      change, saves the valid plan, and applies the answer without losing its period.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: Perdona, no me has entendido
+        expect: NEEDS_CLARIFICATION
+      - say: Me refería al alquiler
+        keeps: [window]
+
   - id: cinema_refused_then_rephrased
     why: >
       The category gate, and what the user does about it. The refusal names a sentence they can
@@ -120,14 +140,15 @@ conversations:
         expect: CONTACTS
         says: Marta
 
-  - id: the_largest_expense_is_refused_not_totalled
+  - id: the_largest_expense_is_one_movement_not_a_total
     why: >
-      The worst answer the system gave: the sum of 56 movements offered as the largest one. Until
-      the capability exists this refuses, and says why rather than giving a number.
+      The worst answer the system gave: the sum of 56 movements offered as the largest one. It was
+      refused for a release, and now it is answered — with the charge, because a figure alone sends
+      the user to the movement list to work out which one it was.
     turns:
       - say: En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?
-        expect: UNSUPPORTED
-        says: no es lo que has preguntado
+        says: fue de
+        not_says: movimientos
 
   - id: the_answer_says_what_the_figure_is_of
     why: >
@@ -201,17 +222,19 @@ conversations:
       - say: ¿cuánto gasté en gasolina el mes pasado?
         says: gasolina
 
-  - id: a_refused_capability_stays_refused
+  - id: the_largest_expense_and_the_next_one
     why: >
-      "¿Y el segundo?" asks for the second largest movement — the capability just refused — and says
-      nothing about size, so no guard rule could see it. It reached the planner, which asked which
-      period, and the next two replies were a loop over a window nothing could use.
+      The reported thread, both turns. It used to be a total for the first — a real figure about a
+      different question — and then a refusal, and then a loop over a period nothing could use.
+      "¿Y el segundo?" is now a patch of one field, so the second turn must keep the window and the
+      category from a sentence that names neither.
     turns:
       - say: Cual fue el gasto más caro en el año de gasolina
-        expect: UNSUPPORTED
+        says: fue de
+        not_says: movimientos
       - say: Y el segundo ?
-        expect: UNSUPPORTED
-        says: más alto
+        says: fue de
+        keeps: [window, categories]
 
   - id: which_marta_can_actually_be_answered
     why: >
