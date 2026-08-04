@@ -83,6 +83,31 @@ _WIDENS: Final = re.compile(
 # mention to survive, and that is what this flag is for.
 _REJECTS: Final = re.compile(r"^(no|mejor|en realidad|que va)\b.+|\bsino\b|\bmas bien\b")
 
+# A question about *when*, not about how much. Two of them in one reported conversation:
+#
+#     "¿Cuándo me suelen ingresar la nómina?"        → 17.383,97 €
+#     "¿Cuándo suelo ir al supermercado a comprar?"  → 3.508,91 €
+#
+# Both figures were correct and neither was an answer. The dates were on screen underneath, in the
+# movement list — the question had been answered and the headline said something else.
+#
+# "Cuánto" is excluded by the word boundary rather than by luck: they differ by one letter and the
+# sentence is folded before it gets here, so `cuando` cannot match inside `cuanto`.
+_ASKS_WHEN: Final = re.compile(
+    r"\bcuando\b|\bcada\s+cuanto\b|\bque\s+dias?\b|\bcon\s+que\s+frecuencia\b"
+    r"|\bcada\s+cuantos\s+dias\b|\bsuelo\s+ir\b|\ben\s+que\s+fechas?\b"
+)
+
+
+def asks_when(sentence: str) -> bool:
+    """Whether the sentence asks *when* something happens rather than how much of it there was.
+
+    Separate from `read` because it changes the sentence the assistant writes rather than the query
+    it runs. The plan is the same either way — the same movements over the same window — and only
+    the headline is wrong.
+    """
+    return bool(_ASKS_WHEN.search(spanish.folded(sentence)))
+
 
 @dataclass(frozen=True)
 class ExplicitFacts:
@@ -96,6 +121,9 @@ class ExplicitFacts:
     names_a_category: bool = False
     widens: bool = False
     corrects: bool = False
+    # Whether the question is about *when* rather than how much. It changes the answer rather than
+    # the plan, so `enforce` does nothing with it and the writer reads it.
+    asks_when: bool = False
 
 
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
@@ -111,6 +139,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         names_a_category=bool(category_words.precisely_named_in(sentence)),
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),
+        asks_when=asks_when(sentence),
     )
 
 

@@ -855,7 +855,7 @@ class AskFinancialQuestionHandler:
                     suggestions=query_recovery.retry_suggestions(),
                 )
 
-        return _answered(plan, answer, query.conversation)
+        return _answered(plan, answer, query.conversation, query.sentence)
 
 
 # One sentence per missing capability, keyed by the guard's family name.
@@ -1028,11 +1028,19 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
 
 
 def _answered(
-    plan: FinancialPlan, answer: QueryAnswer, was: Conversation
+    plan: FinancialPlan, answer: QueryAnswer, was: Conversation, sentence: str
 ) -> AskFinancialQuestionResult:
+    # "¿Cuándo me ingresan la nómina?" ran the right query and was reported as a total. The
+    # question decides which sentence the same figures become, so the reading happens here rather
+    # than in the writer — a writer that inspected the question would be a writer with a parser
+    # in it.
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
-        text=answer_writer.write(answer, plan),
+        text=(
+            answer_writer.when(answer, plan)
+            if explicit_facts.asks_when(sentence)
+            else answer_writer.write(answer, plan)
+        ),
         plan=answer_writer.describe(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
