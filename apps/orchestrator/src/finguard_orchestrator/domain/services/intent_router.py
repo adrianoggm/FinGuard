@@ -98,11 +98,37 @@ _ABOUT_CONTACTS: Final = re.compile(
 
 # About the assistant rather than about the account. `puedes hacer` and not a bare `puedes`, because
 # "¿puedes decirme cuánto gasté?" is a question about money phrased politely.
+#
+# The list grew from a real conversation where three turns in a row asked what this thing does and
+# all three were answered with "¿de qué periodo?":
+#
+#     "Oye, ¿con qué cosas me puedes asistir / ayudar?"
+#     "Del banco me refiero"
+#     "Vale, ¿puedes hacer transferencias o solo bizums?"
+#
+# None of them matched, because the pattern wanted the literal "qué puedes hacer". The answer
+# already existed and was good — `explainer.IDENTITY` says exactly what this does — so the whole
+# defect was the recogniser, and the whole cost of it was a user concluding the assistant is
+# broken. That is the cheapest kind of failure to fix and the most expensive to leave.
+#
+# Two shapes, and they need different patterns. **What can you do**: a verb of helping, with or
+# without "qué". **Can you do X**: `puedes` followed by an operation rather than by a verb of
+# telling, which is what separates "¿puedes hacer transferencias?" from "¿puedes decirme cuánto
+# gasté?".
 _ABOUT_ITSELF: Final = re.compile(
     r"\b(qui[ée]n\s+eres|qu[ée]\s+eres|c[óo]mo\s+funcionas|c[óo]mo\s+te\s+llamas"
     r"|eres\s+(una?\s+)?(ia|bot|robot|m[áa]quina|humano|persona)"
     r"|qu[ée]\s+(puedes|sabes|sabr[íi]as)\s+hacer|para\s+qu[ée]\s+sirves"
-    r"|^\s*ayuda\s*[?!.]*$|qu[ée]\s+es\s+finguard)\b",
+    r"|^\s*ayuda\s*[?!.]*$|qu[ée]\s+es\s+finguard"
+    # "¿con qué cosas me puedes ayudar?", "¿en qué me puedes asistir?", "¿qué sabes hacer?"
+    r"|(qu[ée]|c[óo]mo)\s+.{0,20}\bme\s+(puedes|podr[íi]as)\s+(ayudar|asistir|echar)"
+    r"|\bme\s+(puedes|podr[íi]as)\s+(ayudar|asistir)\b"
+    # "¿puedes hacer transferencias?", "¿sabes hacer bizums?", "¿haces pagos?" — an operation, not
+    # a request to look something up. Listed rather than a wildcard: "¿puedes hacer una consulta
+    # de julio?" is a question about money, and a bare `puedes hacer` would swallow it.
+    r"|\b(puedes|sabes|podr[íi]as)\s+(hacer\s+)?"
+    r"(transferencias|transferir|bizums|pagos|pagar|ingresos|domiciliaciones)\b"
+    r")",
     re.IGNORECASE,
 )
 

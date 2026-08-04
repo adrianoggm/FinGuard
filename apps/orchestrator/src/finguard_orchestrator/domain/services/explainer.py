@@ -15,10 +15,15 @@ from finguard_orchestrator.domain.value_objects.financial_plan import FinancialP
 # between a prompt, a README and a screen. It says what it *cannot* do too: an assistant that lists
 # only its talents is one whose limits somebody discovers by being surprised.
 IDENTITY = (
-    "Soy FinGuard, tu asistente financiero. Puedo consultar tus movimientos y tus gastos, "
-    "explicarte de dónde sale cada cifra y preparar un bizum que tú tienes que confirmar.\n"
-    "No invento números: cada respuesta viene de tu banco y te enseño la consulta que he hecho. "
-    "Todavía no calculo medias, no comparo periodos entre sí y no doy consejos de inversión."
+    "Soy FinGuard, tu asistente financiero. Esto es lo que puedo hacer:\n"
+    "· Consultar tus movimientos y tus gastos por periodo, categoría o comercio.\n"
+    "· Decirte tu saldo y qué se te ha ingresado.\n"
+    "· Sacarte el gasto más alto de un periodo, y el segundo, y el tercero.\n"
+    "· Enseñarte en qué te gastas el dinero, agrupado por categoría, comercio o mes.\n"
+    "· Preparar un bizum a uno de tus contactos, que tú tienes que confirmar antes de que salga.\n"
+    "Lo que todavía no hago: transferencias — solo bizums —, medias, comparar dos periodos entre "
+    "sí, previsiones ni consejos de inversión.\n"
+    "No invento números: cada cifra viene de tu banco y te enseño la consulta que he hecho."
 )
 
 

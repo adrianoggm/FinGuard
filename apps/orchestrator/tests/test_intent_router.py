@@ -57,6 +57,46 @@ def test_asking_about_the_assistant_is_not_a_question_about_money(sentence: str)
 @pytest.mark.parametrize(
     "sentence",
     [
+        # Three turns of a real conversation, all answered with "¿de qué periodo?". The pattern
+        # wanted the literal "qué puedes hacer", so a user asking what the product does was sent to
+        # the financial planner, whose commonest complaint is a missing window.
+        "Oye con que cosas me puedes asistir / ayudar ?",
+        "¿en qué me puedes ayudar?",
+        "Vale puedes hacer transferencias o solo bizums ?",
+        "¿sabes hacer transferencias?",
+        "¿puedes hacer pagos?",
+    ],
+)
+def test_asking_what_the_assistant_can_do_is_answered_and_not_planned(sentence: str) -> None:
+    """The answer already existed and was good. The whole defect was the recogniser, and the whole
+    cost of it was a user concluding the product is broken."""
+    assert route(sentence) is Intent.IDENTITY_OR_HELP
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # The costly direction. A capability question routed to payments asks "¿a quién?" and
+        # wastes a turn; a payment order routed to the identity answer loses a payment.
+        "hagamos un bizum",
+        "hazle un bizum de 20 euros a Marta",
+        "¿puedes hacerme un bizum?",
+        "¿puedes hacer un bizum a Marta?",
+    ],
+)
+def test_an_order_to_pay_is_still_an_order_however_politely_it_asks(sentence: str) -> None:
+    assert route(sentence) is Intent.PAYMENT
+
+
+def test_a_polite_request_for_a_figure_is_still_a_question_about_money() -> None:
+    """`puedes hacer` had to stay narrow. "¿Puedes decirme…" is a question phrased politely, and a
+    bare `puedes` would have swallowed half the dataset."""
+    assert route("¿puedes decirme cuánto gasté el mes pasado?") is Intent.FINANCIAL_QUERY
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
         "¿qué categorías entiendes?",
         "¿qué categorías manejas?",
         "dime las categorías disponibles",
