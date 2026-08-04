@@ -11,6 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_orchestrator.domain.constants import MAX_CATEGORY_NAME, MAX_PROMPT_LENGTH
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.models.conversation import MAX_RANK, Slot, Workflow
+from finguard_orchestrator.domain.value_objects.payment_request import (
+    MAX_PAYMENT_MINOR,
+    MAX_RECIPIENT_NAME,
+)
 
 
 class _Payload(BaseModel):
@@ -107,6 +112,55 @@ class PaymentDraftPayload(_Payload):
     concept: str | None = None
 
 
+class SpokenContactResponse(_Payload):
+    contact_id: str
+    display_name: str
+    phone: str
+
+
+class ConversationPayload(_Payload):
+    """Where the conversation is, in one object.
+
+    It replaces five optional fields — the answered plan, the half-read query, the half-built
+    payment, the payment awaiting a yes, and the last refusal — which between them described
+    thirty-two states, most of them nonsense. `workflow` says which one this is, and the fields the
+    other states would need are absent rather than null-and-meaningless.
+
+    The client round-trips it without interpreting it. That is the point: deciding what a
+    combination of nulls meant was the frontend knowing the orchestrator's semantics, and it got
+    that wrong every time a new state appeared.
+
+    Typed field by field, like the plan and for the same reason: what a caller sends back has to be
+    a conversation and nothing else. The one free-text field is a recipient's name, which is data,
+    and it is resolved against the account's own contacts before anything is prepared.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    # Absent when nothing is under way.
+    workflow: Workflow | None = None
+    # What the last turn asked for, when it asked for anything. This is what makes "de este"
+    # readable: the slot says which field the sentence is filling.
+    awaiting: Slot | None = None
+    # The plan behind the last answered question. Memory rather than a workflow, so it travels
+    # alongside whatever is active.
+    last_plan: PlanPayload | None = None
+    # FINANCIAL_CLARIFICATION and UNSUPPORTED_CAPABILITY: the reading so far.
+    draft: PlanPayload | None = None
+    # UNSUPPORTED_CAPABILITY: which capability, and which position was asked about. The rank is why
+    # "¿y el segundo?" can be a patch of one field rather than a sentence to be read again.
+    capability: str | None = Field(default=None, max_length=64)
+    rank: int | None = Field(default=None, ge=1, le=MAX_RANK)
+    # PAYMENT_IN_PROGRESS: the payment so far, whether it stepped aside, and the choice offered.
+    payment: PaymentDraftPayload | None = None
+    suspended: bool = False
+    candidates: list[SpokenContactResponse] = []
+    # PAYMENT_CONFIRMATION: the intent the bank is holding.
+    intent_id: str | None = None
+    recipient: str | None = Field(default=None, max_length=MAX_RECIPIENT_NAME)
+    amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -120,19 +174,12 @@ class QuestionRequest(_Payload):
     # Free text, because a question is free text: it can only be delimited, never
     # parsed. The plan below is the opposite case and gets the opposite treatment.
     question: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
-    # Echo back `plan_context` from the previous answer to ask a follow-up. Optional,
-    # and the caller owns it: the service keeps no conversation.
-    previous_plan: PlanPayload | None = None
-    # Echo back `pending_context` to answer the question the assistant asked. Same shape with
-    # no window, because that is what it is: the reading its question interrupted. Sending it
-    # is how "este año" completes a plan instead of becoming a new question.
-    pending_draft: PlanPayload | None = None
-    # And the payment being built, if one is. Sending it is how "15 euros" finishes a bizum
-    # instead of being classified as a question about movements — which is what it looks like on
-    # its own, money with no verb.
-    payment_draft: PaymentDraftPayload | None = None
-    # Echo back `refused_capability` so the turn after a refusal can be about it.
-    previous_refusal: str | None = Field(default=None, max_length=64)
+    # Echo back `conversation` from the previous answer. One object rather than the five fields
+    # it replaced — the answered plan, the half-read query, the half-built payment, the payment
+    # awaiting a yes, and the last refusal — because a client should store state, not interpret it.
+    #
+    # Absent on the first turn, and absent means a fresh conversation rather than an error.
+    conversation: ConversationPayload | None = None
 
 
 class SpokenGroupResponse(_Payload):
@@ -152,12 +199,6 @@ class SpokenMovementResponse(_Payload):
     category: str | None = None
 
 
-class SpokenContactResponse(_Payload):
-    contact_id: str
-    display_name: str
-    phone: str
-
-
 class QuestionResponse(_Payload):
     """The answer, and everything needed to disbelieve it.
 
@@ -173,12 +214,9 @@ class QuestionResponse(_Payload):
     # chat endpoint answers both kinds of sentence, so the shape has to admit both.
     intent_id: str | None = None
     plan: str | None = None
-    # The same plan as `plan`, in fields. `plan` is for a person to read; this is what
-    # comes back as `previous_plan` on the next question.
-    plan_context: PlanPayload | None = None
-    # Present with a question back, absent otherwise. What a client echoes as `pending_draft` so
-    # the reply finishes the plan the question was about.
-    pending_context: PlanPayload | None = None
+    # Where the conversation is after this turn, echoed back verbatim on the next one. `plan`
+    # above is the same query in words, for a person to read.
+    conversation: ConversationPayload | None = None
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None
@@ -187,16 +225,9 @@ class QuestionResponse(_Payload):
     # Filled only by a question about who can be paid. The identifier is what lets a client offer
     # a choice and send back *which* contact instead of a name to be interpreted a second time.
     contacts: list[SpokenContactResponse] = []
-    # Present while a payment is still being built: what a client echoes as `payment_draft` so the
-    # next reply completes it. Absent once there is an intent to confirm, or once it is refused.
-    payment_draft: PaymentDraftPayload | None = None
-    # On an UNSUPPORTED answer: which capability is missing, by name. Echoed back as
-    # `previous_refusal` so a bare "¿y el segundo?" gets the same refusal rather than a question
-    # about a period it can never use.
-    refused_capability: str | None = None
-    # Present when a recipient names several contacts, so the client can offer the choice with
-    # identifiers rather than asking the user to retype a name.
-    candidates: list[SpokenContactResponse] = []
+    # The half-built payment, the refused capability and the recipient choice all live on
+    # `conversation` now: they are states of one conversation rather than four independent fields
+    # a client had to combine.
 
 
 class SummaryMovementResponse(_Payload):

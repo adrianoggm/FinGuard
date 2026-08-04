@@ -1,24 +1,25 @@
 /**
- * What the client remembers between turns.
+ * What the client remembers between turns — and, more to the point, what it no longer decides.
  *
- * This is the state machine the diagnosis pointed at: the service keeps no conversation, so
- * every question is as contextless as whatever the client sends with it. A bug here is not a
- * display bug — it deletes the conversation, and the model then answers a question nobody asked
- * because it was handed no history to answer the real one with.
+ * This used to be five nullable fields the client combined by hand: the answered plan, the half-read
+ * query, the half-built payment, the payment awaiting a yes, and the last refusal. `settled` worked
+ * out what to keep from a pattern of nulls, which meant the frontend held the orchestrator's
+ * semantics — and it got them wrong every time a new state appeared.
  *
- * `settled` is the whole of it. Four rules, and each one exists because the opposite behaviour
- * was wrong in a way somebody noticed:
+ * Now the service says where the conversation is and this applies it. So these tests are about two
+ * things and no others:
  *
- *   the plan is kept when an answer brings none    a refusal must not erase what came before it
- *   the plan is cleared by a payment               a bizum and a query are not one conversation
- *   the draft is replaced, never merged            it belongs to the question just asked
- *   the pending payment is exactly the awaited one
+ *   the state is stored, never recomputed    a field this end invents is a field that can disagree
+ *   the screens are told when money moved    the one thing the service cannot do from its side
+ *
+ * A test asserting "the plan survives a refusal" would now be testing the orchestrator through the
+ * client. That property still holds; it is checked where it is decided.
  */
 
 import { describe, expect, it } from "vitest";
 
-import { settled, type Thread } from "./Conversation";
-import type { Answer, PaymentDraft, PlanContext } from "./api";
+import { awaitingConfirmation, pendingIntent, settled, type Thread } from "./Conversation";
+import type { Answer, ConversationState, PlanContext } from "./api";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -32,7 +33,23 @@ const LAST_MONTH: PlanContext = {
   metric: "SUM",
 };
 
-const RENT_DRAFT: PlanContext = { ...LAST_MONTH, period: null, categories: ["HOUSING_RENT"] };
+function state(fields: Partial<ConversationState> = {}): ConversationState {
+  return {
+    workflow: null,
+    awaiting: null,
+    last_plan: null,
+    draft: null,
+    capability: null,
+    rank: null,
+    payment: null,
+    suspended: false,
+    candidates: [],
+    intent_id: null,
+    recipient: null,
+    amount_minor: null,
+    ...fields,
+  };
+}
 
 function answer(fields: Partial<Answer> = {}): Answer {
   return {
@@ -41,11 +58,7 @@ function answer(fields: Partial<Answer> = {}): Answer {
     question: null,
     intent_id: null,
     plan: null,
-    plan_context: null,
-    pending_context: null,
-    payment_draft: null,
-    candidates: [],
-    refused_capability: null,
+    conversation: null,
     currency: null,
     total_minor: null,
     movement_count: null,
@@ -56,213 +69,115 @@ function answer(fields: Partial<Answer> = {}): Answer {
 }
 
 function thread(fields: Partial<Thread> = {}): Thread {
-  return {
-    turns: [],
-    plan: null,
-    pending: null,
-    unfinished: null,
-    payment: null,
-    refusal: null,
-    ...fields,
-  };
+  return { turns: [], conversation: null, ...fields };
 }
 
 const noop = () => {};
 
-describe("the plan carried between turns", () => {
-  it("keeps the previous plan when an answer brings none", () => {
-    // A refusal or a question back must not erase the context of the question before it, or
-    // "¿y este mes?" after one bad turn starts from nothing.
-    const before = thread({ plan: LAST_MONTH });
+describe("the state the service sent", () => {
+  it("is stored as it arrived", () => {
+    // Verbatim, not merged: the service decided what this turn leaves open, and combining it with
+    // what came before is exactly the inference this replaced.
+    const sent = state({
+      workflow: "FINANCIAL_CLARIFICATION",
+      awaiting: "YEAR",
+      draft: LAST_MONTH,
+    });
 
-    const after = settled(before, [], answer({ outcome: "UNSUPPORTED" }), noop);
+    const after = settled(thread(), [], answer({ conversation: sent }), noop);
 
-    expect(after.plan).toBe(LAST_MONTH);
+    expect(after.conversation).toBe(sent);
   });
 
-  it("replaces it when an answer brings a new one", () => {
-    const fuel: PlanContext = { ...LAST_MONTH, categories: ["TRANSPORT_FUEL"] };
+  it("replaces whatever was there before", () => {
+    const before = state({ workflow: "PAYMENT_IN_PROGRESS", awaiting: "AMOUNT" });
+    const now = state({ last_plan: LAST_MONTH });
 
-    const after = settled(thread({ plan: LAST_MONTH }), [], answer({ plan_context: fuel }), noop);
-
-    expect(after.plan).toBe(fuel);
-  });
-
-  it("clears it after a payment", () => {
-    // A bizum and a query are not the same conversation, so "¿y la semana pasada?" after a
-    // payment should not inherit the query from before it.
     const after = settled(
-      thread({ plan: LAST_MONTH }),
+      thread({ conversation: before }),
       [],
-      answer({ outcome: "SENT", intent_id: "abc" }),
+      answer({ conversation: now }),
       noop,
     );
 
-    expect(after.plan).toBeNull();
+    expect(after.conversation).toBe(now);
+  });
+
+  it("keeps the last one when an answer carries none", () => {
+    // The payment endpoints answer about a payment rather than about a conversation, so they send
+    // no state. Dropping it there would end the conversation because a bizum was confirmed.
+    const before = state({ last_plan: LAST_MONTH });
+
+    const after = settled(thread({ conversation: before }), [], answer(), noop);
+
+    expect(after.conversation).toBe(before);
   });
 });
 
-describe("the half-built plan behind a question back", () => {
-  it("is kept when the assistant asks something", () => {
-    const after = settled(
-      thread(),
-      [],
-      answer({ outcome: "NEEDS_CLARIFICATION", pending_context: RENT_DRAFT }),
-      noop,
-    );
+describe("what the client still works out for itself", () => {
+  it("knows a payment is waiting for a yes", () => {
+    const holding = thread({
+      conversation: state({
+        workflow: "PAYMENT_CONFIRMATION",
+        awaiting: "CONFIRMATION",
+        intent_id: "intent-1",
+      }),
+    });
 
-    expect(after.unfinished).toBe(RENT_DRAFT);
+    expect(awaitingConfirmation(holding)).toBe(true);
+    expect(pendingIntent(holding)).toBe("intent-1");
   });
 
-  it("is dropped as soon as an answer arrives without one", () => {
-    // Unlike the plan, which is kept. A draft belongs to the question that was just asked:
-    // carrying a stale one forward would let a window mentioned three turns later complete a
-    // plan the user has long since moved on from.
-    const after = settled(thread({ unfinished: RENT_DRAFT }), [], answer(), noop);
+  it("knows a half-built payment is not one", () => {
+    // The distinction the input box renders on: a payment being built takes a sentence, a payment
+    // waiting for a yes takes a yes.
+    const building = thread({
+      conversation: state({ workflow: "PAYMENT_IN_PROGRESS", awaiting: "AMOUNT" }),
+    });
 
-    expect(after.unfinished).toBeNull();
+    expect(awaitingConfirmation(building)).toBe(false);
+    expect(pendingIntent(building)).toBeNull();
   });
 
-  it("is replaced when the assistant asks again", () => {
-    const second: PlanContext = { ...RENT_DRAFT, categories: ["LEISURE"] };
-
-    const after = settled(
-      thread({ unfinished: RENT_DRAFT }),
-      [],
-      answer({ outcome: "NEEDS_CLARIFICATION", pending_context: second }),
-      noop,
-    );
-
-    expect(after.unfinished).toBe(second);
-  });
-});
-
-describe("the payment waiting for a yes", () => {
-  it("is the intent while it is awaiting confirmation", () => {
-    const after = settled(
-      thread(),
-      [],
-      answer({ outcome: "AWAITING_CONFIRMATION", intent_id: "intent-1" }),
-      noop,
-    );
-
-    expect(after.pending).toBe("intent-1");
-  });
-
-  it("is cleared once the payment resolves, and the screens are told", () => {
-    // The balance and the movements have just changed, so whoever is showing them has to
-    // reload. Without this the home screen kept a figure that was no longer true.
+  it("tells the screens to reload when a payment resolved", () => {
+    // The one side effect the service cannot perform from its side: the balance and the movements
+    // behind the sheet have changed, and whatever is showing them is stale.
     let reloaded = 0;
-    const after = settled(
-      thread({ pending: "intent-1" }),
+
+    settled(
+      thread(),
       [],
-      answer({ outcome: "SENT", intent_id: "intent-1" }),
+      answer({ outcome: "SENT", intent_id: "intent-1", conversation: state() }),
       () => (reloaded += 1),
     );
 
-    expect(after.pending).toBeNull();
     expect(reloaded).toBe(1);
+  });
+
+  it("does not tell them anything while the payment is still a question", () => {
+    let reloaded = 0;
+
+    settled(
+      thread(),
+      [],
+      answer({
+        outcome: "AWAITING_CONFIRMATION",
+        intent_id: "intent-1",
+        conversation: state({ workflow: "PAYMENT_CONFIRMATION", intent_id: "intent-1" }),
+      }),
+      () => (reloaded += 1),
+    );
+
+    expect(reloaded).toBe(0);
   });
 
   it("does not tell them anything when no payment was involved", () => {
     let reloaded = 0;
 
-    settled(thread(), [], answer({ plan_context: LAST_MONTH }), () => (reloaded += 1));
+    settled(thread(), [], answer({ conversation: state({ last_plan: LAST_MONTH }) }), () => {
+      reloaded += 1;
+    });
 
     expect(reloaded).toBe(0);
-  });
-});
-
-
-describe("the bizum being built", () => {
-  const HALF_BUILT: PaymentDraft = {
-    recipient_name: "Marta Solis Vega",
-    amount_minor: null,
-    currency: "EUR",
-    concept: null,
-  };
-
-  it("is kept when the assistant asks for the missing piece", () => {
-    const after = settled(
-      thread(),
-      [],
-      answer({ outcome: "NEEDS_CLARIFICATION", payment_draft: HALF_BUILT }),
-      noop,
-    );
-
-    expect(after.payment).toBe(HALF_BUILT);
-  });
-
-  it("survives a turn that answers something else entirely", () => {
-    // The turn from the report: "no sé, ¿a quién tengo en contactos?" in the middle of a bizum.
-    // The contact list is the answer, and abandoning the payment to give it would mean starting
-    // the bizum over — which is the defect, one level up.
-    const after = settled(
-      thread({ payment: HALF_BUILT }),
-      [],
-      answer({ outcome: "CONTACTS", text: "Tienes estos contactos: …" }),
-      noop,
-    );
-
-    expect(after.payment).toBe(HALF_BUILT);
-  });
-
-  it("is cleared once the payment is a preview waiting for a yes", () => {
-    // From here the state is the intent, not the draft: there is nothing half-built left.
-    const after = settled(
-      thread({ payment: HALF_BUILT }),
-      [],
-      answer({ outcome: "AWAITING_CONFIRMATION", intent_id: "intent-1" }),
-      noop,
-    );
-
-    expect(after.payment).toBeNull();
-    expect(after.pending).toBe("intent-1");
-  });
-
-  it("is cleared once the payment resolves", () => {
-    const after = settled(
-      thread({ payment: HALF_BUILT, pending: "intent-1" }),
-      [],
-      answer({ outcome: "SENT", intent_id: "intent-1" }),
-      noop,
-    );
-
-    expect(after.payment).toBeNull();
-  });
-
-  it("is replaced when a later turn fills a slot", () => {
-    const withAmount: PaymentDraft = { ...HALF_BUILT, amount_minor: 1500 };
-
-    const after = settled(
-      thread({ payment: HALF_BUILT }),
-      [],
-      answer({ outcome: "NEEDS_CLARIFICATION", payment_draft: withAmount }),
-      noop,
-    );
-
-    expect(after.payment).toBe(withAmount);
-  });
-});
-
-
-describe("the capability the last turn was refused for", () => {
-  it("is kept so the next sentence can be about it", () => {
-    const after = settled(
-      thread(),
-      [],
-      answer({ outcome: "UNSUPPORTED", refused_capability: "LARGEST_MOVEMENT" }),
-      noop,
-    );
-
-    expect(after.refusal).toBe("LARGEST_MOVEMENT");
-  });
-
-  it("is dropped as soon as a turn is not a refusal", () => {
-    // Replaced rather than accumulated: a stale one would refuse a question two turns later for a
-    // capability nobody had asked about.
-    const after = settled(thread({ refusal: "LARGEST_MOVEMENT" }), [], answer(), noop);
-
-    expect(after.refusal).toBeNull();
   });
 });

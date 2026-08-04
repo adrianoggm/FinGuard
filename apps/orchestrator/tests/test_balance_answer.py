@@ -20,6 +20,9 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFi
 from finguard_orchestrator.domain.enums import Direction, Period, Spoken
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.conversation import (
+    Conversation,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.services import answer_writer
@@ -166,13 +169,13 @@ async def test_a_balance_question_does_not_erase_the_previous_plan() -> None:
             sentence="¿cuánto tengo?",
             account_id=ACCOUNT,
             today=TODAY,
-            previous_plan=previous,
+            conversation=Conversation(last_plan=previous),
         )
     )
 
-    assert result.plan_context is not None
-    assert result.plan_context.period == Period.LAST_MONTH.value
-    assert result.plan_context.categories == ["GROCERIES"]
+    assert result.conversation.last_plan is not None
+    assert result.conversation.last_plan.period.period is Period.LAST_MONTH
+    assert result.conversation.last_plan.categories == ("GROCERIES",)
 
 
 async def test_a_bank_that_will_not_answer_does_not_become_a_zero() -> None:

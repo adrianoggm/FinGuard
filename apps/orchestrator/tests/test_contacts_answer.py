@@ -19,6 +19,9 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFi
 from finguard_orchestrator.domain.enums import Direction, Period, Spoken
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.conversation import (
+    Conversation,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
@@ -140,10 +143,14 @@ async def test_asking_for_contacts_does_not_erase_the_previous_plan() -> None:
         categories=("GROCERIES",),
     )
 
-    _, result = await ask("¿qué contactos tengo?", FakeContacts(MARTA_RUIZ), previous_plan=previous)
+    _, result = await ask(
+        "¿qué contactos tengo?",
+        FakeContacts(MARTA_RUIZ),
+        conversation=Conversation(last_plan=previous),
+    )
 
-    assert result.plan_context is not None
-    assert result.plan_context.period == Period.LAST_MONTH.value
+    assert result.conversation.last_plan is not None
+    assert result.conversation.last_plan.period.period is Period.LAST_MONTH
 
 
 async def test_a_real_payment_order_is_untouched() -> None:

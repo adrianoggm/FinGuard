@@ -33,6 +33,7 @@ from finguard_orchestrator.application import (
     GetMovementsQuery,
     ListCardsQuery,
     ListContactsQuery,
+    PaymentAnswer,
     PreparePaymentCommand,
     QueryBus,
     ReplaceLlmPolicyCommand,
@@ -50,15 +51,20 @@ from finguard_orchestrator.bootstrap.dependencies import (
     reporting_today,
     requires,
 )
-from finguard_orchestrator.domain.enums import GroupBy, PlanningOutcome
+from finguard_orchestrator.domain.enums import GroupBy, PaymentOutcome, PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
+    ActiveWorkflow,
+    Conversation,
+    PaymentConfirmation,
+    PaymentInProgress,
+    Slot,
+    slot_for,
+)
 from finguard_orchestrator.domain.services import payment_router, payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import (
-    FinancialPlan,
-    FinancialPlanDraft,
-)
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
@@ -72,18 +78,12 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     MessageRequest,
     MessageResponse,
     MovementsResponse,
-    PaymentDraftPayload,
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
-    SpokenContactResponse,
     WalletResponse,
 )
-from finguard_orchestrator.infrastructure.mappers import llm_mapper
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
-    draft_to_domain,
-    plan_to_domain,
-)
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
@@ -201,6 +201,7 @@ async def _as_payment(
     who: Caller,
     commands: CommandBus,
     payments_on: bool,
+    was: Conversation = IDLE,
     pending: PaymentDraft | None = None,
 ) -> QuestionResponse:
     """The payment path, reached from the chat.
@@ -213,7 +214,11 @@ async def _as_payment(
     """
     if not payments_on or not who.may(Scope.PAYMENTS_PREPARE):
         return QuestionResponse(
-            outcome=PlanningOutcome.UNSUPPORTED.value, text=payment_writer.cannot_pay()
+            outcome=PlanningOutcome.UNSUPPORTED.value,
+            text=payment_writer.cannot_pay(),
+            # Nothing was started, so nothing is left open — but the conversation before it is not
+            # a casualty of a payment this deployment cannot make.
+            conversation=conversation_mapper.to_payload(was),
         )
     answer = await commands.dispatch(
         PreparePaymentCommand(
@@ -227,24 +232,48 @@ async def _as_payment(
         outcome=answer.outcome,
         text=answer.text,
         intent_id=str(answer.intent_id) if answer.intent_id else None,
-        payment_draft=(
-            PaymentDraftPayload(
-                recipient_name=answer.draft.recipient_name,
-                amount_minor=answer.draft.amount_minor,
-                currency=answer.draft.currency,
-                concept=answer.draft.concept,
-            )
-            if answer.draft
-            else None
-        ),
-        candidates=[
-            SpokenContactResponse(
-                contact_id=candidate.contact_id,
-                display_name=candidate.display_name,
-                phone=candidate.phone,
-            )
-            for candidate in answer.candidates
-        ],
+        conversation=conversation_mapper.to_payload(was.with_active(_payment_state(answer))),
+    )
+
+
+def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
+    """Where a payment turn leaves the conversation.
+
+    Three outcomes and three states: an intent the bank is holding is a confirmation waiting for a
+    yes; a half-built payment is a payment in progress, with the slot it needs and the choice it can
+    offer; anything else — sent, refused, cancelled, not understood — leaves nothing open.
+
+    Deriving it here rather than in the payment handler keeps the command's answer about the payment
+    and this about the conversation. The handler already says which of the three happened.
+    """
+    if (
+        answer.intent_id is not None
+        and answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+    ):
+        return PaymentConfirmation(
+            intent_id=answer.intent_id,
+            recipient=answer.recipient or "",
+            amount_minor=answer.amount_minor or 0,
+            currency=answer.currency or "EUR",
+        )
+    if answer.draft is None:
+        return None
+
+    drafted = PaymentDraft(
+        recipient_name=answer.draft.recipient_name,
+        amount_minor=answer.draft.amount_minor,
+        currency=answer.draft.currency,
+        concept=answer.draft.concept,
+    )
+    candidates = tuple(
+        Contact(uuid.UUID(row.contact_id), row.display_name, row.phone) for row in answer.candidates
+    )
+    return PaymentInProgress(
+        draft=drafted,
+        # A choice is a different question from a field to type, and the client renders them
+        # differently: buttons against a text box.
+        awaiting=Slot.RECIPIENT_CHOICE if candidates else slot_for(drafted.missing),
+        candidates=candidates,
     )
 
 
@@ -253,6 +282,7 @@ def _payment_events(
     who: Caller,
     commands: CommandBus,
     payments_on: bool,
+    was: Conversation = IDLE,
     pending: PaymentDraft | None = None,
 ) -> StreamingResponse:
     """The payment path as server-sent events: one stage, then the answer.
@@ -268,7 +298,7 @@ def _payment_events(
 
     async def events() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "reading", "detail": None})
-        answer = await _as_payment(sentence, who, commands, payments_on, pending)
+        answer = await _as_payment(sentence, who, commands, payments_on, was, pending)
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -283,18 +313,18 @@ def _sse(payload: Mapping[str, object]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
-def _context_of(request: QuestionRequest) -> FinancialPlan | None:
-    """The follow-up context, as a plan.
+def _conversation_of(request: QuestionRequest) -> Conversation:
+    """Where the conversation was, as a conversation.
 
-    Mapped at the edge on purpose: a plan the caller made up is a bad request, and this
-    is the layer that knows how to say so. Nothing further in owns a string it has to
-    take on faith.
+    Mapped at the edge on purpose: a state the caller made up is a bad request, and this is the
+    layer that knows how to say so. Nothing further in owns a value it has to take on faith — the
+    handler receives typed states whose invariants have already run.
     """
-    return plan_to_domain(request.previous_plan) if request.previous_plan else None
+    return conversation_mapper.to_domain(request.conversation)
 
 
 async def _continues_a_payment(
-    request: QuestionRequest, who: Caller, queries: QueryBus
+    was: Conversation, question: str, who: Caller, queries: QueryBus
 ) -> PaymentDraft | None:
     """The payment this sentence continues, or None.
 
@@ -302,19 +332,15 @@ async def _continues_a_payment(
     way is a state machine rather than a sequence of unrelated sentences. Without it "15 euros"
     reached the financial planner: money with no payment verb is not a payment.
 
-    The directory is fetched only when a payment is actually pending, which is rare. The prepare
+    The directory is fetched only when a payment is actually under way, which is rare. The prepare
     handler reads it again to resolve the recipient — one extra local call on those turns, and the
     alternative is the controller passing a resolved contact into the command, which would move the
     decision out of the layer that owns it.
     """
-    if request.payment_draft is None:
+    active = was.active
+    if not isinstance(active, PaymentInProgress):
         return None
-    drafted = PaymentDraft(
-        recipient_name=request.payment_draft.recipient_name,
-        amount_minor=request.payment_draft.amount_minor,
-        currency=request.payment_draft.currency,
-        concept=request.payment_draft.concept,
-    )
+    drafted = active.draft
     if not drafted.missing:
         # Nothing left to fill, so there is nothing to continue: a complete payment has already
         # become a preview waiting for a yes, and that is the confirmation path.
@@ -324,15 +350,9 @@ async def _continues_a_payment(
         Contact(uuid.UUID(row.contact_id), row.display_name, row.phone)
         for row in directory.contacts
     )
-    if payment_router.continues(request.question, drafted, contacts):
+    if payment_router.continues(question, drafted, contacts):
         return drafted
     return None
-
-
-def _pending_of(request: QuestionRequest) -> FinancialPlanDraft | None:
-    """The half-built plan behind the assistant's last question, as a draft. Mapped here for
-    the same reason as the plan above: what a caller sends is checked at the edge or nowhere."""
-    return draft_to_domain(request.pending_draft) if request.pending_draft else None
 
 
 @assistant_router.get(
@@ -547,25 +567,25 @@ async def ask(
     """
     who.assert_may_read(who.account_id)
 
-    continuing = await _continues_a_payment(request, who, queries)
+    was = _conversation_of(request)
+
+    continuing = await _continues_a_payment(was, request.question, who, queries)
     if continuing is not None:
         # A payment under way takes the reply that answers its question, before anything is
         # classified. "15 euros" is an amount because something asked for one.
-        return await _as_payment(request.question, who, commands, payments_on, continuing)
+        return await _as_payment(request.question, who, commands, payments_on, was, continuing)
 
     if payment_router.is_payment(request.question):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,
         # because making it is what this router is for.
-        return await _as_payment(request.question, who, commands, payments_on)
+        return await _as_payment(request.question, who, commands, payments_on, was)
 
     result = await queries.ask(
         AskFinancialQuestionQuery(
             sentence=request.question,
             account_id=who.account_id,
             today=today,
-            previous_plan=_context_of(request),
-            pending_draft=_pending_of(request),
-            previous_refusal=request.previous_refusal,
+            conversation=was,
         )
     )
     return llm_mapper.question_to_dto(result)
@@ -599,28 +619,28 @@ async def ask_streaming(
     plan that misread the question can be seen for what it is while that still helps —
     rather than arriving as a footnote under a number the user has already read.
     """
-    continuing = await _continues_a_payment(request, who, queries)
+    was = _conversation_of(request)
+
+    continuing = await _continues_a_payment(was, request.question, who, queries)
     if continuing is not None:
         # Here as well as on the other route, and for the reason written below: the web client types
         # into *this* endpoint, so a payment that could only be continued on the other one was a
         # payment that could not be continued at all. The first version of this change wired the
         # routing into `/v1/questions` alone and the browser conversation still broke.
-        return _payment_events(request.question, who, commands, payments_on, continuing)
+        return _payment_events(request.question, who, commands, payments_on, was, continuing)
 
     if payment_router.is_payment(request.question):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one
         # that could not pay — the same sentence answering differently depending on which endpoint
         # a client happened to call.
-        return _payment_events(request.question, who, commands, payments_on)
+        return _payment_events(request.question, who, commands, payments_on, was)
 
     question = AskFinancialQuestionQuery(
         sentence=request.question,
         account_id=who.account_id,
         today=today,
-        previous_plan=_context_of(request),
-        pending_draft=_pending_of(request),
-        previous_refusal=request.previous_refusal,
+        conversation=was,
     )
 
     async def events() -> AsyncIterator[str]:

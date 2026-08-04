@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -30,6 +31,9 @@ class PlanningResult:
     # it may be absent even then: a draft is a convenience for the next turn, never a
     # precondition for asking.
     draft: FinancialPlanDraft | None = None
+    # Which field the question is about, when it asks one. Emitted by the model rather than read
+    # back out of its own Spanish, because "de este" can only be understood against the slot.
+    awaiting: Slot = Slot.WINDOW
 
     def __post_init__(self) -> None:
         if (self.outcome is PlanningOutcome.PLANNED) != (self.plan is not None):
@@ -55,7 +59,10 @@ class PlanningResult:
 
     @classmethod
     def needs_clarification(
-        cls, question: str, draft: FinancialPlanDraft | None = None
+        cls,
+        question: str,
+        draft: FinancialPlanDraft | None = None,
+        awaiting: Slot = Slot.WINDOW,
     ) -> "PlanningResult":
         """`question` is shown to the user, so it names the missing piece rather than
         reporting failure: "which month?" tells them what to do, "ambiguous" does not.
@@ -64,7 +71,12 @@ class PlanningResult:
         worth asking whether or not the rest of the reading survived — but when it is here,
         the reply can complete it instead of starting the conversation again.
         """
-        return cls(PlanningOutcome.NEEDS_CLARIFICATION, question=question, draft=draft)
+        return cls(
+            PlanningOutcome.NEEDS_CLARIFICATION,
+            question=question,
+            draft=draft,
+            awaiting=awaiting,
+        )
 
     @classmethod
     def unsupported(cls, reason: str) -> "PlanningResult":

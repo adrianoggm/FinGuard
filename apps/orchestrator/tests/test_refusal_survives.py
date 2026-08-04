@@ -30,6 +30,10 @@ import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
+from finguard_orchestrator.domain.models.conversation import (
+    Conversation,
+    UnsupportedCapability,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
@@ -93,7 +97,8 @@ async def test_the_refusal_names_the_capability_it_refused() -> None:
     _, _, result = await ask("¿cuál fue el gasto más caro del año en gasolina?")
 
     assert result.outcome == PlanningOutcome.UNSUPPORTED.value
-    assert result.refused_capability == "LARGEST_MOVEMENT"
+    assert isinstance(result.conversation.active, UnsupportedCapability)
+    assert result.conversation.active.capability == "LARGEST_MOVEMENT"
 
 
 @pytest.mark.parametrize(
@@ -101,13 +106,17 @@ async def test_the_refusal_names_the_capability_it_refused() -> None:
     ["¿Y el segundo?", "y el segundo", "¿y el tercero?", "¿y el siguiente?", "y los siguientes"],
 )
 async def test_a_bare_continuation_after_a_refusal_is_refused_again(sentence: str) -> None:
-    planner, ledger, result = await ask(sentence, previous_refusal="LARGEST_MOVEMENT")
+    planner, ledger, result = await ask(
+        sentence,
+        conversation=Conversation(active=UnsupportedCapability(capability="LARGEST_MOVEMENT")),
+    )
 
     assert planner.asked is None, "a continuation of a refused question reached the model"
     assert ledger.ran is False
     assert result.outcome == PlanningOutcome.UNSUPPORTED.value
     assert "más alto" in result.text
-    assert result.refused_capability == "LARGEST_MOVEMENT"
+    assert isinstance(result.conversation.active, UnsupportedCapability)
+    assert result.conversation.active.capability == "LARGEST_MOVEMENT"
 
 
 @pytest.mark.parametrize(
@@ -122,7 +131,10 @@ async def test_a_bare_continuation_after_a_refusal_is_refused_again(sentence: st
     ],
 )
 async def test_a_sentence_with_its_own_content_is_a_new_question(sentence: str) -> None:
-    planner, _, _ = await ask(sentence, previous_refusal="LARGEST_MOVEMENT")
+    planner, _, _ = await ask(
+        sentence,
+        conversation=Conversation(active=UnsupportedCapability(capability="LARGEST_MOVEMENT")),
+    )
 
     assert planner.asked == sentence or planner.asked is None, sentence
 
@@ -138,6 +150,9 @@ async def test_a_continuation_with_no_refusal_behind_it_is_planned() -> None:
 async def test_the_capability_is_checked_rather_than_trusted() -> None:
     """It crosses the wire, so a caller can send anything. A name this build does not have is not a
     refusal it can repeat — the sentence takes the ordinary path instead."""
-    planner, _, _ = await ask("¿y el segundo?", previous_refusal="NOT_A_RULE")
+    planner, _, _ = await ask(
+        "¿y el segundo?",
+        conversation=Conversation(active=UnsupportedCapability(capability="NOT_A_RULE")),
+    )
 
     assert planner.asked == "¿y el segundo?"

@@ -27,6 +27,7 @@ from typing import Final
 
 from finguard_orchestrator.domain.enums import Period
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import RelativePeriod
 
@@ -54,6 +55,10 @@ _NAMED: Final[tuple[tuple[str, Period], ...]] = (
 # about the wrong year.
 _A_YEAR_WE_CANNOT_NAME: Final = re.compile(r"\bano\s+pasado\b|\bano\s+anterior\b")
 
+# A reply that points at whatever was just asked about and names nothing else. Meaningless in
+# isolation — which is why it is only read when a slot says what the question was.
+_THIS_ONE: Final = re.compile(r"(de\s+)?(este|esta|el\s+actual|la\s+actual|actual)")
+
 # "los últimos 30 días", "últimos 3 meses", and the singular "el último mes" which is n=1.
 _COUNTED: Final = re.compile(
     r"ultim[oa]s?\s+(?:(\d{1,3})\s+)?(dias?|meses|mes)\b",
@@ -68,13 +73,21 @@ _UNIT: Final[dict[str, Period]] = {
 }
 
 
-def window_in(sentence: str) -> RelativePeriod | None:
+def window_in(sentence: str, *, asked_for: Slot = Slot.WINDOW) -> RelativePeriod | None:
     """The window this sentence names, or None when it names none this vocabulary is sure about.
 
     None is the useful answer as often as a window is: it means "send this to the model", which is
     where a sentence this does not recognise belongs.
+
+    `asked_for` is the slot the previous turn asked about, and it is what makes a two-word reply
+    readable. "De este" names nothing on its own — but as the answer to "¿de qué año?" it is this
+    year, and that is the difference between a conversation and a list of sentences. Without the
+    slot this file could only grow phrases, which is exactly how it acquired "del año" and "el año".
     """
     folded = spanish.folded(sentence)
+
+    if asked_for is Slot.YEAR and _THIS_ONE.fullmatch(folded.strip(" ?¿.!¡,")):
+        return RelativePeriod(period=Period.THIS_YEAR)
 
     if _A_YEAR_WE_CANNOT_NAME.search(folded):
         # Before anything else, because "el año pasado" ends in a phrase this now recognises. The

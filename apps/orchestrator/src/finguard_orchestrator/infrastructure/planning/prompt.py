@@ -61,8 +61,13 @@ Today is {today}. Every relative expression is resolved against that date.
 
 PLANNED — the sentence determines a query. Fill the plan fields.
 NEEDS_CLARIFICATION — the sentence does not determine one. Put the question to ask the \
-user, in Spanish, in "question". Prefer asking over guessing: a guess returns a real \
-figure for a question nobody asked, which is worse than a question.
+user, in Spanish, in "question", and name the field you are asking about in "awaiting": \
+WINDOW for a period, YEAR when you are asking which year specifically, CATEGORY for a kind \
+of spending. Prefer asking over guessing: a guess returns a real figure for a question \
+nobody asked, which is worse than a question.
+
+"awaiting" matters as much as the question. The reply is often two words — "de este", "el \
+pasado" — and it can only be read against the field it answers.
 UNSUPPORTED — the query cannot be expressed at all. There is no average, no comparison \
 between two periods, and no forecast: only what already happened.
 
@@ -140,38 +145,44 @@ metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimien
 ## Examples
 
 "¿Cuánto gasté el mes pasado?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+"period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
 "¿Cuánto he gastado en los últimos 30 días?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_N_DAYS", "n": 30, "from": "", "to": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+"period": "LAST_N_DAYS", "n": 30, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
 "¿En qué me he gastado el dinero este mes?"
-{{"outcome": "PLANNED", "question": "", "period": "THIS_MONTH", "n": 0, "from": "", "to": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+"period": "THIS_MONTH", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "CATEGORY", \
 "metric": "SUM"}}
 
 "¿Cuánto gasté en Mercadona el mes pasado?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", \
+"period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": ["Mercadona"], \
 "isFollowUp": false, "changed": [], "groupBy": \
 "NONE", "metric": "SUM"}}
 
 "¿Cuánto he gastado últimamente?"
 {{"outcome": "NEEDS_CLARIFICATION", "question": "¿De qué periodo? Por ejemplo este mes, el mes \
-pasado o los últimos 30 días.", "period": "", "n": 0, "from": "", "to": "", "direction": \
+pasado o los últimos 30 días.", "awaiting": "WINDOW", "period": "", "n": 0, "from": "", "to": "", \
+"direction": \
 "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
 "¿Cuál es mi gasto medio mensual?"
-{{"outcome": "UNSUPPORTED", "question": "", "period": "", "n": 0, "from": "", "to": "", \
+{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", \
+"period": "", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
 "isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
