@@ -81,12 +81,10 @@ def test_a_clarification_survives_with_its_slot() -> None:
     assert back.awaiting is Slot.CATEGORY
 
 
-def test_a_refusal_survives_with_its_draft_and_its_rank() -> None:
-    """The state the review asked for. Losing any of the three is what made "¿y el segundo?"
-    re-read a sentence that names neither the period nor the category."""
-    out = IDLE.with_active(
-        UnsupportedCapability(capability="LARGEST_MOVEMENT", draft=FUEL_THIS_YEAR, rank=2)
-    )
+def test_a_refusal_survives_with_the_family_it_named() -> None:
+    """Which the answer needs: "no hago previsiones" and "no comparo dos periodos" are different
+    sentences, and a round trip that lost the family would flatten them into "no puedo con eso"."""
+    out = IDLE.with_active(UnsupportedCapability(capability="FORECAST"))
 
     back = there_and_back(out)
 

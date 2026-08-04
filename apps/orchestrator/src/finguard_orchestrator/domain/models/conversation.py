@@ -91,20 +91,16 @@ class FinancialClarification:
 
 @dataclass(frozen=True)
 class UnsupportedCapability:
-    """A capability this build does not have, and everything that was understood anyway.
+    """A capability this build does not have, by the name of its family.
 
-    The slots are kept because the review's example needs them: after "¿cuál fue el gasto más caro
-    del año en gasolina?" the follow-up "¿y el segundo?" changes one thing — the rank — and
-    remembering only the family name meant re-reading the period and the category out of a sentence
-    that contains neither.
-
-    They are also what makes this state answerable the day the capability exists, rather than the
-    conversation having to be derived again.
+    It carried a draft and a rank for one release: the largest expense was refused, "¿y el segundo?"
+    asked for the next one, and remembering only the family name meant re-reading a period and a
+    category out of a sentence containing neither. RANK_MOVEMENTS answers both of those questions
+    now, so the fields went with the refusal that needed them — a state carrying data no branch
+    reads is the fragility the review named, one field at a time.
     """
 
     capability: str
-    draft: FinancialPlanDraft | None = None
-    rank: int = 1
 
 
 @dataclass(frozen=True)

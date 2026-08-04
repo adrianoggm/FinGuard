@@ -201,17 +201,19 @@ conversations:
       - say: ¿cuánto gasté en gasolina el mes pasado?
         says: gasolina
 
-  - id: a_refused_capability_stays_refused
+  - id: the_largest_expense_and_the_next_one
     why: >
-      "¿Y el segundo?" asks for the second largest movement — the capability just refused — and says
-      nothing about size, so no guard rule could see it. It reached the planner, which asked which
-      period, and the next two replies were a loop over a window nothing could use.
+      The reported thread, both turns. It used to be a total for the first — a real figure about a
+      different question — and then a refusal, and then a loop over a period nothing could use.
+      "¿Y el segundo?" is now a patch of one field, so the second turn must keep the window and the
+      category from a sentence that names neither.
     turns:
       - say: Cual fue el gasto más caro en el año de gasolina
-        expect: UNSUPPORTED
+        says: fue de
+        not_says: movimientos
       - say: Y el segundo ?
-        expect: UNSUPPORTED
-        says: más alto
+        says: fue de
+        keeps: [window, categories]
 
   - id: which_marta_can_actually_be_answered
     why: >

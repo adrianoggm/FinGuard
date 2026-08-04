@@ -125,11 +125,7 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
         case Workflow.UNSUPPORTED_CAPABILITY:
             if not payload.capability:
                 return None
-            return UnsupportedCapability(
-                capability=payload.capability,
-                draft=draft_to_domain(payload.draft) if payload.draft else None,
-                rank=payload.rank or 1,
-            )
+            return UnsupportedCapability(capability=payload.capability)
         case Workflow.PAYMENT_IN_PROGRESS:
             return PaymentInProgress(
                 draft=_payment_to_domain(payload.payment),
@@ -179,13 +175,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     if isinstance(active, FinancialClarification):
         return payload.model_copy(update={"draft": plan_payload(active.draft)})
     if isinstance(active, UnsupportedCapability):
-        return payload.model_copy(
-            update={
-                "capability": active.capability,
-                "rank": active.rank,
-                "draft": plan_payload(active.draft) if active.draft else None,
-            }
-        )
+        return payload.model_copy(update={"capability": active.capability})
     if isinstance(active, PaymentInProgress):
         return payload.model_copy(
             update={

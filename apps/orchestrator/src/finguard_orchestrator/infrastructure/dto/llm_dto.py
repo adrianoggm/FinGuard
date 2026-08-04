@@ -151,12 +151,12 @@ class ConversationPayload(_Payload):
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
-    # FINANCIAL_CLARIFICATION and UNSUPPORTED_CAPABILITY: the reading so far.
+    # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
-    # UNSUPPORTED_CAPABILITY: which capability, and which position was asked about. The rank is why
-    # "¿y el segundo?" can be a patch of one field rather than a sentence to be read again.
+    # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
+    # here left with the refusal it served — a ranking is a plan now, and `last_plan.rank` is what
+    # "¿y el segundo?" patches.
     capability: str | None = Field(default=None, max_length=64)
-    rank: int | None = Field(default=None, ge=1, le=MAX_RANK)
     # PAYMENT_IN_PROGRESS: the payment so far, whether it stepped aside, and the choice offered.
     payment: PaymentDraftPayload | None = None
     suspended: bool = False
