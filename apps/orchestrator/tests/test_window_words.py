@@ -93,3 +93,32 @@ def test_the_singular_forms_are_read_too() -> None:
     """Somebody answering "el último mes" means one month, and "en el último día" means one day.
     Both are counted periods with n=1 rather than a separate name."""
     assert window_words.window_in("el último mes") == window_words.window_in("los últimos 1 meses")
+
+
+# --- the phrasings the loop was made of ----------------------------------------------
+#
+# From the report, answering "¿de qué periodo?":
+#
+#     "del año"   → "¿De qué año? Por ejemplo 2025 o el año actual."
+#     "de este"   → "¿De qué periodo? Por ejemplo este mes…"
+#
+# Neither was read, so both went to the model and the conversation went round. "Del año" is this
+# year in any reading of it, and so is "en el año".
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["del año", "de este año", "en el año", "el año", "durante el año", "de todo el año"],
+)
+def test_the_year_is_read_however_it_is_phrased(sentence: str) -> None:
+    window = window_words.window_in(sentence)
+
+    assert window is not None
+    assert window.period is Period.THIS_YEAR
+
+
+def test_last_year_is_still_not_this_year() -> None:
+    """The one that must not be swept up. "Del año pasado" is a window this vocabulary does not
+    have, and reading it as THIS_YEAR would answer about a different year."""
+    assert window_words.window_in("del año pasado") is None
+    assert window_words.window_in("el año pasado") is None

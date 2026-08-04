@@ -45,6 +45,7 @@ function answer(fields: Partial<Answer> = {}): Answer {
     pending_context: null,
     payment_draft: null,
     candidates: [],
+    refused_capability: null,
     currency: null,
     total_minor: null,
     movement_count: null,
@@ -61,6 +62,7 @@ function thread(fields: Partial<Thread> = {}): Thread {
     pending: null,
     unfinished: null,
     payment: null,
+    refusal: null,
     ...fields,
   };
 }
@@ -240,5 +242,27 @@ describe("the bizum being built", () => {
     );
 
     expect(after.payment).toBe(withAmount);
+  });
+});
+
+
+describe("the capability the last turn was refused for", () => {
+  it("is kept so the next sentence can be about it", () => {
+    const after = settled(
+      thread(),
+      [],
+      answer({ outcome: "UNSUPPORTED", refused_capability: "LARGEST_MOVEMENT" }),
+      noop,
+    );
+
+    expect(after.refusal).toBe("LARGEST_MOVEMENT");
+  });
+
+  it("is dropped as soon as a turn is not a refusal", () => {
+    // Replaced rather than accumulated: a stale one would refuse a question two turns later for a
+    // capability nobody had asked about.
+    const after = settled(thread({ refusal: "LARGEST_MOVEMENT" }), [], answer(), noop);
+
+    expect(after.refusal).toBeNull();
   });
 });

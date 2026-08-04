@@ -57,6 +57,11 @@ services:
     build:
       context: .
       dockerfile: apps/orchestrator/Dockerfile
+      args:
+        # Passed by `just up`, "unknown" when somebody runs compose directly. /version reports it,
+        # so "which build am I talking to" is one request rather than an inference.
+        BUILD_SHA: ${FINGUARD_SHA:-unknown}
+        BUILD_REF: ${FINGUARD_REF:-unknown}
     profiles: ["core", "poc"]
     environment:
       # Which models exist, which provider serves each one and what happens when one

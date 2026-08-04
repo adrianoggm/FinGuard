@@ -241,6 +241,9 @@ def create_app() -> FastAPI:
     # The vocabulary a screen may offer. The same list the decoder is constrained to, so a
     # category a chip produces is one the assistant can name back.
     app.state.categories = settings.categories
+    # For /version. The whole Settings object rather than the two strings, because the next thing
+    # somebody wants from a running service is always another one of these.
+    app.state.settings = settings
     app.state.planner_probe = planner_provider
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth

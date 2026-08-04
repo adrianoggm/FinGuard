@@ -147,6 +147,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         question=result.question,
         plan=result.plan,
         plan_context=_plan_to_dto(result.plan_context) if result.plan_context else None,
+        refused_capability=result.refused_capability,
         contacts=[
             SpokenContactResponse(
                 contact_id=contact.contact_id,

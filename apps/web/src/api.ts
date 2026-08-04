@@ -96,6 +96,9 @@ export type Answer = {
   payment_draft: PaymentDraft | null;
   // Present when the recipient names several contacts: the choice, with identifiers.
   candidates: Candidate[];
+  // On a refusal: which capability is missing. Echoed back so "¿y el segundo?" gets the same
+  // refusal rather than becoming a question about a period nothing can use.
+  refused_capability: string | null;
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
@@ -142,11 +145,19 @@ export async function summary(): Promise<Summary> {
  * and `planned` arrives before any figure so a plan that misread the question can be seen while
  * that still helps.
  */
+/** Which build is answering. Unauthenticated, because it is a fact about the deployment. */
+export async function version(): Promise<{ sha: string; ref: string }> {
+  const response = await fetch(`${BASE}/version`);
+  if (!response.ok) await readError(response);
+  return response.json();
+}
+
 export async function* ask(
   sentence: string,
   previousPlan: PlanContext | null = null,
   pendingDraft: PlanContext | null = null,
   paymentDraft: PaymentDraft | null = null,
+  previousRefusal: string | null = null,
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -159,6 +170,7 @@ export async function* ask(
       previous_plan: previousPlan,
       pending_draft: pendingDraft,
       payment_draft: paymentDraft,
+      previous_refusal: previousRefusal,
     }),
   });
   if (!response.ok || !response.body) await readError(response);
@@ -217,6 +229,7 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     pending_context: null,
     payment_draft: null,
     candidates: [],
+    refused_capability: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
@@ -309,6 +322,7 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     pending_context: null,
     payment_draft: null,
     candidates: [],
+    refused_capability: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,

@@ -11,6 +11,9 @@ default:
     @just --list
 
 # --- Startup ------------------------------------------------------------------
+#
+# The build recipes stamp the current commit into the image, so /version can say which build is
+# answering. Running `docker compose` by hand still works and reports "unknown", which is honest.
 
 # Just the database
 db:
@@ -18,15 +21,15 @@ db:
 
 # A single component plus whatever it needs to be healthy: just component banking-api
 component name:
-    docker compose up -d --wait --build {{ name }}
+    FINGUARD_SHA=$(git rev-parse --short HEAD) FINGUARD_REF=$(git rev-parse --abbrev-ref HEAD) docker compose up -d --wait --build {{ name }}
 
 # Skeleton: database + backend APIs. The skin (web, mobile) stays out
 back:
-    docker compose --profile core up -d --wait --build
+    FINGUARD_SHA=$(git rev-parse --short HEAD) FINGUARD_REF=$(git rev-parse --abbrev-ref HEAD) docker compose --profile core up -d --wait --build
 
 # The whole PoC: skeleton + skin. Today the same as `back`, until apps/web exists
 poc:
-    docker compose --profile poc up -d --wait --build
+    FINGUARD_SHA=$(git rev-parse --short HEAD) FINGUARD_REF=$(git rev-parse --abbrev-ref HEAD) docker compose --profile poc up -d --wait --build
 
 # Stops everything in the project; the data survives in the volume.
 # --profile "*" is essential: without it, down ignores services that have a profile

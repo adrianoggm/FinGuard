@@ -177,3 +177,54 @@ def test_the_order_of_the_parts_does_not_matter() -> None:
     assert [c.display_name for c in payment_words.contacts_in("Vega Marta", EVERYBODY)] == [
         "Marta Solis Vega"
     ]
+
+
+# --- the concept ---------------------------------------------------------------------
+#
+# "pues 15 euros con concepto de comida a Marta" reached the continuation path, which read the
+# amount and the name and nothing else — so the note the user wrote was lost on exactly the turn
+# they wrote it.
+#
+# Only the explicit form is read. "Para Marta" is a recipient and "por fin" is filler, so guessing a
+# concept out of any preposition would put arbitrary words on a payment.
+
+
+@pytest.mark.parametrize(
+    ("sentence", "concept"),
+    [
+        ("15 euros con concepto de comida", "comida"),
+        ("con el concepto tapas", "tapas"),
+        ("15 euros concepto: cena del viernes", "cena del viernes"),
+        ("mándale 20 en concepto de alquiler", "alquiler"),
+        ("con concepto de la cena de ayer a Marta", "la cena de ayer"),
+    ],
+)
+def test_the_concept_is_read_when_it_is_named(sentence: str, concept: str) -> None:
+    assert payment_words.concept_in(sentence) == concept
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "15 euros",
+        "a Marta Solis Vega",
+        "para Marta",
+        "por fin",
+        "",
+        # The word without anything after it is not a concept.
+        "con concepto",
+    ],
+)
+def test_nothing_else_is_a_concept(sentence: str) -> None:
+    assert payment_words.concept_in(sentence) is None
+
+
+def test_the_recipient_is_not_swallowed_into_the_concept() -> None:
+    """ "con concepto de comida a Marta" ends at "a Marta": the name is a different slot, and a
+    concept that ate it would put the recipient in the ledger's description."""
+    assert payment_words.concept_in("con concepto de comida a Marta") == "comida"
+
+
+def test_a_concept_longer_than_the_field_is_refused() -> None:
+    """None rather than a truncation. A note cut in half is a note the user did not write."""
+    assert payment_words.concept_in("con concepto de " + "x" * 300) is None

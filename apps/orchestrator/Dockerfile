@@ -30,6 +30,13 @@ WORKDIR /app
 COPY --from=builder --chown=finguard:finguard /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Which commit this is. An argument rather than a copied .git directory: the repository would
+# invalidate every layer on every commit and ship history into a runtime image.
+ARG BUILD_SHA=unknown
+ARG BUILD_REF=unknown
+ENV ORCHESTRATOR_BUILD_SHA=$BUILD_SHA
+ENV ORCHESTRATOR_BUILD_REF=$BUILD_REF
+
 USER finguard
 EXPOSE 8000
 

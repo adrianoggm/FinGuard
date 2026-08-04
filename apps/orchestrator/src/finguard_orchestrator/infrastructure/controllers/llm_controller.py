@@ -116,6 +116,23 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@assistant_router.get("/version", summary="Which build is answering")
+async def version(request: Request) -> dict[str, str]:
+    """The commit this image was built from.
+
+    Unauthenticated and deliberately: it is a fact about the deployment, not about anybody's money,
+    and the first question when a conversation misbehaves is whether the code being read is the code
+    that answered. Reading it out of git at runtime is not an option — a container has no repository
+    in it — so the build stamps it in.
+    """
+    settings = request.app.state.settings
+    return {
+        "service": "orchestrator",
+        "sha": str(settings.build_sha),
+        "ref": str(settings.build_ref),
+    }
+
+
 @assistant_router.get("/ready", summary="Readiness")
 async def ready(request: Request, queries: Queries) -> JSONResponse:
     """Ready to answer *financial questions*, which is what this service is for.
@@ -548,6 +565,7 @@ async def ask(
             today=today,
             previous_plan=_context_of(request),
             pending_draft=_pending_of(request),
+            previous_refusal=request.previous_refusal,
         )
     )
     return llm_mapper.question_to_dto(result)
@@ -602,6 +620,7 @@ async def ask_streaming(
         today=today,
         previous_plan=_context_of(request),
         pending_draft=_pending_of(request),
+        previous_refusal=request.previous_refusal,
     )
 
     async def events() -> AsyncIterator[str]:

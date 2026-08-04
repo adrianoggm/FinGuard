@@ -242,6 +242,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
             plan: dict[str, Any] | None = None
             pending: dict[str, Any] | None = None
             payment: dict[str, Any] | None = None
+            refusal: str | None = None
             asked = False
 
             for index, turn in enumerate(case["turns"], start=1):
@@ -255,6 +256,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                             "previous_plan": plan,
                             "pending_draft": pending,
                             "payment_draft": payment,
+                            "previous_refusal": refusal,
                         },
                         headers={"Authorization": f"Bearer {token}"},
                     )
@@ -286,6 +288,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                 # this is testing.
                 settled = body.get("outcome") == "AWAITING_CONFIRMATION" or body.get("intent_id")
                 payment = body.get("payment_draft") or (None if settled else payment)
+                refusal = body.get("refused_capability")
                 asked = body.get("outcome") == "NEEDS_CLARIFICATION"
 
     print()

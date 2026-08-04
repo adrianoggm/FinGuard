@@ -39,9 +39,20 @@ _NAMED: Final[tuple[tuple[str, Period], ...]] = (
     ("esta semana", Period.THIS_WEEK),
     ("este mes", Period.THIS_MONTH),
     ("este ano", Period.THIS_YEAR),
+    # How people actually answered "¿de qué periodo?" in the reported conversation: "del año". It
+    # was not read, so the turn went to the model, which asked "¿de qué año?", and the next reply
+    # was not read either. Two turns of a loop over a window this vocabulary has.
+    ("del ano", Period.THIS_YEAR),
+    ("el ano", Period.THIS_YEAR),
     ("ayer", Period.YESTERDAY),
     ("hoy", Period.TODAY),
 )
+
+# What must never reach the phrases above. "El año pasado" ends in "el ano" and is a different year
+# — one the banking contract cannot express at all — so the whole sentence is refused before any
+# phrase is tried. Without this, widening "el ano" to THIS_YEAR would have quietly started answering
+# about the wrong year.
+_A_YEAR_WE_CANNOT_NAME: Final = re.compile(r"\bano\s+pasado\b|\bano\s+anterior\b")
 
 # "los últimos 30 días", "últimos 3 meses", and the singular "el último mes" which is n=1.
 _COUNTED: Final = re.compile(
@@ -64,6 +75,12 @@ def window_in(sentence: str) -> RelativePeriod | None:
     where a sentence this does not recognise belongs.
     """
     folded = spanish.folded(sentence)
+
+    if _A_YEAR_WE_CANNOT_NAME.search(folded):
+        # Before anything else, because "el año pasado" ends in a phrase this now recognises. The
+        # contract has no LAST_YEAR, so the honest answer is that this vocabulary does not know the
+        # window — not that it is the current year.
+        return None
 
     counted = _COUNTED.search(folded)
     if counted:

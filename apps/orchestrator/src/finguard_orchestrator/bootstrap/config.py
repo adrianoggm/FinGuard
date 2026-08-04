@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     questions_enabled: bool
     payments_enabled: bool
 
+    # The commit this image was built from, stamped in by the build rather than read from git at
+    # runtime — a container has no repository in it. "unknown" is honest for a build that did not
+    # pass one, and it is what a local `uvicorn` run reports.
+    build_sha: str = "unknown"
+    build_ref: str = "unknown"
+
     # The home screen's window and movement count. Product decisions about what a bank app shows
     # when it opens, so configuration rather than constants in the adapter that uses them.
     summary_days: int = Field(ge=1, le=366)

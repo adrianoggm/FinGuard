@@ -332,7 +332,11 @@ class PreparePaymentHandler:
             # Ambiguous, and this is the one place that can say so with the names in hand. Banking
             # refuses to choose too, and reaching it would spend a round trip to be told the same
             # thing without the candidates.
-            drafted = pending.filled_with(PaymentDraft(amount_minor=amount))
+            drafted = pending.filled_with(
+                PaymentDraft(
+                    amount_minor=amount, concept=payment_words.concept_in(command.sentence)
+                )
+            )
             return PaymentAnswer(
                 outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
                 text=payment_writer.several_candidates(tuple(c.display_name for c in named)),
@@ -345,6 +349,10 @@ class PreparePaymentHandler:
         turn = PaymentDraft(
             recipient_name=named[0].display_name if named else None,
             amount_minor=amount,
+            # Read on the same turn as the amount, because it arrives in the same breath: "pues 15
+            # euros con concepto de comida a Marta" answered the amount question and carried the
+            # note, and reading one without the other lost it exactly where it was written.
+            concept=payment_words.concept_in(command.sentence),
         )
         drafted = pending.filled_with(turn)
         request = drafted.into_request()

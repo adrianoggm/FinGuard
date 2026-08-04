@@ -1223,3 +1223,15 @@ summary {
   color: var(--ink-soft);
   cursor: default;
 }
+
+/* The build label, development only. Small and grey: it is a debugging aid that happens to live on
+   the home screen, not something the product is about. */
+.brand .build {
+  margin-left: 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+  color: var(--muted);
+  background: var(--surface-2, rgba(0, 0, 0, 0.05));
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.35rem;
+}

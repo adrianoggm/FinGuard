@@ -114,9 +114,34 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 )
 
 
+# A sentence that is only a continuation: an ordinal, or a pronoun standing in for whatever the
+# last turn was about. Anchored at both ends, so anything with content of its own falls through.
+_ONLY_A_CONTINUATION: Final = re.compile(
+    r"y\s+(el|la|los|las)?\s*"
+    r"(segundo|segunda|tercero|tercera|cuarto|cuarta|quinto|quinta"
+    r"|siguiente|siguientes|otro|otra|otros|otras|resto|dem[áa]s)",
+    re.IGNORECASE,
+)
+
+
 # The names, for whoever needs to enumerate them: an ablation loop, a configuration file,
 # and the policy that validates its own input.
 RULES: Final = frozenset(name for name, _ in _FAMILIES)
+
+
+def continues_a_refusal(sentence: str) -> bool:
+    """Whether this sentence is nothing but a continuation of the previous turn.
+
+    "¿Y el segundo?" after "no sé buscar el movimiento más alto" asks for the second largest, and
+    says nothing about size — so no pattern above can see it, and the planner read it as an ordinary
+    follow-up with no window. That started a clarification about a period which could never lead
+    anywhere: three turns of the reported conversation are that loop.
+
+    **Narrow on purpose.** Only an ordinal or a bare pronoun with no content of its own. A sentence
+    that carries its own question is a new question, and a refusal that spread forward would answer
+    "¿cuánto gasté?" with an apology about maximums.
+    """
+    return bool(_ONLY_A_CONTINUATION.fullmatch(spanish.folded(sentence).strip(" ?¿.!¡")))
 
 
 def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str | None:
