@@ -152,19 +152,75 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
 # --- conversations ------------------------------------------------------------------
 
 
-def _window_of(context: dict[str, Any]) -> tuple[Any, ...]:
-    """The window as one value, because a plan carries a period or a range and never both."""
-    return (context.get("period"), context.get("n"), context.get("start"), context.get("end"))
+def _window_of(context: dict[str, Any]) -> str | None:
+    """The window as one string, because a plan carries a period or a range and never both.
+
+    A string rather than a tuple so the dataset can write the expected value the way a person
+    would: `LAST_N_MONTHS:3`, `THIS_MONTH`, `2025-07-01..2025-07-31`.
+    """
+    if context.get("period"):
+        named = str(context["period"])
+        return f"{named}:{context['n']}" if context.get("n") else named
+    if context.get("start") and context.get("end"):
+        return f"{context['start']}..{context['end']}"
+    return None
 
 
-def _kept(field: str, before: dict[str, Any], after: dict[str, Any]) -> bool:
-    if field == "window":
-        return _window_of(before) == _window_of(after)
-    if field == "categories":
-        return sorted(before.get("categories") or []) == sorted(after.get("categories") or [])
-    if field == "metric":
-        return before.get("metric") == after.get("metric")
-    raise SystemExit(f"conversations.yaml asks about a field this cannot check: {field}")
+def _names(context: dict[str, Any], field: str) -> str:
+    """A list field as a stable string. Sorted, because the order a model emits filters in is not
+    part of the question."""
+    return ",".join(sorted(context.get(field) or []))
+
+
+# Every field of a plan a case may talk about, as something comparable and printable. The old
+# version knew three of them and raised on the rest, which is why the dataset only ever asked about
+# three — a check nobody can express is a check nobody writes.
+_FIELDS: dict[str, Any] = {
+    "window": _window_of,
+    "direction": lambda plan: plan.get("direction"),
+    "categories": lambda plan: _names(plan, "categories"),
+    "merchants": lambda plan: _names(plan, "merchants"),
+    "group_by": lambda plan: plan.get("group_by"),
+    "metric": lambda plan: plan.get("metric"),
+    "action": lambda plan: plan.get("action"),
+    "rank": lambda plan: plan.get("rank"),
+}
+
+
+def _value(field: str, plan: dict[str, Any]) -> Any:
+    if field not in _FIELDS:
+        raise SystemExit(
+            f"conversations.yaml asks about a field this cannot check: {field}. "
+            f"Known: {', '.join(sorted(_FIELDS))}"
+        )
+    return _FIELDS[field](plan)
+
+
+def _expected(field: str, written: Any) -> Any:
+    """What the dataset wrote, normalised the same way the answer is."""
+    if field in ("categories", "merchants"):
+        return ",".join(sorted(written if isinstance(written, list) else [written]))
+    return written
+
+
+def shape_of(body: dict[str, Any]) -> str:
+    """What kind of answer this is, as the user sees it.
+
+    The review's point about "¿a qué personas les he hecho Bizum?": the figure was correct and the
+    shape was wrong, and no rule about outcomes or windows can see that. A question about *who* has
+    to come back as rows with names on them.
+
+    An ungrouped aggregate still returns one row keyed "total", which is the figure again rather
+    than a breakdown, so it does not count as GROUPS.
+    """
+    groups = [g for g in (body.get("groups") or []) if g.get("key") != "total"]
+    if groups:
+        return "GROUPS"
+    if body.get("movements") and len(body["movements"]) == 1:
+        return "MOVEMENT"
+    if body.get("total_minor") is not None:
+        return "TOTAL"
+    return "NONE"
 
 
 def turn_violations(
@@ -217,17 +273,104 @@ def turn_violations(
         # what the report described and what nothing before this could detect.
         broken.append("CLARIFICATION_RESTARTED")
 
-    for field in turn.get("keeps") or []:
+    # --- what the plan has to be, keep and change ---------------------------------------
+    #
+    # `expect_plan` is the assertion the dataset could not make before, and it is legitimate now
+    # for exactly the fields a deterministic path owns. A window the sentence states outright is
+    # no longer the model's decision — `explicit_facts` enforces it after the merge — so demanding
+    # a value is asserting our own behaviour rather than betting on the model's mood. Anything
+    # still left to judgement belongs in `must_keep` / `must_change`, which are implications.
+    for field, written in (turn.get("expect_plan") or {}).items():
+        if outcome != "PLANNED":
+            broken.append(f"NOT_PLANNED_SO_NO_{field.upper()}")
+            continue
+        if _value(field, context) != _expected(field, written):
+            broken.append(f"WRONG_{field.upper()}")
+
+    for field in turn.get("must_keep") or []:
         if not plan_before:
             continue
         if outcome != "PLANNED":
             # A turn that declined has no plan to compare, and whether it should have declined is
             # the model's judgement rather than a property.
             continue
-        if not _kept(field, plan_before, context):
+        if _value(field, plan_before) != _value(field, context):
             broken.append(f"LOST_{field.upper()}")
 
+    # The inverse, and the one the dataset had no way to say. Every rule here asked what survived;
+    # none could require that something *stopped* surviving, so "los últimos 3 meses" answered over
+    # the previous five passed every check in the file.
+    for field in turn.get("must_change") or []:
+        if outcome != "PLANNED":
+            broken.append(f"NOT_PLANNED_SO_NO_{field.upper()}")
+            continue
+        if plan_before and _value(field, plan_before) == _value(field, context):
+            broken.append(f"INHERITED_{field.upper()}")
+
+    # --- what shape the answer takes ------------------------------------------------------
+    expected_shape = turn.get("expect_shape")
+    if expected_shape and outcome == "PLANNED" and shape_of(body) != expected_shape:
+        broken.append(f"SHAPE_IS_{shape_of(body)}")
+
+    for key in turn.get("expect_groups") or []:
+        keys = [str(group.get("key", "")).lower() for group in body.get("groups") or []]
+        if not any(key.lower() in found for found in keys):
+            broken.append(f"NO_GROUP_{key.upper()}")
+
     return broken
+
+
+# How many times running the assistant may ask for the same thing. Two is a clarification and one
+# retry; the third is the loop from the report, where "¿de qué periodo?" came back about a period
+# the user had already written twice. Applied to every thread rather than opted into per case,
+# because it is a property of having a conversation rather than of any one conversation.
+MAX_REPEATED_CLARIFICATIONS = 2
+
+
+def asked_slot(body: dict[str, Any]) -> str | None:
+    """Which slot this turn asked the user for, or None if it did not ask.
+
+    The slot rather than the wording: the question is written by a model, so two phrasings of
+    "which period?" are the same dead end and comparing sentences would miss it.
+    """
+    if body.get("outcome") != "NEEDS_CLARIFICATION":
+        return None
+    slot = (body.get("conversation") or {}).get("awaiting")
+    return str(slot) if slot else None
+
+
+def clarification_run(slot: str | None, previous: str | None, run: int) -> int:
+    """How many turns running have now asked for this same slot.
+
+    A function rather than three lines in the loop so it can be tested: the interesting cases are
+    a run broken by an answer and a run broken by a *different* question, and neither is obvious
+    from reading the arithmetic.
+    """
+    if slot is None:
+        return 0
+    return run + 1 if slot == previous else 1
+
+
+# The keys a turn may carry. Checked against the dataset by a test, because a mistyped key is
+# silently ignored by every reader here — and a check nobody runs reads exactly like a check that
+# passes.
+TURN_KEYS = frozenset(
+    {
+        "say",
+        "completes",
+        "must_keep",
+        "must_change",
+        "expect_plan",
+        "expect_shape",
+        "expect_groups",
+        "expect",
+        "says",
+        "not_says",
+        "keeps_payment",
+    }
+)
+CONVERSATION_KEYS = frozenset({"id", "why", "turns", "max_repeated_clarifications"})
+SHAPES = frozenset({"TOTAL", "GROUPS", "MOVEMENT", "NONE"})
 
 
 async def run_conversations(base_url: str, token: str, limit: int | None) -> int:
@@ -245,6 +388,11 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
             # would have made it pass while the browser broke.
             conversation: dict[str, Any] | None = None
             asked = False
+            # The slot the previous turn asked about, and how many turns in a row it has been the
+            # same one. Kept per thread because a loop is a property of the thread.
+            asking_about: str | None = None
+            in_a_row = 0
+            allowed = case.get("max_repeated_clarifications", MAX_REPEATED_CLARIFICATIONS)
 
             for index, turn in enumerate(case["turns"], start=1):
                 plan_before = (conversation or {}).get("last_plan") or {}
@@ -272,6 +420,15 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                     # report: the half-built bizum was dropped and the next reply was classified
                     # from scratch, which sent "15 euros" to the financial planner.
                     broken.append("LOST_THE_PAYMENT")
+
+                slot = asked_slot(body)
+                in_a_row = clarification_run(slot, asking_about, in_a_row)
+                asking_about = slot
+                if slot and in_a_row > allowed:
+                    # Asked for the same slot this many turns running. A user cannot get out of
+                    # that by rephrasing, because rephrasing is what already failed.
+                    broken.append(f"ASKED_{slot}_{in_a_row}_TIMES")
+
                 if broken:
                     failures.append((where, broken, (body.get("text") or "")[:60]))
 
