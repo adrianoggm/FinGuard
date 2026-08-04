@@ -238,3 +238,26 @@ async def test_an_outcome_that_is_not_a_question_carries_no_draft() -> None:
 
     assert answer.draft is None
     assert answer.outcome != PlanningOutcome.NEEDS_CLARIFICATION.value
+
+
+async def test_the_concept_arrives_on_the_same_turn_as_the_amount() -> None:
+    """ "Pues 15 euros con concepto de comida a Marta" answers the amount question and carries the
+    note in the same breath. Reading one without the other lost it exactly where it was written."""
+    answer, reader, gateway = await prepare(
+        "pues 15 euros con concepto de comida a Marta Solis Vega", pending=PaymentDraft()
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].concept == "comida"
+    assert "comida" in answer.text
+
+
+async def test_the_concept_survives_an_ambiguous_name() -> None:
+    answer, _, gateway = await prepare(
+        "pues 15 euros con concepto de comida a Marta", pending=PaymentDraft()
+    )
+
+    assert gateway.prepared == []
+    assert answer.draft is not None
+    assert answer.draft.concept == "comida"
+    assert answer.draft.amount_minor == 1_500

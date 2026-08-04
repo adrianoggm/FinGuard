@@ -19,7 +19,10 @@ from typing import Final
 
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.services import spanish
-from finguard_orchestrator.domain.value_objects.payment_request import MAX_PAYMENT_MINOR
+from finguard_orchestrator.domain.value_objects.payment_request import (
+    MAX_CONCEPT,
+    MAX_PAYMENT_MINOR,
+)
 
 # A figure with an optional thousands separator and an optional two-decimal part. The currency is
 # optional because "pues 20" is an answer to "¿de cuánto?" and carries no unit — but see the
@@ -39,6 +42,15 @@ _NOT_AN_AMOUNT: Final = re.compile(
     re.IGNORECASE,
 )
 
+
+# The note, in the one form that says so out loud: "con concepto de X", "en concepto de X",
+# "concepto: X". It ends at the recipient, because "a Marta" is a different slot and "para" is how
+# the next clause usually starts.
+_CONCEPT: Final = re.compile(
+    r"(?:en|con)?\s*(?:el\s+)?concepto\s*(?:de\s+|:\s*)?(.+?)"
+    r"(?=\s+(?:a|para|al)\s+\S|$)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 # Words that appear inside Spanish names and inside every Spanish sentence. Matching a contact on
 # one of these would make "no sé qué hacer" name María del Carmen.
@@ -70,6 +82,32 @@ def amount_in(sentence: str) -> int | None:
         # every layer after this one has to reject.
         return None
     return minor
+
+
+def concept_in(sentence: str) -> str | None:
+    """The note this sentence names, or None.
+
+    Read here because a continuation never reaches the model: "pues 15 euros con concepto de comida
+    a Marta" answered a question about the amount, and the amount and the name were read while the
+    note the user wrote in the same breath was dropped.
+
+    **Only the explicit form.** "Para Marta" is a recipient and "por fin" is filler, so guessing a
+    concept out of any preposition would write arbitrary words onto a payment. It stops at the
+    recipient — "de comida a Marta" is "comida", because the name is a different slot and a concept
+    that ate it would put the recipient in the ledger's description.
+
+    The original casing is kept: this is the user's own text, and folding it would send "Cena del
+    Viernes" to the bank in lower case.
+    """
+    match = _CONCEPT.search(sentence)
+    if match is None:
+        return None
+    written = match.group(1).strip(" .,;:\"'")
+    if not written or len(written) > MAX_CONCEPT:
+        # A note longer than the field is refused rather than cut: half a sentence is not what the
+        # user wrote, and the model path can ask about it instead.
+        return None
+    return written
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:
