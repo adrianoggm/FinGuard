@@ -12,6 +12,7 @@ the evaluation depends on it.
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Final
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
@@ -313,6 +314,52 @@ class AskFinancialQuestionHandler:
         return _answered(plan, answer)
 
 
+# One sentence per missing capability, keyed by the guard's family name.
+#
+# The guard has carried that name since it was written and nothing read it: every refusal came out
+# as "solo consulto lo que ya ha pasado, sin medias, comparaciones ni previsiones" — a list of three
+# things, at least two of which the user had not asked for. Somebody asking for their largest
+# expense was told the system does not do averages.
+#
+# Each one says what is missing and what to ask instead, because the second half is the only part
+# the user can act on. Spanish, like every string a person reads.
+_MISSING_CAPABILITY: Final[dict[str, str]] = {
+    "AVERAGE": (
+        "Todavía no calculo medias. Puedo darte el total de cada mes por separado y así ves la "
+        "evolución — por ejemplo «¿cuánto gasté en gasolina el mes pasado?»."
+    ),
+    "RATIO": (
+        "Todavía no calculo porcentajes de una cifra sobre otra. Puedo darte las dos por "
+        "separado: lo que ingresas y lo que gastas en esa categoría."
+    ),
+    "COMPARISON": (
+        "Todavía no comparo dos periodos en la misma respuesta. Pregúntame por uno y luego por "
+        "el otro, y los ves seguidos."
+    ),
+    "FORECAST": "Solo consulto lo que ya ha pasado, así que no hago previsiones ni estimaciones.",
+    "ADVICE": (
+        "No doy consejos sobre tu dinero. Puedo mostrarte lo que has gastado y en qué, y las "
+        "decisiones las tomas tú."
+    ),
+    "ACTION": (
+        "De momento solo puedo consultar tus movimientos y hacer bizums. Otras operaciones "
+        "todavía no."
+    ),
+    # The one where the honest answer has to explain why there is no figure. Everything about the
+    # question was understood; the maximum is simply not something a plan can ask for, and a total
+    # in its place would be a real number answering something else.
+    "LARGEST_MOVEMENT": (
+        "Todavía no sé buscar el movimiento más alto de un periodo, y no te doy el total en su "
+        "lugar porque no es lo que has preguntado. Puedo darte los movimientos del periodo o el "
+        "desglose por categoría."
+    ),
+}
+
+# For a family with nothing specific to say, which today is none of them. It exists so adding a
+# family to the guard cannot silently produce an empty refusal.
+_CANNOT_YET = "Eso no puedo calcularlo todavía."
+
+
 def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
     """The five outcomes that never reach the ledger.
 
@@ -323,10 +370,7 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
         case PlanningOutcome.NEEDS_CLARIFICATION:
             text = planned.question or ""
         case PlanningOutcome.UNSUPPORTED:
-            text = (
-                "Eso no puedo calcularlo todavía: solo consulto lo que ya ha pasado, "
-                "sin medias, comparaciones entre periodos ni previsiones."
-            )
+            text = _MISSING_CAPABILITY.get(planned.reason or "", _CANNOT_YET)
         case PlanningOutcome.PROVIDER_ERROR:
             text = "No he podido pensar la respuesta ahora mismo. Vuelve a intentarlo."
         case _:

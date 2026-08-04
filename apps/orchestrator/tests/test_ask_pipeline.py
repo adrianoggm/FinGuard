@@ -551,3 +551,53 @@ async def test_the_question_back_hands_out_the_draft() -> None:
     assert result.pending_context is not None
     assert result.pending_context.categories == ["HOUSING_RENT"]
     assert result.pending_context.period is None
+
+
+# --- what a refusal says --------------------------------------------------------------
+
+
+async def test_every_missing_capability_has_its_own_refusal() -> None:
+    """The guard has carried a family name since it was written and nothing read it. Every
+    refusal came out as "solo consulto lo que ya ha pasado, sin medias, comparaciones ni
+    previsiones" — a list of three things, at least two of which the user had not asked for.
+
+    Enumerated from the guard rather than listed here, so adding a family without a sentence
+    fails this test instead of shipping a refusal that explains the wrong thing.
+    """
+    from finguard_orchestrator.application.queries.ask_financial_question import (
+        _MISSING_CAPABILITY,
+    )
+    from finguard_orchestrator.domain.services import capability_guard
+
+    assert set(_MISSING_CAPABILITY) == capability_guard.RULES
+
+
+async def test_the_largest_expense_is_refused_and_told_why() -> None:
+    """The worst answer the system gave: a total of 56 movements offered as the largest one.
+
+    The refusal has to say that the total was deliberately withheld, or the next thing the user
+    does is ask again in different words.
+    """
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER)
+
+    result = await AskFinancialQuestionHandler(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+
+    assert planner.asked is None, "a question we cannot express reached the model"
+    assert ledger.account_id is None, "a total was computed for a question about one movement"
+    assert result.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert "más alto" in result.text
+    assert "no es lo que has preguntado" in result.text
+
+
+async def test_an_average_is_not_told_about_forecasts() -> None:
+    result = await ask(PlanningResult.unsupported("AVERAGE"))
+
+    assert "medias" in result.text
+    assert "previsiones" not in result.text

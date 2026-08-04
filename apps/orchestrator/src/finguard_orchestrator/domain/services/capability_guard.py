@@ -46,6 +46,35 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         re.compile(r"(\bporcentaje\b|\bqué parte de\b|\bqué proporción\b|%)", re.IGNORECASE),
     ),
     (
+        # One extreme movement, not an aggregate of many. This produced the worst answer the
+        # system has given: "¿cuál ha sido el mayor gasto?" came back as *3.977,37 € en los
+        # últimos 3 meses, en 56 movimientos* — the sum of every expense in the window, offered
+        # as the answer to a question about one of them. Nothing downstream could tell, because
+        # the plan was valid and the figure is real; it answers a different question.
+        #
+        # `Metric` is SUM or COUNT, so the maximum is not expressible. Until it is, refusing is
+        # the only honest option: a total in place of a maximum is not approximate, it is false.
+        #
+        # **The discriminator is grammatical.** A superlative attached to a noun asks for one
+        # movement — "el gasto más alto", "la compra más cara", "mayor importe". "Gasté más" and
+        # "gasto más" are verbs and ask which group is largest, which `groupBy` expresses and the
+        # COMPARISON note below already argues must not be refused.
+        #
+        # **Before COMPARISON, and that ordering is load-bearing.** "El pago más grande *que* he
+        # hecho este año" contains "más … que" and is not a comparison: the "que" introduces a
+        # relative clause, not a second term. No pattern tells those apart, so the sentence that
+        # names a superlative noun is read as being about that noun. Both outcomes refuse, but
+        # the family name is what the refusal says out loud, and the wrong name explains the
+        # wrong thing.
+        "LARGEST_MOVEMENT",
+        re.compile(
+            r"\b(mayor|m[áa]xim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
+            r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura)s?\s+"
+            r"(m[áa]s|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         # "más" alone is not a comparison: "¿dónde gasto más?" asks which group is
         # largest inside one window, which groupBy expresses. What the domain cannot do
         # is relate two windows, and in Spanish that needs the second term — "más X *que*
