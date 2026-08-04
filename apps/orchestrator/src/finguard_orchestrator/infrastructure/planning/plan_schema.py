@@ -32,6 +32,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     PlanningOutcome,
 )
+from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.services.plan_merger import Field
 
 # The outcomes a model may choose. The other three are things that happen TO a model —
@@ -42,6 +43,11 @@ CHOOSABLE_OUTCOMES: Final = (
     PlanningOutcome.NEEDS_CLARIFICATION,
     PlanningOutcome.UNSUPPORTED,
 )
+
+# The slots a clarification may ask about. A subset of the conversation's vocabulary: the planner
+# can only be missing something a plan has, so RECIPIENT and CONFIRMATION are not offered — they
+# belong to the payment conversation, and a decoder that cannot emit them cannot confuse the two.
+ASKABLE_SLOTS: Final = (Slot.WINDOW.value, Slot.YEAR.value, Slot.CATEGORY.value)
 
 # What `period` carries when the window is an explicit range instead of a named one.
 ABSOLUTE: Final = "ABSOLUTE"
@@ -64,6 +70,13 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
         "properties": {
             "outcome": {"type": "string", "enum": [o.value for o in CHOOSABLE_OUTCOMES]},
             "question": {"type": "string"},
+            # Which field the question is about. Emitted rather than inferred from the wording:
+            # the question is Spanish prose written by the model, and reading it back to find out
+            # what it asked is how the window vocabulary ended up carrying "del año" and "el año".
+            # With this, "de este" is read against the slot instead of against a phrase list.
+            #
+            # Empty for every outcome but NEEDS_CLARIFICATION, like `question` itself.
+            "awaiting": {"type": "string", "enum": [*ASKABLE_SLOTS, ""]},
             "period": {"type": "string", "enum": [p.value for p in Period] + [ABSOLUTE, ""]},
             # Bounded here as well as in the domain: a schema that permits 5000 makes
             # the decoder able to emit it, and every value it cannot emit is one the
@@ -101,6 +114,7 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
         "required": [
             "outcome",
             "question",
+            "awaiting",
             "period",
             "n",
             "from",

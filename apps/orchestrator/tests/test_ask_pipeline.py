@@ -20,6 +20,10 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFi
 from finguard_orchestrator.application.queries.ask_financial_question import Stage
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
+from finguard_orchestrator.domain.models.conversation import (
+    Conversation,
+    FinancialClarification,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -367,7 +371,7 @@ async def test_the_previous_plan_reaches_the_planner() -> None:
             sentence="¿y en gasolina?",
             account_id=ACCOUNT,
             today=TODAY,
-            previous_plan=context,
+            conversation=Conversation(last_plan=context),
         )
     )
 
@@ -380,11 +384,11 @@ async def test_an_answer_carries_the_context_of_the_next_question() -> None:
     reconstruct — or invent — the words."""
     result = await ask(PlanningResult.planned(plan(metric=Metric.COUNT, categories=("GROCERIES",))))
 
-    assert result.plan_context is not None
-    assert result.plan_context.period == "LAST_MONTH"
-    assert result.plan_context.direction == "EXPENSE"
-    assert result.plan_context.categories == ["GROCERIES"]
-    assert result.plan_context.metric == "COUNT"
+    assert result.conversation.last_plan is not None
+    assert result.conversation.last_plan.period.period.value == "LAST_MONTH"
+    assert result.conversation.last_plan.direction.value == "EXPENSE"
+    assert result.conversation.last_plan.categories == ("GROCERIES",)
+    assert result.conversation.last_plan.metric.value == "COUNT"
 
 
 async def test_a_declined_question_carries_no_context() -> None:
@@ -392,7 +396,7 @@ async def test_a_declined_question_carries_no_context() -> None:
     # would invite a follow-up onto a question that was never answered.
     result = await ask(PlanningResult.needs_clarification("¿de qué mes?"))
 
-    assert result.plan_context is None
+    assert result.conversation.last_plan is None
 
 
 @pytest.mark.parametrize("metric", [Metric.SUM, Metric.COUNT])
@@ -412,7 +416,10 @@ def spoken(sentence: str, previous: FinancialPlan | None = None):
     """A query with a sentence of its own. The shared `ask` helper fixes the sentence, and these
     three tests are entirely about which sentence was said."""
     return AskFinancialQuestionQuery(
-        sentence=sentence, account_id=ACCOUNT, today=TODAY, previous_plan=previous
+        sentence=sentence,
+        account_id=ACCOUNT,
+        today=TODAY,
+        conversation=Conversation(last_plan=previous),
     )
 
 
@@ -493,15 +500,15 @@ async def test_answering_the_period_finishes_the_question_instead_of_restarting_
             sentence="este año",
             account_id=ACCOUNT,
             today=TODAY,
-            pending_draft=RENT_DRAFT,
+            conversation=Conversation(active=FinancialClarification(draft=RENT_DRAFT)),
         )
     )
 
     assert planner.asked is None, "a window from a closed vocabulary went to a model"
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert result.plan_context is not None
-    assert result.plan_context.period == Period.THIS_YEAR.value
-    assert result.plan_context.categories == ["HOUSING_RENT"]
+    assert result.conversation.last_plan is not None
+    assert result.conversation.last_plan.period.period is Period.THIS_YEAR
+    assert result.conversation.last_plan.categories == ("HOUSING_RENT",)
 
 
 async def test_a_reply_that_names_no_window_goes_to_the_model() -> None:
@@ -511,7 +518,10 @@ async def test_a_reply_that_names_no_window_goes_to_the_model() -> None:
 
     result = await chat(planner, FakeLedger(ANSWER)).handle(
         AskFinancialQuestionQuery(
-            sentence="no sé", account_id=ACCOUNT, today=TODAY, pending_draft=RENT_DRAFT
+            sentence="no sé",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=FinancialClarification(draft=RENT_DRAFT)),
         )
     )
 
@@ -530,7 +540,7 @@ async def test_a_reply_that_says_more_than_the_window_goes_to_the_model() -> Non
             sentence="¿cuántas veces este año?",
             account_id=ACCOUNT,
             today=TODAY,
-            pending_draft=RENT_DRAFT,
+            conversation=Conversation(active=FinancialClarification(draft=RENT_DRAFT)),
         )
     )
 
@@ -548,7 +558,10 @@ async def test_a_draft_that_is_not_missing_a_window_is_not_completed() -> None:
 
     await chat(planner, FakeLedger(ANSWER)).handle(
         AskFinancialQuestionQuery(
-            sentence="este año", account_id=ACCOUNT, today=TODAY, pending_draft=complete
+            sentence="este año",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=FinancialClarification(draft=complete)),
         )
     )
 
@@ -567,7 +580,7 @@ async def test_the_guard_still_runs_before_the_completion() -> None:
             sentence="este año, ¿y qué me recomiendas para ahorrar?",
             account_id=ACCOUNT,
             today=TODAY,
-            pending_draft=RENT_DRAFT,
+            conversation=Conversation(active=FinancialClarification(draft=RENT_DRAFT)),
         )
     )
 
@@ -580,9 +593,9 @@ async def test_the_question_back_hands_out_the_draft() -> None:
     send back, and the completion above can never happen."""
     result = await ask(PlanningResult.needs_clarification("¿De qué periodo?", RENT_DRAFT))
 
-    assert result.pending_context is not None
-    assert result.pending_context.categories == ["HOUSING_RENT"]
-    assert result.pending_context.period is None
+    assert isinstance(result.conversation.active, FinancialClarification)
+    assert result.conversation.active.draft.categories == ("HOUSING_RENT",)
+    assert result.conversation.active.draft.needs_a_window
 
 
 # --- what a refusal says --------------------------------------------------------------

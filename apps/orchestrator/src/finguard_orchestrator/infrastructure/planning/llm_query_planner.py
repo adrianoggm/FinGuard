@@ -34,6 +34,7 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
+from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.services import plan_merger
@@ -176,7 +177,9 @@ def _read(
                 # to nothing, and the user reads the same sentence either way.
                 question = FALLBACK_QUESTION
             return PlanningResult.needs_clarification(
-                question, _draft(body, today=today, categories=categories)
+                question,
+                _draft(body, today=today, categories=categories),
+                _awaiting(body),
             )
 
         case PlanningOutcome.UNSUPPORTED:
@@ -189,6 +192,20 @@ def _read(
             # The three remaining outcomes describe things that happen TO a model; it
             # cannot report them about itself, and the schema does not offer them.
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
+
+
+def _awaiting(body: dict[str, Any]) -> Slot:
+    """Which slot the question is about.
+
+    Defaults to the window rather than failing: it is what a clarification asks for nine times out
+    of ten, and a malformed slot is not worth turning a useful question into an error. A value
+    outside the enum cannot arrive under constrained decoding, and if it does this is where it
+    stops being interesting.
+    """
+    try:
+        return Slot(_text(body, "awaiting"))
+    except (_MalformedError, ValueError):
+        return Slot.WINDOW
 
 
 def _draft(
@@ -305,7 +322,11 @@ def _build_plan(
         # Everything else read fine and one piece is missing, which is a question rather than a
         # failure. The draft is what makes the answer to it a completion instead of a restart.
         return PlanningResult.needs_clarification(
-            WINDOW_QUESTION, _draft(body, today=today, categories=categories)
+            WINDOW_QUESTION,
+            _draft(body, today=today, categories=categories),
+            # The window is what is missing here by construction, whatever the model put in the
+            # field: this branch runs because no window was named.
+            Slot.WINDOW,
         )
 
     try:

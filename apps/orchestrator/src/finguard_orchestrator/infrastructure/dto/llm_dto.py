@@ -174,19 +174,12 @@ class QuestionRequest(_Payload):
     # Free text, because a question is free text: it can only be delimited, never
     # parsed. The plan below is the opposite case and gets the opposite treatment.
     question: str = Field(min_length=1, max_length=MAX_PROMPT_LENGTH)
-    # Echo back `plan_context` from the previous answer to ask a follow-up. Optional,
-    # and the caller owns it: the service keeps no conversation.
-    previous_plan: PlanPayload | None = None
-    # Echo back `pending_context` to answer the question the assistant asked. Same shape with
-    # no window, because that is what it is: the reading its question interrupted. Sending it
-    # is how "este año" completes a plan instead of becoming a new question.
-    pending_draft: PlanPayload | None = None
-    # And the payment being built, if one is. Sending it is how "15 euros" finishes a bizum
-    # instead of being classified as a question about movements — which is what it looks like on
-    # its own, money with no verb.
-    payment_draft: PaymentDraftPayload | None = None
-    # Echo back `refused_capability` so the turn after a refusal can be about it.
-    previous_refusal: str | None = Field(default=None, max_length=64)
+    # Echo back `conversation` from the previous answer. One object rather than the five fields
+    # it replaced — the answered plan, the half-read query, the half-built payment, the payment
+    # awaiting a yes, and the last refusal — because a client should store state, not interpret it.
+    #
+    # Absent on the first turn, and absent means a fresh conversation rather than an error.
+    conversation: ConversationPayload | None = None
 
 
 class SpokenGroupResponse(_Payload):
@@ -221,12 +214,9 @@ class QuestionResponse(_Payload):
     # chat endpoint answers both kinds of sentence, so the shape has to admit both.
     intent_id: str | None = None
     plan: str | None = None
-    # The same plan as `plan`, in fields. `plan` is for a person to read; this is what
-    # comes back as `previous_plan` on the next question.
-    plan_context: PlanPayload | None = None
-    # Present with a question back, absent otherwise. What a client echoes as `pending_draft` so
-    # the reply finishes the plan the question was about.
-    pending_context: PlanPayload | None = None
+    # Where the conversation is after this turn, echoed back verbatim on the next one. `plan`
+    # above is the same query in words, for a person to read.
+    conversation: ConversationPayload | None = None
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None
@@ -235,16 +225,9 @@ class QuestionResponse(_Payload):
     # Filled only by a question about who can be paid. The identifier is what lets a client offer
     # a choice and send back *which* contact instead of a name to be interpreted a second time.
     contacts: list[SpokenContactResponse] = []
-    # Present while a payment is still being built: what a client echoes as `payment_draft` so the
-    # next reply completes it. Absent once there is an intent to confirm, or once it is refused.
-    payment_draft: PaymentDraftPayload | None = None
-    # On an UNSUPPORTED answer: which capability is missing, by name. Echoed back as
-    # `previous_refusal` so a bare "¿y el segundo?" gets the same refusal rather than a question
-    # about a period it can never use.
-    refused_capability: str | None = None
-    # Present when a recipient names several contacts, so the client can offer the choice with
-    # identifiers rather than asking the user to retype a name.
-    candidates: list[SpokenContactResponse] = []
+    # The half-built payment, the refused capability and the recipient choice all live on
+    # `conversation` now: they are states of one conversation rather than four independent fields
+    # a client had to combine.
 
 
 class SummaryMovementResponse(_Payload):

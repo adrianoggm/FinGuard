@@ -22,6 +22,13 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
+from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
+    ActiveWorkflow,
+    Conversation,
+    FinancialClarification,
+    UnsupportedCapability,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
@@ -40,7 +47,6 @@ from finguard_orchestrator.domain.services import (
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
-    FinancialPlanDraft,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
@@ -113,14 +119,14 @@ class AskFinancialQuestionResult:
     question: str | None = None
     plan: str | None = None
     plan_context: SpokenPlan | None = None
-    # On an UNSUPPORTED answer: which capability was missing, by the guard's own name. The client
-    # echoes it as `previous_refusal` so "¿y el segundo?" can be answered with the same refusal
-    # instead of becoming a question about a period.
-    refused_capability: str | None = None
-    # Present with a question back: the reading the question interrupted. The client echoes it
-    # as `pending_draft` so the reply completes the plan instead of starting over. Same shape as
-    # `plan_context` with no window, because that is exactly what it is.
-    pending_context: SpokenPlan | None = None
+    # Where the conversation is after this turn: at most one active workflow, plus the memory of
+    # the last answered question. The client stores it and sends it back without reading it.
+    #
+    # A domain object leaving this layer, which every other Result field avoids. The exception is
+    # deliberate: the alternative is a third representation of the same five states — domain, wire,
+    # and a flat one here — kept in sync by hand, and states drifting apart between layers is the
+    # failure this type was introduced to end. The query already accepts domain objects coming in.
+    conversation: Conversation = IDLE
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None
@@ -140,18 +146,10 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # window alone, and it belongs to the holder rather than the deployment: between
     # midnight and 01:00 peninsular time, today in the Canaries is yesterday in Madrid.
     reporting_timezone: str = "Europe/Madrid"
-    # The plan behind the previous answer, echoed back by the caller. Held by whoever
-    # is having the conversation, not by this service — and already a plan by the time
-    # it arrives here, rather than text that has to be believed.
-    previous_plan: FinancialPlan | None = None
-    # The half-built plan behind the last question back, echoed by the caller the same way.
-    # Separate from `previous_plan` because they mean different things: one is a question that
-    # was answered, the other a question that was asked. Both can be present — a follow-up can
-    # be the one that gets clarified.
-    pending_draft: FinancialPlanDraft | None = None
-    # The capability the previous turn was refused for, echoed by the caller. A refusal is a turn
-    # in the conversation, and the sentence after it is often about it.
-    previous_refusal: str | None = None
+    # Where the conversation was before this turn, echoed back by the caller. Held by whoever is
+    # having it rather than by this service, and already typed by the time it arrives here — the
+    # edge rebuilt it through the domain, so nothing in here has to believe a string.
+    conversation: Conversation = IDLE
 
 
 @dataclass(frozen=True)
@@ -218,14 +216,19 @@ class AskFinancialQuestionHandler:
     async def stream(
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
-        intent = intent_router.route(query.sentence, has_previous=query.previous_plan is not None)
-        previous = query.previous_plan
+        was = query.conversation
+        previous = was.last_plan
+        intent = intent_router.route(query.sentence, has_previous=previous is not None)
 
         if intent is Intent.IDENTITY_OR_HELP:
             # Answered from here, never from the ledger and never from a model. "¿Quién eres?" used
             # to reach the planner and come back as a refusal about averages and forecasts: true
             # about the product, and not an answer to the question.
-            yield AskFinancialQuestionResult(outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY)
+            # An aside: whatever was under way stays under way, including a payment. Asking what
+            # the assistant is does not abandon a bizum.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY, conversation=was
+            )
             return
 
         if intent is Intent.EXPLAIN_PREVIOUS:
@@ -235,15 +238,17 @@ class AskFinancialQuestionHandler:
                 outcome=Spoken.EXPLANATION.value,
                 text=explainer.explain(query.sentence, previous),
                 plan=answer_writer.describe(previous) if previous else None,
-                plan_context=_spoken(previous) if previous else None,
+                conversation=was,
             )
             return
 
         if intent is Intent.LIST_CONTACTS:
+            # An aside as well: this is usually asked *in order to* finish a payment, so the payment
+            # is exactly what must not be lost.
             # "¿Qué contactos tengo para mandar bizum?" used to be read as a payment, because
             # "bizum" is a payment word — so the assistant asked who to pay, about a payment
             # nobody had ordered. The list needs no model and no plan.
-            yield await self._contact_list(query, previous)
+            yield await self._contact_list(query, was)
             return
 
         if intent is Intent.ACCOUNT_BALANCE:
@@ -251,7 +256,7 @@ class AskFinancialQuestionHandler:
             # window, direction, categories, merchants, grouping, SUM or COUNT — and a balance is
             # none of those, so asking a model for one got the nearest expressible thing: today's
             # movements. The figure was already there, on the port the home screen reads.
-            yield await self._balance(query, previous)
+            yield await self._balance(query, was)
             return
 
         if intent is Intent.CORRECTION:
@@ -260,18 +265,9 @@ class AskFinancialQuestionHandler:
             # has just said was wrong.
             previous = None
 
-        if (
-            query.previous_refusal in capability_guard.RULES
-            and capability_guard.continues_a_refusal(query.sentence)
-        ):
-            # "¿Y el segundo?" after "no sé buscar el movimiento más alto" asks for the second
-            # largest. The capability is the one just refused and the sentence says nothing about
-            # size, so nothing here could see it: it went to the planner and came back asking which
-            # period, then asking again, and again.
-            #
-            # The name is checked against the registry rather than trusted — it crosses the wire,
-            # and a name this build does not have is not a refusal it can repeat.
-            yield _decline(PlanningResult.unsupported(query.previous_refusal))
+        again = self._repeat_refusal(query)
+        if again is not None:
+            yield again
             return
 
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
@@ -279,13 +275,13 @@ class AskFinancialQuestionHandler:
             # Before the model, on purpose. Refusing here is a control; refusing after is
             # whatever disposition the configured model happens to have, and that moved
             # by 60 points between two models we measured.
-            yield _decline(PlanningResult.unsupported(refused))
+            yield self._declined(refused, was)
             return
 
         finished = self._finish_pending(query)
         if finished is not None:
-            # No model. The question back was about the window, the reply names one, and a
-            # window is a closed vocabulary — so there is nothing here to infer.
+            # No model. The question back was about a slot, the reply fills it, and both the window
+            # and the slot are closed vocabularies — so there is nothing here to infer.
             yield Stage("planned", answer_writer.describe(finished))
             yield Stage("querying")
             yield await self._answer(query, finished)
@@ -295,7 +291,7 @@ class AskFinancialQuestionHandler:
         planned = await self._planner.plan(query.sentence, today=query.today, previous=previous)
 
         if not planned.is_answerable:
-            yield _decline(planned)
+            yield _decline(planned, was)
             return
 
         assert planned.plan is not None  # is_answerable is exactly this condition
@@ -309,7 +305,9 @@ class AskFinancialQuestionHandler:
                 outcome=PlanningOutcome.INVALID_DOMAIN.value,
                 text=_refusal_for(broken, query.sentence),
                 plan=answer_writer.describe(planned.plan),
-                plan_context=_spoken(planned.plan),
+                # The plan is shown but not remembered: it is the one that misread the question,
+                # and inheriting from it would carry the misreading into the next turn.
+                conversation=was,
             )
             return
 
@@ -317,26 +315,74 @@ class AskFinancialQuestionHandler:
         yield Stage("querying")
         yield await self._answer(query, planned.plan)
 
+    def _repeat_refusal(
+        self, query: AskFinancialQuestionQuery
+    ) -> AskFinancialQuestionResult | None:
+        """The same refusal again when the sentence is only a continuation of it.
+
+        "¿Y el segundo?" after "no sé buscar el movimiento más alto" asks for the second largest:
+        the capability is the one just refused and the sentence says nothing about size, so no rule
+        can see it on its own. It used to reach the planner and come back asking which period.
+
+        The state carries the reading it was refused about, so the follow-up is a patch of the rank
+        rather than a re-derivation of the question — which is what stops this from depending on how
+        the continuation happens to be phrased.
+        """
+        active = query.conversation.active
+        if not isinstance(active, UnsupportedCapability):
+            return None
+        if active.capability not in capability_guard.RULES:
+            # It crossed the wire. A capability name this build does not have is not a refusal it
+            # can repeat, so the sentence takes the ordinary path.
+            return None
+        if not capability_guard.continues_a_refusal(query.sentence):
+            return None
+
+        asked_for = UnsupportedCapability(
+            capability=active.capability, draft=active.draft, rank=active.rank + 1
+        )
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.UNSUPPORTED.value,
+            text=_MISSING_CAPABILITY.get(active.capability, _CANNOT_YET),
+            conversation=query.conversation.with_active(asked_for),
+        )
+
+    def _declined(self, capability: str, was: Conversation) -> AskFinancialQuestionResult:
+        """A refusal that remembers what it was about.
+
+        The draft is not available here — the guard runs before the model, so nothing has read the
+        sentence yet — and the capability plus the rank are enough for the follow-up. What the state
+        buys is that "¿y el segundo?" no longer has to be recognised as a sentence at all.
+        """
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.UNSUPPORTED.value,
+            text=_MISSING_CAPABILITY.get(capability, _CANNOT_YET),
+            conversation=was.with_active(UnsupportedCapability(capability=capability)),
+        )
+
     async def _contact_list(
-        self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None
+        self, query: AskFinancialQuestionQuery, was: Conversation
     ) -> AskFinancialQuestionResult:
-        """Who can be paid. Carries `previous` through for the same reason the balance does: a
-        question about the address book is a turn in the conversation, not a reset."""
+        """Who can be paid.
+
+        The conversation passes through untouched, which matters more here than anywhere else: this
+        question is usually asked *in order to* finish a payment, so abandoning the payment to
+        answer it would mean starting the bizum over.
+        """
         try:
             found = await self._contacts.all_of(query.account_id)
         except BankingUnavailableError:
             return AskFinancialQuestionResult(
                 outcome=PlanningOutcome.PROVIDER_ERROR.value,
                 text="No he podido consultar tus contactos ahora mismo. Vuelve a intentarlo.",
-                plan=answer_writer.describe(previous) if previous else None,
-                plan_context=_spoken(previous) if previous else None,
+                conversation=was,
             )
 
         return AskFinancialQuestionResult(
             outcome=Spoken.CONTACTS.value,
             text=answer_writer.contacts(found),
-            plan=answer_writer.describe(previous) if previous else None,
-            plan_context=_spoken(previous) if previous else None,
+            plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
+            conversation=was,
             contacts=[
                 SpokenContact(
                     contact_id=str(contact.contact_id),
@@ -348,13 +394,13 @@ class AskFinancialQuestionHandler:
         )
 
     async def _balance(
-        self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None
+        self, query: AskFinancialQuestionQuery, was: Conversation
     ) -> AskFinancialQuestionResult:
         """How much money there is, from the fixed question rather than a planned one.
 
-        `previous` is carried straight through. A balance question is a turn in the conversation,
-        not a reset: asking it in the middle of an analysis of last month must not cost the window
-        of the question before it.
+        The conversation passes through. A balance question is a turn, not a reset: asking it in the
+        middle of an analysis of last month must not cost the window of the question before it, and
+        asking it in the middle of a bizum must not abandon the bizum.
         """
         try:
             summary = await self._accounts.of(
@@ -368,15 +414,14 @@ class AskFinancialQuestionHandler:
             return AskFinancialQuestionResult(
                 outcome=PlanningOutcome.PROVIDER_ERROR.value,
                 text="No he podido consultar tu saldo ahora mismo. Vuelve a intentarlo.",
-                plan=answer_writer.describe(previous) if previous else None,
-                plan_context=_spoken(previous) if previous else None,
+                conversation=was,
             )
 
         return AskFinancialQuestionResult(
             outcome=Spoken.BALANCE.value,
             text=answer_writer.balance(summary),
-            plan=answer_writer.describe(previous) if previous else None,
-            plan_context=_spoken(previous) if previous else None,
+            plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
+            conversation=was,
             currency=summary.currency,
             # The available balance, which is the figure the sentence leads with. A client showing
             # it should not have to parse the sentence to find it.
@@ -401,11 +446,16 @@ class AskFinancialQuestionHandler:
         needs the prompt to be able to say "these fields are settled" without inviting the
         model to restate them.
         """
-        draft = query.pending_draft
-        if draft is None or not draft.needs_a_window:
+        active = query.conversation.active
+        if not isinstance(active, FinancialClarification):
+            return None
+        draft = active.draft
+        if not draft.needs_a_window:
             return None
 
-        window = window_words.window_in(query.sentence)
+        # Against the slot the question asked for, which is what makes a two-word reply readable:
+        # "de este" names nothing on its own and is this year as the answer to "¿de qué año?".
+        window = window_words.window_in(query.sentence, asked_for=active.awaiting)
         if window is None:
             return None
 
@@ -438,14 +488,18 @@ class AskFinancialQuestionHandler:
                 outcome=PlanningOutcome.INVALID_DOMAIN.value,
                 text="He entendido la pregunta, pero la consulta que he construido no es válida.",
                 plan=answer_writer.describe(plan),
+                conversation=query.conversation,
             )
         except BankingUnavailableError:
             return AskFinancialQuestionResult(
                 outcome="BANKING_UNAVAILABLE",
                 text="No puedo consultar tus movimientos ahora mismo. Vuelve a intentarlo.",
+                # Nothing changes: the question was fine and the bank was not there, so the next
+                # turn should be able to say "inténtalo otra vez" and keep its context.
+                conversation=query.conversation,
             )
 
-        return _answered(plan, answer)
+        return _answered(plan, answer, query.conversation)
 
 
 # One sentence per missing capability, keyed by the guard's family name.
@@ -494,7 +548,7 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
 
 
-def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
+def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestionResult:
     """The five outcomes that never reach the ledger.
 
     Each gets its own sentence. Collapsing them into "no he podido" would tell the user
@@ -514,16 +568,25 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
-        # Only on UNSUPPORTED, where `reason` is the guard's family name. On the other outcomes it
-        # is a message for the log, and putting that on the wire would invite a client to echo it
-        # back as a capability.
-        refused_capability=(
-            planned.reason if planned.outcome is PlanningOutcome.UNSUPPORTED else None
-        ),
-        # Only a clarification carries one, and the client needs it to answer: without the draft
-        # on the way out there is nothing to echo back, and the reply is a fresh question again.
-        pending_context=_drafted(planned.draft) if planned.draft else None,
+        conversation=was.with_active(_next_state(planned)),
     )
+
+
+def _next_state(planned: PlanningResult) -> ActiveWorkflow | None:
+    """Where a declined turn leaves the conversation.
+
+    A clarification becomes an open question carrying its draft and its slot, so the reply completes
+    it. A missing capability becomes a state that remembers what it was about, so the follow-up is a
+    patch. Everything else leaves nothing open: a malformed answer and a dead provider are not
+    conversations, they are failures, and inviting the user to continue one would be a lie.
+    """
+    match planned.outcome:
+        case PlanningOutcome.NEEDS_CLARIFICATION if planned.draft is not None:
+            return FinancialClarification(draft=planned.draft, awaiting=planned.awaiting)
+        case PlanningOutcome.UNSUPPORTED if planned.reason in capability_guard.RULES:
+            return UnsupportedCapability(capability=planned.reason or "")
+        case _:
+            return None
 
 
 # The generic refusal, for a rule that has nothing specific to say. It asks for a rephrasing because
@@ -558,22 +621,6 @@ def _refusal_for(rule: str, sentence: str) -> str:
     )
 
 
-def _drafted(draft: FinancialPlanDraft) -> SpokenPlan:
-    """The draft in the plan's shape. One wire type, with the window empty — which is the
-    difference between the two and the only one a client has to notice."""
-    return SpokenPlan(
-        direction=draft.direction.value,
-        period=draft.period.period.value if draft.period else None,
-        n=draft.period.n if draft.period else None,
-        start=draft.date_range.start.isoformat() if draft.date_range else None,
-        end=draft.date_range.end.isoformat() if draft.date_range else None,
-        categories=list(draft.categories),
-        merchants=list(draft.merchants),
-        group_by=draft.group_by.value,
-        metric=draft.metric.value,
-    )
-
-
 def _spoken(plan: FinancialPlan) -> SpokenPlan:
     """Flattened, so no domain object leaves this layer."""
     return SpokenPlan(
@@ -589,12 +636,16 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
     )
 
 
-def _answered(plan: FinancialPlan, answer: QueryAnswer) -> AskFinancialQuestionResult:
+def _answered(
+    plan: FinancialPlan, answer: QueryAnswer, was: Conversation
+) -> AskFinancialQuestionResult:
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
         text=answer_writer.write(answer, plan),
         plan=answer_writer.describe(plan),
-        plan_context=_spoken(plan),
+        # Answered: nothing is left open, and this plan becomes the memory the next follow-up
+        # inherits from.
+        conversation=was.answered(plan),
         currency=answer.currency,
         total_minor=answer.total_minor,
         movement_count=answer.movement_count,

@@ -46,6 +46,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SummaryMovementResponse,
     WalletResponse,
 )
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 
 def _model_to_dto(row: ModelRow) -> ModelResponse:
@@ -146,8 +147,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         text=result.text,
         question=result.question,
         plan=result.plan,
-        plan_context=_plan_to_dto(result.plan_context) if result.plan_context else None,
-        refused_capability=result.refused_capability,
+        conversation=conversation_mapper.to_payload(result.conversation),
         contacts=[
             SpokenContactResponse(
                 contact_id=contact.contact_id,
@@ -156,7 +156,6 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
             )
             for contact in result.contacts
         ],
-        pending_context=(_plan_to_dto(result.pending_context) if result.pending_context else None),
         currency=result.currency,
         total_minor=result.total_minor,
         movement_count=result.movement_count,

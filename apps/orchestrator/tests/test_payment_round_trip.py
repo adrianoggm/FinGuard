@@ -57,6 +57,19 @@ CONTACTS = ListContactsResult(
     ]
 )
 
+
+def paying(**draft: object) -> dict:
+    """A payment under way, as the wire spells it. The tests send states rather than fields now,
+    which is the change: a client cannot assemble a combination the service never issues."""
+    return {
+        "workflow": "PAYMENT_IN_PROGRESS",
+        "awaiting": "AMOUNT" if "amount_minor" not in draft else "RECIPIENT",
+        "payment": {"currency": "EUR", **draft},
+    }
+
+
+PAYING_MARTA = paying(recipient_name="Marta Solis Vega")
+
 PREVIEWED = PaymentAnswer(
     outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
     text="Vas a enviar 15,00 € a Marta Solis Vega. ¿Confirmas?",
@@ -142,7 +155,7 @@ def test_an_amount_continues_the_payment_it_was_asked_for() -> None:
         "/v1/questions",
         json={
             "question": "15 euros",
-            "payment_draft": {"recipient_name": "Marta Solis Vega"},
+            "conversation": PAYING_MARTA,
         },
     ).json()
 
@@ -158,7 +171,7 @@ def test_a_name_continues_a_payment_that_is_missing_one() -> None:
 
     client.post(
         "/v1/questions",
-        json={"question": "a Marta Solis Vega", "payment_draft": {"amount_minor": 1_500}},
+        json={"question": "a Marta Solis Vega", "conversation": paying(amount_minor=1500)},
     )
 
     assert asking.sentences == []
@@ -175,7 +188,7 @@ def test_a_change_of_subject_is_still_a_question() -> None:
         "/v1/questions",
         json={
             "question": "¿cuánto gasté el mes pasado?",
-            "payment_draft": {"recipient_name": "Marta Solis Vega"},
+            "conversation": PAYING_MARTA,
         },
     )
 
@@ -190,7 +203,7 @@ def test_a_reply_that_fills_nothing_is_not_a_continuation() -> None:
 
     client.post(
         "/v1/questions",
-        json={"question": "no sé", "payment_draft": {"recipient_name": "Marta Solis Vega"}},
+        json={"question": "no sé", "conversation": PAYING_MARTA},
     )
 
     assert preparing.commands == []
@@ -203,12 +216,9 @@ def test_the_question_the_payment_asks_carries_the_draft_out() -> None:
 
     body = client.post("/v1/questions", json={"question": "hazle un bizum a Marta Solis"}).json()
 
-    assert body["payment_draft"] == {
-        "recipient_name": "Marta Solis Vega",
-        "amount_minor": None,
-        "currency": "EUR",
-        "concept": None,
-    }
+    assert body["conversation"]["workflow"] == "PAYMENT_IN_PROGRESS"
+    assert body["conversation"]["payment"]["recipient_name"] == "Marta Solis Vega"
+    assert body["conversation"]["awaiting"] == "AMOUNT"
 
 
 def test_an_ambiguity_comes_back_with_the_names_and_their_identifiers() -> None:
@@ -227,12 +237,12 @@ def test_an_ambiguity_comes_back_with_the_names_and_their_identifiers() -> None:
         "/v1/questions", json={"question": "hazle un bizum de 15 euros a Marta"}
     ).json()
 
-    assert [c["display_name"] for c in body["candidates"]] == [
+    assert [c["display_name"] for c in body["conversation"]["candidates"]] == [
         "Marta Ruiz Gomez",
         "Marta Solis Vega",
     ]
-    assert body["candidates"][0]["contact_id"] == str(uuid.UUID(int=1))
-    assert body["payment_draft"]["amount_minor"] == 1_500
+    assert body["conversation"]["candidates"][0]["contact_id"] == str(uuid.UUID(int=1))
+    assert body["conversation"]["payment"]["amount_minor"] == 1_500
 
 
 def test_a_complete_draft_is_not_a_continuation() -> None:
@@ -244,7 +254,7 @@ def test_a_complete_draft_is_not_a_continuation() -> None:
         "/v1/questions",
         json={
             "question": "¿cuánto gasté?",
-            "payment_draft": {"recipient_name": "Marta Solis Vega", "amount_minor": 1_500},
+            "conversation": paying(recipient_name="Marta Solis Vega", amount_minor=1500),
         },
     )
 
@@ -258,7 +268,7 @@ def test_a_draft_carrying_an_absurd_amount_is_a_bad_request() -> None:
 
     response = client.post(
         "/v1/questions",
-        json={"question": "15 euros", "payment_draft": {"amount_minor": 99_999_999}},
+        json={"question": "15 euros", "conversation": paying(amount_minor=99_999_999)},
     )
 
     assert response.status_code == 422
@@ -278,7 +288,7 @@ def test_the_streaming_endpoint_continues_a_payment_too() -> None:
     with client.stream(
         "POST",
         "/v1/questions/stream",
-        json={"question": "15 euros", "payment_draft": {"recipient_name": "Marta Solis Vega"}},
+        json={"question": "15 euros", "conversation": PAYING_MARTA},
     ) as response:
         body = "".join(response.iter_text())
 
@@ -296,7 +306,7 @@ def test_the_streaming_endpoint_still_lets_a_question_through() -> None:
         "/v1/questions/stream",
         json={
             "question": "¿cuánto gasté el mes pasado?",
-            "payment_draft": {"recipient_name": "Marta Solis Vega"},
+            "conversation": PAYING_MARTA,
         },
     ) as response:
         list(response.iter_text())
