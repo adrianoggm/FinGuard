@@ -177,6 +177,47 @@ async def test_walking_down_the_list_keeps_working() -> None:
     assert "no hay" in result.text.lower(), "there were only two, and it says so"
 
 
+async def test_a_stated_ordinal_goes_to_the_position_it_states() -> None:
+    """ "¿Y el tercero?" after the largest expense is the third, not the second.
+
+    The recogniser returned a boolean and the caller always advanced by one, so the position the
+    user wrote down was thrown away by the very feature added to read ordinals.
+    """
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    await ask("¿y el tercero?", FakePlanner(), ledger, conversation=Conversation(last_plan=FUEL))
+
+    assert [r.rank for r in ledger.rankings] == [3]
+
+
+async def test_an_ordinal_may_skip_backwards_or_forwards_from_wherever_it_is() -> None:
+    """Absolute means absolute. After the second, "el quinto" is the fifth — not the third."""
+    ledger = FakeLedger(CEPSA, REPSOL)
+
+    await ask(
+        "y el quinto",
+        FakePlanner(),
+        ledger,
+        conversation=Conversation(last_plan=FUEL.at_rank(2)),
+    )
+
+    assert [r.rank for r in ledger.rankings] == [5]
+
+
+async def test_the_next_one_is_still_relative() -> None:
+    """ "El siguiente" names no position, so it is the only phrase that still means "one more"."""
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    await ask(
+        "y el siguiente",
+        FakePlanner(),
+        ledger,
+        conversation=Conversation(last_plan=FUEL.at_rank(2)),
+    )
+
+    assert [r.rank for r in ledger.rankings] == [3]
+
+
 async def test_the_currency_of_a_ranked_movement_comes_from_the_ledger() -> None:
     """It was written here as "EUR" whatever the account held, so a charge on a dollar account was
     labelled in euros beside a figure that was perfectly correct."""

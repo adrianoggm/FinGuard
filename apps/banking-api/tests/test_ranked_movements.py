@@ -58,6 +58,28 @@ def test_the_ranking_is_ordered_by_amount_and_then_broken_deterministically() ->
     assert "transaction_id" in ordering
 
 
+def test_a_ranking_over_both_directions_orders_by_magnitude() -> None:
+    """With `ALL` the amount is signed, so `DESC` puts the largest *income* first — "¿cuál fue mi
+    movimiento más grande?" answered with a salary while a larger charge sat below zero. What "más
+    grande" means about a movement whose direction was never narrowed is its magnitude."""
+    compiled = compile_ranked(
+        FinancialQuery(account_id=uuid.uuid4(), date_range=JULY, direction=Direction.ALL),
+        "Europe/Madrid",
+        rank=1,
+    )
+
+    assert "ABS(amount_minor) DESC" in compiled.sql.split("ORDER BY")[1]
+
+
+def test_a_ranking_in_one_direction_still_orders_by_the_plain_amount() -> None:
+    """In a single direction the amount is already positive, so `ABS` would be noise around the
+    same order — and noise in SQL is a thing somebody later has to prove is harmless."""
+    compiled = compile_ranked(plan(uuid.uuid4()), "Europe/Madrid", rank=1)
+
+    ordering = compiled.sql.split("ORDER BY")[1]
+    assert "ABS(" not in ordering
+
+
 def test_the_rank_becomes_an_offset_and_never_reaches_the_sql_as_text() -> None:
     """Same rule as every other value here: it travels as a parameter. A rank is a number a model
     chose, and §9.3 does not care how harmless a number looks."""

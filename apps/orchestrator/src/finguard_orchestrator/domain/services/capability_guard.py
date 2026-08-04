@@ -32,7 +32,8 @@ product data.
 """
 
 import re
-from typing import Final
+from dataclasses import dataclass
+from typing import Final, Literal
 
 from finguard_orchestrator.domain.services import spanish
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
@@ -95,11 +96,54 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 # A sentence that is only a continuation: an ordinal, or a pronoun standing in for whatever the
 # last turn was about. Anchored at both ends, so anything with content of its own falls through.
 _ONLY_A_CONTINUATION: Final = re.compile(
-    r"y\s+(el|la|los|las)?\s*"
-    r"(segundo|segunda|tercero|tercera|cuarto|cuarta|quinto|quinta"
-    r"|siguiente|siguientes|otro|otra|otros|otras|resto|dem[áa]s)",
+    r"y\s+(?:el|la|los|las)?\s*"
+    r"(?P<word>segundo|segunda|tercero|tercera|tercer|cuarto|cuarta|quinto|quinta"
+    r"|sexto|sexta|septimo|septima|octavo|octava|noveno|novena|decimo|decima"
+    r"|siguiente|siguientes|otro|otra|otros|otras|resto|demas)",
     re.IGNORECASE,
 )
+
+# Which position each word names. "El siguiente" and "otro" name no position at all — they mean
+# one more than wherever we are — and that difference is the whole point of this table: reading
+# "el tercero" as "one more than the first" answered "¿y el tercero?" with the second.
+_POSITION: Final[dict[str, int]] = {
+    "segundo": 2,
+    "segunda": 2,
+    "tercero": 3,
+    "tercera": 3,
+    "tercer": 3,
+    "cuarto": 4,
+    "cuarta": 4,
+    "quinto": 5,
+    "quinta": 5,
+    "sexto": 6,
+    "sexta": 6,
+    "septimo": 7,
+    "septima": 7,
+    "octavo": 8,
+    "octava": 8,
+    "noveno": 9,
+    "novena": 9,
+    "decimo": 10,
+    "decima": 10,
+}
+
+
+@dataclass(frozen=True)
+class OrdinalReference:
+    """Which row of a ranking a continuation asks for.
+
+    Two modes rather than a number, because "el siguiente" genuinely has no number: it is one more
+    than whatever was just answered, and resolving it needs the previous rank. `ABSOLUTE` carries
+    the position the sentence stated and needs nothing else.
+
+    This used to be a bare boolean and the caller always advanced by one, so "¿y el tercero?" after
+    the largest expense answered with the second. The recogniser knew an ordinal was present and
+    threw away which one.
+    """
+
+    mode: Literal["ABSOLUTE", "NEXT"]
+    rank: int | None = None
 
 
 # The names, for whoever needs to enumerate them: an ablation loop, a configuration file,
@@ -113,27 +157,41 @@ RULES: Final = frozenset(name for name, _ in _FAMILIES)
 # This was a refusal family until RANK_MOVEMENTS existed. It stays because COMPARISON would
 # otherwise claim these sentences — they carry "más … que" where the "que" opens a relative
 # clause — and a question with a real answer would come back as "no comparo dos periodos".
+#
+# The noun list is not decoration. It held only the generic words for money leaving an account —
+# gasto, compra, pago, movimiento, cargo, importe, factura — so "¿cuál es el Bizum más alto que he
+# realizado?" carried "más … que", matched nothing here, and came back as "todavía no comparo dos
+# periodos" to a question containing one period. A ranking subject is whatever kind of movement the
+# holder names, so the transfer words belong here as much as "compra" does.
 _A_SUPERLATIVE_NOUN: Final = re.compile(
-    r"\b(mayor|maxim[oa])\s+(gasto|compra|pago|movimiento|cargo|importe|cantidad)"
-    r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura)s?\s+"
+    r"\b(mayor|maxim[oa])\s+"
+    r"(gasto|compra|pago|movimiento|cargo|importe|cantidad|bizum|transferencia|ingreso|cobro|recibo)"
+    r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura"
+    r"|bizum|transferencia|ingreso|cobro|recibo)s?\s+"
     r"(mas|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
     re.IGNORECASE,
 )
 
 
-def continues_an_ordinal(sentence: str) -> bool:
-    """Whether this sentence is nothing but "and the next one".
+def ordinal_in(sentence: str) -> OrdinalReference | None:
+    """Which row of a ranking this sentence asks for, when it asks for nothing else.
 
     Written when "¿y el segundo?" could only be met with a repeated refusal — the capability did not
     exist, and the planner read the sentence as a follow-up missing a window, which started a
-    clarification about a period that could never lead anywhere. Now it asks for the next row of a
-    ranking, which is the same reading with an answer behind it.
+    clarification about a period that could never lead anywhere. Now it asks for a row of a ranking,
+    which is the same reading with an answer behind it.
 
     **Narrow on purpose.** Only an ordinal or a bare pronoun with no content of its own. A sentence
     carrying its own question is a new question, and reading "¿cuánto gasté?" as a continuation
     would answer it with the second largest expense.
     """
-    return bool(_ONLY_A_CONTINUATION.fullmatch(spanish.folded(sentence).strip(" ?¿.!¡")))
+    found = _ONLY_A_CONTINUATION.fullmatch(spanish.folded(sentence).strip(" ?¿.!¡"))
+    if found is None:
+        return None
+    position = _POSITION.get(found.group("word"))
+    if position is None:
+        return OrdinalReference(mode="NEXT")
+    return OrdinalReference(mode="ABSOLUTE", rank=position)
 
 
 def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str | None:

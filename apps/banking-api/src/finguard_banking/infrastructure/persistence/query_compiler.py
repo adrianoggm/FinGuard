@@ -199,7 +199,20 @@ def compile_ranked(query: FinancialQuery, reporting_timezone: str, *, rank: int)
             t.direction
         FROM {VIEW} t
         WHERE {" AND ".join(conditions)}
-        ORDER BY amount_minor DESC, t.occurred_at DESC, t.transaction_id
+        ORDER BY {_ranking_ordering(query.direction)}, t.occurred_at DESC, t.transaction_id
         LIMIT 1 OFFSET {offset}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
+
+
+def _ranking_ordering(direction: Direction) -> str:
+    """Which movement is "the largest" when both directions are in scope.
+
+    In one direction the amount is already positive, so `DESC` is the size order. With `ALL` the
+    amount is signed, and `DESC` then puts the biggest *income* first — so "¿cuál fue mi movimiento
+    más grande?" answered with a salary while a larger charge sat below zero. Magnitude is what
+    "más grande" means about a movement whose direction was never narrowed.
+    """
+    if direction is Direction.ALL:
+        return "ABS(amount_minor) DESC"
+    return "amount_minor DESC"

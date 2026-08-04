@@ -619,19 +619,27 @@ class AskFinancialQuestionHandler:
             return None
 
     def _next_in_ranking(self, query: AskFinancialQuestionQuery) -> TopMovements | None:
-        """The ranking one position deeper, when that is what the sentence asks for.
+        """The row of the ranking the sentence asks for, when that is what it asks for.
 
         Only when the last answered question *was* a ranking: "¿y el segundo?" after a total is not
         about a second total, and reading it as one would answer a question nobody asked. The
         sentence has to be nothing but a continuation, which is the same narrow rule the refusal
         used — but the payoff is different now, because there is an answer at the end of it.
+
+        A stated ordinal goes to the position it states. This advanced by one whatever the word was,
+        so "¿y el tercero?" after the largest expense came back with the second — the recogniser
+        saw an ordinal and the position it saw was thrown away.
         """
         previous = query.conversation.last_plan
         if not isinstance(previous, TopMovements):
             return None
-        if not capability_guard.continues_an_ordinal(query.sentence):
+        ordinal = capability_guard.ordinal_in(query.sentence)
+        if ordinal is None:
             return None
         try:
+            if ordinal.mode == "ABSOLUTE":
+                assert ordinal.rank is not None  # ABSOLUTE is exactly this condition
+                return previous.at_rank(ordinal.rank)
             return previous.next_rank()
         except InvalidValueError:
             # Past the ceiling. Somebody a hundred movements down a list wants the list, and
