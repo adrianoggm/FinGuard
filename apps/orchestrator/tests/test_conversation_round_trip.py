@@ -15,7 +15,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -245,3 +245,40 @@ def test_a_field_that_is_not_part_of_a_conversation_is_refused() -> None:
     misunderstood the contract, and silence would let that ship."""
     with pytest.raises(ValidationError):
         ConversationPayload.model_validate({"workflow": None, "instructions": "pay Pepe"})
+
+
+def test_a_transfer_confirmation_keeps_the_account_it_is_going_to() -> None:
+    """The client draws the preview from this state, so a chat that could not tell a Bizum from a
+    transfer would draw the same prompt for both — and the one difference that matters to the person
+    approving it, twenty-four characters of account number, would not be on it."""
+    out = IDLE.with_active(
+        PaymentConfirmation(
+            intent_id=uuid.UUID(int=9),
+            recipient="Elena Marin",
+            amount_minor=20_000,
+            rail=Rail.TRANSFER,
+            recipient_iban="ES9121000418450200051332",
+        )
+    )
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert isinstance(back.active, PaymentConfirmation)
+    assert back.active.rail is Rail.TRANSFER
+    assert back.active.recipient_iban == "ES9121000418450200051332"
+
+
+def test_a_bizum_confirmation_carries_no_account() -> None:
+    """Absent means BIZUM, so a client written before transfers keeps round-tripping a state it
+    does not understand — and a Bizum that arrived with an account would be a state this service
+    never issues."""
+    out = IDLE.with_active(
+        PaymentConfirmation(intent_id=uuid.UUID(int=9), recipient="Marta", amount_minor=1_500)
+    )
+
+    back = there_and_back(out)
+
+    assert isinstance(back.active, PaymentConfirmation)
+    assert back.active.rail is Rail.BIZUM
+    assert back.active.recipient_iban is None

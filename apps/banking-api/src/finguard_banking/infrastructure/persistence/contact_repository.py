@@ -19,7 +19,7 @@ import asyncpg
 from finguard_banking.domain.errors import AmbiguousContactError, ContactNotFoundError
 from finguard_banking.domain.models.contact import Contact
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
-    _DECLARE_ACCOUNT,
+    declare,
 )
 
 # Two candidates are enough to know it is ambiguous, but the user needs the names to choose, so
@@ -61,7 +61,7 @@ class PostgresContactRepository:
         is worse than a long one: the name that is missing is the one they were looking for.
         """
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
             rows = await connection.fetch(_LIST_SQL)
         return tuple(
             Contact(
@@ -85,7 +85,7 @@ class PostgresContactRepository:
         the same display name are one row each here and a permanent question to `resolve`.
         """
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
             row = await connection.fetchrow(_ONE_SQL, contact_id)
 
         if row is None:
@@ -102,7 +102,7 @@ class PostgresContactRepository:
             # The same declaration every read makes. The view filters on it and row-level
             # security enforces it underneath, so a contact of another account is not "not
             # authorised" — it does not exist, and a caller cannot learn otherwise.
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
             rows = await connection.fetch(_RESOLVE_SQL, name.strip())
 
         if not rows:

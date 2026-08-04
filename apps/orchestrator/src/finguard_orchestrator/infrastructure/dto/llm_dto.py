@@ -17,7 +17,14 @@ from finguard_orchestrator.domain.constants import (
     MAX_RANK,
     MAX_RECIPIENT_NAME,
 )
-from finguard_orchestrator.domain.enums import Action, Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import (
+    Action,
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    Rail,
+)
 from finguard_orchestrator.domain.models.conversation import Slot, Workflow
 
 
@@ -201,6 +208,10 @@ class ConversationPayload(_Payload):
     # as the same number of euros, silently.
     currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
     concept: str | None = None
+    # Which rail the preview is for, and the account when it is a transfer. Absent means BIZUM,
+    # so a client written before transfers keeps round-tripping a state it does not understand.
+    rail: Rail | None = None
+    recipient_iban: str | None = Field(default=None, max_length=42)
 
     @model_validator(mode="after")
     def _fields_match_the_workflow(self) -> "ConversationPayload":
@@ -232,7 +243,15 @@ class ConversationPayload(_Payload):
             Workflow.UNSUPPORTED_CAPABILITY: frozenset({"capability"}),
             Workflow.PAYMENT_IN_PROGRESS: frozenset({"payment", "candidates", "suspended"}),
             Workflow.PAYMENT_CONFIRMATION: frozenset(
-                {"intent_id", "recipient", "amount_minor", "currency", "concept"}
+                {
+                    "intent_id",
+                    "recipient",
+                    "amount_minor",
+                    "currency",
+                    "concept",
+                    "rail",
+                    "recipient_iban",
+                }
             ),
             None: frozenset(),
         }

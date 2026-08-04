@@ -70,7 +70,13 @@ class PaymentResponse(_Payload):
     text: str
     intent_id: str | None = None
     recipient: str | None = None
+    # Which rail, and where it went. Exactly one of the two identifiers is filled and `rail` says
+    # which — a Bizum names a person by phone, a transfer names the account. The account is whole
+    # and unmasked: approving a transfer means recognising twenty-four characters, and four of them
+    # with dots between is not something anybody can check against a note.
+    rail: str | None = None
     recipient_phone: str | None = None
+    recipient_iban: str | None = None
     amount_minor: int | None = None
     currency: str | None = None
     balance_after_minor: int | None = None

@@ -118,6 +118,38 @@ And a conversational consequence that is not in either comment: **"¿cuánto ten
 answer.** The default is the total with a per-account breakdown under it, which is what a bank app
 does; naming an account narrows it. That is a new slot, not a new sentence.
 
+#### Correction, after reading the database rather than the migration titles
+
+The paragraph above was written believing the twelve policies were what enforces isolation. They
+are not, and the difference changes the order of this work.
+
+`relforcerowsecurity` is **false** on every protected table, and deliberately: migration 0007 took
+it off and explains why at length. Row-level security applies inside trigger functions, and every
+integrity check in this ledger reads the table it protects — `assert_transaction_is_balanced` sums
+a transaction's entries, saw none under RLS, and **zero balances**, so an unbalanced transaction
+would have been accepted in silence. The owner is exempt so those triggers can do their job.
+
+So the policies are correct, in place, and dormant. What actually enforces isolation today is a
+pair the tests already name:
+
+    the privilege barrier   `finguard_query_reader` cannot reach the base tables at all
+    the views' WHERE        `assistant_read.*` filters on the declared account
+
+That makes the multi-account change **smaller and differently shaped** than "rewrite twelve
+policies". The load-bearing edit is the views' filter; the policies are updated in the same commit
+to stay correct for the day a migration grants table access, and not because they are guarding
+anything today. Claiming otherwise in a commit message would be describing a second line of defence
+that does not exist.
+
+Two consequences for how it is done:
+
+- **The declared identity becomes the holder.** `app.account_id` narrows; `app.customer_id` scopes.
+  A policy that resolved the holder from the account would have to read `accounts` from inside a
+  policy on `accounts`, which recurses, so the holder is declared by the caller rather than derived
+  in SQL — and that means banking's read path learns who is asking instead of inferring it.
+- **FORCE stays off**, and any attempt to turn it back on has to answer 0007 first. The silent
+  failure it describes is the exact shape a rushed RLS change reintroduces.
+
 ### 6. What may be learned from holders' labels
 
 The idea is good and one detail sinks it if it is seen late. A free-text tag on a bank movement is

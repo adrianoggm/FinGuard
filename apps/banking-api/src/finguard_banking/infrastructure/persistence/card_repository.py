@@ -17,7 +17,7 @@ import asyncpg
 
 from finguard_banking.domain.models.card import Card, CardCharge
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
-    _DECLARE_ACCOUNT,
+    declare,
 )
 
 _SQL = """
@@ -66,7 +66,7 @@ class PostgresCardRepository:
         async with self._pool.acquire() as connection, connection.transaction():
             # The same declaration every read makes. The views filter on it and row-level security
             # enforces it underneath, so another account's card does not exist here.
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
             rows = await connection.fetch(_SQL, timezone, since)
 
         return tuple(
@@ -99,7 +99,7 @@ class PostgresCardRepository:
         this method being careful.
         """
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
             rows = await connection.fetch(_CHARGES_SQL, card_id, timezone, since, limit)
 
         return tuple(

@@ -20,16 +20,45 @@ from finguard_banking.infrastructure.persistence.query_compiler import (
     compile_ranked,
 )
 
-# The currency and the existence of the account come from the balances view, not from
-# the accounts table: the query role cannot reach it, and that is exactly the point.
-# The account the session may read. `SET LOCAL` scopes it to the transaction, so it cannot
-# leak to the next caller borrowing this pooled connection — a plain SET would.
+# The account travels in a session variable, and now so does the holder it belongs to.
 #
-# It is set from the plan and the compiler also filters on it: the same fact enforced twice
-# from two independent places, which is the whole point. A compiler that dropped its WHERE
-# would still see nothing, and a session that forgot this sees nothing either, because
-# current_setting(..., true) is NULL and NULL fails every comparison.
+# It is set from the plan and the compiler also filters on the account: the same fact enforced
+# twice from two independent places. A compiler that dropped its WHERE would still see only the
+# holder's rows, and a session that declared nothing sees none at all — `current_setting(..., true)`
+# is NULL, and NULL fails every comparison.
+#
+# `SET LOCAL` through `set_config(..., true)` scopes both to the transaction, so neither leaks to
+# the next caller borrowing the same pooled connection — the property this has always had and the
+# reason it is two statements in one transaction rather than a connection setting.
+#
+# The holder is looked up from the account rather than taken from the caller. That is not a
+# widening of trust: the credential already proved this account, and everything it opens is another
+# account of the same person. What it avoids is banking's read contract growing a second identifier
+# that every caller has to get right, on the same day the views learn to use it.
+#
+# Through `holder_of`, not a plain SELECT. The query reader has no privilege on any base table —
+# that barrier is what actually enforces isolation — so it cannot read `accounts` to find out. The
+# function is SECURITY DEFINER with a pinned search_path: one question it may ask, and no others.
 _DECLARE_ACCOUNT = "SELECT set_config('app.account_id', $1::text, true)"
+_DECLARE_HOLDER = """
+    SELECT set_config(
+        'app.customer_id',
+        COALESCE(assistant_read.holder_of($1::uuid)::text, ''),
+        true
+    )
+"""
+
+
+async def declare(connection: Any, account_id: Any) -> None:
+    """Say whose rows this transaction may see.
+
+    Both settings, always together. `my_accounts_v1` admits the declared account *or* the declared
+    holder's accounts, so a session that set only the first would still work and see one account —
+    which is exactly the bug this pair exists to make impossible to reintroduce quietly.
+    """
+    await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+    await connection.execute(_DECLARE_HOLDER, str(account_id))
+
 
 _ACCOUNT_SQL = """
     SELECT b.currency
@@ -60,7 +89,7 @@ class PostgresFinancialQueryRepository:
         compiled = compile_ranked(query, zone, rank=rank)
 
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(query.account_id))
+            await declare(connection, str(query.account_id))
             currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
             if currency is None:
                 raise AccountNotFoundError(query.account_id)
@@ -86,7 +115,7 @@ class PostgresFinancialQueryRepository:
             # Declared before anything is read. The views filter on it and row-level
             # security enforces it underneath, so this is the one statement that decides
             # whose rows exist for the rest of the transaction.
-            await connection.execute(_DECLARE_ACCOUNT, str(query.account_id))
+            await declare(connection, str(query.account_id))
             currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
             # An account that does not exist is not an account without movements.
             if currency is None:

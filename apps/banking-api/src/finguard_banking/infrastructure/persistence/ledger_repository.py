@@ -8,6 +8,9 @@ import asyncpg
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.models.balance import Balance
 from finguard_banking.infrastructure.mappers import row_mapper
+from finguard_banking.infrastructure.persistence.financial_query_repository import (
+    declare,
+)
 
 # The balance is derived from the entries, never read from a mutable column: the ledger
 # is the source of truth (ADR-001, vision.md §8.5). The derivation — what counts as
@@ -19,7 +22,6 @@ from finguard_banking.infrastructure.mappers import row_mapper
 # from two independent places, which is the whole point. A compiler that dropped its WHERE
 # would still see nothing, and a session that forgot this sees nothing either, because
 # current_setting(..., true) is NULL and NULL fails every comparison.
-_DECLARE_ACCOUNT = "SELECT set_config('app.account_id', $1::text, true)"
 
 _BALANCE_SQL = """
     SELECT b.currency, b.booked_minor, NOW() AS as_of
@@ -34,7 +36,7 @@ class PostgresLedgerRepository:
 
     async def balance_of(self, account_id: UUID) -> Balance:
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
             row = await connection.fetchrow(_BALANCE_SQL, account_id)
 
         if row is None:

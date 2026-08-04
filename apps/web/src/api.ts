@@ -136,6 +136,12 @@ export type ConversationState = {
   // prepared in another currency came back from one round trip as the same number of euros.
   currency: string | null;
   concept: string | null;
+  // How the money leaves, and where. Exactly one of the two identifiers is filled: a Bizum names a
+  // person and the phone is already on `payment`, a transfer names the account. The IBAN arrives
+  // whole and unmasked on purpose — approving a transfer means recognising twenty-four characters,
+  // and four of them with dots between is not something anybody can check against a note.
+  rail: "BIZUM" | "TRANSFER" | null;
+  recipient_iban: string | null;
   // `rank` used to be here and left with the refusal it served. The service rejects fields it does
   // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
 };

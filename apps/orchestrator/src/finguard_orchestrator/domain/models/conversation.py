@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -130,6 +131,12 @@ class PaymentConfirmation:
     amount_minor: int
     currency: str = "EUR"
     concept: str | None = None
+    # How the money leaves and where it goes. Here rather than only on the answer, because this is
+    # the state the client holds while the preview is on screen: a chat that cannot tell a Bizum
+    # from a transfer draws the same prompt for both, and the one difference that matters to the
+    # person approving it — twenty-four characters of account number — would not be on it.
+    rail: Rail = Rail.BIZUM
+    recipient_iban: str | None = None
 
 
 type ActiveWorkflow = (
