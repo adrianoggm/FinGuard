@@ -47,6 +47,17 @@ class FinancialQuery:
     # date without a zone does not say what "hoy" means, and two services each using their
     # own setting can bin the same purchase on different days.
     reporting_timezone: str | None = None
+    # Whether money the holder moved between their own accounts counts.
+    #
+    # False by default, and the default is the correctness. Moving 200 € to the piggy bank is
+    # not spending 200 €, so "¿cuánto gasté?" means money that left the household — and once
+    # there is a second account, counting it makes the summary report twice the movement that
+    # happened, an expense here and an income there.
+    #
+    # True is a different question with a real answer: "¿cuánto he movido a la hucha este año?"
+    # is worth asking and is not a question about spending. The balance is unaffected either
+    # way — the money did leave *this* account.
+    include_internal: bool = False
 
     def __post_init__(self) -> None:
         if not 0 <= self.supporting_limit <= MAX_SUPPORTING_MOVEMENTS:

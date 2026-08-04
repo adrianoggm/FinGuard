@@ -79,6 +79,7 @@ def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery
         merchants=tuple(request.merchants),
         group_by=request.group_by,
         supporting_limit=request.supporting_limit,
+        include_internal=request.include_internal,
         explain=request.explain,
         reporting_timezone=zone,
     )

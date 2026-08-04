@@ -17,20 +17,34 @@ from finguard_banking.domain.enums import (
 )
 
 
-async def create_account(conn: asyncpg.Connection, currency: str = "EUR") -> uuid.UUID:
-    customer_id = uuid.uuid4()
+async def create_account(
+    conn: asyncpg.Connection,
+    currency: str = "EUR",
+    *,
+    kind: str = "CURRENT",
+    customer_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """An account, with its own customer unless one is supplied.
+
+    `customer_id` is what makes two accounts belong to the same person, which is the only way to
+    build a holder with a piggy bank. Without it every account is a separate customer, which is
+    what every test written before there were several accounts assumed.
+    """
+    owner = customer_id or uuid.uuid4()
     account_id = uuid.uuid4()
+    if customer_id is None:
+        await conn.execute(
+            "INSERT INTO customers (id, full_name) VALUES ($1, $2)", owner, "Test customer"
+        )
     await conn.execute(
-        "INSERT INTO customers (id, full_name) VALUES ($1, $2)", customer_id, "Test customer"
-    )
-    await conn.execute(
-        "INSERT INTO accounts (id, customer_id, account_reference, currency, status) "
-        "VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO accounts (id, customer_id, account_reference, currency, status, kind) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
         account_id,
-        customer_id,
+        owner,
         f"ES-{account_id.hex[:12]}",
         currency,
         AccountStatus.ACTIVE.value,
+        kind,
     )
     return account_id
 
@@ -47,6 +61,7 @@ async def create_transaction(
     merchant: str | None = None,
     occurred_at: datetime | None = None,
     description: str = "Test movement",
+    transaction_type: str = TransactionType.TRANSFER.value,
 ) -> uuid.UUID:
     transaction_id = uuid.uuid4()
     metadata: dict[str, str] = {}
@@ -60,7 +75,7 @@ async def create_transaction(
         "(id, transaction_type, status, reference, description, metadata, occurred_at) "
         "VALUES ($1, $2, $3, $4, $5, $6::jsonb, COALESCE($7::timestamptz, NOW()))",
         transaction_id,
-        TransactionType.TRANSFER.value,
+        transaction_type,
         status,
         f"ref-{transaction_id.hex[:12]}",
         description,

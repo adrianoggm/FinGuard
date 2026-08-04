@@ -85,6 +85,9 @@ class FinancialQueryRequest(_Body):
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     group_by: GroupBy = GroupBy.NONE
+    # Money the holder moved between their own accounts. Absent means excluded, which is what
+    # makes "¿cuánto gasté?" mean money that left rather than money that moved.
+    include_internal: bool = False
     supporting_limit: int = Field(
         default=DEFAULT_SUPPORTING_MOVEMENTS, ge=0, le=MAX_SUPPORTING_MOVEMENTS
     )

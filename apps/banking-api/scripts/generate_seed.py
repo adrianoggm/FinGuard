@@ -65,16 +65,54 @@ SUBSCRIPTIONS = (
 
 
 @dataclass(frozen=True)
+class SideAccount:
+    """A second or third account of the same holder.
+
+    `monthly_minor` is what moves into it from the current account each month — a standing order to
+    the piggy bank, a monthly purchase of a fund. It is an *internal* movement in both directions
+    and nothing here is spending: that distinction is the whole reason this dataset exists before
+    the multi-account work rather than after it.
+
+    `interest_rate` is the yearly rate a savings account pays, credited monthly. Zero for anything
+    that does not pay one, which is every kind but SAVINGS.
+    """
+
+    suffix: str
+    kind: str
+    display_name: str
+    monthly_minor: int
+    interest_rate: float = 0.0
+
+
+@dataclass(frozen=True)
 class Holder:
     name: str
     reference: str
     salary_minor: int
     rent_minor: int
     opening_balance_minor: int
+    # Everything beyond the current account. Empty for two of the three holders on purpose: one
+    # account is still the ordinary case, and a dataset where everybody has three would let the
+    # single-account path rot without anybody noticing.
+    side_accounts: tuple[SideAccount, ...] = ()
 
 
 HOLDERS = (
-    Holder("Laura Martin Ruiz", "ES-0001", 245_000, 92_000, 180_000),
+    Holder(
+        "Laura Martin Ruiz",
+        "ES-0001",
+        245_000,
+        92_000,
+        180_000,
+        side_accounts=(
+            # 2 % yearly, credited monthly. A rate rather than a fixed amount so the figures grow
+            # with the balance, which is what makes a chart of a piggy bank worth looking at.
+            SideAccount("A", "SAVINGS", "Hucha", 30_000, interest_rate=0.02),
+            # Cost basis, not value. The ledger knows what was paid and nothing else, which is why
+            # ADR-009 refuses to call this a valuation until there is a price source with a date.
+            SideAccount("F", "ASSET", "Fondo indexado", 15_000),
+        ),
+    ),
     Holder("Diego Ferrer Gomez", "ES-0002", 189_000, 78_000, 95_000),
     Holder("Nuria Salas Ortega", "ES-0003", 312_000, 115_000, 260_000),
 )
@@ -113,6 +151,36 @@ CARDS = {
         Card("NURIA SALAS ORTEGA", "MASTERCARD", "CREDIT", "7734", 1, 2027, "BLOCKED", 90_000),
     ),
 }
+
+# What the classifier disagrees with the bank about, and what a holder disagreed with both about.
+# Keyed on the merchant, because that is how a real classifier works and because it makes the
+# dataset explicable: every Steam purchase moves, and nothing else does.
+#
+# Both are deliberately small. The point is to make the layers *visible* — a demo where every
+# movement has three opinions on it is a demo of a bug — and to leave plenty of movements whose
+# category still comes straight from the bank.
+RECLASSIFIED = {
+    # The bank files a games shop under leisure. It is a subscription for most people who spend
+    # there monthly, which is exactly the kind of correction a classifier earns its keep on.
+    "Steam": "SUBSCRIPTIONS",
+}
+CLASSIFIER_VERSION = "rules-v1"
+
+# The holder's own corrections, which beat the classifier. Sports gear bought for physiotherapy is
+# the archetype: nothing about the merchant says so and only the person knows.
+REFILED = {
+    "Decathlon": "HEALTH",
+}
+
+# Free labels, on whichever movements happen to carry these merchants. Zero or many per movement,
+# which is the whole reason they are not categories: two of these on one purchase must not make it
+# count twice in any breakdown.
+TAGGED = {
+    "Fnac": ("regalo",),
+    "La Tagliatella": ("trabajo", "invitado"),
+    "Renfe": ("viaje",),
+}
+
 
 # Counterparty for every operation: the bank's clearing account. Without it there
 # would be no double entry and the balance trigger would reject each transaction.
@@ -156,6 +224,61 @@ class Movement:
     amount_minor: int  # positive = money into the holder's account
     account: uuid.UUID
     status: str = "BOOKED"
+    # The other side of the double entry. The clearing account when absent, which is every movement
+    # that crosses the bank's boundary. Set for a transfer between two accounts of the same holder:
+    # one transaction, two entries, both theirs — which is what makes it internal rather than two
+    # unrelated movements that happen to cancel out.
+    counterparty: uuid.UUID | None = None
+
+
+def _side_account_month(
+    rng: random.Random,
+    holder: Holder,
+    side: SideAccount,
+    month: date,
+    end: date,
+    accounts: dict[str, uuid.UUID],
+) -> list[Movement]:
+    """One month of a second account: the standing order into it, and any interest it pays.
+
+    The standing order is two entries of one transaction and the type says INTERNAL_TRANSFER, so
+    neither leg counts as spending or income. Interest is a real credit from the bank and does
+    count — the money came from outside.
+    """
+    current = accounts[holder.reference]
+    other = accounts[f"{holder.reference}-{side.suffix}"]
+    day = day_in_month(rng, month, 1, 4, end)
+    moved: list[Movement] = [
+        Movement(
+            occurred_at=moment(rng, day),
+            kind="INTERNAL_TRANSFER",
+            description=f"Traspaso a {side.display_name}",
+            merchant=side.display_name,
+            category="INTERNAL",
+            amount_minor=-side.monthly_minor,
+            account=current,
+            counterparty=other,
+        )
+    ]
+    if side.interest_rate:
+        # A twelfth of the yearly rate on what has gone in so far. Approximate on purpose: this is
+        # a dataset for reading questions off, not an amortisation table, and rounding it to the
+        # cent is what keeps the ledger balanced.
+        elapsed = month_starts(end, MONTHS).index(month) + 1
+        paid = round(side.monthly_minor * elapsed * side.interest_rate / 12)
+        if paid:
+            moved.append(
+                Movement(
+                    occurred_at=moment(rng, day_in_month(rng, month, 27, 28, end)),
+                    kind="SALARY",
+                    description="Intereses",
+                    merchant="FinGuard",
+                    category="INTEREST",
+                    amount_minor=paid,
+                    account=other,
+                )
+            )
+    return moved
 
 
 def identifier(rng: random.Random) -> uuid.UUID:
@@ -189,12 +312,21 @@ def day_in_month(rng: random.Random, month: date, low: int, high: int, end: date
 
 def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[str, uuid.UUID]]:
     rng = random.Random(seed)
+    # A stream of its own for everything about a second account, and the reason is the one written
+    # above `card_rng`: every draw from `rng` shifts every draw after it, so allocating a piggy
+    # bank from it changes every amount and date in the dataset — which is exactly what happened
+    # the first time this was written, and the phase 2 expectations moved with it.
+    side_rng = random.Random(seed ^ 0x51DE5)
     accounts: dict[str, uuid.UUID] = {CLEARING: identifier(rng)}
     movements: list[Movement] = []
 
     for holder in HOLDERS:
         account = identifier(rng)
         accounts[holder.reference] = account
+        # Allocated here, before any movement, so the identifiers stay stable whatever is added to
+        # the loop below: this generator is only useful because it is byte-for-byte reproducible.
+        for side in holder.side_accounts:
+            accounts[f"{holder.reference}-{side.suffix}"] = identifier(side_rng)
         opening = month_starts(end, months)[0]
 
         movements.append(
@@ -232,6 +364,8 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
                     account=account,
                 )
             )
+            for side in holder.side_accounts:
+                movements.extend(_side_account_month(side_rng, holder, side, month, end, accounts))
             for merchant, category, amount in SUBSCRIPTIONS:
                 movements.append(
                     Movement(
@@ -307,6 +441,9 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         for reference, held in CARDS.items()
     }
     lines: list[str] = []
+    # Which transaction each movement became, so the classification and tag rows below can
+    # point at them without a second pass over the same list.
+    transaction_ids: dict[int, uuid.UUID] = {}
 
     lines.append("BEGIN;")
     lines.append("")
@@ -320,7 +457,8 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     # otherwise, so a migration that forgets it breaks reloading the dataset and nothing else.
     # Never CASCADE: it would silently empty whatever a future migration happens to hang off
     # the ledger, which is a list nobody enumerated.
-    lines.append("         payment_intents, movement_categories, contacts, cards,")
+    lines.append("         payment_intents, movement_categories, movement_classifications,")
+    lines.append("         movement_tags, contacts, cards,")
     lines.append("         accounts, customers;")
     lines.append("")
 
@@ -328,21 +466,32 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     customer_rows = [f"({quote(str(bank_customer))}, {quote('FinGuard (compensacion)')})"]
     account_rows = [
         f"({quote(str(accounts[CLEARING]))}, {quote(str(bank_customer))}, "
-        f"{quote(CLEARING)}, {quote(CURRENCY)}, {quote('ACTIVE')})"
+        f"{quote(CLEARING)}, {quote(CURRENCY)}, {quote('ACTIVE')}, {quote('CURRENT')}, NULL)"
     ]
     for holder in HOLDERS:
         customer = identifier(rng)
         customer_rows.append(f"({quote(str(customer))}, {quote(holder.name)})")
         account_rows.append(
             f"({quote(str(accounts[holder.reference]))}, {quote(str(customer))}, "
-            f"{quote(holder.reference)}, {quote(CURRENCY)}, {quote('ACTIVE')})"
+            f"{quote(holder.reference)}, {quote(CURRENCY)}, {quote('ACTIVE')}, "
+            f"{quote('CURRENT')}, {quote('Cuenta corriente')})"
         )
+        # Same customer, so this is a holder with several accounts rather than several holders —
+        # which is the whole point of the dataset and the thing the RLS work will have to honour.
+        for side in holder.side_accounts:
+            reference = f"{holder.reference}-{side.suffix}"
+            account_rows.append(
+                f"({quote(str(accounts[reference]))}, {quote(str(customer))}, "
+                f"{quote(reference)}, {quote(CURRENCY)}, {quote('ACTIVE')}, "
+                f"{quote(side.kind)}, {quote(side.display_name)})"
+            )
 
     lines.append("INSERT INTO customers (id, full_name) VALUES")
     lines.append(",\n".join(f"    {row}" for row in customer_rows) + ";")
     lines.append("")
     lines.append(
-        "INSERT INTO accounts (id, customer_id, account_reference, currency, status) VALUES"
+        "INSERT INTO accounts (id, customer_id, account_reference, currency, status, "
+        "kind, display_name) VALUES"
     )
     lines.append(",\n".join(f"    {row}" for row in account_rows) + ";")
     lines.append("")
@@ -397,6 +546,7 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         # while a transaction is pending, and the ones that should be booked are booked at the
         # end. The dataset used to insert them already BOOKED and add entries afterwards, which
         # the ledger now forbids — and which is why nothing noticed it allowed it.
+        transaction_ids[number] = transaction
         if movement.status == "BOOKED":
             to_book.append(str(transaction))
         transaction_rows.append(
@@ -410,9 +560,10 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         incoming = movement.amount_minor > 0
         # Double entry: what the holder receives comes out of the clearing account,
         # and the other way round.
+        other_side = movement.counterparty or clearing
         for account, entry_type in (
             (movement.account, "CREDIT" if incoming else "DEBIT"),
-            (clearing, "DEBIT" if incoming else "CREDIT"),
+            (other_side, "DEBIT" if incoming else "CREDIT"),
         ):
             entry_rows.append(
                 f"({quote(str(identifier(rng)))}, {quote(str(transaction))}, "
@@ -434,6 +585,51 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
             entry_rows,
         )
     )
+
+    classification_rows: list[str] = []
+    override_rows: list[str] = []
+    tag_rows: list[str] = []
+    for number, movement in enumerate(movements, start=1):
+        if movement.status != "BOOKED":
+            continue
+        transaction = transaction_ids[number]
+        if movement.merchant in RECLASSIFIED:
+            classification_rows.append(
+                f"({quote(str(movement.account))}, {quote(str(transaction))}, "
+                f"{quote(RECLASSIFIED[movement.merchant])}, {quote(CLASSIFIER_VERSION)})"
+            )
+        if movement.merchant in REFILED:
+            override_rows.append(
+                f"({quote(str(movement.account))}, {quote(str(transaction))}, "
+                f"{quote(REFILED[movement.merchant])})"
+            )
+        for label in TAGGED.get(movement.merchant, ()):
+            tag_rows.append(
+                f"({quote(str(movement.account))}, {quote(str(transaction))}, {quote(label)})"
+            )
+
+    if classification_rows:
+        lines.extend(
+            _batches(
+                "INSERT INTO movement_classifications "
+                "(account_id, transaction_id, category, classifier_version) VALUES",
+                classification_rows,
+            )
+        )
+    if override_rows:
+        lines.extend(
+            _batches(
+                "INSERT INTO movement_categories (account_id, transaction_id, category) VALUES",
+                override_rows,
+            )
+        )
+    if tag_rows:
+        lines.extend(
+            _batches(
+                "INSERT INTO movement_tags (account_id, transaction_id, tag) VALUES",
+                tag_rows,
+            )
+        )
 
     # Booked last, once every entry exists. This is the lifecycle migration 0004 enforces, so
     # building the dataset now exercises it 1,621 times rather than routing around it.

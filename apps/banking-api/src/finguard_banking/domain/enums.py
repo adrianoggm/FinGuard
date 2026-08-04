@@ -43,6 +43,10 @@ class TransactionType(StrEnum):
     CARD_PAYMENT = "CARD_PAYMENT"
     BIZUM = "BIZUM"
     TRANSFER = "TRANSFER"
+    # Money between two accounts the same person owns. Its own type rather than a TRANSFER
+    # with a flag beside it: what makes it different is not how it moved but that it never
+    # left the household, and every question about spending has to know that.
+    INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
 
 
 class Metric(StrEnum):
