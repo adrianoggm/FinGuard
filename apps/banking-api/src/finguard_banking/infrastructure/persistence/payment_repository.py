@@ -49,7 +49,7 @@ from finguard_banking.domain.value_objects.destination import (
 from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.persistence.financial_query_repository import (
-    _DECLARE_ACCOUNT,
+    declare,
 )
 
 _AWAITING = "AWAITING_CONFIRMATION"
@@ -92,7 +92,7 @@ class PostgresPaymentRepository:
         """
         rail = rail_of(to)
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
 
             if isinstance(to, ToPhone):
                 known = await connection.fetchrow(
@@ -156,7 +156,7 @@ class PostgresPaymentRepository:
     async def confirm(self, *, account_id: UUID, intent_id: UUID) -> PaymentReceipt:
         """Executes the intent, exactly once, and returns the receipt."""
         async with self._pool.acquire() as connection, connection.transaction():
-            await connection.execute(_DECLARE_ACCOUNT, str(account_id))
+            await declare(connection, str(account_id))
 
             # The account first, and always in this order: two confirmations that take the rows in
             # opposite orders deadlock instead of serialising.
