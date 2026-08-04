@@ -28,19 +28,19 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
 _MAX_CANDIDATES = 5
 
 _LIST_SQL = """
-    SELECT contact_id, display_name, phone
+    SELECT contact_id, display_name, phone, iban
     FROM assistant_read.contacts_v1
     ORDER BY display_name
 """
 
 _ONE_SQL = """
-    SELECT contact_id, display_name, phone
+    SELECT contact_id, display_name, phone, iban
     FROM assistant_read.contacts_v1
     WHERE contact_id = $1
 """
 
 _RESOLVE_SQL = f"""
-    SELECT contact_id, display_name, phone
+    SELECT contact_id, display_name, phone, iban
     FROM assistant_read.contacts_v1
     WHERE lower(display_name) LIKE lower($1) || '%'
     ORDER BY display_name
@@ -68,6 +68,7 @@ class PostgresContactRepository:
                 contact_id=row["contact_id"],
                 display_name=row["display_name"],
                 phone=row["phone"],
+                iban=row["iban"],
             )
             for row in rows
         )
@@ -93,6 +94,7 @@ class PostgresContactRepository:
             contact_id=row["contact_id"],
             display_name=row["display_name"],
             phone=row["phone"],
+            iban=row["iban"],
         )
 
     async def resolve(self, account_id: UUID, name: str) -> Contact:
@@ -113,4 +115,5 @@ class PostgresContactRepository:
             contact_id=row["contact_id"],
             display_name=row["display_name"],
             phone=row["phone"],
+            iban=row["iban"],
         )

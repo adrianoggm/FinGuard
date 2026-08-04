@@ -107,3 +107,17 @@ class Period(StrEnum):
     THIS_YEAR = "THIS_YEAR"
     LAST_N_DAYS = "LAST_N_DAYS"
     LAST_N_MONTHS = "LAST_N_MONTHS"
+
+
+class Rail(StrEnum):
+    """How the money leaves.
+
+    Two, and they are not two settings of one operation: a Bizum names a person by phone and the
+    bank finds the account, a transfer names the account and there may be no person behind it at
+    all. They differ in what has to be on the preview, in what the intent has to remember, and in
+    what can go wrong — which is why the destination check in the schema is written per rail
+    rather than as a set of nullable columns and a convention.
+    """
+
+    BIZUM = "BIZUM"
+    TRANSFER = "TRANSFER"

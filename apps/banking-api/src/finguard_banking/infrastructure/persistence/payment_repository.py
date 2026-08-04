@@ -30,7 +30,7 @@ from uuid import UUID
 
 import asyncpg
 
-from finguard_banking.domain.enums import EntryType, TransactionStatus, TransactionType
+from finguard_banking.domain.enums import EntryType, Rail, TransactionStatus, TransactionType
 from finguard_banking.domain.errors import (
     AccountNotFoundError,
     ContactNotFoundError,
@@ -107,12 +107,17 @@ class PostgresPaymentRepository:
                 expires_at = datetime.now(UTC) + timedelta(seconds=self.validity_seconds)
                 await connection.execute(
                     "INSERT INTO payment_intents "
-                    "(id, account_id, contact_id, amount_minor, currency, status, "
+                    "(id, account_id, contact_id, rail, amount_minor, currency, status, "
                     " idempotency_key, expires_at) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                     intent_id,
                     account_id,
                     contact_id,
+                    # Named rather than defaulted. The column carried `DEFAULT 'BIZUM'` only long
+                    # enough to backfill the rows that existed; a rail nobody chose is a rail
+                    # somebody forgets to send, and this is the one statement that decides where
+                    # money goes.
+                    Rail.BIZUM.value,
                     amount.amount_minor,
                     amount.currency,
                     _AWAITING,
