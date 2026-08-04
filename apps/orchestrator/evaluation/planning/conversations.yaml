@@ -120,14 +120,15 @@ conversations:
         expect: CONTACTS
         says: Marta
 
-  - id: the_largest_expense_is_refused_not_totalled
+  - id: the_largest_expense_is_one_movement_not_a_total
     why: >
-      The worst answer the system gave: the sum of 56 movements offered as the largest one. Until
-      the capability exists this refuses, and says why rather than giving a number.
+      The worst answer the system gave: the sum of 56 movements offered as the largest one. It was
+      refused for a release, and now it is answered — with the charge, because a figure alone sends
+      the user to the movement list to work out which one it was.
     turns:
       - say: En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?
-        expect: UNSUPPORTED
-        says: no es lo que has preguntado
+        says: fue de
+        not_says: movimientos
 
   - id: the_answer_says_what_the_figure_is_of
     why: >

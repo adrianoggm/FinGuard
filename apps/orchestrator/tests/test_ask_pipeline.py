@@ -64,11 +64,18 @@ class FakePlanner:
         self._result = result
         self.previous: FinancialPlan | None = None
         self.asked: str | None = None
+        self.force_follow_up = False
 
     async def plan(
-        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
+        self,
+        sentence: str,
+        *,
+        today: date,
+        previous: FinancialPlan | None = None,
+        force_follow_up: bool = False,
     ) -> PlanningResult:
         self.previous, self.asked = previous, sentence
+        self.force_follow_up = force_follow_up
         return self._result
 
 
@@ -451,17 +458,31 @@ async def test_explaining_the_last_answer_reads_the_plan_and_not_the_ledger() ->
     assert ledger.account_id is None
 
 
-async def test_a_correction_does_not_inherit_the_plan_it_corrects() -> None:
-    """The reason CORRECTION exists as its own intent. Treating it as a follow-up patches a window
-    onto a category the user has just said was wrong."""
+async def test_a_correction_patches_the_plan_instead_of_dropping_its_valid_fields() -> None:
+    """Changing the category must not also lose the period the user did not correct."""
     planner = FakePlanner(PlanningResult.planned(plan()))
+    before = plan(categories=("RESTAURANTS",))
 
     await chat(planner, FakeLedger(ANSWER)).handle(
-        spoken("no me has entendido, me refería al alquiler", plan(categories=("RESTAURANTS",)))
+        spoken("no me has entendido, me refería al alquiler", before)
     )
 
     assert planner.asked == "no me has entendido, me refería al alquiler"
-    assert planner.previous is None, "the wrong plan was dropped rather than patched"
+    assert planner.previous == before
+    assert planner.force_follow_up is True
+
+
+async def test_a_correction_without_replacement_asks_what_to_change() -> None:
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    before = plan(categories=("RESTAURANTS",))
+
+    result = await chat(planner, FakeLedger(ANSWER)).handle(spoken("no es eso", before))
+
+    assert planner.asked is None
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "qué" in result.text.lower()
+    assert isinstance(result.conversation.active, FinancialClarification)
+    assert result.conversation.last_plan == before
 
 
 async def test_an_ordinary_follow_up_still_inherits() -> None:
@@ -545,6 +566,10 @@ async def test_a_reply_that_says_more_than_the_window_goes_to_the_model() -> Non
     )
 
     assert planner.asked == "¿cuántas veces este año?"
+    assert planner.previous is not None
+    assert planner.previous.period == RelativePeriod(Period.THIS_YEAR)
+    assert planner.previous.categories == ("HOUSING_RENT",)
+    assert planner.force_follow_up is True
     assert result.outcome == PlanningOutcome.PLANNED.value
 
 

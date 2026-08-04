@@ -158,6 +158,20 @@ class FinancialPlanDraft:
             metric=self.metric,
         )
 
+    def into_plan(self) -> FinancialPlan | None:
+        """The validated plan represented by this draft, or None while its window is missing."""
+        if self.needs_a_window:
+            return None
+        return FinancialPlan(
+            direction=self.direction,
+            period=self.period,
+            date_range=self.date_range,
+            categories=self.categories,
+            merchants=self.merchants,
+            group_by=self.group_by,
+            metric=self.metric,
+        )
+
     @classmethod
     def of(cls, plan: FinancialPlan) -> "FinancialPlanDraft":
         """A finished plan, read back as a draft. One shape on the wire instead of two."""

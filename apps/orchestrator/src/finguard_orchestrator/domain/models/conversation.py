@@ -73,6 +73,8 @@ class Slot(StrEnum):
     WINDOW = "WINDOW"
     YEAR = "YEAR"
     CATEGORY = "CATEGORY"
+    # The user rejected the last answer without yet saying which field should change.
+    CORRECTION = "CORRECTION"
     AMOUNT = "AMOUNT"
     RECIPIENT = "RECIPIENT"
     # Not a field to type: a choice between candidates the answer carries. Named separately so a
