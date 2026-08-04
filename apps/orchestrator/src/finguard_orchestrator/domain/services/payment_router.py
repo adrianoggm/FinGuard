@@ -28,7 +28,7 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import payment_words
+from finguard_orchestrator.domain.services import payment_words, spanish
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
@@ -69,6 +69,14 @@ _PAYING: Final = re.compile(
 # money. Without one, "manda un correo a Marta" would be read as a payment.
 _MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbizum\b|\btransferencia\b)", re.IGNORECASE)
 
+# A whole reply that says the user cannot fill the slot yet. Narrow and anchored so "no sé a
+# quién tengo en contactos" remains a contact-list question, while a bare "no sé" does not fall
+# through to the financial planner and come back asking for a month.
+_UNCERTAIN: Final = re.compile(
+    r"\s*(no\s+(lo\s+)?se|ni\s+idea|no\s+estoy\s+segur[oa]|"
+    r"(aun|todavia)\s+no\s+(lo\s+)?se)\s*[.!?]*\s*"
+)
+
 
 def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]) -> bool:
     """Whether this sentence answers the question a half-built payment asked.
@@ -88,6 +96,11 @@ def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]
     return bool(
         PaymentField.RECIPIENT in missing and payment_words.contacts_in(sentence, directory)
     )
+
+
+def is_uncertain(sentence: str) -> bool:
+    """Whether a reply to a missing payment field says only that the user does not know yet."""
+    return _UNCERTAIN.fullmatch(spanish.folded(sentence)) is not None
 
 
 def is_payment(sentence: str) -> bool:

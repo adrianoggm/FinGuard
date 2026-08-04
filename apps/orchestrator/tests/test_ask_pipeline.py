@@ -617,28 +617,19 @@ async def test_every_missing_capability_has_its_own_refusal() -> None:
     assert set(_MISSING_CAPABILITY) == capability_guard.RULES
 
 
-async def test_the_largest_expense_is_refused_and_told_why() -> None:
-    """The worst answer the system gave: a total of 56 movements offered as the largest one.
+async def test_the_largest_expense_is_no_longer_refused() -> None:
+    """It was the worst answer this system gave — the sum of 56 movements offered as the largest one
+    — and then a refusal, which was right while `Metric` was the only way to ask.
 
-    The refusal has to say that the total was deliberately withheld, or the next thing the user
-    does is ask again in different words.
+    RANK_MOVEMENTS answers it. What this pins is that the guard does not stand in front of it: a
+    family here is a debt, and leaving it after the capability exists is a dead end in front of a
+    working answer.
     """
-    planner = FakePlanner(PlanningResult.planned(plan()))
-    ledger = FakeLedger(ANSWER)
+    from finguard_orchestrator.domain.services import capability_guard
 
-    result = await chat(planner, ledger).handle(
-        AskFinancialQuestionQuery(
-            sentence="En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?",
-            account_id=ACCOUNT,
-            today=TODAY,
-        )
-    )
+    sentence = "En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?"
 
-    assert planner.asked is None, "a question we cannot express reached the model"
-    assert ledger.account_id is None, "a total was computed for a question about one movement"
-    assert result.outcome == PlanningOutcome.UNSUPPORTED.value
-    assert "más alto" in result.text
-    assert "no es lo que has preguntado" in result.text
+    assert capability_guard.unsupported_reason(sentence) is None
 
 
 async def test_an_average_is_not_told_about_forecasts() -> None:

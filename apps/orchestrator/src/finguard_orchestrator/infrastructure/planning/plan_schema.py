@@ -26,13 +26,14 @@ from finguard_orchestrator.domain.constants import (
     MAX_PERIOD_DAYS,
 )
 from finguard_orchestrator.domain.enums import (
+    Action,
     Direction,
     GroupBy,
     Metric,
     Period,
     PlanningOutcome,
 )
-from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.models.conversation import MAX_RANK, Slot
 from finguard_orchestrator.domain.services.plan_merger import Field
 
 # The outcomes a model may choose. The other three are things that happen TO a model —
@@ -69,6 +70,13 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "outcome": {"type": "string", "enum": [o.value for o in CHOOSABLE_OUTCOMES]},
+            # Which kind of question this is. Two actions, not a wider metric: AGGREGATE totals or
+            # counts movements, RANK_MOVEMENTS picks one out by size. They answer with different
+            # shapes — a figure with groups against a single row with a date and a shop — so the
+            # decision belongs here rather than being inferred from the other fields.
+            "action": {"type": "string", "enum": [a.value for a in Action]},
+            # Which position, for a ranking. 0 is the sentinel for "not a ranking", like `n`.
+            "rank": {"type": "integer", "minimum": 0, "maximum": MAX_RANK},
             "question": {"type": "string"},
             # Which field the question is about. Emitted rather than inferred from the wording:
             # the question is Spanish prose written by the model, and reading it back to find out
@@ -113,6 +121,8 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
         "additionalProperties": False,
         "required": [
             "outcome",
+            "action",
+            "rank",
             "question",
             "awaiting",
             "period",

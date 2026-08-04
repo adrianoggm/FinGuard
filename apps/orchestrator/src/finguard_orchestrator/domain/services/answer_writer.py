@@ -196,7 +196,7 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
     return f"en los últimos {count} {unit}"
 
 
-def describe(plan: FinancialPlan) -> str:
+def describe(plan: FinancialPlan | TopMovements) -> str:
     """The plan in one readable line.
 
     Shown with every answer on purpose. A figure whose derivation the user cannot
@@ -205,6 +205,10 @@ def describe(plan: FinancialPlan) -> str:
     oracle.
     """
     parts = [window_of(plan), plan.direction.value.lower()]
+    if isinstance(plan, TopMovements):
+        # The rank is the whole point of a ranking, so a description without it would show the same
+        # line for "el más caro" and "el segundo más caro".
+        parts.append(f"nº {plan.rank} por importe")
     if plan.categories:
         parts.append("/".join(plan.categories).lower())
     if plan.merchants:
@@ -212,10 +216,13 @@ def describe(plan: FinancialPlan) -> str:
         # and a reader who sees the name that was searched for can tell that from "you spent
         # nothing there".
         parts.append("/".join(plan.merchants))
-    if plan.group_by.value != "NONE":
-        parts.append(f"por {plan.group_by.value.lower()}")
-    if plan.metric.value != "SUM":
-        parts.append(plan.metric.value.lower())
+    if isinstance(plan, FinancialPlan):
+        # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
+        # appended above — where the reader is looking for what makes the two lines different.
+        if plan.group_by.value != "NONE":
+            parts.append(f"por {plan.group_by.value.lower()}")
+        if plan.metric.value != "SUM":
+            parts.append(plan.metric.value.lower())
     return ", ".join(parts)
 
 

@@ -372,7 +372,24 @@ class ConfirmPaymentHandler:
 
     async def handle(self, command: ConfirmPaymentCommand) -> PaymentAnswer:
         if confirmation.is_refusal(command.reply):
-            await self._bank.cancel(account_id=command.account_id, intent_id=command.intent_id)
+            try:
+                await self._bank.cancel(account_id=command.account_id, intent_id=command.intent_id)
+            except (IntentGoneError, PaymentRefusedError) as gone:
+                return PaymentAnswer(
+                    outcome=PaymentOutcome.REFUSED.value,
+                    text=payment_writer.no_longer_live(),
+                    intent_id=command.intent_id,
+                    reason=gone.reason,
+                )
+            except BankingUnavailableError as down:
+                # Just like a confirmation timeout, the result is unknown. Keep the intent in the
+                # conversation so the same cancellation can be retried instead of starting over.
+                return PaymentAnswer(
+                    outcome=PaymentOutcome.BANKING_UNAVAILABLE.value,
+                    text=payment_writer.cancellation_unavailable(),
+                    intent_id=command.intent_id,
+                    reason=str(down),
+                )
             return PaymentAnswer(
                 outcome=PaymentOutcome.CANCELLED.value,
                 text=payment_writer.cancelled(),
@@ -409,7 +426,7 @@ class ConfirmPaymentHandler:
             # is refused.
             return PaymentAnswer(
                 outcome=PaymentOutcome.BANKING_UNAVAILABLE.value,
-                text=payment_writer.bank_unavailable(),
+                text=payment_writer.confirmation_unavailable(),
                 intent_id=command.intent_id,
                 reason=str(down),
             )

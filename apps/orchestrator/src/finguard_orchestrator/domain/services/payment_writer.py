@@ -54,6 +54,20 @@ def unclear(preview: PaymentPreview | None = None) -> str:
     return "No estoy seguro de haberte entendido. ¿Confirmas el pago? Responde sí o no."
 
 
+def unclear_pending(recipient: str, amount_minor: int, currency: str) -> str:
+    """Repeat the material facts when chat state has the intent but not banking's full preview.
+
+    The user may have answered with a question because they no longer remember what was on the
+    table. A generic "¿confirmas el pago?" makes the next yes unsafe and the conversation feel
+    stuck.
+    """
+    return (
+        "No estoy seguro de haberte entendido. "
+        f"El pago pendiente es de {money(amount_minor, currency)} a {recipient}. "
+        "¿Quieres enviarlo? Responde sí o no."
+    )
+
+
 def still_missing(draft: PaymentDraft) -> str:
     """The question a half-built payment needs answered.
 
@@ -67,6 +81,13 @@ def still_missing(draft: PaymentDraft) -> str:
         return "¿A quién le quieres enviar el dinero?"
     to = f" a {draft.recipient_name}" if draft.recipient_name else ""
     return f"¿De cuánto quieres hacerle el bizum{to}?"
+
+
+def unsure(draft: PaymentDraft) -> str:
+    """A useful answer when the user cannot fill the field the draft is waiting for."""
+    if PaymentField.RECIPIENT in draft.missing:
+        return f"No pasa nada. Puedo enseñarte tus contactos si quieres. {still_missing(draft)}"
+    return f"No pasa nada. {still_missing(draft)} También puedes cancelar el bizum."
 
 
 def ambiguous(name: str, candidates: tuple[str, ...]) -> str:
@@ -101,7 +122,7 @@ def no_longer_live() -> str:
     """Expired, cancelled, or already paid — one sentence, because they mean the same thing to
     whoever is looking at the preview. Notably it does not say which: "ya lo has pagado" invites
     checking, and the honest instruction is the same either way."""
-    return "Ese pago ya no está pendiente. Si quieres hacerlo, dímelo otra vez."
+    return "Ese pago ya no está pendiente. Comprueba tus movimientos antes de volver a intentarlo."
 
 
 def unsupported() -> str:
@@ -123,6 +144,22 @@ def provider_error() -> str:
 
 def bank_unavailable() -> str:
     return "No puedo hablar con el banco ahora mismo, así que no he enviado nada."
+
+
+def confirmation_unavailable() -> str:
+    """The bank failed after confirmation started, when execution may already have happened."""
+    return (
+        "No he podido comprobar si el banco completó el pago. No crees otro bizum: "
+        "puedes reintentar esta confirmación sin que se ejecute dos veces."
+    )
+
+
+def cancellation_unavailable() -> str:
+    """The bank failed while cancelling, so whether the intent is still live is unknown."""
+    return (
+        "No he podido comprobar si el banco canceló el pago. No crees otro bizum: "
+        "puedes volver a responder no para reintentar la cancelación."
+    )
 
 
 def cannot_pay() -> str:

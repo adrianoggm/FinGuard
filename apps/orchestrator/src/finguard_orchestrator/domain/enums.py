@@ -71,6 +71,22 @@ class Period(StrEnum):
     LAST_N_MONTHS = "LAST_N_MONTHS"
 
 
+class Action(StrEnum):
+    """What kind of question a sentence turned into.
+
+    Two, and the split is the one the review argued for: an aggregate totals or counts movements,
+    a ranking picks one out by size. They are not two metrics — they answer with different shapes,
+    a figure with groups against a single row with a date and a shop — so widening `Metric` would
+    have produced a result whose half is meaningless whichever way it went.
+
+    More will arrive: a balance is already answered without a plan, and a category ranking is the
+    obvious next one. When the third appears this is where it goes.
+    """
+
+    AGGREGATE = "AGGREGATE"
+    RANK_MOVEMENTS = "RANK_MOVEMENTS"
+
+
 class Direction(StrEnum):
     EXPENSE = "EXPENSE"
     INCOME = "INCOME"

@@ -98,6 +98,8 @@ class FakeGateway:
 
     async def cancel(self, *, account_id: UUID, intent_id: UUID) -> None:
         self.cancelled += 1
+        if self._error is not None:
+            raise self._error
 
 
 class NoContacts:
@@ -232,6 +234,28 @@ async def test_a_no_cancels_and_pays_nothing() -> None:
     assert gateway.cancelled == 1
 
 
+async def test_cancelling_an_intent_that_is_gone_is_a_conversational_refusal() -> None:
+    handler, gateway = confirming(FakeGateway(IntentGoneError("intent_not_confirmable")))
+
+    answer = await handler.handle(confirm("no"))
+
+    assert answer.outcome == PaymentOutcome.REFUSED.value
+    assert answer.intent_id == INTENT
+    assert "movimientos" in answer.text
+    assert gateway.confirmed == 0
+
+
+async def test_a_bank_failure_while_cancelling_can_be_retried() -> None:
+    handler, gateway = confirming(FakeGateway(BankingUnavailableError("timeout")))
+
+    answer = await handler.handle(confirm("no"))
+
+    assert answer.outcome == PaymentOutcome.BANKING_UNAVAILABLE.value
+    assert answer.intent_id == INTENT
+    assert "responder no" in answer.text.lower()
+    assert gateway.confirmed == 0
+
+
 @pytest.mark.parametrize(
     "reply",
     [
@@ -271,7 +295,7 @@ async def test_a_balance_that_no_longer_covers_it_is_a_refusal_not_a_crash() -> 
     assert "saldo" in answer.text.lower()
 
 
-async def test_an_intent_that_is_gone_says_to_start_again() -> None:
+async def test_an_intent_that_is_gone_says_to_check_movements() -> None:
     """Expired, cancelled, or already paid. All three mean the same thing to the user: this
     preview is no longer a live offer."""
     handler, _ = confirming(FakeGateway(IntentGoneError("intent_expired")))
@@ -280,3 +304,15 @@ async def test_an_intent_that_is_gone_says_to_start_again() -> None:
 
     assert answer.outcome == PaymentOutcome.REFUSED.value
     assert answer.transaction_id is None
+    assert "movimientos" in answer.text
+
+
+async def test_a_bank_failure_during_confirmation_does_not_claim_nothing_happened() -> None:
+    handler, _ = confirming(FakeGateway(BankingUnavailableError("timeout")))
+
+    answer = await handler.handle(confirm("sí"))
+
+    assert answer.outcome == PaymentOutcome.BANKING_UNAVAILABLE.value
+    assert answer.intent_id == INTENT
+    assert "no he enviado nada" not in answer.text.lower()
+    assert "reintentar" in answer.text.lower()

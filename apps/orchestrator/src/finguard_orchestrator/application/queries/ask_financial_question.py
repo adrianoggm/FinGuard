@@ -49,6 +49,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
 @dataclass(frozen=True)
@@ -236,7 +237,12 @@ class AskFinancialQuestionHandler:
             # something would be asking it to guess at a fact we hold.
             yield AskFinancialQuestionResult(
                 outcome=Spoken.EXPLANATION.value,
-                text=explainer.explain(query.sentence, previous),
+                # The explainer speaks about aggregates — which query ran, what a category means —
+                # and a ranking has no metric or grouping to explain. Narrowed here rather than
+                # taught two shapes, until somebody asks "¿cómo has sacado el más caro?".
+                text=explainer.explain(
+                    query.sentence, previous if isinstance(previous, FinancialPlan) else None
+                ),
                 plan=answer_writer.describe(previous) if previous else None,
                 conversation=was,
             )
@@ -265,9 +271,14 @@ class AskFinancialQuestionHandler:
             # has just said was wrong.
             previous = None
 
-        again = self._repeat_refusal(query)
-        if again is not None:
-            yield again
+        deeper = self._next_in_ranking(query)
+        if deeper is not None:
+            # "¿Y el segundo?" after a ranking. One field changes and nothing is read again, which
+            # is what stops this from depending on how the continuation happens to be phrased — the
+            # failure the review pointed at when this was a regex over ordinals.
+            yield Stage("planned", answer_writer.describe(deeper))
+            yield Stage("querying")
+            yield await self._ranked(query, deeper)
             return
 
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
@@ -288,7 +299,14 @@ class AskFinancialQuestionHandler:
             return
 
         yield Stage("planning")
-        planned = await self._planner.plan(query.sentence, today=query.today, previous=previous)
+        planned = await self._planner.plan(
+            query.sentence,
+            today=query.today,
+            # The follow-up merge is expressed over an aggregate's fields, so a ranking is not
+            # context the prompt can inherit from. An ordinal follow-up is handled above, before
+            # the model, which is the case that matters.
+            previous=previous if isinstance(previous, FinancialPlan) else None,
+        )
 
         if not planned.is_answerable:
             yield _decline(planned, was)
@@ -313,39 +331,10 @@ class AskFinancialQuestionHandler:
 
         yield Stage("planned", answer_writer.describe(planned.plan))
         yield Stage("querying")
+        if isinstance(planned.plan, TopMovements):
+            yield await self._ranked(query, planned.plan)
+            return
         yield await self._answer(query, planned.plan)
-
-    def _repeat_refusal(
-        self, query: AskFinancialQuestionQuery
-    ) -> AskFinancialQuestionResult | None:
-        """The same refusal again when the sentence is only a continuation of it.
-
-        "¿Y el segundo?" after "no sé buscar el movimiento más alto" asks for the second largest:
-        the capability is the one just refused and the sentence says nothing about size, so no rule
-        can see it on its own. It used to reach the planner and come back asking which period.
-
-        The state carries the reading it was refused about, so the follow-up is a patch of the rank
-        rather than a re-derivation of the question — which is what stops this from depending on how
-        the continuation happens to be phrased.
-        """
-        active = query.conversation.active
-        if not isinstance(active, UnsupportedCapability):
-            return None
-        if active.capability not in capability_guard.RULES:
-            # It crossed the wire. A capability name this build does not have is not a refusal it
-            # can repeat, so the sentence takes the ordinary path.
-            return None
-        if not capability_guard.continues_a_refusal(query.sentence):
-            return None
-
-        asked_for = UnsupportedCapability(
-            capability=active.capability, draft=active.draft, rank=active.rank + 1
-        )
-        return AskFinancialQuestionResult(
-            outcome=PlanningOutcome.UNSUPPORTED.value,
-            text=_MISSING_CAPABILITY.get(active.capability, _CANNOT_YET),
-            conversation=query.conversation.with_active(asked_for),
-        )
 
     def _declined(self, capability: str, was: Conversation) -> AskFinancialQuestionResult:
         """A refusal that remembers what it was about.
@@ -471,6 +460,75 @@ class AskFinancialQuestionHandler:
             return None
         return finished
 
+    def _next_in_ranking(self, query: AskFinancialQuestionQuery) -> TopMovements | None:
+        """The ranking one position deeper, when that is what the sentence asks for.
+
+        Only when the last answered question *was* a ranking: "¿y el segundo?" after a total is not
+        about a second total, and reading it as one would answer a question nobody asked. The
+        sentence has to be nothing but a continuation, which is the same narrow rule the refusal
+        used — but the payoff is different now, because there is an answer at the end of it.
+        """
+        previous = query.conversation.last_plan
+        if not isinstance(previous, TopMovements):
+            return None
+        if not capability_guard.continues_an_ordinal(query.sentence):
+            return None
+        try:
+            return previous.next_rank()
+        except InvalidValueError:
+            # Past the ceiling. Somebody a hundred movements down a list wants the list, and
+            # silently repeating the hundredth would look like an answer.
+            return None
+
+    async def _ranked(
+        self, query: AskFinancialQuestionQuery, ranking: TopMovements
+    ) -> AskFinancialQuestionResult:
+        """One movement, named. The figure alone would send the user to the movement list."""
+        try:
+            found = await self._queries.ranked(
+                ranking,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido la pregunta, pero la consulta que he construido no es válida.",
+                plan=answer_writer.describe(ranking),
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No puedo consultar tus movimientos ahora mismo. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=answer_writer.ranked(found, ranking),
+            plan=answer_writer.describe(ranking),
+            currency="EUR" if found else None,
+            total_minor=found.amount_minor if found else None,
+            movement_count=1 if found else 0,
+            movements=[
+                SpokenMovement(
+                    occurred_at=found.occurred_at.isoformat(),
+                    description=found.description,
+                    amount_minor=found.amount_minor,
+                    direction=found.direction,
+                    merchant_name=found.merchant_name,
+                    category=found.category,
+                )
+            ]
+            if found
+            else [],
+            # Remembered even when nothing was found: "¿y el segundo?" after "no hay quinto" is a
+            # reasonable thing to say, and the question it refers to is this one.
+            conversation=query.conversation.answered(ranking),
+        )
+
     async def _answer(
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan
     ) -> AskFinancialQuestionResult:
@@ -532,14 +590,6 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
     "ACTION": (
         "De momento solo puedo consultar tus movimientos y hacer bizums. Otras operaciones "
         "todavía no."
-    ),
-    # The one where the honest answer has to explain why there is no figure. Everything about the
-    # question was understood; the maximum is simply not something a plan can ask for, and a total
-    # in its place would be a real number answering something else.
-    "LARGEST_MOVEMENT": (
-        "Todavía no sé buscar el movimiento más alto de un periodo, y no te doy el total en su "
-        "lugar porque no es lo que has preguntado. Puedo darte los movimientos del periodo o el "
-        "desglose por categoría."
     ),
 }
 

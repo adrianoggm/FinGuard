@@ -37,6 +37,12 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlanDraft,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+
+# What a sentence can turn into and a follow-up can inherit from. Declared here as well as on
+# the planning result because both need the pair named, and importing one from the other would
+# tie a conversation to a planner.
+type PlannedQuery = FinancialPlan | TopMovements
 
 # How far down a ranking anybody may ask. Bounded because it crosses the wire and becomes an
 # OFFSET the day RANK_MOVEMENTS exists: "el gasto número 40000" is not a question, it is a scan.
@@ -142,7 +148,10 @@ class Conversation:
     """
 
     active: ActiveWorkflow | None = None
-    last_plan: FinancialPlan | None = None
+    # The last answered question, whichever kind it was. An aggregate and a ranking are both
+    # things a follow-up inherits from — "¿y en gasolina?" narrows either — so this is the union
+    # rather than a field per kind, which would let both be set and neither mean anything.
+    last_plan: PlannedQuery | None = None
 
     @property
     def awaiting(self) -> Slot | None:
@@ -166,7 +175,7 @@ class Conversation:
         """
         return Conversation(active=active, last_plan=self.last_plan)
 
-    def answered(self, plan: FinancialPlan) -> "Conversation":
+    def answered(self, plan: PlannedQuery) -> "Conversation":
         """A financial question was answered: it becomes the memory and nothing is left open."""
         return Conversation(active=None, last_plan=plan)
 

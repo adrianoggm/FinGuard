@@ -26,6 +26,7 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionQuery,
     CategoriseMovementCommand,
     CommandBus,
+    ConfirmPaymentCommand,
     GetAccountSummaryQuery,
     GetBreakdownQuery,
     GetCardChargesQuery,
@@ -63,7 +64,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Slot,
     slot_for,
 )
-from finguard_orchestrator.domain.services import payment_router, payment_writer
+from finguard_orchestrator.domain.services import confirmation, payment_router, payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -299,6 +300,107 @@ def _payment_events(
     async def events() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "reading", "detail": None})
         answer = await _as_payment(sentence, who, commands, payments_on, was, pending)
+        yield _sse({"type": "answer", **answer.model_dump()})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+async def _as_confirmation(
+    reply: str,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    was: Conversation,
+    active: PaymentConfirmation,
+) -> QuestionResponse:
+    """Answer the payment preview that is active in this chat.
+
+    The standalone payment endpoint deliberately has no conversation state. The chat does, and the
+    response must close that state after a terminal answer; otherwise the client keeps offering the
+    same already-consumed intent. An unclear reply is the sole outcome that leaves the preview open.
+    """
+    if not payments_on or not who.may(Scope.PAYMENTS_CONFIRM):
+        return QuestionResponse(
+            outcome=PaymentOutcome.UNSUPPORTED.value,
+            text=payment_writer.cannot_pay(),
+            conversation=conversation_mapper.to_payload(was),
+        )
+
+    answer = await commands.dispatch(
+        ConfirmPaymentCommand(
+            reply=reply,
+            account_id=who.account_id,
+            intent_id=active.intent_id,
+        )
+    )
+    # A transport failure during confirmation is indeterminate: banking may have executed it. Keep
+    # this same intent available for a safe retry instead of letting the user create a duplicate.
+    still_waiting = answer.outcome in {
+        PaymentOutcome.AWAITING_CONFIRMATION.value,
+        PaymentOutcome.BANKING_UNAVAILABLE.value,
+    }
+    conversation = was if still_waiting else was.with_active(None)
+    return QuestionResponse(
+        outcome=answer.outcome,
+        # The chat state retains the material facts even though the standalone confirmation
+        # endpoint has no full preview. Repeat them after an unclear answer: asking somebody to
+        # confirm an unnamed payment is neither useful nor a sound confirmation experience.
+        text=(
+            payment_writer.unclear_pending(active.recipient, active.amount_minor, active.currency)
+            if answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+            else answer.text
+        ),
+        intent_id=str(answer.intent_id) if answer.intent_id else None,
+        conversation=conversation_mapper.to_payload(conversation),
+        currency=answer.currency,
+    )
+
+
+def _confirmation_events(
+    reply: str,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    was: Conversation,
+    active: PaymentConfirmation,
+) -> StreamingResponse:
+    """The streaming shape of a confirmation: one answer, with no invented planning stage."""
+
+    async def events() -> AsyncIterator[str]:
+        answer = await _as_confirmation(reply, who, commands, payments_on, was, active)
+        yield _sse({"type": "answer", **answer.model_dump()})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+def _open_payment_reply(
+    sentence: str, was: Conversation, active: PaymentInProgress
+) -> QuestionResponse | None:
+    """Handle replies that control a draft without sending them to a financial planner.
+
+    A draft has not reached banking yet, so abandoning it is only a state transition. Uncertainty
+    keeps it open and repeats the missing field with context; everything else continues through the
+    ordinary routing rules, including contact questions and genuine changes of subject.
+    """
+    if confirmation.is_refusal(sentence):
+        return QuestionResponse(
+            outcome=PaymentOutcome.CANCELLED.value,
+            text=payment_writer.cancelled(),
+            conversation=conversation_mapper.to_payload(was.with_active(None)),
+        )
+    if payment_router.is_uncertain(sentence):
+        return QuestionResponse(
+            outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+            text=payment_writer.unsure(active.draft),
+            conversation=conversation_mapper.to_payload(was),
+        )
+    return None
+
+
+def _open_payment_events(answer: QuestionResponse) -> StreamingResponse:
+    """The streaming representation of an immediate draft-control answer."""
+
+    async def events() -> AsyncIterator[str]:
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -569,6 +671,16 @@ async def ask(
 
     was = _conversation_of(request)
 
+    if isinstance(was.active, PaymentConfirmation):
+        # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
+        # not a new instruction: the deterministic confirmation reader leaves the preview open.
+        return await _as_confirmation(request.question, who, commands, payments_on, was, was.active)
+
+    if isinstance(was.active, PaymentInProgress):
+        immediate = _open_payment_reply(request.question, was, was.active)
+        if immediate is not None:
+            return immediate
+
     continuing = await _continues_a_payment(was, request.question, who, queries)
     if continuing is not None:
         # A payment under way takes the reply that answers its question, before anything is
@@ -620,6 +732,14 @@ async def ask_streaming(
     rather than arriving as a footnote under a number the user has already read.
     """
     was = _conversation_of(request)
+
+    if isinstance(was.active, PaymentConfirmation):
+        return _confirmation_events(request.question, who, commands, payments_on, was, was.active)
+
+    if isinstance(was.active, PaymentInProgress):
+        immediate = _open_payment_reply(request.question, was, was.active)
+        if immediate is not None:
+            return _open_payment_events(immediate)
 
     continuing = await _continues_a_payment(was, request.question, who, queries)
     if continuing is not None:
