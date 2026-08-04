@@ -337,9 +337,12 @@ async def test_the_sweep_writes_the_state_nothing_else_writes(
         stale.intent_id,
     )
 
-    swept = await payments(connection).expire_stale()
+    await payments(connection).expire_stale()
 
-    assert swept == 1, "only the one past its expiry"
+    # The statuses rather than the count. `expire_stale` sweeps the whole table by design — it is a
+    # maintenance job, not a per-account operation — so a count is a fact about every intent in the
+    # database, including the ones a browser session left behind an hour ago. This asserted `== 1`
+    # and passed only on a freshly seeded database.
     statuses = dict(
         await connection.fetch(
             "SELECT id, status FROM payment_intents WHERE id = ANY($1::uuid[])",
@@ -369,7 +372,9 @@ async def test_the_sweep_leaves_what_already_happened_alone(
         intent.intent_id,
     )
 
-    assert await payments(connection).expire_stale() == 0
+    # Not a count, for the reason above: what matters is that *this* intent was left alone, and a
+    # zero here also depended on nothing else in the table being stale.
+    await payments(connection).expire_stale()
     status = await connection.fetchval(
         "SELECT status FROM payment_intents WHERE id = $1", intent.intent_id
     )

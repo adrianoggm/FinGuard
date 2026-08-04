@@ -7,12 +7,17 @@ import asyncpg
 
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.models.financial_query import FinancialQuery
-from finguard_banking.domain.models.financial_query_result import FinancialQueryResult, QueryTrace
+from finguard_banking.domain.models.financial_query_result import (
+    FinancialQueryResult,
+    Movement,
+    QueryTrace,
+)
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.infrastructure.mappers import row_mapper
 from finguard_banking.infrastructure.persistence.query_compiler import (
     compile_aggregate,
     compile_movements,
+    compile_ranked,
 )
 
 # The currency and the existence of the account come from the balances view, not from
@@ -40,6 +45,28 @@ class PostgresFinancialQueryRepository:
         self._pool = pool
         self._timezone = reporting_timezone
         self._group_limit = group_limit
+
+    async def ranked(self, query: FinancialQuery, *, rank: int) -> Movement | None:
+        """The nth largest movement of the period, or None when there are fewer than n.
+
+        None rather than the smallest: "el quinto" of three movements has no answer, and returning
+        the last one would be a real figure presented as the fifth largest.
+
+        The account is declared exactly as it is in `run`, before anything is read. A new statement
+        is a new chance to forget it, so the declaration is part of every one of them rather than
+        something the caller is trusted to have done.
+        """
+        zone = query.reporting_timezone or self._timezone
+        compiled = compile_ranked(query, zone, rank=rank)
+
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(_DECLARE_ACCOUNT, str(query.account_id))
+            currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
+            if currency is None:
+                raise AccountNotFoundError(query.account_id)
+            row = await connection.fetchrow(compiled.sql, *compiled.parameters)
+
+        return row_mapper.to_movement(row, currency) if row is not None else None
 
     async def run(self, query: FinancialQuery) -> FinancialQueryResult:
         # The caller's zone when it sent one, this deployment's otherwise. Which day a
