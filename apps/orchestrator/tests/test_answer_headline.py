@@ -84,7 +84,10 @@ def test_an_empty_answer_says_what_it_looked_for() -> None:
         plan(categories=("HOUSING_RENT",)),
     )
 
-    assert said == "No he encontrado movimientos en alquiler el mes pasado."
+    assert said == (
+        "No he encontrado movimientos en alquiler el mes pasado. "
+        "Puedes buscar sin categoría o ampliar el periodo."
+    )
 
 
 def test_a_category_outside_the_glossary_falls_back_to_its_identifier() -> None:

@@ -149,6 +149,7 @@ export type Answer = {
   movement_count: number | null;
   groups: { key: string; total_minor: number; movement_count: number }[];
   movements: Movement[];
+  suggestions: string[];
 };
 
 export type Stage = { name: string };
@@ -270,6 +271,7 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     movement_count: null,
     groups: [],
     movements: [],
+    suggestions: [],
   };
 }
 
@@ -362,6 +364,7 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     movement_count: null,
     groups: [],
     movements: [],
+    suggestions: [],
   };
 }
 

@@ -77,6 +77,14 @@ _UNCERTAIN: Final = re.compile(
     r"(aun|todavia)\s+no\s+(lo\s+)?se)\s*[.!?]*\s*"
 )
 
+# Resuming a payment after a change of subject has to name both the action and the payment. A bare
+# "sigamos" could refer to the financial question in between, while a bare amount is exactly the
+# silent resumption this state exists to prevent.
+_RESUMING: Final = re.compile(
+    r"\b(continuar|continua|continuemos|seguir|sigamos|retomar|retoma|retomemos)\b"
+    r".{0,40}\b(bizum|pago|transferencia)\b"
+)
+
 
 def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]) -> bool:
     """Whether this sentence answers the question a half-built payment asked.
@@ -101,6 +109,11 @@ def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]
 def is_uncertain(sentence: str) -> bool:
     """Whether a reply to a missing payment field says only that the user does not know yet."""
     return _UNCERTAIN.fullmatch(spanish.folded(sentence)) is not None
+
+
+def resumes(sentence: str) -> bool:
+    """Whether the user explicitly brings a suspended payment back into focus."""
+    return _RESUMING.search(spanish.folded(sentence)) is not None
 
 
 def is_payment(sentence: str) -> bool:

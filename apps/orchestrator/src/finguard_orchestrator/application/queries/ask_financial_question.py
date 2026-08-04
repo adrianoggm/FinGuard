@@ -10,7 +10,7 @@ the evaluation depends on it.
 """
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Final
 from uuid import UUID
@@ -43,6 +43,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     intent_router,
     plan_verifier,
+    query_recovery,
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
@@ -138,6 +139,7 @@ class AskFinancialQuestionResult:
     # Filled only by a question about who can be paid. Data as well as prose, so a client
     # can draw one button per contact instead of parsing names out of a paragraph.
     contacts: list[SpokenContact] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -225,6 +227,18 @@ class AskFinancialQuestionHandler:
         force_follow_up = False
         intent = intent_router.route(query.sentence, has_previous=previous is not None)
 
+        relaxed = query_recovery.relaxation(query.sentence, previous)
+        if relaxed is not None:
+            # These are the exact actions offered after an empty result. They patch one field in
+            # code and therefore cannot drift with the configured model.
+            yield Stage("planned", answer_writer.describe(relaxed))
+            yield Stage("querying")
+            if isinstance(relaxed, TopMovements):
+                yield await self._ranked(query, relaxed)
+            else:
+                yield await self._answer(query, relaxed)
+            return
+
         if intent is Intent.IDENTITY_OR_HELP:
             # Answered from here, never from the ledger and never from a model. "¿Quién eres?" used
             # to reach the planner and come back as a refusal about averages and forecasts: true
@@ -233,6 +247,16 @@ class AskFinancialQuestionHandler:
             # the assistant is does not abandon a bizum.
             yield AskFinancialQuestionResult(
                 outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY, conversation=was
+            )
+            return
+
+        if intent is Intent.LIST_CATEGORIES:
+            # The catalogue is product data. Keep any open clarification so the user can inspect
+            # the options and answer it on the following turn.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.CATEGORIES.value,
+                text=explainer.category_catalogue(),
+                conversation=was,
             )
             return
 
@@ -490,6 +514,18 @@ class AskFinancialQuestionHandler:
         if not isinstance(active, FinancialClarification):
             return None
         draft = active.draft
+        if active.awaiting is Slot.CATEGORY:
+            # A category answer is a closed-vocabulary completion just like a named period. Only
+            # exact product terms take this shortcut; ambiguous words still go to the planner.
+            named = category_words.precisely_named_in(query.sentence)
+            if not named or draft.needs_a_window:
+                return None
+            finished = replace(draft, categories=named).into_plan()
+            if finished is None:
+                return None
+            if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
+                return None
+            return finished
         if not draft.needs_a_window:
             return None
 
@@ -598,6 +634,7 @@ class AskFinancialQuestionHandler:
             ]
             if found
             else [],
+            suggestions=query_recovery.empty_suggestions(ranking) if found is None else [],
             # Remembered even when nothing was found: "¿y el segundo?" after "no hay quinto" is a
             # reasonable thing to say, and the question it refers to is this one.
             conversation=query.conversation.answered(ranking),
@@ -785,4 +822,5 @@ def _answered(
             )
             for m in answer.movements
         ],
+        suggestions=query_recovery.empty_suggestions(plan) if answer.is_empty else [],
     )

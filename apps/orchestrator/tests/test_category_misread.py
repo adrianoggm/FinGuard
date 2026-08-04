@@ -87,6 +87,21 @@ def test_an_ambiguous_word_is_not_extracted(sentence: str) -> None:
     assert category_words.precisely_named_in(sentence) == ()
 
 
+def test_the_category_catalogue_has_one_stable_name_per_supported_identifier() -> None:
+    assert category_words.names() == (
+        "supermercado",
+        "gasolina",
+        "restaurantes",
+        "transporte público",
+        "salud",
+        "ocio",
+        "suscripciones",
+        "alquiler",
+        "nómina",
+        "bizum",
+    )
+
+
 # --- the rule ----------------------------------------------------------------------
 
 

@@ -140,6 +140,18 @@ conversations:
         expect: CONTACTS
         says: Marta
 
+  - id: the_category_catalogue_is_a_product_question
+    why: >
+      Asking what vocabulary the assistant understands is not a query over movements and needs no
+      period. The catalogue also must not erase the financial context around the aside.
+    turns:
+      - say: ¿Cuánto gasté el mes pasado?
+      - say: ¿Qué categorías entiendes?
+        expect: CATEGORIES
+        says: gasolina
+      - say: ¿Y en gasolina?
+        keeps: [window]
+
   - id: the_largest_expense_is_one_movement_not_a_total
     why: >
       The worst answer the system gave: the sum of 56 movements offered as the largest one. It was

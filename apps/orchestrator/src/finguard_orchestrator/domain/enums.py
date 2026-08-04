@@ -154,3 +154,5 @@ class Spoken(StrEnum):
     # Who this account can pay. A list, from banking's own restricted role — the question
     # "¿a quién puedo hacer un bizum?" has an answer that needs no interpreting.
     CONTACTS = "CONTACTS"
+    # Which product categories a financial query can filter by. Repository data, not account data.
+    CATEGORIES = "CATEGORIES"

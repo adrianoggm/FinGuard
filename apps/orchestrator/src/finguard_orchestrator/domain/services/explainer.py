@@ -22,6 +22,16 @@ IDENTITY = (
 )
 
 
+def category_catalogue() -> str:
+    """The supported categories, from the same vocabulary used to build and explain plans."""
+    available = category_words.names()
+    listed = ", ".join(available[:-1]) + f" y {available[-1]}"
+    return (
+        f"Puedo consultar estas categorías: {listed}. "
+        "Puedes responder sólo con una de ellas cuando te pregunte por la categoría."
+    )
+
+
 def explain(sentence: str, plan: FinancialPlan | None) -> str:
     """Why the last answer said what it said.
 

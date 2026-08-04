@@ -59,6 +59,11 @@ def name_of(category: str) -> str:
     return _NAMES.get(category, category)
 
 
+def names() -> tuple[str, ...]:
+    """One stable, user-facing name for every category in the product catalogue."""
+    return tuple(_NAMES.values())
+
+
 # The words that mean exactly one category, for the gate that refuses a misread one.
 #
 # A deliberate subset of the glossary above, and the exclusions are the design. "La compra" and "la

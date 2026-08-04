@@ -234,6 +234,9 @@ class QuestionResponse(_Payload):
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
+    # Replies the service can actually understand on the next turn. They are data rather than
+    # prose so a client can render buttons without scraping the answer text.
+    suggestions: list[str] = []
     # Filled only by a question about who can be paid. The identifier is what lets a client offer
     # a choice and send back *which* contact instead of a name to be interpreted a second time.
     contacts: list[SpokenContactResponse] = []

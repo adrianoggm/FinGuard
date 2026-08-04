@@ -37,6 +37,7 @@ from finguard_orchestrator.domain.services import payment_router, spanish
 class Intent(StrEnum):
     PAYMENT = "PAYMENT"
     IDENTITY_OR_HELP = "IDENTITY_OR_HELP"
+    LIST_CATEGORIES = "LIST_CATEGORIES"
     CORRECTION = "CORRECTION"
     EXPLAIN_PREVIOUS = "EXPLAIN_PREVIOUS"
     ACCOUNT_BALANCE = "ACCOUNT_BALANCE"
@@ -105,6 +106,15 @@ _ABOUT_ITSELF: Final = re.compile(
     re.IGNORECASE,
 )
 
+# Product vocabulary rather than account data. Narrow enough not to capture "¿en qué categoría has
+# clasificado el cine?", which is about the previous answer and belongs to the explainer below.
+_CATEGORY_CATALOGUE: Final = re.compile(
+    r"\b(lista|listado)\s+de\s+categorias\b"
+    r"|\bdime\s+las\s+categorias(\s+disponibles)?\b"
+    r"|\bque\s+categorias\s+(entiendes|manejas|usas|hay|tienes|soportas)\b"
+    r"|\bque\s+opciones\s+de\s+categoria\s+(hay|tienes)\b"
+)
+
 # The user says the last answer was wrong. Two shapes: naming the misunderstanding, or restating
 # what they meant.
 _CORRECTING: Final = re.compile(
@@ -160,6 +170,8 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
         return Intent.PAYMENT
     if _ABOUT_ITSELF.search(sentence):
         return Intent.IDENTITY_OR_HELP
+    if _CATEGORY_CATALOGUE.search(spanish.folded(sentence)):
+        return Intent.LIST_CATEGORIES
     if has_previous and _CORRECTING.search(sentence):
         return Intent.CORRECTION
     if has_previous and _ABOUT_THE_ANSWER.search(sentence):
