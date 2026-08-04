@@ -117,6 +117,13 @@ def create_app() -> FastAPI:
         timeout_seconds=settings.banking_timeout_seconds,
         supporting_movements=settings.supporting_movements,
     )
+    # And one for both readers of the address book: the payment form and the conversation. The
+    # same argument as the balance — two lists of contacts that could disagree is worse than one
+    # that is occasionally stale.
+    contacts = HttpContacts(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
     # One adapter for both readers of the balance. The home screen and the conversation showing
     # different figures would be worse than either being wrong, so there is one way to ask.
     accounts = HttpAccountSummary(
@@ -137,8 +144,10 @@ def create_app() -> FastAPI:
         # Validated here, so a rule name this build does not have stops the service
         # rather than silently leaving the rule on.
         settings.guard_policy(),
-        # "¿Cuánto dinero tengo?" is answered from here, with no model in the path.
+        # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
+        # with no model in the path.
         accounts=accounts,
+        contacts=contacts,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
@@ -157,12 +166,7 @@ def create_app() -> FastAPI:
     query_bus.register(GetCardChargesQuery, GetCardChargesHandler(cards))
     query_bus.register(
         ListContactsQuery,
-        ListContactsHandler(
-            HttpContacts(
-                base_url=settings.banking_base_url,
-                timeout_seconds=settings.banking_timeout_seconds,
-            )
-        ),
+        ListContactsHandler(contacts),
     )
     query_bus.register(
         GetAccountSummaryQuery,

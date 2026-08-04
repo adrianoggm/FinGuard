@@ -135,3 +135,6 @@ class Spoken(StrEnum):
     # How much money there is. Read from the ledger, but through the fixed question the home
     # screen asks rather than through a plan, so no model is involved in choosing it.
     BALANCE = "BALANCE"
+    # Who this account can pay. A list, from banking's own restricted role — the question
+    # "¿a quién puedo hacer un bizum?" has an answer that needs no interpreting.
+    CONTACTS = "CONTACTS"

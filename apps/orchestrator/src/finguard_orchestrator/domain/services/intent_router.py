@@ -11,7 +11,9 @@ need no model at all, because the answer is in the previous plan or in this repo
 
 **The order is the design.**
 
-    PAYMENT            first. It is the one where being wrong costs money.
+    LIST_CONTACTS      who can be paid. *Before* PAYMENT, which is the one place that rule is
+                       reversed — see the pattern for why it is safe.
+    PAYMENT            then this. It is the one where being wrong costs money.
     IDENTITY_OR_HELP   about the assistant. Answered from here, never from the ledger.
     CORRECTION         "no me has entendido". What matters is what happens next: a correction must
                        not inherit the plan it is correcting.
@@ -38,6 +40,7 @@ class Intent(StrEnum):
     CORRECTION = "CORRECTION"
     EXPLAIN_PREVIOUS = "EXPLAIN_PREVIOUS"
     ACCOUNT_BALANCE = "ACCOUNT_BALANCE"
+    LIST_CONTACTS = "LIST_CONTACTS"
     FINANCIAL_QUERY = "FINANCIAL_QUERY"
 
 
@@ -69,6 +72,25 @@ _NOT_THE_BALANCE: Final = re.compile(
     r"\bcu[áa]nt[oa]s?\s+(movimientos|compras|cargos|pagos|operaciones|veces|bizums?)\b"
     r"|\bgast[éeoa]|\bingres[éeoa]|\bhe\s+gastado\b|\bme\s+he\s+gastado\b"
     r"|\bqu[ée]\s+(contactos|tarjetas|cuentas)\b",
+    re.IGNORECASE,
+)
+
+
+# Who can be paid, which is a question and not an order.
+#
+# From the reported conversation: "¿podrías decirme qué contactos tengo para mandar bizum?" was read
+# as a payment — "bizum" is a payment word — so the assistant asked for the recipient of a payment
+# nobody had asked to make. The list has been on /v1/contacts since it was written; the conversation
+# could not reach it.
+#
+# **Checked before PAYMENT**, reversing the rule that payments come first. That rule exists because
+# being wrong about a payment costs money, and listing contacts cannot move any — so here the risk
+# runs the other way, and the expensive mistake is refusing to answer a question. What keeps it safe
+# is narrowness: it needs the word "contactos", or an explicit "a quién puedo". No order to pay
+# contains either, which is asserted rather than assumed.
+_ABOUT_CONTACTS: Final = re.compile(
+    r"\bcontactos?\b"
+    r"|\ba\s+qui[ée]n\s+(le\s+)?(puedo|podr[íi]a|puedes|se\s+(le\s+)?puede)\b",
     re.IGNORECASE,
 )
 
@@ -118,6 +140,10 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
     gates the two intents that are *about* that answer, so the same words mean different things on
     the first turn and on the second, which is what "conversation" means.
     """
+    if _ABOUT_CONTACTS.search(sentence):
+        # Before the payment check, and the comment on the pattern is the argument for why. A
+        # sentence naming a contact list is asking who exists, even when it also says "bizum".
+        return Intent.LIST_CONTACTS
     if payment_router.is_payment(sentence):
         # Before everything else. A sentence that both complains and asks for money is a payment:
         # the preview and the confirmation are still in front of it, and the other reading would

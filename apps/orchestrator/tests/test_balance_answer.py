@@ -74,9 +74,18 @@ class FakeLedger:
         return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
 
 
+class FakeContacts:
+    """The address book port. Required, like the balance one, so no build can be half-wired."""
+
+    async def all_of(self, account_id: uuid.UUID) -> tuple:
+        return ()
+
+
 def ask(sentence: str, accounts: FakeAccounts) -> tuple[FakePlanner, FakeLedger, object]:
     planner, ledger = FakePlanner(), FakeLedger()
-    handler = AskFinancialQuestionHandler(planner, ledger, accounts=accounts)
+    handler = AskFinancialQuestionHandler(
+        planner, ledger, accounts=accounts, contacts=FakeContacts()
+    )
     return planner, ledger, handler
 
 

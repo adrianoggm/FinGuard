@@ -107,10 +107,29 @@ class FakeAccounts:
         )
 
 
-def handler_for(result: PlanningResult, ledger: FakeLedger | None = None):
+class FakeContacts:
+    """The address book port. Required, like the balance one, so no build can be half-wired."""
+
+    async def all_of(self, account_id: uuid.UUID) -> tuple:
+        return ()
+
+
+def chat(planner: object, ledger: object) -> AskFinancialQuestionHandler:
+    """The handler with the ports a test is not about.
+
+    Both were made required so that no build can reach a balance question without the port that
+    answers it. Inside a test about something else they are noise, so they live here.
+    """
     return AskFinancialQuestionHandler(
-        FakePlanner(result), ledger or FakeLedger(ANSWER), accounts=FakeAccounts()
+        planner,  # type: ignore[arg-type]
+        ledger,  # type: ignore[arg-type]
+        accounts=FakeAccounts(),
+        contacts=FakeContacts(),
     )
+
+
+def handler_for(result: PlanningResult, ledger: FakeLedger | None = None):
+    return chat(FakePlanner(result), ledger or FakeLedger(ANSWER))
 
 
 async def ask(result: PlanningResult, ledger: FakeLedger | None = None, **kwargs: object):
@@ -132,7 +151,7 @@ async def test_a_question_we_cannot_express_never_reaches_the_model() -> None:
     question about a ratio."""
     planner = FakePlanner(PlanningResult.planned(plan()))
     ledger = FakeLedger(ANSWER)
-    handler = AskFinancialQuestionHandler(planner, ledger, accounts=FakeAccounts())
+    handler = chat(planner, ledger)
 
     result = await handler.handle(
         AskFinancialQuestionQuery(
@@ -156,9 +175,7 @@ async def test_a_plan_that_contradicts_the_question_never_reaches_the_ledger() -
     """
     forged = FinancialPlan(direction=Direction.ALL, period=LAST_MONTH)
     ledger = FakeLedger(ANSWER)
-    handler = AskFinancialQuestionHandler(
-        FakePlanner(PlanningResult.planned(forged)), ledger, accounts=FakeAccounts()
-    )
+    handler = chat(FakePlanner(PlanningResult.planned(forged)), ledger)
 
     result = await handler.handle(
         AskFinancialQuestionQuery(
@@ -329,11 +346,7 @@ async def test_the_plan_is_streamed_before_any_figure() -> None:
 async def test_a_decline_stops_the_stream_without_querying() -> None:
     ledger = FakeLedger(ANSWER)
     query = AskFinancialQuestionQuery(sentence="x", account_id=ACCOUNT, today=TODAY)
-    handler = AskFinancialQuestionHandler(
-        FakePlanner(PlanningResult.needs_clarification("¿de qué mes?")),
-        ledger,
-        accounts=FakeAccounts(),
-    )
+    handler = chat(FakePlanner(PlanningResult.needs_clarification("¿de qué mes?")), ledger)
 
     steps = [step async for step in handler.stream(query)]
 
@@ -346,7 +359,7 @@ async def test_a_decline_stops_the_stream_without_querying() -> None:
 
 async def test_the_previous_plan_reaches_the_planner() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
-    handler = AskFinancialQuestionHandler(planner, FakeLedger(ANSWER), accounts=FakeAccounts())
+    handler = chat(planner, FakeLedger(ANSWER))
     context = plan(categories=("GROCERIES",))
 
     await handler.handle(
@@ -409,9 +422,7 @@ async def test_asking_who_it_is_never_reaches_the_planner() -> None:
     answer to the question."""
     planner, ledger = FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)
 
-    result = await AskFinancialQuestionHandler(planner, ledger, accounts=FakeAccounts()).handle(
-        spoken("¿quién eres?")
-    )
+    result = await chat(planner, ledger).handle(spoken("¿quién eres?"))
 
     assert result.outcome == "IDENTITY"
     assert "FinGuard" in result.text
@@ -422,7 +433,7 @@ async def test_asking_who_it_is_never_reaches_the_planner() -> None:
 async def test_explaining_the_last_answer_reads_the_plan_and_not_the_ledger() -> None:
     planner, ledger = FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)
 
-    result = await AskFinancialQuestionHandler(planner, ledger, accounts=FakeAccounts()).handle(
+    result = await chat(planner, ledger).handle(
         spoken("¿en qué categoría has clasificado el cine?", plan(categories=("RESTAURANTS",)))
     )
 
@@ -438,7 +449,7 @@ async def test_a_correction_does_not_inherit_the_plan_it_corrects() -> None:
     onto a category the user has just said was wrong."""
     planner = FakePlanner(PlanningResult.planned(plan()))
 
-    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER), accounts=FakeAccounts()).handle(
+    await chat(planner, FakeLedger(ANSWER)).handle(
         spoken("no me has entendido, me refería al alquiler", plan(categories=("RESTAURANTS",)))
     )
 
@@ -452,9 +463,7 @@ async def test_an_ordinary_follow_up_still_inherits() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     before = plan(categories=("RESTAURANTS",))
 
-    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER), accounts=FakeAccounts()).handle(
-        spoken("¿y este mes?", before)
-    )
+    await chat(planner, FakeLedger(ANSWER)).handle(spoken("¿y este mes?", before))
 
     assert planner.previous == before
 
@@ -479,7 +488,7 @@ async def test_answering_the_period_finishes_the_question_instead_of_restarting_
     planner = FakePlanner(PlanningResult.planned(plan()))
     ledger = FakeLedger(ANSWER)
 
-    result = await AskFinancialQuestionHandler(planner, ledger, accounts=FakeAccounts()).handle(
+    result = await chat(planner, ledger).handle(
         AskFinancialQuestionQuery(
             sentence="este año",
             account_id=ACCOUNT,
@@ -500,9 +509,7 @@ async def test_a_reply_that_names_no_window_goes_to_the_model() -> None:
     the ordinary path rather than being answered from a guess."""
     planner = FakePlanner(PlanningResult.needs_clarification("¿De qué periodo?", RENT_DRAFT))
 
-    result = await AskFinancialQuestionHandler(
-        planner, FakeLedger(ANSWER), accounts=FakeAccounts()
-    ).handle(
+    result = await chat(planner, FakeLedger(ANSWER)).handle(
         AskFinancialQuestionQuery(
             sentence="no sé", account_id=ACCOUNT, today=TODAY, pending_draft=RENT_DRAFT
         )
@@ -518,9 +525,7 @@ async def test_a_reply_that_says_more_than_the_window_goes_to_the_model() -> Non
     it — a refusal the shortcut itself created. So the shortcut stands aside instead."""
     planner = FakePlanner(PlanningResult.planned(plan(metric=Metric.COUNT)))
 
-    result = await AskFinancialQuestionHandler(
-        planner, FakeLedger(ANSWER), accounts=FakeAccounts()
-    ).handle(
+    result = await chat(planner, FakeLedger(ANSWER)).handle(
         AskFinancialQuestionQuery(
             sentence="¿cuántas veces este año?",
             account_id=ACCOUNT,
@@ -541,7 +546,7 @@ async def test_a_draft_that_is_not_missing_a_window_is_not_completed() -> None:
     )
     planner = FakePlanner(PlanningResult.planned(plan()))
 
-    await AskFinancialQuestionHandler(planner, FakeLedger(ANSWER), accounts=FakeAccounts()).handle(
+    await chat(planner, FakeLedger(ANSWER)).handle(
         AskFinancialQuestionQuery(
             sentence="este año", account_id=ACCOUNT, today=TODAY, pending_draft=complete
         )
@@ -557,7 +562,7 @@ async def test_the_guard_still_runs_before_the_completion() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     ledger = FakeLedger(ANSWER)
 
-    result = await AskFinancialQuestionHandler(planner, ledger, accounts=FakeAccounts()).handle(
+    result = await chat(planner, ledger).handle(
         AskFinancialQuestionQuery(
             sentence="este año, ¿y qué me recomiendas para ahorrar?",
             account_id=ACCOUNT,
@@ -608,7 +613,7 @@ async def test_the_largest_expense_is_refused_and_told_why() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     ledger = FakeLedger(ANSWER)
 
-    result = await AskFinancialQuestionHandler(planner, ledger, accounts=FakeAccounts()).handle(
+    result = await chat(planner, ledger).handle(
         AskFinancialQuestionQuery(
             sentence="En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?",
             account_id=ACCOUNT,

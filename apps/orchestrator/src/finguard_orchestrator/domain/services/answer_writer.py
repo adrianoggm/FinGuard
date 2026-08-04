@@ -15,6 +15,7 @@ makes.
 
 from finguard_orchestrator.domain.enums import Metric
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
@@ -61,6 +62,20 @@ def balance(summary: AccountSummary) -> str:
         return f"Tienes {available} en tu cuenta."
     booked = money(summary.booked_minor, summary.currency)
     return f"Tienes {available} disponibles en tu cuenta. El saldo contabilizado es de {booked}."
+
+
+def contacts(found: tuple[Contact, ...]) -> str:
+    """Who can be paid, in words.
+
+    Names only. The phone number travels beside this as data — it is what tells two Martas
+    apart — but a chat line carrying both numbers buries the answer in digits nobody asked
+    for. Disambiguating is the client's job, with the identifiers it also receives.
+    """
+    if not found:
+        return "Todavía no tienes contactos guardados para enviar dinero."
+    names = ", ".join(contact.display_name for contact in found)
+    plural = "estos contactos" if len(found) > 1 else "este contacto"
+    return f"Tienes {plural} para enviar dinero: {names}."
 
 
 def window_of(plan: FinancialPlan) -> str:

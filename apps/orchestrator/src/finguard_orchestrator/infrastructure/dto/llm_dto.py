@@ -126,6 +126,12 @@ class SpokenMovementResponse(_Payload):
     category: str | None = None
 
 
+class SpokenContactResponse(_Payload):
+    contact_id: str
+    display_name: str
+    phone: str
+
+
 class QuestionResponse(_Payload):
     """The answer, and everything needed to disbelieve it.
 
@@ -152,6 +158,9 @@ class QuestionResponse(_Payload):
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
+    # Filled only by a question about who can be paid. The identifier is what lets a client offer
+    # a choice and send back *which* contact instead of a name to be interpreted a second time.
+    contacts: list[SpokenContactResponse] = []
 
 
 class SummaryMovementResponse(_Payload):

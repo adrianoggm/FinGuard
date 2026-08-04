@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.errors import (
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
+from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.services import (
@@ -72,6 +73,19 @@ class SpokenPlan:
 
 
 @dataclass(frozen=True)
+class SpokenContact:
+    """Somebody who can be paid, flat like every Result piece.
+
+    The identifier is here so a client can offer a choice and send back *which* contact rather
+    than a name to be interpreted again — which is how money reaches the wrong Marta.
+    """
+
+    contact_id: str
+    display_name: str
+    phone: str
+
+
+@dataclass(frozen=True)
 class SpokenMovement:
     occurred_at: str
     description: str
@@ -104,6 +118,9 @@ class AskFinancialQuestionResult:
     movement_count: int | None = None
     groups: list[SpokenGroup] = field(default_factory=list)
     movements: list[SpokenMovement] = field(default_factory=list)
+    # Filled only by a question about who can be paid. Data as well as prose, so a client
+    # can draw one button per contact instead of parsing names out of a paragraph.
+    contacts: list[SpokenContact] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -164,11 +181,13 @@ class AskFinancialQuestionHandler:
         policy: GuardPolicy = EVERY_RULE,
         *,
         accounts: AccountSummaryPort,
+        contacts: ContactDirectoryPort,
     ) -> None:
         self._planner = planner
         self._queries = queries
         self._policy = policy
         self._accounts = accounts
+        self._contacts = contacts
 
     # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
     # handler without it would fall back to the planner, which is the bug this exists to fix — and
@@ -207,6 +226,13 @@ class AskFinancialQuestionHandler:
                 plan=answer_writer.describe(previous) if previous else None,
                 plan_context=_spoken(previous) if previous else None,
             )
+            return
+
+        if intent is Intent.LIST_CONTACTS:
+            # "¿Qué contactos tengo para mandar bizum?" used to be read as a payment, because
+            # "bizum" is a payment word — so the assistant asked who to pay, about a payment
+            # nobody had ordered. The list needs no model and no plan.
+            yield await self._contact_list(query, previous)
             return
 
         if intent is Intent.ACCOUNT_BALANCE:
@@ -265,6 +291,36 @@ class AskFinancialQuestionHandler:
         yield Stage("planned", answer_writer.describe(planned.plan))
         yield Stage("querying")
         yield await self._answer(query, planned.plan)
+
+    async def _contact_list(
+        self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None
+    ) -> AskFinancialQuestionResult:
+        """Who can be paid. Carries `previous` through for the same reason the balance does: a
+        question about the address book is a turn in the conversation, not a reset."""
+        try:
+            found = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tus contactos ahora mismo. Vuelve a intentarlo.",
+                plan=answer_writer.describe(previous) if previous else None,
+                plan_context=_spoken(previous) if previous else None,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.CONTACTS.value,
+            text=answer_writer.contacts(found),
+            plan=answer_writer.describe(previous) if previous else None,
+            plan_context=_spoken(previous) if previous else None,
+            contacts=[
+                SpokenContact(
+                    contact_id=str(contact.contact_id),
+                    display_name=contact.display_name,
+                    phone=contact.phone,
+                )
+                for contact in found
+            ],
+        )
 
     async def _balance(
         self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None

@@ -185,3 +185,51 @@ def test_a_question_about_movements_is_not_a_balance(sentence: str) -> None:
     """A false positive here is expensive: it would answer "¿cuánto gasté?" with the balance, which
     is a real figure about something else — the same class of error the balance bug itself is."""
     assert route(sentence) is not Intent.ACCOUNT_BALANCE
+
+
+# --- who can I pay -------------------------------------------------------------------
+#
+# From the reported conversation:
+#
+#     "Perdona, ¿podrías decirme qué contactos tengo para mandar bizum?"
+#     → "¿Para qué contacto te gustaría enviar un bizum?"
+#
+# It was read as a payment — "bizum" is a payment word — so the assistant asked for the recipient
+# of a payment nobody had asked to make. The user had asked *who is available*, which is a list the
+# service has served on /v1/contacts since it was written.
+#
+# **Checked before PAYMENT, which reverses the rule that payments come first.** That rule exists
+# because being wrong about a payment costs money; listing contacts cannot move any, so the risk
+# runs the other way here. What keeps it safe is the narrowness of the pattern: it needs the word
+# "contactos" or an explicit "a quién puedo", and no real payment order contains either.
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Perdona, ¿podrías decirme qué contactos tengo para mandar bizum?",
+        "¿qué contactos tengo?",
+        "mis contactos",
+        "¿a quién puedo hacer un bizum?",
+        "¿a quién puedo enviar dinero?",
+        "lista de contactos",
+        "enséñame los contactos",
+    ],
+)
+def test_asking_who_can_be_paid_is_a_question(sentence: str) -> None:
+    assert route(sentence) is Intent.LIST_CONTACTS
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum de 20 euros a Marta",
+        "mándale 15 euros a Marta Solis",
+        "quiero hacerle 15 euros de bizum a Marta con el concepto tapas",
+        "transfiere 50 euros a Aitor",
+    ],
+)
+def test_an_order_to_pay_is_still_a_payment(sentence: str) -> None:
+    """The reversal above must not cost a single real payment. None of these names a contact list,
+    and being wrong here is the expensive direction."""
+    assert route(sentence) is Intent.PAYMENT
