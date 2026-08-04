@@ -71,6 +71,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const choices = recipientChoices(thread);
+  const replies = quickReplies(thread);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
@@ -156,6 +157,15 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
               >
                 <strong>{candidate.display_name}</strong>
                 <small>{candidate.phone}</small>
+              </button>
+            ))}
+          </div>
+        )}
+        {replies.length > 0 && !busy && !awaitingConfirmation(thread) && choices.length === 0 && (
+          <div className="suggestions" role="group" aria-label="Acciones sugeridas">
+            {replies.map((reply) => (
+              <button key={reply} onClick={() => send(reply)}>
+                {reply}
               </button>
             ))}
           </div>
@@ -253,6 +263,12 @@ export function recipientChoices(thread: Thread) {
     return [];
   }
   return conversation.candidates;
+}
+
+/** Actions attached to the latest answer. Older suggestions must never remain live. */
+export function quickReplies(thread: Thread): string[] {
+  const last = thread.turns.at(-1);
+  return last?.who === "assistant" ? last.answer.suggestions : [];
 }
 
 const EXAMPLES = [

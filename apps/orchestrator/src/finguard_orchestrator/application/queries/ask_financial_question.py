@@ -43,6 +43,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     intent_router,
     plan_verifier,
+    query_recovery,
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
@@ -138,6 +139,7 @@ class AskFinancialQuestionResult:
     # Filled only by a question about who can be paid. Data as well as prose, so a client
     # can draw one button per contact instead of parsing names out of a paragraph.
     contacts: list[SpokenContact] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -224,6 +226,18 @@ class AskFinancialQuestionHandler:
         planning_previous = previous if isinstance(previous, FinancialPlan) else None
         force_follow_up = False
         intent = intent_router.route(query.sentence, has_previous=previous is not None)
+
+        relaxed = query_recovery.relaxation(query.sentence, previous)
+        if relaxed is not None:
+            # These are the exact actions offered after an empty result. They patch one field in
+            # code and therefore cannot drift with the configured model.
+            yield Stage("planned", answer_writer.describe(relaxed))
+            yield Stage("querying")
+            if isinstance(relaxed, TopMovements):
+                yield await self._ranked(query, relaxed)
+            else:
+                yield await self._answer(query, relaxed)
+            return
 
         if intent is Intent.IDENTITY_OR_HELP:
             # Answered from here, never from the ledger and never from a model. "¿Quién eres?" used
@@ -620,6 +634,7 @@ class AskFinancialQuestionHandler:
             ]
             if found
             else [],
+            suggestions=query_recovery.empty_suggestions(ranking) if found is None else [],
             # Remembered even when nothing was found: "¿y el segundo?" after "no hay quinto" is a
             # reasonable thing to say, and the question it refers to is this one.
             conversation=query.conversation.answered(ranking),
@@ -807,4 +822,5 @@ def _answered(
             )
             for m in answer.movements
         ],
+        suggestions=query_recovery.empty_suggestions(plan) if answer.is_empty else [],
     )

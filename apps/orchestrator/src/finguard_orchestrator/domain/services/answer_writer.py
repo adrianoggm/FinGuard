@@ -158,7 +158,10 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
     if movement is None:
         # "El quinto" of three movements has no answer. Saying which position could not be found
         # beats reporting a zero, which reads as a movement of nothing.
-        return f"No hay {_position(ranking.rank).lower()} movimiento en ese periodo."
+        return (
+            f"No hay {_position(ranking.rank).lower()} movimiento en ese periodo. "
+            f"Puedo ampliar el periodo o quitar algún filtro de la búsqueda."
+        )
 
     amount = money(movement.amount_minor, "EUR")
     what = movement.merchant_name or movement.description
@@ -244,7 +247,15 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
         # The second is usually a plan that was wrong, and saying so lets the user
         # correct it instead of believing a zero.
-        return f"No he encontrado movimientos{about} {window}."
+        if plan.categories and plan.merchants:
+            next_step = "buscar sin categoría, buscar sin comercio o ampliar el periodo"
+        elif plan.categories:
+            next_step = "buscar sin categoría o ampliar el periodo"
+        elif plan.merchants:
+            next_step = "buscar sin comercio o ampliar el periodo"
+        else:
+            next_step = "ampliar el periodo o consultar las categorías disponibles"
+        return f"No he encontrado movimientos{about} {window}. Puedes {next_step}."
 
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
     if counting:

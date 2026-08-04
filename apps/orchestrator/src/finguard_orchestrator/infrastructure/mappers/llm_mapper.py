@@ -178,6 +178,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
             )
             for movement in result.movements
         ],
+        suggestions=result.suggestions,
     )
 
 

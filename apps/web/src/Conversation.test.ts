@@ -24,6 +24,7 @@ import {
   Conversation,
   awaitingConfirmation,
   pendingIntent,
+  quickReplies,
   recipientChoices,
   settled,
   withChoice,
@@ -75,6 +76,7 @@ function answer(fields: Partial<Answer> = {}): Answer {
     movement_count: null,
     groups: [],
     movements: [],
+    suggestions: [],
     ...fields,
   };
 }
@@ -147,6 +149,38 @@ describe("the state the service sent", () => {
 });
 
 describe("what the client still works out for itself", () => {
+  it("renders only the latest answer's structured recovery actions", () => {
+    const retrying = thread({
+      turns: [
+        { who: "assistant", answer: answer({ suggestions: ["Reintentar", "Cambiar consulta"] }) },
+      ],
+    });
+
+    expect(quickReplies(retrying)).toEqual(["Reintentar", "Cambiar consulta"]);
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: retrying,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+    expect(markup).toContain('aria-label="Acciones sugeridas"');
+    expect(markup).toContain("Reintentar");
+  });
+
+  it("does not keep an older action live after the user writes another turn", () => {
+    const movedOn = thread({
+      turns: [
+        { who: "assistant", answer: answer({ suggestions: ["Reintentar"] }) },
+        { who: "user", text: "otra cosa" },
+      ],
+    });
+
+    expect(quickReplies(movedOn)).toEqual([]);
+  });
+
   it("knows a payment is waiting for a yes", () => {
     const holding = thread({
       conversation: state({
