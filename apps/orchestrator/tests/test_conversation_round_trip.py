@@ -132,7 +132,10 @@ def test_a_half_built_payment_survives_with_everything_on_it() -> None:
 def test_a_confirmation_survives() -> None:
     out = IDLE.with_active(
         PaymentConfirmation(
-            intent_id=uuid.UUID(int=9), recipient="Marta Solis Vega", amount_minor=1_500
+            intent_id=uuid.UUID(int=9),
+            recipient="Marta Solis Vega",
+            amount_minor=1_500,
+            concept="tapas",
         )
     )
 
@@ -140,6 +143,8 @@ def test_a_confirmation_survives() -> None:
 
     assert back == out
     assert back.awaiting is Slot.CONFIRMATION
+    assert isinstance(back.active, PaymentConfirmation)
+    assert back.active.concept == "tapas"
 
 
 def test_the_memory_survives_alongside_a_workflow() -> None:

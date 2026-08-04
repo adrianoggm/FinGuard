@@ -802,6 +802,11 @@ async def ask(
             sentence=request.question,
             account_id=who.account_id,
             today=today,
+            # The holder's zone, exactly like every screen endpoint above. Left out, the chat
+            # answered a Canarian holder about a Madrid day: between 00:00 and 01:00 peninsular
+            # the two are different dates, and the movements screen and the conversation would
+            # disagree about "hoy" on the same phone.
+            reporting_timezone=who.reporting_timezone,
             conversation=was,
         )
     )
@@ -868,6 +873,10 @@ async def ask_streaming(
         sentence=request.question,
         account_id=who.account_id,
         today=today,
+        # Here as well, and for the reason the whole streaming path exists twice: the browser
+        # types into *this* endpoint, so a zone that only reached the other one was a zone the
+        # conversation never used.
+        reporting_timezone=who.reporting_timezone,
         conversation=was,
     )
 

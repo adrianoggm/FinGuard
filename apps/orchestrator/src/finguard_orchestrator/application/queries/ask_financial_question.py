@@ -678,7 +678,10 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.ranked(found, ranking),
             plan=answer_writer.describe(ranking),
-            currency="EUR" if found else None,
+            # Banking's, never this layer's. A hard-coded "EUR" here labelled a movement on a
+            # dollar account as euros — the one kind of wrong answer a ledger-backed product
+            # cannot afford, because the figure beside it is correct.
+            currency=found.currency if found else None,
             total_minor=found.amount_minor if found else None,
             movement_count=1 if found else 0,
             movements=[

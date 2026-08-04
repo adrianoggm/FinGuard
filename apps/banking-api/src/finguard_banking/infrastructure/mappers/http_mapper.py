@@ -108,6 +108,7 @@ def ranked_to_dto(result: RankedMovementResult) -> RankedMovementResponse:
     return RankedMovementResponse(
         account_id=result.account_id,
         rank=result.rank,
+        currency=result.currency,
         movement=_movement_to_dto(result.movement) if result.movement is not None else None,
     )
 

@@ -49,6 +49,7 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
     workflow: null,
     awaiting: null,
     last_plan: null,
+    retry_plan: null,
     draft: null,
     capability: null,
     rank: null,

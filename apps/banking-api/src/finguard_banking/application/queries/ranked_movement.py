@@ -28,6 +28,11 @@ class RankedMovementResult:
     # Flat, like every other Result piece: no domain object leaves this layer, so the amount arrives
     # as minor units beside its direction rather than as a Money.
     movement: SummaryMovement | None = None
+    # What the amount is denominated in. It travels beside the figure for the same reason the
+    # aggregate's does: the caller was writing "EUR" next to every ranked movement because nothing
+    # told it otherwise, so an account in USD read as euros. None when there is no movement, since
+    # there is then no amount to denominate.
+    currency: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,7 @@ class RankedMovementHandler:
         return RankedMovementResult(
             account_id=query.plan.account_id,
             rank=query.rank,
+            currency=found.amount.currency if found is not None else None,
             movement=SummaryMovement(
                 transaction_id=found.transaction_id,
                 occurred_at=found.occurred_at,

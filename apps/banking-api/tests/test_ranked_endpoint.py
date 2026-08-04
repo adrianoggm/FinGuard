@@ -38,7 +38,10 @@ class FakeRanking:
     async def handle(self, query: RankedMovementQuery) -> RankedMovementResult:
         self.asked = query
         return RankedMovementResult(
-            account_id=query.plan.account_id, rank=query.rank, movement=self._movement
+            account_id=query.plan.account_id,
+            rank=query.rank,
+            movement=self._movement,
+            currency="USD" if self._movement is not None else None,
         )
 
 
@@ -124,3 +127,29 @@ def test_a_ranking_needs_a_window_like_everything_else(client_and_handler) -> No
     del request["period"]
 
     assert client.post("/v1/financial-queries/ranked", json=request).status_code == 422
+
+
+def test_the_answer_says_what_the_amount_is_denominated_in(client_and_handler) -> None:
+    """Beside the movement, like the aggregate's currency is beside its total.
+
+    Without it the caller had nothing to write next to the figure, so the assistant wrote "EUR" and
+    a charge on a dollar account was labelled in euros beside a number that was perfectly correct.
+    A wrong currency on a right amount is the hardest kind of wrong answer to notice.
+    """
+    client, _ = client_and_handler
+
+    answered = client.post("/v1/financial-queries/ranked", json=body()).json()
+
+    assert answered["currency"] == "USD"
+
+
+def test_nothing_found_denominates_nothing(client_and_handler) -> None:
+    """There is no amount, so there is no currency. A default here would be a fact invented about
+    an account nobody read."""
+    client, handler = client_and_handler
+    handler._movement = None  # noqa: SLF001 - the fixture's one knob
+
+    answered = client.post("/v1/financial-queries/ranked", json=body()).json()
+
+    assert answered["movement"] is None
+    assert answered["currency"] is None

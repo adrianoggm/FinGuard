@@ -122,8 +122,13 @@ class HttpFinancialQuery:
             raise BankingUnavailableError(f"HTTP {response.status_code}: {_detail(response)}")
 
         try:
-            found = response.json().get("movement")
-            return movement_from_body(found) if found else None
+            answered = response.json()
+            found = answered.get("movement")
+            if not found:
+                return None
+            # The currency belongs to the answer rather than the row, so it is attached here. The
+            # assistant used to write "EUR" beside every ranked movement because nothing carried it.
+            return movement_from_body(found, currency=answered.get("currency"))
         except (ValueError, KeyError, TypeError) as exc:
             raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
 
@@ -250,11 +255,15 @@ def from_body(body: Any, *, account_id: UUID | None = None) -> QueryAnswer:
     )
 
 
-def movement_from_body(movement: Any) -> Movement:
+def movement_from_body(movement: Any, *, currency: str | None = None) -> Movement:
     """One movement, from banking's camelCase.
 
     Shared by the supporting movements of an aggregate and the single row of a ranking. Two copies
     would drift the first time a field is added to one of them.
+
+    `currency` is the ranking's: there the movement *is* the answer, so it has to carry what its
+    amount is denominated in. A supporting movement leaves it absent, because the aggregate beside
+    it already says so once.
     """
     return Movement(
         occurred_at=_moment(movement["occurredAt"]),
@@ -265,6 +274,7 @@ def movement_from_body(movement: Any) -> Movement:
         transaction_id=movement.get("transactionId"),
         category_is_custom=bool(movement.get("categoryIsCustom", False)),
         category=movement.get("category"),
+        currency=currency,
     )
 
 
