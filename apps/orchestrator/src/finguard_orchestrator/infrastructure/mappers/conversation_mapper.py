@@ -10,7 +10,7 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
-import uuid
+from typing import Any
 
 from finguard_orchestrator.domain.enums import Action
 from finguard_orchestrator.domain.models.contact import Contact
@@ -100,8 +100,10 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     client that forgets to send one gets a fresh conversation instead of a rejection.
 
     A payload whose `workflow` does not match the fields it carries — PAYMENT_CONFIRMATION with no
-    intent, a clarification with no draft — becomes idle too. It cannot have come from here, and
-    idle is the reading that cannot act on it.
+    intent, a clarification with no draft — never reaches this function: the payload refuses itself
+    and the caller gets a 422. It used to become idle here, which was quieter and worse. A state
+    nobody could have been in is a client bug or an attempt, and silently reinterpreting it as "no
+    conversation" tells whoever sent it nothing while discarding whatever was really under way.
     """
     if payload is None or payload.workflow is None:
         return Conversation(
@@ -118,44 +120,52 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
 
 
 def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
+    """The state the payload describes.
+
+    Nothing is recovered here any more. The payload's own validator has already refused a workflow
+    whose fields do not match it, so a PAYMENT_CONFIRMATION reaching this function has an intent and
+    a PAYMENT_IN_PROGRESS has a payment. That is why the asserts below are asserts and not branches:
+    they are the invariant restated, not a case a caller can produce.
+    """
     match payload.workflow:
         case Workflow.FINANCIAL_CLARIFICATION:
-            if payload.draft is None:
-                return None
+            assert payload.draft is not None  # the payload's validator requires it
             return FinancialClarification(
                 draft=draft_to_domain(payload.draft),
                 awaiting=payload.awaiting or Slot.WINDOW,
             )
         case Workflow.UNSUPPORTED_CAPABILITY:
-            if not payload.capability:
-                return None
+            assert payload.capability  # the payload's validator requires it
             return UnsupportedCapability(capability=payload.capability)
         case Workflow.PAYMENT_IN_PROGRESS:
+            assert payload.payment is not None  # the payload's validator requires it
             return PaymentInProgress(
                 draft=_payment_to_domain(payload.payment),
                 awaiting=payload.awaiting or Slot.AMOUNT,
                 candidates=tuple(
-                    Contact(uuid.UUID(row.contact_id), row.display_name, row.phone)
+                    Contact(row.contact_id, row.display_name, row.phone)
                     for row in payload.candidates
                 ),
                 suspended=payload.suspended,
             )
         case Workflow.PAYMENT_CONFIRMATION:
-            if not payload.intent_id or not payload.recipient or payload.amount_minor is None:
-                return None
+            assert payload.intent_id is not None  # the payload's validator requires all three
+            assert payload.recipient is not None
+            assert payload.amount_minor is not None
             return PaymentConfirmation(
-                intent_id=uuid.UUID(payload.intent_id),
+                intent_id=payload.intent_id,
                 recipient=payload.recipient,
                 amount_minor=payload.amount_minor,
+                # The domain's default is EUR, and taking it here is how a preview prepared in
+                # dollars came back from a round trip denominated in euros.
+                currency=payload.currency or "EUR",
                 concept=payload.concept,
             )
         case _:
             return None
 
 
-def _payment_to_domain(payload: PaymentDraftPayload | None) -> PaymentDraft:
-    if payload is None:
-        return PaymentDraft()
+def _payment_to_domain(payload: PaymentDraftPayload) -> PaymentDraft:
     return PaymentDraft(
         recipient_name=payload.recipient_name,
         recipient_contact_id=payload.recipient_contact_id,
@@ -170,47 +180,57 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
 
     Everything the next turn needs is here, and nothing else: a client that reads this to decide
     what to keep is the design this replaced.
-    """
-    payload = ConversationPayload(
-        workflow=workflow_of(conversation.active),
-        awaiting=conversation.awaiting,
-        last_plan=plan_payload(conversation.last_plan) if conversation.last_plan else None,
-        retry_plan=plan_payload(conversation.retry_plan) if conversation.retry_plan else None,
-    )
-    active = conversation.active
 
+    Built in one call rather than a base plus `model_copy` patches, because the payload validates
+    itself now: a half-filled PAYMENT_CONFIRMATION is refused, and constructing one on the way to
+    filling it would make this function raise on its own correct output.
+    """
+    return ConversationPayload.model_validate(
+        {
+            "workflow": workflow_of(conversation.active),
+            "awaiting": conversation.awaiting,
+            "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
+            "retry_plan": (
+                plan_payload(conversation.retry_plan) if conversation.retry_plan else None
+            ),
+            **_active_payload(conversation.active),
+        }
+    )
+
+
+def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
+    """The fields that belong to the active state, and only those."""
     if isinstance(active, FinancialClarification):
-        return payload.model_copy(update={"draft": plan_payload(active.draft)})
+        return {"draft": plan_payload(active.draft)}
     if isinstance(active, UnsupportedCapability):
-        return payload.model_copy(update={"capability": active.capability})
+        return {"capability": active.capability}
     if isinstance(active, PaymentInProgress):
-        return payload.model_copy(
-            update={
-                "payment": PaymentDraftPayload(
-                    recipient_name=active.draft.recipient_name,
-                    recipient_contact_id=active.draft.recipient_contact_id,
-                    amount_minor=active.draft.amount_minor,
-                    currency=active.draft.currency,
-                    concept=active.draft.concept,
-                ),
-                "suspended": active.suspended,
-                "candidates": [
-                    SpokenContactResponse(
-                        contact_id=str(contact.contact_id),
-                        display_name=contact.display_name,
-                        phone=contact.phone,
-                    )
-                    for contact in active.candidates
-                ],
-            }
-        )
+        return {
+            "payment": PaymentDraftPayload(
+                recipient_name=active.draft.recipient_name,
+                recipient_contact_id=active.draft.recipient_contact_id,
+                amount_minor=active.draft.amount_minor,
+                currency=active.draft.currency,
+                concept=active.draft.concept,
+            ),
+            "suspended": active.suspended,
+            "candidates": [
+                SpokenContactResponse(
+                    contact_id=contact.contact_id,
+                    display_name=contact.display_name,
+                    phone=contact.phone,
+                )
+                for contact in active.candidates
+            ],
+        }
     if isinstance(active, PaymentConfirmation):
-        return payload.model_copy(
-            update={
-                "intent_id": str(active.intent_id),
-                "recipient": active.recipient,
-                "amount_minor": active.amount_minor,
-                "concept": active.concept,
-            }
-        )
-    return payload
+        return {
+            "intent_id": active.intent_id,
+            "recipient": active.recipient,
+            "amount_minor": active.amount_minor,
+            # Sent as well as read. Dropping it here was the whole of the round-trip loss: the
+            # payload had nowhere to put a currency, so the far side rebuilt the default.
+            "currency": active.currency,
+            "concept": active.concept,
+        }
+    return {}

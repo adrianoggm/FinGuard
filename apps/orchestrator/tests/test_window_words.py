@@ -14,10 +14,13 @@ than being guessed at — the cost of a miss is one more turn, and the cost of a
 a figure about the wrong month.
 """
 
+from datetime import date
+
 import pytest
 
 from finguard_orchestrator.domain.enums import Period
 from finguard_orchestrator.domain.services import window_words
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, RelativePeriod
 
 
 @pytest.mark.parametrize(
@@ -69,10 +72,11 @@ def test_anything_else_is_not_a_window(sentence: str) -> None:
     assert window_words.window_in(sentence) is None
 
 
-def test_last_year_is_not_a_window_because_the_contract_has_none() -> None:
-    """A harder exclusion than the ambiguous ones: "el año pasado" is perfectly clear, and banking's
-    period vocabulary simply has no LAST_YEAR to translate it into. Reading it as THIS_YEAR would
-    produce a figure about a different year, which is what this whole file exists to avoid."""
+def test_last_year_needs_a_reference_day_and_not_a_period_name() -> None:
+    """It was excluded because banking's period vocabulary has no LAST_YEAR. That was the wrong
+    conclusion from a right premise: a plan carries either a period or an explicit range, and a
+    calendar year is a range. Without a reference day there is still nothing to resolve it against,
+    and this service does not read a clock."""
     assert window_words.window_in("el año pasado") is None
 
 
@@ -118,7 +122,89 @@ def test_the_year_is_read_however_it_is_phrased(sentence: str) -> None:
 
 
 def test_last_year_is_still_not_this_year() -> None:
-    """The one that must not be swept up. "Del año pasado" is a window this vocabulary does not
-    have, and reading it as THIS_YEAR would answer about a different year."""
-    assert window_words.window_in("del año pasado") is None
-    assert window_words.window_in("el año pasado") is None
+    """The one that must not be swept up. "Del año pasado" ends in a phrase the table reads as this
+    year, and answering it as this year would be a figure about a different one."""
+    assert window_words.window_in("del año pasado") != RelativePeriod(period=Period.THIS_YEAR)
+    assert window_words.window_in("el año pasado") != RelativePeriod(period=Period.THIS_YEAR)
+
+
+# --- years, months and the loop they caused -------------------------------------------
+#
+# From the report:
+#
+#     "el último año"   → not read, so the model asked for the period again, twice
+#     "el año anterior" → answered as the last twelve months, after a question about July
+#     "durante todo el año 2025" → the window did not change at all
+#
+# The first is a counted period in the unit the contract has. The other two are ranges.
+
+TODAY = date(2026, 8, 4)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "months"),
+    [("el último año", 12), ("los últimos 2 años", 24), ("últimos 2 años", 24)],
+)
+def test_a_counted_year_is_counted_in_months(sentence: str, months: int) -> None:
+    """LAST_N_MONTHS is the only counted window longer than a day the contract has, so a year is
+    twelve of them. Leaving the unit out is what sent "el último año" to the model."""
+    assert window_words.window_in(sentence, today=TODAY) == RelativePeriod(
+        period=Period.LAST_N_MONTHS, n=months
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["en 2025", "durante 2025", "del 2025", "todo el año 2025", "el año 2025", "en el año 2025"],
+)
+def test_a_named_year_is_the_range_it_is(sentence: str) -> None:
+    assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(
+        start=date(2025, 1, 1), end=date(2025, 12, 31)
+    )
+
+
+def test_last_year_is_the_previous_calendar_year() -> None:
+    assert window_words.window_in("el año pasado", today=TODAY) == AbsoluteRange(
+        start=date(2025, 1, 1), end=date(2025, 12, 31)
+    )
+
+
+def test_a_four_digit_number_that_is_not_a_year_is_not_a_window() -> None:
+    """A marker is required. "Gasté 2025 euros" is an amount, and reading it as a year would
+    answer a question about one purchase with a whole calendar."""
+    assert window_words.window_in("gasté 2025 euros en agosto", today=TODAY) is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "start", "end"),
+    [
+        ("en julio de 2026", date(2026, 7, 1), date(2026, 7, 31)),
+        ("julio de este año", date(2026, 7, 1), date(2026, 7, 31)),
+        ("en febrero de 2024", date(2024, 2, 1), date(2024, 2, 29)),
+        ("en febrero de 2025", date(2025, 2, 1), date(2025, 2, 28)),
+    ],
+)
+def test_a_month_of_a_year_is_that_month(sentence: str, start: date, end: date) -> None:
+    """Read before the year, because "julio de 2026" contains "de 2026" — a year rule that ran
+    first would answer a question about one month with twelve. February is in here because it is
+    the month whose last day moves."""
+    assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(start=start, end=end)
+
+
+def test_the_year_before_shifts_the_window_it_follows() -> None:
+    """ "¿Y el año anterior?" after a question about July is July of last year — not the last twelve
+    months, and not the whole of last year."""
+    july = AbsoluteRange(start=date(2026, 7, 1), end=date(2026, 7, 31))
+
+    assert window_words.a_year_earlier("¿y el año anterior?", july) == AbsoluteRange(
+        start=date(2025, 7, 1), end=date(2025, 7, 31)
+    )
+
+
+def test_only_a_bare_continuation_shifts_a_window() -> None:
+    """A sentence carrying its own question is a new question. Shifting the previous window for it
+    would answer something nobody asked, which is the rule every continuation reader follows."""
+    july = AbsoluteRange(start=date(2026, 7, 1), end=date(2026, 7, 31))
+
+    assert window_words.a_year_earlier("¿cuánto gasté el año anterior en ocio?", july) is None
+    assert window_words.a_year_earlier("¿y el año anterior?", None) is None

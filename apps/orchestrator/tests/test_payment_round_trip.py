@@ -72,10 +72,16 @@ def paying(*, suspended: bool = False, **draft: object) -> dict:
 
 PAYING_MARTA = paying(recipient_name="Marta Solis Vega")
 
+# The material facts travel with the preview because the real handler always sends them: a
+# confirmation state is what the chat repeats back after an unclear reply, and one built from
+# defaults would ask somebody to confirm a payment of zero euros to nobody.
 PREVIEWED = PaymentAnswer(
     outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
     text="Vas a enviar 15,00 € a Marta Solis Vega. ¿Confirmas?",
     intent_id=INTENT,
+    recipient="Marta Solis Vega",
+    amount_minor=1_500,
+    currency="EUR",
 )
 
 ASKED_FOR_THE_AMOUNT = PaymentAnswer(

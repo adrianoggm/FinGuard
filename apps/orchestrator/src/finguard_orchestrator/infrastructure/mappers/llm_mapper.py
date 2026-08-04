@@ -4,6 +4,8 @@ Queries and commands answer with Results, never with domain objects, so what arr
 here is already flat. This adds the wire format and nothing else.
 """
 
+from uuid import UUID
+
 from finguard_orchestrator.application import (
     AccountSummaryResult,
     AnswerMessageResult,
@@ -150,7 +152,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         conversation=conversation_mapper.to_payload(result.conversation),
         contacts=[
             SpokenContactResponse(
-                contact_id=contact.contact_id,
+                contact_id=UUID(contact.contact_id),
                 display_name=contact.display_name,
                 phone=contact.phone,
             )

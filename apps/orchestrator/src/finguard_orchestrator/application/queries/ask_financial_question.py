@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Conversation,
     FinancialClarification,
     PaymentInProgress,
+    PlannedQuery,
     Slot,
     UnsupportedCapability,
 )
@@ -42,6 +43,7 @@ from finguard_orchestrator.domain.services import (
     capability_guard,
     category_words,
     explainer,
+    explicit_facts,
     intent_router,
     plan_verifier,
     query_recovery,
@@ -381,6 +383,20 @@ class AskFinancialQuestionHandler:
             yield await self._ranked(query, deeper)
             return
 
+        shifted = self._a_year_earlier(query)
+        if shifted is not None:
+            # "¿Y el año anterior?" after a question about July is July of last year. Answering it
+            # as the last twelve months is a different question, and refusing the phrase outright —
+            # which is what happened, because no `Period` names it — sent the turn to the model and
+            # started a clarification loop about a period the user had just given.
+            yield Stage("planned", answer_writer.describe(shifted))
+            yield Stage("querying")
+            if isinstance(shifted, TopMovements):
+                yield await self._ranked(query, shifted)
+            else:
+                yield await self._answer(query, shifted)
+            return
+
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         if refused is not None:
             # Before the model, on purpose. Refusing here is a control; refusing after is
@@ -427,7 +443,24 @@ class AskFinancialQuestionHandler:
 
         assert planned.plan is not None  # is_answerable is exactly this condition
 
-        checked = planned.plan
+        # What the sentence stated outright wins over both the model's opinion about which fields
+        # changed and the plan it inherited from. "Los últimos 3 meses" was answered over five
+        # because the model emitted `changed: ["categories"]` and the merge is arithmetic on that
+        # list — a real figure about a window the user had written down and nobody read.
+        facts = explicit_facts.read(query.sentence, today=query.today)
+        checked = explicit_facts.enforce(planned.plan, facts)
+        correcting = force_follow_up or facts.corrects
+        if correcting and planning_previous is not None and isinstance(checked, FinancialPlan):
+            # A correction patches. The same turn that lost the window also lost the category the
+            # correction never mentioned, and an empty list from a model cannot be told apart from
+            # a filter it simply did not copy.
+            #
+            # `facts.corrects` and not only the router's intent: "no, durante todo el año 2025"
+            # rejects *and* replaces, which the router deliberately does not treat as a bare
+            # correction — that path is for a rejection with nothing behind it. The sentence is
+            # still a patch, and its unmentioned fields still have to survive.
+            checked = explicit_facts.restored_filters(checked, planning_previous, facts)
+
         broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
         if broken is not None:
             # The plan is well formed, the domain accepts it, and it answers a different
@@ -579,7 +612,9 @@ class AskFinancialQuestionHandler:
 
         # Against the slot the question asked for, which is what makes a two-word reply readable:
         # "de este" names nothing on its own and is this year as the answer to "¿de qué año?".
-        window = window_words.window_in(query.sentence, asked_for=active.awaiting)
+        window = window_words.window_in(
+            query.sentence, asked_for=active.awaiting, today=query.today
+        )
         if window is None:
             return None
 
@@ -610,7 +645,9 @@ class AskFinancialQuestionHandler:
         if complete is not None:
             return complete
 
-        window = window_words.window_in(query.sentence, asked_for=active.awaiting)
+        window = window_words.window_in(
+            query.sentence, asked_for=active.awaiting, today=query.today
+        )
         if window is None:
             return None
         try:
@@ -645,6 +682,25 @@ class AskFinancialQuestionHandler:
             # Past the ceiling. Somebody a hundred movements down a list wants the list, and
             # silently repeating the hundredth would look like an answer.
             return None
+
+    def _a_year_earlier(self, query: AskFinancialQuestionQuery) -> PlannedQuery | None:
+        """The last question again, one year back, when that is all the sentence asks for.
+
+        A patch on the window and nothing else, which is what makes it safe to apply without a
+        model: the category, the direction and the metric are the ones already validated, and the
+        only field that moves is the pair of dates.
+
+        Only over an explicit range. Shifting a named period would mean resolving what LAST_MONTH
+        covers, and this service deliberately does not know — banking owns the calendar, and two
+        implementations of it is the two-clocks bug in a different costume.
+        """
+        previous = query.conversation.last_plan
+        if previous is None or previous.date_range is None:
+            return None
+        moved = window_words.a_year_earlier(query.sentence, previous.date_range)
+        if moved is None:
+            return None
+        return replace(previous, date_range=moved)
 
     async def _ranked(
         self, query: AskFinancialQuestionQuery, ranking: TopMovements
@@ -794,6 +850,7 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
     Each gets its own sentence. Collapsing them into "no he podido" would tell the user
     nothing about whether to rephrase, wait, or give up.
     """
+    suggestions: list[str] = []
     match planned.outcome:
         case PlanningOutcome.NEEDS_CLARIFICATION:
             text = planned.question or ""
@@ -804,11 +861,38 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         case _:
             text = "No he entendido la pregunta. ¿Puedes decirla de otra forma?"
 
+    if _asks_the_same_thing_again(planned, was):
+        # The reply did not answer the question and the model has asked it again, word for word.
+        # A third "¿de qué periodo?" is not a clarification, it is a loop — and the user cannot
+        # get out of one by rephrasing, because rephrasing is what already failed twice. Offer
+        # the answers this service is certain about instead of asking an open question again.
+        text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
+
     return AskFinancialQuestionResult(
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
         conversation=was.with_active(_next_state(planned)),
+        suggestions=suggestions,
+    )
+
+
+def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bool:
+    """Whether this turn is the previous question repeated.
+
+    The slot rather than the wording, because the wording comes from a model and two phrasings of
+    "which period?" are the same dead end.
+
+    ponytail: `was.awaiting` is read off the active workflow, so a clarification that carried no
+    draft leaves no state and can still loop. The planner emits a draft whenever it read anything
+    at all, which is the ordinary case. The upgrade is remembering the last slot asked beside
+    `last_plan` — memory rather than a workflow — and it is worth doing when a draft-less repeat
+    is actually observed rather than imagined.
+    """
+    return (
+        planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+        and was.awaiting is not None
+        and was.awaiting is planned.awaiting
     )
 
 

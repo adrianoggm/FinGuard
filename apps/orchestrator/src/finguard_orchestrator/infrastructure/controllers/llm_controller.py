@@ -259,11 +259,18 @@ def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
     if (
         answer.intent_id is not None
         and answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+        # All three, not "whatever arrived plus a default". `recipient or ""` and
+        # `amount_minor or 0` used to build a confirmation for nobody of nothing, which the wire
+        # then refused as a payment of zero — a state that describes no preview and can only be
+        # confirmed blind. A preview the handler could not describe leaves nothing open here; the
+        # intent still travels on the response for the standalone confirmation endpoint.
+        and answer.recipient
+        and answer.amount_minor
     ):
         return PaymentConfirmation(
             intent_id=answer.intent_id,
-            recipient=answer.recipient or "",
-            amount_minor=answer.amount_minor or 0,
+            recipient=answer.recipient,
+            amount_minor=answer.amount_minor,
             currency=answer.currency or "EUR",
             concept=answer.concept,
         )

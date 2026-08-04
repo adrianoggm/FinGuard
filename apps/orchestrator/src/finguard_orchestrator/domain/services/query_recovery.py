@@ -23,6 +23,30 @@ WITHOUT_MERCHANT = "Buscar sin comercio"
 THREE_MONTHS = "Ampliar a tres meses"
 SHOW_CATEGORIES = "Mostrar categorías"
 
+# Offered when the same question has been asked twice. Every one of these is a phrase
+# `window_words` reads, which is this module's whole contract: a suggestion that falls through to a
+# model is a button whose behaviour depends on the configured provider.
+#
+# The reported conversation asked "¿de qué periodo?" three times in a row about a period the user
+# had already named twice. A third identical question is not a clarification, it is a loop, and the
+# way out of one is to stop asking an open question and offer the answers this service can act on.
+WINDOW_CHOICES = ["Este mes", "El mes pasado", "Los últimos 12 meses", "En 2025"]
+
+
+def repeated_question(slot: str) -> tuple[str, list[str]]:
+    """What to say instead of asking the same thing a second time, and the replies that work.
+
+    `slot` is the name of the field being asked about. Only the window has choices worth listing —
+    it is a closed vocabulary and it is the slot that loops — so everything else gets the same
+    honest sentence with nothing to press.
+    """
+    if slot in {"WINDOW", "YEAR"}:
+        return (
+            "Sigo sin tener claro el periodo. Dime uno de estos, o unas fechas concretas.",
+            list(WINDOW_CHOICES),
+        )
+    return ("No he conseguido entender esa parte. ¿Puedes decírmelo de otra forma?", [])
+
 
 class RetryAction(StrEnum):
     RETRY = "RETRY"

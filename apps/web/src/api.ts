@@ -125,14 +125,19 @@ export type ConversationState = {
   retry_plan: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
-  rank: number | null;
   payment: PaymentDraft | null;
   suspended: boolean;
   candidates: Candidate[];
   intent_id: string | null;
   recipient: string | null;
   amount_minor: number | null;
+  // What the preview is denominated in. It travels with the amount because the two describe one
+  // figure: without it the service rebuilt every echoed confirmation as euros, so a payment
+  // prepared in another currency came back from one round trip as the same number of euros.
+  currency: string | null;
   concept: string | null;
+  // `rank` used to be here and left with the refusal it served. The service rejects fields it does
+  // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
 };
 
 export type Answer = {
