@@ -132,6 +132,19 @@ def not_a_contact(name: str) -> str:
     return f"No tengo a {name} en tus contactos, así que no puedo enviarle nada."
 
 
+def no_account_for(name: str) -> str:
+    """A transfer to somebody whose account this bank does not have saved.
+
+    It names what is missing and what to do about it, because both halves are what the user can
+    act on. Offering a Bizum is not a consolation: it is the rail that works for this person right
+    now, and the holder came here to move money rather than to choose a rail.
+    """
+    return (
+        f"Tengo a {name} en tus contactos, pero no su número de cuenta, así que no puedo hacerle "
+        f"una transferencia. Puedes darme la cuenta, o hacerle un bizum."
+    )
+
+
 def not_a_contact_chosen() -> str:
     """A picked contact that is not in the account's list.
 

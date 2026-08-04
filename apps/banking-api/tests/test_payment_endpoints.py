@@ -37,7 +37,7 @@ from finguard_banking.domain.errors import (
 )
 from finguard_banking.domain.models.contact import Contact
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
-from finguard_banking.domain.value_objects.destination import Destination, ToPhone
+from finguard_banking.domain.value_objects.destination import Destination, ToAccount, ToPhone
 from finguard_banking.domain.value_objects.money import Money
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -335,3 +335,70 @@ def test_a_recipient_is_named_exactly_one_way(body: dict[str, object]) -> None:
     response = client_for(FakeGateway()).post(PAYMENTS, json=body, headers=KEY)
 
     assert response.status_code == 422
+
+
+# --- transfers over the wire -----------------------------------------------------------
+
+ELENA_IBAN = "ES9121000418450200051332"
+TRANSFER = {
+    "recipientName": "Elena Marin",
+    "recipientIban": ELENA_IBAN,
+    "rail": "TRANSFER",
+    "amountMinor": 20_000,
+    "currency": "EUR",
+}
+
+
+def test_a_transfer_to_a_typed_account_reaches_the_gateway_as_an_account() -> None:
+    """The whole point of the typed field: the destination arrives as data the caller entered,
+    resolved into a `ToAccount` before anything is written, with no contact lookup behind it."""
+    contacts, gateway = FakeContacts(), FakeGateway()
+
+    response = client_for(gateway, contacts).post(PAYMENTS, json=TRANSFER, headers=KEY)
+
+    assert response.status_code == 200
+    assert contacts.asked_by is None, "a typed account needs no contact"
+    destination = gateway.prepared["to"]
+    assert isinstance(destination, ToAccount)
+    assert str(destination.iban) == ELENA_IBAN
+
+
+def test_an_account_number_that_fails_its_check_digits_never_reaches_the_gateway() -> None:
+    """One character wrong is the mistake mod-97 exists for, and 422 is where it belongs: a
+    preview of a payment to nowhere is worse than a refusal."""
+    contacts, gateway = FakeContacts(), FakeGateway()
+    mistyped = TRANSFER | {"recipientIban": ELENA_IBAN[:-1] + "3"}
+
+    response = client_for(gateway, contacts).post(PAYMENTS, json=mistyped, headers=KEY)
+
+    assert response.status_code == 422
+    assert gateway.prepared == {}
+
+
+@pytest.mark.parametrize(
+    ("body", "why"),
+    [
+        ({"rail": "BIZUM"}, "an account number is not a destination for a Bizum"),
+        ({"recipientContactId": str(CONTACT)}, "a saved contact and a typed account are two"),
+        ({"recipientName": None}, "a typed account needs a name to print beside it"),
+    ],
+)
+def test_a_destination_that_cannot_be_read_one_way_is_refused(body: dict, why: str) -> None:
+    """The same argument the name/identifier pair already makes. Two answers to "who gets paid"
+    with no rule about which wins is not a body this contract can act on."""
+    contacts, gateway = FakeContacts(), FakeGateway()
+
+    response = client_for(gateway, contacts).post(PAYMENTS, json=TRANSFER | body, headers=KEY)
+
+    assert response.status_code == 422, why
+    assert gateway.prepared == {}
+
+
+def test_a_body_that_says_nothing_about_the_rail_is_still_a_bizum() -> None:
+    """The one default in this request, and it is a default about the past: every client written
+    before transfers existed keeps meaning what it meant."""
+    contacts, gateway = FakeContacts(), FakeGateway()
+
+    client_for(gateway, contacts).post(PAYMENTS, json=BODY, headers=KEY)
+
+    assert isinstance(gateway.prepared["to"], ToPhone)

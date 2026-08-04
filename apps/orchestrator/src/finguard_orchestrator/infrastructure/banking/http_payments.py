@@ -30,6 +30,7 @@ from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
     IntentGoneError,
     PaymentRefusedError,
+    RecipientHasNoAccountError,
     RecipientNotFoundError,
 )
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
@@ -37,6 +38,9 @@ from finguard_orchestrator.domain.value_objects.payment_request import PaymentRe
 
 # Banking's codes. Matched on these and never on its sentences.
 CONTACT_NOT_FOUND = "contact_not_found"
+# The contact exists and has no account number. 409 from banking, for the same reason an
+# ambiguous name is: the request is well formed and the state is what makes it unanswerable.
+CONTACT_HAS_NO_ACCOUNT = "contact_has_no_account"
 AMBIGUOUS_CONTACT = "ambiguous_contact"
 INSUFFICIENT_FUNDS = "insufficient_funds"
 INTENT_EXPIRED = "intent_expired"
@@ -72,6 +76,9 @@ class HttpPayments:
                 **recipient,
                 "amountMinor": request.amount_minor,
                 "currency": request.currency,
+                # Always sent, never defaulted on this side. Banking defaults it to BIZUM for
+                # clients written before transfers existed, and this one was not.
+                "rail": request.rail.value,
             },
             headers={"Idempotency-Key": key},
         )
@@ -124,6 +131,8 @@ def refusal_for(status: int, body: dict[str, Any]) -> Exception | None:
         candidates = body.get("candidates")
         names = tuple(str(c) for c in candidates) if isinstance(candidates, list) else ()
         return AmbiguousRecipientError(_named(body), names)
+    if code == CONTACT_HAS_NO_ACCOUNT:
+        return RecipientHasNoAccountError(_named(body))
     if code == CONTACT_NOT_FOUND:
         return RecipientNotFoundError(_named(body))
     if code == INSUFFICIENT_FUNDS:

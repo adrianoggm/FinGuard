@@ -17,6 +17,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_PAYMENT_MINOR,
     MAX_RECIPIENT_NAME,
 )
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 
 
@@ -40,6 +41,9 @@ class PaymentRequest:
     # display name are ever told apart. The name stays because it is what the sentence is checked
     # against and what the assistant says while the payment is being built.
     recipient_contact_id: UUID | None = None
+    # How the money leaves. Read from the sentence rather than from the model — see
+    # `payment_words.rail_in` — so a rail is never something a decoder chose.
+    rail: Rail = Rail.BIZUM
 
     def __post_init__(self) -> None:
         if not isinstance(self.amount_minor, int) or isinstance(self.amount_minor, bool):

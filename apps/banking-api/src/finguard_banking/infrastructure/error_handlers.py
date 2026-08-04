@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from finguard_banking.domain.errors import (
     AccountNotFoundError,
     AmbiguousContactError,
+    ContactHasNoAccountError,
     ContactNotFoundError,
     CurrencyMismatchError,
     DomainError,
@@ -41,6 +42,10 @@ _STATUS_BY_CODE = {
     # A caller retrying with a fuller name succeeds, which is exactly what a conflict means,
     # and the candidate names travel in the body so they can.
     AmbiguousContactError.code: 409,
+    # 409 for the same reason as the ambiguous one: the request is well formed and it is the state
+    # that makes it unanswerable. The contact exists and can be paid — just not this way — so 404
+    # would be a wrong answer about somebody in the holder's own list.
+    ContactHasNoAccountError.code: 409,
     IntentNotFoundError.code: 404,
     # 410 rather than 409: the intent is gone and no retry of this request can ever succeed. The
     # caller has to prepare a new one, and a status that merely said "conflict" would invite the
