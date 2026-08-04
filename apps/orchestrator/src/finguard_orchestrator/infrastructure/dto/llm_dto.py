@@ -8,7 +8,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 from datetime import date
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from finguard_orchestrator.domain.constants import MAX_CATEGORY_NAME, MAX_PROMPT_LENGTH
 from finguard_orchestrator.domain.enums import Action, Direction, GroupBy, Metric, Period
@@ -125,9 +125,26 @@ class PaymentDraftPayload(_Payload):
 
 
 class SpokenContactResponse(_Payload):
-    contact_id: str
+    # A UUID rather than a string, for the reason `recipient_contact_id` already is one: this
+    # travels back inside a conversation and selects who gets money. A sentence in this field
+    # used to reach `uuid.UUID(...)` three layers in and escape as a 500 instead of a 422.
+    contact_id: UUID
     display_name: str
     phone: str
+
+
+# Which questions each state can be waiting on. A window slot attached to a payment is not a
+# conversation this service has ever been in, and reading one would let a reply meant for a period
+# complete a Bizum.
+_SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
+    Workflow.FINANCIAL_CLARIFICATION: frozenset(
+        {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION}
+    ),
+    Workflow.UNSUPPORTED_CAPABILITY: frozenset(),
+    Workflow.PAYMENT_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.RECIPIENT, Slot.RECIPIENT_CHOICE}),
+    Workflow.PAYMENT_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
+    None: frozenset(),
+}
 
 
 class ConversationPayload(_Payload):
@@ -171,10 +188,64 @@ class ConversationPayload(_Payload):
     suspended: bool = False
     candidates: list[SpokenContactResponse] = []
     # PAYMENT_CONFIRMATION: the intent the bank is holding.
-    intent_id: str | None = None
+    #
+    # A UUID, not a string. It was a string that `uuid.UUID(...)` parsed inside the mapper, so
+    # "not-a-uuid" escaped as a ValueError from a layer whose only honest answer is 422.
+    intent_id: UUID | None = None
     recipient: str | None = Field(default=None, max_length=MAX_RECIPIENT_NAME)
     amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
+    # What the amount is denominated in. It was missing, so the domain's default put every
+    # confirmation back together as euros: a preview prepared in USD came back from one round trip
+    # as the same number of euros, silently.
+    currency: str | None = Field(default=None, min_length=3, max_length=3, pattern=r"^[A-Z]{3}$")
     concept: str | None = None
+
+    @model_validator(mode="after")
+    def _fields_match_the_workflow(self) -> "ConversationPayload":
+        """A state the client sends has to be one this service can issue.
+
+        The mapper used to reinterpret what it could not read: a PAYMENT_CONFIRMATION with no intent
+        became idle, a PAYMENT_IN_PROGRESS with no payment became an empty draft, and a window slot
+        could arrive attached to a payment. Reinterpreting a state nobody could have been in is a
+        guess about money, and the caller never learns their state was discarded.
+
+        `extra="forbid"` above rejects fields we do not know. This rejects combinations we do know
+        and cannot mean anything — which is the larger half.
+
+        ponytail: one validator rather than five payload classes behind a discriminated union. It
+        buys the 422s and the impossible states; what it does not buy is OpenAPI documenting each
+        state's own shape. Split it when a second consumer has to generate a client from the schema.
+        """
+        required: dict[Workflow | None, tuple[str, ...]] = {
+            Workflow.FINANCIAL_CLARIFICATION: ("draft",),
+            Workflow.UNSUPPORTED_CAPABILITY: ("capability",),
+            Workflow.PAYMENT_IN_PROGRESS: ("payment",),
+            Workflow.PAYMENT_CONFIRMATION: ("intent_id", "recipient", "amount_minor"),
+            None: (),
+        }
+        # Which fields belong to which state. Anything set outside its own state is a caller
+        # improvising a combination this service never sends.
+        owned: dict[Workflow | None, frozenset[str]] = {
+            Workflow.FINANCIAL_CLARIFICATION: frozenset({"draft"}),
+            Workflow.UNSUPPORTED_CAPABILITY: frozenset({"capability"}),
+            Workflow.PAYMENT_IN_PROGRESS: frozenset({"payment", "candidates", "suspended"}),
+            Workflow.PAYMENT_CONFIRMATION: frozenset(
+                {"intent_id", "recipient", "amount_minor", "currency", "concept"}
+            ),
+            None: frozenset(),
+        }
+        every = frozenset().union(*owned.values())
+
+        for name in required[self.workflow]:
+            if not getattr(self, name):
+                raise ValueError(f"{self.workflow} needs {name}")
+        for name in every - owned[self.workflow]:
+            if getattr(self, name):
+                raise ValueError(f"{name} does not belong to {self.workflow or 'an idle'} state")
+
+        if self.awaiting is not None and self.awaiting not in _SLOTS_OF[self.workflow]:
+            raise ValueError(f"{self.workflow or 'an idle state'} never asks for {self.awaiting}")
+        return self
 
 
 class QuestionRequest(_Payload):

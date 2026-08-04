@@ -6,8 +6,8 @@ broke, one field at a time. A round-trip test is the only honest check: it fails
 added to a state and forgotten in one of the two directions.
 
 Coming in, the payload is input. It crossed the network, so every piece is rebuilt through the
-domain type that validates it, and a payload whose tag disagrees with its fields becomes idle
-rather than half a state.
+domain type that validates it, and a payload whose tag disagrees with its fields is refused rather
+than reinterpreted into half a state.
 """
 
 import uuid
@@ -147,6 +147,25 @@ def test_a_confirmation_survives() -> None:
     assert back.active.concept == "tapas"
 
 
+def test_a_confirmation_keeps_the_currency_it_was_prepared_in() -> None:
+    """Its own test, in a currency that is not the default, because that is the only way this
+    fails: every other round-trip case uses EUR, so a payload with nowhere to put a currency
+    rebuilt the right answer by accident and the loss was invisible."""
+    out = IDLE.with_active(
+        PaymentConfirmation(
+            intent_id=uuid.UUID(int=9),
+            recipient="Marta Solis Vega",
+            amount_minor=1_500,
+            currency="USD",
+        )
+    )
+
+    back = there_and_back(out)
+
+    assert isinstance(back.active, PaymentConfirmation)
+    assert back.active.currency == "USD"
+
+
 def test_the_memory_survives_alongside_a_workflow() -> None:
     """The pair that the five fields used to hold separately, and the reason `last_plan` is not
     inside the union: a payment under way must not cost the window of the question before it."""
@@ -169,19 +188,40 @@ def test_no_payload_is_an_idle_conversation() -> None:
     assert mapper.to_domain(None) == IDLE
 
 
-def test_a_tag_that_disagrees_with_its_fields_is_idle() -> None:
-    """It cannot have come from here. Idle is the reading that cannot act on it: a confirmation with
-    no intent must never become something that can be confirmed."""
-    forged = ConversationPayload(workflow=Workflow.PAYMENT_CONFIRMATION)
+@pytest.mark.parametrize(
+    "forged",
+    [
+        # A tag with none of the fields its state carries.
+        {"workflow": "PAYMENT_CONFIRMATION"},
+        {"workflow": "FINANCIAL_CLARIFICATION"},
+        {"workflow": "PAYMENT_IN_PROGRESS"},
+        {"workflow": "UNSUPPORTED_CAPABILITY"},
+        # A tag carrying another state's fields.
+        {"workflow": "UNSUPPORTED_CAPABILITY", "capability": "AVERAGE", "amount_minor": 1_500},
+        {"workflow": "PAYMENT_IN_PROGRESS", "payment": {}, "intent_id": str(uuid.UUID(int=9))},
+        # A slot no state asks for. A reply meant for a period must never fill a payment.
+        {"workflow": "PAYMENT_IN_PROGRESS", "payment": {}, "awaiting": "WINDOW"},
+        {"awaiting": "CONFIRMATION"},
+        # An identifier that is not one. It used to reach `uuid.UUID(...)` inside the mapper.
+        {
+            "workflow": "PAYMENT_CONFIRMATION",
+            "intent_id": "not-a-uuid",
+            "recipient": "Marta",
+            "amount_minor": 1_500,
+        },
+    ],
+)
+def test_a_state_this_service_never_issues_is_refused_rather_than_reinterpreted(
+    forged: dict[str, object],
+) -> None:
+    """It cannot have come from here, so it is a 422 and not a silent idle.
 
-    assert mapper.to_domain(forged).active is None
-
-
-def test_a_clarification_with_no_draft_is_idle() -> None:
-    assert (
-        mapper.to_domain(ConversationPayload(workflow=Workflow.FINANCIAL_CLARIFICATION)).active
-        is None
-    )
+    Reinterpreting used to feel safe — a confirmation with no intent became nothing, which at least
+    could not pay anybody. What it also did was discard whatever conversation was really under way
+    and tell the caller nothing, so a client bug looked like a user who had changed the subject.
+    """
+    with pytest.raises(ValidationError):
+        ConversationPayload(**forged)
 
 
 @pytest.mark.parametrize(
