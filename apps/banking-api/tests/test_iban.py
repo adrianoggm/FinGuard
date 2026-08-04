@@ -86,3 +86,23 @@ def test_a_well_formed_account_belonging_to_somebody_else_passes() -> None:
     the preview prints the destination in full and why the digits are typed rather than read out
     of a sentence by a model."""
     assert Iban("ES7921000813610123456789").value.startswith("ES79")
+
+
+def test_every_account_number_in_the_seed_is_one_a_transfer_could_use() -> None:
+    """The dataset must not be the reason a demo transfer is refused.
+
+    The IBANs in the seed were produced by solving mod-97 rather than typed, and this is what says
+    so. A generator that stopped doing the arithmetic would otherwise be found by somebody trying
+    to send money in front of an audience.
+    """
+    import re
+    from pathlib import Path
+
+    seed = (Path(__file__).resolve().parents[1] / "seeds" / "0001_demo.sql").read_text(
+        encoding="utf-8"
+    )
+    written = re.findall(r"'(ES\d{22})'", seed)
+
+    assert written, "the seed has no account numbers at all"
+    for account in written:
+        Iban(account)  # raises if the check digits disagree with the rest
