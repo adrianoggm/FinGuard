@@ -76,11 +76,18 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [thread.turns, stage]);
 
-  async function send(text: string) {
+  /**
+   * Sending a turn, optionally with the contact the user tapped.
+   *
+   * The identifier is the one thing this client puts *into* the state, and it is a choice among rows
+   * the service listed rather than a reading of anything — the sentence beside it is the display
+   * name, so a service that ignored the field would behave exactly as it does today.
+   */
+  async function send(text: string, chosen?: string) {
     if (!text.trim() || busy) return;
     // Read once: the prop is a snapshot, and everything below is computed from this rather than from
     // a value that may already have been replaced.
-    const before = thread;
+    const before = chosen ? withChoice(thread, chosen) : thread;
     const turns: Turn[] = [...before.turns, { who: "user", text }];
     onThread({ ...before, turns });
     setDraft("");
@@ -143,7 +150,10 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         {choices.length > 0 && !busy && (
           <div className="recipient-choices" role="group" aria-label="Elige el contacto">
             {choices.map((candidate) => (
-              <button key={candidate.contact_id} onClick={() => send(candidate.display_name)}>
+              <button
+                key={candidate.contact_id}
+                onClick={() => send(candidate.display_name, candidate.contact_id)}
+              >
                 <strong>{candidate.display_name}</strong>
                 <small>{candidate.phone}</small>
               </button>
@@ -212,6 +222,25 @@ export function awaitingConfirmation(thread: Thread): boolean {
 /** The intent a confirmation is about, when there is one. */
 export function pendingIntent(thread: Thread): string | null {
   return awaitingConfirmation(thread) ? (thread.conversation?.intent_id ?? null) : null;
+}
+
+/**
+ * The thread with the tapped contact on its half-built payment.
+ *
+ * Written rather than echoed, which every other field of the conversation is. It is safe for the
+ * same reason the candidates were safe to render: the identifier came from the service's own list,
+ * and the service resolves it against the account's contacts before anybody is paid.
+ */
+export function withChoice(thread: Thread, contactId: string): Thread {
+  const conversation = thread.conversation;
+  if (!conversation?.payment) return thread;
+  return {
+    ...thread,
+    conversation: {
+      ...conversation,
+      payment: { ...conversation.payment, recipient_contact_id: contactId },
+    },
+  };
 }
 
 /** Structured choices for the one payment state that asks the user to pick a person. */

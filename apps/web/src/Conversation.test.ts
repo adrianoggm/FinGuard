@@ -26,6 +26,7 @@ import {
   pendingIntent,
   recipientChoices,
   settled,
+  withChoice,
   type Thread,
 } from "./Conversation";
 import type { Answer, ConversationState, PlanContext } from "./api";
@@ -56,6 +57,7 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
     intent_id: null,
     recipient: null,
     amount_minor: null,
+    concept: null,
     ...fields,
   };
 }
@@ -253,5 +255,43 @@ describe("what the client still works out for itself", () => {
     });
 
     expect(reloaded).toBe(0);
+  });
+});
+
+describe("the one field this client writes", () => {
+  it("puts the tapped contact on the half-built payment", () => {
+    const choosing = thread({
+      conversation: state({
+        workflow: "PAYMENT_IN_PROGRESS",
+        awaiting: "RECIPIENT_CHOICE",
+        payment: {
+          recipient_name: null,
+          recipient_contact_id: null,
+          amount_minor: 1_500,
+          currency: "EUR",
+          concept: "comida",
+        },
+        candidates: [
+          { contact_id: "contact-2", display_name: "Marta Solis Vega", phone: "+34600333444" },
+        ],
+      }),
+    });
+
+    const chosen = withChoice(choosing, "contact-2");
+
+    expect(chosen.conversation?.payment?.recipient_contact_id).toBe("contact-2");
+    // Everything else is the service's, and a client that rewrote any of it would be back to
+    // deciding what the conversation means.
+    expect(chosen.conversation?.payment?.amount_minor).toBe(1_500);
+    expect(chosen.conversation?.payment?.concept).toBe("comida");
+    expect(chosen.conversation?.awaiting).toBe("RECIPIENT_CHOICE");
+  });
+
+  it("changes nothing when there is no payment to choose for", () => {
+    // A tap cannot arrive without candidates, and inventing a payment to hang an identifier on
+    // would send the service a state it never issued.
+    const idle = thread();
+
+    expect(withChoice(idle, "contact-2")).toBe(idle);
   });
 });

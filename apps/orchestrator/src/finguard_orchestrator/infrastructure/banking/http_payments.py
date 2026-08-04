@@ -59,10 +59,17 @@ class HttpPayments:
     async def prepare(
         self, request: PaymentRequest, *, account_id: UUID, key: str
     ) -> PaymentPreview:
+        # One or the other, never both: banking refuses a body that names its recipient twice,
+        # and the identifier is the one that can tell two people with the same name apart.
+        recipient: dict[str, object] = (
+            {"recipientContactId": str(request.recipient_contact_id)}
+            if request.recipient_contact_id is not None
+            else {"recipientName": request.recipient_name}
+        )
         response = await self._post(
             self._payments(account_id),
             json={
-                "recipientName": request.recipient_name,
+                **recipient,
                 "amountMinor": request.amount_minor,
                 "currency": request.currency,
             },

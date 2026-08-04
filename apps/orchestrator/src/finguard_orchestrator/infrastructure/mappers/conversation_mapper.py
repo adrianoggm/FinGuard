@@ -153,6 +153,7 @@ def _payment_to_domain(payload: PaymentDraftPayload | None) -> PaymentDraft:
         return PaymentDraft()
     return PaymentDraft(
         recipient_name=payload.recipient_name,
+        recipient_contact_id=payload.recipient_contact_id,
         amount_minor=payload.amount_minor,
         currency=payload.currency,
         concept=payload.concept,
@@ -181,6 +182,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             update={
                 "payment": PaymentDraftPayload(
                     recipient_name=active.draft.recipient_name,
+                    recipient_contact_id=active.draft.recipient_contact_id,
                     amount_minor=active.draft.amount_minor,
                     currency=active.draft.currency,
                     concept=active.draft.concept,

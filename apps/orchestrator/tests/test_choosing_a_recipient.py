@@ -16,8 +16,12 @@ the account's own directory, which is also what makes a made-up identifier a ref
 payment.
 """
 
+import json
 import uuid
 from dataclasses import replace
+
+import httpx2 as httpx
+import pytest
 
 from finguard_orchestrator.application.commands.pay import (
     PreparePaymentCommand,
@@ -25,9 +29,28 @@ from finguard_orchestrator.application.commands.pay import (
 )
 from finguard_orchestrator.domain.enums import PaymentOutcome
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.conversation import (
+    Conversation,
+    PaymentInProgress,
+    Slot,
+)
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
+from finguard_orchestrator.infrastructure.banking.http_payments import HttpPayments
+from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+
+PREVIEW_BODY = {
+    "intentId": "44444444-4444-4444-4444-444444444444",
+    "recipient": "Marta Solis Vega",
+    "recipientPhone": "+34600333444",
+    "amountMinor": 1_500,
+    "currency": "EUR",
+    "balanceBeforeMinor": 1_037_042,
+    "balanceAfterMinor": 1_035_542,
+    "expiresAt": "2026-08-04T12:00:00Z",
+}
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 RUIZ = Contact(
@@ -186,3 +209,91 @@ async def test_a_choice_without_an_amount_still_asks_for_one() -> None:
     assert "cuánto" in answer.text
     assert answer.draft is not None
     assert answer.draft.recipient_contact_id == str(VEGA.contact_id), "the choice was forgotten"
+
+
+def _sending_to(monkeypatch, handler) -> HttpPayments:
+    """The gateway with its transport replaced, so the request body can be read.
+
+    `httpx2.AsyncClient` is constructed inside `_post` rather than injected, which is right for
+    production — one client per call, no shared pool to leak across requests — and means a test has
+    to reach it here. The real class is captured first, or the replacement calls itself.
+    """
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))
+    )
+    return HttpPayments(base_url="http://banking.invalid", timeout_seconds=1.0)
+
+
+# --- and out to the bank --------------------------------------------------------------
+
+
+async def test_the_bank_is_asked_by_identifier_and_not_by_name(
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    """The body, because this client exists instead of a generated one and the shape is therefore
+    stated twice. Banking refuses a body that names its recipient both ways, so sending the name
+    alongside the identifier would turn every chosen payment into a 422."""
+    sent: dict[str, object] = {}
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json=PREVIEW_BODY)
+
+    gateway = _sending_to(monkeypatch, transport)
+
+    await gateway.prepare(
+        PaymentRequest(
+            recipient_name="Marta Solis Vega",
+            recipient_contact_id=VEGA.contact_id,
+            amount_minor=1_500,
+            currency="EUR",
+        ),
+        account_id=ACCOUNT,
+        key="k",
+    )
+
+    assert sent["recipientContactId"] == str(VEGA.contact_id)
+    assert "recipientName" not in sent, "banking refuses a body that names the recipient twice"
+
+
+async def test_a_payment_nobody_chose_is_still_asked_by_name(
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    """Most payments. The identifier is for the case a name cannot answer, not instead of one."""
+    sent: dict[str, object] = {}
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json=PREVIEW_BODY)
+
+    gateway = _sending_to(monkeypatch, transport)
+
+    await gateway.prepare(
+        PaymentRequest(recipient_name="Marta", amount_minor=1_500, currency="EUR"),
+        account_id=ACCOUNT,
+        key="k",
+    )
+
+    assert sent["recipientName"] == "Marta"
+    assert "recipientContactId" not in sent
+
+
+# --- and back, through the wire -------------------------------------------------------
+
+
+def test_the_choice_survives_the_round_trip() -> None:
+    """The client echoes the state without reading it, so a field this drops is a choice the next
+    turn does not have — and the turn after a choice is the one that pays."""
+    out = Conversation().with_active(
+        PaymentInProgress(
+            draft=PaymentDraft(recipient_contact_id=VEGA.contact_id, amount_minor=1_500),
+            awaiting=Slot.RECIPIENT_CHOICE,
+        )
+    )
+
+    back = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(conversation_mapper.to_payload(out).model_dump())
+    )
+
+    assert back == out

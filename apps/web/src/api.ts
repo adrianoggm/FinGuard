@@ -69,6 +69,13 @@ export type PlanContext = {
 /** A payment being built. Part of the conversation state, never held on its own. */
 export type PaymentDraft = {
   recipient_name: string | null;
+  /**
+   * The contact the user picked, when they picked one. The only field of the conversation this
+   * client ever *writes*, and it writes an identifier the service itself listed rather than a
+   * reading of anything: sending the display name back means the ambiguity is resolved by matching
+   * a name again, which is what made "Marta Vega" three turns of the same question.
+   */
+  recipient_contact_id: string | null;
   amount_minor: number | null;
   currency: string;
   concept: string | null;
@@ -124,6 +131,7 @@ export type ConversationState = {
   intent_id: string | null;
   recipient: string | null;
   amount_minor: number | null;
+  concept: string | null;
 };
 
 export type Answer = {
