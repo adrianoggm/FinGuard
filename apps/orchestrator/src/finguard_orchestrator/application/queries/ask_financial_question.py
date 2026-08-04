@@ -850,6 +850,7 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
     Each gets its own sentence. Collapsing them into "no he podido" would tell the user
     nothing about whether to rephrase, wait, or give up.
     """
+    suggestions: list[str] = []
     match planned.outcome:
         case PlanningOutcome.NEEDS_CLARIFICATION:
             text = planned.question or ""
@@ -860,11 +861,38 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         case _:
             text = "No he entendido la pregunta. ¿Puedes decirla de otra forma?"
 
+    if _asks_the_same_thing_again(planned, was):
+        # The reply did not answer the question and the model has asked it again, word for word.
+        # A third "¿de qué periodo?" is not a clarification, it is a loop — and the user cannot
+        # get out of one by rephrasing, because rephrasing is what already failed twice. Offer
+        # the answers this service is certain about instead of asking an open question again.
+        text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
+
     return AskFinancialQuestionResult(
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
         conversation=was.with_active(_next_state(planned)),
+        suggestions=suggestions,
+    )
+
+
+def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bool:
+    """Whether this turn is the previous question repeated.
+
+    The slot rather than the wording, because the wording comes from a model and two phrasings of
+    "which period?" are the same dead end.
+
+    ponytail: `was.awaiting` is read off the active workflow, so a clarification that carried no
+    draft leaves no state and can still loop. The planner emits a draft whenever it read anything
+    at all, which is the ordinary case. The upgrade is remembering the last slot asked beside
+    `last_plan` — memory rather than a workflow — and it is worth doing when a draft-less repeat
+    is actually observed rather than imagined.
+    """
+    return (
+        planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+        and was.awaiting is not None
+        and was.awaiting is planned.awaiting
     )
 
 
