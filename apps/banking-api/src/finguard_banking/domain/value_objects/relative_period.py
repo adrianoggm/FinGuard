@@ -6,6 +6,7 @@ inside a generative model is exactly where silent off-by-one-month errors come f
 depends on when it runs.
 """
 
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -55,6 +56,17 @@ def _months_back(day: date, months: int) -> date:
     return date(total // 12, total % 12 + 1, 1)
 
 
+def _same_day_months_back(day: date, months: int) -> date:
+    """The same date `months` earlier, clamped to the end of a shorter month.
+
+    31 March minus one month is 28 February, because 31 February is not a date and refusing to
+    answer would be worse. Every calendar makes the same choice.
+    """
+    total = day.year * 12 + (day.month - 1) - months
+    year, month = total // 12, total % 12 + 1
+    return date(year, month, min(day.day, monthrange(year, month)[1]))
+
+
 def resolve(relative: RelativePeriod, today: date) -> DateRange:
     """Turns the period into a closed range, both ends included."""
     reference = relative.reference or today
@@ -97,5 +109,17 @@ def resolve(relative: RelativePeriod, today: date) -> DateRange:
         case Period.LAST_N_MONTHS:
             if relative.n is None:  # pragma: no cover - the invariant prevents it
                 raise InvalidValueError("LAST_N_MONTHS requires n")
-            # The current month counts, from its 1st.
-            return DateRange(start=_months_back(reference, relative.n - 1), end=reference)
+            # Rolling back from today, like LAST_N_DAYS beside it.
+            #
+            # It used to count the *current* month as one of the N and start on its 1st, which
+            # made `n=1` on the 4th of a month a window of four days — and exactly equal to
+            # THIS_MONTH, so two different questions resolved to one range. A holder asked
+            # "¿en el último mes?" about a category the assistant had just reported 53,71 € of,
+            # and was told there were no movements. Both answers were true of their own window and
+            # the conversation contradicted itself.
+            #
+            # Rolling also makes the pair coherent: "los últimos 7 días" ends today and starts
+            # seven days ago, so "los últimos 3 meses" ends today and starts three months ago. The
+            # calendar alignment was the odd one out and it shortened every window by most of a
+            # month.
+            return DateRange(start=_same_day_months_back(reference, relative.n), end=reference)
