@@ -85,3 +85,24 @@ def test_a_bare_uncertain_reply_is_recognised(reply: str) -> None:
 )
 def test_a_sentence_with_a_subject_is_not_reduced_to_uncertainty(reply: str) -> None:
     assert not payment_router.is_uncertain(reply)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "continuar con el bizum",
+        "sigamos con el pago",
+        "retoma la transferencia",
+        "quiero seguir con el bizum",
+    ],
+)
+def test_resuming_a_paused_payment_has_to_be_explicit(sentence: str) -> None:
+    assert payment_router.resumes(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["15 euros", "Marta Solis Vega", "sigamos", "¿cuánto gasté este mes?"],
+)
+def test_a_slot_value_or_an_unrelated_sentence_does_not_resume_a_payment(sentence: str) -> None:
+    assert payment_router.resumes(sentence) is False
