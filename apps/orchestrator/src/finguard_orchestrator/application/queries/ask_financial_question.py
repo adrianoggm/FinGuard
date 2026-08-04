@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Conversation,
     FinancialClarification,
     PaymentInProgress,
+    PlannedQuery,
     Slot,
     UnsupportedCapability,
 )
@@ -381,6 +382,20 @@ class AskFinancialQuestionHandler:
             yield await self._ranked(query, deeper)
             return
 
+        shifted = self._a_year_earlier(query)
+        if shifted is not None:
+            # "¿Y el año anterior?" after a question about July is July of last year. Answering it
+            # as the last twelve months is a different question, and refusing the phrase outright —
+            # which is what happened, because no `Period` names it — sent the turn to the model and
+            # started a clarification loop about a period the user had just given.
+            yield Stage("planned", answer_writer.describe(shifted))
+            yield Stage("querying")
+            if isinstance(shifted, TopMovements):
+                yield await self._ranked(query, shifted)
+            else:
+                yield await self._answer(query, shifted)
+            return
+
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         if refused is not None:
             # Before the model, on purpose. Refusing here is a control; refusing after is
@@ -579,7 +594,9 @@ class AskFinancialQuestionHandler:
 
         # Against the slot the question asked for, which is what makes a two-word reply readable:
         # "de este" names nothing on its own and is this year as the answer to "¿de qué año?".
-        window = window_words.window_in(query.sentence, asked_for=active.awaiting)
+        window = window_words.window_in(
+            query.sentence, asked_for=active.awaiting, today=query.today
+        )
         if window is None:
             return None
 
@@ -610,7 +627,9 @@ class AskFinancialQuestionHandler:
         if complete is not None:
             return complete
 
-        window = window_words.window_in(query.sentence, asked_for=active.awaiting)
+        window = window_words.window_in(
+            query.sentence, asked_for=active.awaiting, today=query.today
+        )
         if window is None:
             return None
         try:
@@ -645,6 +664,25 @@ class AskFinancialQuestionHandler:
             # Past the ceiling. Somebody a hundred movements down a list wants the list, and
             # silently repeating the hundredth would look like an answer.
             return None
+
+    def _a_year_earlier(self, query: AskFinancialQuestionQuery) -> PlannedQuery | None:
+        """The last question again, one year back, when that is all the sentence asks for.
+
+        A patch on the window and nothing else, which is what makes it safe to apply without a
+        model: the category, the direction and the metric are the ones already validated, and the
+        only field that moves is the pair of dates.
+
+        Only over an explicit range. Shifting a named period would mean resolving what LAST_MONTH
+        covers, and this service deliberately does not know — banking owns the calendar, and two
+        implementations of it is the two-clocks bug in a different costume.
+        """
+        previous = query.conversation.last_plan
+        if previous is None or previous.date_range is None:
+            return None
+        moved = window_words.a_year_earlier(query.sentence, previous.date_range)
+        if moved is None:
+            return None
+        return replace(previous, date_range=moved)
 
     async def _ranked(
         self, query: AskFinancialQuestionQuery, ranking: TopMovements
