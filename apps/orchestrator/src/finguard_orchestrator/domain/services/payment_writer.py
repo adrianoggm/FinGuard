@@ -71,8 +71,22 @@ def still_missing(draft: PaymentDraft) -> str:
 
 def ambiguous(name: str, candidates: tuple[str, ...]) -> str:
     """Two people answer to that name, so the user picks. Choosing for them would be the assistant
-    deciding who gets the money."""
+    deciding who gets the money.
+
+    Used where the name is known to be a name — banking's own refusal carries the fragment it
+    matched on. When the only thing to hand is the sentence, `several_candidates` is the one to use.
+    """
     return f"Tienes varios contactos que se llaman {name}: {', '.join(candidates)}. ¿A quién?"
+
+
+def several_candidates(candidates: tuple[str, ...]) -> str:
+    """The same question when the matched fragment is not separable from the sentence.
+
+    The first version passed the whole sentence in as the name, and the user read "tienes
+    varios contactos que se llaman Vale que te parece si le hacemos un bizum a Marta". Beyond
+    reading badly, echoing a sentence back into an answer is a habit worth not having.
+    """
+    return f"Tienes varios contactos con ese nombre: {', '.join(candidates)}. ¿A quién se lo envío?"
 
 
 def not_a_contact(name: str) -> str:

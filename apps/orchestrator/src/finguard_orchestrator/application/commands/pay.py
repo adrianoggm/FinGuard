@@ -166,7 +166,12 @@ def _asking_for(draft: PaymentDraft) -> PaymentAnswer:
 
 
 async def _previewed(
-    bank: PaymentGatewayPort, request: PaymentRequest, *, account_id: UUID, key: str
+    bank: PaymentGatewayPort,
+    request: PaymentRequest,
+    *,
+    account_id: UUID,
+    key: str,
+    directory: tuple[Contact, ...] = (),
 ) -> PaymentAnswer:
     """Asks the bank to hold the intent and turns every refusal into something sayable.
 
@@ -178,10 +183,24 @@ async def _previewed(
         preview = await bank.prepare(request, account_id=account_id, key=key)
     except AmbiguousRecipientError as several:
         # A question, not an error: the user picks, and they cannot without the names.
+        #
+        # It used to return the names and nothing else, so the amount and the concept the user had
+        # already given were lost — "quiero hacerle 15 euros de bizum a Marta con el concepto tapas"
+        # came back asking which Marta, and the reply then reached the financial planner. The
+        # recipient is cleared because it is the question; everything else survives it.
+        names = {name.casefold() for name in several.candidates}
         return PaymentAnswer(
             outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
             text=payment_writer.ambiguous(several.name, several.candidates),
             reason=several.code,
+            draft=_drafted(
+                PaymentDraft(amount_minor=request.amount_minor, concept=request.concept)
+            ),
+            candidates=[
+                SpokenCandidate(str(c.contact_id), c.display_name, c.phone)
+                for c in directory
+                if c.display_name.casefold() in names
+            ],
         )
     except RecipientNotFoundError as nobody:
         return PaymentAnswer(
@@ -282,6 +301,8 @@ class PreparePaymentHandler:
             reading.request,
             account_id=command.account_id,
             key=command.idempotency_key,
+            # So an ambiguous name comes back with identifiers rather than as prose to retype.
+            directory=await self._contacts.all_of(command.account_id),
         )
 
     async def _continue(self, command: PreparePaymentCommand) -> PaymentAnswer | None:
@@ -314,9 +335,7 @@ class PreparePaymentHandler:
             drafted = pending.filled_with(PaymentDraft(amount_minor=amount))
             return PaymentAnswer(
                 outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
-                text=payment_writer.ambiguous(
-                    command.sentence, tuple(c.display_name for c in named)
-                ),
+                text=payment_writer.several_candidates(tuple(c.display_name for c in named)),
                 draft=_drafted(drafted),
                 candidates=[
                     SpokenCandidate(str(c.contact_id), c.display_name, c.phone) for c in named

@@ -24,6 +24,7 @@ from typing import Any, Final
 
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.services.payment_grounding import SUPPORTED_CURRENCY
+from finguard_orchestrator.domain.value_objects.payment_request import MAX_CONCEPT
 
 # The outcomes a model may choose about its own reading. The other three are things that happen TO
 # a model — malformed output, a rejected value, a dead daemon — and offering them would only invite
@@ -47,7 +48,13 @@ PAYMENT_SCHEMA: Final[dict[str, Any]] = {
         "amountMinor": {"type": "integer", "minimum": 0},
         # One value, so a payment in another currency is unreachable rather than refused later.
         "currency": {"type": "string", "enum": [SUPPORTED_CURRENCY]},
+        # What the payment is for, in the user's words. Free text, like a merchant name and for the
+        # same reason: a note is data rather than vocabulary. Empty when the sentence gives none.
+        #
+        # It was being read from the answer before this existed, which meant never: the schema
+        # forbids additional properties, so a model that wanted to emit one could not.
+        "concept": {"type": "string", "maxLength": MAX_CONCEPT},
     },
-    "required": ["outcome", "question", "recipient", "amountMinor", "currency"],
+    "required": ["outcome", "question", "recipient", "amountMinor", "currency", "concept"],
     "additionalProperties": False,
 }
