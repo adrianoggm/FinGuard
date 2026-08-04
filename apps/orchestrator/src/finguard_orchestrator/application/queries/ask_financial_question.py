@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.models.conversation import (
     ActiveWorkflow,
     Conversation,
     FinancialClarification,
+    PaymentInProgress,
     Slot,
     UnsupportedCapability,
 )
@@ -268,6 +269,12 @@ class AskFinancialQuestionHandler:
         force_follow_up = False
         intent = intent_router.route(query.sentence, has_previous=previous is not None)
 
+        if isinstance(was.active, PaymentInProgress) and intent is not Intent.LIST_CONTACTS:
+            # This turn belongs to another subject. Keep the half-built Bizum, but mark that it
+            # stepped aside so a later bare amount or name cannot resume it without warning.
+            was = was.suspend()
+            query = replace(query, conversation=was)
+
         relaxed = query_recovery.relaxation(query.sentence, previous)
         if relaxed is not None:
             # These are the exact actions offered after an empty result. They patch one field in
@@ -284,8 +291,8 @@ class AskFinancialQuestionHandler:
             # Answered from here, never from the ledger and never from a model. "¿Quién eres?" used
             # to reach the planner and come back as a refusal about averages and forecasts: true
             # about the product, and not an answer to the question.
-            # An aside: whatever was under way stays under way, including a payment. Asking what
-            # the assistant is does not abandon a bizum.
+            # An aside does not abandon a Bizum. It does pause it, because the next bare amount
+            # should not silently jump back to a payment after the subject changed.
             yield AskFinancialQuestionResult(
                 outcome=Spoken.IDENTITY.value, text=explainer.IDENTITY, conversation=was
             )

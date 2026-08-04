@@ -234,6 +234,23 @@ conversations:
       - say: ¿cuánto gasté en gasolina el mes pasado?
         says: gasolina
 
+  - id: a_bizum_does_not_resume_silently_after_a_change_of_subject
+    why: >
+      A payment that stepped aside used to accept the next bare amount as if no other conversation
+      had happened. It now survives visibly paused and requires an explicit resumption.
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        keeps_payment: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        says: gasolina
+        keeps_payment: true
+      - say: 15 euros
+        says: pausado
+        keeps_payment: true
+      - say: continuar con el bizum, 15 euros
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
+
   - id: the_largest_expense_and_the_next_one
     why: >
       The reported thread, both turns. It used to be a total for the first — a real figure about a

@@ -129,6 +129,7 @@ class PaymentConfirmation:
     recipient: str
     amount_minor: int
     currency: str = "EUR"
+    concept: str | None = None
 
 
 type ActiveWorkflow = (
@@ -190,8 +191,18 @@ class Conversation:
         return Conversation(active=self.active, last_plan=self.last_plan)
 
     def answered(self, plan: PlannedQuery) -> "Conversation":
-        """A financial question was answered: it becomes the memory and nothing is left open."""
-        return Conversation(active=None, last_plan=plan)
+        """Remember a financial answer and close only the workflow that answer resolves.
+
+        A suspended payment belongs to the conversation before this answer and deliberately stepped
+        aside for it. It survives; a financial clarification or refusal does not, because the new
+        answer supersedes it.
+        """
+        active = (
+            self.active
+            if isinstance(self.active, PaymentInProgress) and self.active.suspended
+            else None
+        )
+        return Conversation(active=active, last_plan=plan)
 
     def suspend(self) -> "Conversation":
         """The active payment steps aside for a turn about something else.

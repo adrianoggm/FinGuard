@@ -59,13 +59,14 @@ CONTACTS = ListContactsResult(
 )
 
 
-def paying(**draft: object) -> dict:
+def paying(*, suspended: bool = False, **draft: object) -> dict:
     """A payment under way, as the wire spells it. The tests send states rather than fields now,
     which is the change: a client cannot assemble a combination the service never issues."""
     return {
         "workflow": "PAYMENT_IN_PROGRESS",
         "awaiting": "AMOUNT" if "amount_minor" not in draft else "RECIPIENT",
         "payment": {"currency": "EUR", **draft},
+        "suspended": suspended,
     }
 
 
@@ -195,6 +196,65 @@ def test_a_change_of_subject_is_still_a_question() -> None:
 
     assert preparing.commands == [], "a question was read as part of a payment"
     assert asking.sentences == ["¿cuánto gasté el mes pasado?"]
+
+
+def test_a_bare_amount_does_not_silently_resume_a_suspended_payment() -> None:
+    client, preparing, asking = client_for()
+
+    body = client.post(
+        "/v1/questions",
+        json={
+            "question": "15 euros",
+            "conversation": paying(suspended=True, recipient_name="Marta Solis Vega"),
+        },
+    ).json()
+
+    assert preparing.commands == []
+    assert asking.sentences == []
+    assert body["outcome"] == PaymentOutcome.NEEDS_CLARIFICATION.value
+    assert "pausado" in body["text"].lower()
+    assert body["conversation"]["suspended"] is True
+
+
+def test_an_explicit_resume_reopens_the_payment_on_the_streaming_route() -> None:
+    client, preparing, asking = client_for(answer=ASKED_FOR_THE_AMOUNT)
+
+    response = client.post(
+        "/v1/questions/stream",
+        json={
+            "question": "continuar con el bizum",
+            "conversation": paying(suspended=True, recipient_name="Marta Solis Vega"),
+        },
+    )
+    answer = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ][-1]
+
+    assert asking.sentences == []
+    assert len(preparing.commands) == 1
+    assert preparing.commands[0].pending is not None
+    assert preparing.commands[0].pending.recipient_name == "Marta Solis Vega"
+    assert answer["outcome"] == PaymentOutcome.NEEDS_CLARIFICATION.value
+    assert answer["conversation"]["suspended"] is False
+
+
+def test_a_new_payment_order_does_not_inherit_the_suspended_recipient() -> None:
+    client, preparing, asking = client_for()
+
+    body = client.post(
+        "/v1/questions",
+        json={
+            "question": "hazle un bizum de 20 euros a Aitor",
+            "conversation": paying(suspended=True, recipient_name="Marta Solis Vega"),
+        },
+    ).json()
+
+    assert asking.sentences == []
+    assert len(preparing.commands) == 1
+    assert preparing.commands[0].pending is None
+    assert body["outcome"] == PaymentOutcome.AWAITING_CONFIRMATION.value
 
 
 def test_uncertainty_repeats_the_missing_field_instead_of_becoming_a_financial_question() -> None:
