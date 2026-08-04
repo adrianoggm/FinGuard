@@ -6,14 +6,15 @@
 -- holders        3 + clearing account
 -- transactions   1678 (1675 BOOKED, 3 PENDING)
 -- entries        3356
--- sha256         2d236babf6b358fbb21cb5db74d5febe447f776837d38383a21f9bf07f010d89
+-- sha256         4b14d2d134bfa735a374811904ffef96ed28e542434b54e184d1ad4bb4bb204b
 --
 -- CAREFUL: it starts with a TRUNCATE. This is a development dataset.
 BEGIN;
 
 -- The ledger is immutable: it cannot be cleared with DELETE.
 TRUNCATE ledger_entries, ledger_transactions, balance_projections,
-         payment_intents, movement_categories, contacts, cards,
+         payment_intents, movement_categories, movement_classifications,
+         movement_tags, contacts, cards,
          accounts, customers;
 
 INSERT INTO customers (id, full_name) VALUES

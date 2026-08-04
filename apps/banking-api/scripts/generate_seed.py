@@ -419,7 +419,8 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     # otherwise, so a migration that forgets it breaks reloading the dataset and nothing else.
     # Never CASCADE: it would silently empty whatever a future migration happens to hang off
     # the ledger, which is a list nobody enumerated.
-    lines.append("         payment_intents, movement_categories, contacts, cards,")
+    lines.append("         payment_intents, movement_categories, movement_classifications,")
+    lines.append("         movement_tags, contacts, cards,")
     lines.append("         accounts, customers;")
     lines.append("")
 
