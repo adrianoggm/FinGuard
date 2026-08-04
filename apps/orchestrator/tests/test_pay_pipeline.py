@@ -100,9 +100,17 @@ class FakeGateway:
         self.cancelled += 1
 
 
+class NoContacts:
+    """An empty directory. These tests are about reading a whole sentence, where the recipient comes
+    from the model rather than from the address book — the continuation path has its own file."""
+
+    async def all_of(self, account_id: UUID) -> tuple:
+        return ()
+
+
 def preparing(reading: PaymentReading, gateway: FakeGateway | None = None):
     bank = gateway or FakeGateway()
-    return PreparePaymentHandler(FakeReader(reading), bank), bank
+    return PreparePaymentHandler(FakeReader(reading), bank, contacts=NoContacts()), bank
 
 
 def prepare(sentence: str = SENTENCE) -> PreparePaymentCommand:

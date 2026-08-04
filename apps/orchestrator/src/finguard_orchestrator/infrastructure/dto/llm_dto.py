@@ -90,6 +90,23 @@ class PlanPayload(_Payload):
     metric: Metric = Metric.SUM
 
 
+class PaymentDraftPayload(_Payload):
+    """A payment being built, in fields. Travels out with the question the assistant asked and back
+    with the answer to it.
+
+    Typed for the same reason the plan is: what a caller sends has to be a payment and nothing else.
+    A recipient is free text because a name is data, and it is resolved against the account's own
+    contacts before anything is prepared.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    recipient_name: str | None = None
+    amount_minor: int | None = None
+    currency: str = "EUR"
+    concept: str | None = None
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -110,6 +127,10 @@ class QuestionRequest(_Payload):
     # no window, because that is what it is: the reading its question interrupted. Sending it
     # is how "este año" completes a plan instead of becoming a new question.
     pending_draft: PlanPayload | None = None
+    # And the payment being built, if one is. Sending it is how "15 euros" finishes a bizum
+    # instead of being classified as a question about movements — which is what it looks like on
+    # its own, money with no verb.
+    payment_draft: PaymentDraftPayload | None = None
 
 
 class SpokenGroupResponse(_Payload):
@@ -164,6 +185,12 @@ class QuestionResponse(_Payload):
     # Filled only by a question about who can be paid. The identifier is what lets a client offer
     # a choice and send back *which* contact instead of a name to be interpreted a second time.
     contacts: list[SpokenContactResponse] = []
+    # Present while a payment is still being built: what a client echoes as `payment_draft` so the
+    # next reply completes it. Absent once there is an intent to confirm, or once it is refused.
+    payment_draft: PaymentDraftPayload | None = None
+    # Present when a recipient names several contacts, so the client can offer the choice with
+    # identifiers rather than asking the user to retype a name.
+    candidates: list[SpokenContactResponse] = []
 
 
 class SummaryMovementResponse(_Payload):

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
 
@@ -27,6 +28,10 @@ class PaymentReading:
     request: PaymentRequest | None = None
     question: str | None = None
     reason: str | None = None
+    # What the model had already read when it stopped to ask. Only a question carries one, and it
+    # may be absent even then: a draft is a convenience for the next turn, not a precondition for
+    # asking. "¿De cuánto quieres hacerle el bizum a Marta?" knew who Marta was and threw it away.
+    draft: PaymentDraft | None = None
 
     def __post_init__(self) -> None:
         if (self.outcome is PlanningOutcome.PLANNED) != (self.request is not None):
@@ -36,6 +41,8 @@ class PaymentReading:
             raise InvalidValueError("NEEDS_CLARIFICATION must carry the question to ask")
         if not needs_question and self.question is not None:
             raise InvalidValueError(f"{self.outcome} does not ask a question")
+        if not needs_question and self.draft is not None:
+            raise InvalidValueError(f"{self.outcome} has nothing half-built to carry")
 
     @property
     def is_payable(self) -> bool:
@@ -48,10 +55,16 @@ class PaymentReading:
         return cls(PlanningOutcome.PLANNED, request=request)
 
     @classmethod
-    def needs_clarification(cls, question: str) -> "PaymentReading":
+    def needs_clarification(
+        cls, question: str, draft: "PaymentDraft | None" = None
+    ) -> "PaymentReading":
         """`question` reaches the user, so it names the missing piece: "¿de cuánto?" tells them what
-        to do, "ambiguous" does not."""
-        return cls(PlanningOutcome.NEEDS_CLARIFICATION, question=question)
+        to do, "ambiguous" does not.
+
+        `draft` is what the model had already read. Optional, because the question is worth asking
+        either way — but when it is here, the reply completes a payment instead of starting one.
+        """
+        return cls(PlanningOutcome.NEEDS_CLARIFICATION, question=question, draft=draft)
 
     @classmethod
     def unsupported(cls, reason: str) -> "PaymentReading":

@@ -14,7 +14,7 @@ yes. Every other path — a question, an ungrounded reading, a "sí pero 30", a 
 ends in a sentence and no movement.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.command_bus import Command
@@ -27,16 +27,44 @@ from finguard_orchestrator.domain.errors import (
     PaymentRefusedError,
     RecipientNotFoundError,
 )
+from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
+from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.payment_gateway import PaymentGatewayPort
 from finguard_orchestrator.domain.ports.payment_reader import PaymentReaderPort
-from finguard_orchestrator.domain.services import confirmation, payment_writer
+from finguard_orchestrator.domain.services import confirmation, payment_words, payment_writer
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
 # Banking's code for a balance that does not cover the payment. Matched on the code, never on the
 # sentence: prose across a service boundary is how two services start disagreeing.
 INSUFFICIENT_FUNDS = "insufficient_funds"
+
+
+@dataclass(frozen=True)
+class SpokenPaymentDraft:
+    """The payment so far, flat like every Result piece.
+
+    The client echoes it on the next turn. Without it the reply to "¿de cuánto?" is a sentence with
+    no history — which is how "15 euros" reached the financial planner and came back asking which
+    month it was about.
+    """
+
+    recipient_name: str | None = None
+    amount_minor: int | None = None
+    currency: str = "EUR"
+    concept: str | None = None
+
+
+@dataclass(frozen=True)
+class SpokenCandidate:
+    """One of several people the recipient could be. The identifier is what lets the next turn name
+    a contact instead of a string to be interpreted again."""
+
+    contact_id: str
+    display_name: str
+    phone: str
 
 
 @dataclass(frozen=True)
@@ -60,6 +88,12 @@ class PaymentAnswer:
     transaction_id: UUID | None = None
     # Why it was refused, for the log and the evaluation. Never the sentence the user reads.
     reason: str | None = None
+    # Present while the payment is still being built: what the client echoes back so the next reply
+    # completes it. Absent once there is an intent to confirm, or once the payment is refused.
+    draft: SpokenPaymentDraft | None = None
+    # Present when the recipient names several contacts. Structured, so a client can offer buttons
+    # and send back which one — rather than the user retyping a name to be re-interpreted.
+    candidates: list[SpokenCandidate] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -73,6 +107,9 @@ class PreparePaymentCommand(Command[PaymentAnswer]):
     sentence: str
     account_id: UUID
     idempotency_key: str
+    # The payment already under way, echoed by the caller. This service keeps no conversation, so a
+    # half-built payment lives in the client's hands exactly like a half-built query does.
+    pending: PaymentDraft | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +140,29 @@ class ConfirmPaymentCommand(Command[PaymentAnswer]):
     # The preview being answered, if the caller echoed it back. Only used to repeat the question
     # when the reply is neither yes nor no — the decision to pay never depends on it.
     preview: PaymentPreview | None = None
+
+
+def _drafted(draft: PaymentDraft) -> SpokenPaymentDraft:
+    """Flattened, so no domain object leaves this layer."""
+    return SpokenPaymentDraft(
+        recipient_name=draft.recipient_name,
+        amount_minor=draft.amount_minor,
+        currency=draft.currency,
+        concept=draft.concept,
+    )
+
+
+def _asking_for(draft: PaymentDraft) -> PaymentAnswer:
+    """The question a half-built payment still needs answered, carrying itself.
+
+    Which slot is missing decides the question, and the draft travels with it — a question the
+    client cannot answer in context is the defect this whole path exists to fix.
+    """
+    return PaymentAnswer(
+        outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+        text=payment_writer.still_missing(draft),
+        draft=_drafted(draft),
+    )
 
 
 async def _previewed(
@@ -140,7 +200,7 @@ async def _previewed(
 
     return PaymentAnswer(
         outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
-        text=payment_writer.confirm_question(preview),
+        text=payment_writer.confirm_question(preview, request.concept),
         intent_id=preview.intent_id,
         recipient=preview.recipient,
         recipient_phone=preview.recipient_phone,
@@ -178,21 +238,42 @@ class PrepareChosenPaymentHandler:
 
 
 class PreparePaymentHandler:
+    """Reads a sentence into a payment, or continues one that is already under way.
+
+    The second half is what the reported conversation needed. "¿De cuánto quieres hacerle el bizum a
+    Marta?" followed by "15 euros" used to start again from nothing: the recipient was thrown away
+    with the question, and a sentence with money and no payment verb is not a payment, so it reached
+    the financial planner.
+
+    A continuation never consults the model. Both slots a payment can be missing are closed
+    vocabularies — an amount is a grammar, and a recipient is this account's own contact list — so
+    there is nothing to infer, and the turn that answers a question should not be able to be read as
+    a different intent.
+    """
+
     def __init__(
         self,
         reader: PaymentReaderPort,
         bank: PaymentGatewayPort,
         policy: GuardPolicy = EVERY_RULE,
+        *,
+        contacts: ContactDirectoryPort,
     ) -> None:
         self._reader = reader
         self._bank = bank
         self._policy = policy
+        self._contacts = contacts
 
     async def handle(self, command: PreparePaymentCommand) -> PaymentAnswer:
+        if command.pending is not None:
+            continued = await self._continue(command)
+            if continued is not None:
+                return continued
+
         reading = await self._reader.read(command.sentence, policy=self._policy)
 
         if not reading.is_payable:
-            return _declined(reading.outcome, reading.question, reading.reason)
+            return _declined(reading.outcome, reading.question, reading.reason, reading.draft)
 
         assert reading.request is not None  # is_payable is exactly this condition
 
@@ -201,6 +282,58 @@ class PreparePaymentHandler:
             reading.request,
             account_id=command.account_id,
             key=command.idempotency_key,
+        )
+
+    async def _continue(self, command: PreparePaymentCommand) -> PaymentAnswer | None:
+        """The pending payment plus whatever this sentence adds, or None if it adds nothing.
+
+        None is the useful answer as often as an answer is: "no sé" fills no slot, and a sentence
+        nobody can read deterministically belongs on the ordinary path.
+        """
+        assert command.pending is not None
+        pending = command.pending
+        missing = pending.missing
+
+        amount = payment_words.amount_in(command.sentence)
+        named: tuple[Contact, ...] = ()
+        if PaymentField.RECIPIENT in missing:
+            # Only when the recipient is what is missing. Otherwise a sentence that happens to
+            # mention a contact — "los 15 de la cena con Marta" — would silently change who is
+            # being paid.
+            named = payment_words.contacts_in(
+                command.sentence, await self._contacts.all_of(command.account_id)
+            )
+
+        if amount is None and not named:
+            return None
+
+        if len(named) > 1:
+            # Ambiguous, and this is the one place that can say so with the names in hand. Banking
+            # refuses to choose too, and reaching it would spend a round trip to be told the same
+            # thing without the candidates.
+            drafted = pending.filled_with(PaymentDraft(amount_minor=amount))
+            return PaymentAnswer(
+                outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+                text=payment_writer.ambiguous(
+                    command.sentence, tuple(c.display_name for c in named)
+                ),
+                draft=_drafted(drafted),
+                candidates=[
+                    SpokenCandidate(str(c.contact_id), c.display_name, c.phone) for c in named
+                ],
+            )
+
+        turn = PaymentDraft(
+            recipient_name=named[0].display_name if named else None,
+            amount_minor=amount,
+        )
+        drafted = pending.filled_with(turn)
+        request = drafted.into_request()
+        if request is None:
+            return _asking_for(drafted)
+
+        return await _previewed(
+            self._bank, request, account_id=command.account_id, key=command.idempotency_key
         )
 
 
@@ -279,7 +412,12 @@ def _refusal(reason: str) -> PaymentAnswer:
     return PaymentAnswer(outcome=PaymentOutcome.REFUSED.value, text=text, reason=reason)
 
 
-def _declined(outcome: PlanningOutcome, question: str | None, reason: str | None) -> PaymentAnswer:
+def _declined(
+    outcome: PlanningOutcome,
+    question: str | None,
+    reason: str | None,
+    draft: PaymentDraft | None = None,
+) -> PaymentAnswer:
     """The readings that are not a payment. Each gets its own sentence: collapsing them would leave
     the user unable to tell whether to rephrase, wait, or give up."""
     match outcome:
@@ -288,6 +426,9 @@ def _declined(outcome: PlanningOutcome, question: str | None, reason: str | None
                 outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
                 text=question or payment_writer.not_understood(),
                 reason=reason,
+                # Only a question carries one. A refusal that echoed a draft would invite the client
+                # to keep answering a question nobody asked.
+                draft=_drafted(draft) if draft else None,
             )
         case PlanningOutcome.UNSUPPORTED:
             return PaymentAnswer(

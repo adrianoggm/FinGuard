@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.services import payment_grounding
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 from finguard_orchestrator.infrastructure.payments.payment_prompt import build_prompt
 from finguard_orchestrator.infrastructure.payments.payment_schema import PAYMENT_SCHEMA
@@ -30,6 +31,12 @@ from finguard_orchestrator.infrastructure.payments.payment_schema import PAYMENT
 # Supplying the words of a question commits to nothing; supplying an amount would commit to a
 # payment. That asymmetry is why this fallback exists and why there is no equivalent for a figure.
 FALLBACK_QUESTION: Final = "¿Cuánto quieres enviar, y a quién?"
+
+
+# What to ask when the model read a payment and left one slot empty. Spanish, and naming the slot:
+# "¿de cuánto?" tells the user what to type and "no lo he entendido" does not.
+MISSING_AMOUNT: Final = "¿De cuánto quieres hacer el bizum?"
+MISSING_RECIPIENT: Final = "¿A quién quieres enviarle el dinero?"
 
 
 class _MalformedError(Exception):
@@ -108,7 +115,7 @@ def _read(answer: str, *, sentence: str, policy: GuardPolicy) -> PaymentReading:
                 question = _text(body, "question").strip()
             except _MalformedError as exc:
                 return PaymentReading.invalid_structure(str(exc))
-            return PaymentReading.needs_clarification(question or FALLBACK_QUESTION)
+            return PaymentReading.needs_clarification(question or FALLBACK_QUESTION, _draft(body))
 
         case PlanningOutcome.UNSUPPORTED:
             return PaymentReading.unsupported("the sentence is not a payment this assistant makes")
@@ -122,6 +129,26 @@ def _read(answer: str, *, sentence: str, policy: GuardPolicy) -> PaymentReading:
             return PaymentReading.invalid_structure(f"{outcome} is not the model's to choose")
 
 
+def _draft(body: dict[str, Any]) -> PaymentDraft | None:
+    """What the model had read by the time it decided to ask.
+
+    The schema requires every field on every outcome, so a clarification already carries whatever it
+    understood — usually the recipient, when the amount is what it is asking about. That
+    was dropped, which is why answering "15 euros" started a new conversation.
+
+    Nothing here can fail the clarification: an unreadable draft becomes no draft, because
+    a question back is useful on its own and the model did nothing wrong by asking.
+    """
+    try:
+        return PaymentDraft(
+            recipient_name=_text(body, "recipient").strip() or None,
+            amount_minor=_count(body, "amountMinor") or None,
+            concept=(body.get("concept") or "").strip() or None,
+        )
+    except (_MalformedError, InvalidValueError):
+        return None
+
+
 def _build_request(body: dict[str, Any], *, sentence: str, policy: GuardPolicy) -> PaymentReading:
     try:
         recipient, currency = _text(body, "recipient"), _text(body, "currency")
@@ -129,9 +156,23 @@ def _build_request(body: dict[str, Any], *, sentence: str, policy: GuardPolicy) 
     except _MalformedError as exc:
         return PaymentReading.invalid_structure(str(exc))
 
+    if not recipient.strip() or amount_minor <= 0:
+        # It chose PLANNED and left a slot empty. That is a question rather than a bad payment: the
+        # sentinel means "the sentence did not say", and building a PaymentRequest from it used to
+        # raise and come back as "no lo he entendido" — about a sentence that was understood except
+        # for one field.
+        drafted = _draft(body)
+        missing_amount = amount_minor <= 0
+        return PaymentReading.needs_clarification(
+            MISSING_AMOUNT if missing_amount else MISSING_RECIPIENT, drafted
+        )
+
     try:
         request = PaymentRequest(
-            recipient_name=recipient.strip(), amount_minor=amount_minor, currency=currency
+            recipient_name=recipient.strip(),
+            amount_minor=amount_minor,
+            currency=currency,
+            concept=(body.get("concept") or "").strip() or None,
         )
     except InvalidValueError as exc:
         # A payment of nothing, a negative one, an absurd one, or nobody to pay. Well-formed JSON

@@ -23,12 +23,20 @@ MAX_PAYMENT_MINOR = 1_000_000
 # surnames, short enough that the field cannot carry a paragraph into the contact lookup.
 MAX_RECIPIENT_NAME = 120
 
+# A note the user wrote. Long enough for "cena del viernes con Marta y Aitor", short enough that the
+# field cannot carry a paragraph into the ledger's description.
+MAX_CONCEPT = 140
+
 
 @dataclass(frozen=True)
 class PaymentRequest:
     recipient_name: str
     amount_minor: int
     currency: str
+    # What the payment is for, in the user's own words. Optional, because a payment without one is
+    # still a payment — and it was read out of "con el concepto tapas" and then dropped on the
+    # floor, because this field did not exist.
+    concept: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.amount_minor, int) or isinstance(self.amount_minor, bool):
@@ -46,5 +54,7 @@ class PaymentRequest:
             raise InvalidValueError(
                 f"a recipient's name is at most {MAX_RECIPIENT_NAME} characters"
             )
+        if self.concept is not None and len(self.concept) > MAX_CONCEPT:
+            raise InvalidValueError(f"a concept is at most {MAX_CONCEPT} characters")
         if len(self.currency) != CURRENCY_LENGTH or not self.currency.isalpha():
             raise InvalidValueError(f"currency must be 3 letters, got {self.currency!r}")
