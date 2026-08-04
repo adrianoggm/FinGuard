@@ -104,6 +104,11 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
 
+    if not query.include_internal:
+        # Before the direction, because it is the wider cut and reads in the order somebody
+        # would say it: money that left the household, then which way it went.
+        conditions.append("NOT t.is_internal")
+
     if query.direction is not Direction.ALL:
         conditions.append(f"t.direction = {parameters.bind(query.direction.value)}")
 

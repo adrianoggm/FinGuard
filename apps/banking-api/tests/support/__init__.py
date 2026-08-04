@@ -47,6 +47,7 @@ async def create_transaction(
     merchant: str | None = None,
     occurred_at: datetime | None = None,
     description: str = "Test movement",
+    transaction_type: str = TransactionType.TRANSFER.value,
 ) -> uuid.UUID:
     transaction_id = uuid.uuid4()
     metadata: dict[str, str] = {}
@@ -60,7 +61,7 @@ async def create_transaction(
         "(id, transaction_type, status, reference, description, metadata, occurred_at) "
         "VALUES ($1, $2, $3, $4, $5, $6::jsonb, COALESCE($7::timestamptz, NOW()))",
         transaction_id,
-        TransactionType.TRANSFER.value,
+        transaction_type,
         status,
         f"ref-{transaction_id.hex[:12]}",
         description,
