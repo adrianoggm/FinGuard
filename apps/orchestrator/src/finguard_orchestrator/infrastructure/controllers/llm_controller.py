@@ -548,6 +548,7 @@ async def ask(
             today=today,
             previous_plan=_context_of(request),
             pending_draft=_pending_of(request),
+            previous_refusal=request.previous_refusal,
         )
     )
     return llm_mapper.question_to_dto(result)
@@ -602,6 +603,7 @@ async def ask_streaming(
         today=today,
         previous_plan=_context_of(request),
         pending_draft=_pending_of(request),
+        previous_refusal=request.previous_refusal,
     )
 
     async def events() -> AsyncIterator[str]:

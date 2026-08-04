@@ -60,6 +60,11 @@ export type Thread = {
    * contactos?" in the middle of one must not abandon it.
    */
   payment: PaymentDraft | null;
+  /**
+   * The capability the last turn was refused for, if it was. Sending it back is what lets
+   * "¿y el segundo?" get the same refusal instead of starting a conversation about a period.
+   */
+  refusal: string | null;
 };
 
 export const EMPTY_THREAD: Thread = {
@@ -68,6 +73,7 @@ export const EMPTY_THREAD: Thread = {
   pending: null,
   unfinished: null,
   payment: null,
+  refusal: null,
 };
 
 type Props = {
@@ -104,7 +110,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         const answer = await confirm(before.pending, text);
         onThread(settled(before, [...turns, { who: "assistant", answer }], answer, onSettled));
       } else {
-        for await (const step of ask(text, before.plan, before.unfinished, before.payment)) {
+        for await (const step of ask(text, before.plan, before.unfinished, before.payment, before.refusal)) {
           if ("name" in step) setStage(STAGES[step.name] ?? null);
           else {
             turns.push({ who: "assistant", answer: step });
@@ -202,6 +208,9 @@ export function settled(before: Thread, turns: Turn[], answer: Answer, onSettled
     // it became a preview waiting for a yes, or it was refused. A bizum is a goal that spans
     // turns, so asking who is in the address book in the middle of one must not abandon it.
     payment: answer.payment_draft ?? (awaiting || wasPayment ? null : before.payment),
+    // Replaced every turn, like the query draft: it describes the turn that just happened, and
+    // a stale one would refuse a question two turns later for a capability nobody asked about.
+    refusal: answer.refused_capability ?? null,
   };
 }
 

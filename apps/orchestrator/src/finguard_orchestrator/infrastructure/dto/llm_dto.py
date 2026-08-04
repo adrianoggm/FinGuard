@@ -131,6 +131,8 @@ class QuestionRequest(_Payload):
     # instead of being classified as a question about movements — which is what it looks like on
     # its own, money with no verb.
     payment_draft: PaymentDraftPayload | None = None
+    # Echo back `refused_capability` so the turn after a refusal can be about it.
+    previous_refusal: str | None = Field(default=None, max_length=64)
 
 
 class SpokenGroupResponse(_Payload):
@@ -188,6 +190,10 @@ class QuestionResponse(_Payload):
     # Present while a payment is still being built: what a client echoes as `payment_draft` so the
     # next reply completes it. Absent once there is an intent to confirm, or once it is refused.
     payment_draft: PaymentDraftPayload | None = None
+    # On an UNSUPPORTED answer: which capability is missing, by name. Echoed back as
+    # `previous_refusal` so a bare "¿y el segundo?" gets the same refusal rather than a question
+    # about a period it can never use.
+    refused_capability: str | None = None
     # Present when a recipient names several contacts, so the client can offer the choice with
     # identifiers rather than asking the user to retype a name.
     candidates: list[SpokenContactResponse] = []

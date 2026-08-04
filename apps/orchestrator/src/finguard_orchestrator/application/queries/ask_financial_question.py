@@ -113,6 +113,10 @@ class AskFinancialQuestionResult:
     question: str | None = None
     plan: str | None = None
     plan_context: SpokenPlan | None = None
+    # On an UNSUPPORTED answer: which capability was missing, by the guard's own name. The client
+    # echoes it as `previous_refusal` so "¿y el segundo?" can be answered with the same refusal
+    # instead of becoming a question about a period.
+    refused_capability: str | None = None
     # Present with a question back: the reading the question interrupted. The client echoes it
     # as `pending_draft` so the reply completes the plan instead of starting over. Same shape as
     # `plan_context` with no window, because that is exactly what it is.
@@ -145,6 +149,9 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # was answered, the other a question that was asked. Both can be present — a follow-up can
     # be the one that gets clarified.
     pending_draft: FinancialPlanDraft | None = None
+    # The capability the previous turn was refused for, echoed by the caller. A refusal is a turn
+    # in the conversation, and the sentence after it is often about it.
+    previous_refusal: str | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +259,20 @@ class AskFinancialQuestionHandler:
             # correction treated as an ordinary follow-up patches a window onto a category the user
             # has just said was wrong.
             previous = None
+
+        if (
+            query.previous_refusal in capability_guard.RULES
+            and capability_guard.continues_a_refusal(query.sentence)
+        ):
+            # "¿Y el segundo?" after "no sé buscar el movimiento más alto" asks for the second
+            # largest. The capability is the one just refused and the sentence says nothing about
+            # size, so nothing here could see it: it went to the planner and came back asking which
+            # period, then asking again, and again.
+            #
+            # The name is checked against the registry rather than trusted — it crosses the wire,
+            # and a name this build does not have is not a refusal it can repeat.
+            yield _decline(PlanningResult.unsupported(query.previous_refusal))
+            return
 
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
         if refused is not None:
@@ -493,6 +514,12 @@ def _decline(planned: PlanningResult) -> AskFinancialQuestionResult:
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
+        # Only on UNSUPPORTED, where `reason` is the guard's family name. On the other outcomes it
+        # is a message for the log, and putting that on the wire would invite a client to echo it
+        # back as a capability.
+        refused_capability=(
+            planned.reason if planned.outcome is PlanningOutcome.UNSUPPORTED else None
+        ),
         # Only a clarification carries one, and the client needs it to answer: without the draft
         # on the way out there is nothing to echo back, and the reply is a fresh question again.
         pending_context=_drafted(planned.draft) if planned.draft else None,
