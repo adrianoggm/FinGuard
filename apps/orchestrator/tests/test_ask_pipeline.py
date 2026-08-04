@@ -18,11 +18,20 @@ import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.application.queries.ask_financial_question import Stage
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    PlanningOutcome,
+    Spoken,
+)
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
     FinancialClarification,
+    PaymentInProgress,
+    Slot,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
@@ -31,6 +40,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlanDraft,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 7, 15)
@@ -80,9 +90,17 @@ class FakePlanner:
 
 
 class FakeLedger:
-    def __init__(self, answer: QueryAnswer | None = None, failure: Exception | None = None) -> None:
+    def __init__(
+        self,
+        answer: QueryAnswer | None = None,
+        failure: Exception | None = None,
+        *,
+        failures_before_success: int = 0,
+    ) -> None:
         self._answer = answer
         self._failure = failure
+        self._failures_before_success = failures_before_success
+        self.attempts = 0
         self.account_id: uuid.UUID | None = None
         self.today: date | None = None
         self.reporting_timezone: str | None = None
@@ -96,9 +114,13 @@ class FakeLedger:
         today: date,
         reporting_timezone: str = "Europe/Madrid",
     ) -> QueryAnswer:
+        self.attempts += 1
         self.account_id, self.today = account_id, today
         self.reporting_timezone = reporting_timezone
         self.plan = plan
+        if self._failures_before_success > 0:
+            self._failures_before_success -= 1
+            raise BankingUnavailableError("short interruption")
         if self._failure is not None:
             raise self._failure
         assert self._answer is not None
@@ -343,6 +365,215 @@ async def test_an_unreachable_ledger_is_not_the_users_problem() -> None:
 
     assert result.outcome == "BANKING_UNAVAILABLE"
     assert result.total_minor is None
+    assert result.conversation.retry_plan == plan()
+    assert result.suggestions == ["Reintentar", "Cambiar consulta", "Cancelar consulta"]
+    assert ledger.attempts == 2
+
+
+async def test_a_short_bank_interruption_is_retried_automatically_for_a_read() -> None:
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER, failures_before_success=1)
+
+    result = await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.attempts == 2
+    assert planner.asked == "¿cuánto gasté el mes pasado?"
+    assert result.conversation.retry_plan is None
+
+
+async def test_retry_runs_the_same_validated_plan_without_calling_the_model_again() -> None:
+    planned = plan(categories=("GROCERIES",), metric=Metric.COUNT)
+    planner = FakePlanner(PlanningResult.planned(planned))
+    ledger = FakeLedger(ANSWER, failure=BankingUnavailableError("timeout"))
+    handler = chat(planner, ledger)
+
+    failed = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántas compras hice el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+    planner.asked = None
+    ledger._failure = None
+
+    retried = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="Reintentar",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=failed.conversation,
+        )
+    )
+
+    assert planner.asked is None
+    assert ledger.plan == planned
+    assert retried.outcome == PlanningOutcome.PLANNED.value
+    assert retried.conversation.retry_plan is None
+    assert retried.conversation.last_plan == planned
+
+
+@pytest.mark.parametrize(
+    ("sentence", "fragment"),
+    [
+        ("Cambiar consulta", "Dime qué movimientos"),
+        ("Cancelar consulta", "he descartado"),
+    ],
+)
+async def test_a_saved_retry_can_be_changed_or_cancelled_without_the_model(
+    sentence: str, fragment: str
+) -> None:
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER)
+
+    result = await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence=sentence,
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(retry_plan=plan()),
+        )
+    )
+
+    assert result.outcome == Spoken.GUIDANCE.value
+    assert fragment in result.text
+    assert result.conversation.retry_plan is None
+    assert planner.asked is None
+    assert ledger.plan is None
+
+
+async def test_an_empty_answer_explains_the_filters_and_offers_supported_relaxations() -> None:
+    searched = plan(categories=("GROCERIES",), merchants=("Mercadonna",))
+    empty = QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+    planner = FakePlanner(PlanningResult.planned(searched))
+    ledger = FakeLedger(empty)
+    handler = chat(planner, ledger)
+
+    result = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿qué gasté en Mercadonna el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+
+    assert "No he encontrado movimientos" in result.text
+    assert "Mercadonna" in result.text
+    assert result.suggestions == [
+        "Buscar sin categoría",
+        "Buscar sin comercio",
+        "Ampliar a tres meses",
+    ]
+    assert result.conversation.last_plan == searched
+
+    planner.asked = None
+    ledger._answer = ANSWER
+    await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="Buscar sin categoría",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=result.conversation,
+        )
+    )
+
+    assert planner.asked is None
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ()
+    assert ledger.plan.merchants == ("Mercadonna",)
+    assert ledger.plan.period == LAST_MONTH
+
+
+async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
+    """The financial answer is useful, but it is a change of subject. The Bizum survives visibly
+    paused so a later bare amount cannot complete it without the user explicitly resuming it."""
+    building = Conversation(
+        active=PaymentInProgress(
+            draft=PaymentDraft(recipient_name="Marta Solis Vega"),
+            awaiting=Slot.AMOUNT,
+        )
+    )
+
+    result = await chat(FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=building,
+        )
+    )
+
+    assert isinstance(result.conversation.active, PaymentInProgress)
+    assert result.conversation.active.suspended is True
+    assert result.conversation.active.draft.recipient_name == "Marta Solis Vega"
+    assert result.conversation.last_plan == plan()
+
+
+async def test_the_category_catalogue_is_answered_without_a_model_or_the_ledger() -> None:
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = FakeLedger(ANSWER)
+
+    result = await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿qué categorías entiendes?",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+
+    assert result.outcome == Spoken.CATEGORIES.value
+    assert "gasolina" in result.text
+    assert "alquiler" in result.text
+    assert planner.asked is None
+    assert ledger.account_id is None
+
+
+async def test_listing_categories_does_not_close_the_clarification_that_needed_one() -> None:
+    clarification = FinancialClarification(
+        draft=FinancialPlanDraft(direction=Direction.EXPENSE, period=LAST_MONTH),
+        awaiting=Slot.CATEGORY,
+    )
+
+    result = await chat(FakePlanner(PlanningResult.planned(plan())), FakeLedger(ANSWER)).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿qué opciones de categoría hay?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=clarification),
+        )
+    )
+
+    assert result.conversation.active == clarification
+
+
+async def test_a_category_name_completes_the_clarification_without_a_model() -> None:
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    clarification = FinancialClarification(
+        draft=FinancialPlanDraft(direction=Direction.EXPENSE, period=LAST_MONTH),
+        awaiting=Slot.CATEGORY,
+    )
+
+    result = await chat(planner, FakeLedger(ANSWER)).handle(
+        AskFinancialQuestionQuery(
+            sentence="gasolina",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=clarification),
+        )
+    )
+
+    assert planner.asked is None
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert result.conversation.last_plan is not None
+    assert result.conversation.last_plan.period == LAST_MONTH
+    assert result.conversation.last_plan.categories == ("TRANSPORT_FUEL",)
 
 
 # --- the account and the clock come from the caller ---------------------------------
