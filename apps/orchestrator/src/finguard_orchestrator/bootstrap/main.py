@@ -117,6 +117,14 @@ def create_app() -> FastAPI:
         timeout_seconds=settings.banking_timeout_seconds,
         supporting_movements=settings.supporting_movements,
     )
+    # One adapter for both readers of the balance. The home screen and the conversation showing
+    # different figures would be worse than either being wrong, so there is one way to ask.
+    accounts = HttpAccountSummary(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+        days=settings.summary_days,
+        movements=settings.summary_movements,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -129,6 +137,8 @@ def create_app() -> FastAPI:
         # Validated here, so a rule name this build does not have stops the service
         # rather than silently leaving the rule on.
         settings.guard_policy(),
+        # "¿Cuánto dinero tengo?" is answered from here, with no model in the path.
+        accounts=accounts,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
@@ -156,14 +166,7 @@ def create_app() -> FastAPI:
     )
     query_bus.register(
         GetAccountSummaryQuery,
-        GetAccountSummaryHandler(
-            HttpAccountSummary(
-                base_url=settings.banking_base_url,
-                timeout_seconds=settings.banking_timeout_seconds,
-                days=settings.summary_days,
-                movements=settings.summary_movements,
-            )
-        ),
+        GetAccountSummaryHandler(accounts),
     )
 
     # The payment path. Its own reader, its own prompt and its own schema: extracting who

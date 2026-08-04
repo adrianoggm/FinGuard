@@ -16,6 +16,8 @@ need no model at all, because the answer is in the previous plan or in this repo
     CORRECTION         "no me has entendido". What matters is what happens next: a correction must
                        not inherit the plan it is correcting.
     EXPLAIN_PREVIOUS   about the last answer. Reads the plan, not the ledger.
+    ACCOUNT_BALANCE    how much money there is. A state, not a sum over a window — and the one
+                       question the financial planner cannot express at all.
     FINANCIAL_QUERY    everything left.
 
 `has_previous` gates the two that only mean something after an answer. "¿Por qué me has mostrado
@@ -35,7 +37,40 @@ class Intent(StrEnum):
     IDENTITY_OR_HELP = "IDENTITY_OR_HELP"
     CORRECTION = "CORRECTION"
     EXPLAIN_PREVIOUS = "EXPLAIN_PREVIOUS"
+    ACCOUNT_BALANCE = "ACCOUNT_BALANCE"
     FINANCIAL_QUERY = "FINANCIAL_QUERY"
+
+
+# How much money there is, which is a state and not a sum over a window.
+#
+# The first question of the reported conversation — "¿podrías decirme cuánto dinero tengo en mis
+# cuentas?" — came back as *"no he encontrado movimientos del 2026-08-04 al 2026-08-04"*. This is
+# where that starts: there were five intents and none of them was the balance, so it fell through
+# to the financial planner, and `FinancialPlan` cannot express a balance at all. The model built the
+# nearest thing available to it, which was today's movements.
+#
+# **The discriminator is the verb.** "Tengo", "queda", "dispongo" and "saldo" are about a state;
+# "gasté", "ingresé" and "he gastado" are sums over a period. The two overlap in "¿cuántos
+# movimientos tengo este mes?", so anything counting movements is excluded explicitly: that is a
+# question the planner answers well, and answering it with a balance would be the same class of
+# error this fixes — a real figure about something else.
+_ABOUT_THE_BALANCE: Final = re.compile(
+    r"\bsaldos?\b"
+    r"|\bcu[áa]nto\s+(dinero\s+)?(tengo|ten[íi]a|me\s+queda|hay)\b"
+    r"|\bcu[áa]nto\s+(tengo\s+)?disponible\b"
+    r"|\bde\s+cu[áa]nto\s+dispongo\b"
+    r"|\bdinero\s+(disponible|tengo)\b",
+    re.IGNORECASE,
+)
+
+# What "tengo" means when it is not about the balance. Checked first, so a question that counts
+# movements or lists things keeps going to the path that can answer it.
+_NOT_THE_BALANCE: Final = re.compile(
+    r"\bcu[áa]nt[oa]s?\s+(movimientos|compras|cargos|pagos|operaciones|veces|bizums?)\b"
+    r"|\bgast[éeoa]|\bingres[éeoa]|\bhe\s+gastado\b|\bme\s+he\s+gastado\b"
+    r"|\bqu[ée]\s+(contactos|tarjetas|cuentas)\b",
+    re.IGNORECASE,
+)
 
 
 # About the assistant rather than about the account. `puedes hacer` and not a bare `puedes`, because
@@ -94,4 +129,9 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
         return Intent.CORRECTION
     if has_previous and _ABOUT_THE_ANSWER.search(sentence):
         return Intent.EXPLAIN_PREVIOUS
+    if _ABOUT_THE_BALANCE.search(sentence) and not _NOT_THE_BALANCE.search(sentence):
+        # Last of the deterministic ones, and not gated on `has_previous`: "¿cuánto tengo?" is a
+        # whole question on the first turn. The exclusion is what keeps "¿cuántos movimientos
+        # tengo este mes?" on the path that can answer it.
+        return Intent.ACCOUNT_BALANCE
     return Intent.FINANCIAL_QUERY

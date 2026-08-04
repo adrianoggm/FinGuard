@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.services import (
@@ -161,10 +162,18 @@ class AskFinancialQuestionHandler:
         planner: QueryPlannerPort,
         queries: FinancialQueryPort,
         policy: GuardPolicy = EVERY_RULE,
+        *,
+        accounts: AccountSummaryPort,
     ) -> None:
         self._planner = planner
         self._queries = queries
         self._policy = policy
+        self._accounts = accounts
+
+    # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
+    # handler without it would fall back to the planner, which is the bug this exists to fix — and
+    # it would do so silently. Required means mypy finds an unwired build instead of a user
+    # finding it.
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
         """The whole answer at once. Drains the same pipeline the stream walks, so the
@@ -198,6 +207,14 @@ class AskFinancialQuestionHandler:
                 plan=answer_writer.describe(previous) if previous else None,
                 plan_context=_spoken(previous) if previous else None,
             )
+            return
+
+        if intent is Intent.ACCOUNT_BALANCE:
+            # Not a plan and not a model. `FinancialPlan` expresses aggregations over movements —
+            # window, direction, categories, merchants, grouping, SUM or COUNT — and a balance is
+            # none of those, so asking a model for one got the nearest expressible thing: today's
+            # movements. The figure was already there, on the port the home screen reads.
+            yield await self._balance(query, previous)
             return
 
         if intent is Intent.CORRECTION:
@@ -248,6 +265,42 @@ class AskFinancialQuestionHandler:
         yield Stage("planned", answer_writer.describe(planned.plan))
         yield Stage("querying")
         yield await self._answer(query, planned.plan)
+
+    async def _balance(
+        self, query: AskFinancialQuestionQuery, previous: FinancialPlan | None
+    ) -> AskFinancialQuestionResult:
+        """How much money there is, from the fixed question rather than a planned one.
+
+        `previous` is carried straight through. A balance question is a turn in the conversation,
+        not a reset: asking it in the middle of an analysis of last month must not cost the window
+        of the question before it.
+        """
+        try:
+            summary = await self._accounts.of(
+                query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except BankingUnavailableError:
+            # The one figure that must never be invented. "Tienes 0,00 €" for "we could not ask"
+            # is the worst wrong answer a bank can give, so nothing numeric goes out.
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tu saldo ahora mismo. Vuelve a intentarlo.",
+                plan=answer_writer.describe(previous) if previous else None,
+                plan_context=_spoken(previous) if previous else None,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.BALANCE.value,
+            text=answer_writer.balance(summary),
+            plan=answer_writer.describe(previous) if previous else None,
+            plan_context=_spoken(previous) if previous else None,
+            currency=summary.currency,
+            # The available balance, which is the figure the sentence leads with. A client showing
+            # it should not have to parse the sentence to find it.
+            total_minor=summary.available_minor,
+        )
 
     def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         """The plan a reply to "¿de qué periodo?" completes, or None if this is not that.

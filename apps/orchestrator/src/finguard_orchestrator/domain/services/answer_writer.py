@@ -14,6 +14,7 @@ makes.
 """
 
 from finguard_orchestrator.domain.enums import Metric
+from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
@@ -44,6 +45,22 @@ def money(amount_minor: int, currency: str) -> str:
     # the same amount two ways.
     symbol = " €" if currency == "EUR" else f" {currency}"
     return f"{sign}{grouped},{cents:02d}{symbol}"
+
+
+def balance(summary: AccountSummary) -> str:
+    """How much money there is, in words.
+
+    Two figures or one, and the difference matters. Booked is what the ledger has settled and
+    available is what can be spent; when something is pending they differ, and showing one under
+    the other's name tells somebody they have money they do not. When they agree, saying the same
+    number twice under two labels reads like a discrepancy the user has to work out — so it is
+    said once.
+    """
+    available = money(summary.available_minor, summary.currency)
+    if summary.available_minor == summary.booked_minor:
+        return f"Tienes {available} en tu cuenta."
+    booked = money(summary.booked_minor, summary.currency)
+    return f"Tienes {available} disponibles en tu cuenta. El saldo contabilizado es de {booked}."
 
 
 def window_of(plan: FinancialPlan) -> str:

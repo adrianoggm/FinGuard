@@ -132,3 +132,6 @@ class Spoken(StrEnum):
     IDENTITY = "IDENTITY"
     # About the previous answer: which query ran, and what a category means.
     EXPLANATION = "EXPLANATION"
+    # How much money there is. Read from the ledger, but through the fixed question the home
+    # screen asks rather than through a plan, so no model is involved in choosing it.
+    BALANCE = "BALANCE"

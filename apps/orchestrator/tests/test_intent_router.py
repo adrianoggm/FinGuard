@@ -128,3 +128,60 @@ def test_a_payment_wins_over_a_complaint() -> None:
     would drop it into the query path, where it would be refused as an action — annoying, but the
     reverse would be worse in the other direction, so the order is chosen and not accidental."""
     assert route("no me has entendido, hazle un bizum de 20 euros a Marta") is Intent.PAYMENT
+
+
+# --- the balance, which is not a question about movements ----------------------------
+#
+# The first thing the user asked in the reported conversation:
+#
+#     "Buenos días, ¿podrías decirme cuánto dinero tengo en mis cuentas?"
+#     → "No he encontrado movimientos del 2026-08-04 al 2026-08-04."
+#
+# Everything about that is wrong, and the router is where it starts. There were five intents and
+# none of them was the balance, so it fell through to FINANCIAL_QUERY — where `FinancialPlan` can
+# express a window, a direction, categories, merchants, a grouping and SUM or COUNT, and cannot
+# express a balance at all. The model built the nearest thing it could: today's movements.
+#
+# The figure exists and needs no model: /v1/account/summary has served it to the home screen since
+# it was written. The conversation simply could not reach it.
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Buenos días, ¿podrías decirme cuánto dinero tengo en mis cuentas?",
+        "¿cuánto dinero tengo en la cuenta?",
+        "cuanto dinero tengo",
+        "¿qué saldo tengo?",
+        "¿cuál es mi saldo?",
+        "mi saldo actual",
+        "¿cuánto me queda en la cuenta?",
+        "¿de cuánto dispongo?",
+        "¿cuánto tengo disponible?",
+        "saldo",
+    ],
+)
+def test_a_question_about_the_balance_is_its_own_intent(sentence: str) -> None:
+    assert route(sentence) is Intent.ACCOUNT_BALANCE
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # About movements, which is what the financial planner is for. The discriminator is that a
+        # balance is a state and these are all sums over a window — the words that decide it are
+        # "gasté", "ingresé" and a period, never "tengo".
+        "¿cuánto gasté el mes pasado?",
+        "¿cuánto me he gastado en el supermercado?",
+        "¿cuánto ingresé este mes?",
+        "¿cuántos movimientos tengo este mes?",
+        "¿cuántas compras tengo en Mercadona?",
+        # A card's limit is not the account's balance, and neither is a contact list.
+        "¿qué contactos tengo?",
+        "¿qué tarjetas tengo?",
+    ],
+)
+def test_a_question_about_movements_is_not_a_balance(sentence: str) -> None:
+    """A false positive here is expensive: it would answer "¿cuánto gasté?" with the balance, which
+    is a real figure about something else — the same class of error the balance bug itself is."""
+    assert route(sentence) is not Intent.ACCOUNT_BALANCE
