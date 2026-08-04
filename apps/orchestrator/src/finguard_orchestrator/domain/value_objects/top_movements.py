@@ -14,8 +14,8 @@ about the question, which is what stops it depending on how the continuation hap
 """
 
 from dataclasses import dataclass, field, replace
-from typing import Final
 
+from finguard_orchestrator.domain.constants import MAX_RANK
 from finguard_orchestrator.domain.enums import Direction
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -24,10 +24,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     check_filters,
 )
 
-# How far down the ranking anybody may ask. It becomes an OFFSET in banking, which is the difference
-# between a question and a scan — banking bounds it too, at the same number, and disagreeing would
-# mean a plan this service accepts and that one rejects.
-MAX_RANK: Final = 100
+__all__ = ["MAX_RANK", "TopMovements"]
 
 
 @dataclass(frozen=True)

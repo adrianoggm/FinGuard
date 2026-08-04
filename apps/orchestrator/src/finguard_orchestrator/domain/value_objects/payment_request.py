@@ -11,22 +11,13 @@ and a negative one is a withdrawal wearing a payment's clothes.
 from dataclasses import dataclass
 from uuid import UUID
 
+from finguard_orchestrator.domain.constants import (
+    CURRENCY_LENGTH,
+    MAX_CONCEPT,
+    MAX_PAYMENT_MINOR,
+    MAX_RECIPIENT_NAME,
+)
 from finguard_orchestrator.domain.errors import InvalidValueError
-
-CURRENCY_LENGTH = 3
-
-# The ceiling the orchestrator will present. Banking has its own, lower or equal, and enforces it
-# regardless of this one — the point of having it here is that an absurd figure never reaches a
-# confirmation prompt, where a distracted "sí" is all that stands between it and the ledger.
-MAX_PAYMENT_MINOR = 1_000_000
-
-# A recipient's name as the caller wrote or chose it. Long enough for a full Spanish name with two
-# surnames, short enough that the field cannot carry a paragraph into the contact lookup.
-MAX_RECIPIENT_NAME = 120
-
-# A note the user wrote. Long enough for "cena del viernes con Marta y Aitor", short enough that the
-# field cannot carry a paragraph into the ledger's description.
-MAX_CONCEPT = 140
 
 
 @dataclass(frozen=True)

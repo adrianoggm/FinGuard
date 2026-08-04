@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
     MAX_PERIOD_DAYS,
+    MAX_RANK,
 )
 from finguard_orchestrator.domain.enums import (
     Action,
@@ -33,7 +34,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     PlanningOutcome,
 )
-from finguard_orchestrator.domain.models.conversation import MAX_RANK, Slot
+from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.services.plan_merger import Field
 
 # The outcomes a model may choose. The other three are things that happen TO a model —

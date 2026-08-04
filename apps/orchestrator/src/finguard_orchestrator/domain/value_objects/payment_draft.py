@@ -22,13 +22,13 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from uuid import UUID
 
-from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.value_objects.payment_request import (
+from finguard_orchestrator.domain.constants import (
     MAX_CONCEPT,
     MAX_PAYMENT_MINOR,
     MAX_RECIPIENT_NAME,
-    PaymentRequest,
 )
+from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
 
 class PaymentField(StrEnum):

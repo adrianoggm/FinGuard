@@ -9,8 +9,7 @@ credential, so there is nowhere to say whose money you mean.
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH
-from finguard_orchestrator.domain.value_objects.payment_request import MAX_RECIPIENT_NAME
+from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH, MAX_RECIPIENT_NAME
 
 # A reply to a confirmation is a word or two. Bounded far below a prompt because it is read by an
 # allow-list of affirmations, and a paragraph is not one — nothing longer can be a yes.
