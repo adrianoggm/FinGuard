@@ -13,6 +13,7 @@ import pathlib
 import pytest
 import yaml
 
+from finguard_orchestrator.domain.services import capability_guard
 from finguard_orchestrator.domain.services.capability_guard import unsupported_reason
 
 PLANNING = pathlib.Path(__file__).resolve().parents[1] / "evaluation" / "planning"
@@ -134,3 +135,47 @@ def test_asking_for_one_extreme_movement_is_no_longer_refused(question: str) -> 
 )
 def test_a_ranking_of_groups_or_a_total_is_not_refused(question: str) -> None:
     assert unsupported_reason(question) is None
+
+
+# --- which row a continuation asks for ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sentence", "rank"),
+    [
+        ("y el segundo", 2),
+        ("¿y el tercero?", 3),
+        ("y la cuarta", 4),
+        ("y el quinto", 5),
+        ("y el décimo", 10),
+    ],
+)
+def test_a_stated_ordinal_carries_its_position(sentence: str, rank: int) -> None:
+    """It used to be a boolean, so the caller advanced by one whichever word it was and "¿y el
+    tercero?" after the largest expense answered with the second."""
+    found = capability_guard.ordinal_in(sentence)
+
+    assert found is not None
+    assert found.mode == "ABSOLUTE"
+    assert found.rank == rank
+
+
+@pytest.mark.parametrize("sentence", ["y el siguiente", "y otro", "y los demás", "y el resto"])
+def test_a_pronoun_names_no_position(sentence: str) -> None:
+    """ "El siguiente" is genuinely relative — it is one more than wherever we are — and that is the
+    only case where the caller may advance by one."""
+    found = capability_guard.ordinal_in(sentence)
+
+    assert found is not None
+    assert found.mode == "NEXT"
+    assert found.rank is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["¿cuánto gasté?", "y en gasolina", "el tercero de la lista de contactos", ""],
+)
+def test_a_sentence_with_content_of_its_own_is_not_a_continuation(sentence: str) -> None:
+    """Anchored at both ends. Reading a whole question as "the next one" would answer it with the
+    second largest expense, which is worse than the loop the ordinal reader replaced."""
+    assert capability_guard.ordinal_in(sentence) is None

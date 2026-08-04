@@ -53,9 +53,17 @@ class TopMovements:
         check_filters(self.categories, self.merchants)
 
     def next_rank(self) -> "TopMovements":
-        """The next one down, which is what a follow-up asks for.
+        """The next one down, which is what "¿y el siguiente?" asks for.
 
         Raises past the ceiling rather than clamping: somebody who has walked a hundred movements
         down a list wants the list, and silently repeating the hundredth would look like an answer.
         """
         return replace(self, rank=self.rank + 1)
+
+    def at_rank(self, rank: int) -> "TopMovements":
+        """The position the sentence named, which is what "¿y el tercero?" asks for.
+
+        A stated ordinal is not one step down. Advancing by one from the first answered "el tercero"
+        with the second — the recogniser knew an ordinal was there and the caller threw away which.
+        """
+        return replace(self, rank=rank)
