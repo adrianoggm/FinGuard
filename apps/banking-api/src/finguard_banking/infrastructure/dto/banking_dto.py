@@ -23,7 +23,7 @@ from finguard_banking.domain.constants import (
     MAX_RECIPIENT_NAME,
     MAX_SUPPORTING_MOVEMENTS,
 )
-from finguard_banking.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_banking.domain.enums import Direction, GroupBy, Metric, Period, Rail
 
 
 class _Payload(BaseModel):
@@ -203,20 +203,57 @@ class PreparePaymentRequest(_Body):
     currency: str = Field(pattern="^[A-Z]{3}$")
     recipient_name: str | None = Field(default=None, min_length=1, max_length=MAX_RECIPIENT_NAME)
     recipient_contact_id: UUID | None = None
+    # BIZUM unless the caller says otherwise, so every client written before transfers existed
+    # keeps meaning what it meant. It is the one default here, and it is a default about the past.
+    rail: Rail = Rail.BIZUM
+    # An account the holder typed. Only for a transfer, and only when the recipient is not a
+    # favourite — with it, a name is required, because the destination is then two fields the
+    # caller supplied rather than a row this service already had.
+    #
+    # It arrives as its own field, never inside a sentence. A language model transcribing
+    # twenty-four characters is a checksum-valid stranger waiting to happen, and the check digits
+    # catch a slip of the finger rather than a confident misreading.
+    recipient_iban: str | None = Field(default=None, min_length=15, max_length=42)
 
     @model_validator(mode="after")
     def _one_recipient(self) -> "PreparePaymentRequest":
-        if (self.recipient_name is None) == (self.recipient_contact_id is None):
+        named = self.recipient_name is not None
+        chosen = self.recipient_contact_id is not None
+        typed = self.recipient_iban is not None
+
+        if typed:
+            if self.rail is not Rail.TRANSFER:
+                raise ValueError("an account number is only a destination for a transfer")
+            if chosen:
+                raise ValueError(
+                    "a transfer goes to a saved contact or to a typed account, not both"
+                )
+            if not named:
+                raise ValueError("a transfer to a typed account needs a name to print beside it")
+            return self
+
+        if named == chosen:
             raise ValueError("name the recipient either as recipientName or as recipientContactId")
         return self
 
 
 class PaymentPreviewResponse(_Payload):
-    """What the user is asked to approve. The balance it leaves is part of the question."""
+    """What the user is asked to approve. The balance it leaves is part of the question.
+
+    The destination is spelled by rail: a Bizum carries the phone, a transfer carries the account.
+    Both are optional on the wire and exactly one is ever present, which is weaker than the domain
+    union behind it — a response shape is read by clients that cannot be changed in the same commit,
+    so it grows fields rather than replacing them.
+
+    The IBAN is sent whole and unmasked. Somebody approving a transfer is being asked to recognise
+    twenty-four characters, and four of them with dots in between is not a thing anybody can check.
+    """
 
     intent_id: UUID
+    rail: str
     recipient: str
-    recipient_phone: str
+    recipient_phone: str | None = None
+    recipient_iban: str | None = None
     amount_minor: int
     currency: str
     balance_before_minor: int
@@ -229,8 +266,10 @@ class PaymentReceiptResponse(_Payload):
 
     intent_id: UUID
     transaction_id: UUID
+    rail: str
     recipient: str
-    recipient_phone: str
+    recipient_phone: str | None = None
+    recipient_iban: str | None = None
     amount_minor: int
     currency: str
     balance_after_minor: int

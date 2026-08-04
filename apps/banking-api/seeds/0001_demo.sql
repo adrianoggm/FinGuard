@@ -6,7 +6,7 @@
 -- holders        3 + clearing account
 -- transactions   1624 (1621 BOOKED, 3 PENDING)
 -- entries        3248
--- sha256         cbeb58e3b2306c43e0c0814603d37b48187ed48b60ae1739e6b23ab936949450
+-- sha256         3676c56f770144640c352d77c7c4e4932ad61b87ee8b81d153eba3de423bbf50
 --
 -- CAREFUL: it starts with a TRUNCATE. This is a development dataset.
 BEGIN;
@@ -28,15 +28,15 @@ INSERT INTO accounts (id, customer_id, account_reference, currency, status) VALU
     ('2db96ca5-d01d-422d-8123-6172dfe1c98e', 'f91caf4c-64bc-4121-8402-30810622fa04', 'ES-0002', 'EUR', 'ACTIVE'),
     ('cc662a55-4af5-4570-b101-9696ab5f1e05', '6a66d3d1-cd07-4904-a6da-f2060220abf6', 'ES-0003', 'EUR', 'ACTIVE');
 
-INSERT INTO contacts (id, account_id, display_name, phone) VALUES
-    ('e30aaa4f-1ab2-46e2-bfb9-86f9f57ef41f', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Marta Ruiz Gomez', '+34600111222'),
-    ('ee62e6d0-d535-474b-8ab2-c5b150176787', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Marta Solis Vega', '+34600333444'),
-    ('326bb444-edf6-40af-a9d5-cf12665ebb88', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Aitor Beltran Diaz', '+34611222333'),
-    ('ed2abba4-cfd2-4313-86f0-2bd69511890d', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Carmen Nieto Lara', '+34622333444'),
-    ('7d1b8926-1865-4673-bf37-d263c3b22aef', '2db96ca5-d01d-422d-8123-6172dfe1c98e', 'Laura Martin Ruiz', '+34633444555'),
-    ('a5456a3d-df31-4b98-bfcd-c9341fa74805', '2db96ca5-d01d-422d-8123-6172dfe1c98e', 'Sergio Vidal Pons', '+34644555666'),
-    ('476304be-76e1-4ee2-a764-41096c746b0e', 'cc662a55-4af5-4570-b101-9696ab5f1e05', 'Diego Ferrer Gomez', '+34655666777'),
-    ('a0f21133-2010-4841-a632-24f434324e6c', 'cc662a55-4af5-4570-b101-9696ab5f1e05', 'Elena Prat Mas', '+34666777888');
+INSERT INTO contacts (id, account_id, display_name, phone, iban) VALUES
+    ('e30aaa4f-1ab2-46e2-bfb9-86f9f57ef41f', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Marta Ruiz Gomez', '+34600111222', 'ES9121000418450200051332'),
+    ('ee62e6d0-d535-474b-8ab2-c5b150176787', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Marta Solis Vega', '+34600333444', NULL),
+    ('326bb444-edf6-40af-a9d5-cf12665ebb88', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Aitor Beltran Diaz', '+34611222333', 'ES6000491500051234567892'),
+    ('ed2abba4-cfd2-4313-86f0-2bd69511890d', '08aba04f-2b30-4639-88a6-eac741153ce0', 'Carmen Nieto Lara', '+34622333444', NULL),
+    ('7d1b8926-1865-4673-bf37-d263c3b22aef', '2db96ca5-d01d-422d-8123-6172dfe1c98e', 'Laura Martin Ruiz', '+34633444555', 'ES9620853500093000000000'),
+    ('a5456a3d-df31-4b98-bfcd-c9341fa74805', '2db96ca5-d01d-422d-8123-6172dfe1c98e', 'Sergio Vidal Pons', '+34644555666', NULL),
+    ('476304be-76e1-4ee2-a764-41096c746b0e', 'cc662a55-4af5-4570-b101-9696ab5f1e05', 'Diego Ferrer Gomez', '+34655666777', 'ES3701822200150201504058'),
+    ('a0f21133-2010-4841-a632-24f434324e6c', 'cc662a55-4af5-4570-b101-9696ab5f1e05', 'Elena Prat Mas', '+34666777888', NULL);
 
 INSERT INTO cards (id, account_id, display_name, brand, kind, last_four, expires_month, expires_year, status, spending_limit_minor) VALUES
     ('e5902068-0a36-4d8e-b404-531d9d704473', '08aba04f-2b30-4639-88a6-eac741153ce0', 'LAURA MARTIN RUIZ', 'VISA', 'DEBIT', '4417', 9, 2028, 'ACTIVE', NULL),
