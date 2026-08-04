@@ -20,6 +20,7 @@ value refused at the edge is a 422 and one refused three layers in is an apology
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from uuid import UUID
 
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.payment_request import (
@@ -44,6 +45,11 @@ class PaymentField(StrEnum):
 @dataclass(frozen=True)
 class PaymentDraft:
     recipient_name: str | None = None
+    # The contact the user picked from a list this assistant offered. It is what ends the "Marta
+    # Vega" loop: a name that matches two contacts is ambiguous in every spelling, and the choice
+    # has already been made by the time it arrives. Resolved against the account's own directory
+    # before it is used, because it comes back from a client like everything else here.
+    recipient_contact_id: UUID | None = None
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
@@ -81,7 +87,9 @@ class PaymentDraft:
         of two things, and which one decides the question to ask.
         """
         absent = set()
-        if self.recipient_name is None:
+        if self.recipient_name is None and self.recipient_contact_id is None:
+            # Either names a recipient. Asking "¿a quién?" while holding a chosen contact would be
+            # the assistant ignoring the button it drew.
             absent.add(PaymentField.RECIPIENT)
         if self.amount_minor is None:
             absent.add(PaymentField.AMOUNT)
@@ -95,9 +103,17 @@ class PaymentDraft:
         a merge that kept the older value would answer the ambiguity question with the ambiguous
         name again.
         """
+        names_somebody_else = (
+            turn.recipient_name is not None or turn.recipient_contact_id is not None
+        )
         return replace(
             self,
             recipient_name=turn.recipient_name or self.recipient_name,
+            # Cleared when the new turn names a recipient any other way. "No, mejor a Aitor" after a
+            # tap is a different person, and keeping the identifier would pay the one it replaced.
+            recipient_contact_id=(
+                turn.recipient_contact_id if names_somebody_else else self.recipient_contact_id
+            ),
             amount_minor=turn.amount_minor if turn.amount_minor is not None else self.amount_minor,
             concept=turn.concept or self.concept,
         )
@@ -113,6 +129,7 @@ class PaymentDraft:
         assert self.recipient_name is not None and self.amount_minor is not None
         return PaymentRequest(
             recipient_name=self.recipient_name,
+            recipient_contact_id=self.recipient_contact_id,
             amount_minor=self.amount_minor,
             currency=self.currency,
             concept=self.concept,
