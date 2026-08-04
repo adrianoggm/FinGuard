@@ -20,6 +20,7 @@ import httpx2 as httpx
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
 class HttpFinancialQuery:
@@ -86,6 +87,46 @@ class HttpFinancialQuery:
         except (ValueError, KeyError, TypeError) as exc:
             raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
 
+    async def ranked(
+        self,
+        ranking: TopMovements,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+    ) -> Movement | None:
+        """The nth largest movement, from banking's own ranking endpoint.
+
+        The same error ladder as `run`, deliberately: a 422 is our plan being refused by the
+        authority, a 4xx is our request being wrong, a 5xx is the service being down. Three
+        different things to say to a user, and collapsing them is how "no puedo ahora mismo" ends
+        up covering a bug of ours.
+        """
+        body = ranked_body(
+            ranking, account_id=account_id, today=today, reporting_timezone=reporting_timezone
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(
+                    f"{self._base_url}/v1/financial-queries/ranked", json=body
+                )
+        except httpx.HTTPError as exc:
+            raise BankingUnavailableError(f"{self._base_url}: {exc}") from exc
+
+        if response.status_code == 422:
+            raise QueryRejectedError(_detail(response))
+        if 400 <= response.status_code < 500:
+            raise QueryRejectedError(f"HTTP {response.status_code}: {_detail(response)}")
+        if response.status_code >= 500:
+            raise BankingUnavailableError(f"HTTP {response.status_code}: {_detail(response)}")
+
+        try:
+            found = response.json().get("movement")
+            return movement_from_body(found) if found else None
+        except (ValueError, KeyError, TypeError) as exc:
+            raise BankingUnavailableError(f"unreadable answer: {exc}") from exc
+
     async def ping(self) -> bool:
         """Whether the ledger answers. Every figure comes from there, so a service that
         cannot reach it is not ready however healthy its own process looks."""
@@ -95,6 +136,39 @@ class HttpFinancialQuery:
                 return response.status_code == 200
         except httpx.HTTPError:
             return False
+
+
+def ranked_body(
+    ranking: TopMovements,
+    *,
+    account_id: UUID,
+    today: date,
+    reporting_timezone: str,
+) -> dict[str, Any]:
+    """Ranking to request body.
+
+    It reuses `to_body` for the filters and the window — the same fields, resolved the same way,
+    including the reference date that makes both services agree on which days a period covers — and
+    then drops the three the ranking endpoint does not take. Dropping is safer than rebuilding: a
+    second copy of the window logic is a second chance for the two services to disagree.
+    """
+    body = to_body(
+        FinancialPlan(
+            direction=ranking.direction,
+            period=ranking.period,
+            date_range=ranking.date_range,
+            categories=ranking.categories,
+            merchants=ranking.merchants,
+        ),
+        account_id=account_id,
+        today=today,
+        supporting_movements=0,
+        reporting_timezone=reporting_timezone,
+    )
+    for absent in ("groupBy", "metric", "supportingLimit"):
+        body.pop(absent, None)
+    body["rank"] = ranking.rank
+    return body
 
 
 def to_body(
@@ -171,18 +245,26 @@ def from_body(body: Any, *, account_id: UUID | None = None) -> QueryAnswer:
             for group in body.get("groups") or ()
         ),
         movements=tuple(
-            Movement(
-                occurred_at=_moment(movement["occurredAt"]),
-                description=movement["description"],
-                amount_minor=movement["amountMinor"],
-                direction=movement["direction"],
-                merchant_name=movement.get("merchantName"),
-                transaction_id=movement.get("transactionId"),
-                category_is_custom=bool(movement.get("categoryIsCustom", False)),
-                category=movement.get("category"),
-            )
-            for movement in body.get("supportingMovements") or ()
+            movement_from_body(movement) for movement in body.get("supportingMovements") or ()
         ),
+    )
+
+
+def movement_from_body(movement: Any) -> Movement:
+    """One movement, from banking's camelCase.
+
+    Shared by the supporting movements of an aggregate and the single row of a ranking. Two copies
+    would drift the first time a field is added to one of them.
+    """
+    return Movement(
+        occurred_at=_moment(movement["occurredAt"]),
+        description=movement["description"],
+        amount_minor=movement["amountMinor"],
+        direction=movement["direction"],
+        merchant_name=movement.get("merchantName"),
+        transaction_id=movement.get("transactionId"),
+        category_is_custom=bool(movement.get("categoryIsCustom", False)),
+        category=movement.get("category"),
     )
 
 
