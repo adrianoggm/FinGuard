@@ -60,6 +60,8 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
     amount_minor: null,
     currency: null,
     concept: null,
+    rail: null,
+    recipient_iban: null,
     ...fields,
   };
 }

@@ -52,7 +52,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     reporting_today,
     requires,
 )
-from finguard_orchestrator.domain.enums import GroupBy, PaymentOutcome, PlanningOutcome
+from finguard_orchestrator.domain.enums import GroupBy, PaymentOutcome, PlanningOutcome, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
@@ -273,6 +273,8 @@ def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
             amount_minor=answer.amount_minor,
             currency=answer.currency or "EUR",
             concept=answer.concept,
+            rail=Rail(answer.rail),
+            recipient_iban=answer.recipient_iban,
         )
     if answer.draft is None:
         return None

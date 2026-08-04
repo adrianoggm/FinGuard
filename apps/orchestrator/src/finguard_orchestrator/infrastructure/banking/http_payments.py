@@ -25,6 +25,7 @@ from uuid import UUID
 
 import httpx2 as httpx
 
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
     BankingUnavailableError,
@@ -178,7 +179,13 @@ def preview_from_body(body: dict[str, Any]) -> PaymentPreview:
         return PaymentPreview(
             intent_id=UUID(body["intentId"]),
             recipient=body["recipient"],
-            recipient_phone=body["recipientPhone"],
+            # Both optional and exactly one present, which the rail says. `get` rather than `[]`
+            # for all three: a deployment of banking from before transfers answers without them,
+            # and refusing to read a preview because a field is missing would break every payment
+            # rather than the one feature that needs it.
+            rail=Rail(body.get("rail", Rail.BIZUM.value)),
+            recipient_phone=body.get("recipientPhone"),
+            recipient_iban=body.get("recipientIban"),
             amount_minor=int(body["amountMinor"]),
             currency=body["currency"],
             balance_before_minor=int(body["balanceBeforeMinor"]),
@@ -192,6 +199,9 @@ def preview_from_body(body: dict[str, Any]) -> PaymentPreview:
 def receipt_from_body(body: dict[str, Any]) -> PaymentReceipt:
     try:
         return PaymentReceipt(
+            rail=Rail(body.get("rail", Rail.BIZUM.value)),
+            recipient_phone=body.get("recipientPhone"),
+            recipient_iban=body.get("recipientIban"),
             intent_id=UUID(body["intentId"]),
             transaction_id=UUID(body["transactionId"]),
             recipient=body["recipient"],

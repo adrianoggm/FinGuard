@@ -12,7 +12,7 @@ layers in with an apology.
 
 from typing import Any
 
-from finguard_orchestrator.domain.enums import Action
+from finguard_orchestrator.domain.enums import Action, Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     ActiveWorkflow,
@@ -160,6 +160,8 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
                 # dollars came back from a round trip denominated in euros.
                 currency=payload.currency or "EUR",
                 concept=payload.concept,
+                rail=payload.rail or Rail.BIZUM,
+                recipient_iban=payload.recipient_iban,
             )
         case _:
             return None
@@ -232,5 +234,7 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
             # payload had nowhere to put a currency, so the far side rebuilt the default.
             "currency": active.currency,
             "concept": active.concept,
+            "rail": active.rail,
+            "recipient_iban": active.recipient_iban,
         }
     return {}

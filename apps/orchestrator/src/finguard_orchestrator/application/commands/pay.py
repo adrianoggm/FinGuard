@@ -85,6 +85,10 @@ class PaymentAnswer:
     intent_id: UUID | None = None
     recipient: str | None = None
     recipient_phone: str | None = None
+    # Where a transfer went, and how it went. Flat like every other field here, and both
+    # absent for a Bizum — the rail is what says which identifier to read.
+    recipient_iban: str | None = None
+    rail: str = Rail.BIZUM.value
     amount_minor: int | None = None
     currency: str | None = None
     concept: str | None = None
@@ -258,6 +262,8 @@ async def _previewed(
         intent_id=preview.intent_id,
         recipient=preview.recipient,
         recipient_phone=preview.recipient_phone,
+        recipient_iban=preview.recipient_iban,
+        rail=preview.rail.value,
         amount_minor=preview.amount_minor,
         currency=preview.currency,
         concept=request.concept,
