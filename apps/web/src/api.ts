@@ -66,6 +66,21 @@ export type PlanContext = {
   metric: string;
 };
 
+/** A payment being built. Echoed back so the next reply finishes it instead of starting over. */
+export type PaymentDraft = {
+  recipient_name: string | null;
+  amount_minor: number | null;
+  currency: string;
+  concept: string | null;
+};
+
+/** One of several people a recipient could be, with the identifier that resolves the ambiguity. */
+export type Candidate = {
+  contact_id: string;
+  display_name: string;
+  phone: string;
+};
+
 export type Answer = {
   outcome: string;
   text: string;
@@ -76,6 +91,11 @@ export type Answer = {
   // Present with a question back: the reading that question interrupted. Echoed on the next turn
   // so the reply finishes the plan instead of starting a new one.
   pending_context: PlanContext | null;
+  // Present while a bizum is still being built. Sending it back is what turns "15 euros" into a
+  // payment instead of a question about movements, which is what it looks like on its own.
+  payment_draft: PaymentDraft | null;
+  // Present when the recipient names several contacts: the choice, with identifiers.
+  candidates: Candidate[];
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
@@ -126,6 +146,7 @@ export async function* ask(
   sentence: string,
   previousPlan: PlanContext | null = null,
   pendingDraft: PlanContext | null = null,
+  paymentDraft: PaymentDraft | null = null,
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -137,6 +158,7 @@ export async function* ask(
       question: sentence,
       previous_plan: previousPlan,
       pending_draft: pendingDraft,
+      payment_draft: paymentDraft,
     }),
   });
   if (!response.ok || !response.body) await readError(response);
@@ -189,10 +211,12 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
-    // A payment has no query behind it, so there is nothing to carry into the next turn — and
-    // nothing half-built either: a payment asks for a confirmation, not for a missing field.
+    // A confirmation has no query behind it and nothing half-built: by this point the payment is
+    // complete and waiting for a yes, which is its own piece of state.
     plan_context: null,
     pending_context: null,
+    payment_draft: null,
+    candidates: [],
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
@@ -281,10 +305,10 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
-    // A payment has no query behind it, so there is nothing to carry into the next turn — and
-    // nothing half-built either: a payment asks for a confirmation, not for a missing field.
     plan_context: null,
     pending_context: null,
+    payment_draft: null,
+    candidates: [],
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,

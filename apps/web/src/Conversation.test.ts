@@ -18,7 +18,7 @@
 import { describe, expect, it } from "vitest";
 
 import { settled, type Thread } from "./Conversation";
-import type { Answer, PlanContext } from "./api";
+import type { Answer, PaymentDraft, PlanContext } from "./api";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -43,6 +43,8 @@ function answer(fields: Partial<Answer> = {}): Answer {
     plan: null,
     plan_context: null,
     pending_context: null,
+    payment_draft: null,
+    candidates: [],
     currency: null,
     total_minor: null,
     movement_count: null,
@@ -53,7 +55,14 @@ function answer(fields: Partial<Answer> = {}): Answer {
 }
 
 function thread(fields: Partial<Thread> = {}): Thread {
-  return { turns: [], plan: null, pending: null, unfinished: null, ...fields };
+  return {
+    turns: [],
+    plan: null,
+    pending: null,
+    unfinished: null,
+    payment: null,
+    ...fields,
+  };
 }
 
 const noop = () => {};
@@ -159,5 +168,77 @@ describe("the payment waiting for a yes", () => {
     settled(thread(), [], answer({ plan_context: LAST_MONTH }), () => (reloaded += 1));
 
     expect(reloaded).toBe(0);
+  });
+});
+
+
+describe("the bizum being built", () => {
+  const HALF_BUILT: PaymentDraft = {
+    recipient_name: "Marta Solis Vega",
+    amount_minor: null,
+    currency: "EUR",
+    concept: null,
+  };
+
+  it("is kept when the assistant asks for the missing piece", () => {
+    const after = settled(
+      thread(),
+      [],
+      answer({ outcome: "NEEDS_CLARIFICATION", payment_draft: HALF_BUILT }),
+      noop,
+    );
+
+    expect(after.payment).toBe(HALF_BUILT);
+  });
+
+  it("survives a turn that answers something else entirely", () => {
+    // The turn from the report: "no sé, ¿a quién tengo en contactos?" in the middle of a bizum.
+    // The contact list is the answer, and abandoning the payment to give it would mean starting
+    // the bizum over — which is the defect, one level up.
+    const after = settled(
+      thread({ payment: HALF_BUILT }),
+      [],
+      answer({ outcome: "CONTACTS", text: "Tienes estos contactos: …" }),
+      noop,
+    );
+
+    expect(after.payment).toBe(HALF_BUILT);
+  });
+
+  it("is cleared once the payment is a preview waiting for a yes", () => {
+    // From here the state is the intent, not the draft: there is nothing half-built left.
+    const after = settled(
+      thread({ payment: HALF_BUILT }),
+      [],
+      answer({ outcome: "AWAITING_CONFIRMATION", intent_id: "intent-1" }),
+      noop,
+    );
+
+    expect(after.payment).toBeNull();
+    expect(after.pending).toBe("intent-1");
+  });
+
+  it("is cleared once the payment resolves", () => {
+    const after = settled(
+      thread({ payment: HALF_BUILT, pending: "intent-1" }),
+      [],
+      answer({ outcome: "SENT", intent_id: "intent-1" }),
+      noop,
+    );
+
+    expect(after.payment).toBeNull();
+  });
+
+  it("is replaced when a later turn fills a slot", () => {
+    const withAmount: PaymentDraft = { ...HALF_BUILT, amount_minor: 1500 };
+
+    const after = settled(
+      thread({ payment: HALF_BUILT }),
+      [],
+      answer({ outcome: "NEEDS_CLARIFICATION", payment_draft: withAmount }),
+      noop,
+    );
+
+    expect(after.payment).toBe(withAmount);
   });
 });

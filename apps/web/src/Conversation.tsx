@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, confirm, type Answer, type PlanContext } from "./api";
+import { ask, confirm, type Answer, type PaymentDraft, type PlanContext } from "./api";
 import { money, outgoing, signed, day } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
@@ -54,9 +54,21 @@ export type Thread = {
    * what turns "este año" into an answer instead of a fresh question with no history.
    */
   unfinished: PlanContext | null;
+  /**
+   * The bizum being built, if one is. Unlike the query draft this is *kept* until the payment
+   * resolves: a payment is a goal with several turns in it, so asking "¿a quién tengo en
+   * contactos?" in the middle of one must not abandon it.
+   */
+  payment: PaymentDraft | null;
 };
 
-export const EMPTY_THREAD: Thread = { turns: [], plan: null, pending: null, unfinished: null };
+export const EMPTY_THREAD: Thread = {
+  turns: [],
+  plan: null,
+  pending: null,
+  unfinished: null,
+  payment: null,
+};
 
 type Props = {
   thread: Thread;
@@ -92,7 +104,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         const answer = await confirm(before.pending, text);
         onThread(settled(before, [...turns, { who: "assistant", answer }], answer, onSettled));
       } else {
-        for await (const step of ask(text, before.plan, before.unfinished)) {
+        for await (const step of ask(text, before.plan, before.unfinished, before.payment)) {
           if ("name" in step) setStage(STAGES[step.name] ?? null);
           else {
             turns.push({ who: "assistant", answer: step });
@@ -186,6 +198,10 @@ export function settled(before: Thread, turns: Turn[], answer: Answer, onSettled
     // stale one forward would let a window mentioned three turns later complete a plan the user has
     // long since moved on from.
     unfinished: answer.pending_context ?? null,
+    // Kept, unlike the query draft, and cleared only when the payment stops being half-built —
+    // it became a preview waiting for a yes, or it was refused. A bizum is a goal that spans
+    // turns, so asking who is in the address book in the middle of one must not abandon it.
+    payment: answer.payment_draft ?? (awaiting || wasPayment ? null : before.payment),
   };
 }
 
