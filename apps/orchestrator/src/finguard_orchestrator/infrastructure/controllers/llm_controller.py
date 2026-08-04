@@ -52,12 +52,14 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.domain.enums import GroupBy, PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.services import payment_router, payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
 )
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
@@ -70,9 +72,11 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     MessageRequest,
     MessageResponse,
     MovementsResponse,
+    PaymentDraftPayload,
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
+    SpokenContactResponse,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import llm_mapper
@@ -176,7 +180,11 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
 
 
 async def _as_payment(
-    sentence: str, who: Caller, commands: CommandBus, payments_on: bool
+    sentence: str,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    pending: PaymentDraft | None = None,
 ) -> QuestionResponse:
     """The payment path, reached from the chat.
 
@@ -192,13 +200,34 @@ async def _as_payment(
         )
     answer = await commands.dispatch(
         PreparePaymentCommand(
-            sentence=sentence, account_id=who.account_id, idempotency_key=str(uuid.uuid4())
+            sentence=sentence,
+            account_id=who.account_id,
+            idempotency_key=str(uuid.uuid4()),
+            pending=pending,
         )
     )
     return QuestionResponse(
         outcome=answer.outcome,
         text=answer.text,
         intent_id=str(answer.intent_id) if answer.intent_id else None,
+        payment_draft=(
+            PaymentDraftPayload(
+                recipient_name=answer.draft.recipient_name,
+                amount_minor=answer.draft.amount_minor,
+                currency=answer.draft.currency,
+                concept=answer.draft.concept,
+            )
+            if answer.draft
+            else None
+        ),
+        candidates=[
+            SpokenContactResponse(
+                contact_id=candidate.contact_id,
+                display_name=candidate.display_name,
+                phone=candidate.phone,
+            )
+            for candidate in answer.candidates
+        ],
     )
 
 
@@ -241,6 +270,42 @@ def _context_of(request: QuestionRequest) -> FinancialPlan | None:
     take on faith.
     """
     return plan_to_domain(request.previous_plan) if request.previous_plan else None
+
+
+async def _continues_a_payment(
+    request: QuestionRequest, who: Caller, queries: QueryBus
+) -> PaymentDraft | None:
+    """The payment this sentence continues, or None.
+
+    Checked before the sentence is classified at all, because a conversation with a payment under
+    way is a state machine rather than a sequence of unrelated sentences. Without it "15 euros"
+    reached the financial planner: money with no payment verb is not a payment.
+
+    The directory is fetched only when a payment is actually pending, which is rare. The prepare
+    handler reads it again to resolve the recipient — one extra local call on those turns, and the
+    alternative is the controller passing a resolved contact into the command, which would move the
+    decision out of the layer that owns it.
+    """
+    if request.payment_draft is None:
+        return None
+    drafted = PaymentDraft(
+        recipient_name=request.payment_draft.recipient_name,
+        amount_minor=request.payment_draft.amount_minor,
+        currency=request.payment_draft.currency,
+        concept=request.payment_draft.concept,
+    )
+    if not drafted.missing:
+        # Nothing left to fill, so there is nothing to continue: a complete payment has already
+        # become a preview waiting for a yes, and that is the confirmation path.
+        return None
+    directory = await queries.ask(ListContactsQuery(account_id=who.account_id))
+    contacts = tuple(
+        Contact(uuid.UUID(row.contact_id), row.display_name, row.phone)
+        for row in directory.contacts
+    )
+    if payment_router.continues(request.question, drafted, contacts):
+        return drafted
+    return None
 
 
 def _pending_of(request: QuestionRequest) -> FinancialPlanDraft | None:
@@ -460,6 +525,12 @@ async def ask(
     rather than an error.
     """
     who.assert_may_read(who.account_id)
+
+    continuing = await _continues_a_payment(request, who, queries)
+    if continuing is not None:
+        # A payment under way takes the reply that answers its question, before anything is
+        # classified. "15 euros" is an amount because something asked for one.
+        return await _as_payment(request.question, who, commands, payments_on, continuing)
 
     if payment_router.is_payment(request.question):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,

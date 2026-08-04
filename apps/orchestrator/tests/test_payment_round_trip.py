@@ -1,0 +1,252 @@
+"""The pending workflow is consulted before the sentence is classified.
+
+This is the structural half of the payment fix, and it lives at the controller because that is where
+the chat's two paths fork. The rule the report asked for, in order:
+
+    a payment under way, and this sentence fills a slot   → continue the payment
+    a payment order                                       → start a payment
+    anything else                                         → classify it afresh
+
+Without the first line, "15 euros" was classified from scratch — money with no payment verb is
+not a payment — and reached the financial planner, which asked which period it was about.
+
+The last line matters as much: a payment under way must not swallow a genuine change of subject.
+"¿Cuánto gasté este mes?" in the middle of a bizum is still a question.
+"""
+
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+from finguard_orchestrator.application.bus.command_bus import CommandBus
+from finguard_orchestrator.application.bus.query_bus import QueryBus
+from finguard_orchestrator.application.commands.pay import (
+    PaymentAnswer,
+    PreparePaymentCommand,
+    SpokenCandidate,
+    SpokenPaymentDraft,
+)
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
+)
+from finguard_orchestrator.application.queries.list_contacts import (
+    ContactRow,
+    ListContactsQuery,
+    ListContactsResult,
+)
+from finguard_orchestrator.bootstrap.dependencies import (
+    authenticated_caller,
+    get_command_bus,
+    get_query_bus,
+)
+from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.enums import PaymentOutcome
+from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.scope import Scope
+
+ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
+INTENT = uuid.UUID("33333333-3333-3333-3333-333333333333")
+
+CONTACTS = ListContactsResult(
+    contacts=[
+        ContactRow(str(uuid.UUID(int=1)), "Marta Ruiz Gomez", "+34600111222"),
+        ContactRow(str(uuid.UUID(int=2)), "Marta Solis Vega", "+34600333444"),
+    ]
+)
+
+PREVIEWED = PaymentAnswer(
+    outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
+    text="Vas a enviar 15,00 € a Marta Solis Vega. ¿Confirmas?",
+    intent_id=INTENT,
+)
+
+ASKED_FOR_THE_AMOUNT = PaymentAnswer(
+    outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+    text="¿De cuánto quieres hacerle el bizum a Marta Solis Vega?",
+    draft=SpokenPaymentDraft(recipient_name="Marta Solis Vega"),
+)
+
+
+class FakePreparing:
+    def __init__(self, answer: PaymentAnswer) -> None:
+        self._answer = answer
+        self.commands: list[PreparePaymentCommand] = []
+
+    async def handle(self, command: PreparePaymentCommand) -> PaymentAnswer:
+        self.commands.append(command)
+        return self._answer
+
+
+class FakeAsking:
+    def __init__(self) -> None:
+        self.sentences: list[str] = []
+
+    async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
+        self.sentences.append(query.sentence)
+        return AskFinancialQuestionResult(outcome="PLANNED", text="1.895,97 € el mes pasado.")
+
+
+class FakeContacts:
+    async def handle(self, query: ListContactsQuery) -> ListContactsResult:
+        return CONTACTS
+
+
+def client_for(answer: PaymentAnswer = PREVIEWED) -> tuple[TestClient, FakePreparing, FakeAsking]:
+    preparing, asking = FakePreparing(answer), FakeAsking()
+    commands = CommandBus()
+    commands.register(PreparePaymentCommand, preparing)
+    queries = QueryBus()
+    queries.register(AskFinancialQuestionQuery, asking)
+    queries.register(ListContactsQuery, FakeContacts())
+    app.dependency_overrides[get_command_bus] = lambda: commands
+    app.dependency_overrides[get_query_bus] = lambda: queries
+    app.dependency_overrides[authenticated_caller] = lambda: Caller(
+        holder_reference="ES-0001",
+        account_id=ACCOUNT,
+        scopes=frozenset({Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE}),
+    )
+    app.state.payments_enabled = True
+    app.state.questions_enabled = True
+    return TestClient(app), preparing, asking
+
+
+@pytest.fixture(autouse=True)
+def _restore():
+    app.dependency_overrides.clear()
+    enabled = app.state.payments_enabled
+    yield
+    app.dependency_overrides.clear()
+    app.state.payments_enabled = enabled
+
+
+def test_an_amount_continues_the_payment_it_was_asked_for() -> None:
+    """The turn that broke the reported conversation."""
+    client, preparing, asking = client_for()
+
+    body = client.post(
+        "/v1/questions",
+        json={
+            "question": "15 euros",
+            "payment_draft": {"recipient_name": "Marta Solis Vega"},
+        },
+    ).json()
+
+    assert asking.sentences == [], "an answer to '¿de cuánto?' reached the financial planner"
+    assert len(preparing.commands) == 1
+    assert preparing.commands[0].pending is not None
+    assert preparing.commands[0].pending.recipient_name == "Marta Solis Vega"
+    assert body["intent_id"] == str(INTENT)
+
+
+def test_a_name_continues_a_payment_that_is_missing_one() -> None:
+    client, preparing, asking = client_for()
+
+    client.post(
+        "/v1/questions",
+        json={"question": "a Marta Solis Vega", "payment_draft": {"amount_minor": 1_500}},
+    )
+
+    assert asking.sentences == []
+    assert preparing.commands[0].pending is not None
+    assert preparing.commands[0].pending.amount_minor == 1_500
+
+
+def test_a_change_of_subject_is_still_a_question() -> None:
+    """The rule that keeps the state machine honest. A payment under way must not swallow
+    everything the user says next."""
+    client, preparing, asking = client_for()
+
+    client.post(
+        "/v1/questions",
+        json={
+            "question": "¿cuánto gasté el mes pasado?",
+            "payment_draft": {"recipient_name": "Marta Solis Vega"},
+        },
+    )
+
+    assert preparing.commands == [], "a question was read as part of a payment"
+    assert asking.sentences == ["¿cuánto gasté el mes pasado?"]
+
+
+def test_a_reply_that_fills_nothing_is_not_a_continuation() -> None:
+    """ "No sé" names no contact and no amount. It is not a payment turn this can advance, so it
+    takes the ordinary path."""
+    client, preparing, asking = client_for()
+
+    client.post(
+        "/v1/questions",
+        json={"question": "no sé", "payment_draft": {"recipient_name": "Marta Solis Vega"}},
+    )
+
+    assert preparing.commands == []
+    assert asking.sentences == ["no sé"]
+
+
+def test_the_question_the_payment_asks_carries_the_draft_out() -> None:
+    """Without it on the way out there is nothing to echo, and the next turn is a fresh sentence."""
+    client, _, _ = client_for(ASKED_FOR_THE_AMOUNT)
+
+    body = client.post("/v1/questions", json={"question": "hazle un bizum a Marta Solis"}).json()
+
+    assert body["payment_draft"] == {
+        "recipient_name": "Marta Solis Vega",
+        "amount_minor": None,
+        "currency": "EUR",
+        "concept": None,
+    }
+
+
+def test_an_ambiguity_comes_back_with_the_names_and_their_identifiers() -> None:
+    ambiguous = PaymentAnswer(
+        outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+        text="Tienes varios contactos que se llaman Marta. ¿A quién?",
+        draft=SpokenPaymentDraft(amount_minor=1_500),
+        candidates=[
+            SpokenCandidate(str(uuid.UUID(int=1)), "Marta Ruiz Gomez", "+34600111222"),
+            SpokenCandidate(str(uuid.UUID(int=2)), "Marta Solis Vega", "+34600333444"),
+        ],
+    )
+    client, _, _ = client_for(ambiguous)
+
+    body = client.post(
+        "/v1/questions", json={"question": "hazle un bizum de 15 euros a Marta"}
+    ).json()
+
+    assert [c["display_name"] for c in body["candidates"]] == [
+        "Marta Ruiz Gomez",
+        "Marta Solis Vega",
+    ]
+    assert body["candidates"][0]["contact_id"] == str(uuid.UUID(int=1))
+    assert body["payment_draft"]["amount_minor"] == 1_500
+
+
+def test_a_complete_draft_is_not_a_continuation() -> None:
+    """A payment with both slots filled has already become a preview waiting for a yes. Treating a
+    later sentence as a continuation of it would prepare the same payment twice."""
+    client, preparing, asking = client_for()
+
+    client.post(
+        "/v1/questions",
+        json={
+            "question": "¿cuánto gasté?",
+            "payment_draft": {"recipient_name": "Marta Solis Vega", "amount_minor": 1_500},
+        },
+    )
+
+    assert preparing.commands == []
+    assert asking.sentences == ["¿cuánto gasté?"]
+
+
+def test_a_draft_carrying_an_absurd_amount_is_a_bad_request() -> None:
+    """It cannot have come from here, and it is input on the way back."""
+    client, preparing, _ = client_for()
+
+    response = client.post(
+        "/v1/questions",
+        json={"question": "15 euros", "payment_draft": {"amount_minor": 99_999_999}},
+    )
+
+    assert response.status_code == 422
+    assert preparing.commands == []

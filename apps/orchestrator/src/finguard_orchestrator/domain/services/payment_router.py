@@ -27,6 +27,10 @@ Three signals, and the order matters:
 import re
 from typing import Final
 
+from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.services import payment_words
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
+
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
 # which polite instructions carry too.
 _ASKING: Final = re.compile(
@@ -64,6 +68,26 @@ _PAYING: Final = re.compile(
 # Money in the sentence: a figure, a symbol, the word, or a means of payment that is only ever
 # money. Without one, "manda un correo a Marta" would be read as a payment.
 _MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbizum\b|\btransferencia\b)", re.IGNORECASE)
+
+
+def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]) -> bool:
+    """Whether this sentence answers the question a half-built payment asked.
+
+    Checked *before* `is_payment`, and that ordering is the point. A conversation with a payment
+    under way is a state machine, not a sequence of unrelated sentences: "15 euros" is an amount
+    because something asked for one, and classifying it afresh is how it reached the financial
+    planner and came back asking which month.
+
+    The rule is narrow on purpose — the sentence has to fill a slot that is actually missing. So a
+    genuine change of subject in the middle of a payment ("¿cuánto gasté este mes?") is still a
+    question, and "no sé" still goes to the model rather than being read as a name.
+    """
+    missing = draft.missing
+    if PaymentField.AMOUNT in missing and payment_words.amount_in(sentence) is not None:
+        return True
+    return bool(
+        PaymentField.RECIPIENT in missing and payment_words.contacts_in(sentence, directory)
+    )
 
 
 def is_payment(sentence: str) -> bool:
