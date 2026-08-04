@@ -38,6 +38,24 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
+# How far down a ranking anybody may ask. Bounded because it crosses the wire and becomes an
+# OFFSET the day RANK_MOVEMENTS exists: "el gasto número 40000" is not a question, it is a scan.
+MAX_RANK = 100
+
+
+class Workflow(StrEnum):
+    """The tag of the active state.
+
+    The union above is the type; this is its name, for the two places that need one — the wire, and
+    a client switching on what to render. Deriving it from `isinstance` at the edge would put the
+    same four-way decision in every layer that touches a conversation.
+    """
+
+    FINANCIAL_CLARIFICATION = "FINANCIAL_CLARIFICATION"
+    UNSUPPORTED_CAPABILITY = "UNSUPPORTED_CAPABILITY"
+    PAYMENT_IN_PROGRESS = "PAYMENT_IN_PROGRESS"
+    PAYMENT_CONFIRMATION = "PAYMENT_CONFIRMATION"
+
 
 class Slot(StrEnum):
     """What a turn is waiting for the user to supply.
@@ -172,6 +190,21 @@ class Conversation:
         )
 
 
+def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
+    """Which state this is, by name. None when nothing is under way."""
+    match active:
+        case FinancialClarification():
+            return Workflow.FINANCIAL_CLARIFICATION
+        case UnsupportedCapability():
+            return Workflow.UNSUPPORTED_CAPABILITY
+        case PaymentInProgress():
+            return Workflow.PAYMENT_IN_PROGRESS
+        case PaymentConfirmation():
+            return Workflow.PAYMENT_CONFIRMATION
+        case _:
+            return None
+
+
 def slot_for(missing: frozenset[PaymentField]) -> Slot:
     """Which question a half-built payment asks next.
 
@@ -193,5 +226,7 @@ __all__ = [
     "PaymentInProgress",
     "Slot",
     "UnsupportedCapability",
+    "Workflow",
     "slot_for",
+    "workflow_of",
 ]

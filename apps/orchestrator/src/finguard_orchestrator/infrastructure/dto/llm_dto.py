@@ -11,6 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_orchestrator.domain.constants import MAX_CATEGORY_NAME, MAX_PROMPT_LENGTH
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.models.conversation import MAX_RANK, Slot, Workflow
+from finguard_orchestrator.domain.value_objects.payment_request import (
+    MAX_PAYMENT_MINOR,
+    MAX_RECIPIENT_NAME,
+)
 
 
 class _Payload(BaseModel):
@@ -107,6 +112,55 @@ class PaymentDraftPayload(_Payload):
     concept: str | None = None
 
 
+class SpokenContactResponse(_Payload):
+    contact_id: str
+    display_name: str
+    phone: str
+
+
+class ConversationPayload(_Payload):
+    """Where the conversation is, in one object.
+
+    It replaces five optional fields — the answered plan, the half-read query, the half-built
+    payment, the payment awaiting a yes, and the last refusal — which between them described
+    thirty-two states, most of them nonsense. `workflow` says which one this is, and the fields the
+    other states would need are absent rather than null-and-meaningless.
+
+    The client round-trips it without interpreting it. That is the point: deciding what a
+    combination of nulls meant was the frontend knowing the orchestrator's semantics, and it got
+    that wrong every time a new state appeared.
+
+    Typed field by field, like the plan and for the same reason: what a caller sends back has to be
+    a conversation and nothing else. The one free-text field is a recipient's name, which is data,
+    and it is resolved against the account's own contacts before anything is prepared.
+    """
+
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    # Absent when nothing is under way.
+    workflow: Workflow | None = None
+    # What the last turn asked for, when it asked for anything. This is what makes "de este"
+    # readable: the slot says which field the sentence is filling.
+    awaiting: Slot | None = None
+    # The plan behind the last answered question. Memory rather than a workflow, so it travels
+    # alongside whatever is active.
+    last_plan: PlanPayload | None = None
+    # FINANCIAL_CLARIFICATION and UNSUPPORTED_CAPABILITY: the reading so far.
+    draft: PlanPayload | None = None
+    # UNSUPPORTED_CAPABILITY: which capability, and which position was asked about. The rank is why
+    # "¿y el segundo?" can be a patch of one field rather than a sentence to be read again.
+    capability: str | None = Field(default=None, max_length=64)
+    rank: int | None = Field(default=None, ge=1, le=MAX_RANK)
+    # PAYMENT_IN_PROGRESS: the payment so far, whether it stepped aside, and the choice offered.
+    payment: PaymentDraftPayload | None = None
+    suspended: bool = False
+    candidates: list[SpokenContactResponse] = []
+    # PAYMENT_CONFIRMATION: the intent the bank is holding.
+    intent_id: str | None = None
+    recipient: str | None = Field(default=None, max_length=MAX_RECIPIENT_NAME)
+    amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -150,12 +204,6 @@ class SpokenMovementResponse(_Payload):
     direction: str
     merchant_name: str | None = None
     category: str | None = None
-
-
-class SpokenContactResponse(_Payload):
-    contact_id: str
-    display_name: str
-    phone: str
 
 
 class QuestionResponse(_Payload):
