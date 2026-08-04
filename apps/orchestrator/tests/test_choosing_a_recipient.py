@@ -297,3 +297,146 @@ def test_the_choice_survives_the_round_trip() -> None:
     )
 
     assert back == out
+
+
+def _client():
+    """The two routes with fakes behind them, and nothing else alive.
+
+    A copy of what `test_payment_round_trip` builds, kept here rather than imported: that file is
+    about the routing rules in general, and a shared fixture between the two would make either one
+    fail for the other's reasons.
+    """
+    from fastapi.testclient import TestClient
+
+    from finguard_orchestrator.application.bus.command_bus import CommandBus
+    from finguard_orchestrator.application.bus.query_bus import QueryBus
+    from finguard_orchestrator.application.commands.pay import PaymentAnswer
+    from finguard_orchestrator.application.queries.ask_financial_question import (
+        AskFinancialQuestionQuery,
+        AskFinancialQuestionResult,
+    )
+    from finguard_orchestrator.application.queries.list_contacts import (
+        ContactRow,
+        ListContactsQuery,
+        ListContactsResult,
+    )
+    from finguard_orchestrator.bootstrap.dependencies import (
+        authenticated_caller,
+        get_ask_handler,
+        get_command_bus,
+        get_query_bus,
+    )
+    from finguard_orchestrator.bootstrap.main import app
+    from finguard_orchestrator.domain.value_objects.caller import Caller
+    from finguard_orchestrator.domain.value_objects.scope import Scope
+
+    class Preparing:
+        def __init__(self) -> None:
+            self.commands: list[PreparePaymentCommand] = []
+
+        async def handle(self, command: PreparePaymentCommand) -> PaymentAnswer:
+            self.commands.append(command)
+            return PaymentAnswer(
+                outcome=PaymentOutcome.AWAITING_CONFIRMATION.value,
+                text="¿Confirmas?",
+                intent_id=uuid.UUID("44444444-4444-4444-4444-444444444444"),
+                recipient=VEGA.display_name,
+                amount_minor=1_500,
+                currency="EUR",
+                balance_after_minor=1_035_542,
+            )
+
+    class Asking:
+        def __init__(self) -> None:
+            self.sentences: list[str] = []
+
+        async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
+            self.sentences.append(query.sentence)
+            return AskFinancialQuestionResult(outcome="PLANNED", text="una cifra")
+
+        async def stream(self, query: AskFinancialQuestionQuery):
+            self.sentences.append(query.sentence)
+            yield AskFinancialQuestionResult(outcome="PLANNED", text="una cifra")
+
+    class Contacts:
+        async def handle(self, query: ListContactsQuery) -> ListContactsResult:
+            return ListContactsResult(
+                contacts=[
+                    ContactRow(str(c.contact_id), c.display_name, c.phone) for c in (RUIZ, VEGA)
+                ]
+            )
+
+    preparing, asking = Preparing(), Asking()
+    commands, queries = CommandBus(), QueryBus()
+    commands.register(PreparePaymentCommand, preparing)
+    queries.register(AskFinancialQuestionQuery, asking)
+    queries.register(ListContactsQuery, Contacts())
+    app.dependency_overrides[get_command_bus] = lambda: commands
+    app.dependency_overrides[get_query_bus] = lambda: queries
+    app.dependency_overrides[get_ask_handler] = lambda: asking
+    app.dependency_overrides[authenticated_caller] = lambda: Caller(
+        holder_reference="ES-0001",
+        account_id=ACCOUNT,
+        scopes=frozenset({Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE}),
+    )
+    app.state.payments_enabled = True
+    app.state.questions_enabled = True
+    return TestClient(app), preparing, asking
+
+
+@pytest.fixture(autouse=True)
+def _restore():
+    from finguard_orchestrator.bootstrap.main import app
+
+    app.dependency_overrides.clear()
+    yield
+    app.dependency_overrides.clear()
+
+
+# --- and the turn that carries it -----------------------------------------------------
+
+
+CHOOSING = {
+    "workflow": "PAYMENT_IN_PROGRESS",
+    "awaiting": "RECIPIENT_CHOICE",
+    "payment": {
+        "recipient_name": None,
+        "recipient_contact_id": str(VEGA.contact_id),
+        "amount_minor": 1_500,
+        "currency": "EUR",
+        "concept": "comida",
+    },
+    "candidates": [
+        {
+            "contact_id": str(c.contact_id),
+            "display_name": c.display_name,
+            "phone": c.phone,
+        }
+        for c in (RUIZ, VEGA)
+    ],
+}
+
+
+@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream"])
+def test_a_tap_reaches_the_payment_path_and_not_the_planner(route: str) -> None:
+    """The failure this caught in the browser. A chosen contact fills the recipient slot, so the
+    draft looks complete — and "a complete draft is already a preview" sent the turn to the
+    financial planner, which answered "eso no puedo calcularlo todavía" to a tap on a button.
+
+    Both routes, because the client uses the streaming one and this pair has diverged twice.
+    """
+    client, preparing, asking = _client()
+
+    response = client.post(
+        route,
+        json={"question": VEGA.display_name, "conversation": CHOOSING},
+        headers={"Authorization": "Bearer t"},
+    )
+
+    assert response.status_code == 200
+    assert asking.sentences == [], "a tap on a contact reached the financial planner"
+    assert len(preparing.commands) == 1
+    pending = preparing.commands[0].pending
+    assert pending is not None
+    assert pending.recipient_contact_id == VEGA.contact_id
+    assert pending.concept == "comida", "the note did not survive the tap"

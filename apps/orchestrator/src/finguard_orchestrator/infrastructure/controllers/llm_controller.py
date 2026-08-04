@@ -443,6 +443,17 @@ async def _continues_a_payment(
     if not isinstance(active, PaymentInProgress):
         return None
     drafted = active.draft
+    if active.suspended:
+        # A value for the missing slot is intercepted above and gets a reminder. Only an explicit
+        # resumption reaches preparation, carrying the old draft so none of its settled fields
+        # vanish.
+        return drafted if payment_router.resumes(question) else None
+    if drafted.recipient_contact_id is not None and drafted.recipient_name is None:
+        # A contact the user tapped and this service has not applied yet. It fills the recipient
+        # slot, so the draft below looks complete â€” and "complete means a preview already exists"
+        # sent the tap to the financial planner, which answered a button with "eso no puedo
+        # calcularlo todavÃ­a". The preview is exactly what this turn is asking for.
+        return drafted
     if not drafted.missing:
         # Nothing left to fill, so there is nothing to continue: a complete payment has already
         # become a preview waiting for a yes, and that is the confirmation path.
