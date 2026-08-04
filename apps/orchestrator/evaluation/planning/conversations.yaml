@@ -23,6 +23,7 @@
 #   expect       an outcome a deterministic path owes us
 #   says         a phrase the answer has to contain, for the prose rather than the plan
 #   not_says     a phrase it must never contain, for turns where several outcomes are fine
+#   keeps_payment  a bizum has to still be under way after this turn
 
 conversations:
   - id: rent_then_period
@@ -159,3 +160,43 @@ conversations:
       - say: ¿Cuál es el gasto medio mensual que gasto en el coche?
         expect: UNSUPPORTED
         says: medias
+
+  - id: a_bizum_built_over_four_turns
+    why: >
+      The payment conversation from the report, which never reached a preview. "15 euros" has money
+      in it and no payment verb, so it was classified as a question and asked which period.
+    turns:
+      - say: Vale y si hacemos un bizum a alguien?
+        keeps_payment: true
+      - say: No se a quien tengo en contactos?
+        expect: CONTACTS
+      - say: Vale que te parece si le hacemos un bizum a Marta
+        keeps_payment: true
+        says: Marta Ruiz Gomez
+      - say: 15 euros
+        keeps_payment: true
+      - say: Marta Solis Vega
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
+
+  - id: the_ambiguity_keeps_the_amount_and_the_concept
+    why: >
+      Banking refuses to choose between two Martas, and used to return the names and nothing else —
+      so the amount and the concept the user had already given were lost.
+    turns:
+      - say: quiero hacerle 15 euros de bizum a Marta con el concepto tapas
+        keeps_payment: true
+        says: Marta Solis Vega
+      - say: Marta Solis Vega
+        expect: AWAITING_CONFIRMATION
+        says: tapas
+
+  - id: a_question_in_the_middle_of_a_bizum_is_still_a_question
+    why: >
+      The rule that keeps the state machine honest. A payment under way must not swallow everything
+      the user says next.
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        keeps_payment: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        says: gasolina

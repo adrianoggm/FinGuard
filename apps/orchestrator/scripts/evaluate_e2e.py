@@ -200,9 +200,15 @@ def turn_violations(
         # every model mood — where demanding a particular outcome would not be.
         broken.append("SAYS_WHAT_IT_MUST_NOT")
 
-    if outcome == "NEEDS_CLARIFICATION" and not body.get("pending_context"):
-        # Without the draft on the way out the client has nothing to echo, so the next turn is a
+    half_built = body.get("pending_context") or body.get("payment_draft")
+    if outcome == "NEEDS_CLARIFICATION" and not half_built:
+        # Without something on the way out the client has nothing to echo, so the next turn is a
         # fresh question however well it is phrased. This is the defect, at its source.
+        #
+        # Either draft counts, because either workflow can be the one asking: a query missing its
+        # window and a bizum missing its amount are the same failure seen from two sides. The rule
+        # was written when only the query path could ask, and payment clarifications then failed it
+        # for carrying the right draft under the other name.
         broken.append("QUESTION_WITHOUT_A_DRAFT")
 
     if turn.get("completes") and asked_before and outcome == "NEEDS_CLARIFICATION":
@@ -235,6 +241,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
         for case in cases:
             plan: dict[str, Any] | None = None
             pending: dict[str, Any] | None = None
+            payment: dict[str, Any] | None = None
             asked = False
 
             for index, turn in enumerate(case["turns"], start=1):
@@ -247,6 +254,7 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                             "question": turn["say"],
                             "previous_plan": plan,
                             "pending_draft": pending,
+                            "payment_draft": payment,
                         },
                         headers={"Authorization": f"Bearer {token}"},
                     )
@@ -261,6 +269,11 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                 body = response.json()
                 turns_run += 1
                 broken = violations(body) + turn_violations(turn, body, asked, plan_before)
+                if turn.get("keeps_payment") and not body.get("payment_draft"):
+                    # A payment under way that stopped being under way. This is the defect from the
+                    # report: the half-built bizum was dropped and the next reply was classified
+                    # from scratch, which sent "15 euros" to the financial planner.
+                    broken.append("LOST_THE_PAYMENT")
                 if broken:
                     failures.append((where, broken, (body.get("text") or "")[:60]))
 
@@ -268,6 +281,11 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                 # is what the client implements, not what the handler would accept.
                 plan = body.get("plan_context") or plan
                 pending = body.get("pending_context")
+                # Kept across turns that answer something else, and cleared when the payment stops
+                # being half-built — the same rule the client follows, because the client is what
+                # this is testing.
+                settled = body.get("outcome") == "AWAITING_CONFIRMATION" or body.get("intent_id")
+                payment = body.get("payment_draft") or (None if settled else payment)
                 asked = body.get("outcome") == "NEEDS_CLARIFICATION"
 
     print()
