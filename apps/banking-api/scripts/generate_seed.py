@@ -152,6 +152,36 @@ CARDS = {
     ),
 }
 
+# What the classifier disagrees with the bank about, and what a holder disagreed with both about.
+# Keyed on the merchant, because that is how a real classifier works and because it makes the
+# dataset explicable: every Steam purchase moves, and nothing else does.
+#
+# Both are deliberately small. The point is to make the layers *visible* — a demo where every
+# movement has three opinions on it is a demo of a bug — and to leave plenty of movements whose
+# category still comes straight from the bank.
+RECLASSIFIED = {
+    # The bank files a games shop under leisure. It is a subscription for most people who spend
+    # there monthly, which is exactly the kind of correction a classifier earns its keep on.
+    "Steam": "SUBSCRIPTIONS",
+}
+CLASSIFIER_VERSION = "rules-v1"
+
+# The holder's own corrections, which beat the classifier. Sports gear bought for physiotherapy is
+# the archetype: nothing about the merchant says so and only the person knows.
+REFILED = {
+    "Decathlon": "HEALTH",
+}
+
+# Free labels, on whichever movements happen to carry these merchants. Zero or many per movement,
+# which is the whole reason they are not categories: two of these on one purchase must not make it
+# count twice in any breakdown.
+TAGGED = {
+    "Fnac": ("regalo",),
+    "La Tagliatella": ("trabajo", "invitado"),
+    "Renfe": ("viaje",),
+}
+
+
 # Counterparty for every operation: the bank's clearing account. Without it there
 # would be no double entry and the balance trigger would reject each transaction.
 CLEARING = "ES-COMPENSACION"
@@ -282,6 +312,11 @@ def day_in_month(rng: random.Random, month: date, low: int, high: int, end: date
 
 def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[str, uuid.UUID]]:
     rng = random.Random(seed)
+    # A stream of its own for everything about a second account, and the reason is the one written
+    # above `card_rng`: every draw from `rng` shifts every draw after it, so allocating a piggy
+    # bank from it changes every amount and date in the dataset — which is exactly what happened
+    # the first time this was written, and the phase 2 expectations moved with it.
+    side_rng = random.Random(seed ^ 0x51DE5)
     accounts: dict[str, uuid.UUID] = {CLEARING: identifier(rng)}
     movements: list[Movement] = []
 
@@ -291,7 +326,7 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
         # Allocated here, before any movement, so the identifiers stay stable whatever is added to
         # the loop below: this generator is only useful because it is byte-for-byte reproducible.
         for side in holder.side_accounts:
-            accounts[f"{holder.reference}-{side.suffix}"] = identifier(rng)
+            accounts[f"{holder.reference}-{side.suffix}"] = identifier(side_rng)
         opening = month_starts(end, months)[0]
 
         movements.append(
@@ -330,7 +365,7 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
                 )
             )
             for side in holder.side_accounts:
-                movements.extend(_side_account_month(rng, holder, side, month, end, accounts))
+                movements.extend(_side_account_month(side_rng, holder, side, month, end, accounts))
             for merchant, category, amount in SUBSCRIPTIONS:
                 movements.append(
                     Movement(
@@ -406,6 +441,9 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         for reference, held in CARDS.items()
     }
     lines: list[str] = []
+    # Which transaction each movement became, so the classification and tag rows below can
+    # point at them without a second pass over the same list.
+    transaction_ids: dict[int, uuid.UUID] = {}
 
     lines.append("BEGIN;")
     lines.append("")
@@ -508,6 +546,7 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         # while a transaction is pending, and the ones that should be booked are booked at the
         # end. The dataset used to insert them already BOOKED and add entries afterwards, which
         # the ledger now forbids — and which is why nothing noticed it allowed it.
+        transaction_ids[number] = transaction
         if movement.status == "BOOKED":
             to_book.append(str(transaction))
         transaction_rows.append(
@@ -546,6 +585,51 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
             entry_rows,
         )
     )
+
+    classification_rows: list[str] = []
+    override_rows: list[str] = []
+    tag_rows: list[str] = []
+    for number, movement in enumerate(movements, start=1):
+        if movement.status != "BOOKED":
+            continue
+        transaction = transaction_ids[number]
+        if movement.merchant in RECLASSIFIED:
+            classification_rows.append(
+                f"({quote(str(movement.account))}, {quote(str(transaction))}, "
+                f"{quote(RECLASSIFIED[movement.merchant])}, {quote(CLASSIFIER_VERSION)})"
+            )
+        if movement.merchant in REFILED:
+            override_rows.append(
+                f"({quote(str(movement.account))}, {quote(str(transaction))}, "
+                f"{quote(REFILED[movement.merchant])})"
+            )
+        for label in TAGGED.get(movement.merchant, ()):
+            tag_rows.append(
+                f"({quote(str(movement.account))}, {quote(str(transaction))}, {quote(label)})"
+            )
+
+    if classification_rows:
+        lines.extend(
+            _batches(
+                "INSERT INTO movement_classifications "
+                "(account_id, transaction_id, category, classifier_version) VALUES",
+                classification_rows,
+            )
+        )
+    if override_rows:
+        lines.extend(
+            _batches(
+                "INSERT INTO movement_categories (account_id, transaction_id, category) VALUES",
+                override_rows,
+            )
+        )
+    if tag_rows:
+        lines.extend(
+            _batches(
+                "INSERT INTO movement_tags (account_id, transaction_id, tag) VALUES",
+                tag_rows,
+            )
+        )
 
     # Booked last, once every entry exists. This is the lifecycle migration 0004 enforces, so
     # building the dataset now exercises it 1,621 times rather than routing around it.
