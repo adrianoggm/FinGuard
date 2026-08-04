@@ -125,6 +125,21 @@ def test_a_payment_typed_into_the_chat_reaches_the_payment_path() -> None:
     assert preparing.sentences == [PAYMENT]
 
 
+def test_starting_a_payment_discards_an_older_failed_query_retry() -> None:
+    client, _ = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
+
+    body = client.post(
+        "/v1/questions",
+        json={
+            "question": PAYMENT,
+            "conversation": {"retry_plan": {"direction": "EXPENSE", "period": "LAST_MONTH"}},
+        },
+    ).json()
+
+    assert body["conversation"]["workflow"] == "PAYMENT_CONFIRMATION"
+    assert body["conversation"]["retry_plan"] is None
+
+
 def test_the_preview_comes_back_as_the_text_to_show() -> None:
     client, _ = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
 

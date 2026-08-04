@@ -233,7 +233,11 @@ async def _as_payment(
         outcome=answer.outcome,
         text=answer.text,
         intent_id=str(answer.intent_id) if answer.intent_id else None,
-        conversation=conversation_mapper.to_payload(was.with_active(_payment_state(answer))),
+        # Starting a payment is choosing a different operation. Do not carry an older, invisible
+        # failed-query retry through it and let a later bare "reintenta" revive stale context.
+        conversation=conversation_mapper.to_payload(
+            was.without_retry().with_active(_payment_state(answer))
+        ),
     )
 
 

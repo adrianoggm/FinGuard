@@ -122,6 +122,7 @@ export type ConversationState = {
   workflow: Workflow | null;
   awaiting: Slot | null;
   last_plan: PlanContext | null;
+  retry_plan: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
   rank: number | null;
