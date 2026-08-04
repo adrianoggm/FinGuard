@@ -65,16 +65,54 @@ SUBSCRIPTIONS = (
 
 
 @dataclass(frozen=True)
+class SideAccount:
+    """A second or third account of the same holder.
+
+    `monthly_minor` is what moves into it from the current account each month — a standing order to
+    the piggy bank, a monthly purchase of a fund. It is an *internal* movement in both directions
+    and nothing here is spending: that distinction is the whole reason this dataset exists before
+    the multi-account work rather than after it.
+
+    `interest_rate` is the yearly rate a savings account pays, credited monthly. Zero for anything
+    that does not pay one, which is every kind but SAVINGS.
+    """
+
+    suffix: str
+    kind: str
+    display_name: str
+    monthly_minor: int
+    interest_rate: float = 0.0
+
+
+@dataclass(frozen=True)
 class Holder:
     name: str
     reference: str
     salary_minor: int
     rent_minor: int
     opening_balance_minor: int
+    # Everything beyond the current account. Empty for two of the three holders on purpose: one
+    # account is still the ordinary case, and a dataset where everybody has three would let the
+    # single-account path rot without anybody noticing.
+    side_accounts: tuple[SideAccount, ...] = ()
 
 
 HOLDERS = (
-    Holder("Laura Martin Ruiz", "ES-0001", 245_000, 92_000, 180_000),
+    Holder(
+        "Laura Martin Ruiz",
+        "ES-0001",
+        245_000,
+        92_000,
+        180_000,
+        side_accounts=(
+            # 2 % yearly, credited monthly. A rate rather than a fixed amount so the figures grow
+            # with the balance, which is what makes a chart of a piggy bank worth looking at.
+            SideAccount("A", "SAVINGS", "Hucha", 30_000, interest_rate=0.02),
+            # Cost basis, not value. The ledger knows what was paid and nothing else, which is why
+            # ADR-009 refuses to call this a valuation until there is a price source with a date.
+            SideAccount("F", "ASSET", "Fondo indexado", 15_000),
+        ),
+    ),
     Holder("Diego Ferrer Gomez", "ES-0002", 189_000, 78_000, 95_000),
     Holder("Nuria Salas Ortega", "ES-0003", 312_000, 115_000, 260_000),
 )
@@ -156,6 +194,61 @@ class Movement:
     amount_minor: int  # positive = money into the holder's account
     account: uuid.UUID
     status: str = "BOOKED"
+    # The other side of the double entry. The clearing account when absent, which is every movement
+    # that crosses the bank's boundary. Set for a transfer between two accounts of the same holder:
+    # one transaction, two entries, both theirs — which is what makes it internal rather than two
+    # unrelated movements that happen to cancel out.
+    counterparty: uuid.UUID | None = None
+
+
+def _side_account_month(
+    rng: random.Random,
+    holder: Holder,
+    side: SideAccount,
+    month: date,
+    end: date,
+    accounts: dict[str, uuid.UUID],
+) -> list[Movement]:
+    """One month of a second account: the standing order into it, and any interest it pays.
+
+    The standing order is two entries of one transaction and the type says INTERNAL_TRANSFER, so
+    neither leg counts as spending or income. Interest is a real credit from the bank and does
+    count — the money came from outside.
+    """
+    current = accounts[holder.reference]
+    other = accounts[f"{holder.reference}-{side.suffix}"]
+    day = day_in_month(rng, month, 1, 4, end)
+    moved: list[Movement] = [
+        Movement(
+            occurred_at=moment(rng, day),
+            kind="INTERNAL_TRANSFER",
+            description=f"Traspaso a {side.display_name}",
+            merchant=side.display_name,
+            category="INTERNAL",
+            amount_minor=-side.monthly_minor,
+            account=current,
+            counterparty=other,
+        )
+    ]
+    if side.interest_rate:
+        # A twelfth of the yearly rate on what has gone in so far. Approximate on purpose: this is
+        # a dataset for reading questions off, not an amortisation table, and rounding it to the
+        # cent is what keeps the ledger balanced.
+        elapsed = month_starts(end, MONTHS).index(month) + 1
+        paid = round(side.monthly_minor * elapsed * side.interest_rate / 12)
+        if paid:
+            moved.append(
+                Movement(
+                    occurred_at=moment(rng, day_in_month(rng, month, 27, 28, end)),
+                    kind="SALARY",
+                    description="Intereses",
+                    merchant="FinGuard",
+                    category="INTEREST",
+                    amount_minor=paid,
+                    account=other,
+                )
+            )
+    return moved
 
 
 def identifier(rng: random.Random) -> uuid.UUID:
@@ -195,6 +288,10 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
     for holder in HOLDERS:
         account = identifier(rng)
         accounts[holder.reference] = account
+        # Allocated here, before any movement, so the identifiers stay stable whatever is added to
+        # the loop below: this generator is only useful because it is byte-for-byte reproducible.
+        for side in holder.side_accounts:
+            accounts[f"{holder.reference}-{side.suffix}"] = identifier(rng)
         opening = month_starts(end, months)[0]
 
         movements.append(
@@ -232,6 +329,8 @@ def generate(months: int, end: date, seed: int) -> tuple[list[Movement], dict[st
                     account=account,
                 )
             )
+            for side in holder.side_accounts:
+                movements.extend(_side_account_month(rng, holder, side, month, end, accounts))
             for merchant, category, amount in SUBSCRIPTIONS:
                 movements.append(
                     Movement(
@@ -328,21 +427,32 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     customer_rows = [f"({quote(str(bank_customer))}, {quote('FinGuard (compensacion)')})"]
     account_rows = [
         f"({quote(str(accounts[CLEARING]))}, {quote(str(bank_customer))}, "
-        f"{quote(CLEARING)}, {quote(CURRENCY)}, {quote('ACTIVE')})"
+        f"{quote(CLEARING)}, {quote(CURRENCY)}, {quote('ACTIVE')}, {quote('CURRENT')}, NULL)"
     ]
     for holder in HOLDERS:
         customer = identifier(rng)
         customer_rows.append(f"({quote(str(customer))}, {quote(holder.name)})")
         account_rows.append(
             f"({quote(str(accounts[holder.reference]))}, {quote(str(customer))}, "
-            f"{quote(holder.reference)}, {quote(CURRENCY)}, {quote('ACTIVE')})"
+            f"{quote(holder.reference)}, {quote(CURRENCY)}, {quote('ACTIVE')}, "
+            f"{quote('CURRENT')}, {quote('Cuenta corriente')})"
         )
+        # Same customer, so this is a holder with several accounts rather than several holders —
+        # which is the whole point of the dataset and the thing the RLS work will have to honour.
+        for side in holder.side_accounts:
+            reference = f"{holder.reference}-{side.suffix}"
+            account_rows.append(
+                f"({quote(str(accounts[reference]))}, {quote(str(customer))}, "
+                f"{quote(reference)}, {quote(CURRENCY)}, {quote('ACTIVE')}, "
+                f"{quote(side.kind)}, {quote(side.display_name)})"
+            )
 
     lines.append("INSERT INTO customers (id, full_name) VALUES")
     lines.append(",\n".join(f"    {row}" for row in customer_rows) + ";")
     lines.append("")
     lines.append(
-        "INSERT INTO accounts (id, customer_id, account_reference, currency, status) VALUES"
+        "INSERT INTO accounts (id, customer_id, account_reference, currency, status, "
+        "kind, display_name) VALUES"
     )
     lines.append(",\n".join(f"    {row}" for row in account_rows) + ";")
     lines.append("")
@@ -410,9 +520,10 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
         incoming = movement.amount_minor > 0
         # Double entry: what the holder receives comes out of the clearing account,
         # and the other way round.
+        other_side = movement.counterparty or clearing
         for account, entry_type in (
             (movement.account, "CREDIT" if incoming else "DEBIT"),
-            (clearing, "DEBIT" if incoming else "CREDIT"),
+            (other_side, "DEBIT" if incoming else "CREDIT"),
         ):
             entry_rows.append(
                 f"({quote(str(identifier(rng)))}, {quote(str(transaction))}, "

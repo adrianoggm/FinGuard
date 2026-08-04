@@ -128,3 +128,45 @@ def test_the_exclusion_is_in_the_sql_and_not_in_a_caller() -> None:
 
     assert "NOT t.is_internal" in excluded.sql
     assert "is_internal" not in included.sql
+
+
+def test_the_dataset_has_a_holder_with_more_than_one_account() -> None:
+    """The seed is what makes any of this reachable outside a fixture.
+
+    One holder with a current account, a piggy bank and a fund — same customer, which is what
+    makes them one person's accounts rather than three people's, and the property the RLS work
+    will have to honour.
+    """
+    import re
+    from pathlib import Path
+
+    seed = (Path(__file__).resolve().parents[1] / "seeds" / "0001_demo.sql").read_text(
+        encoding="utf-8"
+    )
+    rows = re.findall(
+        r"'([0-9a-f-]{36})', '([0-9a-f-]{36})', 'ES-[^']*', 'EUR', 'ACTIVE', '(\w+)'", seed
+    )
+
+    by_customer: dict[str, list[str]] = {}
+    for _, customer, kind in rows:
+        by_customer.setdefault(customer, []).append(kind)
+
+    several = [kinds for kinds in by_customer.values() if len(kinds) > 1]
+    assert several, "no holder has a second account"
+    assert {"CURRENT", "SAVINGS", "ASSET"} <= set(several[0])
+    # And not everybody, deliberately: one account is still the ordinary case, and a dataset where
+    # every holder had three would let the single-account path rot unnoticed.
+    assert any(len(kinds) == 1 for kinds in by_customer.values())
+
+
+def test_the_seeded_transfers_are_marked_internal() -> None:
+    """A standing order to the piggy bank is one transaction with two of the holder's own entries.
+    Emitted against the clearing account instead, it would be two unrelated movements that happen
+    to cancel out — and both would count as spending."""
+    from pathlib import Path
+
+    seed = (Path(__file__).resolve().parents[1] / "seeds" / "0001_demo.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "'INTERNAL_TRANSFER'" in seed, "the dataset has no internal movements to exclude"
