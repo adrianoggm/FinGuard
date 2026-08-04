@@ -314,9 +314,7 @@ class PreparePaymentHandler:
             drafted = pending.filled_with(PaymentDraft(amount_minor=amount))
             return PaymentAnswer(
                 outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
-                text=payment_writer.ambiguous(
-                    command.sentence, tuple(c.display_name for c in named)
-                ),
+                text=payment_writer.several_candidates(tuple(c.display_name for c in named)),
                 draft=_drafted(drafted),
                 candidates=[
                     SpokenCandidate(str(c.contact_id), c.display_name, c.phone) for c in named
