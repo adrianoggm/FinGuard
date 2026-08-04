@@ -308,7 +308,13 @@ def to_sql(movements: list[Movement], accounts: dict[str, uuid.UUID], seed: int)
     # payment_intents references contacts and accounts, and TRUNCATE needs every referencing
     # table named with them. A dataset that cannot be reloaded is a dataset nobody reloads.
     # `cards` is referenced by ledger_transactions, so TRUNCATE needs the two named together.
-    lines.append("         payment_intents, contacts, cards, accounts, customers;")
+    # `movement_categories` references both accounts and ledger_transactions, and every table
+    # added after this one has to be named here too — postgres refuses the whole statement
+    # otherwise, so a migration that forgets it breaks reloading the dataset and nothing else.
+    # Never CASCADE: it would silently empty whatever a future migration happens to hang off
+    # the ledger, which is a list nobody enumerated.
+    lines.append("         payment_intents, movement_categories, contacts, cards,")
+    lines.append("         accounts, customers;")
     lines.append("")
 
     bank_customer = identifier(rng)
