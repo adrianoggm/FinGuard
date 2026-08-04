@@ -79,6 +79,54 @@ open question.
 | "¿A qué personas les he hecho Bizum?" answered with a total | The question forces a grouped answer |
 | "¿Cuál fue mi movimiento más grande?" over both directions returned the largest income | Banking orders by `ABS(amount_minor)` when direction is `ALL` |
 | The same clarification asked three times | Second identical ask offers periods the service can act on |
+| The ranked answer's *text* still said "€" after the field was fixed | `money` takes the ledger's currency and prints no unit when it has none |
+| `MAX_RANK` declared twice, payment ceilings beside the value object | One declaration each, in `domain/constants` |
+| No way to diagnose a degraded conversation after the fact | `turn.window` names the explicit, planned and inherited windows in one line |
+
+## Observability
+
+There was none. Every reported defect was a figure that was real and about the wrong question, so
+nothing crashed and nothing was left behind to read — diagnosing meant reproducing.
+
+Three records now, JSON to stdout, configured once from the composition root:
+
+    request      method, path, status, latency. Never a body, never a query string.
+    turn         outcome, latency, whether anything was inherited, pseudonymised account.
+    turn.window  the explicit, planned and inherited windows, when the sentence named one.
+
+The third is the reason the other two exist. It is the line that makes "los últimos 3 meses
+answered over five" visible without reproducing the conversation.
+
+**Never logged:** the question text, a Bizum's concept, a contact's name or phone, a movement's
+description, and a raw account identifier — pseudonymised to eight hex characters of a digest,
+which correlates two records and names nobody. This is a discipline at the call sites rather than a
+filter, because no filter can tell a category name from a merchant name, so the control is a test
+that drives a real turn with a sentence full of private things and greps everything emitted.
+
+Missing against the review's example record, and deliberately: `conversation_id`, because there is
+no conversation identity — the state is held by the client and this service stores nothing — and
+`turn_id`, which is the client-supplied idempotency key from the follow-up list. The request id
+serves as the turn's identifier until it exists.
+
+## Limits, constants and configuration
+
+The review's three-way split is now stated in `domain/constants.py` and applied:
+
+    protocol limits     what a field may carry. Centralised, and deliberately not configurable —
+                        raising one by environment variable makes two services accept different
+                        contracts, and nothing reports that until a request is refused.
+    domain invariants   `rank >= 1`, a payment needs a recipient and an amount. Not centralised at
+                        all: the rule and the `__post_init__` that enforces it are one thing.
+    operational policy  timeouts, movements per screen, payments on or off, guard rules, and now
+                        the log level and format. Configuration, in .env.defaults.
+
+What was actually duplicated and is not any more: `MAX_RANK` (declared in two modules at 100, with
+the DTO importing one and the value object enforcing the other), `MAX_CATEGORY_NAME` as a second
+name for `MAX_CATEGORY_LENGTH`, and the payment ceilings living beside `PaymentRequest`.
+
+One ceiling still has no policy under it: `MAX_PAYMENT_MINOR`. A deployment lowering what the
+assistant will ever offer to pay is a real request and a small setting clamped to the constant. It
+is in the follow-ups rather than in this branch.
 
 ## Security guarantees
 
@@ -115,9 +163,13 @@ consumer. If a second one exists, this needs `/v2/questions` or a transition per
 
 ## Test evidence
 
-    orchestrator   1289 passed, 3 skipped     ruff clean, mypy clean
+    orchestrator   1298 passed, 3 skipped     ruff clean, mypy clean
     banking-api     247 passed                ruff clean, mypy clean
     web              20 passed                tsc --noEmit clean
+
+Every commit in the series was run on its own in a throwaway worktree, not only the tip: the
+counts rise monotonically and none of them breaks the next. A branch whose commits are atomic and
+individually red is a branch that cannot be bisected, which is the whole reason for splitting.
 
 New:
 
@@ -130,6 +182,8 @@ New:
 - `test_chat_uses_the_holder_timezone.py` — a Canarian identity on both question routes.
 - `test_explicit_facts.py` — the enforcement, through the pipeline rather than at the unit.
 - `test_conversation_round_trip.py` — a USD confirmation survives; nine forged states are refused.
+- `test_logging.py` — a real turn with a private sentence, asserting nothing the holder wrote was
+  emitted, plus the three-window record and one request id across every record of a request.
 
 The acceptance file is the one that matters for this branch. Every defect here was an integration
 defect: the state round-tripped, the mapper mapped, the guard guarded, and the chain from React to
@@ -169,35 +223,41 @@ SSE and back still lost the context.
 
 To open before merge, so the open review threads stop standing in for a backlog:
 
-1. **Counterparty as a first-class concept.** `counterparty_name` and `counterparty_type`
+1. **ADR-008 in code** — extract the language knowledge behind `LanguagePack`, move today's
+   behaviour into `es-ES` unchanged, and verify no evaluation result moves. The decision is
+   recorded in docs/architecture/adr-008-language-packs.md; English comes after the Spanish
+   semantics are finished, not before.
+2. **A configurable payment ceiling.** `ORCHESTRATOR_MAX_PAYMENT_MINOR`, clamped to the domain
+   constant. The ceiling exists; the policy under it does not.
+3. **Counterparty as a first-class concept.** `counterparty_name` and `counterparty_type`
    (`MERCHANT` / `PERSON` / `EMPLOYER` / `LANDLORD` / `SERVICE_PROVIDER`) in banking, plus
    `GroupBy.COUNTERPARTY` in the plan and the prompt.
-2. **Ranking of groups.** `RankGroups(group_by, metric, rank)` — "la categoría en la que más gasté",
+4. **Ranking of groups.** `RankGroups(group_by, metric, rank)` — "la categoría en la que más gasté",
    "los tres comercios donde más pagué". Not `TopMovements`: a winning category and a winning
    transaction are different answers.
-3. **A typed query patch.** Replace `changed: [...]` plus emitted values with
+5. **A typed query patch.** Replace `changed: [...]` plus emitted values with
    `Unchanged | Clear | SetValue[T]` per field, so the two representations of one decision cannot
    contradict each other.
-4. **`QueryContext` separate from the operation,** so "¿y cuál fue el más alto?" after a total keeps
+6. **`QueryContext` separate from the operation,** so "¿y cuál fue el más alto?" after a total keeps
    the window, direction and categories instead of re-planning.
-5. **A signed or server-held conversation state,** before MCP, A2A or any external client. Options:
+7. **A signed or server-held conversation state,** before MCP, A2A or any external client. Options:
    re-read the intent from banking every time, an HMAC/JWS token with a version and an expiry, or an
    opaque identifier over server-side storage.
-6. **Client-supplied `turn_id`,** with the prepare idempotency key derived from
+8. **Client-supplied `turn_id`,** with the prepare idempotency key derived from
    `account_id + turn_id + operation`.
-7. **A visible suspended-payment indicator** in the web client — "Bizum pausado · Marta · falta el
+9. **A visible suspended-payment indicator** in the web client — "Bizum pausado · Marta · falta el
    importe" with Continuar and Cancelar — so the state stops being silent on screen as well as in
    the backend.
-8. **Evaluation contract: `must_change` and `must_not_inherit`.** The conversational dataset only
+10. **Evaluation contract: `must_change` and `must_not_inherit`.** The conversational dataset only
    asserts what is *kept*; it has no way to require that an explicit window changed. Also
    `expected_answer_shape` and `max_repeated_clarifications`.
-9. **Category taxonomy:** `bank_category` (immutable), `system_category`, `user_category`, free
+11. **Category taxonomy:** `bank_category` (immutable), `system_category`, `user_category`, free
    tags. Assets and investments are not spending categories.
-10. **Learning from corrections** — consent, anonymisation, declared purpose, bounded retention,
+12. **Learning from corrections** — consent, anonymisation, declared purpose, bounded retention,
     exclusion of concepts and merchant names, opt-out, and a hard separation between operational
     data and any training set. An epic, not a side effect of categorisation.
-11. **Split `llm_controller.py`** into `ConversationApplicationService`, `PaymentConversationService`
+13. **Split `llm_controller.py`** into `ConversationApplicationService`, `PaymentConversationService`
     and `FinancialConversationService`, leaving the controller as map → handle → map. Group the DTOs
     by context (`questions`, `conversations`, `payments`, `accounts`, `cards`, `admin`) rather than
     one file per class.
-12. **Multiple accounts per holder,** and conversational metrics.
+14. **Multiple accounts per holder,** and conversational metrics.
