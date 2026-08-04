@@ -10,13 +10,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from finguard_orchestrator.domain.constants import MAX_CATEGORY_NAME, MAX_PROMPT_LENGTH
-from finguard_orchestrator.domain.enums import Action, Direction, GroupBy, Metric, Period
-from finguard_orchestrator.domain.models.conversation import MAX_RANK, Slot, Workflow
-from finguard_orchestrator.domain.value_objects.payment_request import (
+from finguard_orchestrator.domain.constants import (
+    MAX_CATEGORY_LENGTH,
     MAX_PAYMENT_MINOR,
+    MAX_PROMPT_LENGTH,
+    MAX_RANK,
     MAX_RECIPIENT_NAME,
 )
+from finguard_orchestrator.domain.enums import Action, Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.models.conversation import Slot, Workflow
 
 
 class _Payload(BaseModel):
@@ -435,7 +437,7 @@ class CategoryRequest(_Payload):
 
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
-    category: str | None = Field(default=None, max_length=MAX_CATEGORY_NAME)
+    category: str | None = Field(default=None, max_length=MAX_CATEGORY_LENGTH)
 
 
 class CategoriesResponse(_Payload):

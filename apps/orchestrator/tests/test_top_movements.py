@@ -43,6 +43,9 @@ CEPSA = Movement(
     direction="EXPENSE",
     merchant_name="Cepsa",
     category="TRANSPORT_FUEL",
+    # A ranked movement always carries one: it *is* the answer, so it has to say what its amount
+    # is denominated in. A fixture without it now renders a bare figure, which is the point.
+    currency="EUR",
 )
 
 

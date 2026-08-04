@@ -22,9 +22,9 @@ to change and a constrained decoder quietly clamping a figure instead of the pip
 
 from typing import Any, Final
 
+from finguard_orchestrator.domain.constants import MAX_CONCEPT
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.services.payment_grounding import SUPPORTED_CURRENCY
-from finguard_orchestrator.domain.value_objects.payment_request import MAX_CONCEPT
 
 # The outcomes a model may choose about its own reading. The other three are things that happen TO
 # a model — malformed output, a rejected value, a dead daemon — and offering them would only invite

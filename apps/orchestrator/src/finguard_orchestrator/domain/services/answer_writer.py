@@ -39,9 +39,15 @@ _WINDOWS = {
 }
 
 
-def money(amount_minor: int, currency: str) -> str:
+def money(amount_minor: int, currency: str | None) -> str:
     """Minor units in Spanish notation. Integer arithmetic the whole way: a float here
-    is how a cent goes missing between the ledger and the screen."""
+    is how a cent goes missing between the ledger and the screen.
+
+    An unknown currency prints no unit at all. It cannot happen through any adapter here — every
+    figure arrives from banking with the account's currency beside it — and if it ever does, a
+    bare "82,40" is a number somebody will ask about, while "82,40 €" on a dollar account is a
+    number they will believe. A missing unit is a worse-looking answer and a safer one.
+    """
     sign = "-" if amount_minor < 0 else ""
     units, cents = divmod(abs(amount_minor), 100)
     grouped = f"{units:,}".replace(",", ".")
@@ -49,7 +55,13 @@ def money(amount_minor: int, currency: str) -> str:
     # currency here already got — EUR was the odd one out at "159,46€". It matters beyond taste: the
     # web client formats its own figures and the two appeared side by side on one screen, spelling
     # the same amount two ways.
-    symbol = " €" if currency == "EUR" else f" {currency}"
+    #
+    # The symbol is a fact about the currency; where it sits and how the digits are grouped are
+    # facts about the locale. They are one function today because there is one locale. See ADR-008.
+    if currency is None:
+        symbol = ""
+    else:
+        symbol = " €" if currency == "EUR" else f" {currency}"
     return f"{sign}{grouped},{cents:02d}{symbol}"
 
 
@@ -163,7 +175,10 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
             f"Puedo ampliar el periodo o quitar algún filtro de la búsqueda."
         )
 
-    amount = money(movement.amount_minor, "EUR")
+    # The ledger's, like every other figure this module writes. It was spelled "EUR" here, so the
+    # sentence a person actually reads went on claiming euros after the `currency` field beside it
+    # had been fixed — and nobody reads the field.
+    amount = money(movement.amount_minor, movement.currency)
     what = movement.merchant_name or movement.description
     when = _spoken_date(movement.occurred_at)
 

@@ -44,9 +44,9 @@ from finguard_orchestrator.domain.value_objects.top_movements import TopMovement
 # tie a conversation to a planner.
 type PlannedQuery = FinancialPlan | TopMovements
 
-# How far down a ranking anybody may ask. Bounded because it crosses the wire and becomes an
-# OFFSET the day RANK_MOVEMENTS exists: "el gasto número 40000" is not a question, it is a scan.
-MAX_RANK = 100
+# MAX_RANK was declared here as well as in `top_movements`, at 100 in both, with the DTO importing
+# this one and the value object enforcing the other. It lives in `domain/constants` now, with every
+# other limit the wire has to agree with banking about.
 
 
 class Workflow(StrEnum):

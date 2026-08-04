@@ -17,12 +17,12 @@ approximately, because paying the wrong person is the failure this whole path is
 import re
 from typing import Final
 
-from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import spanish
-from finguard_orchestrator.domain.value_objects.payment_request import (
+from finguard_orchestrator.domain.constants import (
     MAX_CONCEPT,
     MAX_PAYMENT_MINOR,
 )
+from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.services import spanish
 
 # A figure with an optional thousands separator and an optional two-decimal part. The currency is
 # optional because "pues 20" is an answer to "¿de cuánto?" and carries no unit — but see the
