@@ -66,7 +66,7 @@ export type PlanContext = {
   metric: string;
 };
 
-/** A payment being built. Echoed back so the next reply finishes it instead of starting over. */
+/** A payment being built. Part of the conversation state, never held on its own. */
 export type PaymentDraft = {
   recipient_name: string | null;
   amount_minor: number | null;
@@ -81,24 +81,60 @@ export type Candidate = {
   phone: string;
 };
 
+/** Which workflow is under way, if any. */
+export type Workflow =
+  | "FINANCIAL_CLARIFICATION"
+  | "UNSUPPORTED_CAPABILITY"
+  | "PAYMENT_IN_PROGRESS"
+  | "PAYMENT_CONFIRMATION";
+
+/** What the last turn asked the user for. */
+export type Slot =
+  | "WINDOW"
+  | "YEAR"
+  | "CATEGORY"
+  | "AMOUNT"
+  | "RECIPIENT"
+  | "RECIPIENT_CHOICE"
+  | "CONFIRMATION";
+
+/**
+ * Where the conversation is, as the service sees it.
+ *
+ * Stored and echoed back without being interpreted. That is the whole point of the shape: this
+ * client used to hold five independent fields — the answered plan, the half-read query, the
+ * half-built payment, the payment awaiting a yes, the last refusal — and decide what each
+ * combination of nulls meant. Deciding that is the orchestrator's job, and every new state it
+ * gained was a new way for the client to get it wrong.
+ *
+ * Read it to *render* (which workflow, which slot, which candidates); never to work out what to
+ * keep.
+ */
+export type ConversationState = {
+  workflow: Workflow | null;
+  awaiting: Slot | null;
+  last_plan: PlanContext | null;
+  draft: PlanContext | null;
+  capability: string | null;
+  rank: number | null;
+  payment: PaymentDraft | null;
+  suspended: boolean;
+  candidates: Candidate[];
+  intent_id: string | null;
+  recipient: string | null;
+  amount_minor: number | null;
+};
+
 export type Answer = {
   outcome: string;
   text: string;
   question: string | null;
   intent_id: string | null;
   plan: string | null;
-  plan_context: PlanContext | null;
   // Present with a question back: the reading that question interrupted. Echoed on the next turn
   // so the reply finishes the plan instead of starting a new one.
-  pending_context: PlanContext | null;
-  // Present while a bizum is still being built. Sending it back is what turns "15 euros" into a
-  // payment instead of a question about movements, which is what it looks like on its own.
-  payment_draft: PaymentDraft | null;
-  // Present when the recipient names several contacts: the choice, with identifiers.
-  candidates: Candidate[];
-  // On a refusal: which capability is missing. Echoed back so "¿y el segundo?" gets the same
-  // refusal rather than becoming a question about a period nothing can use.
-  refused_capability: string | null;
+  // Where the conversation is after this turn. Sent back verbatim on the next one.
+  conversation: ConversationState | null;
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
@@ -154,10 +190,7 @@ export async function version(): Promise<{ sha: string; ref: string }> {
 
 export async function* ask(
   sentence: string,
-  previousPlan: PlanContext | null = null,
-  pendingDraft: PlanContext | null = null,
-  paymentDraft: PaymentDraft | null = null,
-  previousRefusal: string | null = null,
+  conversation: ConversationState | null = null,
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -165,13 +198,9 @@ export async function* ask(
     // The plan behind the last answer travels with the question, and so does the half-built one
     // behind the last question back. The service remembers neither: the conversation is held by
     // whoever is having it, which is why both parameters exist at all.
-    body: JSON.stringify({
-      question: sentence,
-      previous_plan: previousPlan,
-      pending_draft: pendingDraft,
-      payment_draft: paymentDraft,
-      previous_refusal: previousRefusal,
-    }),
+    // One object, stored and returned. The service decides what the next state is; this only
+    // carries it there and back.
+    body: JSON.stringify({ question: sentence, conversation }),
   });
   if (!response.ok || !response.body) await readError(response);
 
@@ -223,13 +252,10 @@ export async function confirm(intentId: string, reply: string): Promise<Answer> 
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
-    // A confirmation has no query behind it and nothing half-built: by this point the payment is
-    // complete and waiting for a yes, which is its own piece of state.
-    plan_context: null,
-    pending_context: null,
-    payment_draft: null,
-    candidates: [],
-    refused_capability: null,
+    // The confirmation endpoints answer about a payment, not about a conversation: by this point
+    // it is complete and either done or refused, so nothing is left open. The chat's own state is
+    // whatever it was, which the caller still holds.
+    conversation: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,
@@ -318,11 +344,10 @@ export async function payChosen(recipientName: string, amountMinor: number): Pro
     question: null,
     intent_id: body.intent_id ?? null,
     plan: null,
-    plan_context: null,
-    pending_context: null,
-    payment_draft: null,
-    candidates: [],
-    refused_capability: null,
+    // The confirmation endpoints answer about a payment, not about a conversation: by this point
+    // it is complete and either done or refused, so nothing is left open. The chat's own state is
+    // whatever it was, which the caller still holds.
+    conversation: null,
     currency: body.currency ?? null,
     total_minor: null,
     movement_count: null,

@@ -23,12 +23,18 @@ sys.modules["evaluate_e2e"] = e2e
 _SPEC.loader.exec_module(e2e)
 
 
-def answered(**over: object) -> dict[str, object]:
+def answered(*, last_plan: dict[str, object] | None = None, **over: object) -> dict[str, object]:
+    """A PLANNED answer as the wire spells it now: the plan lives inside the conversation, under
+    `last_plan`, because it is the memory of this turn rather than a field of its own."""
     body: dict[str, object] = {
         "outcome": "PLANNED",
         "text": "449,62€ el mes pasado, en 8 movimientos.",
         "plan": "el mes pasado, expense",
-        "plan_context": {"direction": "EXPENSE", "period": "LAST_MONTH", "metric": "SUM"},
+        "conversation": {
+            "workflow": None,
+            "last_plan": last_plan
+            or {"direction": "EXPENSE", "period": "LAST_MONTH", "metric": "SUM"},
+        },
         "currency": "EUR",
         "total_minor": 44962,
         "movement_count": 8,
@@ -42,7 +48,7 @@ def test_a_count_plan_answered_with_money_is_a_violation() -> None:
     """The defect, as a property. The plan asked how many and the headline says how
     much, which is the one failure mode no layer below could see."""
     body = answered(
-        plan_context={"direction": "EXPENSE", "period": "LAST_MONTH", "metric": "COUNT"},
+        last_plan={"direction": "EXPENSE", "period": "LAST_MONTH", "metric": "COUNT"},
         text="449,62€ el mes pasado, en 8 movimientos.",
     )
 
@@ -51,7 +57,7 @@ def test_a_count_plan_answered_with_money_is_a_violation() -> None:
 
 def test_the_correct_pair_passes_in_both_directions() -> None:
     counted = answered(
-        plan_context={"metric": "COUNT"}, text="8 movimientos el mes pasado.", total_minor=44962
+        last_plan={"metric": "COUNT"}, text="8 movimientos el mes pasado.", total_minor=44962
     )
     summed = answered()
 

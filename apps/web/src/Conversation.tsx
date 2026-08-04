@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, confirm, type Answer, type PaymentDraft, type PlanContext } from "./api";
+import { ask, confirm, type Answer, type ConversationState } from "./api";
 import { money, outgoing, signed, day } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
@@ -42,39 +42,21 @@ export type Turn =
   | { who: "assistant"; answer: Answer }
   | { who: "error"; text: string };
 
-/** What the client remembers between turns. The service remembers nothing. */
+/**
+ * What the client remembers between turns. The service remembers nothing.
+ *
+ * Two fields, and only one of them is state: the turns on screen, and the conversation the service
+ * handed back. This used to be five nullable fields the client combined by hand — the answered plan,
+ * the half-read query, the half-built payment, the payment awaiting a yes, the last refusal — and
+ * every conversational defect added another one. Deciding what a combination of them meant is the
+ * orchestrator's job, and this end got it wrong every time a state was added.
+ */
 export type Thread = {
   turns: Turn[];
-  /** The plan behind the last answered question, or null if there has not been one. */
-  plan: PlanContext | null;
-  /** The payment waiting for a yes, if any. */
-  pending: string | null;
-  /**
-   * The half-built plan behind the assistant's last question, if it asked one. Sending it back is
-   * what turns "este año" into an answer instead of a fresh question with no history.
-   */
-  unfinished: PlanContext | null;
-  /**
-   * The bizum being built, if one is. Unlike the query draft this is *kept* until the payment
-   * resolves: a payment is a goal with several turns in it, so asking "¿a quién tengo en
-   * contactos?" in the middle of one must not abandon it.
-   */
-  payment: PaymentDraft | null;
-  /**
-   * The capability the last turn was refused for, if it was. Sending it back is what lets
-   * "¿y el segundo?" get the same refusal instead of starting a conversation about a period.
-   */
-  refusal: string | null;
+  conversation: ConversationState | null;
 };
 
-export const EMPTY_THREAD: Thread = {
-  turns: [],
-  plan: null,
-  pending: null,
-  unfinished: null,
-  payment: null,
-  refusal: null,
-};
+export const EMPTY_THREAD: Thread = { turns: [], conversation: null };
 
 type Props = {
   thread: Thread;
@@ -104,13 +86,14 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
     setBusy(true);
 
     try {
-      if (before.pending) {
+      const intent = pendingIntent(before);
+      if (intent) {
         // A payment on the table takes the reply, whatever it says. Routing a typed answer back to
         // the question path would lose the confirmation the user is in the middle of giving.
-        const answer = await confirm(before.pending, text);
+        const answer = await confirm(intent, text);
         onThread(settled(before, [...turns, { who: "assistant", answer }], answer, onSettled));
       } else {
-        for await (const step of ask(text, before.plan, before.unfinished, before.payment, before.refusal)) {
+        for await (const step of ask(text, before.conversation)) {
           if ("name" in step) setStage(STAGES[step.name] ?? null);
           else {
             turns.push({ who: "assistant", answer: step });
@@ -149,7 +132,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
             {stage}
           </p>
         )}
-        {thread.pending && !busy && (
+        {awaitingConfirmation(thread) && !busy && (
           <div className="confirm">
             <button className="yes" onClick={() => send("sí")}>
               Sí, enviar
@@ -172,7 +155,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={thread.pending ? "Responde sí o no" : "Escribe tu pregunta…"}
+          placeholder={awaitingConfirmation(thread) ? "Responde sí o no" : "Escribe tu pregunta…"}
           aria-label="Mensaje"
           autoFocus
         />
@@ -185,33 +168,36 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
 }
 
 /**
- * The thread after an answer: the turns, the plan to carry forward, and any pending payment.
+ * The thread after an answer: the turns, and the state the service says it is in.
  *
- * The plan is *kept* when an answer does not bring a new one — a refusal or a clarifying question
- * should not erase the context of the question before it, or "¿y este mes?" after one bad turn starts
- * from nothing. A payment is the exception and clears it, because a bizum and a query are not the same
- * conversation.
+ * This function used to decide what to keep — the plan unless a payment cleared it, the draft
+ * replaced every turn, the payment kept unless it resolved — from a pattern of nulls. All of that
+ * now arrives decided. What is left is applying it, and one side effect the service cannot perform:
+ * telling the screens behind the sheet to reload when a payment moved money.
  */
-export function settled(before: Thread, turns: Turn[], answer: Answer, onSettled: () => void): Thread {
-  const awaiting = answer.outcome === AWAITING ? answer.intent_id : null;
-  const wasPayment = answer.intent_id !== null;
-  if (!awaiting && wasPayment) onSettled();
-  return {
-    turns,
-    plan: wasPayment ? null : (answer.plan_context ?? before.plan),
-    pending: awaiting,
-    // Not kept, unlike the plan: a draft belongs to the question that was just asked. Carrying a
-    // stale one forward would let a window mentioned three turns later complete a plan the user has
-    // long since moved on from.
-    unfinished: answer.pending_context ?? null,
-    // Kept, unlike the query draft, and cleared only when the payment stops being half-built —
-    // it became a preview waiting for a yes, or it was refused. A bizum is a goal that spans
-    // turns, so asking who is in the address book in the middle of one must not abandon it.
-    payment: answer.payment_draft ?? (awaiting || wasPayment ? null : before.payment),
-    // Replaced every turn, like the query draft: it describes the turn that just happened, and
-    // a stale one would refuse a question two turns later for a capability nobody asked about.
-    refusal: answer.refused_capability ?? null,
-  };
+export function settled(
+  before: Thread,
+  turns: Turn[],
+  answer: Answer,
+  onSettled: () => void,
+): Thread {
+  const resolved =
+    answer.intent_id !== null && answer.conversation?.workflow !== "PAYMENT_CONFIRMATION";
+  if (resolved) {
+    // The balance and the movements have just changed, so whatever is showing them is stale.
+    onSettled();
+  }
+  return { turns, conversation: answer.conversation ?? before.conversation };
+}
+
+/** Whether a payment is on the table waiting for a yes. The one thing the input box renders on. */
+export function awaitingConfirmation(thread: Thread): boolean {
+  return thread.conversation?.workflow === "PAYMENT_CONFIRMATION";
+}
+
+/** The intent a confirmation is about, when there is one. */
+export function pendingIntent(thread: Thread): string | null {
+  return awaitingConfirmation(thread) ? (thread.conversation?.intent_id ?? null) : null;
 }
 
 const EXAMPLES = [

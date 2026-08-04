@@ -47,7 +47,7 @@ def violations(body: dict[str, Any]) -> list[str]:
     one it broke is the whole diagnostic value.
     """
     broken: list[str] = []
-    context = body.get("plan_context") or {}
+    context = (body.get("conversation") or {}).get("last_plan") or {}
     headline = (body.get("text") or "").splitlines()[0] if body.get("text") else ""
 
     if body.get("outcome") == "PLANNED":
@@ -178,7 +178,7 @@ def turn_violations(
     """
     broken: list[str] = []
     outcome = body.get("outcome")
-    context = body.get("plan_context") or {}
+    context = (body.get("conversation") or {}).get("last_plan") or {}
 
     expected = turn.get("expect")
     if expected and outcome != expected:
@@ -200,7 +200,8 @@ def turn_violations(
         # every model mood — where demanding a particular outcome would not be.
         broken.append("SAYS_WHAT_IT_MUST_NOT")
 
-    half_built = body.get("pending_context") or body.get("payment_draft")
+    state = body.get("conversation") or {}
+    half_built = state.get("draft") or state.get("payment")
     if outcome == "NEEDS_CLARIFICATION" and not half_built:
         # Without something on the way out the client has nothing to echo, so the next turn is a
         # fresh question however well it is phrased. This is the defect, at its source.
@@ -239,25 +240,19 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
 
     async with httpx.AsyncClient(timeout=180.0) as client:
         for case in cases:
-            plan: dict[str, Any] | None = None
-            pending: dict[str, Any] | None = None
-            payment: dict[str, Any] | None = None
-            refusal: str | None = None
+            # One value, exactly as the client holds it. The four separate pieces this replaced
+            # were four chances for the harness to combine them differently from the client, which
+            # would have made it pass while the browser broke.
+            conversation: dict[str, Any] | None = None
             asked = False
 
             for index, turn in enumerate(case["turns"], start=1):
-                plan_before = plan or {}
+                plan_before = (conversation or {}).get("last_plan") or {}
                 where = f"{case['id']}#{index}"
                 try:
                     response = await client.post(
                         f"{base_url}/v1/questions",
-                        json={
-                            "question": turn["say"],
-                            "previous_plan": plan,
-                            "pending_draft": pending,
-                            "payment_draft": payment,
-                            "previous_refusal": refusal,
-                        },
+                        json={"question": turn["say"], "conversation": conversation},
                         headers={"Authorization": f"Bearer {token}"},
                     )
                 except httpx.HTTPError as exc:
@@ -271,7 +266,8 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
                 body = response.json()
                 turns_run += 1
                 broken = violations(body) + turn_violations(turn, body, asked, plan_before)
-                if turn.get("keeps_payment") and not body.get("payment_draft"):
+                state = body.get("conversation") or {}
+                if turn.get("keeps_payment") and state.get("workflow") != "PAYMENT_IN_PROGRESS":
                     # A payment under way that stopped being under way. This is the defect from the
                     # report: the half-built bizum was dropped and the next reply was classified
                     # from scratch, which sent "15 euros" to the financial planner.
@@ -281,14 +277,10 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
 
                 # Exactly what the client does, and the reason this runs over HTTP: the contract
                 # is what the client implements, not what the handler would accept.
-                plan = body.get("plan_context") or plan
-                pending = body.get("pending_context")
-                # Kept across turns that answer something else, and cleared when the payment stops
-                # being half-built — the same rule the client follows, because the client is what
-                # this is testing.
-                settled = body.get("outcome") == "AWAITING_CONFIRMATION" or body.get("intent_id")
-                payment = body.get("payment_draft") or (None if settled else payment)
-                refusal = body.get("refused_capability")
+                # Stored, not recomputed — the client's whole job now, and the reason this
+                # harness matches it: an answer that carries no state (the payment endpoints) leaves
+                # the conversation where it was.
+                conversation = body.get("conversation") or conversation
                 asked = body.get("outcome") == "NEEDS_CLARIFICATION"
 
     print()
