@@ -14,9 +14,9 @@
  * behind it, both one tap away. That is the control that makes a residual error survivable: somebody
  * who asked about this month and reads "el mes pasado" can see it.
  *
- * **A payment is answered in words.** When an answer is a preview, the reply goes to the confirm
- * endpoint — including a typed one. Buttons are there because "sí" is what most people want to press,
- * but "sí pero mándale 30" has to reach the service, which knows that is not a yes.
+ * **A payment is answered in words.** When an answer is a preview, every reply stays on the
+ * conversational endpoint. Buttons are there because "sí" is what most people want to press, but
+ * "sí pero mándale 30" has to reach the service, which knows that is not a yes.
  *
  * **A payment clears the query context.** They are different conversations: after a bizum, "¿y este
  * mes?" is not a follow-up to the bizum, and merging a window onto a payment means nothing.
@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, confirm, type Answer, type ConversationState } from "./api";
+import { ask, type Answer, type ConversationState } from "./api";
 import { money, outgoing, signed, day } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
@@ -70,6 +70,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [stage, setStage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
+  const choices = recipientChoices(thread);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
@@ -86,19 +87,16 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
     setBusy(true);
 
     try {
-      const intent = pendingIntent(before);
-      if (intent) {
-        // A payment on the table takes the reply, whatever it says. Routing a typed answer back to
-        // the question path would lose the confirmation the user is in the middle of giving.
-        const answer = await confirm(intent, text);
-        onThread(settled(before, [...turns, { who: "assistant", answer }], answer, onSettled));
-      } else {
-        for await (const step of ask(text, before.conversation)) {
-          if ("name" in step) setStage(STAGES[step.name] ?? null);
-          else {
-            turns.push({ who: "assistant", answer: step });
-            onThread(settled(before, [...turns], step, onSettled));
-          }
+      // Every turn goes through the conversational route, including a yes or no. That route owns
+      // the state machine and returns either the same PAYMENT_CONFIRMATION (an unclear reply) or an
+      // idle conversation (paid, cancelled or refused). Calling the bare payment endpoint here
+      // returned no conversation state, so `settled` correctly retained the old preview and left
+      // the buttons pointing at an intent the bank had already consumed.
+      for await (const step of ask(text, before.conversation)) {
+        if ("name" in step) setStage(STAGES[step.name] ?? null);
+        else {
+          turns.push({ who: "assistant", answer: step });
+          onThread(settled(before, [...turns], step, onSettled));
         }
       }
     } catch (failure) {
@@ -142,6 +140,16 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
             </button>
           </div>
         )}
+        {choices.length > 0 && !busy && (
+          <div className="recipient-choices" role="group" aria-label="Elige el contacto">
+            {choices.map((candidate) => (
+              <button key={candidate.contact_id} onClick={() => send(candidate.display_name)}>
+                <strong>{candidate.display_name}</strong>
+                <small>{candidate.phone}</small>
+              </button>
+            ))}
+          </div>
+        )}
         <div ref={bottom} />
       </div>
 
@@ -155,7 +163,13 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={awaitingConfirmation(thread) ? "Responde sí o no" : "Escribe tu pregunta…"}
+          placeholder={
+            awaitingConfirmation(thread)
+              ? "Responde sí o no"
+              : choices.length > 0
+                ? "Elige un contacto"
+                : "Escribe tu pregunta…"
+          }
           aria-label="Mensaje"
           autoFocus
         />
@@ -198,6 +212,18 @@ export function awaitingConfirmation(thread: Thread): boolean {
 /** The intent a confirmation is about, when there is one. */
 export function pendingIntent(thread: Thread): string | null {
   return awaitingConfirmation(thread) ? (thread.conversation?.intent_id ?? null) : null;
+}
+
+/** Structured choices for the one payment state that asks the user to pick a person. */
+export function recipientChoices(thread: Thread) {
+  const conversation = thread.conversation;
+  if (
+    conversation?.workflow !== "PAYMENT_IN_PROGRESS" ||
+    conversation.awaiting !== "RECIPIENT_CHOICE"
+  ) {
+    return [];
+  }
+  return conversation.candidates;
 }
 
 const EXAMPLES = [

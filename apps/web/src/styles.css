@@ -1163,6 +1163,31 @@ summary {
   color: var(--ink);
 }
 
+.recipient-choices {
+  display: grid;
+  gap: 0.5rem;
+  align-self: stretch;
+}
+
+.recipient-choices button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.recipient-choices small {
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
 .suggestions {
   display: grid;
   gap: 0.4rem;
