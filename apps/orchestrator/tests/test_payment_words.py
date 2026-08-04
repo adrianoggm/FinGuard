@@ -128,3 +128,52 @@ def test_a_short_name_is_not_found_inside_a_longer_word() -> None:
 
     assert payment_words.contacts_in("se lo mando manana", ana) == ()
     assert payment_words.contacts_in("mándale algo a Ana", ana) != ()
+
+
+# --- the most specific match wins ----------------------------------------------------
+#
+# From the report, three turns in a row:
+#
+#     "Marta Vega"                              → "Tienes varios contactos con ese nombre…"
+#     "a Marta Vega quiero mandarle el bizum"   → the same question again
+#
+# A dead end: the user names one person and the assistant keeps asking which of two. Matching on
+# any single part of a name made "Marta Vega" match Marta Ruiz Gomez on "marta" and Marta Solis
+# Vega on "marta" and "vega" — two matches, so ambiguous forever.
+#
+# The rule is how much of a name the sentence gets right. Two parts beats one, so "Marta Vega"
+# resolves, and "Marta" alone still names both because they tie on one.
+
+
+def test_two_parts_of_a_name_beat_one() -> None:
+    found = payment_words.contacts_in("Marta Vega", EVERYBODY)
+
+    assert [c.display_name for c in found] == ["Marta Solis Vega"]
+
+
+def test_the_sentence_around_the_name_does_not_change_it() -> None:
+    found = payment_words.contacts_in("a Marta Vega quiero mandarle el bizum", EVERYBODY)
+
+    assert [c.display_name for c in found] == ["Marta Solis Vega"]
+
+
+def test_a_first_name_shared_by_two_is_still_ambiguous() -> None:
+    """The tie is real, and resolving it by picking one would be the assistant choosing who gets
+    the money."""
+    found = payment_words.contacts_in("un bizum a Marta", EVERYBODY)
+
+    assert {c.display_name for c in found} == {"Marta Ruiz Gomez", "Marta Solis Vega"}
+
+
+def test_a_surname_alone_still_resolves() -> None:
+    assert [c.display_name for c in payment_words.contacts_in("a Ruiz", EVERYBODY)] == [
+        "Marta Ruiz Gomez"
+    ]
+
+
+def test_the_order_of_the_parts_does_not_matter() -> None:
+    """ "Vega Marta" is not how anybody writes it and it names the same person. The rule counts the
+    parts the sentence gets right, not the order it puts them in."""
+    assert [c.display_name for c in payment_words.contacts_in("Vega Marta", EVERYBODY)] == [
+        "Marta Solis Vega"
+    ]
