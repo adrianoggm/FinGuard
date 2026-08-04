@@ -145,6 +145,13 @@ export async function summary(): Promise<Summary> {
  * and `planned` arrives before any figure so a plan that misread the question can be seen while
  * that still helps.
  */
+/** Which build is answering. Unauthenticated, because it is a fact about the deployment. */
+export async function version(): Promise<{ sha: string; ref: string }> {
+  const response = await fetch(`${BASE}/version`);
+  if (!response.ok) await readError(response);
+  return response.json();
+}
+
 export async function* ask(
   sentence: string,
   previousPlan: PlanContext | null = null,

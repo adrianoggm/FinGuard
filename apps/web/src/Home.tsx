@@ -13,7 +13,12 @@
 
 import { useEffect, useState } from "react";
 
-import { breakdown as fetchBreakdown, type Breakdown, type Summary } from "./api";
+import {
+  breakdown as fetchBreakdown,
+  version,
+  type Breakdown,
+  type Summary,
+} from "./api";
 import { categoryName, day, glyph, money, monthName, signed } from "./format";
 import type { Tab } from "./tabs";
 
@@ -48,6 +53,16 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
 
   const bars = months?.groups.slice(-6) ?? [];
   const biggest = Math.max(1, ...bars.map((group) => group.total_minor));
+  const [build, setBuild] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    // Failing quietly is right: not knowing the build is a worse home screen than one without a
+    // label, and this is a development aid rather than part of the product.
+    version()
+      .then((it) => setBuild(`${it.ref}@${it.sha}`))
+      .catch(() => setBuild(null));
+  }, []);
 
   return (
     <div className="screen home">
@@ -56,6 +71,12 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
           ◆
         </span>
         <strong>FinGuard</strong>
+        {/*
+          Which build this is talking to, in development only. It exists because "I read HEAD and
+          the app still does X" is unanswerable without it: the container may be older than the
+          tree. Hidden in a production build, where a commit is nobody's business.
+        */}
+        {import.meta.env.DEV && build && <span className="build">{build}</span>}
         <span className="brand-right">
           <button onClick={() => onGo("cuentas-buscar")} aria-label="Buscar movimientos">
             🔍
