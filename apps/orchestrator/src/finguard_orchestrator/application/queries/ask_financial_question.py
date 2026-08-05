@@ -308,16 +308,21 @@ class AskFinancialQuestionHandler:
                 conversation=was.without_retry(),
             )
             return
-        if was.retry_plan is not None:
-            # Any other sentence starts a different turn. It must not leave a stale retry behind
-            # that a later bare "reintenta" could unexpectedly revive.
-            was = was.without_retry()
-            query = replace(query, conversation=was)
-
         previous = was.last_plan
         planning_previous = previous if isinstance(previous, FinancialPlan) else None
         force_follow_up = False
         intent = intent_router.route(query.sentence, has_previous=previous is not None)
+
+        if was.retry_plan is not None and intent not in _ASIDES:
+            # Any other sentence starts a different turn. It must not leave a stale retry behind
+            # that a later bare "reintenta" could unexpectedly revive.
+            #
+            # An aside is not another turn, which is why the intent has to be known first. This
+            # ran before the routing, so "¿quién eres?" between a bank outage and the retry threw
+            # the saved query away while the three buttons offering it were still on screen — and
+            # pressing one then reached the planner as the word "Reintentar".
+            was = was.without_retry()
+            query = replace(query, conversation=was)
 
         if isinstance(was.active, PaymentInProgress) and intent is not Intent.LIST_CONTACTS:
             # This turn belongs to another subject. Keep the half-built Bizum, but mark that it
@@ -1146,6 +1151,20 @@ def _direction_of(categories: tuple[str, ...]) -> Direction:
         # total over both is the only figure that is not wrong about one of them.
         return Direction.ALL
     return Direction.EXPENSE
+
+
+# Turns that are *about* something else without changing the subject. Each of these already passes
+# the conversation through untouched — the user did not stop asking about last month by asking who
+# they can pay — so a saved retry survives them too, and for the same reason.
+_ASIDES: Final = frozenset(
+    {
+        Intent.IDENTITY_OR_HELP,
+        Intent.LIST_CATEGORIES,
+        Intent.EXPLAIN_PREVIOUS,
+        Intent.LIST_CONTACTS,
+        Intent.ACCOUNT_BALANCE,
+    }
+)
 
 
 def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestionResult:
