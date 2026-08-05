@@ -20,6 +20,12 @@ the rest for that reason.
 The corpus is replayed through the real service to rebuild the conversation state, because half of
 what decides a turn is where the conversation was. That makes a run take minutes rather than
 seconds, and it is the only version of this that measures the right thing.
+
+It also means fewer turns are scored than the corpus has. A preview owns the next turn and a
+half-built payment takes the reply that answers its question, both before anything is classified,
+so those are questions no interpreter is ever asked. Scoring them anyway counted a model as having
+invented 47 payments for reading "sí" and "20 euros" — in the middle of a Bizum — as being about
+the Bizum.
 """
 
 import argparse
@@ -61,7 +67,9 @@ from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import (  # no
 
 def _table(report: episodes.Agreement, limit: int) -> str:
     lines = [
-        f"turns            {report.turns}",
+        # Classified turns, not corpus turns. A preview and a half-built payment own their next turn
+        # before anything is read, so those are not questions this interpreter was ever asked.
+        f"turns classified {report.turns}",
         f"agreed           {report.agreed}  ({report.rate} %)",
         f"differed         {report.turns - report.agreed}",
         "",
@@ -130,7 +138,8 @@ async def main() -> int:
     )
     elapsed = time.monotonic() - started
 
-    print(f"\n{args.model} vs the deterministic rules, over {len(corpus)} episodes\n")
+    said = sum(len(episode.turns) for episode in corpus)
+    print(f"\n{args.model} vs the deterministic rules — {len(corpus)} episodes, {said} turns\n")
     print(_table(report, args.worst))
     per_turn = elapsed / report.turns if report.turns else 0
     print(f"\n{elapsed:.0f} s total, {per_turn * 1000:.0f} ms per turn")

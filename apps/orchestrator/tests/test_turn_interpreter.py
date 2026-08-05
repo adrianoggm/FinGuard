@@ -342,7 +342,7 @@ def test_the_rules_are_restated_after_the_sentence() -> None:
 # --- the corpus is the harness ----------------------------------------------------------------
 
 
-async def test_the_corpus_scores_an_interpreter_against_every_turn() -> None:
+async def test_the_corpus_scores_an_interpreter_against_every_turn_that_is_classified() -> None:
     """879 turns whose right answer is already written down. That is what makes a shadow migration
     measurable at all: production can only say how often two decisions differ, because the sentence
     is not logged — here the sentences are ours.
@@ -354,6 +354,22 @@ async def test_the_corpus_scores_an_interpreter_against_every_turn() -> None:
     assert report.turns >= 800
     assert report.rate == 100.0
     assert report.confusions == {}
+
+
+async def test_a_turn_inside_an_open_payment_is_not_scored() -> None:
+    """Because the service does not classify it. A preview owns the next turn whatever its words
+    are, and a half-built Bizum takes the reply that answers its question — both before any
+    interpreter is asked.
+
+    Scoring them anyway made a model look reckless for being right: "sí", "20 euros" and "era para
+    Javi Nuñez" read as PAYMENT, counted as inventing 47 payments in one run, on turns where the
+    route had already decided without asking. The gap between the corpus and what is scored is the
+    part of a conversation the deterministic state machine owns.
+    """
+    corpus = episodes.load()
+    report = await episodes.compare(corpus, turn_interpreters.Deterministic())
+
+    assert report.turns < sum(len(episode.turns) for episode in corpus)
 
 
 async def test_the_harness_reports_which_intents_get_confused() -> None:
