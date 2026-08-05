@@ -84,13 +84,27 @@ _MONTH_NUMBER: Final[dict[str, int]] = {
 }
 _MONTHS: Final[tuple[str, ...]] = tuple(_MONTH_NUMBER)
 
-# "julio de 2026", "en julio del 2026", "julio de este año". A month is the window somebody means
-# when they name one, and it has to be read *before* the year — "julio de 2026" contains "de 2026",
-# so a year rule that ran first would answer a question about one month with twelve.
+# "julio de 2026", "en julio del 2026", "julio de este año", "julio del año pasado". A month is the
+# window somebody means when they name one, and it has to be read *before* the year — "julio de
+# 2026" contains "de 2026", so a year rule that ran first would answer one month with twelve. Same
+# for "julio del año pasado", which "el año pasado" would otherwise widen to the whole of it.
 _A_MONTH: Final = re.compile(
-    rf"\b(?P<month>{'|'.join(_MONTHS)})\s+(?:de|del)\s+(?:el\s+)?(?:ano\s+)?"
-    rf"(?P<year>20\d{{2}}|este\s+ano)\b"
+    rf"\b(?P<month>{'|'.join(_MONTHS)})\s+(?:de|del)\s+(?:el\s+)?"
+    rf"(?:(?:ano\s+)?(?P<year>20\d{{2}})|(?P<relative>este\s+ano|ano\s+(?:pasado|anterior)))\b"
 )
+
+# A month with no year at all: "en junio", "durante marzo", "¿cuánto gasté en octubre?".
+#
+# A preposition is required. This reader's answer *overrides* the model's plan, so a false positive
+# is a real figure about a month nobody asked for — and a bare "junio" in the middle of a sentence
+# is as likely to be part of a name as a window.
+_A_BARE_MONTH: Final = re.compile(
+    rf"(?<![a-z0-9])(?:en|de|del|durante)\s+(?P<month>{'|'.join(_MONTHS)})(?![a-z0-9])"
+)
+
+# "el 15 de junio" is a day, not a month, and answering it with the whole of June is thirty times
+# the question. A range — "del 1 de junio al 15 de julio" — trips this too, which is the point.
+_A_DAY_OF_A_MONTH: Final = re.compile(rf"\d{{1,2}}\s+de\s+(?:{'|'.join(_MONTHS)})(?![a-z0-9])")
 
 # A year named outright: "en 2025", "durante 2025", "del 2025", "todo el año 2025". Either a
 # preposition or the word "año" has to be there — a bare four-digit number is an amount as often as
@@ -139,6 +153,37 @@ def whole_month(year: int, month: int) -> AbsoluteRange:
     )
 
 
+def _a_month_with_no_year(folded: str) -> int | None:
+    """The month a sentence names when it names exactly one and no year, or None.
+
+    Two refusals, and both would otherwise produce a real figure about the wrong days:
+
+        a day    "el 15 de junio" is a date. The whole of June is thirty times the question.
+        a range  "de junio a septiembre" names two, and answering with either is a third of it.
+
+    None means "send it to the model", which is where a sentence this is not sure about belongs.
+    """
+    named = _A_BARE_MONTH.search(folded)
+    if named is None or _A_DAY_OF_A_MONTH.search(folded):
+        return None
+    months = {
+        _MONTH_NUMBER[name]
+        for name in _MONTHS
+        if re.search(rf"(?<![a-z0-9]){name}(?![a-z0-9])", folded)
+    }
+    return _MONTH_NUMBER[named.group("month")] if len(months) == 1 else None
+
+
+def _year_of(month: int, today: date) -> int:
+    """Which year a bare month means: the last time it happened, counting the one under way.
+
+    "En junio" said in August is this June; said in March it is last June, because June has not
+    come round yet. Nobody says "en junio" about a month four months away — that is "el junio que
+    viene", and this vocabulary deliberately does not read the future.
+    """
+    return today.year if month <= today.month else today.year - 1
+
+
 def window_in(
     sentence: str, *, asked_for: Slot = Slot.WINDOW, today: date | None = None
 ) -> Window | None:
@@ -165,12 +210,14 @@ def window_in(
     if month:
         # Before the year, because "julio de 2026" contains "de 2026" and reading that as the year
         # would answer a question about one month with twelve.
-        written = month.group("year")
-        if written.startswith("este"):
-            if today is None:
-                return None
-            return whole_month(today.year, _MONTH_NUMBER[month.group("month")])
-        return whole_month(int(written), _MONTH_NUMBER[month.group("month")])
+        number = _MONTH_NUMBER[month.group("month")]
+        if month.group("year"):
+            return whole_month(int(month.group("year")), number)
+        if today is None:
+            # "Este año" and "el año pasado" are relative, and this service does not read a clock.
+            return None
+        said = month.group("relative")
+        return whole_month(today.year if said.startswith("este") else today.year - 1, number)
 
     named_year = _A_NAMED_YEAR.search(folded)
     if named_year:
@@ -184,6 +231,15 @@ def window_in(
         # Before the phrase table, because "el año pasado" ends in "el ano" and that entry means
         # *this* year. Reading it there was the failure this ordering exists to prevent.
         return whole_year(today.year - 1) if today is not None else None
+
+    if today is not None:
+        bare = _a_month_with_no_year(folded)
+        if bare is not None:
+            # After the explicit forms and before the phrase table, which is the whole fix: "hoy
+            # quiero saber cuánto gasté en junio" fell through to "hoy", because a month with no
+            # year was not a window this file knew — a real figure about today, answering about
+            # June, with nothing anywhere to contradict it.
+            return whole_month(_year_of(bare, today), bare)
 
     counted = _COUNTED.search(folded)
     if counted:
