@@ -42,6 +42,7 @@ from finguard_orchestrator.domain.ports.contact_directory import ContactDirector
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.services import (
+    account_words,
     answer_writer,
     capability_guard,
     category_words,
@@ -616,15 +617,23 @@ class AskFinancialQuestionHandler:
                 conversation=was,
             )
 
+        # Which account the sentence asked about, if it said. Deterministic, and empty is the
+        # ordinary case: "¿cuánto tengo?" names none and gets the total with a breakdown, because a
+        # breakdown is a better answer than a question. That is also why no clarification is asked
+        # here even when a kind matches two accounts — both are listed, and nobody has to reply.
+        named = account_words.named_in(query.sentence)
+
         return AskFinancialQuestionResult(
             outcome=Spoken.BALANCE.value,
-            text=answer_writer.balance(summary),
+            text=answer_writer.balance(summary, named),
             plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
             conversation=was,
             currency=summary.currency,
-            # The available balance, which is the figure the sentence leads with. A client showing
-            # it should not have to parse the sentence to find it.
-            total_minor=summary.available_minor,
+            # The figure the sentence leads with, so a client showing it does not have to parse
+            # prose to find it. It comes from the writer rather than being recomputed here,
+            # because a second copy of the rule is a second answer waiting to disagree with the
+            # first — and the two would sit side by side on one screen.
+            total_minor=answer_writer.leading_figure(summary, named),
         )
 
     def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
