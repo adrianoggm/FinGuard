@@ -67,10 +67,12 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.services import (
     confirmation,
+    intent_router,
     payment_router,
     payment_words,
     payment_writer,
 )
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -204,6 +206,24 @@ async def replace_policy(body: PolicyRequest, commands: Commands) -> CatalogueRe
 @admin_router.post("/llm-policy/reset", summary="Back to the startup policy")
 async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
+
+
+def _is_an_order_to_pay(sentence: str, was: Conversation) -> bool:
+    """Whether this sentence starts a payment, asked of the router that knows the exceptions.
+
+    It used to ask `payment_router.is_payment` directly, which is the *narrower* question: is there
+    a payment order in these words. `intent_router` adds the one case where the answer is no anyway
+    — a sentence asking who can be paid — and that rule was written because "¿qué contactos tengo
+    para mandar bizum?" was read as an order and answered by asking who to pay.
+
+    The rule lived only in the handler, and this check runs before the handler is reached. So it
+    worked for the phrasings that say "contactos" and not for "¿a quién puedo hacerle un bizum?",
+    which is the same question reaching the same wrong answer by the same route.
+
+    Asked here rather than copying the exception, because two copies of "is this a payment" is how
+    the first one came to be incomplete.
+    """
+    return intent_router.route(sentence, has_previous=was.last_plan is not None) is Intent.PAYMENT
 
 
 async def _as_payment(
@@ -833,7 +853,7 @@ async def ask(
             request.question, who, commands, payments_on, was, continuing, key=key
         )
 
-    if payment_router.is_payment(request.question):
+    if _is_an_order_to_pay(request.question, was):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,
         # because making it is what this router is for.
         return await _as_payment(request.question, who, commands, payments_on, was, key=key)
@@ -909,7 +929,7 @@ async def ask_streaming(
             request.question, who, commands, payments_on, was, continuing, key=key
         )
 
-    if payment_router.is_payment(request.question):
+    if _is_an_order_to_pay(request.question, was):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one
         # that could not pay — the same sentence answering differently depending on which endpoint
