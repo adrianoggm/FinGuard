@@ -96,6 +96,8 @@ from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraf
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 ACCOUNT = uuid.UUID("08aba04f-2b30-4639-88a6-eac741153ce0")
 PIGGY = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -554,4 +556,69 @@ def run(episodes: list[Episode]) -> Report:
                 report.unnecessary_clarifications += 1
             if "PAYMENT answered" in failure.complaint or "TRANSFER answered" in failure.complaint:
                 report.unsafe += 1
+    return report
+
+
+# --- the corpus as a migration harness -----------------------------------------------------
+#
+# The reason this file can measure an interpreter at all: 879 turns whose right answer is already
+# written down. A shadow comparison in production can only ever say *how often* two decisions
+# differ, because the sentence may not be logged — this service reads a person's bank account and
+# nothing they typed reaches a log file. Here the sentences are ours, so a disagreement can be read.
+
+
+@dataclass
+class Agreement:
+    """How one interpreter did against the corpus, per intent and overall."""
+
+    turns: int = 0
+    agreed: int = 0
+    # Which intent was expected and which was read, counted. The pairs are what a migration is
+    # steered by: "it calls a balance a query" is actionable and "92 %" is not.
+    confusions: dict[tuple[str, str], int] = field(default_factory=dict)
+
+    @property
+    def rate(self) -> float:
+        return 0.0 if not self.turns else round(100 * self.agreed / self.turns, 2)
+
+    def worst(self, limit: int = 8) -> list[tuple[tuple[str, str], int]]:
+        return sorted(self.confusions.items(), key=lambda pair: -pair[1])[:limit]
+
+
+async def compare(
+    episodes: list[Episode], candidate: object, authority: object | None = None
+) -> Agreement:
+    """Walk every turn of every episode and score `candidate` against `authority`.
+
+    The conversation is rebuilt by *replaying* each episode through the service, because the state
+    is half of what decides a turn: scoring an interpreter on the sentences alone would be scoring
+    it on a question nobody can answer. That makes this slower than reading a file, and it is the
+    only version of it that measures the right thing.
+    """
+    from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
+
+    reference = authority or Deterministic()
+    report = Agreement()
+    for episode in episodes:
+        stack = a_stack()
+        conversation: dict[str, Any] | None = None
+        for turn in episode.turns:
+            was = conversation_mapper.to_domain(
+                ConversationPayload.model_validate(conversation) if conversation else None
+            )
+            expected = await reference.interpret(turn.say, conversation=was)  # type: ignore[attr-defined]
+            read = await candidate.interpret(turn.say, conversation=was)  # type: ignore[attr-defined]
+            report.turns += 1
+            if read is expected:
+                report.agreed += 1
+            else:
+                key = (expected.value, read.value)
+                report.confusions[key] = report.confusions.get(key, 0) + 1
+
+            answered = stack.client.post(
+                "/v1/questions", json={"question": turn.say, "conversation": conversation}
+            )
+            if answered.status_code != 200:
+                break
+            conversation = answered.json()["conversation"]
     return report

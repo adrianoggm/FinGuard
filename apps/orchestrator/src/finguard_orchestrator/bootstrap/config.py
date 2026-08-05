@@ -171,6 +171,17 @@ class Settings(BaseSettings):
     # worthless.
     disabled_guards: tuple[str, ...] = ()
 
+    # Ask a model to read every turn as well, and record whether it agreed with the rules.
+    #
+    # Off by default and it changes no answer when on: the deterministic reading still decides,
+    # the model's opinion becomes a log line. What it buys is the number that has to exist before
+    # anybody argues about promoting it — the corpus says how a model does on 879 sentences
+    # somebody wrote down, and this says how it does on the ones a real person types.
+    #
+    # It costs a model call per turn, in parallel with nothing, which is why it is a switch rather
+    # than always on: a demo does not need to pay for an experiment it is not reading.
+    turn_interpreter_shadow: bool = False
+
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a
     # rejected plan rather than as a wrong figure.
