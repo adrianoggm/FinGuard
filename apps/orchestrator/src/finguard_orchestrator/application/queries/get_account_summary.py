@@ -26,12 +26,32 @@ class SummaryMovement:
 
 
 @dataclass(frozen=True)
+class HoldingRow:
+    """One of the holder's accounts. Flat, like every Result piece.
+
+    `kind` is the field a screen has to read before it adds anything up: on an `ASSET` the balance
+    is what was paid and not what it is worth, so a total across all three without saying so
+    reports a purchase price as somebody's money.
+    """
+
+    account_id: str
+    kind: str
+    display_name: str | None
+    currency: str
+    booked_minor: int
+
+
+@dataclass(frozen=True)
 class AccountSummaryResult:
+    # Of the declared account, not of the holder — `holdings` is all of them, so summing those
+    # gives a different number. Deliberately no total here: accounts in different currencies do
+    # not have one, and whoever renders this is the only one who knows what to do about that.
     currency: str
     booked_minor: int
     available_minor: int
     as_of: str
     movements: list[SummaryMovement] = field(default_factory=list)
+    holdings: list[HoldingRow] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -65,5 +85,15 @@ class GetAccountSummaryHandler:
                     category=movement.category,
                 )
                 for movement in summary.movements
+            ],
+            holdings=[
+                HoldingRow(
+                    account_id=str(holding.account_id),
+                    kind=holding.kind,
+                    display_name=holding.display_name,
+                    currency=holding.currency,
+                    booked_minor=holding.booked_minor,
+                )
+                for holding in summary.holdings
             ],
         )

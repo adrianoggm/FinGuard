@@ -341,6 +341,24 @@ class QuestionResponse(_Payload):
     # a client had to combine.
 
 
+class HoldingPayload(_Payload):
+    """One of the holder's accounts.
+
+    `kind` is `CURRENT`, `SAVINGS` or `ASSET`, and it is the field a screen must read before adding
+    anything up: on an `ASSET` the balance is what was paid, not what it is worth, so a total
+    across all three without a word about it reports a purchase price as somebody's money.
+
+    `displayName` is nullable because the holder may not have named the account. A screen falls
+    back to the kind — never to the reference, which is a string nobody recognises.
+    """
+
+    account_id: str
+    kind: str
+    display_name: str | None
+    currency: str
+    booked_minor: int
+
+
 class SummaryMovementResponse(_Payload):
     occurred_at: str
     description: str
@@ -364,6 +382,10 @@ class AccountSummaryResponse(_Payload):
     available_minor: int
     as_of: str
     movements: list[SummaryMovementResponse] = []
+    # Added rather than replacing anything, so a client written before there were several accounts
+    # keeps reading the same figures: the balance above is still the declared account's, and this
+    # is a field it can ignore until somebody decides to show it.
+    holdings: list[HoldingPayload] = []
 
 
 class ContactPayload(_Payload):
