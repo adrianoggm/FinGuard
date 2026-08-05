@@ -150,8 +150,18 @@ evaluate-e2e token dataset="dev":
 evaluate-conversations token:
     cd apps/orchestrator && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset conversations
 
+# Separate from lint/typecheck/test because those iterate over the Python services and npm
+# answers all three at once. `build` runs tsc a second time on purpose: vite strips types
+# without checking them, so the build is what proves the bundle it emits compiles.
+# Types, tests and a build for the client
+web-check:
+    cd apps/web && npm run typecheck && npm test && npm run build
+
+# Since CI stopped running on every push, this is the whole verification a working branch gets,
+# so it has to cover what CI covers — otherwise the change moved a gap rather than a cost.
+# `test` includes the integration suite, so `just db` has to be up first.
 # What has to pass before pushing a commit
-check: lint typecheck test
+check: lint typecheck test web-check
 
 # Installs the git hook. Run once per clone; uvx needs no global install
 hooks:
