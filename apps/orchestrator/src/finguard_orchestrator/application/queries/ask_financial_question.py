@@ -899,13 +899,58 @@ class AskFinancialQuestionHandler:
             conversation=query.conversation.answered(ranking),
         )
 
+    async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
+        """Which of the holder's accounts the question is about.
+
+        The same rule the balance answer already uses, applied to the ledger path: name an account
+        and the figures are that account's; name none and they are all of them. It is not a new
+        judgement — it reads the same closed vocabulary, and the model never sees this decision.
+
+        **Across accounts is the default, and that is a change of meaning worth stating.** Until
+        there were three accounts the figures were the one the credential named, which was also
+        every account the holder had. They are no longer the same thing, and keeping the old
+        default would answer "cuánto gasté" with the spending of one account out of three — a real
+        figure about part of somebody's money, presented as all of it.
+
+        Internal transfers stay excluded, so widening does not double anything: money moved into
+        the piggy bank is not income there any more than it was spending here.
+
+        The holder's accounts are only fetched when the sentence named one, which is the rare case.
+        Widening needs no list — banking drops its own filter and the view's scope is what remains.
+        """
+        named = account_words.named_in(query.sentence)
+        if not named:
+            return replace(plan, across_accounts=True)
+
+        try:
+            summary = await self._accounts.of(
+                query.account_id, today=query.today, reporting_timezone=query.reporting_timezone
+            )
+        except BankingUnavailableError:
+            # The account list is what narrowing needs, and without it the honest fallback is the
+            # wider answer rather than the declared account: one account out of three, labelled as
+            # though the word had been understood, is the failure this whole method exists to stop.
+            logger.warning("scope.accounts_unavailable account=%s", account_ref(query.account_id))
+            return replace(plan, across_accounts=True)
+
+        wanted = [holding for holding in summary.holdings if holding.kind in named]
+        if len(wanted) != 1:
+            # None of that kind, or more than one. Neither narrows to a single account, and
+            # inventing one would answer about an account the sentence did not choose.
+            return replace(plan, across_accounts=True)
+        return replace(plan, only_account_id=wanted[0].account_id)
+
     async def _answer(
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, widened: bool = False
     ) -> AskFinancialQuestionResult:
+        # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
+        # property of how the question was answered; the plan is what was *asked*, and that is what
+        # gets described to the user and remembered for a follow-up.
+        scoped = await self._scoped(plan, query)
         for attempt in range(BANK_READ_ATTEMPTS):
             try:
                 answer = await self._queries.run(
-                    plan,
+                    scoped,
                     account_id=query.account_id,
                     today=query.today,
                     reporting_timezone=query.reporting_timezone,

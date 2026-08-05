@@ -94,6 +94,11 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "HOUSING_RENT": ("alquiler",),
     "SALARY": ("nómina", "sueldo", "salario"),
     "TRANSFER_BIZUM": ("bizum", "bizums"),
+    # An equivalence the product itself defines, like cine and ocio. "Intereses" in a sentence
+    # about money is what a savings account paid and nothing else — there is no second reading to
+    # break by being sure about it, and leaving it out meant the answer depended on the model
+    # choosing a category it had only just been told about.
+    "INTEREST": ("intereses", "interes"),
 }
 
 
