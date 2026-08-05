@@ -392,6 +392,12 @@ class AskFinancialQuestionHandler:
             yield await self._own_transfer(query, was)
             return
 
+        if intent is Intent.FINANCIAL_QUERY and _narrows_the_balance(query, was):
+            # "¿Y en la hucha?" after a balance is about the balance of that account. The same words
+            # after a spending question narrow the spending, which is why this reads the turn before
+            # rather than the sentence: they are identical sentences and they mean different things.
+            intent = Intent.ACCOUNT_BALANCE
+
         if intent is Intent.ACCOUNT_BALANCE:
             # Not a plan and not a model. `FinancialPlan` expresses aggregations over movements —
             # window, direction, categories, merchants, grouping, SUM or COUNT — and a balance is
@@ -654,7 +660,10 @@ class AskFinancialQuestionHandler:
             outcome=Spoken.BALANCE.value,
             text=answer_writer.balance(summary, named),
             plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
-            conversation=was,
+            # Remembered, so "¿y en la hucha?" on the next turn is about the balance rather than
+            # about spending. The rest of the conversation passes through: a balance is a turn, not
+            # a reset.
+            conversation=was.answering_the_balance(),
             currency=summary.currency,
             # The figure the sentence leads with, so a client showing it does not have to parse
             # prose to find it. It comes from the writer rather than being recomputed here,
@@ -688,8 +697,14 @@ class AskFinancialQuestionHandler:
                 conversation=was,
             )
 
-        named = account_words.named_in(query.sentence)
-        wanted = [holding for holding in summary.holdings if holding.kind in named]
+        # Where the money is going, by the preposition in front of it — not every account the
+        # sentence happens to mention. "Traspasar el total de fondo indexado a la cuenta de ahorros"
+        # names two, and counting the one it comes *from* as somewhere to move it *into* produced an
+        # ambiguity the reader had invented and then asked the user to resolve.
+        towards = account_words.destination_in(query.sentence) or account_words.named_in(
+            query.sentence
+        )
+        wanted = [holding for holding in summary.holdings if holding.kind in towards]
         amount = payment_words.amount_in(query.sentence)
 
         if not wanted:
@@ -699,20 +714,22 @@ class AskFinancialQuestionHandler:
                 conversation=was,
             )
         if len(wanted) > 1:
-            # Two accounts of one kind. The only place this service asks which — see the docstring.
+            # Two accounts of one kind, and the honest answer names them and asks for the whole
+            # instruction again.
+            #
+            # It used to leave a `Slot.ACCOUNT` open, and that was a question this path cannot read
+            # the answer to. Nothing on the spoken transfer path holds state — reading a sentence is
+            # all it does, and preparing is a `payments:prepare` scope on another route — so the
+            # amount was gone by the time the reply arrived. "¿A cuál lo muevo?" answered with "a
+            # Hucha" fell through to the financial planner, which asked which period. The one place
+            # this service asked which account was the one place it could not hear the answer.
+            #
+            # ponytail: no state, so no slot. Giving this one a workflow of its own is the upgrade,
+            # and it is worth doing when the transfer path gains anything else to remember.
             return AskFinancialQuestionResult(
-                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                outcome=Spoken.TRANSFER_READY.value,
                 text=answer_writer.which_account(wanted),
-                question=answer_writer.which_account(wanted),
-                conversation=was.with_active(
-                    FinancialClarification(
-                        # A draft with nothing read into it: the sentence was an instruction and
-                        # not a question, so there is no plan half-built behind this. The slot is
-                        # what the next turn answers, and the draft is the shape the state needs.
-                        draft=FinancialPlanDraft(direction=Direction.ALL),
-                        awaiting=Slot.ACCOUNT,
-                    )
-                ),
+                conversation=was,
             )
         if amount is None:
             return AskFinancialQuestionResult(
@@ -1042,6 +1059,11 @@ class AskFinancialQuestionHandler:
 # Each one says what is missing and what to ask instead, because the second half is the only part
 # the user can act on. Spanish, like every string a person reads.
 _MISSING_CAPABILITY: Final[dict[str, str]] = {
+    "INTERNAL_ONLY": (
+        "Todavía no sé separar los traspasos entre tus cuentas del resto de movimientos. "
+        "Puedo darte el total de un periodo o lo que has gastado por categoría, y en la pantalla "
+        "de movimientos los verás marcados uno a uno."
+    ),
     "AVERAGE": (
         "Todavía no calculo medias. Puedo darte el total de cada mes por separado y así ves la "
         "evolución — por ejemplo «¿cuánto gasté en gasolina el mes pasado?»."
@@ -1165,6 +1187,22 @@ _ASIDES: Final = frozenset(
         Intent.ACCOUNT_BALANCE,
     }
 )
+
+
+def _narrows_the_balance(query: AskFinancialQuestionQuery, was: Conversation) -> bool:
+    """Whether this sentence is a balance question that names only an account.
+
+    Three conditions, and all three are needed. The previous turn answered a balance, or the same
+    words are a follow-up about spending. The sentence names an account, or there is nothing to
+    narrow to. And it states no window and no category, because a sentence that does has moved on
+    to a question the ledger answers — "¿y en la hucha el mes pasado?" is about movements.
+    """
+    if not was.answered_the_balance:
+        return False
+    if not account_words.named_in(query.sentence):
+        return False
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    return facts.window is None and not facts.names_a_category
 
 
 def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestionResult:

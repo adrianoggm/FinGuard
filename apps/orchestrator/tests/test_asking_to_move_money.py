@@ -18,7 +18,6 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 )
 from finguard_orchestrator.domain.enums import Spoken
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
-from finguard_orchestrator.domain.models.conversation import Slot, Workflow, workflow_of
 from finguard_orchestrator.domain.services import intent_router
 from finguard_orchestrator.domain.services.intent_router import Intent
 
@@ -145,19 +144,23 @@ async def test_an_account_the_holder_does_not_have_is_said_plainly() -> None:
 # --- the one question this service asks about an account --------------------------------
 
 
-async def test_two_accounts_of_one_kind_is_the_one_thing_worth_asking() -> None:
-    """`Slot.ACCOUNT` finally has an emitter, and this is why it took one.
+async def test_two_accounts_of_one_kind_asks_for_the_whole_instruction_again() -> None:
+    """The ambiguity is real and the question has to be asked. What it may not do is leave a slot.
 
-    Every other ambiguity here is better answered with a breakdown than with a question — showing
-    every account lets the reader take what they meant. An instruction cannot be answered that way:
-    either the money moves or it does not, and moving it into an account nobody named is an act
-    rather than a sentence.
+    It used to leave `Slot.ACCOUNT` open — the one place this service asked which account — and the
+    one place it could not hear the answer. Nothing on this path holds state: reading a sentence is
+    all it does, and preparing is a `payments:prepare` scope on another route. So the amount was
+    already gone when the reply arrived, and "¿a cuál lo muevo?" answered with "a Hucha" fell
+    through to the financial planner, which asked which period. Reported from a real conversation.
+
+    Naming both accounts is what makes repeating the instruction cheap, and repeating it is the only
+    answer this path can act on.
     """
     other = Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00)
 
     answer = await said("mueve 200 € a la hucha", summary(CURRENT, PIGGY, other))
 
-    assert answer.conversation.awaiting is Slot.ACCOUNT
-    assert workflow_of(answer.conversation.active) is Workflow.FINANCIAL_CLARIFICATION
     assert "Hucha" in answer.text and "Hucha viajes" in answer.text
-    assert "¿A cuál" in answer.text
+    assert answer.conversation.awaiting is None, "a question this path cannot hear the answer to"
+    assert answer.conversation.active is None
+    assert "otra vez" in answer.text, "it does not say what to do instead"

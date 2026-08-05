@@ -181,6 +181,9 @@ export type ConversationState = {
   // rest and never read here: it is how the service notices it has asked the same question twice
   // and offers choices instead of a third open question.
   last_asked: Slot | null;
+  // Whether the last turn said how much money there is. Round-tripped and never read here: it is
+  // how the service knows that "¿y en la hucha?" is about the balance rather than about spending.
+  answered_the_balance: boolean;
   last_plan: PlanContext | null;
   retry_plan: PlanContext | null;
   draft: PlanContext | null;

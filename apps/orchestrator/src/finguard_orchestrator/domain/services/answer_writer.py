@@ -203,14 +203,18 @@ def _invested_clause(invested: list[Holding]) -> str:
 def which_account(candidates: list[Holding]) -> str:
     """Two accounts of one kind, so the word did not pick one.
 
-    The only question this service asks about an account, and the reason is that the alternatives
-    are both worse. A breakdown answers an ambiguous *question* well — it shows every account and
-    lets the reader take what they meant — but this is an instruction, and there is nothing to show
-    somebody who asked to move money: either it moves or it does not. Picking the first would move
-    money into an account they did not name.
+    It asks for the whole instruction again rather than for the missing word, and that is not
+    politeness — it is the only version of this question that can be answered. Nothing on the spoken
+    transfer path holds state, so a reply naming only the account arrives with the amount already
+    gone; "¿a cuál lo muevo?" answered with "a Hucha" used to reach the financial planner, which
+    asked which period. Naming both accounts is what makes the repetition cheap.
     """
     names = _listed(tuple(_name_of(holding) for holding in candidates))
-    return f"Tienes más de una cuenta de ese tipo: {names}. ¿A cuál lo muevo?"
+    example = _name_of(candidates[0])
+    return (
+        f"Tienes más de una cuenta de ese tipo: {names}. "
+        f"Dímelo otra vez con el nombre completo, por ejemplo «pasa 200 € a {example}»."
+    )
 
 
 def how_much_to_move(target: Holding) -> str:

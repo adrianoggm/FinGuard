@@ -185,6 +185,10 @@ class ConversationPayload(_Payload):
     # payment would let a reply meant for a period complete a Bizum, and this decides one thing —
     # whether the same question has now been asked twice.
     last_asked: Slot | None = None
+    # Whether the last turn said how much money there is. Memory, like the two below, and it is
+    # what makes "¿y en la hucha?" a balance question after a balance and a spending question after
+    # a spending one — the same sentence, two meanings, decided by the turn before.
+    answered_the_balance: bool = False
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None

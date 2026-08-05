@@ -90,6 +90,26 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
             re.IGNORECASE,
         ),
     ),
+    (
+        # Movements between the holder's own accounts, on their own. A plan cannot express it:
+        # `include_internal` *widens* a query to take them in, and nothing asks for only them
+        # because banking books an internal movement with no category to filter on.
+        #
+        # Refused rather than approximated, and this family has the clearest reason of any of them.
+        # Asked "¿qué movimientos he tenido entre mis cuentas?" the assistant answered 14.019,05 €
+        # over 194 movements — every movement the holder made that year. Correct arithmetic about a
+        # different question, which is the one answer nothing downstream can contradict.
+        #
+        # The balance is routed before the guard, so "¿cuánto tengo entre mis cuentas?" is still a
+        # balance. That sentence asks about a state and has a real answer.
+        "INTERNAL_ONLY",
+        re.compile(
+            r"\bentre\s+(mis|tus|sus|las)\s+cuentas\b"
+            r"|\bentre\s+cuentas\b"
+            r"|\btraspasos?\s+entre\b",
+            re.IGNORECASE,
+        ),
+    ),
 )
 
 

@@ -172,6 +172,15 @@ class Conversation:
     # asked forever — and the user cannot escape by rephrasing, because rephrasing is what already
     # failed. It survives exactly one turn: everything that is not another question clears it.
     last_asked: Slot | None = None
+    # Whether the last turn answered a balance. Memory again, and the narrowest form of it: "¿y en
+    # la hucha?" is a follow-up about spending after a spending question and a follow-up about the
+    # balance after a balance, and the sentence is identical in both. Without this the second one
+    # reached the financial planner and came back "¿de qué periodo?" — a question about a window,
+    # to somebody who had just been told a figure and asked which account it was in.
+    #
+    # A flag rather than the whole answer: nothing else needs remembering, and a field that holds
+    # more than one thing is a field the next branch reads wrongly.
+    answered_the_balance: bool = False
 
     @property
     def awaiting(self) -> Slot | None:
@@ -210,6 +219,20 @@ class Conversation:
             last_plan=self.last_plan,
             retry_plan=self.retry_plan,
             last_asked=slot,
+        )
+
+    def answering_the_balance(self) -> "Conversation":
+        """This turn said how much money there is, so a bare account name is about that.
+
+        Everything else about the conversation survives: a balance is a turn and not a reset, and
+        asking it in the middle of an analysis of last month must not cost the window.
+        """
+        return Conversation(
+            active=self.active,
+            last_plan=self.last_plan,
+            retry_plan=self.retry_plan,
+            last_asked=self.last_asked,
+            answered_the_balance=True,
         )
 
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":

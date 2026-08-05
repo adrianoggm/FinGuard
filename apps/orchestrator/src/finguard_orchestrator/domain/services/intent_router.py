@@ -64,16 +64,26 @@ _ABOUT_THE_BALANCE: Final = re.compile(
     r"|\bcu[áa]nto\s+(dinero\s+)?(tengo|ten[íi]a|me\s+queda|hay)\b"
     r"|\bcu[áa]nto\s+(tengo\s+)?disponible\b"
     r"|\bde\s+cu[áa]nto\s+dispongo\b"
-    r"|\bdinero\s+(disponible|tengo)\b",
+    r"|\bdinero\s+(disponible|tengo)\b"
+    # "¿Qué cuentas tengo?" — the accounts themselves, which is what a balance answer already is:
+    # a total with every account and its figure under it. It was excluded below and nothing else
+    # answered it, so it reached the planner and came back "eso no puedo calcularlo todavía" about
+    # a list this service holds and had printed one turn earlier.
+    r"|\bqu[ée]\s+cuentas\s+(tengo|tiene|hay)\b"
+    r"|\bcu[áa]ntas\s+cuentas\s+(tengo|tiene|hay)\b",
     re.IGNORECASE,
 )
 
 # What "tengo" means when it is not about the balance. Checked first, so a question that counts
 # movements or lists things keeps going to the path that can answer it.
+#
+# "Cuentas" left this list when the balance learned to answer about them. Contacts and cards stay:
+# both have a screen of their own, neither has an answer on this path, and a balance would be a
+# real figure about something nobody asked for.
 _NOT_THE_BALANCE: Final = re.compile(
     r"\bcu[áa]nt[oa]s?\s+(movimientos|compras|cargos|pagos|operaciones|veces|bizums?)\b"
     r"|\bgast[éeoa]|\bingres[éeoa]|\bhe\s+gastado\b|\bme\s+he\s+gastado\b"
-    r"|\bqu[ée]\s+(contactos|tarjetas|cuentas)\b",
+    r"|\bqu[ée]\s+(contactos|tarjetas)\b",
     re.IGNORECASE,
 )
 

@@ -115,6 +115,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # comes back exactly here — no workflow — and dropping the slot on the way in is what
             # let the same question be asked forever.
             last_asked=payload.last_asked if payload else None,
+            answered_the_balance=bool(payload and payload.answered_the_balance),
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -125,6 +126,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_plan=last_plan,
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
+        answered_the_balance=payload.answered_the_balance,
     )
 
 
@@ -201,6 +203,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
+            "answered_the_balance": conversation.answered_the_balance,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "retry_plan": (
                 plan_payload(conversation.retry_plan) if conversation.retry_plan else None
