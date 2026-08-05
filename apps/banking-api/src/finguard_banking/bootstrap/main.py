@@ -15,6 +15,8 @@ from finguard_banking.application import (
     ConfirmPaymentHandler,
     GetBalanceHandler,
     GetBalanceQuery,
+    ListAccountsHandler,
+    ListAccountsQuery,
     ListCardChargesHandler,
     ListCardChargesQuery,
     ListCardsHandler,
@@ -31,6 +33,7 @@ from finguard_banking.application import (
 )
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import (
+    PostgresAccountRepository,
     PostgresAuditLog,
     PostgresCardRepository,
     PostgresContactRepository,
@@ -96,6 +99,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # payment path needs the owner pool, and showing a list does not.
     app.state.query_bus.register(
         ListContactsQuery, ListContactsHandler(PostgresContactRepository(query_pool))
+    )
+    # The holder's accounts, through the restricted role like every other read. This is the
+    # widest read in the service — it is the one that says which accounts exist for a session — so
+    # it goes through the role that cannot reach a base table.
+    app.state.query_bus.register(
+        ListAccountsQuery, ListAccountsHandler(PostgresAccountRepository(query_pool))
     )
     cards = PostgresCardRepository(query_pool)
     app.state.query_bus.register(ListCardsQuery, ListCardsHandler(cards))

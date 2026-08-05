@@ -15,6 +15,7 @@ from finguard_banking.application import (
     CategoriseMovementCommand,
     CommandBus,
     GetBalanceQuery,
+    ListAccountsQuery,
     ListCardChargesQuery,
     ListCardsQuery,
     ListContactsQuery,
@@ -39,6 +40,7 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     ContactsResponse,
     FinancialQueryRequest,
     FinancialQueryResponse,
+    HoldingsResponse,
     RankedMovementRequest,
     RankedMovementResponse,
 )
@@ -121,6 +123,20 @@ async def read_card_charges(
         )
     )
     return http_mapper.card_charges_to_dto(result)
+
+
+@accounts_router.get("/{account_id}/holder-accounts", summary="Every account this holder has")
+async def read_holder_accounts(account_id: UUID, queries: Queries) -> HoldingsResponse:
+    """The declared account, plus the others belonging to the same person.
+
+    Under `/{account_id}/` and not at the root, because the account in the path is what gets
+    declared: it is the credential's proof of who is asking, and `my_accounts_v1` widens from it to
+    the holder. A route without one would have nothing to declare and therefore no scope.
+
+    Additive by construction. A caller that never asks keeps seeing exactly the account it names,
+    which is what every existing read path does.
+    """
+    return http_mapper.holdings_to_dto(await queries.ask(ListAccountsQuery(account_id)))
 
 
 @accounts_router.get("/{account_id}/contacts", summary="Everybody this account can pay")
