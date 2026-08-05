@@ -29,6 +29,7 @@ from finguard_banking.domain.errors import (
     IntentExpiredError,
     IntentNotConfirmableError,
     IntentNotFoundError,
+    KeyReusedForAnotherPaymentError,
     MovementNotFoundError,
     UnknownCategoryError,
 )
@@ -56,6 +57,9 @@ _STATUS_BY_CODE = {
     IntentNotConfirmableError.code: 409,
     # 409 rather than 422: the request was well formed and the balance is what refused it.
     InsufficientFundsError.code: 409,
+    # 409, and the canonical one: two requests claim the same key and only one can own it. Not 422,
+    # because nothing about the request is malformed — a caller retrying under a fresh key succeeds.
+    KeyReusedForAnotherPaymentError.code: 409,
     MovementNotFoundError.code: 404,
     # 422: the request is well formed and the value is not one this ledger uses.
     UnknownCategoryError.code: 422,
