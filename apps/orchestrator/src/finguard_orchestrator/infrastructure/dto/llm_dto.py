@@ -147,7 +147,7 @@ class SpokenContactResponse(_Payload):
 # complete a Bizum.
 _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     Workflow.FINANCIAL_CLARIFICATION: frozenset(
-        {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION}
+        {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION, Slot.ACCOUNT}
     ),
     Workflow.UNSUPPORTED_CAPABILITY: frozenset(),
     Workflow.PAYMENT_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.RECIPIENT, Slot.RECIPIENT_CHOICE}),

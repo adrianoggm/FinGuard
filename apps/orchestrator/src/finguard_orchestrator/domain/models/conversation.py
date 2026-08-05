@@ -82,6 +82,10 @@ class Slot(StrEnum):
     # client can tell "write something" from "pick one of these".
     RECIPIENT_CHOICE = "RECIPIENT_CHOICE"
     CONFIRMATION = "CONFIRMATION"
+    # Which of the holder's accounts. Asked rarely on purpose: "¿cuánto tengo?" names none and is
+    # answered with the total and a breakdown, because a breakdown is a better answer than a
+    # question. This is for the sentences where the accounts would not add up into one figure.
+    ACCOUNT = "ACCOUNT"
 
 
 @dataclass(frozen=True)
