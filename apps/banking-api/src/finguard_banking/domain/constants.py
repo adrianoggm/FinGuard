@@ -64,6 +64,11 @@ CATEGORIES = (
     "HOUSING_RENT",
     "SALARY",
     "TRANSFER_BIZUM",
+    # Interest a savings account paid. Income, and the ledger has been writing it since the piggy
+    # bank existed while this list did not have it — so it could not be asked about, could not be
+    # chosen as an override, and rendered as "Otros" on the one screen where it is every movement.
+    # Adding it widens what may be *asked*; it changes no stored figure.
+    "INTEREST",
 )
 
 # Sentinel keys for grouping rows that carry no category or merchant. They are contract

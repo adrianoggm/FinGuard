@@ -604,6 +604,8 @@ async def account_movements(
     limit: Annotated[int, Query(ge=1, le=MAX_MOVEMENTS)] = 50,
     category: Annotated[str | None, Query(max_length=40)] = None,
     include_internal: Annotated[bool, Query()] = False,
+    account: Annotated[UUID | None, Query()] = None,
+    across_accounts: Annotated[bool, Query()] = False,
     merchant: Annotated[str | None, Query(max_length=140)] = None,
 ) -> MovementsResponse:
     """What the movements screen and its search field read.
@@ -622,6 +624,8 @@ async def account_movements(
             category=category,
             merchant=merchant,
             include_internal=include_internal,
+            only_account_id=account,
+            across_accounts=across_accounts,
         )
     )
     return llm_mapper.movements_to_dto(result)

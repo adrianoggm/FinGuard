@@ -366,6 +366,10 @@ export async function movements(options: {
   /** Money moved between the holder's own accounts. Off by default: the tally is a net, and a
       transfer nets to nothing across the household. */
   includeInternal?: boolean;
+  /** One of the holder's accounts. Absent is the one the credential names. */
+  account?: string;
+  /** Every account the holder has. It cannot reach past them — the scope is the server's. */
+  acrossAccounts?: boolean;
 }): Promise<Movements> {
   const query = new URLSearchParams();
   query.set("days", String(options.days ?? 90));
@@ -373,6 +377,8 @@ export async function movements(options: {
   if (options.category) query.set("category", options.category);
   if (options.merchant) query.set("merchant", options.merchant);
   if (options.includeInternal) query.set("include_internal", "true");
+  if (options.account) query.set("account", options.account);
+  if (options.acrossAccounts) query.set("across_accounts", "true");
   return read<Movements>(`/v1/account/movements?${query}`);
 }
 
@@ -389,6 +395,44 @@ export async function breakdown(by: GroupBy, days: number): Promise<Breakdown> {
  * resolves it against this account's own contacts, so two Martas still produce a question instead of
  * a guess, and a forged id is useless because there is no id to forge.
  */
+/**
+ * Money into another of the holder's own accounts.
+ *
+ * No recipient, because there is nobody to name. The account is an identifier the service listed,
+ * so nothing here turns a word into a destination.
+ */
+export async function transferBetweenAccounts(
+  toAccountId: string,
+  amountMinor: number,
+  currency = "EUR",
+): Promise<Answer> {
+  const response = await fetch(`${BASE}/v1/payments/between-accounts`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({
+      to_account_id: toAccountId,
+      amount_minor: amountMinor,
+      currency,
+    }),
+  });
+  if (!response.ok) await readError(response);
+  const body = await response.json();
+  return {
+    outcome: body.outcome,
+    text: body.text,
+    question: null,
+    intent_id: body.intent_id ?? null,
+    plan: null,
+    conversation: null,
+    currency: body.currency ?? null,
+    total_minor: null,
+    movement_count: null,
+    groups: [],
+    movements: [],
+    suggestions: [],
+  };
+}
+
 export async function payChosen(recipientName: string, amountMinor: number): Promise<Answer> {
   const response = await fetch(`${BASE}/v1/payments/chosen`, {
     method: "POST",

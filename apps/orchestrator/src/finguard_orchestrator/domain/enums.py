@@ -116,6 +116,10 @@ class Rail(StrEnum):
 
     BIZUM = "BIZUM"
     TRANSFER = "TRANSFER"
+    # Between the holder's own accounts. Not a setting of TRANSFER: the destination is an account
+    # id rather than an IBAN, and what banking books is a type the read views keep out of spending.
+    # Mirrored from banking's contract like the rest of this file — no shared package.
+    INTERNAL = "INTERNAL"
 
 
 class Metric(StrEnum):
@@ -175,3 +179,7 @@ class Spoken(StrEnum):
     # A deterministic conversation control such as abandoning a saved retry. No model or ledger
     # produced it, so it belongs with the other spoken outcomes rather than planning failures.
     GUIDANCE = "GUIDANCE"
+    # A transfer between the holder own accounts, understood but not staged. The chat reads the
+    # sentence; preparing it is a payments:prepare scope on a different route, and a read path that
+    # quietly gained the ability to stage a payment would erase the seam between asking and paying.
+    TRANSFER_READY = "TRANSFER_READY"

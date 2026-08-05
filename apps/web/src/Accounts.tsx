@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { movements as fetchMovements, type Movements, type Summary } from "./api";
+import type { Tab } from "./tabs";
 import {
   accountGlyph,
   accountName,
@@ -38,13 +39,17 @@ const WINDOWS = [
   [365, "1 año"],
 ] as const;
 
-type Props = { summary: Summary | null; searching: boolean };
+type Props = { summary: Summary | null; searching: boolean; onGo: (tab: Tab) => void };
 
-export function Accounts({ summary, searching }: Props) {
+export function Accounts({ summary, searching, onGo }: Props) {
   const [days, setDays] = useState(90);
   const [category, setCategory] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [internal, setInternal] = useState(false);
+  // Which account the list is about. `null` is every one of them, which is the honest default now
+  // that there is more than one: a list silently about the current account, on a screen showing
+  // three balances, is a figure whose scope the reader has to guess.
+  const [only, setOnly] = useState<string | null>(null);
   const [found, setFound] = useState<Movements | null>(null);
   const [error, setError] = useState<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -65,6 +70,8 @@ export function Accounts({ summary, searching }: Props) {
           category: category ?? undefined,
           merchant: term.trim() || undefined,
           includeInternal: internal,
+          account: only ?? undefined,
+          acrossAccounts: only === null,
         });
         if (current) {
           setFound(answer);
@@ -78,7 +85,7 @@ export function Accounts({ summary, searching }: Props) {
       current = false;
       clearTimeout(timer);
     };
-  }, [days, category, term, internal]);
+  }, [days, category, term, internal, only]);
 
   const shown = found?.movements ?? [];
 
@@ -110,6 +117,13 @@ export function Accounts({ summary, searching }: Props) {
               </span>
             </article>
           ))}
+          {/* Only with somewhere to move money to. A button that always refuses is worse than no
+              button: it teaches somebody the app is broken, and they are right. */}
+          {summary.holdings.length > 1 && (
+            <button className="move-money" onClick={() => onGo("traspaso")}>
+              ⇄ Mover dinero entre cuentas
+            </button>
+          )}
         </section>
       ) : (
         summary && (
@@ -135,6 +149,26 @@ export function Accounts({ summary, searching }: Props) {
           </button>
         )}
       </div>
+
+      {/* Which account the list is about. Only with more than one — a row of one chip is a
+          control that decides nothing. "Todas" first and selected, because that is what the
+          screen above it is showing. */}
+      {summary?.holdings && summary.holdings.length > 1 && (
+        <div className="chips" role="group" aria-label="Cuenta">
+          <button className={only === null ? "chip on" : "chip"} onClick={() => setOnly(null)}>
+            Todas
+          </button>
+          {summary.holdings.map((holding) => (
+            <button
+              key={holding.account_id}
+              className={only === holding.account_id ? "chip on" : "chip"}
+              onClick={() => setOnly(holding.account_id)}
+            >
+              {accountName(holding)}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="chips" role="group" aria-label="Filtros">
         {WINDOWS.map(([value, label]) => (

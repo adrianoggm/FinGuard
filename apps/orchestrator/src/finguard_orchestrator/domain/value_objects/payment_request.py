@@ -44,6 +44,10 @@ class PaymentRequest:
     # How the money leaves. Read from the sentence rather than from the model — see
     # `payment_words.rail_in` — so a rail is never something a decoder chose.
     rail: Rail = Rail.BIZUM
+    # Another account of this holder, for the INTERNAL rail. Banking checks it is theirs against
+    # the view that listed it; this service only carries it, and carries an id rather than a number
+    # so nothing here can turn it into a different account.
+    to_account_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.amount_minor, int) or isinstance(self.amount_minor, bool):
@@ -55,6 +59,17 @@ class PaymentRequest:
                 f"a payment of {self.amount_minor} minor units is beyond what this assistant "
                 f"will offer to make ({MAX_PAYMENT_MINOR})"
             )
+        if self.rail is Rail.INTERNAL:
+            # An internal transfer has no recipient, and requiring one would mean inventing a
+            # person for money that goes to an account. What it needs instead is the account, and
+            # a rail without one would fall through to banking as a payment to nobody.
+            if self.to_account_id is None:
+                raise InvalidValueError("an internal transfer needs one of your own accounts")
+            if self.recipient_name.strip() or self.recipient_contact_id is not None:
+                raise InvalidValueError("an internal transfer goes to an account, not to a person")
+            return
+        if self.to_account_id is not None:
+            raise InvalidValueError("one of your own accounts is only an internal destination")
         if not self.recipient_name.strip():
             raise InvalidValueError("a payment needs somebody to pay")
         if len(self.recipient_name) > MAX_RECIPIENT_NAME:

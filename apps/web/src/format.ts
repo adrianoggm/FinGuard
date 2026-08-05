@@ -142,6 +142,11 @@ const CATEGORIES: Record<string, [string, string]> = {
   SALARY: ["💼", "Nómina"],
   TRANSFER_BIZUM: ["📲", "Bizum"],
   OPENING: ["🏦", "Apertura"],
+  INTEREST: ["🪙", "Intereses"],
+  // Written by the dataset generator on its internal transfers. New ones carry no category at all,
+  // because a category partitions spending and this is not spending — the word is here so the
+  // rows that predate that decision do not render as "Otros".
+  INTERNAL: ["⇄", "Traspaso"],
 };
 
 export function glyph(category: string | null): string {

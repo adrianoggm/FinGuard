@@ -272,6 +272,53 @@ async def _previewed(
     )
 
 
+@dataclass(frozen=True)
+class PrepareOwnTransferCommand(Command[PaymentAnswer]):
+    """Money from one of the holder's accounts into another.
+
+    Its own command rather than a flag on the chosen payment, for the reason the rail is its own
+    rail: there is no recipient to name and no contact to resolve, so a shared shape would carry
+    three fields that must all be empty and one that must not.
+
+    The destination is an id the caller was shown. Whether it is *theirs* is banking's to check,
+    against the same view that listed it — this service holds no rule about whose account is whose.
+    """
+
+    account_id: UUID
+    to_account_id: UUID
+    amount_minor: int
+    currency: str
+    idempotency_key: str
+
+
+class PrepareOwnTransferHandler:
+    """No model and no reader: an account was picked from a list and an amount was typed."""
+
+    def __init__(self, bank: PaymentGatewayPort) -> None:
+        self._bank = bank
+
+    async def handle(self, command: PrepareOwnTransferCommand) -> PaymentAnswer:
+        try:
+            request = PaymentRequest(
+                # No recipient. The preview comes back naming the account, because banking snapshots
+                # the holder's own label onto the intent — this end never invents a name for it.
+                recipient_name="",
+                amount_minor=command.amount_minor,
+                currency=command.currency,
+                rail=Rail.INTERNAL,
+                to_account_id=command.to_account_id,
+            )
+        except InvalidValueError as refused:
+            return PaymentAnswer(
+                outcome=PaymentOutcome.NOT_UNDERSTOOD.value,
+                text=payment_writer.not_understood(),
+                reason=str(refused),
+            )
+        return await _previewed(
+            self._bank, request, account_id=command.account_id, key=command.idempotency_key
+        )
+
+
 class PrepareChosenPaymentHandler:
     """The form path. It builds the request and stops there — no reader, no policy."""
 

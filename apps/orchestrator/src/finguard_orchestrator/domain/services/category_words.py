@@ -30,6 +30,7 @@ _GLOSS: Final[dict[str, tuple[str, ...]]] = {
     "HOUSING_RENT": ("alquiler", "la renta", "la casa", "la vivienda"),
     "SALARY": ("nómina", "sueldo", "salario", "la paga"),
     "TRANSFER_BIZUM": ("bizum", "transferencias entre personas"),
+    "INTEREST": ("intereses", "lo que me da la hucha", "rendimiento"),
 }
 
 # What a category is called in a sentence the user reads. Not the gloss: a list of five synonyms is
@@ -45,6 +46,7 @@ _NAMES: Final[dict[str, str]] = {
     "HOUSING_RENT": "alquiler",
     "SALARY": "nómina",
     "TRANSFER_BIZUM": "bizum",
+    "INTEREST": "intereses",
 }
 
 
@@ -92,6 +94,11 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "HOUSING_RENT": ("alquiler",),
     "SALARY": ("nómina", "sueldo", "salario"),
     "TRANSFER_BIZUM": ("bizum", "bizums"),
+    # An equivalence the product itself defines, like cine and ocio. "Intereses" in a sentence
+    # about money is what a savings account paid and nothing else — there is no second reading to
+    # break by being sure about it, and leaving it out meant the answer depended on the model
+    # choosing a category it had only just been told about.
+    "INTEREST": ("intereses", "interes"),
 }
 
 

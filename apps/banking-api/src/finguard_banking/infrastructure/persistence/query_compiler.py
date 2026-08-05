@@ -93,16 +93,25 @@ def _amount_expression(direction: Direction) -> str:
 
 
 def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list[str]:
-    account = parameters.bind(query.account_id)
     start = parameters.bind(query.date_range.start)
     end = parameters.bind(query.date_range.end)
 
     conditions = [
-        f"t.account_id = {account}",
         # The range includes the whole final day, in the reporting time zone.
         f"t.occurred_at >= (({start}::date)::timestamp AT TIME ZONE {tz})",
         f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
+
+    if not query.across_accounts:
+        # The same fact enforced twice from two independent places: the session declared this
+        # account and the compiler filters on it, so a compiler that dropped its WHERE would still
+        # see only the holder's rows.
+        #
+        # Asking across accounts drops *this* filter and nothing else. The view's own scope is what
+        # remains, which is the rule written once — there is no list of accounts to pass and so no
+        # way for this to reach past the holder. `across_accounts` cannot widen; it can only stop
+        # narrowing.
+        conditions.append(f"t.account_id = {parameters.bind(query.scoped_to)}")
 
     if not query.include_internal:
         # Before the direction, because it is the wider cut and reads in the order somebody

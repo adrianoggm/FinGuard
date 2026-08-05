@@ -99,6 +99,9 @@ def test_the_category_catalogue_has_one_stable_name_per_supported_identifier() -
         "alquiler",
         "nómina",
         "bizum",
+        # What a savings account pays. The ledger has written it since the piggy bank existed and
+        # the catalogue did not have it, so it could not be asked about and rendered as "Otros".
+        "intereses",
     )
 
 

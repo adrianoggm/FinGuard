@@ -25,6 +25,7 @@ from finguard_orchestrator.application import CommandBus
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     PrepareChosenPaymentCommand,
+    PrepareOwnTransferCommand,
     PreparePaymentCommand,
 )
 from finguard_orchestrator.bootstrap.dependencies import get_command_bus, payments_enabled, requires
@@ -33,6 +34,7 @@ from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.payment_dto import (
     ChosenPaymentRequest,
     ConfirmPaymentRequest,
+    OwnTransferRequest,
     PaymentRequestBody,
     PaymentResponse,
 )
@@ -86,6 +88,34 @@ async def prepare_chosen(
         PrepareChosenPaymentCommand(
             account_id=who.account_id,
             recipient_name=request.recipient_name,
+            amount_minor=request.amount_minor,
+            currency=request.currency,
+            idempotency_key=str(uuid.uuid4()),
+        )
+    )
+    return payment_mapper.answer_to_dto(answer)
+
+
+@payments_router.post("/between-accounts", summary="Move money between your own accounts")
+async def prepare_own_transfer(
+    request: OwnTransferRequest, who: MayPrepare, commands: Commands
+) -> PaymentResponse:
+    """A preview, like every other payment, and confirmed through the same route.
+
+    Nothing is read and no model is involved: an account was picked from a list this holder was
+    shown and an amount was typed into a field.
+
+    It keeps the preview and the explicit confirmation even though the money never leaves the
+    household, because those protect against a mistake rather than against a misreading — and 200 €
+    in the wrong direction between two of your own accounts is a mistake worth being asked about.
+
+    Declared before `/{intent_id}/confirm` for readability only: "between-accounts" is not a UUID,
+    so the two cannot collide.
+    """
+    answer = await commands.dispatch(
+        PrepareOwnTransferCommand(
+            account_id=who.account_id,
+            to_account_id=request.to_account_id,
             amount_minor=request.amount_minor,
             currency=request.currency,
             idempotency_key=str(uuid.uuid4()),

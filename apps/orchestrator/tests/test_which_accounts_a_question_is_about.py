@@ -1,0 +1,141 @@
+"""Which of the holder's accounts a question covers.
+
+Until there were three accounts, the figures were the one the credential named — which was also
+every account the holder had, so the two were the same thing and nothing had to choose. They are
+not the same thing any more, and keeping the old default answers "¿cuánto gasté?" with the spending
+of one account out of three: a real figure about part of somebody's money, presented as all of it.
+
+The rule is the one the balance answer already uses, and that is the point of it — nothing new is
+being judged here. Name an account and the figures are that account's. Name none and they are all
+of them. The same closed vocabulary, and the model never sees the decision.
+"""
+
+import uuid
+from datetime import UTC, date, datetime
+
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    AskFinancialQuestionHandler,
+    AskFinancialQuestionQuery,
+)
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
+from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
+from finguard_orchestrator.domain.models.planning_result import PlanningResult
+from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+
+ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
+PIGGY = uuid.UUID("22222222-2222-2222-2222-222222222222")
+TODAY = date(2026, 8, 5)
+
+SPENDING = FinancialPlan(
+    direction=Direction.EXPENSE,
+    period=RelativePeriod(period=Period.THIS_MONTH),
+    group_by=GroupBy.NONE,
+    metric=Metric.SUM,
+)
+
+
+def summary(*holdings: Holding) -> AccountSummary:
+    return AccountSummary(
+        currency="EUR",
+        booked_minor=227_042,
+        available_minor=227_042,
+        as_of=datetime(2026, 8, 5, 9, 30, tzinfo=UTC),
+        holdings=holdings
+        or (
+            Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
+            Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550),
+        ),
+    )
+
+
+class Planner:
+    async def plan(self, *_: object, **__: object) -> PlanningResult:
+        return PlanningResult(outcome=PlanningOutcome.PLANNED, plan=SPENDING)
+
+
+class Ledger:
+    """Remembers the plan it was asked to run, which is where the scope shows up."""
+
+    def __init__(self) -> None:
+        self.plan: FinancialPlan | None = None
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plan = plan
+        return QueryAnswer(currency="EUR", total_minor=0, movement_count=0, groups=(), movements=())
+
+
+class Bank:
+    def __init__(self, of: AccountSummary) -> None:
+        self._summary = of
+
+    async def of(self, *_: object, **__: object) -> AccountSummary:
+        return self._summary
+
+
+async def ran(sentence: str, of: AccountSummary | None = None) -> FinancialPlan:
+    ledger = Ledger()
+    handler = AskFinancialQuestionHandler(
+        Planner(),  # type: ignore[arg-type]
+        ledger,  # type: ignore[arg-type]
+        accounts=Bank(of or summary()),  # type: ignore[arg-type]
+        contacts=None,  # type: ignore[arg-type]
+    )
+    await handler.handle(
+        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+    )
+    assert ledger.plan is not None
+    return ledger.plan
+
+
+async def test_a_question_naming_no_account_covers_all_of_them() -> None:
+    """The default, and the one that changed. "¿Cuánto gasté?" means everything somebody spent,
+    not what left one of their three accounts."""
+    plan = await ran("¿cuánto gasté este mes?")
+
+    assert plan.across_accounts is True
+    assert plan.only_account_id is None
+
+
+async def test_a_question_naming_an_account_is_about_that_account() -> None:
+    plan = await ran("¿cuánto gasté este mes en la hucha?")
+
+    assert plan.only_account_id == PIGGY
+    assert plan.across_accounts is False
+
+
+async def test_a_kind_the_holder_does_not_have_widens_rather_than_narrowing_to_nothing() -> None:
+    """Narrowing to an account that is not there would answer about nothing and look like an empty
+    month. The wider answer is the honest one: the word was not understood, and the figures say so
+    by covering everything."""
+    only_current = summary(Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042))
+
+    plan = await ran("¿cuánto gasté en la hucha?", only_current)
+
+    assert plan.across_accounts is True
+    assert plan.only_account_id is None
+
+
+async def test_two_accounts_of_one_kind_widen_rather_than_picking_one() -> None:
+    """A question, unlike an instruction, has a better answer than "which one?" — cover both. And
+    picking the first would answer about an account the sentence did not choose."""
+    two = summary(
+        Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
+        Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550),
+        Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00),
+    )
+
+    plan = await ran("¿cuánto gasté en la hucha?", two)
+
+    assert plan.across_accounts is True
+    assert plan.only_account_id is None
+
+
+async def test_the_scope_is_not_part_of_the_plan_that_is_remembered() -> None:
+    """Which accounts the figures came from is how the question was answered. The plan is what was
+    *asked*, and that is what gets described and carried into a follow-up — so the two are set
+    apart deliberately, and `SPENDING` here is the plan the planner produced, unscoped."""
+    plan = await ran("¿cuánto gasté este mes?")
+
+    assert plan.direction is SPENDING.direction
+    assert plan.period == SPENDING.period

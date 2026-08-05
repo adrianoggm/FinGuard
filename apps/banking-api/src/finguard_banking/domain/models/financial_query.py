@@ -58,6 +58,25 @@ class FinancialQuery:
     # is worth asking and is not a question about spending. The balance is unaffected either
     # way — the money did leave *this* account.
     include_internal: bool = False
+    # Every account this session can see, rather than the one named by `account_id`. The view
+    # decides which those are, so there is no list to pass and nothing here can widen past the
+    # holder — dropping the compiler's filter leaves the scope rule in exactly one place.
+    #
+    # Off by default, and that default is what keeps every existing question meaning what it meant.
+    across_accounts: bool = False
+    # Narrow to one account *within* what the session can already see. Never what gets declared:
+    # `declare()` resolves the holder from the account it is given, so declaring an account opens
+    # ITS holder scope — passing a stranger's here would open theirs, which is a leak and not a
+    # filter. `account_id` is the credential's and is what is declared; this only narrows.
+    #
+    # An account that is not the holder is therefore not refused, it is absent: the balance lookup
+    # finds no currency for it and the read answers 404, the same as an account that does not exist.
+    only_account_id: UUID | None = None
+
+    @property
+    def scoped_to(self) -> UUID:
+        """Which account the figures are about. Not which one gets declared."""
+        return self.only_account_id or self.account_id
 
     def __post_init__(self) -> None:
         if not 0 <= self.supporting_limit <= MAX_SUPPORTING_MOVEMENTS:

@@ -88,6 +88,12 @@ class GetMovementsQuery(Query[MovementsResult]):
     # tagged — hiding a 200 € transfer means the movements do not reconcile with the balance, and
     # somebody looking for where it went cannot find it. ADR-009 §2 left this open for a screen.
     include_internal: bool = False
+    # Which account the list is about. `None` is the credential's, which is what every caller got
+    # before there were several; `across` is all of them. Whether a named one is the holder's is
+    # not decided here — banking answers from the view that listed them, so an account that is not
+    # theirs returns nothing rather than being refused.
+    only_account_id: UUID | None = None
+    across_accounts: bool = False
 
 
 @dataclass(frozen=True)
@@ -122,9 +128,14 @@ class GetMovementsHandler:
             group_by=GroupBy.NONE,
             metric=Metric.SUM,
             include_internal=query.include_internal,
+            across_accounts=query.across_accounts,
+            only_account_id=query.only_account_id,
         )
         answer = await self._queries.run(
             plan,
+            # The credential's account, always. Which one the figures are *about* travels on the
+            # plan instead — sending it here would have banking declare it, and declaring somebody
+            # else's account opens their scope rather than filtering within yours.
             account_id=query.account_id,
             today=query.today,
             reporting_timezone=query.reporting_timezone,

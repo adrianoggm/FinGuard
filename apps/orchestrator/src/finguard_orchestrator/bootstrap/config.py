@@ -177,6 +177,7 @@ class Settings(BaseSettings):
         "HOUSING_RENT",
         "SALARY",
         "TRANSFER_BIZUM",
+        "INTEREST",
     )
 
     def callers(self) -> dict[str, Caller]:

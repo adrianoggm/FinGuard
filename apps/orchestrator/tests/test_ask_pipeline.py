@@ -12,6 +12,7 @@ sentence a person reads.
 """
 
 import uuid
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -414,7 +415,10 @@ async def test_retry_runs_the_same_validated_plan_without_calling_the_model_agai
     )
 
     assert planner.asked is None
-    assert ledger.plan == planned
+    # `across_accounts` because the sentence named no account, which is the default now that a
+    # holder has three of them. It is set for the run and not on the plan, so what was retried is
+    # the same question — the scope is how it was answered, not what was asked.
+    assert ledger.plan == replace(planned, across_accounts=True)
     assert retried.outcome == PlanningOutcome.PLANNED.value
     assert retried.conversation.retry_plan is None
     assert retried.conversation.last_plan == planned

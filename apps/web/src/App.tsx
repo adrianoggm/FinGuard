@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { configured, summary as fetchSummary, type Summary } from "./api";
 import { Accounts } from "./Accounts";
 import { Bizum } from "./Bizum";
+import { Transfer } from "./Transfer";
 import { Cards } from "./Cards";
 import { Conversation, EMPTY_THREAD, type Thread } from "./Conversation";
 import { Finances } from "./Finances";
@@ -86,8 +87,9 @@ export function App() {
               onAsk={() => setTalking(true)}
             />
           )}
-          {tabOf(where) === "cuentas" && (
-            <Accounts summary={summary} searching={where === "cuentas-buscar"} />
+          {where === "traspaso" && <Transfer summary={summary} onPaid={load} />}
+          {tabOf(where) === "cuentas" && where !== "traspaso" && (
+            <Accounts summary={summary} searching={where === "cuentas-buscar"} onGo={go} />
           )}
           {where === "tarjetas" && <Cards />}
           {where === "finanzas" && <Finances />}

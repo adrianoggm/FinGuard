@@ -16,18 +16,27 @@ tests go through the views, because that is what actually decides.
 """
 
 import uuid
+from datetime import date
 
 import asyncpg
 import pytest
 from support import as_pool, create_account, create_contact, record_movement
 
-from finguard_banking.domain.enums import AccountKind
+from finguard_banking.domain.enums import AccountKind, Direction
+from finguard_banking.domain.errors import AccountNotFoundError
+from finguard_banking.domain.models.financial_query import FinancialQuery
+from finguard_banking.domain.value_objects.date_range import DateRange
 from finguard_banking.infrastructure.persistence.account_repository import (
     PostgresAccountRepository,
 )
-from finguard_banking.infrastructure.persistence.financial_query_repository import declare
+from finguard_banking.infrastructure.persistence.financial_query_repository import (
+    PostgresFinancialQueryRepository,
+    declare,
+)
 
 pytestmark = pytest.mark.integration
+
+WHOLE_YEAR = DateRange(start=date(2026, 1, 1), end=date(2026, 12, 31))
 
 
 async def a_holder_with_two_accounts(
@@ -191,3 +200,80 @@ async def test_contacts_are_scoped_the_same_way(connection: asyncpg.Connection) 
         }
 
     assert names == {"Marta Solis Vega"}
+
+
+# --- narrowing to one account, which is not the same as declaring it ---------------------
+
+
+async def test_narrowing_to_the_holders_other_account_works(
+    connection: asyncpg.Connection,
+) -> None:
+    """The feature: a movement list about the piggy bank rather than the current account."""
+    current, piggy = await a_holder_with_two_accounts(connection)
+    queries = PostgresFinancialQueryRepository(as_pool(connection), "Europe/Madrid")
+
+    answer = await queries.run(
+        FinancialQuery(
+            account_id=current,
+            only_account_id=piggy,
+            date_range=WHOLE_YEAR,
+            direction=Direction.ALL,
+        )
+    )
+
+    assert answer.total.amount_minor == 30_00
+
+
+async def test_narrowing_to_a_stranger_finds_nothing_rather_than_their_money(
+    connection: asyncpg.Connection,
+) -> None:
+    """The one that matters, and the reason `only_account_id` exists at all.
+
+    The obvious implementation passes the requested account as `account_id`, and it reads perfectly:
+    the compiler narrows to it and the view still scopes. It is a leak. `declare()` resolves the
+    holder *from the account it is given*, so declaring a stranger's account opens their scope —
+    the filter and the scope become the same value, and asking for somebody else's account hands
+    over their movements with a 200.
+
+    Caught by asking for another holder's account over HTTP and getting 341 of their movements
+    back. This is that request, at the layer that decides.
+    """
+    current, _ = await a_holder_with_two_accounts(connection)
+    stranger = await create_account(connection)
+    bank = await create_account(connection)
+    await record_movement(connection, account=stranger, counterparty=bank, amount_minor=500_00)
+    queries = PostgresFinancialQueryRepository(as_pool(connection), "Europe/Madrid")
+
+    with pytest.raises(AccountNotFoundError):
+        await queries.run(
+            FinancialQuery(
+                account_id=current,
+                only_account_id=stranger,
+                date_range=WHOLE_YEAR,
+                direction=Direction.ALL,
+            )
+        )
+
+
+async def test_across_accounts_is_every_account_of_this_holder_and_no_more(
+    connection: asyncpg.Connection,
+) -> None:
+    """It drops the compiler's account filter and leaves the view's scope, so it cannot widen past
+    the holder — it can only stop narrowing."""
+    current, _ = await a_holder_with_two_accounts(connection)
+    stranger = await create_account(connection)
+    bank = await create_account(connection)
+    await record_movement(connection, account=stranger, counterparty=bank, amount_minor=500_00)
+    queries = PostgresFinancialQueryRepository(as_pool(connection), "Europe/Madrid")
+
+    answer = await queries.run(
+        FinancialQuery(
+            account_id=current,
+            across_accounts=True,
+            date_range=WHOLE_YEAR,
+            direction=Direction.ALL,
+        )
+    )
+
+    # 100 in the current account and 30 in the piggy bank. The stranger's 500 is not there.
+    assert answer.total.amount_minor == 130_00

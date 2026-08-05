@@ -28,6 +28,8 @@ from finguard_orchestrator.application import (
     PolicyStore,
     PrepareChosenPaymentCommand,
     PrepareChosenPaymentHandler,
+    PrepareOwnTransferCommand,
+    PrepareOwnTransferHandler,
     PreparePaymentCommand,
     PreparePaymentHandler,
     QueryBus,
@@ -223,6 +225,17 @@ def create_app() -> FastAPI:
     command_bus.register(
         PrepareChosenPaymentCommand,
         PrepareChosenPaymentHandler(
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
+    # Money between the holder's own accounts. Same gateway, same preview, same confirmation route
+    # — the only thing that differs is that there is nobody to resolve.
+    command_bus.register(
+        PrepareOwnTransferCommand,
+        PrepareOwnTransferHandler(
             HttpPayments(
                 base_url=settings.banking_base_url,
                 timeout_seconds=settings.banking_timeout_seconds,

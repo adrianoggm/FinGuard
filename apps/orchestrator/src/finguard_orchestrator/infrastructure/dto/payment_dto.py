@@ -7,6 +7,8 @@ There is no account in either body, and its absence is the point: the account co
 credential, so there is nowhere to say whose money you mean.
 """
 
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from finguard_orchestrator.domain.constants import MAX_PROMPT_LENGTH, MAX_RECIPIENT_NAME
@@ -82,6 +84,22 @@ class PaymentResponse(_Payload):
     balance_after_minor: int | None = None
     expires_at: str | None = None
     transaction_id: str | None = None
+
+
+class OwnTransferRequest(_Payload):
+    """Money into another of the holder's own accounts.
+
+    No recipient field, and that is the shape rather than an omission: there is nobody to name, so
+    a body that could name one would be a body that can describe a payment leaving the household
+    under a rail that says it does not.
+
+    The account is an identifier the caller was shown. Whether it is theirs is banking's to decide,
+    against the view that listed it — this service holds no rule about whose account is whose.
+    """
+
+    to_account_id: UUID
+    amount_minor: int = Field(gt=0)
+    currency: str = Field(pattern="^[A-Z]{3}$")
 
 
 class ChosenPaymentRequest(_Payload):

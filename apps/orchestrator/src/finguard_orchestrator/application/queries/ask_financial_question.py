@@ -18,7 +18,7 @@ from typing import Final
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.domain.enums import PlanningOutcome, Spoken
+from finguard_orchestrator.domain.enums import Direction, PlanningOutcome, Spoken
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
     InvalidValueError,
@@ -49,6 +49,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     explicit_facts,
     intent_router,
+    payment_words,
     plan_verifier,
     query_recovery,
     window_words,
@@ -372,6 +373,10 @@ class AskFinancialQuestionHandler:
             yield await self._contact_list(query, was)
             return
 
+        if intent is Intent.OWN_TRANSFER:
+            yield await self._own_transfer(query, was)
+            return
+
         if intent is Intent.ACCOUNT_BALANCE:
             # Not a plan and not a model. `FinancialPlan` expresses aggregations over movements —
             # window, direction, categories, merchants, grouping, SUM or COUNT — and a balance is
@@ -636,6 +641,73 @@ class AskFinancialQuestionHandler:
             total_minor=answer_writer.leading_figure(summary, named),
         )
 
+    async def _own_transfer(
+        self, query: AskFinancialQuestionQuery, was: Conversation
+    ) -> AskFinancialQuestionResult:
+        """Money into one of the holder's own accounts, asked for in words.
+
+        No model anywhere on this path. The account comes from a closed vocabulary and the amount
+        from a closed grammar — digits and a currency word — so what is left to decide is nothing.
+
+        It stops at a question rather than guessing, in both directions. An amount nobody said is
+        asked for; an account name matching two of the holder's accounts is asked about, and that
+        is the one thing `Slot.ACCOUNT` is for. It has had no emitter until now precisely because
+        every other ambiguity here is better answered with a breakdown than with a question — this
+        one cannot be, because moving money to the wrong account is not a sentence, it is an act.
+        """
+        try:
+            summary = await self._accounts.of(
+                query.account_id, today=query.today, reporting_timezone=query.reporting_timezone
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tus cuentas ahora mismo. Vuelve a intentarlo.",
+                conversation=was,
+            )
+
+        named = account_words.named_in(query.sentence)
+        wanted = [holding for holding in summary.holdings if holding.kind in named]
+        amount = payment_words.amount_in(query.sentence)
+
+        if not wanted:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.BALANCE.value,
+                text=answer_writer.no_such_account_to_move_to(summary),
+                conversation=was,
+            )
+        if len(wanted) > 1:
+            # Two accounts of one kind. The only place this service asks which — see the docstring.
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=answer_writer.which_account(wanted),
+                question=answer_writer.which_account(wanted),
+                conversation=was.with_active(
+                    FinancialClarification(
+                        # A draft with nothing read into it: the sentence was an instruction and
+                        # not a question, so there is no plan half-built behind this. The slot is
+                        # what the next turn answers, and the draft is the shape the state needs.
+                        draft=FinancialPlanDraft(direction=Direction.ALL),
+                        awaiting=Slot.ACCOUNT,
+                    )
+                ),
+            )
+        if amount is None:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=answer_writer.how_much_to_move(wanted[0]),
+                question=answer_writer.how_much_to_move(wanted[0]),
+                conversation=was,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.TRANSFER_READY.value,
+            text=answer_writer.ready_to_move(wanted[0], amount),
+            conversation=was,
+            currency=wanted[0].currency,
+            total_minor=amount,
+        )
+
     def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         """The plan a reply to "¿de qué periodo?" completes, or None if this is not that.
 
@@ -827,13 +899,58 @@ class AskFinancialQuestionHandler:
             conversation=query.conversation.answered(ranking),
         )
 
+    async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
+        """Which of the holder's accounts the question is about.
+
+        The same rule the balance answer already uses, applied to the ledger path: name an account
+        and the figures are that account's; name none and they are all of them. It is not a new
+        judgement — it reads the same closed vocabulary, and the model never sees this decision.
+
+        **Across accounts is the default, and that is a change of meaning worth stating.** Until
+        there were three accounts the figures were the one the credential named, which was also
+        every account the holder had. They are no longer the same thing, and keeping the old
+        default would answer "cuánto gasté" with the spending of one account out of three — a real
+        figure about part of somebody's money, presented as all of it.
+
+        Internal transfers stay excluded, so widening does not double anything: money moved into
+        the piggy bank is not income there any more than it was spending here.
+
+        The holder's accounts are only fetched when the sentence named one, which is the rare case.
+        Widening needs no list — banking drops its own filter and the view's scope is what remains.
+        """
+        named = account_words.named_in(query.sentence)
+        if not named:
+            return replace(plan, across_accounts=True)
+
+        try:
+            summary = await self._accounts.of(
+                query.account_id, today=query.today, reporting_timezone=query.reporting_timezone
+            )
+        except BankingUnavailableError:
+            # The account list is what narrowing needs, and without it the honest fallback is the
+            # wider answer rather than the declared account: one account out of three, labelled as
+            # though the word had been understood, is the failure this whole method exists to stop.
+            logger.warning("scope.accounts_unavailable account=%s", account_ref(query.account_id))
+            return replace(plan, across_accounts=True)
+
+        wanted = [holding for holding in summary.holdings if holding.kind in named]
+        if len(wanted) != 1:
+            # None of that kind, or more than one. Neither narrows to a single account, and
+            # inventing one would answer about an account the sentence did not choose.
+            return replace(plan, across_accounts=True)
+        return replace(plan, only_account_id=wanted[0].account_id)
+
     async def _answer(
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, widened: bool = False
     ) -> AskFinancialQuestionResult:
+        # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
+        # property of how the question was answered; the plan is what was *asked*, and that is what
+        # gets described to the user and remembered for a follow-up.
+        scoped = await self._scoped(plan, query)
         for attempt in range(BANK_READ_ATTEMPTS):
             try:
                 answer = await self._queries.run(
-                    plan,
+                    scoped,
                     account_id=query.account_id,
                     today=query.today,
                     reporting_timezone=query.reporting_timezone,

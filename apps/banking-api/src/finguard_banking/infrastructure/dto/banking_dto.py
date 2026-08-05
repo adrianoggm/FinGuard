@@ -88,6 +88,12 @@ class FinancialQueryRequest(_Body):
     # Money the holder moved between their own accounts. Absent means excluded, which is what
     # makes "¿cuánto gasté?" mean money that left rather than money that moved.
     include_internal: bool = False
+    # Every account this session can see rather than the one in `accountId`. It cannot widen past
+    # the holder: it drops the compiler's filter and leaves the view's, which is the scope rule.
+    across_accounts: bool = False
+    # Narrow to one account within what the session can already see. Never what gets declared —
+    # that is `accountId`, the credential's — because declaring an account opens its holder scope.
+    only_account_id: UUID | None = None
     supporting_limit: int = Field(
         default=DEFAULT_SUPPORTING_MOVEMENTS, ge=0, le=MAX_SUPPORTING_MOVEMENTS
     )

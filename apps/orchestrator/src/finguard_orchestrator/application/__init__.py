@@ -25,6 +25,8 @@ from finguard_orchestrator.application.commands.pay import (
     PaymentAnswer,
     PrepareChosenPaymentCommand,
     PrepareChosenPaymentHandler,
+    PrepareOwnTransferCommand,
+    PrepareOwnTransferHandler,
     PreparePaymentCommand,
     PreparePaymentHandler,
 )
@@ -113,6 +115,8 @@ __all__ = [
     "PaymentAnswer",
     "PrepareChosenPaymentCommand",
     "PrepareChosenPaymentHandler",
+    "PrepareOwnTransferCommand",
+    "PrepareOwnTransferHandler",
     "PreparePaymentCommand",
     "PreparePaymentHandler",
     "AnswerMessageHandler",
