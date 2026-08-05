@@ -1377,3 +1377,23 @@ summary {
   color: #7a5200;
   font-size: 0.78rem;
 }
+
+/* Where a category came from, when it is worth saying. Italic and quiet: it qualifies the label
+   beside it rather than competing with it. */
+.what small .source {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+/* Money that stayed between the holder's own accounts. It is not a purchase, and the amount on the
+   right looks exactly like one without this. */
+.tag-internal {
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.35rem;
+  background: var(--line);
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

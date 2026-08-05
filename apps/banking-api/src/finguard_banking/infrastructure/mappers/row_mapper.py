@@ -31,6 +31,19 @@ def to_group(row: Any, currency: str) -> QueryGroup:
     )
 
 
+def _optional(row: Any, column: str) -> Any:
+    """A column the row may not have.
+
+    asyncpg's Record raises on a missing key rather than returning None, and the three queries that
+    build a Movement do not select the same columns. Returning None here is right: a column that was
+    not asked for is not a fact about the movement.
+    """
+    try:
+        return row[column]
+    except KeyError:
+        return None
+
+
 def to_movement(row: Any, currency: str) -> Movement:
     return Movement(
         transaction_id=row["transaction_id"],
@@ -39,6 +52,10 @@ def to_movement(row: Any, currency: str) -> Movement:
         merchant_name=row["merchant_name"],
         category=row["category"],
         category_is_custom=bool(row["category_is_custom"]),
+        # `.get`-shaped, because the ranked query selects a narrower row than the movement list and
+        # a missing column there is not a movement without a category source.
+        category_source=_optional(row, "category_source") or "NONE",
+        is_internal=bool(_optional(row, "is_internal")),
         amount=Money(int(row["amount_minor"]), currency),
         direction=row["direction"],
     )

@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { accountName, money, spendable } from "./format";
+import { accountName, categorySource, money, spendable } from "./format";
 
 const CURRENT = { kind: "CURRENT", currency: "EUR", booked_minor: 227_042 };
 const PIGGY = { kind: "SAVINGS", currency: "EUR", booked_minor: 548_550 };
@@ -57,5 +57,22 @@ describe("accountName", () => {
 
     expect(unnamed).toBe("Ahorro");
     expect(unnamed).not.toContain("ES-");
+  });
+});
+
+describe("categorySource", () => {
+  it("names only the layers a person can act on", () => {
+    // Their own label, so an override visibly stuck; and unfiled, which is the only state worth
+    // offering to correct.
+    expect(categorySource("USER")).toBe("tuya");
+    expect(categorySource("NONE")).toBe("sin clasificar");
+  });
+
+  it("says nothing about the ordinary case", () => {
+    // A caption under every row is a caption people stop reading, and then it is not there when it
+    // matters. BANK and SYSTEM are what almost every movement is.
+    expect(categorySource("BANK")).toBeNull();
+    expect(categorySource("SYSTEM")).toBeNull();
+    expect(categorySource(undefined)).toBeNull();
   });
 });

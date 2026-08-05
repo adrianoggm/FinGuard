@@ -144,6 +144,8 @@ def _movement_to_dto(movement: SummaryMovement) -> MovementResponse:
         merchant_name=movement.merchant_name,
         category=movement.category,
         category_is_custom=movement.category_is_custom,
+        category_source=movement.category_source,
+        is_internal=movement.is_internal,
         amount_minor=movement.amount_minor,
         direction=movement.direction,
     )

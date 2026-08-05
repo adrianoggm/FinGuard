@@ -241,6 +241,8 @@ def movements_to_dto(result: MovementsResult) -> MovementsResponse:
                 category=movement.category,
                 transaction_id=movement.transaction_id,
                 category_is_custom=movement.category_is_custom,
+                category_source=movement.category_source,
+                is_internal=movement.is_internal,
             )
             for movement in result.movements
         ],

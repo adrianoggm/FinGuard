@@ -83,6 +83,11 @@ class FinancialPlan:
     merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    # Money the holder moved between their own accounts. Excluded by default, which is what makes
+    # "¿cuánto gasté?" mean money that left rather than money that moved (ADR-009 §2). Asked for
+    # explicitly by a list, where hiding a 200 € transfer means the movements do not reconcile with
+    # the balance and the person looking for it cannot find it.
+    include_internal: bool = False
     explain: bool = False
 
     def __post_init__(self) -> None:

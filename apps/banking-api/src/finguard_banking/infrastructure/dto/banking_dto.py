@@ -121,7 +121,11 @@ class MovementResponse(_Payload):
     merchant_name: str | None
     category: str | None
     # Whose opinion the category is. False means the bank's.
-    category_is_custom: bool = False
+    category_is_custom: bool
+    # Which layer decided the category — BANK, SYSTEM, USER or NONE — and whether the money stayed
+    # inside the household. Both are facts a screen needs to label a figure honestly.
+    category_source: str = "NONE"
+    is_internal: bool = False
     amount_minor: int
     direction: str
 

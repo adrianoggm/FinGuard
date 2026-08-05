@@ -11,7 +11,16 @@
 import { useEffect, useRef, useState } from "react";
 
 import { movements as fetchMovements, type Movements, type Summary } from "./api";
-import { accountGlyph, accountName, categoryName, day, glyph, money, signed } from "./format";
+import {
+  accountGlyph,
+  accountName,
+  categoryName,
+  categorySource,
+  day,
+  glyph,
+  money,
+  signed,
+} from "./format";
 
 /** The categories worth a chip. The ledger has more; these are the ones a phone can show. */
 const CHIPS = [
@@ -35,6 +44,7 @@ export function Accounts({ summary, searching }: Props) {
   const [days, setDays] = useState(90);
   const [category, setCategory] = useState<string | null>(null);
   const [term, setTerm] = useState("");
+  const [internal, setInternal] = useState(false);
   const [found, setFound] = useState<Movements | null>(null);
   const [error, setError] = useState<string | null>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -54,6 +64,7 @@ export function Accounts({ summary, searching }: Props) {
           limit: 50,
           category: category ?? undefined,
           merchant: term.trim() || undefined,
+          includeInternal: internal,
         });
         if (current) {
           setFound(answer);
@@ -67,7 +78,7 @@ export function Accounts({ summary, searching }: Props) {
       current = false;
       clearTimeout(timer);
     };
-  }, [days, category, term]);
+  }, [days, category, term, internal]);
 
   const shown = found?.movements ?? [];
 
@@ -135,6 +146,15 @@ export function Accounts({ summary, searching }: Props) {
             {label}
           </button>
         ))}
+        {/*
+          ADR-009 left open whether internal movements are hidden from the list or merely excluded
+          from totals. With a screen in front of it: excluded by default, because the tally is a net
+          and a transfer nets to nothing — and available, because a list that hides a 200 € transfer
+          does not reconcile with the balance, and the person hunting for it has nowhere to look.
+        */}
+        <button className={internal ? "chip on" : "chip"} onClick={() => setInternal(!internal)}>
+          Traspasos
+        </button>
         {CHIPS.map((key) => (
           <button
             key={key}
@@ -152,6 +172,9 @@ export function Accounts({ summary, searching }: Props) {
               beside a movement count it reads as "you spent this", which for a window containing a
               salary is wrong by the size of the salary. */}
           {found.movement_count} movimientos · neto {money(found.total_minor, found.currency)}
+          {/* Said, not implied. With transfers in, the net counts money that never left the
+              household, and a figure whose scope is unstated is one somebody will misread. */}
+          {internal && " (traspasos incluidos)"}
         </p>
       )}
 
@@ -168,8 +191,17 @@ export function Accounts({ summary, searching }: Props) {
                 <strong>{movement.merchant_name ?? movement.description}</strong>
                 <small>
                   {day(movement.occurred_at)} · {categoryName(movement.category)}
+                  {/* Only where it changes what somebody would do: their own label, or none yet.
+                      A caption on every row is a caption nobody reads. */}
+                  {categorySource(movement.category_source) && (
+                    <em className="source"> · {categorySource(movement.category_source)}</em>
+                  )}
                 </small>
               </span>
+              {/* Money between the holder's own accounts. Banking already keeps it out of the
+                  totals; the row still has to say so, or a 200 € line to the piggy bank reads as
+                  200 € spent. */}
+              {movement.is_internal && <span className="tag-internal">traspaso</span>}
               <span className={movement.amount_minor < 0 ? "out" : "in"}>
                 {signed(movement.amount_minor, found?.currency ?? "EUR")}
               </span>

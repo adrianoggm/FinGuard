@@ -98,6 +98,20 @@ export function ibanGroups(iban: string): string {
   return iban.replace(/(.{4})/g, "$1 ").trim();
 }
 
+/**
+ * Where a movement's category came from, in one short word, or null when saying nothing is right.
+ *
+ * Only the two layers a person can act on get a label. "USER" means they filed it themselves and
+ * seeing that is what makes the override feel kept; "NONE" means nobody has, which is the only
+ * state that is worth offering to correct. "BANK" and "SYSTEM" are the ordinary case, and a caption
+ * under every row would be noise that teaches people to stop reading captions.
+ */
+export function categorySource(source: string | undefined): string | null {
+  if (source === "USER") return "tuya";
+  if (source === "NONE") return "sin clasificar";
+  return null;
+}
+
 const DAY = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" });
 
 export function day(iso: string): string {

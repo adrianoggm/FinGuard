@@ -162,6 +162,8 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
             t.merchant_name,
             t.category,
             t.category_is_custom,
+            t.category_source,
+            t.is_internal,
             {_amount_expression(query.direction)} AS amount_minor,
             t.direction
         FROM {VIEW} t
@@ -200,6 +202,8 @@ def compile_ranked(query: FinancialQuery, reporting_timezone: str, *, rank: int)
             t.merchant_name,
             t.category,
             t.category_is_custom,
+            t.category_source,
+            t.is_internal,
             {_amount_expression(query.direction)} AS amount_minor,
             t.direction
         FROM {VIEW} t

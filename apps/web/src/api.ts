@@ -36,6 +36,18 @@ export type Movement = {
   transaction_id?: string | null;
   /** Whether the category is the holder's own rather than the bank's guess. */
   category_is_custom?: boolean;
+  /**
+   * Which of the four layers decided the category: "BANK" (what the statement said), "SYSTEM"
+   * (what FinGuard inferred), "USER" (the holder's override) or "NONE" (nobody has). NONE is not a
+   * gap to fill with a guess — it is the only state a person can be asked to correct.
+   */
+  category_source?: string;
+  /**
+   * Money that stayed between the holder's own accounts. Banking already leaves these out of
+   * totals; a list still has to say so, because 200 € to the piggy bank drawn like a purchase is
+   * spending that never happened (ADR-009 §2).
+   */
+  is_internal?: boolean;
 };
 
 /**
@@ -351,12 +363,16 @@ export async function movements(options: {
   limit?: number;
   category?: string;
   merchant?: string;
+  /** Money moved between the holder's own accounts. Off by default: the tally is a net, and a
+      transfer nets to nothing across the household. */
+  includeInternal?: boolean;
 }): Promise<Movements> {
   const query = new URLSearchParams();
   query.set("days", String(options.days ?? 90));
   query.set("limit", String(options.limit ?? 50));
   if (options.category) query.set("category", options.category);
   if (options.merchant) query.set("merchant", options.merchant);
+  if (options.includeInternal) query.set("include_internal", "true");
   return read<Movements>(`/v1/account/movements?${query}`);
 }
 
