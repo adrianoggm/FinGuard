@@ -65,6 +65,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_command_bus,
     get_query_bus,
     reporting_today,
+    turn_interpreter,
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import (
@@ -80,6 +81,7 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
@@ -90,14 +92,13 @@ from finguard_orchestrator.domain.services import (
     payment_words,
     spanish,
 )
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
-from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
-from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 ACCOUNT = uuid.UUID("08aba04f-2b30-4639-88a6-eac741153ce0")
 PIGGY = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -576,6 +577,14 @@ class Agreement:
     # Which intent was expected and which was read, counted. The pairs are what a migration is
     # steered by: "it calls a balance a query" is actionable and "92 %" is not.
     confusions: dict[tuple[str, str], int] = field(default_factory=dict)
+    # A few of the sentences behind each pair. A count says a disagreement exists; the sentence is
+    # what says whose fault it is — five models reading one transfer as a payment is a prompt to
+    # fix, and the same count spread over five different sentences is a model to reject.
+    #
+    # These are ours. The corpus is written in this repository and read from it, so printing one is
+    # printing a fixture — it is not the rule about a person's typing reaching a log, which is why
+    # the shadow in production counts and this names.
+    examples: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
     @property
     def rate(self) -> float:
@@ -584,16 +593,63 @@ class Agreement:
     def worst(self, limit: int = 8) -> list[tuple[tuple[str, str], int]]:
         return sorted(self.confusions.items(), key=lambda pair: -pair[1])[:limit]
 
+    def saw(self, expected: str, read: str, sentence: str, *, keep: int = 4) -> None:
+        key = (expected, read)
+        self.confusions[key] = self.confusions.get(key, 0) + 1
+        seen = self.examples.setdefault(key, [])
+        # Capped, because a full run is 879 turns and a report nobody reads to the end is a report.
+        # The first few are enough to tell one bad rule from a scattering of bad guesses.
+        if len(seen) < keep and sentence not in seen:
+            seen.append(sentence)
+
+
+class _Scored:
+    """Both interpreters, in the seat the service asks. Answers with the reference.
+
+    Installed as the deployment's interpreter, so the *route* decides when a reading is needed and
+    this only records what happened. That is the whole point of doing it this way rather than
+    walking the sentences: a payment under way answers "sí", "20 euros" and "era para Javi Nuñez"
+    without classifying them at all, and scoring those turns measured a model on questions the
+    service never asks it.
+
+    It cost 47 of 49 "invented payments" in the first full run — the model noticing, correctly,
+    that a sentence in the middle of a Bizum is about the Bizum, counted as it volunteering to move
+    money. A measurement that makes a model look reckless for being right is worse than no
+    measurement.
+
+    The reference is what it returns, so the conversation evolves exactly as it does in production
+    and the state each turn is scored against is the real one.
+    """
+
+    def __init__(self, reference: Any, candidate: Any, report: Agreement) -> None:
+        self._reference = reference
+        self._candidate = candidate
+        self._report = report
+
+    async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
+        expected = await self._reference.interpret(sentence, conversation=conversation)
+        read = await self._candidate.interpret(sentence, conversation=conversation)
+        self._report.turns += 1
+        if read is expected:
+            self._report.agreed += 1
+        else:
+            self._report.saw(expected.value, read.value, sentence)
+        return expected  # type: ignore[no-any-return]
+
 
 async def compare(
     episodes: list[Episode], candidate: object, authority: object | None = None
 ) -> Agreement:
-    """Walk every turn of every episode and score `candidate` against `authority`.
+    """Replay every episode through the service and score `candidate` against `authority`.
 
-    The conversation is rebuilt by *replaying* each episode through the service, because the state
-    is half of what decides a turn: scoring an interpreter on the sentences alone would be scoring
-    it on a question nobody can answer. That makes this slower than reading a file, and it is the
-    only version of it that measures the right thing.
+    The conversation is rebuilt by replaying rather than read from the file, because the state is
+    half of what decides a turn: scoring an interpreter on the sentences alone would be scoring it
+    on a question nobody can answer. That makes this slower than reading a file, and it is the only
+    version of it that measures the right thing.
+
+    `report.turns` is therefore the turns that were *classified*, not the turns in the corpus. The
+    gap between the two is not loss — it is the part of the conversation the deterministic state
+    machine owns, which no interpreter is consulted about and none can get wrong.
     """
     from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 
@@ -601,20 +657,9 @@ async def compare(
     report = Agreement()
     for episode in episodes:
         stack = a_stack()
+        app.dependency_overrides[turn_interpreter] = lambda: _Scored(reference, candidate, report)
         conversation: dict[str, Any] | None = None
         for turn in episode.turns:
-            was = conversation_mapper.to_domain(
-                ConversationPayload.model_validate(conversation) if conversation else None
-            )
-            expected = await reference.interpret(turn.say, conversation=was)  # type: ignore[attr-defined]
-            read = await candidate.interpret(turn.say, conversation=was)  # type: ignore[attr-defined]
-            report.turns += 1
-            if read is expected:
-                report.agreed += 1
-            else:
-                key = (expected.value, read.value)
-                report.confusions[key] = report.confusions.get(key, 0) + 1
-
             answered = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}
             )
