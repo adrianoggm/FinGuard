@@ -34,6 +34,8 @@ class SummaryMovement:
     # Whose opinion the category is. Last, with a default, because a dataclass will not take a
     # defaulted field before a required one.
     category_is_custom: bool = False
+    category_source: str = "NONE"
+    is_internal: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,8 @@ def _to_result(result: FinancialQueryResult) -> MovementSummaryResult:
                 merchant_name=movement.merchant_name,
                 category=movement.category,
                 category_is_custom=movement.category_is_custom,
+                category_source=movement.category_source,
+                is_internal=movement.is_internal,
                 amount_minor=movement.amount.amount_minor,
                 direction=movement.direction,
             )

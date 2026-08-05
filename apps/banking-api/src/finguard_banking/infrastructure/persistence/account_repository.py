@@ -29,12 +29,17 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
 # An inner join is safe: that view is built from `my_accounts_v1` with a LEFT JOIN onto the
 # movements, so an account with nothing in it is a row with zero rather than a missing row.
 #
-# Ordered by kind and then name, so a screen and a sentence list them the same way.
+# Ordered so a screen and a sentence list them the same way, and spelled out rather than left to
+# `ORDER BY kind`: alphabetically that is ASSET, CURRENT, SAVINGS, which puts the investment first.
+# Nobody thinks about their money starting from what they cannot spend, and the assistant's own
+# sentence already says the current account first — the two disagreeing is a small thing that reads
+# as a bug in whichever one you are looking at.
 _LIST_SQL = """
     SELECT a.account_id, a.kind, a.display_name, a.status, b.currency, b.booked_minor
     FROM assistant_read.my_accounts_v1 a
     JOIN assistant_read.account_balances_v1 b ON b.account_id = a.account_id
-    ORDER BY a.kind, a.display_name NULLS LAST
+    ORDER BY CASE a.kind WHEN 'CURRENT' THEN 0 WHEN 'SAVINGS' THEN 1 ELSE 2 END,
+             a.display_name NULLS LAST
 """
 
 

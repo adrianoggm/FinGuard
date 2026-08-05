@@ -25,7 +25,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ask, type Answer, type ConversationState } from "./api";
-import { money, outgoing, signed, day } from "./format";
+import { day, ibanGroups, money, outgoing, signed } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
@@ -290,6 +290,61 @@ function Suggestions({ onPick }: { onPick: (text: string) => void }) {
   );
 }
 
+/**
+ * What the payment state looks like on screen, for the two states that were invisible.
+ *
+ * **A confirmation.** The sentence says the amount and the name, and until now that was all a
+ * person had. A Bizum and a transfer drew the identical prompt, so the one thing that distinguishes
+ * what is about to happen — twenty-four characters of account number — was nowhere on the screen
+ * somebody taps "Sí" on. §4.1 asks for an explicit confirmation of a *specific* operation; a
+ * confirmation of an operation you cannot fully see is a formality.
+ *
+ * **A payment paused by a change of subject.** The service keeps it and says so in words once, and
+ * a sentence scrolls away. Follow-up 9 of the phase-4 review: without a visible marker, "sigue con
+ * el bizum" is something the user has to know to say, about a state they have no way to see.
+ */
+export function PaymentPanel({ state }: { state: ConversationState | null | undefined }) {
+  if (!state) return null;
+
+  if (state.workflow === "PAYMENT_CONFIRMATION" && state.amount_minor !== null) {
+    const transfer = state.rail === "TRANSFER";
+    return (
+      <dl className="preview-detail">
+        <dt>{transfer ? "Transferencia a" : "Bizum a"}</dt>
+        <dd>{state.recipient ?? "—"}</dd>
+        {transfer && state.recipient_iban && (
+          <>
+            <dt>A la cuenta</dt>
+            {/* Unmasked and grouped. Recognising the number is the whole job of this step. */}
+            <dd className="iban">{ibanGroups(state.recipient_iban)}</dd>
+          </>
+        )}
+        {state.concept && (
+          <>
+            <dt>Concepto</dt>
+            <dd>{state.concept}</dd>
+          </>
+        )}
+        <dt>Importe</dt>
+        <dd className="preview-amount">{money(state.amount_minor, state.currency ?? "EUR")}</dd>
+      </dl>
+    );
+  }
+
+  if (state.workflow === "PAYMENT_IN_PROGRESS" && state.suspended) {
+    const draft = state.payment;
+    const missing = draft?.amount_minor === null ? "falta el importe" : "falta el destinatario";
+    return (
+      <p className="paused" role="status">
+        <span aria-hidden="true">⏸</span> Bizum pausado
+        {draft?.recipient_name ? ` · ${draft.recipient_name}` : ""} · {missing}
+      </p>
+    );
+  }
+
+  return null;
+}
+
 function Bubble({ turn }: { turn: Turn }) {
   if (turn.who === "user") return <p className="bubble mine">{turn.text}</p>;
   if (turn.who === "error") return <p className="bubble failed">{turn.text}</p>;
@@ -298,6 +353,7 @@ function Bubble({ turn }: { turn: Turn }) {
   return (
     <div className={answer.outcome === AWAITING ? "bubble theirs preview" : "bubble theirs"}>
       <p>{answer.text}</p>
+      <PaymentPanel state={answer.conversation} />
       {answer.plan && (
         <details>
           <summary>Ver la consulta</summary>

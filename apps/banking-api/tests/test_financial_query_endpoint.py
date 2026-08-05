@@ -101,6 +101,11 @@ def test_it_answers_with_the_contract_names() -> None:
                 # False here because this fake movement carries no override. The flag is on the
                 # contract so a screen can say whose opinion the category is.
                 "categoryIsCustom": False,
+                # Which of the four layers decided it, and whether the money left the household.
+                # NONE and false on a fake that sets neither — and the defaults are what an older
+                # caller sees, which is the same answer it saw before these existed.
+                "categorySource": "NONE",
+                "isInternal": False,
                 "amountMinor": 3_420,
                 "direction": "EXPENSE",
             }

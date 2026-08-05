@@ -45,6 +45,73 @@ export function signed(amountMinor: number, currency = "EUR"): string {
   return `${sign}${money(amountMinor, currency)}`;
 }
 
+/** What to call an account the holder never named. Never the reference: nobody recognises "ES-0001-2". */
+const KIND_NAMES: Record<string, string> = {
+  CURRENT: "Cuenta corriente",
+  SAVINGS: "Ahorro",
+  ASSET: "Inversión",
+};
+
+export function accountName(holding: { kind: string; display_name: string | null }): string {
+  return holding.display_name ?? KIND_NAMES[holding.kind] ?? "Cuenta";
+}
+
+const KIND_GLYPHS: Record<string, string> = { CURRENT: "💳", SAVINGS: "🐷", ASSET: "📈" };
+
+export function accountGlyph(kind: string): string {
+  return KIND_GLYPHS[kind] ?? "🏦";
+}
+
+/**
+ * What the holder can actually spend, and what it deliberately leaves out.
+ *
+ * An `ASSET` balance is its cost basis — what was paid — because there is no price source. Adding
+ * it into a figure labelled "tu dinero" reports a purchase price as money somebody has, which is
+ * the same answer the assistant refuses to give in words. The two have to agree.
+ *
+ * `null` when the accounts are in different currencies, because then there is no total: adding
+ * minor units across currencies gives a valid integer that means nothing. A caller renders the
+ * per-account list instead.
+ */
+export function spendable(
+  holdings: { kind: string; currency: string; booked_minor: number }[],
+): { minor: number; currency: string } | null {
+  const counted = holdings.filter((holding) => holding.kind !== "ASSET");
+  const first = counted[0];
+  if (first === undefined) return null;
+  if (new Set(counted.map((holding) => holding.currency)).size > 1) return null;
+  return {
+    minor: counted.reduce((total, holding) => total + holding.booked_minor, 0),
+    currency: first.currency,
+  };
+}
+
+/**
+ * An account number in groups of four, which is how it is printed and how it is read aloud.
+ *
+ * Whole and unmasked, deliberately. Approving a transfer means recognising twenty-four characters
+ * as the ones you meant, and "····1332" is not something anybody can check against a note — a
+ * masked destination turns the confirmation step into a formality, which is the one thing it must
+ * not become.
+ */
+export function ibanGroups(iban: string): string {
+  return iban.replace(/(.{4})/g, "$1 ").trim();
+}
+
+/**
+ * Where a movement's category came from, in one short word, or null when saying nothing is right.
+ *
+ * Only the two layers a person can act on get a label. "USER" means they filed it themselves and
+ * seeing that is what makes the override feel kept; "NONE" means nobody has, which is the only
+ * state that is worth offering to correct. "BANK" and "SYSTEM" are the ordinary case, and a caption
+ * under every row would be noise that teaches people to stop reading captions.
+ */
+export function categorySource(source: string | undefined): string | null {
+  if (source === "USER") return "tuya";
+  if (source === "NONE") return "sin clasificar";
+  return null;
+}
+
 const DAY = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" });
 
 export function day(iso: string): string {

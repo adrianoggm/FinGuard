@@ -193,6 +193,7 @@ def to_body(
         "categories": list(plan.categories),
         "merchants": list(plan.merchants),
         "supportingLimit": supporting_movements,
+        "includeInternal": plan.include_internal,
     }
 
     if plan.period is not None:
@@ -273,6 +274,8 @@ def movement_from_body(movement: Any, *, currency: str | None = None) -> Movemen
         merchant_name=movement.get("merchantName"),
         transaction_id=movement.get("transactionId"),
         category_is_custom=bool(movement.get("categoryIsCustom", False)),
+        category_source=str(movement.get("categorySource") or "NONE"),
+        is_internal=bool(movement.get("isInternal", False)),
         category=movement.get("category"),
         currency=currency,
     )

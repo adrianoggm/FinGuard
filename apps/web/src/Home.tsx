@@ -19,7 +19,17 @@ import {
   type Breakdown,
   type Summary,
 } from "./api";
-import { categoryName, day, glyph, money, monthName, signed } from "./format";
+import {
+  accountGlyph,
+  accountName,
+  categoryName,
+  day,
+  glyph,
+  money,
+  monthName,
+  signed,
+  spendable,
+} from "./format";
 import type { Tab } from "./tabs";
 
 type Props = {
@@ -50,6 +60,21 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
       }
     })();
   }, [summary]);
+
+  // Across the accounts rather than the declared one. Null when their currencies differ, which is
+  // when there is no total to show — see `spendable`.
+  const holdings = summary?.holdings ?? [];
+  const total = spendable(holdings);
+  const investments = holdings.filter((holding) => holding.kind === "ASSET");
+  const firstInvestment = investments[0];
+  const invested =
+    firstInvestment !== undefined &&
+    new Set(investments.map((holding) => holding.currency)).size === 1
+      ? {
+          minor: investments.reduce((sum, holding) => sum + holding.booked_minor, 0),
+          currency: firstInvestment.currency,
+        }
+      : null;
 
   const bars = months?.groups.slice(-6) ?? [];
   const biggest = Math.max(1, ...bars.map((group) => group.total_minor));
@@ -93,13 +118,26 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
         <div>
           <p className="figure-label">Tu dinero</p>
           <p className="figure">
+            {/*
+              Across the holder's accounts, and deliberately without the investments: an ASSET
+              balance is what was paid and not what it is worth. The assistant says exactly this in
+              words — "es lo que invertiste y no lo que vale hoy" — and a screen that quietly added
+              it in would contradict the sentence beside it.
+
+              `total` is null when the accounts are in different currencies, because then there is
+              no total. Falling back to the declared account's balance is right there: it is a real
+              figure that is honestly labelled by the account list underneath.
+            */}
             {summary ? (
-              money(summary.booked_minor, summary.currency)
+              money(total?.minor ?? summary.booked_minor, total?.currency ?? summary.currency)
             ) : (
               // Never a zero while we are still asking: 0,00 € is a statement about somebody's money.
               <span className="figure-missing">{error ?? "···"}</span>
             )}
           </p>
+          {invested && (
+            <p className="figure-aside">+ {money(invested.minor, invested.currency)} invertidos</p>
+          )}
         </div>
         <div>
           <p className="figure-label">Gastos del mes</p>
@@ -162,15 +200,44 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
 
       <section aria-label="Cuentas">
         <h2 className="section-head">Cuentas</h2>
-        <button className="account-row" onClick={() => onGo("cuentas")}>
-          <span className="account-who">
-            <strong>Cuenta corriente</strong>
-            <small>ES-0001</small>
-          </span>
-          <span className="account-figure">
-            {summary ? money(summary.booked_minor, summary.currency) : "···"}
-          </span>
-        </button>
+        {/*
+          One row per account the holder has. This was a single hardcoded row reading "Cuenta
+          corriente · ES-0001", which was accurate while there was one account and became a lie the
+          moment there were three — and the kind of lie nobody notices, because the figure beside
+          it was real.
+        */}
+        {holdings.length > 0
+          ? holdings.map((holding) => (
+              <button
+                className="account-row"
+                key={holding.account_id}
+                onClick={() => onGo("cuentas")}
+              >
+                <span className="account-glyph" aria-hidden="true">
+                  {accountGlyph(holding.kind)}
+                </span>
+                <span className="account-who">
+                  <strong>{accountName(holding)}</strong>
+                  {/* Only where it changes what the figure means. A caption under every row would
+                      be decoration; under this one it is the difference between what somebody paid
+                      and what they have. */}
+                  {holding.kind === "ASSET" && <small>lo invertido, no lo que vale hoy</small>}
+                </span>
+                <span className="account-figure">
+                  {money(holding.booked_minor, holding.currency)}
+                </span>
+              </button>
+            ))
+          : summary && (
+              <button className="account-row" onClick={() => onGo("cuentas")}>
+                <span className="account-who">
+                  <strong>Cuenta corriente</strong>
+                </span>
+                <span className="account-figure">
+                  {money(summary.booked_minor, summary.currency)}
+                </span>
+              </button>
+            )}
       </section>
 
       <section className="movements" aria-label="Últimos movimientos">

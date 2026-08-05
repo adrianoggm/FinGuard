@@ -603,6 +603,7 @@ async def account_movements(
     days: Annotated[int, Query(ge=1, le=MAX_DAYS)] = 90,
     limit: Annotated[int, Query(ge=1, le=MAX_MOVEMENTS)] = 50,
     category: Annotated[str | None, Query(max_length=40)] = None,
+    include_internal: Annotated[bool, Query()] = False,
     merchant: Annotated[str | None, Query(max_length=140)] = None,
 ) -> MovementsResponse:
     """What the movements screen and its search field read.
@@ -620,6 +621,7 @@ async def account_movements(
             limit=limit,
             category=category,
             merchant=merchant,
+            include_internal=include_internal,
         )
     )
     return llm_mapper.movements_to_dto(result)

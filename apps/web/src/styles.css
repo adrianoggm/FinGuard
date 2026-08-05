@@ -352,6 +352,73 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Two or more account rows in a row need air between them; one did not. */
+.account-row + .account-row {
+  margin-top: 0.5rem;
+}
+
+.account-glyph {
+  margin-right: 0.7rem;
+  font-size: 1.2rem;
+}
+
+/* The row is a flex with the figure pushed right, so the name has to take the slack — otherwise
+   the glyph and the name sit apart with the gap between them. */
+.account-row .account-who {
+  flex: 1;
+}
+
+/* What is invested, under what can be spent. Quieter than the balance on purpose: it is a real
+   figure and it is not money anybody can spend today. */
+.figure-aside {
+  margin: 0.15rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the holder's accounts, on the accounts screen ------------------------------- */
+
+.holdings {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.holding {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.holding-glyph {
+  font-size: 1.35rem;
+}
+
+.holding-what {
+  display: grid;
+  flex: 1;
+}
+
+.holding-what strong {
+  font-size: 0.95rem;
+}
+
+/* The caveat on an investment. Small, and never absent: the figure is a cost basis, and the
+   assistant says so in words — a screen that showed it bare would contradict the sentence. */
+.holding-what small {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+}
+
+.holding-balance {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- the account card, on the accounts screen ----------------------------------- */
 
 .account {
@@ -1259,4 +1326,74 @@ summary {
   background: var(--surface-2, rgba(0, 0, 0, 0.05));
   padding: 0.1rem 0.35rem;
   border-radius: 0.35rem;
+}
+
+/* --- what a payment is about to do ------------------------------------------------ */
+
+/* The preview's fields, under the sentence. A Bizum and a transfer used to draw the identical
+   prompt, so what distinguishes them was on no screen anybody approves anything from. */
+.preview-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+}
+
+.preview-detail dt {
+  color: var(--ink-soft);
+}
+
+.preview-detail dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 550;
+}
+
+/* Whole, grouped and monospaced. Recognising twenty-four characters is the job of this step, and
+   proportional digits make two account numbers look alike. */
+.preview-detail dd.iban {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
+.preview-detail dd.preview-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A payment the user walked away from. The service remembers it; until now the screen did not,
+   so resuming was something you had to know was possible. */
+.paused {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  background: rgba(180, 120, 0, 0.12);
+  color: #7a5200;
+  font-size: 0.78rem;
+}
+
+/* Where a category came from, when it is worth saying. Italic and quiet: it qualifies the label
+   beside it rather than competing with it. */
+.what small .source {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+/* Money that stayed between the holder's own accounts. It is not a purchase, and the amount on the
+   right looks exactly like one without this. */
+.tag-internal {
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.35rem;
+  background: var(--line);
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }

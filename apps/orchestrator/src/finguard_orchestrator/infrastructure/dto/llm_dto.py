@@ -371,6 +371,11 @@ class SummaryMovementResponse(_Payload):
     # needs the ledger's identifier to do it and the flag to say whose category it is showing.
     transaction_id: str | None = None
     category_is_custom: bool = False
+    # Which layer decided the category — BANK, SYSTEM, USER, NONE — and whether the money stayed
+    # between the holder's own accounts. A movement list needs both to label a row honestly: a
+    # transfer to the piggy bank drawn like a purchase is spending that never happened.
+    category_source: str = "NONE"
+    is_internal: bool = False
 
 
 class AccountSummaryResponse(_Payload):

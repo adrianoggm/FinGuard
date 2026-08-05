@@ -31,6 +31,11 @@ class Movement:
     transaction_id: str | None = None
     # Whether the category is the holder's own rather than the bank's guess.
     category_is_custom: bool = False
+    # Which of the four layers decided the category: BANK, SYSTEM, USER or NONE.
+    category_source: str = "NONE"
+    # Money that stayed between the holder's own accounts. Excluded from totals by banking; carried
+    # here so a list can say why a 200 € line is not a purchase.
+    is_internal: bool = False
     # What the amount is denominated in, filled only when the movement *is* the answer — a ranking.
     # Supporting movements leave it None because their answer already carries the account's
     # currency once, and repeating it per row would be two places for it to disagree.

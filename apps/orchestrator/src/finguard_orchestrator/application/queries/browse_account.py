@@ -40,6 +40,8 @@ class BrowsedMovement:
     # screen that can refile a movement, so it is the one that needs both.
     transaction_id: str | None = None
     category_is_custom: bool = False
+    category_source: str = "NONE"
+    is_internal: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,11 @@ class GetMovementsQuery(Query[MovementsResult]):
     reporting_timezone: str = "Europe/Madrid"
     category: str | None = None
     merchant: str | None = None
+    # Money the holder moved between their own accounts. Off by default, because the tally beside
+    # the list is a net and a transfer nets to nothing across the household. On, the list shows them
+    # tagged — hiding a 200 € transfer means the movements do not reconcile with the balance, and
+    # somebody looking for where it went cannot find it. ADR-009 §2 left this open for a screen.
+    include_internal: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,6 +121,7 @@ class GetMovementsHandler:
             merchants=(query.merchant,) if query.merchant else (),
             group_by=GroupBy.NONE,
             metric=Metric.SUM,
+            include_internal=query.include_internal,
         )
         answer = await self._queries.run(
             plan,
@@ -137,6 +145,8 @@ class GetMovementsHandler:
                     category=movement.category,
                     transaction_id=movement.transaction_id,
                     category_is_custom=movement.category_is_custom,
+                    category_source=movement.category_source,
+                    is_internal=movement.is_internal,
                 )
                 for movement in answer.movements
             ],

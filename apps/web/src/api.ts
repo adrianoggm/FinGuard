@@ -36,14 +36,50 @@ export type Movement = {
   transaction_id?: string | null;
   /** Whether the category is the holder's own rather than the bank's guess. */
   category_is_custom?: boolean;
+  /**
+   * Which of the four layers decided the category: "BANK" (what the statement said), "SYSTEM"
+   * (what FinGuard inferred), "USER" (the holder's override) or "NONE" (nobody has). NONE is not a
+   * gap to fill with a guess — it is the only state a person can be asked to correct.
+   */
+  category_source?: string;
+  /**
+   * Money that stayed between the holder's own accounts. Banking already leaves these out of
+   * totals; a list still has to say so, because 200 € to the piggy bank drawn like a purchase is
+   * spending that never happened (ADR-009 §2).
+   */
+  is_internal?: boolean;
+};
+
+/**
+ * One of the holder's accounts.
+ *
+ * `kind` has to be read before anything is added up. On an `ASSET` the balance is what was paid,
+ * not what it is worth — there is no price source — so a total across all three without saying so
+ * reports a purchase price as somebody's money.
+ *
+ * `display_name` is null when the holder never named the account. Fall back to the kind, never to
+ * the reference: "ES-0001-2" is not something anybody recognises as theirs.
+ */
+export type Holding = {
+  account_id: string;
+  kind: "CURRENT" | "SAVINGS" | "ASSET";
+  display_name: string | null;
+  currency: string;
+  booked_minor: number;
 };
 
 export type Summary = {
+  /**
+   * Of the account the credential names, not of the holder. `holdings` is all of them, so the sum
+   * of those is a different number — see `spendable` in format.ts for the one this app shows.
+   */
   currency: string;
   booked_minor: number;
   available_minor: number;
   as_of: string;
   movements: Movement[];
+  /** Empty from a service that predates multi-account, which is why nothing here may require it. */
+  holdings?: Holding[];
 };
 
 /**
@@ -327,12 +363,16 @@ export async function movements(options: {
   limit?: number;
   category?: string;
   merchant?: string;
+  /** Money moved between the holder's own accounts. Off by default: the tally is a net, and a
+      transfer nets to nothing across the household. */
+  includeInternal?: boolean;
 }): Promise<Movements> {
   const query = new URLSearchParams();
   query.set("days", String(options.days ?? 90));
   query.set("limit", String(options.limit ?? 50));
   if (options.category) query.set("category", options.category);
   if (options.merchant) query.set("merchant", options.merchant);
+  if (options.includeInternal) query.set("include_internal", "true");
   return read<Movements>(`/v1/account/movements?${query}`);
 }
 

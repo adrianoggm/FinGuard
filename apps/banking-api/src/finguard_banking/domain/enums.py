@@ -131,14 +131,21 @@ class Period(StrEnum):
 
 
 class Rail(StrEnum):
-    """How the money leaves.
+    """How the money moves.
 
-    Two, and they are not two settings of one operation: a Bizum names a person by phone and the
-    bank finds the account, a transfer names the account and there may be no person behind it at
-    all. They differ in what has to be on the preview, in what the intent has to remember, and in
-    what can go wrong — which is why the destination check in the schema is written per rail
-    rather than as a set of nullable columns and a convention.
+    Three, and they are not three settings of one operation: a Bizum names a person by phone and
+    the bank finds the account, a transfer names the account and there may be no person behind it
+    at all, and an internal transfer names another account of the same holder. They differ in what
+    has to be on the preview, in what the intent has to remember, and in what can go wrong — which
+    is why the destination check in the schema is written per rail rather than as a set of nullable
+    columns and a convention.
     """
 
     BIZUM = "BIZUM"
     TRANSFER = "TRANSFER"
+    # Between the holder's own accounts. Not a setting of TRANSFER: the destination is an account
+    # id rather than an IBAN, no clearing account is involved because the money does not leave the
+    # household, and what it books is `INTERNAL_TRANSFER` — the type the read views already keep
+    # out of spending. Calling it a transfer would make "¿cuánto gasté?" wrong by every euro
+    # somebody moved into their savings.
+    INTERNAL = "INTERNAL"
