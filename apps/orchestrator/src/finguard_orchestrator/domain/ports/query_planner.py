@@ -23,5 +23,10 @@ class QueryPlannerPort(Protocol):
     """
 
     async def plan(
-        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
+        self,
+        sentence: str,
+        *,
+        today: date,
+        previous: FinancialPlan | None = None,
+        force_follow_up: bool = False,
     ) -> PlanningResult: ...

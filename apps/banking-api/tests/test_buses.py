@@ -1,5 +1,6 @@
 """The buses: one handler per message, and a loud failure when there is none."""
 
+import uuid
 from dataclasses import dataclass
 
 import pytest
@@ -12,6 +13,8 @@ from finguard_banking.application import (
     Query,
     QueryBus,
 )
+from finguard_banking.domain.errors import InsufficientFundsError
+from finguard_banking.domain.models.audit_event import AuditEvent
 
 
 @dataclass(frozen=True)
@@ -90,3 +93,77 @@ async def test_the_registry_is_per_bus() -> None:
 
     with pytest.raises(HandlerNotRegisteredError):
         await QueryBus().ask(Ping("hola"))
+
+
+class Recorder:
+    """A sink that remembers. The Postgres one is exercised in `test_audit.py`."""
+
+    def __init__(self, broken: bool = False) -> None:
+        self.events: list[AuditEvent] = []
+        self._broken = broken
+
+    async def record(self, event: AuditEvent) -> None:
+        if self._broken:
+            raise RuntimeError("the audit database is down")
+        self.events.append(event)
+
+
+@dataclass(frozen=True)
+class Explode(Command[None]):
+    account_id: uuid.UUID
+
+
+class ExplodeHandler:
+    async def handle(self, command: Explode) -> None:
+        raise InsufficientFundsError(1_000, 2_000)
+
+
+async def test_every_command_is_audited_without_the_handler_taking_part() -> None:
+    """The bus is the seam, so a handler cannot forget. A per-handler audit is an audit that is
+    missing from whichever handler somebody writes next."""
+    recorder = Recorder()
+    bus = CommandBus(audit=recorder)
+    bus.register(Shout, ShoutHandler())
+
+    await bus.dispatch(Shout("hola"))
+
+    assert [(e.command, e.outcome) for e in recorder.events] == [("Shout", "OK")]
+
+
+async def test_a_refused_command_is_audited_with_its_code_and_still_raises() -> None:
+    recorder = Recorder()
+    bus = CommandBus(audit=recorder)
+    bus.register(Explode, ExplodeHandler())
+
+    with pytest.raises(InsufficientFundsError):
+        await bus.dispatch(Explode(account_id=uuid.uuid4()))
+
+    assert [(e.command, e.outcome) for e in recorder.events] == [("Explode", "insufficient_funds")]
+
+
+async def test_a_broken_audit_does_not_undo_what_already_happened() -> None:
+    """The money moved. Failing the response would make the caller retry a payment that went
+    through — idempotency would catch it, but the caller would have been told it failed.
+
+    ponytail: best effort, and the ceiling is real. A trail that cannot be lost has to be written
+    in the same transaction as the state change, which means the repository rather than the bus.
+    What is here records attempts, including the refusals that never have a transaction at all.
+    """
+    bus = CommandBus(audit=Recorder(broken=True))
+    bus.register(Shout, ShoutHandler())
+
+    assert await bus.dispatch(Shout("hola")) == "HOLA"
+
+
+async def test_the_account_travels_with_the_event_when_the_command_has_one() -> None:
+    """Read off the command rather than passed in: an audit row without the account it concerns
+    cannot be filtered by account, which is the only way anybody will ever read it."""
+    recorder = Recorder()
+    account = uuid.uuid4()
+    bus = CommandBus(audit=recorder)
+    bus.register(Explode, ExplodeHandler())
+
+    with pytest.raises(InsufficientFundsError):
+        await bus.dispatch(Explode(account_id=account))
+
+    assert recorder.events[0].account_id == account

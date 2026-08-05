@@ -7,9 +7,12 @@ return a GetBalanceResult, with no cast at the call site.
 PEP 695 type parameters rather than Generic[...]: variance is inferred, so the handler
 protocol does not need a covariant TypeVar spelled out.
 
-ponytail: this module is duplicated in banking-api. Two copies of sixty lines beat a
-shared package that nothing else uses yet — it moves to packages/python/ when a third
-service needs it.
+This module is duplicated in banking-api, and it stays that way. The two services are
+independent deployables: the point is that neither has to be released because the other changed,
+and a shared package would buy sixty lines and sell that back. Public contracts are shared
+(packages/contracts); internal machinery is not, and a bus is machinery.
+
+A third service does not change this. It gets its own copy.
 """
 
 from typing import Any, Protocol

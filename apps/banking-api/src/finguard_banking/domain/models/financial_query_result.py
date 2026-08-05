@@ -25,6 +25,18 @@ class Movement:
     category: str | None
     amount: Money
     direction: str
+    # Which of the four layers decided the category: BANK, SYSTEM, USER or NONE.
+    # `category_is_custom` answers only "did the holder override it"; this says what it overrode,
+    # and NONE says the movement is unfiled rather than filed under a guess.
+    category_source: str = "NONE"
+    # Money that stayed inside the household. Excluded from totals by default, and carried here so a
+    # list can say why a 200 € line is not a purchase — ADR-009 §2.
+    is_internal: bool = False
+    # Whether that category is the holder's own rather than what the bank inferred. It travels with
+    # the movement because a label that silently changed is a label nobody trusts twice — a screen
+    # has to be able to say whose opinion it is showing. Last, and with a default, because a
+    # dataclass will not take a defaulted field before a required one.
+    category_is_custom: bool = False
 
 
 @dataclass(frozen=True)

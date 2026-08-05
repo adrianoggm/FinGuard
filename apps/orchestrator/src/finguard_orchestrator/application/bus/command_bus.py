@@ -7,9 +7,12 @@ written would be a race waiting to happen.
 It is the seam phase 5 needs — idempotency, audit and correlation IDs all hook here,
 once, instead of inside every handler.
 
-ponytail: this module is duplicated in banking-api. Two copies of sixty lines beat a
-shared package that nothing else uses yet — it moves to packages/python/ when a third
-service needs it.
+This module is duplicated in banking-api, and it stays that way. The two services are
+independent deployables: the point is that neither has to be released because the other changed,
+and a shared package would buy sixty lines and sell that back. Public contracts are shared
+(packages/contracts); internal machinery is not, and a bus is machinery.
+
+A third service does not change this. It gets its own copy.
 """
 
 from typing import Any, Protocol

@@ -61,10 +61,33 @@ Today is {today}. Every relative expression is resolved against that date.
 
 PLANNED — the sentence determines a query. Fill the plan fields.
 NEEDS_CLARIFICATION — the sentence does not determine one. Put the question to ask the \
-user, in Spanish, in "question". Prefer asking over guessing: a guess returns a real \
-figure for a question nobody asked, which is worse than a question.
+user, in Spanish, in "question", and name the field you are asking about in "awaiting": \
+WINDOW for a period, YEAR when you are asking which year specifically, CATEGORY for a kind \
+of spending. Prefer asking over guessing: a guess returns a real figure for a question \
+nobody asked, which is worse than a question.
+
+"awaiting" matters as much as the question. The reply is often two words — "de este", "el \
+pasado" — and it can only be read against the field it answers.
 UNSUPPORTED — the query cannot be expressed at all. There is no average, no comparison \
 between two periods, and no forecast: only what already happened.
+
+## Which kind of question: "action"
+
+AGGREGATE — how much, or how many. A total, a count, a breakdown. Almost every question.
+RANK_MOVEMENTS — **one** movement, chosen by size. "El gasto más caro", "la compra más \
+alta", "el pago de mayor importe". Set "rank" to which position: 1 for the largest, 2 for \
+the second.
+
+The pair that decides it:
+
+- "¿cuánto gasté en gasolina?" totals every fuel movement. AGGREGATE, rank 0.
+- "¿cuál fue el gasto más caro en gasolina?" asks for one of them. RANK_MOVEMENTS, rank 1.
+
+A superlative on a noun — "el gasto más alto", "la compra más cara" — is a ranking. "Gasté \
+más" and "gasto más" are verbs and ask which *group* is largest: that is AGGREGATE with \
+groupBy.
+
+"rank" is 0 for AGGREGATE. Nothing else uses it.
 
 ## The window: exactly one
 
@@ -101,43 +124,93 @@ What each one is called in Spanish:
 
 {glossary}
 
-The list has categories, not shops. A question about one shop ("¿cuánto gasté en \
-Mercadona?") cannot be answered by its category, because that category also covers the \
-other shops in it — ask for clarification instead.
+The list has categories, not shops, and they are different fields. "¿cuánto gasté en el súper?" \
+is the GROCERIES category; "¿cuánto gasté en Mercadona?" is the merchant "Mercadona" and no \
+category at all, because that category would also cover every other shop in it.
+
+## Merchants
+
+"merchants" holds the shops the sentence names, copied as written: Mercadona, Netflix, Repsol, \
+Carrefour. Unlike the categories it is not a list to choose from — any name is allowed, matching \
+ignores capitalisation, and a name nothing matches gives an empty answer rather than a wrong \
+one.
+
+Use it only when the sentence names a shop. A question about a kind of spending uses \
+"categories" and leaves this empty. A question asking which shops stand out uses groupBy \
+MERCHANT and leaves this empty too.
 
 ## Grouping and metric
 
 groupBy is NONE unless the sentence asks for a breakdown. A breakdown nobody asked for \
 is as wrong as a missing one.
+
+When one *is* asked for, these are the words that choose it:
+
+- CATEGORY — categorías, tipos de gasto, "en qué me he gastado", "cómo se reparte", \
+"desglosa", "de dónde me ha venido el dinero".
+- DAY — cada día, día a día, por días.
+- WEEK — semanas, semana a semana, por semanas.
+- MONTH — meses, mes a mes, por meses.
+- MERCHANT — comercios, tiendas, establecimientos, sitios, "¿en qué comercio?". It \
+breaks the total down across **all** of them and cannot narrow to one, so a sentence \
+naming a shop is the clarification case above and not a grouping.
+
+"Semana a semana" and "mes a mes" are groupings, not windows: the window is still \
+whatever period the sentence names.
+
 metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimientos".
 
 ## Examples
 
 "¿Cuánto gasté el mes pasado?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_MONTH", "n": 0, "from": "", \
-"to": "", "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
+"¿Cuál fue el gasto más caro del año en gasolina?"
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "RANK_MOVEMENTS", \
+"rank": 1, "period": "THIS_YEAR", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["TRANSPORT_FUEL"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": "SUM"}}
+
 "¿Cuánto he gastado en los últimos 30 días?"
-{{"outcome": "PLANNED", "question": "", "period": "LAST_N_DAYS", "n": 30, "from": "", \
-"to": "", "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", \
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "LAST_N_DAYS", "n": 30, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "NONE", \
 "metric": "SUM"}}
 
 "¿En qué me he gastado el dinero este mes?"
-{{"outcome": "PLANNED", "question": "", "period": "THIS_MONTH", "n": 0, "from": "", \
-"to": "", "direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": \
-"CATEGORY", "metric": "SUM"}}
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "THIS_MONTH", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "CATEGORY", \
+"metric": "SUM"}}
+
+"¿Cuánto gasté en Mercadona el mes pasado?"
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "LAST_MONTH", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": ["Mercadona"], \
+"isFollowUp": false, "changed": [], "groupBy": \
+"NONE", "metric": "SUM"}}
 
 "¿Cuánto he gastado últimamente?"
-{{"outcome": "NEEDS_CLARIFICATION", "question": "¿De qué periodo? Por ejemplo este mes, \
-el mes pasado o los últimos 30 días.", "period": "", "n": 0, "from": "", "to": "", \
-"direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", "metric": \
+{{"outcome": "NEEDS_CLARIFICATION", "question": "¿De qué periodo? Por ejemplo este mes, el mes \
+pasado o los últimos 30 días.", "awaiting": "WINDOW", "action": "AGGREGATE", "rank": 0, \
+"period": "", "n": 0, "from": "", "to": "", \
+"direction": \
+"EXPENSE", "categories": ["{no_category}"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
 "¿Cuál es mi gasto medio mensual?"
-{{"outcome": "UNSUPPORTED", "question": "", "period": "", "n": 0, "from": "", "to": "", \
-"direction": "EXPENSE", "categories": ["{no_category}"], "groupBy": "NONE", "metric": \
-"SUM"}}
+{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "", "n": 0, "from": "", "to": "", \
+"direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
+"isFollowUp": false, "changed": [], "groupBy": "NONE", \
+"metric": "SUM"}}
 
 {previous}## The sentence
 
@@ -155,11 +228,37 @@ _PREVIOUS: Final = """## The previous question
 
 It was answered with this plan: {previous}
 
-If the new sentence only changes part of it — a different category, a different \
-window, a breakdown — keep everything it does not mention. "¿Y en gasolina?" asked \
-after a question about last month is still a question about last month.
+Set "isFollowUp" to true when the new sentence continues that question, and list in \
+"changed" only the fields it actually changes. **Do not restate the rest.** The fields it \
+does not name are taken from the plan above, by code, so nothing is lost by leaving them \
+out — and a field you list is a field you are replacing.
 
-If the new sentence is a fresh question, ignore the plan above entirely.
+The names for "changed" are: window, direction, categories, merchants, groupBy, metric. \
+"window" covers both the named period and an explicit range, because a plan has one or \
+the other.
+
+"¿Y en gasolina?" after a question about last month changes categories and nothing else: \
+isFollowUp true, changed ["categories"]. "¿Y la semana pasada?" changes window. "¿Y \
+cuántas veces?" changes metric.
+
+Removing a filter is a change too: "¿y en general?" is changed ["categories"] with an \
+empty list.
+
+A sentence that names only a period — "el mes pasado", "este año", "los últimos 30 días" \
+— is always a follow-up that changes the window and nothing else. It is not a question on \
+its own: on its own it asks about every movement there is, which is never what somebody \
+answering "¿de qué periodo?" meant.
+
+Set "isFollowUp" to false when the new sentence is a complete question on its own, and \
+the plan above is then ignored entirely. "¿Cuánto gasté hoy?" determines everything it \
+needs, so inheriting a breakdown from the previous question would add one nobody asked \
+for.
+
+"""
+
+_FORCED_FOLLOW_UP: Final = """The conversation state says this sentence completes or corrects the \
+plan above. It **must be treated as a follow-up**, even if it could look complete by itself. Set \
+"isFollowUp" to true and list only the fields this sentence changes.
 
 """
 
@@ -188,6 +287,7 @@ def build_prompt(
     today: date,
     categories: tuple[str, ...] = (),
     previous: FinancialPlan | None = None,
+    force_follow_up: bool = False,
 ) -> str:
     """`previous` is the plan behind the last answer. A follow-up carries context the
     sentence alone does not: "¿y en gasolina?" is not a question about all time, and
@@ -204,7 +304,7 @@ def build_prompt(
     and one with untrusted text only in its data.
     """
     return _TEMPLATE.format(
-        previous=_previous_section(previous, categories),
+        previous=_previous_section(previous, categories, force_follow_up=force_follow_up),
         today=today.isoformat(),
         absolute=ABSOLUTE,
         no_category=NO_CATEGORY,
@@ -213,7 +313,12 @@ def build_prompt(
     )
 
 
-def _previous_section(previous: FinancialPlan | None, categories: tuple[str, ...]) -> str:
+def _previous_section(
+    previous: FinancialPlan | None,
+    categories: tuple[str, ...],
+    *,
+    force_follow_up: bool = False,
+) -> str:
     """The previous plan, described by us rather than quoted from the caller.
 
     Every token in that line comes from a closed set: enum values, an integer the plan's
@@ -227,4 +332,5 @@ def _previous_section(previous: FinancialPlan | None, categories: tuple[str, ...
         return ""
     known = tuple(name for name in previous.categories if name in categories)
     plan = previous if known == previous.categories else replace(previous, categories=known)
-    return _PREVIOUS.format(previous=answer_writer.describe(plan))
+    section = _PREVIOUS.format(previous=answer_writer.describe(plan))
+    return section + (_FORCED_FOLLOW_UP if force_follow_up else "")

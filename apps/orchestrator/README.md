@@ -114,6 +114,31 @@ somebody changes.
 | `ORCHESTRATOR_DISABLED_GUARDS` | *(none)* | Deterministic rules to switch off, by name. A name this build does not have stops the service |
 | `ORCHESTRATOR_QUESTIONS_ENABLED` | `false` | The financial endpoints. Off until the open risks clear an agreed bar |
 
+## Identity, authorisation and scopes
+
+A token entry is `token:holder:account_uuid[:timezone[:scopes]]`. The zone is the holder's,
+because "hoy" belongs to whoever is asking. The scopes are comma-separated and default to
+the two read permissions — **not** the admin one, so swapping the model that answers every
+question is something somebody was allowed to do rather than something anybody on the
+network can do.
+
+| scope | opens |
+| --- | --- |
+| `questions:read` | `POST /v1/questions` and its streaming twin |
+| `assistant:use` | `POST /v1/messages` — a prompt straight to a model, with no plan, no verifier and no ledger |
+| `assistant:admin` | every `/admin/*` route |
+| `payments:prepare` | phase 5: build an intent and see its preview |
+| `payments:confirm` | phase 5: move the money. Deliberately not implied by prepare — a human confirmation step is meaningless if the credential that drafted the operation can also complete it |
+
+An unknown scope name stops the service at startup rather than granting nothing quietly. A
+caller who believes they have a permission and does not is a support call; an unvalidated
+string is worse, because it becomes a real permission the day somebody adds a scope with
+that spelling.
+
+Still not OAuth. §12.2 asks for short-lived tokens from an issuer, and what exists is the
+seam: the account and the permissions come from the credential, so swapping the issuer is a
+change of adapter rather than a change of design.
+
 ## Running it
 
 ```bash

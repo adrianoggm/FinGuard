@@ -1,14 +1,37 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from finguard_orchestrator.application import (
     AnswerMessageHandler,
     AnswerMessageQuery,
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
     CommandBus,
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
+    GetAccountSummaryHandler,
+    GetAccountSummaryQuery,
+    GetBreakdownHandler,
+    GetBreakdownQuery,
+    GetCardChargesHandler,
+    GetCardChargesQuery,
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
+    GetMovementsHandler,
+    GetMovementsQuery,
+    ListCardsHandler,
+    ListCardsQuery,
+    ListContactsHandler,
+    ListContactsQuery,
     PolicyStore,
+    PrepareChosenPaymentCommand,
+    PrepareChosenPaymentHandler,
+    PrepareOwnTransferCommand,
+    PrepareOwnTransferHandler,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
     QueryBus,
     ReplaceLlmPolicyCommand,
     ReplaceLlmPolicyHandler,
@@ -17,18 +40,27 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.infrastructure import (
+    HttpAccountSummary,
+    HttpCards,
+    HttpContacts,
     HttpFinancialQuery,
+    HttpMovementCategories,
+    HttpPayments,
+    LlmPaymentReader,
     LlmQueryPlanner,
     ProviderRegistry,
     admin_router,
     assistant_router,
+    payments_router,
     register_error_handlers,
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
+from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
+from finguard_orchestrator.observability import configure_logging
 
 DESCRIPTION = """
 Conversational orchestrator of FinGuard.
@@ -42,6 +74,12 @@ code.
 
 def create_app() -> FastAPI:
     """Composition root: the only place that wires concrete implementations."""
+    # First, before anything can want to say something. Uvicorn has already configured its own
+    # loggers by now and this takes them over deliberately — two formats interleaved in one stream
+    # is a stream nothing can parse.
+    logging_settings = get_settings()
+    configure_logging(level=logging_settings.log_level, as_json=logging_settings.log_json)
+
     app = FastAPI(
         title="FinGuard Assistant API",
         version="0.1.0",
@@ -89,6 +127,21 @@ def create_app() -> FastAPI:
         timeout_seconds=settings.banking_timeout_seconds,
         supporting_movements=settings.supporting_movements,
     )
+    # And one for both readers of the address book: the payment form and the conversation. The
+    # same argument as the balance — two lists of contacts that could disagree is worse than one
+    # that is occasionally stale.
+    contacts = HttpContacts(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
+    # One adapter for both readers of the balance. The home screen and the conversation showing
+    # different figures would be worse than either being wrong, so there is one way to ask.
+    accounts = HttpAccountSummary(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+        days=settings.summary_days,
+        movements=settings.summary_movements,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -101,8 +154,55 @@ def create_app() -> FastAPI:
         # Validated here, so a rule name this build does not have stops the service
         # rather than silently leaving the rule on.
         settings.guard_policy(),
+        # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
+        # with no model in the path.
+        accounts=accounts,
+        contacts=contacts,
+        read_attempts=settings.banking_read_attempts,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
+    # The home screen's figures. Same service, no model: the plan is built in the adapter.
+    # Browsing the account: the movement list, the search field and the breakdown a finance
+    # screen draws. All three build their plan in code — a screen has already said everything
+    # the plan needs, so a model between the tap and the query would only add a way to be wrong.
+    query_bus.register(GetMovementsQuery, GetMovementsHandler(banking))
+    query_bus.register(GetBreakdownQuery, GetBreakdownHandler(banking))
+    # The cards, and the contacts a payment form offers. Both are reads through banking's own
+    # restricted role, and neither has a model anywhere in it.
+    cards = HttpCards(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
+    query_bus.register(ListCardsQuery, ListCardsHandler(cards))
+    query_bus.register(GetCardChargesQuery, GetCardChargesHandler(cards))
+    query_bus.register(
+        ListContactsQuery,
+        ListContactsHandler(contacts),
+    )
+    query_bus.register(
+        GetAccountSummaryQuery,
+        GetAccountSummaryHandler(accounts),
+    )
+
+    # The payment path. Its own reader, its own prompt and its own schema: extracting who
+    # and how much is a different job from planning a query, and sharing one prompt for both
+    # would mean tuning either one moved the other.
+    paying = PreparePaymentHandler(
+        LlmPaymentReader(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        ),
+        HttpPayments(
+            base_url=settings.banking_base_url,
+            timeout_seconds=settings.banking_timeout_seconds,
+        ),
+        settings.guard_policy(),
+        # The same directory the conversation and the payment form read. A recipient is resolved
+        # against it without a model, which is what lets "Marta Solis Vega" answer "¿a quién?".
+        contacts=contacts,
+    )
 
     command_bus = CommandBus()
     command_bus.register(
@@ -111,6 +211,47 @@ def create_app() -> FastAPI:
     command_bus.register(
         ResetLlmPolicyCommand, ResetLlmPolicyHandler(policies, catalogue, available)
     )
+    # The holder's own category. A write, and the only one here that is not a payment.
+    command_bus.register(
+        CategoriseMovementCommand,
+        CategoriseMovementHandler(
+            HttpMovementCategories(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
+    command_bus.register(PreparePaymentCommand, paying)
+    # The form path shares the gateway and skips the reader: nothing to read, nothing to ground.
+    command_bus.register(
+        PrepareChosenPaymentCommand,
+        PrepareChosenPaymentHandler(
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
+    # Money between the holder's own accounts. Same gateway, same preview, same confirmation route
+    # — the only thing that differs is that there is nobody to resolve.
+    command_bus.register(
+        PrepareOwnTransferCommand,
+        PrepareOwnTransferHandler(
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
+    command_bus.register(
+        ConfirmPaymentCommand,
+        ConfirmPaymentHandler(
+            HttpPayments(
+                base_url=settings.banking_base_url,
+                timeout_seconds=settings.banking_timeout_seconds,
+            )
+        ),
+    )
 
     app.state.query_bus = query_bus
     app.state.command_bus = command_bus
@@ -118,13 +259,39 @@ def create_app() -> FastAPI:
     app.state.ask_handler = asking
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
+    app.state.payments_enabled = settings.payments_enabled
+    # The vocabulary a screen may offer. The same list the decoder is constrained to, so a
+    # category a chip produces is one the assistant can name back.
+    app.state.categories = settings.categories
+    # For /version. The whole Settings object rather than the two strings, because the next thing
+    # somebody wants from a running service is always another one of these.
+    app.state.settings = settings
     app.state.planner_probe = planner_provider
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
     app.state.identity = StaticTokenIdentity(settings.callers())
 
+    # Before the routers, because a rejected preflight never reaches one. The web client cannot
+    # call this service at all without it: a browser refuses a cross-origin request unless the
+    # server says otherwise, which makes this the frontend's first dependency and not a detail.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.web_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        # Spelled out rather than "*": the answer to a preflight is a statement about what this
+        # service accepts, and a wildcard makes that statement unfalsifiable.
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+    # Outermost, so it sees the status a handler's exception turns into and the ones CORS answers
+    # by itself. Every request accounted for is the property; a decorator per route would account
+    # for the ones somebody remembered.
+    register_request_logging(app)
+
     app.include_router(assistant_router)
+    app.include_router(payments_router)
     app.include_router(admin_router)
     register_error_handlers(app)
     return app

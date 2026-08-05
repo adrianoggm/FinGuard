@@ -1,0 +1,418 @@
+# Conversations, not questions.
+#
+# Every other dataset here is one sentence with one expected plan, and the whole class of defect
+# that reached the report lives between sentences: a clarification that restarted instead of
+# completing, a follow-up that lost its window, an identity question that erased the thread.
+# Nothing single-turn can see any of it.
+#
+# **Most expectations are implications, not outcomes.** A local model asked twice about the same
+# sentence does not always answer the same way — "¿cuánto pago de alquiler?" comes back as a
+# question about the period on one run and as a plan for July on the next, and both are
+# defensible readings. So a case that demanded NEEDS_CLARIFICATION would fail for the model
+# having a good day. What is asserted instead holds either way: *if* it asks, the answer must
+# finish the question; *if* the previous turn was answered, a follow-up must keep what it did
+# not mention.
+#
+# **`expect` and `expect_plan` are the exception, and the boundary moved.** They assert a value
+# rather than an implication, so they may only be used where no model decides the answer. That
+# used to mean the intent router, the capability guard and the deterministic window completion.
+# It now also means every field the sentence states outright: `explicit_facts` enforces the window
+# after the merge, so `expect_plan: {window: LAST_N_MONTHS:3}` is asserting our own behaviour
+# rather than betting on the model's mood. Anything still left to judgement — which category
+# "comida" is, whether a turn is a correction — belongs in `must_keep` and `must_change`.
+#
+# **`must_change` is the half this file did not have.** Every rule here asked what *survived* a
+# turn, and none could require that something stopped surviving, so the worst defect in the report
+# passed the whole file: "¿cuánto he gastado en los últimos 3 meses?" answered over the previous
+# five, with a real figure, a valid plan and every `must_keep` satisfied.
+#
+# Turn keys:
+#   say          the sentence, as a person types it
+#   completes    this sentence supplies what the previous turn asked for
+#   must_keep    fields that must survive from the previous plan
+#   must_change  fields that must NOT be inherited — the sentence names them, so the plan owes
+#                a different value than the turn before
+#   expect_plan  what a field must actually be. Only for fields a deterministic path owns
+#   expect_shape TOTAL, GROUPS, MOVEMENT or NONE — what kind of answer this question deserves
+#   expect_groups  keys that must appear among the rows, for a question about who or where
+#   expect       an outcome a deterministic path owes us
+#   says         a phrase the answer has to contain, for the prose rather than the plan
+#   not_says     a phrase it must never contain, for turns where several outcomes are fine
+#   keeps_payment  a bizum has to still be under way after this turn
+#
+# Conversation keys:
+#   max_repeated_clarifications  how many turns running may ask for the same slot. Defaults to 2
+#                                for every thread: two is a clarification and one retry, and the
+#                                third is the loop from the report.
+#
+# Fields `must_keep`, `must_change` and `expect_plan` can name:
+#   window       LAST_N_MONTHS:3, THIS_MONTH, 2025-07-01..2025-12-31 — one string either way
+#   direction · categories · merchants · group_by · metric · action · rank
+
+conversations:
+  - id: rent_then_period
+    why: >
+      The conversation from the report. "Este año" arrived as a two-word sentence with no
+      history and came back asking for the period again.
+    turns:
+      - say: ¿Cuánto pago de alquiler?
+      - say: este año
+        completes: true
+        must_keep: [categories]
+
+  - id: rent_then_last_month
+    why: A different window, to keep the completion from passing on one lucky phrase.
+    turns:
+      - say: ¿Cuánto suelo pagar de alquiler?
+      - say: el mes pasado
+        completes: true
+        must_keep: [categories]
+
+  - id: fuel_then_groceries
+    why: >
+      The follow-up the prompt asks for: it changes the category and says nothing about the
+      window, which is the field it was told not to restate.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿y en el supermercado?
+        must_keep: [window]
+
+  - id: fuel_then_count
+    why: The other axis. "¿Y cuántas veces?" changes the metric and keeps everything else.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿y cuántas veces?
+        must_keep: [window, categories]
+
+  - id: a_correction_changes_only_what_it_names
+    why: >
+      A correction is a patch, not a restart. The user replaces the category and does not have
+      to repeat a period the previous plan already understood.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: No me has entendido, me refería al alquiler
+        must_keep: [window]
+
+  - id: a_bare_correction_can_be_completed_on_the_next_turn
+    why: >
+      "No es eso" contains nothing a planner can turn into a query. The assistant asks what to
+      change, saves the valid plan, and applies the answer without losing its period.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: Perdona, no me has entendido
+        expect: NEEDS_CLARIFICATION
+      - say: Me refería al alquiler
+        must_keep: [window]
+
+  - id: cinema_refused_then_rephrased
+    why: >
+      The category gate, and what the user does about it. The refusal names a sentence they can
+      send, so sending it has to work.
+    turns:
+      - say: ¿cuántas veces fui al cine el mes pasado?
+      - say: ¿cuánto gasté en ocio el mes pasado?
+
+  - id: identity_does_not_erase_the_thread
+    why: >
+      "¿Quién eres?" is answered without a model and without the ledger. It must not become the
+      context of the next question, and it must not delete the context of the last one.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿quién eres?
+        expect: IDENTITY
+      - say: ¿y en el supermercado?
+        must_keep: [window]
+
+  - id: an_unanswerable_question_keeps_the_context
+    why: >
+      A refusal is a turn, not a reset. The guard declines before the model, and the question
+      before it is still the context of the question after it.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿Qué porcentaje de mi sueldo se va en ocio?
+        expect: UNSUPPORTED
+      - say: ¿y en el supermercado?
+        must_keep: [window]
+
+  - id: the_balance_is_not_todays_movements
+    why: >
+      The first question of the reported conversation. It came back as "no he encontrado
+      movimientos del 2026-08-04 al 2026-08-04" — a plan the model built because the router had
+      no intent for a balance and FinancialPlan cannot express one.
+    turns:
+      - say: Buenos días, ¿podrías decirme cuánto dinero tengo en mis cuentas?
+        expect: BALANCE
+        says: Tienes
+      - say: ¿Qué gastos he realizado el último mes?
+        says: el mes pasado
+
+  - id: the_balance_does_not_erase_the_thread
+    why: A turn, not a reset. The follow-up after it must still know the window.
+    turns:
+      - say: ¿Cuánto gasté en gasolina el mes pasado?
+      - say: ¿cuánto dinero tengo?
+        expect: BALANCE
+      - say: ¿y en el supermercado?
+        must_keep: [window]
+
+  - id: the_contacts_are_listed_not_paid
+    why: >
+      "¿Qué contactos tengo para mandar bizum?" was read as a payment, so the assistant asked who
+      to pay about a payment nobody had ordered.
+    turns:
+      - say: Perdona, ¿podrías decirme qué contactos tengo para mandar bizum?
+        expect: CONTACTS
+        says: Marta
+
+  - id: the_category_catalogue_is_a_product_question
+    why: >
+      Asking what vocabulary the assistant understands is not a query over movements and needs no
+      period. The catalogue also must not erase the financial context around the aside.
+    turns:
+      - say: ¿Cuánto gasté el mes pasado?
+      - say: ¿Qué categorías entiendes?
+        expect: CATEGORIES
+        says: gasolina
+      - say: ¿Y en gasolina?
+        must_keep: [window]
+
+  - id: the_largest_expense_is_one_movement_not_a_total
+    why: >
+      The worst answer the system gave: the sum of 56 movements offered as the largest one. It was
+      refused for a release, and now it is answered — with the charge, because a figure alone sends
+      the user to the movement list to work out which one it was.
+    turns:
+      - say: En los últimos 3 meses, ¿cuál ha sido el mayor gasto que he realizado?
+        says: fue de
+        not_says: movimientos
+
+  - id: the_answer_says_what_the_figure_is_of
+    why: >
+      Two answers in a row differing only in a number nobody can attribute. The filter was in the
+      plan and only visible behind "Ver la consulta", spelled GROCERIES.
+    turns:
+      - say: ¿Qué gastos he realizado el último mes?
+      - say: De esos gastos, ¿cuánto gasté en el supermercado?
+        says: supermercado
+        must_keep: [window]
+
+  - id: how_many_is_never_answered_with_a_total
+    why: >
+      Typed exactly as it was in the reported conversation, without the accent. The verifier's
+      count rule read "\bcuánt[oa]s\b" and never fired, so "cuantos fueron en el supermercado"
+      came back as 449,62 € — a total presented as the answer to "how many".
+
+      Either outcome is acceptable and one thing is not: a count question must never be answered
+      with an amount, whether by counting correctly or by declining.
+    turns:
+      - say: Que gastos he realizado el ultimo mes
+      - say: De esos gastos cuantos fueron en el supermercado ?
+        not_says: €
+
+  - id: an_average_is_refused_by_name
+    why: >
+      Every refusal used to read "sin medias, comparaciones ni previsiones" — a list of three
+      things, at least two of which the user had not asked for.
+    turns:
+      - say: ¿Cuál es el gasto medio mensual que gasto en el coche?
+        expect: UNSUPPORTED
+        says: medias
+
+  - id: a_bizum_built_over_four_turns
+    why: >
+      The payment conversation from the report, which never reached a preview. "15 euros" has money
+      in it and no payment verb, so it was classified as a question and asked which period.
+    turns:
+      - say: Vale y si hacemos un bizum a alguien?
+        keeps_payment: true
+      - say: No se a quien tengo en contactos?
+        expect: CONTACTS
+      - say: Vale que te parece si le hacemos un bizum a Marta
+        keeps_payment: true
+        says: Marta Ruiz Gomez
+      - say: 15 euros
+        keeps_payment: true
+      - say: Marta Solis Vega
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
+
+  - id: the_ambiguity_keeps_the_amount_and_the_concept
+    why: >
+      Banking refuses to choose between two Martas, and used to return the names and nothing else —
+      so the amount and the concept the user had already given were lost.
+    turns:
+      - say: quiero hacerle 15 euros de bizum a Marta con el concepto tapas
+        keeps_payment: true
+        says: Marta Solis Vega
+      - say: Marta Solis Vega
+        expect: AWAITING_CONFIRMATION
+        says: tapas
+
+  - id: a_previewed_amount_can_be_corrected_without_paying_the_old_one
+    why: >
+      A different amount at confirmation is a replacement, never a yes. The held intent is
+      cancelled, the recipient and concept survive, and the replacement requires confirmation.
+    turns:
+      - say: hazle un bizum de 15 euros a Marta Solis Vega con concepto tapas
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
+      - say: mejor 20 euros
+        expect: AWAITING_CONFIRMATION
+        says: 20,00
+      # Quoted, because YAML reads a bare `no` as false and the request then carries a boolean
+      # where the question goes — a 422 the harness reports as a broken thread.
+      - say: "no"
+        expect: CANCELLED
+
+  - id: a_question_in_the_middle_of_a_bizum_is_still_a_question
+    why: >
+      The rule that keeps the state machine honest. A payment under way must not swallow everything
+      the user says next.
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        keeps_payment: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        says: gasolina
+
+  - id: a_bizum_does_not_resume_silently_after_a_change_of_subject
+    why: >
+      A payment that stepped aside used to accept the next bare amount as if no other conversation
+      had happened. It now survives visibly paused and requires an explicit resumption.
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        keeps_payment: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        says: gasolina
+        keeps_payment: true
+      - say: 15 euros
+        says: pausado
+        keeps_payment: true
+      - say: continuar con el bizum, 15 euros
+        expect: AWAITING_CONFIRMATION
+        says: 15,00
+
+  - id: the_largest_expense_and_the_next_one
+    why: >
+      The reported thread, both turns. It used to be a total for the first — a real figure about a
+      different question — and then a refusal, and then a loop over a period nothing could use.
+      "¿Y el segundo?" is now a patch of one field, so the second turn must keep the window and the
+      category from a sentence that names neither.
+    turns:
+      - say: Cual fue el gasto más caro en el año de gasolina
+        says: fue de
+        not_says: movimientos
+      - say: Y el segundo ?
+        says: fue de
+        must_keep: [window, categories]
+
+  - id: which_marta_can_actually_be_answered
+    why: >
+      Three turns of the report were the same question. "Marta Vega" matched both Martas on the
+      first name, so the sentence that resolves the ambiguity reported it again, forever.
+    turns:
+      - say: Bueno hagamos un bizum
+        keeps_payment: true
+      - say: pues 15 euros con concepto de comida a Marta
+        keeps_payment: true
+        says: Marta Solis Vega
+      - say: Marta Vega
+        expect: AWAITING_CONFIRMATION
+        says: comida
+
+  # --- what the sentence says, against what the turn before it said --------------------
+  #
+  # Everything below this line failed silently before `must_change` existed. Each one produced a
+  # real figure, a valid plan and a satisfied `must_keep`, about a question nobody asked.
+
+  - id: an_explicit_window_is_never_inherited
+    why: >
+      The worst answer in the report. The model emitted `changed: ["categories"]` and the merge is
+      arithmetic on that list, so a question that says "los últimos 3 meses" was answered over the
+      previous five. Every check in this file passed: the window *was* kept, which was the bug.
+    turns:
+      - say: ¿A qué personas les he hecho bizum en los últimos 5 meses?
+        expect_plan:
+          window: LAST_N_MONTHS:5
+      - say: ¿Cuánto he gastado en total en los últimos 3 meses en alquiler?
+        expect_plan:
+          window: LAST_N_MONTHS:3
+        must_change: [window]
+
+  - id: a_question_about_people_is_answered_with_people
+    why: >
+      "¿A qué personas?" does not ask for a total, and a total is what came back — correct number,
+      wrong shape, and no rule about outcomes or windows could see it.
+    turns:
+      - say: ¿A qué personas les he hecho bizum en los últimos 5 meses?
+        expect_shape: GROUPS
+        expect_groups: [Elena]
+
+  - id: the_same_month_of_the_previous_year
+    why: >
+      "¿Y el año anterior?" after a question about July means July of last year. It meant the last
+      twelve months, because no `Period` names a year and the phrase was refused outright — so the
+      turn went to the model and came back asking for a period again.
+    turns:
+      - say: ¿Cuánto gasté en restaurantes en julio de este año?
+        expect_plan:
+          window: 2026-07-01..2026-07-31
+          categories: [RESTAURANTS]
+      - say: ¿Y el año anterior?
+        expect_plan:
+          window: 2025-07-01..2025-07-31
+        must_keep: [categories, direction, metric]
+        must_change: [window]
+
+  - id: a_named_year_replaces_a_relative_window
+    why: >
+      "Durante todo el año 2025" is a range and the inherited window is a period. Both failures of
+      the reported turn are here: the window did not change, and the category the correction never
+      mentioned disappeared with it.
+    turns:
+      - say: ¿Cuánto gasté en restaurantes en los últimos 12 meses?
+        expect_plan:
+          window: LAST_N_MONTHS:12
+      - say: No, durante todo el año 2025
+        expect_plan:
+          window: 2025-01-01..2025-12-31
+        must_keep: [categories]
+        must_change: [window]
+
+  - id: a_counted_year_is_a_window_this_service_knows
+    why: >
+      "El último año" was not read, so the model asked for the period, twice. Twelve months is the
+      unit the contract has, and the clarification limit is what catches the loop if it returns.
+    max_repeated_clarifications: 1
+    turns:
+      - say: ¿Cuánto he gastado en el último año?
+        expect_plan:
+          window: LAST_N_MONTHS:12
+
+  - id: a_bizum_superlative_is_not_a_comparison
+    why: >
+      "El Bizum más alto que he realizado" carries "más … que" with a relative pronoun, and the
+      exception list only held the generic words for money going out — so it was refused as a
+      comparison between two periods, to a question containing one.
+    turns:
+      - say: ¿Cuál es el Bizum más alto que he realizado?
+        expect_shape: MOVEMENT
+        not_says: comparo
+
+  - id: an_ordinal_goes_to_the_position_it_names
+    why: >
+      The recogniser returned a boolean, so the caller advanced by one whatever the word was and
+      "¿y el tercero?" answered with the second. Nothing in this file could tell the two apart —
+      both are a MOVEMENT with the right window and category.
+    turns:
+      - say: ¿Cuál fue el gasto más caro del año en gasolina?
+        expect_plan:
+          rank: 1
+      - say: ¿Y el segundo?
+        expect_plan:
+          rank: 2
+        must_keep: [window, categories]
+      - say: ¿Y el tercero?
+        expect_plan:
+          rank: 3
+        must_keep: [window, categories]
+        must_change: [rank]

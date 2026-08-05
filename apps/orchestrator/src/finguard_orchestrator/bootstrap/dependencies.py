@@ -1,17 +1,14 @@
-from datetime import date, datetime
+from collections.abc import Callable
+from datetime import date
 from typing import Annotated
-from zoneinfo import ZoneInfo
 
-from fastapi import Header, Request
+from fastapi import Depends, Header, Request
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, CommandBus, QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
-
-# The zone the user's day is measured in. Not UTC: "hoy" means the holder's today, and a
-# purchase at 23:30 in Madrid belongs to that day, not the next one.
-REPORTING_TIMEZONE = "Europe/Madrid"
+from finguard_orchestrator.domain.value_objects.scope import Scope
 
 
 def get_query_bus(request: Request) -> QueryBus:
@@ -23,16 +20,6 @@ def get_query_bus(request: Request) -> QueryBus:
 def get_command_bus(request: Request) -> CommandBus:
     bus: CommandBus = request.app.state.command_bus
     return bus
-
-
-def reporting_today(request: Request) -> date:
-    """What day it is where the money is.
-
-    The clock lives here and nowhere deeper, exactly as in banking: the planner takes
-    today as an argument, so a question asked on the 15th resolves the same way when the
-    evaluation replays it in March.
-    """
-    return datetime.now(ZoneInfo(REPORTING_TIMEZONE)).date()
 
 
 def get_ask_handler(request: Request) -> AskFinancialQuestionHandler:
@@ -70,3 +57,66 @@ def questions_enabled(request: Request) -> None:
         raise FeatureDisabledError(
             "financial questions are disabled; set ORCHESTRATOR_QUESTIONS_ENABLED=true"
         )
+
+
+def payments_enabled(request: Request) -> None:
+    """Refuses the payment endpoints unless a deployment opted in.
+
+    Separate from `questions_enabled` because they are separate risks: a deployment that answers
+    questions has not thereby agreed to move money. Off by default, like the other one, so a
+    surface that can pay somebody is something an operator turned on.
+    """
+    if not request.app.state.payments_enabled:
+        raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
+
+
+def known_categories(request: Request) -> tuple[str, ...]:
+    """The categories a screen may offer.
+
+    Read from the application state rather than imported from the config: a controller that imports
+    the composition root closes a circle — `bootstrap.config` is reached through `infrastructure`,
+    which is where the controllers live, and the service refused to start with a partially
+    initialised module. The same reason every other setting arrives this way.
+    """
+    categories: tuple[str, ...] = request.app.state.categories
+    return categories
+
+
+def payments_available(request: Request) -> bool:
+    """Whether payments are on, without refusing when they are not.
+
+    The chat route needs to *answer* rather than fail: a sentence asking for a payment on a
+    deployment that does not make them is answered with words, not with a 503.
+    """
+    enabled: bool = request.app.state.payments_enabled
+    return enabled
+
+
+def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
+    """What day it is *for this holder*.
+
+    The clock lives here and nowhere deeper, exactly as in banking: the planner takes today
+    as an argument, so a question asked on the 15th resolves the same way when the
+    evaluation replays it in March.
+
+    It used to read a module constant, which gave every holder the same day and left the
+    zone able to differ silently from the one banking bins timestamps with. It now comes
+    from the credential, so a holder in the Canaries is answered about their own day and the
+    zone travels to banking beside the date.
+    """
+    return who.today_in()
+
+
+def requires(scope: Scope) -> Callable[[Caller], Caller]:
+    """A dependency that authenticates and then checks one permission.
+
+    Declared on the route rather than checked in the handler, so the permission a route
+    needs is visible where somebody reads what the route is — and so a new route without one
+    is a missing dependency rather than a missing `if` nobody notices.
+    """
+
+    def guard(who: Annotated[Caller, Depends(authenticated_caller)]) -> Caller:
+        who.assert_may(scope)
+        return who
+
+    return guard

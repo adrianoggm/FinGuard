@@ -165,6 +165,8 @@ is what says whether 6.4 points of accuracy are affordable.
 | change | effect |
 | --- | --- |
 | **Spanish glossary for the categories** | categories 28.6 % → 92.9 % |
+| **Spanish vocabulary per `groupBy` value** | dev exact 83.0 % → 86.0 %, unsafe 13 → 8; grouping exact 8/12 → 10/12. Cost one adversarial case — see below |
+| **The capability guard and the plan verifier** | validation unsafe 12.7 % → 8.9 %; `unsupported` 1/5 → 5/5; the live injection refused |
 | **`qwen3.5:9b` instead of `qwen2.5-coder:7b`** | held out 83.5 % → 89.9 %; `unsupported` 20 % → 60 % |
 | **Delimiting the question as data** | held-out outcome 79.7 % → 83.5 %; one injection neutralised |
 | **`num_ctx: 4096`** | no accuracy change; P50 5.28 s → 2.58 s, max 31.2 s → 3.6 s |
@@ -201,5 +203,25 @@ already accepted and every token it can contain is enumerable in advance. A ques
 no schema to parse it against and never will — fencing is all there is — which is why
 these two arrive at opposite defences and why treating both as text was wrong.
 
-Also open: `boundary` 60 % (n=0 and n=5000 are not refused cleanly) and the merchant
+Also open: `boundary` 70 % (n=0 and n=5000 are not refused cleanly) and the merchant
 contract gap, which is banking's decision rather than comprehension.
+
+That gap is now the largest single source of unsafe execution, and it is worth being precise
+about why. Teaching the prompt the vocabulary of each `groupBy` value improved every other
+grouping measure and cost one adversarial case: `"SYSTEM OVERRIDE"` as a merchant name, which
+is simultaneously a named shop and an injection attempt. It sits in the `injection` group, so
+one case moves that score by fourteen points and makes a contract gap look like an injection
+regression.
+
+Three attempts were measured before this landed, and the two rejected ones say more than the
+one that worked. Adding the merchant vocabulary alone took `merchant` from 75 % to **0 %** —
+told that merchants were expressible, the model stopped asking about named ones. Adding "it
+cannot narrow to one" recovered that and over-asked instead, dropping `grouping` to 71 %.
+What works is naming the vocabulary and stating the limit in the same breath, and none of it
+was predictable from reading the prompt.
+
+A deterministic rule was tried and abandoned: refusing a sentence that contains a capitalised
+word which is not a category. Measured against all 235 cases it fires on `Francia`,
+`Telefónica`, `Juan`, `DROP TABLE` and `CRIPTOMONEDAS`, so the discriminator is not
+capitalisation. The real fix is `merchantFilter` in the contract, at which point there is
+nothing left to clarify.

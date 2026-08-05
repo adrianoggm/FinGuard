@@ -11,6 +11,9 @@ default:
     @just --list
 
 # --- Startup ------------------------------------------------------------------
+#
+# The build recipes stamp the current commit into the image, so /version can say which build is
+# answering. Running `docker compose` by hand still works and reports "unknown", which is honest.
 
 # Just the database
 db:
@@ -18,15 +21,15 @@ db:
 
 # A single component plus whatever it needs to be healthy: just component banking-api
 component name:
-    docker compose up -d --wait --build {{ name }}
+    FINGUARD_SHA=$(git rev-parse --short HEAD) FINGUARD_REF=$(git rev-parse --abbrev-ref HEAD) docker compose up -d --wait --build {{ name }}
 
 # Skeleton: database + backend APIs. The skin (web, mobile) stays out
 back:
-    docker compose --profile core up -d --wait --build
+    FINGUARD_SHA=$(git rev-parse --short HEAD) FINGUARD_REF=$(git rev-parse --abbrev-ref HEAD) docker compose --profile core up -d --wait --build
 
 # The whole PoC: skeleton + skin. Today the same as `back`, until apps/web exists
 poc:
-    docker compose --profile poc up -d --wait --build
+    FINGUARD_SHA=$(git rev-parse --short HEAD) FINGUARD_REF=$(git rev-parse --abbrev-ref HEAD) docker compose --profile poc up -d --wait --build
 
 # Stops everything in the project; the data survives in the volume.
 # --profile "*" is essential: without it, down ignores services that have a profile
@@ -141,8 +144,24 @@ evaluate-planning model="qwen2.5-coder:7b":
 evaluate-e2e token dataset="dev":
     cd apps/orchestrator && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset {{ dataset }}
 
+# Several turns of one conversation, echoed back the way the client does it. The defects this
+# catches live *between* sentences — a clarification that restarts, a follow-up that loses its
+# window — and nothing single-turn can see any of them.
+evaluate-conversations token:
+    cd apps/orchestrator && uv run python scripts/evaluate_e2e.py --token {{ token }} --dataset conversations
+
+# Separate from lint/typecheck/test because those iterate over the Python services and npm
+# answers all three at once. `build` runs tsc a second time on purpose: vite strips types
+# without checking them, so the build is what proves the bundle it emits compiles.
+# Types, tests and a build for the client
+web-check:
+    cd apps/web && npm run typecheck && npm test && npm run build
+
+# Since CI stopped running on every push, this is the whole verification a working branch gets,
+# so it has to cover what CI covers — otherwise the change moved a gap rather than a cost.
+# `test` includes the integration suite, so `just db` has to be up first.
 # What has to pass before pushing a commit
-check: lint typecheck test
+check: lint typecheck test web-check
 
 # Installs the git hook. Run once per clone; uvx needs no global install
 hooks:

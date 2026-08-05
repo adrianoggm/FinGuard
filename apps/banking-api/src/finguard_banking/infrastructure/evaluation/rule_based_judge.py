@@ -66,8 +66,25 @@ class RuleBasedJudge:
                 )
 
             case "groups_are_ordered":
+                # This asked whether the keys were sorted alphabetically, which was a
+                # description of `ORDER BY 1` rather than of the requirement. The compiler
+                # now orders a breakdown by what was asked — money or counts descending, and
+                # a time series chronologically — so the old check failed on the very change
+                # that made the answer correct. An evaluation that encodes the
+                # implementation cannot tell an improvement from a regression.
+                #
+                # What it means is that the order carries information. Three orders do; any
+                # other is arbitrary, and arbitrary with a LIMIT is how the five
+                # alphabetically-first categories got presented as the five largest.
                 keys = [group.key for group in result.groups]
-                return _met(requirement, keys == sorted(keys), f"order: {keys}")
+                amounts = [group.total.amount_minor for group in result.groups]
+                counts = [group.movement_count for group in result.groups]
+                meaningful = (
+                    keys == sorted(keys)
+                    or amounts == sorted(amounts, reverse=True)
+                    or counts == sorted(counts, reverse=True)
+                )
+                return _met(requirement, meaningful, f"order: {keys}")
 
             case "every_movement_has_a_merchant":
                 missing = [m for m in result.supporting_movements if not m.merchant_name]

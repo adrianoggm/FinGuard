@@ -71,6 +71,22 @@ class Period(StrEnum):
     LAST_N_MONTHS = "LAST_N_MONTHS"
 
 
+class Action(StrEnum):
+    """What kind of question a sentence turned into.
+
+    Two, and the split is the one the review argued for: an aggregate totals or counts movements,
+    a ranking picks one out by size. They are not two metrics — they answer with different shapes,
+    a figure with groups against a single row with a date and a shop — so widening `Metric` would
+    have produced a result whose half is meaningless whichever way it went.
+
+    More will arrive: a balance is already answered without a plan, and a category ranking is the
+    obvious next one. When the third appears this is where it goes.
+    """
+
+    AGGREGATE = "AGGREGATE"
+    RANK_MOVEMENTS = "RANK_MOVEMENTS"
+
+
 class Direction(StrEnum):
     EXPENSE = "EXPENSE"
     INCOME = "INCOME"
@@ -86,6 +102,26 @@ class GroupBy(StrEnum):
     MERCHANT = "MERCHANT"
 
 
+class Rail(StrEnum):
+    """How the money leaves.
+
+    Mirrored from the banking contract, like `Period` and `GroupBy`: no shared package, so this
+    side states the values it will emit and banking stays the authority. A value that drifts comes
+    back as a refusal rather than as a payment down the wrong rail.
+
+    Which one a sentence means is read deterministically — "bizum" and "transferencia" are a closed
+    vocabulary of two, and a model choosing between them would be a model deciding how money
+    leaves an account.
+    """
+
+    BIZUM = "BIZUM"
+    TRANSFER = "TRANSFER"
+    # Between the holder's own accounts. Not a setting of TRANSFER: the destination is an account
+    # id rather than an IBAN, and what banking books is a type the read views keep out of spending.
+    # Mirrored from banking's contract like the rest of this file — no shared package.
+    INTERNAL = "INTERNAL"
+
+
 class Metric(StrEnum):
     SUM = "SUM"
     COUNT = "COUNT"
@@ -94,3 +130,56 @@ class Metric(StrEnum):
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum
 # so a new counted period cannot be added without seeing this.
 PERIODS_NEEDING_COUNT = frozenset({Period.LAST_N_DAYS, Period.LAST_N_MONTHS})
+
+
+class PaymentOutcome(StrEnum):
+    """Where a turn of the payment conversation ended.
+
+    Not the same axis as PlanningOutcome, which is about reading a sentence. This is the state of
+    the conversation, and the reading's outcomes map onto it: a malformed or ungrounded reading both
+    become NOT_UNDERSTOOD, because the difference matters to us and not to the user.
+    """
+
+    # A preview is on the table and nothing has moved. The only state from which a yes pays.
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    PAID = "PAID"
+    CANCELLED = "CANCELLED"
+    # Something is missing, or two things matched. A turn in the conversation, not an error.
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    # Not a payment this assistant makes.
+    UNSUPPORTED = "UNSUPPORTED"
+    # The model's answer was malformed, or did not correspond to the sentence.
+    NOT_UNDERSTOOD = "NOT_UNDERSTOOD"
+    # The bank said no: the balance, or an intent that is no longer live.
+    REFUSED = "REFUSED"
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+    BANKING_UNAVAILABLE = "BANKING_UNAVAILABLE"
+
+
+class Spoken(StrEnum):
+    """Answers the assistant gives without asking the ledger anything.
+
+    Separate from PlanningOutcome, which is about reading a sentence into a plan. Nothing here was
+    planned: the answer was already in this repository or in the previous plan, so counting these as
+    planning outcomes would put two different things in the metric that measures one.
+    """
+
+    # About the assistant: what it is, what it can do.
+    IDENTITY = "IDENTITY"
+    # About the previous answer: which query ran, and what a category means.
+    EXPLANATION = "EXPLANATION"
+    # How much money there is. Read from the ledger, but through the fixed question the home
+    # screen asks rather than through a plan, so no model is involved in choosing it.
+    BALANCE = "BALANCE"
+    # Who this account can pay. A list, from banking's own restricted role — the question
+    # "¿a quién puedo hacer un bizum?" has an answer that needs no interpreting.
+    CONTACTS = "CONTACTS"
+    # Which product categories a financial query can filter by. Repository data, not account data.
+    CATEGORIES = "CATEGORIES"
+    # A deterministic conversation control such as abandoning a saved retry. No model or ledger
+    # produced it, so it belongs with the other spoken outcomes rather than planning failures.
+    GUIDANCE = "GUIDANCE"
+    # A transfer between the holder own accounts, understood but not staged. The chat reads the
+    # sentence; preparing it is a payments:prepare scope on a different route, and a read path that
+    # quietly gained the ability to stage a payment would erase the seam between asking and paying.
+    TRANSFER_READY = "TRANSFER_READY"

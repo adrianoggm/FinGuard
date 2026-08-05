@@ -23,10 +23,11 @@ the difference visible instead of silent.
 
 import json
 from datetime import date
-from typing import Any
+from typing import Any, Final
 
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
+    Action,
     Direction,
     GroupBy,
     Metric,
@@ -34,13 +35,18 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
+from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
+from finguard_orchestrator.domain.services import plan_merger
+from finguard_orchestrator.domain.services.plan_merger import Field
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.planning.plan_schema import (
     ABSOLUTE,
     NO_CATEGORY,
@@ -69,7 +75,12 @@ class LlmQueryPlanner:
         self._schema = build_schema(categories)
 
     async def plan(
-        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
+        self,
+        sentence: str,
+        *,
+        today: date,
+        previous: FinancialPlan | None = None,
+        force_follow_up: bool = False,
     ) -> PlanningResult:
         try:
             answer = await self._provider.complete(
@@ -78,6 +89,7 @@ class LlmQueryPlanner:
                     today=today,
                     categories=self._categories,
                     previous=previous,
+                    force_follow_up=force_follow_up,
                 ),
                 model=self._model,
                 temperature=self._temperature,
@@ -87,7 +99,27 @@ class LlmQueryPlanner:
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc))
 
-        return _read(answer, today=today, categories=self._categories)
+        return _read(
+            answer,
+            today=today,
+            categories=self._categories,
+            previous=previous,
+            force_follow_up=force_follow_up,
+        )
+
+
+# What to ask when the model chose to ask and did not say what. Spanish because it reaches
+# the user, which is the one exception rule 14 makes.
+FALLBACK_QUESTION: Final = (
+    "No he entendido qué quieres consultar de tu cuenta. ¿Puedes decirlo de otra forma?"
+)
+
+# What to ask when the sentence read completely except for its window. The examples are phrases
+# `window_words` can read back, which is what makes the next turn deterministic: suggesting a form
+# the reader does not recognise would send the answer to the model and undo the point of asking.
+WINDOW_QUESTION: Final = (
+    "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
+)
 
 
 class _MalformedError(Exception):
@@ -122,7 +154,14 @@ def _texts(body: dict[str, Any], key: str) -> list[str]:
     return value
 
 
-def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningResult:
+def _read(
+    answer: str,
+    *,
+    today: date,
+    categories: tuple[str, ...],
+    previous: FinancialPlan | None = None,
+    force_follow_up: bool = False,
+) -> PlanningResult:
     try:
         body = json.loads(answer)
     except ValueError as exc:
@@ -147,16 +186,38 @@ def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningR
             except _MalformedError as exc:
                 return PlanningResult.invalid_structure(str(exc))
             if not question:
-                # It chose to ask and then asked nothing, which leaves the user at a
-                # dead end. Treat it as malformed rather than inventing the question.
-                return PlanningResult.invalid_structure("clarification with no question")
-            return PlanningResult.needs_clarification(question)
+                # It chose to ask and did not say what. The JSON is valid and every field is
+                # present, so this is not a structural failure — calling it one claimed the
+                # constraint had broken when it had not, and a false positive in that signal
+                # hides the real thing it exists to detect.
+                #
+                # The words are supplied instead. Inventing a *plan* would be dangerous: a
+                # figure for a question nobody asked. Inventing the words of a refusal commits
+                # to nothing, and the user reads the same sentence either way.
+                question = FALLBACK_QUESTION
+            draft = _draft(body, today=today, categories=categories)
+            if previous is not None and force_follow_up and draft is not None:
+                try:
+                    draft = plan_merger.merge_draft(previous, draft, changed=_changed(body))
+                except (_MalformedError, InvalidValueError) as exc:
+                    return PlanningResult.invalid_structure(str(exc))
+            return PlanningResult.needs_clarification(
+                question,
+                draft,
+                _awaiting(body),
+            )
 
         case PlanningOutcome.UNSUPPORTED:
             return PlanningResult.unsupported("the question cannot be expressed as a query")
 
         case PlanningOutcome.PLANNED:
-            return _build_plan(body, today=today, categories=categories)
+            return _build_plan(
+                body,
+                today=today,
+                categories=categories,
+                previous=previous,
+                force_follow_up=force_follow_up,
+            )
 
         case _:
             # The three remaining outcomes describe things that happen TO a model; it
@@ -164,11 +225,112 @@ def _read(answer: str, *, today: date, categories: tuple[str, ...]) -> PlanningR
             return PlanningResult.invalid_structure(f"{outcome} is not the model's to choose")
 
 
-def _build_plan(
+def _action(body: dict[str, Any]) -> Action:
+    """Which kind of query the model chose.
+
+    Defaults to the aggregate rather than failing: it is what almost every question is, and a
+    malformed tag is not worth turning a readable plan into an error. Under constrained decoding the
+    value cannot be outside the enum, and if it ever is, this is where it stops mattering.
+    """
+    try:
+        return Action(_text(body, "action"))
+    except (_MalformedError, ValueError):
+        return Action.AGGREGATE
+
+
+def _awaiting(body: dict[str, Any]) -> Slot:
+    """Which slot the question is about.
+
+    Defaults to the window rather than failing: it is what a clarification asks for nine times out
+    of ten, and a malformed slot is not worth turning a useful question into an error. A value
+    outside the enum cannot arrive under constrained decoding, and if it does this is where it
+    stops being interesting.
+    """
+    try:
+        return Slot(_text(body, "awaiting"))
+    except (_MalformedError, ValueError):
+        return Slot.WINDOW
+
+
+def _draft(
     body: dict[str, Any], *, today: date, categories: tuple[str, ...]
+) -> FinancialPlanDraft | None:
+    """What the model had read by the time it decided to ask a question.
+
+    The schema requires every field on every outcome, so a clarification carries a complete
+    reading of everything except the window — which is normally the thing being asked about.
+    This used to be dropped on the floor, and dropping it is why answering "este año" asked
+    for the period again.
+
+    **Nothing here can fail the clarification.** A question back is useful on its own, so an
+    unreadable draft becomes no draft rather than an error: turning it into INVALID_STRUCTURE
+    would replace a helpful question with an apology, and the model did nothing wrong by
+    asking.
+    """
+    try:
+        direction = Direction(_text(body, "direction"))
+        group_by = GroupBy(_text(body, "groupBy"))
+        metric = Metric(_text(body, "metric"))
+        selected_categories = _categories(_texts(body, "categories"), allowed=categories)
+        merchants = tuple(dict.fromkeys(m.strip() for m in _texts(body, "merchants") if m.strip()))
+    except (_MalformedError, ValueError):
+        return None
+
+    try:
+        window: RelativePeriod | AbsoluteRange | None = _window(body, today=today)
+    except (_MalformedError, InvalidValueError, ValueError):
+        # The expected case, not an error: `period` is "" because the window is what the
+        # question is about. A range that fails to parse lands here too, and no window is the
+        # right reading of both — the next turn supplies one.
+        window = None
+
+    try:
+        return FinancialPlanDraft(
+            direction=direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            categories=selected_categories,
+            merchants=merchants,
+            group_by=group_by,
+            metric=metric,
+        )
+    except InvalidValueError:
+        return None
+
+
+def _flag(body: dict[str, Any], key: str) -> bool:
+    value = body.get(key)
+    if not isinstance(value, bool):
+        raise _MalformedError(f"{key} must be a boolean, got {type(value).__name__}")
+    return value
+
+
+def _changed(body: dict[str, Any]) -> frozenset[Field]:
+    """Which fields the follow-up changes. A name outside the set is malformed rather than
+    ignored: silently dropping one means inheriting a field the sentence just changed, which
+    is a real figure for the previous question."""
+    names = _texts(body, "changed")
+    known = {f.value for f in Field}
+    unknown = set(names) - known
+    if unknown:
+        raise _MalformedError(f"changed holds unknown fields: {sorted(unknown)}")
+    return frozenset(Field(name) for name in names)
+
+
+def _build_plan(
+    body: dict[str, Any],
+    *,
+    today: date,
+    categories: tuple[str, ...],
+    previous: FinancialPlan | None = None,
+    force_follow_up: bool = False,
 ) -> PlanningResult:
     try:
         selected_categories = _categories(_texts(body, "categories"), allowed=categories)
+        # No `allowed` list: a merchant name is not vocabulary. Blanks are dropped because an
+        # empty name filters nothing, and dropping one is not the widening bug — the others
+        # still narrow, and an all-blank list means the question named no shop.
+        merchants = tuple(dict.fromkeys(m.strip() for m in _texts(body, "merchants") if m.strip()))
         direction, group_by, metric = (
             _text(body, "direction"),
             _text(body, "groupBy"),
@@ -179,39 +341,113 @@ def _build_plan(
 
     try:
         window = _window(body, today=today)
+    except _MalformedError as exc:
+        return PlanningResult.invalid_structure(str(exc))
+    except (InvalidValueError, ValueError) as exc:
+        # A window that is wrong rather than absent: a range ending after today, an unparseable
+        # date, `n` outside its bounds. Nobody can supply what is already there and incorrect.
+        return PlanningResult.invalid_domain(str(exc))
+
+    follow_up, changed = False, frozenset[Field]()
+    if previous is not None:
+        try:
+            follow_up, changed = (
+                force_follow_up or _flag(body, "isFollowUp"),
+                _changed(body),
+            )
+        except _MalformedError as exc:
+            return PlanningResult.invalid_structure(str(exc))
+
+    inherits_window = follow_up and Field.WINDOW not in changed
+    if window is None and previous is not None and inherits_window:
+        # The prompt says "do not restate the rest", so a follow-up changing the category emits
+        # no window on purpose. The plan used to be built before the merge could supply one, so
+        # "¿y en gasolina?" was refused for missing the single field the model was told to leave
+        # out. Taken as a pair, like the merge does: a plan carries one window or the other.
+        window = previous.period or previous.date_range
+
+    if window is None:
+        # Everything else read fine and one piece is missing, which is a question rather than a
+        # failure. The draft is what makes the answer to it a completion instead of a restart.
+        return PlanningResult.needs_clarification(
+            WINDOW_QUESTION,
+            _draft(body, today=today, categories=categories),
+            # The window is what is missing here by construction, whatever the model put in the
+            # field: this branch runs because no window was named.
+            Slot.WINDOW,
+        )
+
+    if _action(body) is Action.RANK_MOVEMENTS:
+        # A ranking, and it does not go through the follow-up merge: that vocabulary is expressed
+        # over an aggregate's fields, and there is nothing sensible to inherit into a maximum.
+        try:
+            return PlanningResult.planned(
+                TopMovements(
+                    direction=Direction(direction),
+                    period=window if isinstance(window, RelativePeriod) else None,
+                    date_range=window if isinstance(window, AbsoluteRange) else None,
+                    categories=selected_categories,
+                    merchants=merchants,
+                    rank=_count(body, "rank") or 1,
+                )
+            )
+        except (_MalformedError, InvalidValueError, ValueError) as exc:
+            return PlanningResult.invalid_domain(str(exc))
+
+    try:
         plan = FinancialPlan(
             direction=Direction(direction),
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=selected_categories,
+            merchants=merchants,
             group_by=GroupBy(group_by),
             metric=Metric(metric),
         )
-    except _MalformedError as exc:
-        return PlanningResult.invalid_structure(str(exc))
     except InvalidValueError as exc:
         return PlanningResult.invalid_domain(str(exc))
     except ValueError as exc:
-        # An enum value outside the schema, or an unparseable date: well-formed JSON
-        # carrying a value the domain will not take.
+        # An enum value outside the schema: well-formed JSON carrying a value the domain
+        # will not take.
         return PlanningResult.invalid_domain(str(exc))
 
-    return PlanningResult.planned(plan)
+    if previous is None or not follow_up:
+        # A complete question carries its own context. Inheriting here is how a breakdown
+        # nobody asked for survives into the next answer.
+        return PlanningResult.planned(plan)
+
+    try:
+        return PlanningResult.planned(plan_merger.merge(previous, plan, changed=changed))
+    except InvalidValueError as exc:
+        return PlanningResult.invalid_domain(str(exc))
 
 
-def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange:
+def _window(body: dict[str, Any], *, today: date) -> RelativePeriod | AbsoluteRange | None:
+    """The window the model named, or None if it named none.
+
+    None is a reading, not a failure — and telling the two apart is the whole point of this
+    signature. A window that is *missing* can be supplied: by the previous plan on a follow-up,
+    or by the user on the next turn. A window that is *wrong* — a range ending after today, an
+    unparseable date — still raises, because there is nothing for anyone to supply.
+
+    It used to raise for both, and the missing case then arrived as INVALID_DOMAIN. The deployed
+    model answers "¿cuánto suelo pagar de alquiler?" with `period: "ABSOLUTE"` and both ends
+    empty, which is the only way the schema lets it choose PLANNED while having no window — so
+    the reply was "no he entendido la pregunta" to a sentence it had understood entirely.
+    """
     named = _text(body, "period")
 
     if not named:
-        # The empty period exists so a model that is asking or refusing has something to
-        # put there. Arriving with PLANNED means it chose to answer and then named no
-        # window, which is not a date-parsing problem and should not read like one.
-        raise InvalidValueError("a plan needs a window and none was named")
+        # The empty period exists so a model that is asking or refusing has something to put
+        # there. On PLANNED it means it read the sentence and found no window in it.
+        return None
 
     if named == ABSOLUTE:
         start, end = _text(body, "from"), _text(body, "to")
         if not start or not end:
-            raise InvalidValueError("an explicit range needs both ends")
+            # ABSOLUTE with an empty end is the same statement as an empty period, spelled
+            # differently. It is the spelling the deployed model actually uses.
+            return None
         window = AbsoluteRange(start=date.fromisoformat(start), end=date.fromisoformat(end))
         if window.end > today:
             # Nobody has spent money after today. A range reaching into the future is a

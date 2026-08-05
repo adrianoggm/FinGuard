@@ -1,8 +1,15 @@
 """The `httpx2` dependency, checked instead of explained.
 
-An automated security scanner has flagged it four times as a typosquat of `httpx`, and
-the answer lived in a comment in `pyproject.toml` — prose nobody executes, which ages
-badly and convinces no one. These tests assert the three facts that comment was claiming.
+An automated security scanner flags it as a typosquat of `httpx` every time a new HTTP
+client is added — six occasions so far, and counting a number here was itself a thing
+that went stale. The answer used to live in a comment in `pyproject.toml`: prose nobody
+executes, which ages badly and convinces no one. These tests assert the three facts that
+comment was claiming.
+
+The fact that settles it fastest is the first one, and there is a fourth worth knowing
+that no test can hold: `import httpx` raises ModuleNotFoundError here, so the usual
+suggested fix — "change it to `import httpx`" — does not make the code more standard, it
+makes it not run.
 
 They also earn their keep in the other direction: if starlette ever stops requiring
 `httpx2`, the first test fails and tells us to move back to `httpx` deliberately rather

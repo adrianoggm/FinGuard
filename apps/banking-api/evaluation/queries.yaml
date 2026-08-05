@@ -37,7 +37,10 @@
     direction: EXPENSE
     categories: [GROCERIES]
     period: {period: LAST_N_MONTHS, n: 3, reference: 2026-07-15}
-  expected: {totalMinor: 132149, movementCount: 23}
+  # Three months back from the 15th of July, so from the 15th of April. It used to be from the 1st
+  # of May: LAST_N_MONTHS counted the current month from its 1st, which made a window called three
+  # months span two and a half. This is the only expectation the correction moved.
+  expected: {totalMinor: 169219, movementCount: 29}
 
 - id: total_spending_june
   question: ¿Cuánto gasté en total en junio?

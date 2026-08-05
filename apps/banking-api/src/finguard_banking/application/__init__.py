@@ -15,10 +15,46 @@ from finguard_banking.application.bus.errors import (
     HandlerNotRegisteredError,
 )
 from finguard_banking.application.bus.query_bus import Query, QueryBus, QueryHandler
+from finguard_banking.application.commands.categorise_movement import (
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
+)
+from finguard_banking.application.commands.payments import (
+    CancelPaymentCommand,
+    CancelPaymentHandler,
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
+)
 from finguard_banking.application.queries.get_balance import (
     GetBalanceHandler,
     GetBalanceQuery,
     GetBalanceResult,
+)
+from finguard_banking.application.queries.list_accounts import (
+    AccountRow,
+    ListAccountsHandler,
+    ListAccountsQuery,
+    ListAccountsResult,
+)
+from finguard_banking.application.queries.list_card_charges import (
+    CardChargeRow,
+    ListCardChargesHandler,
+    ListCardChargesQuery,
+    ListCardChargesResult,
+)
+from finguard_banking.application.queries.list_cards import (
+    CardRow,
+    ListCardsHandler,
+    ListCardsQuery,
+    ListCardsResult,
+)
+from finguard_banking.application.queries.list_contacts import (
+    ContactRow,
+    ListContactsHandler,
+    ListContactsQuery,
+    ListContactsResult,
 )
 from finguard_banking.application.queries.movement_summary import (
     MovementSummaryHandler,
@@ -28,11 +64,41 @@ from finguard_banking.application.queries.movement_summary import (
     SummaryMovement,
     SummaryTrace,
 )
+from finguard_banking.application.queries.ranked_movement import (
+    RankedMovementHandler,
+    RankedMovementQuery,
+    RankedMovementResult,
+)
 
 __all__ = [
+    "RankedMovementResult",
+    "RankedMovementQuery",
+    "RankedMovementHandler",
+    "CardChargeRow",
+    "CategoriseMovementCommand",
+    "CategoriseMovementHandler",
+    "CardRow",
+    "ListCardChargesHandler",
+    "ListCardChargesQuery",
+    "ListCardChargesResult",
+    "ContactRow",
+    "AccountRow",
+    "ListAccountsHandler",
+    "ListAccountsQuery",
+    "ListAccountsResult",
+    "ListCardsHandler",
+    "ListCardsQuery",
+    "ListCardsResult",
+    "ListContactsHandler",
+    "ListContactsQuery",
+    "ListContactsResult",
+    "CancelPaymentCommand",
+    "CancelPaymentHandler",
     "Command",
     "CommandBus",
     "CommandHandler",
+    "ConfirmPaymentCommand",
+    "ConfirmPaymentHandler",
     "GetBalanceHandler",
     "GetBalanceQuery",
     "GetBalanceResult",
@@ -41,6 +107,8 @@ __all__ = [
     "MovementSummaryHandler",
     "MovementSummaryQuery",
     "MovementSummaryResult",
+    "PreparePaymentCommand",
+    "PreparePaymentHandler",
     "Query",
     "QueryBus",
     "QueryHandler",

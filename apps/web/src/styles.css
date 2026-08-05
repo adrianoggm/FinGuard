@@ -1,0 +1,1421 @@
+/*
+ * One stylesheet. No framework: a phone-shaped chat is a few hundred lines of CSS, and a build step
+ * plus a dependency to avoid writing them is a worse trade.
+ *
+ * Sizes are in rem against a 16px root so the whole thing scales with a phone's text setting, and the
+ * safe-area insets are respected because a real device has a notch and a home bar.
+ */
+
+:root {
+  --ink: #0d1b18;
+  --ink-soft: #5c6b66;
+  --brand: #0d3b33;
+  --brand-bright: #14806a;
+  --surface: #f4f6f5;
+  --card: #ffffff;
+  --line: #e3e8e6;
+  --out: #b3261e;
+  --in: #0f7a4f;
+  --radius: 1.25rem;
+  --shadow: 0 0.5rem 1.5rem rgb(13 27 24 / 8%);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: #0b1512;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The desk the phone sits on. Only visible on a wide screen. */
+.stage {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 50% 0%, #1b3b34 0%, #0b1512 60%);
+}
+
+.phone {
+  position: relative;
+  width: min(24rem, 100vw);
+  height: min(50rem, 100vh);
+  background: var(--surface);
+  border-radius: 2.5rem;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 0.5rem #101d1a,
+    0 1.5rem 3rem rgb(0 0 0 / 45%);
+  display: flex;
+  flex-direction: column;
+}
+
+/* On an actual phone the frame gets out of the way: the app is the whole screen. */
+@media (max-width: 26rem) {
+  .stage {
+    padding: 0;
+  }
+  .phone {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.65rem 1.5rem 0.25rem;
+  padding-top: max(0.65rem, env(safe-area-inset-top));
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.app,
+.turns {
+  /* A phone does not show a scrollbar over its own content. Both containers scroll, and a grey bar
+     down the side of a bank app is the detail that gives away that this is a web page. */
+  scrollbar-width: none;
+}
+
+.app::-webkit-scrollbar,
+.turns::-webkit-scrollbar {
+  display: none;
+}
+
+.app {
+  flex: 1;
+  overflow-y: auto;
+  transition: filter 180ms ease;
+}
+
+.app.dimmed {
+  filter: brightness(0.97) saturate(0.9);
+}
+
+/* --- the screens ----------------------------------------------------------------- */
+
+.screen {
+  padding: 0.25rem 1.25rem 6rem;
+}
+
+.screen-title {
+  margin: 0.75rem 0 1rem;
+  font-size: 1.4rem;
+  letter-spacing: -0.02em;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.see-all,
+.chart-more {
+  border: 0;
+  background: none;
+  color: var(--brand-bright);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+
+.card p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+/* The one card that is about to move money says so before anybody reads it. */
+.card.preview {
+  background: #fff8e6;
+  border: 1px solid #f0dca8;
+}
+
+/* --- the home screen ------------------------------------------------------------ */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.mark {
+  color: var(--brand-bright);
+}
+
+.brand-right {
+  margin-left: auto;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.brand-right button {
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.hello {
+  margin: 0 0 0.75rem;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.figures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.figure-label {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.figure {
+  margin: 0.15rem 0 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure.out {
+  color: var(--out);
+}
+
+.figure-missing {
+  color: var(--ink-soft);
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+.chart {
+  margin-top: 1rem;
+}
+
+.bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: stretch;
+  gap: 0.5rem;
+  height: 6.5rem;
+}
+
+/* Two rows: the bar grows into the first, the label sits in the second. The first version
+   end-aligned the slots, which made them content-sized — and a percentage height against a parent
+   with no definite height resolves to nothing, so every bar came out as a 2px sliver. */
+.bar-slot {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  gap: 0.3rem;
+  height: 100%;
+}
+
+.bar-slot .bar {
+  align-self: end;
+}
+
+.bar {
+  width: 100%;
+  max-width: 2rem;
+  min-height: 0.2rem;
+  border-radius: 0.35rem 0.35rem 0 0;
+  background: linear-gradient(180deg, var(--brand-bright) 0%, var(--brand) 100%);
+}
+
+.bar-slot small {
+  font-size: 0.65rem;
+  color: var(--ink-soft);
+}
+
+.chart-more {
+  margin-top: 0.75rem;
+}
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.shortcut {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.shortcut-icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  background: var(--card);
+  font-size: 1.1rem;
+  box-shadow: var(--shadow);
+}
+
+.shortcut:active .shortcut-icon {
+  transform: scale(0.94);
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.account-who {
+  display: grid;
+}
+
+.account-who strong {
+  font-size: 0.95rem;
+}
+
+.account-who small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.account-figure {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two or more account rows in a row need air between them; one did not. */
+.account-row + .account-row {
+  margin-top: 0.5rem;
+}
+
+.account-glyph {
+  margin-right: 0.7rem;
+  font-size: 1.2rem;
+}
+
+/* The row is a flex with the figure pushed right, so the name has to take the slack — otherwise
+   the glyph and the name sit apart with the gap between them. */
+.account-row .account-who {
+  flex: 1;
+}
+
+/* What is invested, under what can be spent. Quieter than the balance on purpose: it is a real
+   figure and it is not money anybody can spend today. */
+.figure-aside {
+  margin: 0.15rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the holder's accounts, on the accounts screen ------------------------------- */
+
+.holdings {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.holding {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.holding-glyph {
+  font-size: 1.35rem;
+}
+
+.holding-what {
+  display: grid;
+  flex: 1;
+}
+
+.holding-what strong {
+  font-size: 0.95rem;
+}
+
+/* The caveat on an investment. Small, and never absent: the figure is a cost basis, and the
+   assistant says so in words — a screen that showed it bare would contradict the sentence. */
+.holding-what small {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+}
+
+.holding-balance {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the account card, on the accounts screen ----------------------------------- */
+
+.account {
+  background: linear-gradient(150deg, var(--brand) 0%, #10574a 100%);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  box-shadow: var(--shadow);
+}
+
+.account.small {
+  padding: 1rem;
+}
+
+.account-name {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.balance {
+  margin: 0.35rem 0 0.15rem;
+  font-size: 1.9rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- movements ------------------------------------------------------------------- */
+
+.movements ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.movements li {
+  display: grid;
+  grid-template-columns: 2.25rem 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.movements li:last-child {
+  border-bottom: 0;
+}
+
+.glyph {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.what {
+  display: grid;
+  min-width: 0;
+}
+
+.what strong {
+  font-size: 0.92rem;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.what small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.out,
+.in {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.out {
+  color: var(--out);
+}
+
+.in {
+  color: var(--in);
+}
+
+.empty {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+}
+
+.tally {
+  margin: 0.75rem 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the finder and the filters -------------------------------------------------- */
+
+.finder {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 1.5rem;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.finder input {
+  flex: 1;
+  border: 0;
+  background: none;
+  font-size: 0.92rem;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.finder input:focus {
+  outline: none;
+}
+
+.clear {
+  border: 0;
+  background: var(--surface);
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.chips {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 0.15rem;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.75rem;
+  border-radius: 1.25rem;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* --- finances -------------------------------------------------------------------- */
+
+.spent {
+  margin: 0.5rem 0 1rem;
+  text-align: center;
+}
+
+.spent-label {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.spent-total {
+  margin: 0.2rem 0 0;
+  font-size: 2rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.spent-count {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.shares {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.shares li {
+  display: grid;
+  grid-template-columns: 2.25rem 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.share-what {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.share-what strong {
+  font-size: 0.85rem;
+  font-weight: 550;
+}
+
+.track {
+  height: 0.4rem;
+  border-radius: 1rem;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: 1rem;
+  background: linear-gradient(90deg, var(--brand-bright) 0%, var(--brand) 100%);
+}
+
+.share-figure {
+  display: grid;
+  justify-items: end;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.share-figure small {
+  color: var(--ink-soft);
+  font-weight: 400;
+  font-size: 0.7rem;
+}
+
+/* --- the wallet ------------------------------------------------------------------ */
+
+.wallet {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+
+.plastic {
+  border-radius: 1.1rem;
+  padding: 1rem;
+  color: #fff;
+  background: linear-gradient(140deg, #14806a 0%, var(--brand) 55%, #0a2c26 100%);
+  box-shadow: var(--shadow);
+}
+
+/* A blocked card is still a card and still has history. Greyed, not hidden. */
+.plastic.blocked {
+  background: linear-gradient(140deg, #6b7a76 0%, #46524f 60%, #2c3532 100%);
+}
+
+.plastic header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.plastic-brand {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: 0.9rem;
+}
+
+.plastic-kind {
+  font-size: 0.7rem;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.plastic-number {
+  margin: 1.1rem 0 0.9rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plastic footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+
+.plastic footer span {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.plastic footer small {
+  font-size: 0.6rem;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.plastic-spend {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgb(255 255 255 / 22%);
+}
+
+.plastic-spend p {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+}
+
+.plastic-spend strong {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.plastic-spend small {
+  opacity: 0.75;
+}
+
+.plastic-spend .track {
+  /* `display: block`, because a span is inline and height does nothing to an inline box. In the
+     category list the same class lands inside a grid, which blockifies it — here it does not, so the
+     limit bar was 0px tall and only the percentage underneath gave it away. */
+  display: block;
+  background: rgb(255 255 255 / 22%);
+}
+
+.plastic-spend .fill {
+  background: #fff;
+}
+
+.limit {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.plastic-more {
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 10%);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* The charges sit under their card rather than in a separate screen: the total and the movements
+   behind it belong in one place, which is the whole point of showing them. */
+.charges {
+  margin-top: 0.5rem;
+}
+
+.charges ul {
+  border-radius: 1rem;
+}
+
+.plastic-status {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* --- bizum ----------------------------------------------------------------------- */
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 1rem;
+  background: var(--surface);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.person.on {
+  border-color: var(--brand);
+  background: #eaf4f1;
+}
+
+.person-who {
+  display: grid;
+}
+
+.person-who strong {
+  font-size: 0.9rem;
+  font-weight: 550;
+}
+
+.person-who small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.avatar.small {
+  width: 2.1rem;
+  height: 2.1rem;
+  font-size: 0.75rem;
+}
+
+.amount {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.5rem 0 1rem;
+}
+
+.amount input {
+  flex: 1;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  background: none;
+  font-size: 2rem;
+  font-weight: 650;
+  font-family: inherit;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+
+.amount input:focus {
+  outline: none;
+  border-bottom-color: var(--brand);
+}
+
+.amount span {
+  font-size: 1.5rem;
+  color: var(--ink-soft);
+}
+
+.warn {
+  margin: 0 0 0.75rem;
+  color: var(--out);
+  font-size: 0.8rem;
+}
+
+.primary,
+.restart {
+  width: 100%;
+  padding: 0.8rem;
+  border: 0;
+  border-radius: 1.25rem;
+  background: var(--brand);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  background: var(--line);
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.restart {
+  margin-top: 0.75rem;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* --- the avatar, shared ---------------------------------------------------------- */
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* --- the tab bar ---------------------------------------------------------------- */
+
+.tabs {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  /* Five, since Tarjetas joined. At 24rem that is 4.8rem each, which still fits a label. */
+  grid-template-columns: repeat(5, 1fr);
+  padding: 0.5rem 0 max(0.5rem, env(safe-area-inset-bottom));
+  background: rgb(255 255 255 / 92%);
+  backdrop-filter: blur(0.5rem);
+  border-top: 1px solid var(--line);
+}
+
+.tab {
+  display: grid;
+  justify-items: center;
+  gap: 0.15rem;
+  border: 0;
+  background: none;
+  padding: 0.15rem 0;
+  font-size: 1.05rem;
+  color: var(--ink-soft);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tab small {
+  font-size: 0.65rem;
+}
+
+.tab.active {
+  color: var(--brand);
+}
+
+/* --- the floating button -------------------------------------------------------- */
+
+.fab {
+  position: absolute;
+  z-index: 10;
+  right: 1.1rem;
+  bottom: 4.5rem;
+  width: 3.5rem;
+  height: 3.5rem;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(150deg, var(--brand-bright) 0%, var(--brand) 100%);
+  color: #fff;
+  font-size: 1.4rem;
+  box-shadow: 0 0.5rem 1.25rem rgb(13 59 51 / 45%);
+  cursor: pointer;
+  animation: rise 260ms ease both;
+}
+
+.fab:active {
+  transform: scale(0.94);
+}
+
+@keyframes rise {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+}
+
+/* --- conversation mode ---------------------------------------------------------- */
+
+/* Above the tab bar, and this is not decoration.
+ *
+ * The tab bar is rendered after the sheet and is also absolutely positioned, so it painted on top of
+ * the composer — which sits at the bottom of the sheet, exactly where the tabs are. Tapping the text
+ * field hit a tab instead: the chat could not be typed in at all, and touching near the bottom of the
+ * sheet silently navigated somewhere else. `elementFromPoint` at the centre of the input returned
+ * BUTTON.tab, which is how this was finally pinned down.
+ *
+ * Stacking by DOM order is the kind of thing that works until somebody adds an element below, so the
+ * modal layer says out loud that it is one. */
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgb(6 18 15 / 35%);
+  animation: fade 200ms ease both;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* One above the scrim, which is itself above the tab bar. */
+  z-index: 21;
+  height: 78%;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-radius: 1.75rem 1.75rem 0 0;
+  box-shadow: 0 -0.5rem 2rem rgb(0 0 0 / 25%);
+  animation: slide 280ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+@keyframes slide {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+.sheet-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 0.5rem 1rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.handle {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: 2.5rem;
+  height: 0.25rem;
+  border-radius: 1rem;
+  background: var(--line);
+  margin-bottom: 0.6rem;
+}
+
+.sheet-title {
+  display: grid;
+}
+
+.sheet-title strong {
+  font-size: 1rem;
+}
+
+.sheet-title small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.close {
+  border: 0;
+  background: var(--surface);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.turns {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.bubble {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border-radius: 1.1rem;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  max-width: 85%;
+  white-space: pre-wrap;
+}
+
+.bubble.mine {
+  align-self: flex-end;
+  background: var(--brand);
+  color: #fff;
+  border-bottom-right-radius: 0.35rem;
+}
+
+.bubble.theirs {
+  align-self: flex-start;
+  background: var(--surface);
+  border-bottom-left-radius: 0.35rem;
+}
+
+.bubble.theirs p {
+  margin: 0;
+}
+
+/* A preview is the one bubble that is about to move money. It says so before anybody reads it. */
+.bubble.preview {
+  background: #fff8e6;
+  border: 1px solid #f0dca8;
+}
+
+.bubble.failed {
+  align-self: flex-start;
+  background: #fdecea;
+  color: var(--out);
+}
+
+/* Renamed away from `.stage`: that class is the desk the phone sits on, and a progress line that
+   inherited `min-height: 100vh` and a radial gradient is a layout nobody would debug twice. */
+.thinking {
+  margin: 0;
+  align-self: flex-start;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+details {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+}
+
+summary {
+  color: var(--brand-bright);
+  cursor: pointer;
+}
+
+.plan {
+  margin: 0.4rem 0 0;
+  color: var(--ink-soft);
+}
+
+.evidence,
+.groups {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.evidence li {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr auto;
+  gap: 0.5rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.groups li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px dashed var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.caveat {
+  margin: 0.4rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.confirm {
+  display: flex;
+  gap: 0.5rem;
+  align-self: stretch;
+}
+
+.confirm button {
+  flex: 1;
+  padding: 0.7rem;
+  border-radius: 1rem;
+  border: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.confirm .yes {
+  background: var(--brand);
+  color: #fff;
+}
+
+.confirm .no {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.recipient-choices {
+  display: grid;
+  gap: 0.5rem;
+  align-self: stretch;
+}
+
+.recipient-choices button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.recipient-choices small {
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.suggestions {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--ink-soft);
+}
+
+.suggestions p {
+  margin: 0 0 0.2rem;
+  font-size: 0.82rem;
+}
+
+.suggestions button {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.composer {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+
+.composer input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border-radius: 1.5rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.composer input:focus {
+  outline: 2px solid var(--brand-bright);
+  outline-offset: -1px;
+}
+
+.composer button {
+  width: 2.9rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.composer button:disabled {
+  background: var(--line);
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+/* The build label, development only. Small and grey: it is a debugging aid that happens to live on
+   the home screen, not something the product is about. */
+.brand .build {
+  margin-left: 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+  color: var(--muted);
+  background: var(--surface-2, rgba(0, 0, 0, 0.05));
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.35rem;
+}
+
+/* --- what a payment is about to do ------------------------------------------------ */
+
+/* The preview's fields, under the sentence. A Bizum and a transfer used to draw the identical
+   prompt, so what distinguishes them was on no screen anybody approves anything from. */
+.preview-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+}
+
+.preview-detail dt {
+  color: var(--ink-soft);
+}
+
+.preview-detail dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 550;
+}
+
+/* Whole, grouped and monospaced. Recognising twenty-four characters is the job of this step, and
+   proportional digits make two account numbers look alike. */
+.preview-detail dd.iban {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
+.preview-detail dd.preview-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A payment the user walked away from. The service remembers it; until now the screen did not,
+   so resuming was something you had to know was possible. */
+.paused {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  background: rgba(180, 120, 0, 0.12);
+  color: #7a5200;
+  font-size: 0.78rem;
+}
+
+/* Where a category came from, when it is worth saying. Italic and quiet: it qualifies the label
+   beside it rather than competing with it. */
+.what small .source {
+  font-style: normal;
+  opacity: 0.75;
+}
+
+/* Money that stayed between the holder's own accounts. It is not a purchase, and the amount on the
+   right looks exactly like one without this. */
+.tag-internal {
+  margin-right: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.35rem;
+  background: var(--line);
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Reaching the transfer screen from the account list, which is where somebody looking at two
+   balances wants it. Not a sixth tab: a sixth icon costs the other five their labels. */
+.move-money {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.7rem;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--brand-bright);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.from-account {
+  margin: 0;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
