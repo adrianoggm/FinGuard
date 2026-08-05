@@ -43,6 +43,7 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.application.queries.browse_account import MAX_DAYS, MAX_MOVEMENTS
 from finguard_orchestrator.bootstrap.dependencies import (
+    attempt_key,
     get_ask_handler,
     get_command_bus,
     get_query_bus,
@@ -97,6 +98,9 @@ Today = Annotated[date, Depends(reporting_today)]
 Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
 Who = Annotated[Caller, Depends(requires(Scope.QUESTIONS_READ))]
 PaymentsOn = Annotated[bool, Depends(payments_available)]
+# The caller's name for this attempt. The chat prepares payments too, so a resent question that
+# happened to be "hazle un bizum de 20 a Marta" must not leave two intents. See `attempt_key`.
+Attempt = Annotated[str, Depends(attempt_key)]
 Categories = Annotated[tuple[str, ...], Depends(known_categories)]
 
 assistant_router = APIRouter(tags=["assistant"])
@@ -209,6 +213,8 @@ async def _as_payment(
     payments_on: bool,
     was: Conversation = IDLE,
     pending: PaymentDraft | None = None,
+    *,
+    key: str,
 ) -> QuestionResponse:
     """The payment path, reached from the chat.
 
@@ -230,7 +236,7 @@ async def _as_payment(
         PreparePaymentCommand(
             sentence=sentence,
             account_id=who.account_id,
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=key,
             pending=pending,
         )
     )
@@ -304,6 +310,8 @@ def _payment_events(
     payments_on: bool,
     was: Conversation = IDLE,
     pending: PaymentDraft | None = None,
+    *,
+    key: str,
 ) -> StreamingResponse:
     """The payment path as server-sent events: one stage, then the answer.
 
@@ -318,7 +326,7 @@ def _payment_events(
 
     async def events() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "reading", "detail": None})
-        answer = await _as_payment(sentence, who, commands, payments_on, was, pending)
+        answer = await _as_payment(sentence, who, commands, payments_on, was, pending, key=key)
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -331,6 +339,8 @@ async def _as_confirmation(
     payments_on: bool,
     was: Conversation,
     active: PaymentConfirmation,
+    *,
+    key: str,
 ) -> QuestionResponse:
     """Answer the payment preview that is active in this chat.
 
@@ -388,6 +398,7 @@ async def _as_confirmation(
             payments_on,
             was.with_active(None),
             replacement,
+            key=key,
         )
         return revised.model_copy(
             update={"text": f"He descartado el Bizum anterior. {revised.text}"}
@@ -430,11 +441,13 @@ def _confirmation_events(
     payments_on: bool,
     was: Conversation,
     active: PaymentConfirmation,
+    *,
+    key: str,
 ) -> StreamingResponse:
     """The streaming shape of a confirmation: one answer, with no invented planning stage."""
 
     async def events() -> AsyncIterator[str]:
-        answer = await _as_confirmation(reply, who, commands, payments_on, was, active)
+        answer = await _as_confirmation(reply, who, commands, payments_on, was, active, key=key)
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -780,6 +793,7 @@ async def ask(
     today: Today,
     commands: Commands,
     payments_on: PaymentsOn,
+    attempt: Attempt,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -793,12 +807,15 @@ async def ask(
     """
     who.assert_may_read(who.account_id)
 
+    key = attempt
     was = _conversation_of(request)
 
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
         # not a new instruction: the deterministic confirmation reader leaves the preview open.
-        return await _as_confirmation(request.question, who, commands, payments_on, was, was.active)
+        return await _as_confirmation(
+            request.question, who, commands, payments_on, was, was.active, key=key
+        )
 
     if isinstance(was.active, PaymentInProgress):
         paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
@@ -812,12 +829,14 @@ async def ask(
     if continuing is not None:
         # A payment under way takes the reply that answers its question, before anything is
         # classified. "15 euros" is an amount because something asked for one.
-        return await _as_payment(request.question, who, commands, payments_on, was, continuing)
+        return await _as_payment(
+            request.question, who, commands, payments_on, was, continuing, key=key
+        )
 
     if payment_router.is_payment(request.question):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,
         # because making it is what this router is for.
-        return await _as_payment(request.question, who, commands, payments_on, was)
+        return await _as_payment(request.question, who, commands, payments_on, was, key=key)
 
     result = await queries.ask(
         AskFinancialQuestionQuery(
@@ -851,6 +870,7 @@ async def ask_streaming(
     # continued. This route takes its own handler rather than the bus for the answer itself; the
     # directory is an ordinary query and goes through the bus like everything else.
     queries: Queries,
+    attempt: Attempt,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -863,10 +883,13 @@ async def ask_streaming(
     plan that misread the question can be seen for what it is while that still helps —
     rather than arriving as a footnote under a number the user has already read.
     """
+    key = attempt
     was = _conversation_of(request)
 
     if isinstance(was.active, PaymentConfirmation):
-        return _confirmation_events(request.question, who, commands, payments_on, was, was.active)
+        return _confirmation_events(
+            request.question, who, commands, payments_on, was, was.active, key=key
+        )
 
     if isinstance(was.active, PaymentInProgress):
         paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
@@ -882,14 +905,16 @@ async def ask_streaming(
         # into *this* endpoint, so a payment that could only be continued on the other one was a
         # payment that could not be continued at all. The first version of this change wired the
         # routing into `/v1/questions` alone and the browser conversation still broke.
-        return _payment_events(request.question, who, commands, payments_on, was, continuing)
+        return _payment_events(
+            request.question, who, commands, payments_on, was, continuing, key=key
+        )
 
     if payment_router.is_payment(request.question):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one
         # that could not pay — the same sentence answering differently depending on which endpoint
         # a client happened to call.
-        return _payment_events(request.question, who, commands, payments_on, was)
+        return _payment_events(request.question, who, commands, payments_on, was, key=key)
 
     question = AskFinancialQuestionQuery(
         sentence=request.question,

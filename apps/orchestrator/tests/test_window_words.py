@@ -171,8 +171,16 @@ def test_last_year_is_the_previous_calendar_year() -> None:
 
 def test_a_four_digit_number_that_is_not_a_year_is_not_a_window() -> None:
     """A marker is required. "Gasté 2025 euros" is an amount, and reading it as a year would
-    answer a question about one purchase with a whole calendar."""
-    assert window_words.window_in("gasté 2025 euros en agosto", today=TODAY) is None
+    answer a question about one purchase with a whole calendar.
+
+    The window here is August, which the sentence does name. It used to be None, because a month
+    with no year was not a window this file knew — the assertion was about the number all along and
+    now says so without depending on the month being unreadable.
+    """
+    assert window_words.window_in(
+        "gasté 2025 euros en agosto", today=TODAY
+    ) == window_words.whole_month(TODAY.year, 8)
+    assert window_words.window_in("gasté 2025 euros", today=TODAY) is None
 
 
 @pytest.mark.parametrize(
@@ -208,3 +216,96 @@ def test_only_a_bare_continuation_shifts_a_window() -> None:
 
     assert window_words.a_year_earlier("¿cuánto gasté el año anterior en ocio?", july) is None
     assert window_words.a_year_earlier("¿y el año anterior?", None) is None
+
+
+# --- a month with no year, which used to be no window at all ------------------------------
+
+
+def test_a_bare_hoy_no_longer_outranks_the_month_beside_it() -> None:
+    """The reported sentence. "En junio" was not a window this file knew, so the phrase table found
+    "hoy" and answered about today — a real figure, about the wrong thirty days, with nothing
+    anywhere to contradict it."""
+    assert window_words.window_in(
+        "hoy quiero saber cuánto gasté en junio", today=TODAY
+    ) == AbsoluteRange(start=date(2026, 6, 1), end=date(2026, 6, 30))
+
+
+@pytest.mark.parametrize(
+    ("sentence", "start", "end"),
+    [
+        # Already past this year, so it is this year's.
+        ("¿cuánto gasté en junio?", date(2026, 6, 1), date(2026, 6, 30)),
+        # The month under way counts as having happened: it is the one somebody means.
+        ("¿cuánto gasté en agosto?", date(2026, 8, 1), date(2026, 8, 31)),
+        # Not yet come round, so it is last year's. Nobody says "en octubre" about a month four
+        # months away — that is "el octubre que viene", and this reads no futures.
+        ("¿cuánto gasté en octubre?", date(2025, 10, 1), date(2025, 10, 31)),
+        ("durante diciembre", date(2025, 12, 1), date(2025, 12, 31)),
+    ],
+)
+def test_a_month_with_no_year_is_the_last_time_it_happened(
+    sentence: str, start: date, end: date
+) -> None:
+    assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(start=start, end=end)
+
+
+def test_a_month_of_the_year_before_is_that_month_and_not_the_whole_year() -> None:
+    """ "El año pasado" on its own is a calendar year and is read as one. Beside a month it is the
+    year that month belongs to, and answering with twelve months instead of one is the same class
+    of mistake in the other direction."""
+    assert window_words.window_in(
+        "¿cuánto gasté en julio del año pasado?", today=TODAY
+    ) == AbsoluteRange(start=date(2025, 7, 1), end=date(2025, 7, 31))
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # A date, not a month. The whole of June is thirty times the question.
+        "¿cuánto gasté el 15 de junio?",
+        # Two months is a range, and answering with either is a fraction of what was asked.
+        "¿cuánto gasté de junio a septiembre?",
+        "¿cuánto gasté del 1 de junio al 15 de julio?",
+    ],
+)
+def test_a_sentence_this_is_not_sure_about_goes_to_the_model(sentence: str) -> None:
+    """Precision over coverage, which is this file's whole rule: a miss costs one turn and a wrong
+    guess costs a figure about the wrong days, presented as the answer."""
+    assert window_words.window_in(sentence, today=TODAY) is None
+
+
+def test_a_month_with_no_year_needs_to_know_what_year_it_is() -> None:
+    """No clock is read here. Without `today` the phrase is unresolvable rather than resolved
+    against a date this service invented — the rule that lets the evaluation replay a turn."""
+    assert window_words.window_in("¿cuánto gasté en junio?") is None
+
+
+@pytest.mark.parametrize("name", list(range(1, 13)))
+def test_every_month_maps_to_its_own_number(name: int) -> None:
+    """It was `enumerate` over a list with "setiembre" in the middle of it, skipped by an `if`, so
+    every month after September was one too high: October answered November, and December was
+    month 13 — a `ValueError` on the way to a 500."""
+    spelled = [
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    ][name - 1]
+
+    window = window_words.window_in(f"en {spelled} de 2025", today=TODAY)
+
+    assert window == window_words.whole_month(2025, name)
+
+
+def test_both_spellings_of_september_are_september() -> None:
+    assert window_words.window_in("en setiembre de 2025", today=TODAY) == window_words.window_in(
+        "en septiembre de 2025", today=TODAY
+    )

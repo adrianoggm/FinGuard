@@ -14,8 +14,25 @@ const TOKEN = import.meta.env.VITE_ORCHESTRATOR_TOKEN ?? "";
 
 export const configured = TOKEN !== "";
 
-function headers(): Record<string, string> {
-  return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+function headers(attempt?: string): Record<string, string> {
+  const common = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+  // Names this attempt so a resend of it is the same preview rather than a second one. The service
+  // mints one when it is absent, which is the same as having none: a key that differs between a
+  // request and its retry cannot tell them apart. Whoever knows what "one attempt" means has to be
+  // the one to say it, and that is the screen, not this module.
+  return attempt ? { ...common, "Idempotency-Key": attempt } : common;
+}
+
+/**
+ * A name for one attempt at one payment.
+ *
+ * Kept across a failure and renewed when the payment changes: resending after a timeout must not
+ * become a second intent, and reusing it for a different amount is refused by the bank with a 409
+ * rather than answered with the earlier preview. So a screen holds one per thing it is about to
+ * send, and takes a new one when what it is sending changes.
+ */
+export function newAttempt(): string {
+  return crypto.randomUUID();
 }
 
 export type Movement = {
@@ -140,7 +157,10 @@ export type Slot =
   | "AMOUNT"
   | "RECIPIENT"
   | "RECIPIENT_CHOICE"
-  | "CONFIRMATION";
+  | "CONFIRMATION"
+  // Which of the holder's accounts. Asked rarely: a question naming none is answered with a
+  // breakdown, because a breakdown is a better answer than a question.
+  | "ACCOUNT";
 
 /**
  * Where the conversation is, as the service sees it.
@@ -253,10 +273,13 @@ export async function version(): Promise<{ sha: string; ref: string }> {
 export async function* ask(
   sentence: string,
   conversation: ConversationState | null = null,
+  attempt?: string,
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
-    headers: headers(),
+    // A question can be a payment — "hazle un bizum de 20 a Marta" prepares one — so this endpoint
+    // takes the key too, and a resent question leaves one intent behind instead of two.
+    headers: headers(attempt),
     // The plan behind the last answer travels with the question, and so does the half-built one
     // behind the last question back. The service remembers neither: the conversation is held by
     // whoever is having it, which is why both parameters exist at all.
@@ -409,10 +432,11 @@ export async function transferBetweenAccounts(
   toAccountId: string,
   amountMinor: number,
   currency = "EUR",
+  attempt?: string,
 ): Promise<Answer> {
   const response = await fetch(`${BASE}/v1/payments/between-accounts`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(attempt),
     body: JSON.stringify({
       to_account_id: toAccountId,
       amount_minor: amountMinor,
@@ -437,10 +461,14 @@ export async function transferBetweenAccounts(
   };
 }
 
-export async function payChosen(recipientName: string, amountMinor: number): Promise<Answer> {
+export async function payChosen(
+  recipientName: string,
+  amountMinor: number,
+  attempt?: string,
+): Promise<Answer> {
   const response = await fetch(`${BASE}/v1/payments/chosen`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(attempt),
     body: JSON.stringify({
       recipient_name: recipientName,
       amount_minor: amountMinor,

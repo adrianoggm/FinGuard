@@ -589,10 +589,19 @@ def _paid(paid: PaymentReceipt) -> PaymentAnswer:
 
 
 def _refusal(reason: str) -> PaymentAnswer:
+    """A refusal of the *request*, which is never a payment that already happened.
+
+    The fall-through used to be `no_longer_live()` — "ese pago ya no está pendiente, comprueba tus
+    movimientos" — and a `PaymentRefusedError` cannot mean that: it is raised for a balance that
+    did not cover the payment, or for a 4xx this service has no name for. Nothing was ever pending
+    in either case, so the sentence sent somebody looking through their movements for a payment
+    that was never made. An expired or already-paid intent arrives as `IntentGoneError`, which has
+    its own handlers and keeps that sentence.
+    """
     text = (
         payment_writer.insufficient_funds()
         if reason == INSUFFICIENT_FUNDS
-        else payment_writer.no_longer_live()
+        else payment_writer.nothing_was_sent()
     )
     return PaymentAnswer(outcome=PaymentOutcome.REFUSED.value, text=text, reason=reason)
 

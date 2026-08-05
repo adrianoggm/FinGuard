@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, type Answer, type ConversationState } from "./api";
+import { ask, newAttempt, type Answer, type ConversationState } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
 
 /** The stage names the service emits, in words somebody can read. */
@@ -72,6 +72,16 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const choices = recipientChoices(thread);
   const replies = quickReplies(thread);
+  // The sentence being attempted, and the name this attempt goes by. A sentence can be a payment —
+  // "hazle un bizum de 20 a Marta" prepares one — so retyping it after a request that never came
+  // back must reach the same intent rather than making a second. Cleared once the turn is answered,
+  // because saying the same thing again after an answer is a second payment and means to be.
+  const attempt = useRef<{ text: string; key: string } | null>(null);
+
+  function keyFor(text: string): string {
+    if (attempt.current?.text !== text) attempt.current = { text, key: newAttempt() };
+    return attempt.current.key;
+  }
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
@@ -100,10 +110,11 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
       // idle conversation (paid, cancelled or refused). Calling the bare payment endpoint here
       // returned no conversation state, so `settled` correctly retained the old preview and left
       // the buttons pointing at an intent the bank had already consumed.
-      for await (const step of ask(text, before.conversation)) {
+      for await (const step of ask(text, before.conversation, keyFor(text))) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {
           turns.push({ who: "assistant", answer: step });
+          attempt.current = null;
           onThread(settled(before, [...turns], step, onSettled));
         }
       }

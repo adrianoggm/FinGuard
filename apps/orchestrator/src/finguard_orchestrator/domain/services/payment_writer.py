@@ -181,6 +181,18 @@ def insufficient_funds() -> str:
     return "No he enviado nada: tu saldo no cubre ese pago."
 
 
+def nothing_was_sent() -> str:
+    """The bank refused the request itself, so no intent was ever pending.
+
+    Its own sentence because the one below is a claim: "ya no está pendiente" says a payment
+    existed and has been dealt with, and sending somebody to check their movements for a payment
+    that was never made is a wrong answer about money in the direction that alarms people. This
+    covers a reused idempotency key and any refusal this service does not have a name for, and both
+    mean the same two things to whoever is reading — nothing moved, and trying again works.
+    """
+    return "No he enviado nada. Vuelve a intentarlo."
+
+
 def no_longer_live() -> str:
     """Expired, cancelled, or already paid — one sentence, because they mean the same thing to
     whoever is looking at the preview. Notably it does not say which: "ya lo has pagado" invites
