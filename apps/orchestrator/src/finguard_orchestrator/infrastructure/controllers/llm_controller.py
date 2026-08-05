@@ -52,6 +52,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     questions_enabled,
     reporting_today,
     requires,
+    turn_interpreter,
 )
 from finguard_orchestrator.domain.enums import GroupBy, PaymentOutcome, PlanningOutcome, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
@@ -65,9 +66,9 @@ from finguard_orchestrator.domain.models.conversation import (
     Slot,
     slot_for,
 )
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
-    intent_router,
     payment_router,
     payment_words,
     payment_writer,
@@ -103,6 +104,10 @@ PaymentsOn = Annotated[bool, Depends(payments_available)]
 # The caller's name for this attempt. The chat prepares payments too, so a resent question that
 # happened to be "hazle un bizum de 20 a Marta" must not leave two intents. See `attempt_key`.
 Attempt = Annotated[str, Depends(attempt_key)]
+# How a turn is read. Asked once per turn, at the top of the route, and carried from there — the
+# three decisions below used to ask separately, which was three chances to disagree while it was
+# free and would be three model calls once it is not.
+Reads = Annotated[TurnInterpreterPort, Depends(turn_interpreter)]
 Categories = Annotated[tuple[str, ...], Depends(known_categories)]
 
 assistant_router = APIRouter(tags=["assistant"])
@@ -208,11 +213,11 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
 
 
-def _is_an_order_to_pay(sentence: str, was: Conversation) -> bool:
-    """Whether this sentence starts a payment, asked of the router that knows the exceptions.
+def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bool:
+    """Whether this sentence starts a payment, given how the turn was read.
 
     It used to ask `payment_router.is_payment` directly, which is the *narrower* question: is there
-    a payment order in these words. `intent_router` adds the one case where the answer is no anyway
+    a payment order in these words. The interpreter adds the one case where the answer is no anyway
     — a sentence asking who can be paid — and that rule was written because "¿qué contactos tengo
     para mandar bizum?" was read as an order and answered by asking who to pay.
 
@@ -220,16 +225,18 @@ def _is_an_order_to_pay(sentence: str, was: Conversation) -> bool:
     worked for the phrasings that say "contactos" and not for "¿a quién puedo hacerle un bizum?",
     which is the same question reaching the same wrong answer by the same route.
 
-    Asked here rather than copying the exception, because two copies of "is this a payment" is how
-    the first one came to be incomplete.
+    The reading is now taken as an argument rather than computed, because two copies of "is this a
+    payment" is how the first one came to be incomplete — and because it costs a model call once
+    the interpreter is a model.
 
     An open question takes precedence over a payment word, unless the sentence carries an amount.
     "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and asked who to send
     it to — a word offered as the answer to a question, read as an order. A real instruction is not
     lost to this: "hazle un bizum de 20 € a Marta" names a figure, and that is what tells a change
-    of subject from a one-word reply.
+    of subject from a one-word reply. This stays here rather than moving into the interpreter: it
+    is not about what the sentence means, it is about which of two open subjects owns the turn.
     """
-    if intent_router.route(sentence, has_previous=was.last_plan is not None) is not Intent.PAYMENT:
+    if read_as is not Intent.PAYMENT:
         return False
     asked = was.awaiting or was.last_asked
     return asked not in _FINANCIAL_SLOTS or payment_words.amount_in(sentence) is not None
@@ -574,13 +581,13 @@ def _conversation_of(request: QuestionRequest) -> Conversation:
 
 
 async def _continues_a_payment(
-    was: Conversation, question: str, who: Caller, queries: QueryBus
+    read_as: Intent, was: Conversation, question: str, who: Caller, queries: QueryBus
 ) -> PaymentDraft | None:
     """The payment this sentence continues, or None.
 
-    Checked before the sentence is classified at all, because a conversation with a payment under
-    way is a state machine rather than a sequence of unrelated sentences. Without it "15 euros"
-    reached the financial planner: money with no payment verb is not a payment.
+    Checked before the sentence's *meaning* decides anything, because a conversation with a payment
+    under way is a state machine rather than a sequence of unrelated sentences. Without it "15
+    euros" reached the financial planner: money with no payment verb is not a payment.
 
     The directory is fetched only when a payment is actually under way, which is rare. The prepare
     handler reads it again to resolve the recipient — one extra local call on those turns, and the
@@ -590,7 +597,7 @@ async def _continues_a_payment(
     active = was.active
     if not isinstance(active, PaymentInProgress):
         return None
-    if intent_router.route(question, has_previous=was.last_plan is not None) is Intent.OWN_TRANSFER:
+    if read_as is Intent.OWN_TRANSFER:
         # An instruction to move money between the holder's own accounts, not a reply to the Bizum.
         # "Mueve 200 euros a la hucha" carries a figure, and a half-built payment missing its amount
         # took it — so a sentence naming one of the holder's own accounts completed a payment to
@@ -836,6 +843,7 @@ async def ask(
     commands: Commands,
     payments_on: PaymentsOn,
     attempt: Attempt,
+    reads: Reads,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -867,7 +875,12 @@ async def ask(
         if immediate is not None:
             return immediate
 
-    continuing = await _continues_a_payment(was, request.question, who, queries)
+    # One reading, before any of the three decisions that need one. It is asked after the
+    # confirmation and open-payment branches above on purpose: those turns belong to a state
+    # machine whatever the words mean, and paying to classify them would be paying for nothing.
+    read_as = await reads.interpret(request.question, conversation=was)
+
+    continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
         # A payment under way takes the reply that answers its question, before anything is
         # classified. "15 euros" is an amount because something asked for one.
@@ -875,7 +888,7 @@ async def ask(
             request.question, who, commands, payments_on, was, continuing, key=key
         )
 
-    if _is_an_order_to_pay(request.question, was):
+    if _is_an_order_to_pay(read_as, request.question, was):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,
         # because making it is what this router is for.
         return await _as_payment(request.question, who, commands, payments_on, was, key=key)
@@ -891,6 +904,10 @@ async def ask(
             # disagree about "hoy" on the same phone.
             reporting_timezone=who.reporting_timezone,
             conversation=was,
+            # The reading this route already made. Handed down rather than made again — see the
+            # field. Everything above decided *not* to pay on the strength of it, and the handler
+            # deciding otherwise from a second reading is the disagreement this removes.
+            intent=read_as,
         )
     )
     return llm_mapper.question_to_dto(result)
@@ -913,6 +930,7 @@ async def ask_streaming(
     # directory is an ordinary query and goes through the bus like everything else.
     queries: Queries,
     attempt: Attempt,
+    reads: Reads,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -941,7 +959,9 @@ async def ask_streaming(
         if immediate is not None:
             return _open_payment_events(immediate)
 
-    continuing = await _continues_a_payment(was, request.question, who, queries)
+    read_as = await reads.interpret(request.question, conversation=was)
+
+    continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
         # Here as well as on the other route, and for the reason written below: the web client types
         # into *this* endpoint, so a payment that could only be continued on the other one was a
@@ -951,7 +971,7 @@ async def ask_streaming(
             request.question, who, commands, payments_on, was, continuing, key=key
         )
 
-    if _is_an_order_to_pay(request.question, was):
+    if _is_an_order_to_pay(read_as, request.question, was):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one
         # that could not pay — the same sentence answering differently depending on which endpoint
@@ -967,6 +987,7 @@ async def ask_streaming(
         # conversation never used.
         reporting_timezone=who.reporting_timezone,
         conversation=was,
+        intent=read_as,
     )
 
     async def events() -> AsyncIterator[str]:

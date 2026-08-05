@@ -49,6 +49,7 @@ from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPor
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     account_words,
     answer_writer,
@@ -64,6 +65,7 @@ from finguard_orchestrator.domain.services import (
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -182,6 +184,19 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # having it rather than by this service, and already typed by the time it arrives here — the
     # edge rebuilt it through the domain, so nothing in here has to believe a string.
     conversation: Conversation = IDLE
+    # What this turn was read as, when the caller already knows.
+    #
+    # The edge has to classify the sentence before it can decide whether to dispatch this query at
+    # all — a payment order never reaches here. Left out, the classification happened again inside,
+    # and two readings of one sentence is a thing that can disagree with itself. It already did:
+    # the edge and the handler each grew their own exception for "¿a quién puedo hacer un bizum?"
+    # and only one of them got it.
+    #
+    # It is *not* a client field. Nothing deserialises into it; the edge fills it from the
+    # interpreter it just asked, and a caller that leaves it out gets the same reading computed
+    # here. That keeps the handler usable on its own — every test and the corpus call it that way —
+    # without letting a second reading exist on the path a user is actually on.
+    intent: Intent | None = None
 
 
 @dataclass(frozen=True)
@@ -224,11 +239,16 @@ class AskFinancialQuestionHandler:
         accounts: AccountSummaryPort,
         contacts: ContactDirectoryPort,
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
+        interpreter: TurnInterpreterPort | None = None,
     ) -> None:
         self._planner = planner
         self._queries = queries
         self._policy = policy
         self._read_attempts = read_attempts
+        # Only reached when the caller did not classify the turn itself. On the live path the edge
+        # always has — it had to, to know this query was the right one — so this is the fallback
+        # for a handler used directly, and the default is the behaviour that already existed.
+        self._interpreter = interpreter or Deterministic()
         self._accounts = accounts
         self._contacts = contacts
 
@@ -314,7 +334,7 @@ class AskFinancialQuestionHandler:
         previous = was.last_plan
         planning_previous = previous if isinstance(previous, FinancialPlan) else None
         force_follow_up = False
-        intent = intent_router.route(query.sentence, has_previous=previous is not None)
+        intent = query.intent or await self._interpreter.interpret(query.sentence, conversation=was)
 
         if was.retry_plan is not None and intent not in _ASIDES:
             # Any other sentence starts a different turn. It must not leave a stale retry behind

@@ -20,7 +20,6 @@ from typing import Any, Final
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.services.intent_router import Intent
-from finguard_orchestrator.domain.value_objects.llm_policy import LlmPolicy
 from finguard_orchestrator.infrastructure.interpreting.turn_prompt import build_prompt
 
 logger = logging.getLogger(__name__)
@@ -43,18 +42,23 @@ MAX_OUTPUT_TOKENS: Final = 32
 class LlmTurnInterpreter:
     """Implements TurnInterpreterPort against one model."""
 
-    def __init__(self, provider: LlmProviderPort, policy: LlmPolicy) -> None:
+    def __init__(self, provider: LlmProviderPort, *, model: str) -> None:
+        """The model by name, like the planner takes it, and nothing else.
+
+        No temperature and no token budget: both are decided here rather than configured, because
+        both are properties of *this* job. Classification wants zero temperature — the same turn
+        twice has to be the same intent, or a conversation stops being reproducible and so does
+        every measurement of one — and it wants a tiny budget, because a model given room to
+        explain itself takes it, on every turn of every conversation.
+        """
         self._provider = provider
-        self._policy = policy
+        self._model = model
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
         try:
             answered = await self._provider.complete(
                 build_prompt(sentence, conversation),
-                model=self._policy.model.model,
-                # Zero rather than the planning temperature. Classification is not a place for
-                # variety: the same turn twice has to be the same intent, or a conversation stops
-                # being reproducible and so does every measurement of one.
+                model=self._model,
                 temperature=0.0,
                 max_output_tokens=MAX_OUTPUT_TOKENS,
                 schema=SCHEMA,

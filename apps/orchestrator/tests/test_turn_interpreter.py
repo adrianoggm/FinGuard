@@ -93,12 +93,8 @@ class Provider:
 
 
 def a_model(answer: str) -> tuple[LlmTurnInterpreter, Provider]:
-    from finguard_orchestrator.domain.value_objects.llm_model import LlmModel
-    from finguard_orchestrator.domain.value_objects.llm_policy import LlmPolicy
-
     provider = Provider(answer)
-    policy = LlmPolicy(model=LlmModel(alias="a", provider="double", model="m"))
-    return LlmTurnInterpreter(provider, policy), provider  # type: ignore[arg-type]
+    return LlmTurnInterpreter(provider, model="a-model"), provider  # type: ignore[arg-type]
 
 
 # --- the deterministic one is today, renamed ---------------------------------------------

@@ -39,6 +39,8 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyHandler,
 )
 from finguard_orchestrator.bootstrap.config import get_settings
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
+from finguard_orchestrator.domain.services.turn_interpreters import Deterministic, Shadowed
 from finguard_orchestrator.infrastructure import (
     HttpAccountSummary,
     HttpCards,
@@ -53,6 +55,9 @@ from finguard_orchestrator.infrastructure import (
     assistant_router,
     payments_router,
     register_error_handlers,
+)
+from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
+    LlmTurnInterpreter,
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
@@ -142,6 +147,15 @@ def create_app() -> FastAPI:
         days=settings.summary_days,
         movements=settings.summary_movements,
     )
+    # How a turn is read, chosen once. The deterministic rules decide; a model gets to have an
+    # opinion when the shadow is on, and it is recorded rather than acted on. See `Shadowed`.
+    interpreter: TurnInterpreterPort = Deterministic()
+    if settings.turn_interpreter_shadow:
+        interpreter = Shadowed(
+            interpreter,
+            LlmTurnInterpreter(planner_provider, model=settings.planner_model),
+        )
+
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -159,6 +173,10 @@ def create_app() -> FastAPI:
         accounts=accounts,
         contacts=contacts,
         read_attempts=settings.banking_read_attempts,
+        # Only used when a caller did not classify the turn itself. Both HTTP routes do, so on the
+        # live path this is unreachable — it is here so the handler and the edge cannot end up
+        # reading a sentence two different ways when somebody adds a third caller.
+        interpreter=interpreter,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
@@ -267,6 +285,8 @@ def create_app() -> FastAPI:
     # somebody wants from a running service is always another one of these.
     app.state.settings = settings
     app.state.planner_probe = planner_provider
+    # Read by both question routes, which classify the turn once and carry the answer down.
+    app.state.turn_interpreter = interpreter
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.

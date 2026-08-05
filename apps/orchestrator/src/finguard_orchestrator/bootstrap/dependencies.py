@@ -8,6 +8,7 @@ from fastapi import Depends, Header, Request
 from finguard_orchestrator.application import AskFinancialQuestionHandler, CommandBus, QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 
@@ -91,6 +92,17 @@ def payments_available(request: Request) -> bool:
     """
     enabled: bool = request.app.state.payments_enabled
     return enabled
+
+
+def turn_interpreter(request: Request) -> TurnInterpreterPort:
+    """Whatever reads a turn on this deployment.
+
+    Which one is a startup decision, and the point of the port is that the routes cannot tell:
+    deterministic today, the same rules with a model shadowing them when the shadow is switched on,
+    a model deciding once the numbers say so. One place chooses; nothing downstream changes.
+    """
+    interpreter: TurnInterpreterPort = request.app.state.turn_interpreter
+    return interpreter
 
 
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
