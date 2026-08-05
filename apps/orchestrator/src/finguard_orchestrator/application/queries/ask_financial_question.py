@@ -18,7 +18,13 @@ from typing import Final
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.domain.enums import Direction, PlanningOutcome, Spoken
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    PlanningOutcome,
+    Spoken,
+)
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
     InvalidValueError,
@@ -56,17 +62,19 @@ from finguard_orchestrator.domain.services import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     FinancialPlanDraft,
+    RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.observability import account_ref
 
-# Reads have no side effects, so one immediate retry can recover a short transport interruption.
-# A second failure becomes visible state and lets the user decide whether to try again; commands
-# deliberately do not use this policy because their outcome may be indeterminate after a timeout.
-BANK_READ_ATTEMPTS = 2
+# The default when a handler is built without one, which is every test that does not care. The
+# deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
+# a constant here was a policy nobody could change without a release.
+DEFAULT_BANK_READ_ATTEMPTS = 2
 
 logger = logging.getLogger(__name__)
 
@@ -212,10 +220,12 @@ class AskFinancialQuestionHandler:
         *,
         accounts: AccountSummaryPort,
         contacts: ContactDirectoryPort,
+        read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
     ) -> None:
         self._planner = planner
         self._queries = queries
         self._policy = policy
+        self._read_attempts = read_attempts
         self._accounts = accounts
         self._contacts = contacts
 
@@ -480,8 +490,15 @@ class AskFinancialQuestionHandler:
             )
 
         if not planned.is_answerable:
-            yield _decline(planned, was)
-            return
+            rescued = _from_what_the_sentence_said(planned, query)
+            if rescued is None:
+                yield _decline(planned, was)
+                return
+            if not rescued.is_answerable:
+                # A question rather than a plan: the sentence named a category and no period.
+                yield _decline(rescued, was)
+                return
+            planned = rescued
 
         assert planned.plan is not None  # is_answerable is exactly this condition
 
@@ -839,7 +856,7 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery, ranking: TopMovements
     ) -> AskFinancialQuestionResult:
         """One movement, named. The figure alone would send the user to the movement list."""
-        for attempt in range(BANK_READ_ATTEMPTS):
+        for attempt in range(self._read_attempts):
             try:
                 found = await self._queries.ranked(
                     ranking,
@@ -858,7 +875,7 @@ class AskFinancialQuestionHandler:
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
-                if attempt + 1 < BANK_READ_ATTEMPTS:
+                if attempt + 1 < self._read_attempts:
                     continue
                 return AskFinancialQuestionResult(
                     outcome="BANKING_UNAVAILABLE",
@@ -947,7 +964,7 @@ class AskFinancialQuestionHandler:
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
         scoped = await self._scoped(plan, query)
-        for attempt in range(BANK_READ_ATTEMPTS):
+        for attempt in range(self._read_attempts):
             try:
                 answer = await self._queries.run(
                     scoped,
@@ -968,7 +985,7 @@ class AskFinancialQuestionHandler:
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
-                if attempt + 1 < BANK_READ_ATTEMPTS:
+                if attempt + 1 < self._read_attempts:
                     continue
                 return AskFinancialQuestionResult(
                     outcome="BANKING_UNAVAILABLE",
@@ -1046,6 +1063,89 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # For a family with nothing specific to say, which today is none of them. It exists so adding a
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
+
+
+def _from_what_the_sentence_said(
+    planned: PlanningResult, query: AskFinancialQuestionQuery
+) -> PlanningResult | None:
+    """A plan built from the sentence alone, when the model gave up on one it could have made.
+
+    **The guard owns refusals; the model does not get to invent one.** `capability_guard` is what
+    decides which questions this product declines — averages, ratios, comparisons — and it runs
+    *before* the model. So an `UNSUPPORTED` naming a family the guard does not have is not a
+    refusal this service makes; it is the model failing, dressed as a product limit. Handing it to
+    the user is the worst kind of wrong answer: "no puedo" about something that can be, said with
+    the authority of a rule.
+
+    Ollama returned exactly that for "¿qué intereses me ha dado la hucha?" — a question whose
+    every part is in a closed vocabulary this service reads itself.
+
+    So the sentence is re-read deterministically, and a plan is built only when it states enough on
+    its own: a window, and a category named precisely enough for the gate to be sure of it. Both,
+    never one — a category with no window would answer about a period nobody chose, and a window
+    with no category would total everything under a question about one thing. `None` when it does
+    not, and then the decline stands: this rescues a plan the sentence contains, and never guesses
+    at one it does not.
+    """
+    if planned.outcome is not PlanningOutcome.UNSUPPORTED:
+        return None
+    if planned.reason in _MISSING_CAPABILITY:
+        # A family the guard owns. The refusal is this product's and it is correct.
+        return None
+
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    named = category_words.precisely_named_in(query.sentence)
+    if not named:
+        # Nothing certain to build from. The decline stands, and it is honest: what this rescues is
+        # a plan the sentence contains, never one it does not.
+        return None
+
+    if facts.window is None:
+        # Everything but the period. Asking for it is the true answer — "no puedo calcularlo" about
+        # a question that only lacks a window is a capability limit that does not exist, and it
+        # teaches somebody the product cannot do something it does.
+        return PlanningResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION,
+            question=(
+                "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
+            ),
+            draft=FinancialPlanDraft(
+                direction=_direction_of(named), categories=named, group_by=GroupBy.NONE
+            ),
+            awaiting=Slot.WINDOW,
+        )
+
+    plan = FinancialPlan(
+        direction=_direction_of(named),
+        period=facts.window if isinstance(facts.window, RelativePeriod) else None,
+        date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
+        categories=named,
+        group_by=facts.group_by or GroupBy.NONE,
+        metric=Metric.SUM,
+    )
+    logger.info(
+        "plan.rescued account=%s reason=%s categories=%s",
+        account_ref(query.account_id),
+        planned.reason or "none",
+        ",".join(named),
+    )
+    return PlanningResult(outcome=PlanningOutcome.PLANNED, plan=plan)
+
+
+# Categories that are money coming in. Read from the sentence's category rather than guessed from
+# its verb: "¿qué intereses me ha dado la hucha?" has no verb of spending or earning that this
+# service reads, and interest is income by what it *is*.
+_INCOME_CATEGORIES: Final = frozenset({"SALARY", "INTEREST"})
+
+
+def _direction_of(categories: tuple[str, ...]) -> Direction:
+    if all(category in _INCOME_CATEGORIES for category in categories):
+        return Direction.INCOME
+    if any(category in _INCOME_CATEGORIES for category in categories):
+        # A salary and a supermarket in one question. ALL rather than picking, because a signed
+        # total over both is the only figure that is not wrong about one of them.
+        return Direction.ALL
+    return Direction.EXPENSE
 
 
 def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestionResult:

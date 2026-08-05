@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     # Both were constants inside the adapter, which made them parameters and not
     # configuration — a slower machine needed a commit.
     banking_timeout_seconds: float
+    # How many times a *read* against banking is attempted before the failure becomes visible
+    # state. Reads have no side effects, so one immediate retry recovers a short transport
+    # interruption; a second failure lets the user decide whether to try again.
+    #
+    # Operational policy, so it lives here rather than beside the code that uses it. Commands
+    # deliberately do not retry at all: their outcome may be indeterminate after a timeout, and
+    # this number must never be able to reach them.
+    banking_read_attempts: int = 2
     supporting_movements: int
 
     # Where the local runtime listens. Configurable because inside a container 127.0.0.1
