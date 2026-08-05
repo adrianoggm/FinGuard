@@ -64,9 +64,43 @@ class ToAccount:
             raise InvalidValueError("a transfer names who it is going to")
 
 
-type Destination = ToPhone | ToAccount
+@dataclass(frozen=True)
+class ToOwnAccount:
+    """Another account of the same holder. The money moves and never leaves.
+
+    An account id, not an IBAN. Routing this through a number would mean resolving it back to a row,
+    and that lookup can land on somebody else's account; an id the caller was shown cannot become a
+    different account than the one they picked. What makes it *theirs* is checked where the intent
+    is prepared, against the same view that listed it — a foreign key says an account exists, not
+    that it is yours.
+
+    `name` is what the preview prints, and it is the holder's own label for the account ("Hucha").
+    Kept on the destination rather than read at confirmation time for the reason `ToAccount` keeps
+    its IBAN: the preview is what was approved, and a label edited in between must not change what
+    the person agreed to.
+    """
+
+    account_id: UUID
+    name: str
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise InvalidValueError("a transfer names the account it is going to")
+
+
+type Destination = ToPhone | ToAccount | ToOwnAccount
+
+_RAILS: dict[type, Rail] = {
+    ToPhone: Rail.BIZUM,
+    ToAccount: Rail.TRANSFER,
+    ToOwnAccount: Rail.INTERNAL,
+}
 
 
 def rail_of(destination: Destination) -> Rail:
-    """Which rail this destination is paid over. The tag of the union, by name."""
-    return Rail.BIZUM if isinstance(destination, ToPhone) else Rail.TRANSFER
+    """Which rail this destination is paid over. The tag of the union, by name.
+
+    A table rather than a chain of `isinstance`: with three members the chain grows an implicit
+    "everything else" branch, and the day a fourth arrives it silently becomes one of the three.
+    """
+    return _RAILS[type(destination)]

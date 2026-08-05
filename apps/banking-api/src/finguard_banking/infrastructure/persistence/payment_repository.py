@@ -43,6 +43,7 @@ from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceip
 from finguard_banking.domain.value_objects.destination import (
     Destination,
     ToAccount,
+    ToOwnAccount,
     ToPhone,
     rail_of,
 )
@@ -122,11 +123,11 @@ class PostgresPaymentRepository:
                 await connection.execute(
                     "INSERT INTO payment_intents "
                     "(id, account_id, contact_id, rail, recipient_name, recipient_iban, "
-                    " amount_minor, currency, status, idempotency_key, expires_at) "
-                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                    " to_account_id, amount_minor, currency, status, idempotency_key, expires_at) "
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
                     intent_id,
                     account_id,
-                    to.contact_id,
+                    to.contact_id if isinstance(to, ToPhone | ToAccount) else None,
                     # Named rather than defaulted. The column carried `DEFAULT 'BIZUM'` only long
                     # enough to backfill the rows that existed; a rail nobody chose is a rail
                     # somebody forgets to send, and this is the one statement that decides where
@@ -135,8 +136,9 @@ class PostgresPaymentRepository:
                     # The destination as the preview will show it. A transfer to a favourite
                     # could read the contact's account back at confirmation; snapshotting is
                     # what makes the approval binding on the account the user actually saw.
-                    to.name if isinstance(to, ToAccount) else None,
+                    to.name if isinstance(to, ToAccount | ToOwnAccount) else None,
                     str(to.iban) if isinstance(to, ToAccount) else None,
+                    to.account_id if isinstance(to, ToOwnAccount) else None,
                     amount.amount_minor,
                     amount.currency,
                     _AWAITING,
@@ -168,7 +170,7 @@ class PostgresPaymentRepository:
 
             intent = await connection.fetchrow(
                 "SELECT i.id, i.amount_minor, i.currency, i.status, i.expires_at, i.rail, "
-                "       i.contact_id, i.recipient_name, i.recipient_iban, "
+                "       i.contact_id, i.recipient_name, i.recipient_iban, i.to_account_id, "
                 "       c.display_name, c.phone "
                 # LEFT, because a transfer to a typed account has no contact and an inner
                 # join would leave its intent unconfirmable: money approved, row invisible.
@@ -197,16 +199,24 @@ class PostgresPaymentRepository:
                 # from by another route between the two steps.
                 raise InsufficientFundsError(balance.amount_minor, amount.amount_minor)
 
-            clearing = await connection.fetchval(
-                "SELECT id FROM accounts WHERE account_reference = $1", self.clearing_reference
-            )
+            # Where the credit leg lands, and it is the whole difference between the rails at this
+            # layer. Money that leaves the household is balanced against the clearing account;
+            # money that stays lands in the holder's other account, which is what makes the pair a
+            # real double entry rather than a payment out with a matching payment in.
+            if isinstance(destination, ToOwnAccount):
+                counterparty = destination.account_id
+            else:
+                counterparty = await connection.fetchval(
+                    "SELECT id FROM accounts WHERE account_reference = $1", self.clearing_reference
+                )
             transaction_id = await self._book(
                 connection,
                 payer=account_id,
-                clearing=clearing,
+                clearing=counterparty,
                 amount=amount,
                 recipient=destination.name,
                 phone=destination.phone if isinstance(destination, ToPhone) else None,
+                internal=isinstance(destination, ToOwnAccount),
             )
 
             confirmed_at = datetime.now(UTC)
@@ -287,6 +297,7 @@ class PostgresPaymentRepository:
         amount: Money,
         recipient: str,
         phone: str | None,
+        internal: bool = False,
     ) -> UUID:
         """One transaction through the lifecycle: PENDING, both entries, BOOKED.
 
@@ -294,19 +305,29 @@ class PostgresPaymentRepository:
         re-asserts the balance. A payment therefore cannot be recorded half-written.
         """
         transaction_id = uuid.uuid4()
+        # An internal transfer gets no category, and that is deliberate rather than an omission.
+        # A category partitions spending, and this is not spending — filing it under one would put
+        # it in a breakdown that is supposed to add up to what left the household.
         metadata = json.dumps(
-            {"merchant_name": recipient, "category": "TRANSFER_BIZUM", "phone": phone},
+            {
+                "merchant_name": recipient,
+                "category": None if internal else "TRANSFER_BIZUM",
+                "phone": phone,
+            },
             ensure_ascii=False,
         )
+        kind = TransactionType.INTERNAL_TRANSFER if internal else TransactionType.BIZUM
+        label = f"Traspaso a {recipient}" if internal else f"Bizum a {recipient}"
+        prefix = "traspaso" if internal else "bizum"
         await connection.execute(
             "INSERT INTO ledger_transactions "
             "(id, transaction_type, status, reference, description, metadata, occurred_at) "
             "VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())",
             transaction_id,
-            TransactionType.BIZUM.value,
+            kind.value,
             TransactionStatus.PENDING.value,
-            f"bizum-{transaction_id.hex[:16]}",
-            f"Bizum a {recipient}",
+            f"{prefix}-{transaction_id.hex[:16]}",
+            label,
             metadata,
         )
         for account, entry_type in (
@@ -339,6 +360,8 @@ def _destination_of(intent: Any) -> Destination:
     account and a name — so the branches here restate an invariant rather than guessing at one, and
     a row that satisfied neither could not have been written.
     """
+    if intent["rail"] == Rail.INTERNAL.value:
+        return ToOwnAccount(account_id=intent["to_account_id"], name=intent["recipient_name"])
     if intent["rail"] == Rail.BIZUM.value:
         return ToPhone(
             contact_id=intent["contact_id"],

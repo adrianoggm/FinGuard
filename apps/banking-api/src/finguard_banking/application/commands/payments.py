@@ -14,11 +14,21 @@ from uuid import UUID
 
 from finguard_banking.application.bus.command_bus import Command
 from finguard_banking.domain.enums import Rail
-from finguard_banking.domain.errors import ContactHasNoAccountError, InvalidValueError
+from finguard_banking.domain.errors import (
+    AccountNotFoundError,
+    ContactHasNoAccountError,
+    InvalidValueError,
+)
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
+from finguard_banking.domain.ports.account_directory import AccountDirectoryPort
 from finguard_banking.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_banking.domain.ports.payment_gateway import PaymentGatewayPort
-from finguard_banking.domain.value_objects.destination import Destination, ToAccount, ToPhone
+from finguard_banking.domain.value_objects.destination import (
+    Destination,
+    ToAccount,
+    ToOwnAccount,
+    ToPhone,
+)
 from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 
@@ -47,8 +57,23 @@ class PreparePaymentCommand(Command[PaymentPreview]):
     # arrives — `Iban` refuses anything that fails its check digits — so what is left here is which
     # combinations name a destination at all.
     recipient_iban: Iban | None = None
+    # Another account of this holder. An id and not an IBAN: an id the caller was shown cannot
+    # resolve to a different account than the one they picked, and a number can.
+    to_account_id: UUID | None = None
 
     def __post_init__(self) -> None:
+        if self.to_account_id is not None:
+            if self.rail is not Rail.INTERNAL:
+                raise InvalidValueError("one of your own accounts is only an internal destination")
+            if self.recipient_iban is not None or self.recipient_contact_id is not None:
+                raise InvalidValueError("an internal transfer goes to one of your accounts, only")
+            if self.to_account_id == self.account_id:
+                # A transaction debiting and crediting one account balances perfectly, so every
+                # integrity check in this ledger would accept it and the balance would not move.
+                raise InvalidValueError("an account cannot transfer to itself")
+            return
+        if self.rail is Rail.INTERNAL:
+            raise InvalidValueError("an internal transfer needs one of your own accounts")
         if self.recipient_iban is not None:
             if self.rail is not Rail.TRANSFER:
                 raise InvalidValueError("an account number is only a destination for a transfer")
@@ -80,9 +105,18 @@ class CancelPaymentCommand(Command[None]):
 
 
 class PreparePaymentHandler:
-    def __init__(self, contacts: ContactDirectoryPort, payments: PaymentGatewayPort) -> None:
+    def __init__(
+        self,
+        contacts: ContactDirectoryPort,
+        payments: PaymentGatewayPort,
+        accounts: AccountDirectoryPort | None = None,
+    ) -> None:
         self._contacts = contacts
         self._payments = payments
+        # Only the internal rail needs it, and a deployment that has not wired it refuses that rail
+        # rather than skipping the check. Optional here and not in the signature of the check: an
+        # ownership test that can be absent is an ownership test.
+        self._accounts = accounts
 
     async def handle(self, command: PreparePaymentCommand) -> PaymentPreview:
         return await self._payments.prepare(
@@ -103,6 +137,9 @@ class PreparePaymentHandler:
         Marta" is a better answer than a transfer that fails at the gateway with somebody's money
         already in flight.
         """
+        if command.to_account_id is not None:
+            return await self._own_account(command)
+
         if command.recipient_iban is not None:
             assert command.recipient_name is not None  # the command's own invariant
             return ToAccount(name=command.recipient_name, iban=command.recipient_iban)
@@ -123,6 +160,33 @@ class PreparePaymentHandler:
             name=contact.display_name,
             iban=Iban(contact.iban),
             contact_id=contact.contact_id,
+        )
+
+    async def _own_account(self, command: PreparePaymentCommand) -> Destination:
+        """The holder's other account, checked to be theirs before anything is written.
+
+        The foreign key says the account exists. It does not say it is yours, and this is the only
+        place that asks — an internal transfer to a stranger's account would be a transfer with no
+        preview naming a stranger, which is the worst shape a payment can have.
+
+        Read through `all_of`, which goes through the same declaration and the same view every
+        other read does: an account of another holder is not "not authorised", it is not there.
+        """
+        assert command.to_account_id is not None  # the command's own invariant
+        if self._accounts is None:  # pragma: no cover - wiring, asserted at startup
+            raise InvalidValueError("this deployment cannot move money between accounts")
+
+        holdings = await self._accounts.all_of(command.account_id)
+        mine = {holding.account_id: holding for holding in holdings}
+        target = mine.get(command.to_account_id)
+        if target is None:
+            raise AccountNotFoundError(command.to_account_id)
+        return ToOwnAccount(
+            account_id=target.account_id,
+            # The holder's own label, or the kind when they never gave one. Snapshotted onto the
+            # intent for the reason a transfer snapshots its IBAN: the preview is what was agreed
+            # to, and a name edited in between must not change what somebody approved.
+            name=target.display_name or target.kind.value,
         )
 
 

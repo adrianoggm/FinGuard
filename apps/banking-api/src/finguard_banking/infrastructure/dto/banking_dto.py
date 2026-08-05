@@ -221,12 +221,25 @@ class PreparePaymentRequest(_Body):
     # twenty-four characters is a checksum-valid stranger waiting to happen, and the check digits
     # catch a slip of the finger rather than a confident misreading.
     recipient_iban: str | None = Field(default=None, min_length=15, max_length=42)
+    # Another account of this holder, for the INTERNAL rail. An identifier and not a number: an id
+    # the caller was shown cannot resolve to a different account than the one they picked. Whether
+    # it is *theirs* is checked where the intent is prepared, against the view that listed it.
+    to_account_id: UUID | None = None
 
     @model_validator(mode="after")
     def _one_recipient(self) -> "PreparePaymentRequest":
         named = self.recipient_name is not None
         chosen = self.recipient_contact_id is not None
         typed = self.recipient_iban is not None
+
+        if self.to_account_id is not None:
+            if self.rail is not Rail.INTERNAL:
+                raise ValueError("one of your own accounts is only an internal destination")
+            if typed or chosen or named:
+                raise ValueError("an internal transfer goes to one of your accounts, only")
+            return self
+        if self.rail is Rail.INTERNAL:
+            raise ValueError("an internal transfer needs toAccountId")
 
         if typed:
             if self.rail is not Rail.TRANSFER:
@@ -261,6 +274,8 @@ class PaymentPreviewResponse(_Payload):
     recipient: str
     recipient_phone: str | None = None
     recipient_iban: str | None = None
+    # Which of the holder's accounts an internal transfer landed in.
+    to_account_id: UUID | None = None
     amount_minor: int
     currency: str
     balance_before_minor: int
@@ -277,6 +292,8 @@ class PaymentReceiptResponse(_Payload):
     recipient: str
     recipient_phone: str | None = None
     recipient_iban: str | None = None
+    # Which of the holder's accounts an internal transfer landed in.
+    to_account_id: UUID | None = None
     amount_minor: int
     currency: str
     balance_after_minor: int

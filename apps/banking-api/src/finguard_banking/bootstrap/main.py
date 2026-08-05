@@ -117,7 +117,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Rebuilt here rather than in create_app: the trail needs the pool, and every command is
     # audited by the bus so no handler can be the one that forgets.
     app.state.command_bus = bus = CommandBus(audit=PostgresAuditLog(pool))
-    bus.register(PreparePaymentCommand, PreparePaymentHandler(contacts, payments))
+    # The account directory goes in because an internal transfer has to prove the destination is
+    # this holder's. Through the restricted role, like every read: it answers from the same view
+    # that listed the accounts, so one belonging to somebody else is not there to be found.
+    bus.register(
+        PreparePaymentCommand,
+        PreparePaymentHandler(contacts, payments, PostgresAccountRepository(query_pool)),
+    )
     bus.register(ConfirmPaymentCommand, ConfirmPaymentHandler(payments))
     bus.register(CancelPaymentCommand, CancelPaymentHandler(payments))
     # The holder's own category. A write, so it holds the owner pool — and it never touches

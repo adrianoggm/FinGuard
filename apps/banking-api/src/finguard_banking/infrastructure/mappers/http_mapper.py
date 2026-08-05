@@ -26,7 +26,12 @@ from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
-from finguard_banking.domain.value_objects.destination import Destination, ToAccount, ToPhone
+from finguard_banking.domain.value_objects.destination import (
+    Destination,
+    ToAccount,
+    ToOwnAccount,
+    ToPhone,
+)
 from finguard_banking.domain.value_objects.iban import Iban
 from finguard_banking.domain.value_objects.money import Money
 from finguard_banking.domain.value_objects.relative_period import RelativePeriod, resolve
@@ -181,6 +186,7 @@ def payment_from_dto(
         # that fails its check digits, so a mistyped account is a 422 rather than a preview of a
         # payment to nowhere.
         recipient_iban=Iban.parse(body.recipient_iban) if body.recipient_iban else None,
+        to_account_id=body.to_account_id,
         amount=Money(body.amount_minor, body.currency),
         idempotency_key=key,
     )
@@ -193,6 +199,7 @@ def preview_to_dto(preview: PaymentPreview) -> PaymentPreviewResponse:
         recipient=preview.to.name,
         recipient_phone=_phone_of(preview.to),
         recipient_iban=_iban_of(preview.to),
+        to_account_id=_own_account_of(preview.to),
         amount_minor=preview.amount.amount_minor,
         currency=preview.amount.currency,
         balance_before_minor=preview.balance_before.amount_minor,
@@ -209,6 +216,7 @@ def receipt_to_dto(receipt: PaymentReceipt) -> PaymentReceiptResponse:
         recipient=receipt.to.name,
         recipient_phone=_phone_of(receipt.to),
         recipient_iban=_iban_of(receipt.to),
+        to_account_id=_own_account_of(receipt.to),
         amount_minor=receipt.amount.amount_minor,
         currency=receipt.amount.currency,
         balance_after_minor=receipt.balance_after.amount_minor,
@@ -288,6 +296,11 @@ def card_charges_to_dto(result: ListCardChargesResult) -> CardChargesResponse:
 def _phone_of(destination: Destination) -> str | None:
     """The number a Bizum went to. None for a transfer, which has an account instead."""
     return destination.phone if isinstance(destination, ToPhone) else None
+
+
+def _own_account_of(destination: Destination) -> UUID | None:
+    """The account an internal transfer went to. None for the two rails that leave the household."""
+    return destination.account_id if isinstance(destination, ToOwnAccount) else None
 
 
 def _iban_of(destination: Destination) -> str | None:
