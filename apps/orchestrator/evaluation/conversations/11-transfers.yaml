@@ -1,0 +1,240 @@
+# Moving money between the holder's own accounts, read out of a sentence.
+#
+# Nothing here stages anything. The chat reads the instruction and says where to confirm it, because
+# preparing is a `payments:prepare` scope on another route — a read path that quietly gained the
+# ability to stage a payment would erase the seam between asking for something and paying for it.
+#
+# Both halves are required for a sentence to be an instruction at all: a verb of moving *and* one of
+# this holder's accounts. "Mueve el dinero" is not something anybody could act on, and "en la hucha"
+# alone is a question about a balance.
+
+episodes:
+  - name: the_destination_is_the_one_after_the_preposition
+    why: >
+      "Traspasar el total de fondo indexado a la cuenta de ahorros" names two accounts and says
+      exactly where the money goes. Counting the source as a candidate destination invented an
+      ambiguity and then asked the user to resolve it.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: me gustaría traspasar el total de fondo indexado a la cuenta de ahorros
+        route: TRANSFER
+        awaiting: AMOUNT
+        not_says: más de una cuenta
+      - say: 2700 euros
+        route: TRANSFER
+        says: Hucha
+        ends: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: from_one_account_to_another_both_named
+    why: The source is never offered as somewhere to put the money.
+    metrics: [unsafe_action]
+    turns:
+      - say: pasa el dinero de la hucha al fondo
+        route: TRANSFER
+        says: Fondo indexado
+      - say: 300 €
+        route: TRANSFER
+        ends: true
+      - say: pasa 100 € del fondo a la hucha
+        route: TRANSFER
+        says: Hucha
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_reflexive_verb_is_a_transfer_and_not_a_payment
+    why: >
+      `enviar` and `mandar` are what somebody says about paying another person, and the reflexive is
+      the opposite: exactly one possible destination, and it is the holder's own account. Without
+      them the sentence was answered with that account's balance.
+    metrics: [wrong_tool]
+    turns:
+      - say: me gustaría enviarme dinero a la cuenta corriente
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: 300 euros
+        route: TRANSFER
+        ends: true
+      - say: mándame 100 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: no_destination_named_at_all
+    why: >
+      "Transferir dinero entre cuentas" is an instruction with the destination left out. It reached
+      the capability guard and was refused with a sentence about *querying* the transfers — a
+      refusal about reading, to somebody asking to write.
+    metrics: [wrong_tool]
+    turns:
+      - say: me gustaría transferir dinero entre cuentas
+        route: TRANSFER
+        awaiting: ACCOUNT
+        says: Hucha
+      - say: a la hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: 200 €
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: the_amount_and_the_account_in_either_order
+    why: >
+      Somebody says one or the other first, and the state has to hold whichever arrived. Both
+      questions have to be answerable, which is the whole reason the transfer keeps state.
+    metrics: [context_retention]
+    turns:
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: 500
+        route: TRANSFER
+        ends: true
+      - say: mueve 500 € a algún sitio
+        route: QUERY
+      - say: mueve 500 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: an_account_the_holder_does_not_have
+    why: >
+      It names what does exist rather than refusing. A holder told "no puedo" about their own
+      accounts learns the wrong thing about the product.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: mueve 200 € a la cuenta de la empresa
+        route: QUERY
+      - say: mueve 200 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_transfer_never_stages_anything
+    why: >
+      The chat reads sentences. Confirming is a screen with a scope behind it, and the answer says
+      so rather than pretending the money has moved.
+    metrics: [unsafe_action]
+    turns:
+      - say: mueve 200 € a la hucha
+        route: TRANSFER
+        says: confirm
+        ends: true
+      - say: sí
+        not_says: Hecho
+      - say: confirmo
+        not_says: Hecho
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: three_transfers_in_a_row
+    why: >
+      Each one is read on its own and none of them inherits from the last. A destination that
+      carried over would move money to an account named two turns ago.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: mueve 100 € a la hucha
+        route: TRANSFER
+        says: Hucha
+      - say: mueve 200 € al fondo
+        route: TRANSFER
+        says: Fondo indexado
+      - say: mueve 300 € a la cuenta corriente
+        route: TRANSFER
+        says: Cuenta corriente
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_transfer_asked_about_rather_than_ordered
+    why: >
+      The same verbs appear in questions. An interrogative turns the sentence back into a question,
+      and the reply to a question would otherwise be a prompt to move money nobody asked to move.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿cuánto paso a la hucha cada mes?
+        route: QUERY
+      - say: ¿qué traspaso al fondo?
+        route: QUERY
+      # A question about the movements between the holder's own accounts, which no plan can
+      # express. Refused with its reason rather than answered with every movement of the year.
+      - say: ¿cuánto muevo entre cuentas?
+        route: REFUSED
+      - say: mueve 100 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_whole_transfer_conversation
+    why: >
+      Ten turns around one instruction, with three asides and a change of mind in the middle. The
+      state has to survive what belongs to it and close for everything else.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en el fondo?
+        route: BALANCE
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: 500 €
+        route: TRANSFER
+        ends: true
+      - say: mejor 1000
+        route: QUERY
+      - say: mueve 1000 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY

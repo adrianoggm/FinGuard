@@ -33,6 +33,7 @@ And what a whole episode may say:
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -346,11 +347,19 @@ class Reader:
     turn most of these episodes are about.
     """
 
+    # A capitalised word after "a", when no known contact is in the sentence. An unknown name is
+    # still a name: "hazle un bizum a Pepe" is a payment to somebody who is not in the list, and
+    # reading it as a question about *who* would be a different answer to a different question.
+    _A_NAME = re.compile(r"\ba\s+([A-ZÁÉÍÓÚÑ][\wáéíóúñ]+)")
+
     async def read(self, sentence: str, **_: object) -> PaymentReading:
         said = spanish.folded(sentence)
-        named = next(
-            (c.display_name for c in CONTACTS if spanish.folded(c.display_name) in said), None
-        ) or next((first for first in ("Marta", "Javi") if first.lower() in said), None)
+        found = self._A_NAME.search(sentence)
+        named = (
+            next((c.display_name for c in CONTACTS if spanish.folded(c.display_name) in said), None)
+            or next((first for first in ("Marta", "Javi") if first.lower() in said), None)
+            or (found.group(1) if found else None)
+        )
         amount = payment_words.amount_in(sentence)
 
         if named is None:

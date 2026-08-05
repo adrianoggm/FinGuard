@@ -1,0 +1,348 @@
+# The long ones. Twelve to twenty turns, nothing tidy about any of them.
+#
+# Everything the other twelve files test in isolation, arriving in the order a person produces it:
+# a typo, an aside, a correction, a payment interrupted, a refusal, a fragment, a change of subject
+# and then a follow-up to something four turns back.
+#
+# These are the episodes that would have caught the reported conversations, because the reported
+# conversations looked like this. Nothing here is a feature; it is a length.
+
+episodes:
+  - name: the_first_reported_conversation_from_the_top
+    why: >
+      Twelve questions typed at the demo, seven of which came back wrong. The transcript, with the
+      answers each turn is supposed to reach.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: Perdona que movimeintos he tenido entre mis cuentas ?
+        route: REFUSED
+      - say: Que cuentas tengo ?
+        route: BALANCE
+        says: Fondo indexado
+      - say: Cuanto dinero tengo en mi cuenta de ahorros ?
+        route: BALANCE
+        says: "5.485,50"
+      - say: En mi Hucha ?
+        route: BALANCE
+        says: "5.485,50"
+      - say: Cuanto dinero tengo en mi Hucha?
+        route: BALANCE
+      - say: Y en EL FONDO
+        route: BALANCE
+        says: "2.700,00"
+      - say: Pero en el fondo inversion que cuanto tengo ?
+        route: BALANCE
+      - say: me gustaria traspasar el total de fondo indexado a la cuenta de ahorros
+        route: TRANSFER
+        not_says: más de una cuenta
+      - say: 2700 €
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo ahora?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_second_reported_conversation
+    why: >
+      The tail of the same session, where a question about money *arriving* was read as an order to
+      send some — and every turn after it lived inside a payment nobody had asked for.
+    metrics: [wrong_tool, unsafe_action]
+    turns:
+      - say: Cuanto he gastado en inversiones este mes ?
+        route: REFUSED
+      - say: Caunto he invertido en el ultimo año ?
+        route: REFUSED
+        says: cuánto tengo en el fondo
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: He recibido algún bizum de Marta Solis Vega este mes ?
+        route: QUERY
+      - say: ¿y de algún otro en los 2 últimos meses?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_third_reported_conversation
+    why: >
+      A balance asked without the word "cuánto", two transfer instructions answered with figures,
+      and a question the transfer path could not hear the answer to.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: Oye cual es el estado actua lde mi hucha de ahorros
+        route: QUERY
+      - say: Oye cual es el estado actual de mi hucha de ahorros
+        route: BALANCE
+        says: "5.485,50"
+      - say: El total
+        route: BALANCE
+      - say: Cual es el saldo de mi hucha
+        route: BALANCE
+        says: "5.485,50"
+      - say: Me gustaria enviarme dinero a la cuenta corriente
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: Me gustaria tranferir dinero entre cuentas
+        route: TRANSFER
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: 1000 pavos
+        route: TRANSFER
+        says: "1.000,00"
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: sixteen_turns_of_everything
+    why: >
+      A tour with no theme. Balance, spending, a payment interrupted twice, a refusal, a correction,
+      a typo, an aside and a follow-up to the second turn arriving as the fifteenth.
+    metrics: [wrong_tool, context_retention, unsafe_action]
+    turns:
+      - say: hola
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: ¿cuál es mi gasto medio?
+        route: REFUSED
+      - say: continuar con el bizum
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: ¿quién eres?
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: cunato me queda
+        route: QUERY
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: dime las categorías
+        route: CATEGORIES
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+      - say: no es eso
+        route: CLARIFY
+      - say: en restaurantes
+        route: QUERY
+
+  - name: a_user_who_never_finishes_a_sentence
+    why: >
+      Twelve fragments and two real questions. The fragments must not accumulate into an answer and
+      must not move anything.
+    metrics: [unsafe_action]
+    turns:
+      - say: a ver
+        route: QUERY
+      - say: quería
+        route: QUERY
+      - say: bueno
+        route: QUERY
+      - say: es que
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ya
+        route: QUERY
+      - say: pues eso
+        route: QUERY
+      - say: nada
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+      - say: adiós
+        route: QUERY
+
+  - name: everything_goes_wrong_and_then_it_works
+    why: >
+      A refusal, a typo, a rejection, an unanswerable clarification and a lost thread — and the
+      last four turns are a clean exchange. Recovery is the property, and it is the one a demo
+      needs most.
+    metrics: [correction_recovery, wrong_tool]
+    turns:
+      - say: ¿cuál es mi gasto medio?
+        route: REFUSED
+      - say: cunato gaste
+        route: QUERY
+      - say: no es eso
+        route: CLARIFY
+      - say: pues no sé
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: gracias
+        route: QUERY
+
+  - name: three_operations_started_and_one_finished
+    why: >
+      A transfer, a payment and a query, opened in that order and closed in another. One workflow at
+      a time is the invariant, and this is what it looks like from outside.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 500
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: "no"
+        route: PAYMENT
+        ends: true
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: mueve 500 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: twenty_turns
+    why: >
+      The longest in the corpus, and the only assertion that matters is that the twentieth turn is
+      as good as the first. Nothing accumulates, nothing leaks and nothing is left open.
+    metrics: [wrong_tool, context_retention, unsafe_action]
+    turns:
+      - say: buenas
+        route: QUERY
+      - say: ¿qué puedes hacer?
+        route: IDENTITY
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿y en el fondo?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: ¿cuál es mi gasto medio?
+        route: REFUSED
+      - say: ¿y en restaurantes?
+        route: QUERY
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Javi Nuñez
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: ¿cuánto me quedaría?
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: mueve 100 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: dime las categorías
+        route: CATEGORIES
+      - say: ¿cuánto gasté en el supermercado?
+        route: QUERY
+      - say: no es eso
+        route: CLARIFY
+      - say: en gasolina
+        route: QUERY
+      - say: gracias, hasta luego
+        route: QUERY
+
+  - name: a_demo_being_shown_to_somebody
+    why: >
+      What the video looks like: a balance, a breakdown, a payment, a transfer and a question about
+      the product, in fifteen turns and with an interruption in the middle.
+    metrics: [wrong_tool]
+    turns:
+      - say: hola, ¿qué eres?
+        route: IDENTITY
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+        total: 775592
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y en qué?
+        route: QUERY
+      - say: dime las categorías disponibles
+        route: CATEGORIES
+      - say: ¿a quién puedo hacerle un bizum?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: mueve 100 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo ahora?
+        route: BALANCE
+      - say: ¿puedes hacer transferencias?
+        route: IDENTITY
+      - say: ¿cuánto he invertido?
+        route: REFUSED
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: gracias
+        route: QUERY
+
+  - name: the_same_question_five_times
+    why: >
+      Somebody who does not believe the answer. Five identical questions, five identical answers, and
+      no drift — the fifth is the second, to the cent.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿seguro?
+        route: QUERY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: vale, me fío
+        route: QUERY

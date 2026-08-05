@@ -1,0 +1,237 @@
+# Answering a preview, and the replies that are neither yes nor no.
+#
+# This is the one place in the whole service where getting a turn wrong moves money. The rule the
+# whole file exists to hold: **nothing reaches `confirm` except an unambiguous yes.** A reply that
+# adds a condition, names a different figure, or hedges is about a payment other than the one on the
+# table, and guessing which is the thing that must never happen.
+#
+# An unclear reply leaves the preview exactly where it was and asks again. That is the same outcome
+# as before, on purpose: the state of the world did not change.
+
+episodes:
+  - name: yes_but_a_different_amount
+    why: >
+      "Sí pero mándale 30" is not a yes. It agrees with paying and disagrees with the figure, and
+      the figure is the whole of what was being approved.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí pero mándale 30
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+
+  - name: a_hedge_is_not_a_yes
+    why: >
+      "Bueno", "supongo", "venga va". A human would read agreement into all three and this service
+      may not: the allow-list is what stands between a shrug and a payment.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: supongo
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: bueno
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: QUERY
+      - say: ¿cuánto me queda?
+        route: BALANCE
+
+  - name: a_question_instead_of_an_answer
+    why: >
+      "¿Cuánto me quedaría?" asked at a preview is a question about the preview, and the preview
+      owns the turn after it whatever the words are. What must not happen is the payment closing.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: ¿y cuánto me quedaría?
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda ahora?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: three_unclear_replies_then_a_yes
+    why: >
+      Somebody who is not paying attention. Each unclear reply repeats the question and leaves the
+      preview alone, and the fourth turn is the only one that moves anything.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: eh
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: qué
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: a ver
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: QUERY
+
+  - name: yes_in_several_words
+    why: >
+      "Sí", "vale", "confirmo", "adelante". The allow-list has to hold the ways people agree, or a
+      real yes is answered with the question again and the user concludes it is broken.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: confirmo
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: adelante
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: QUERY
+
+  - name: changing_the_recipient_at_the_preview
+    why: >
+      "Era para María" discards the intent the bank is holding and rebuilds. A second explicit yes is
+      mandatory whichever field changed — mutating an intent already held would move the approval
+      onto something the user never saw.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: era para Javi Nuñez
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_yes_with_nothing_to_confirm
+    why: >
+      The other direction. A bare "sí" with no preview open is not an approval of anything, and
+      reading it as one would be the worst turn in the file.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: sí
+        not_says: Hecho
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: confirmo
+        not_says: Hecho
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_yes_arriving_after_the_payment_was_settled
+    why: >
+      Somebody who typed twice. The intent is already terminal, and the second yes must find that
+      rather than pay again.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+        ends: true
+      - say: sí
+        not_says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_confirmation_that_also_says_thank_you
+    why: >
+      "Sí, gracias" is a yes with politeness on it, and politeness must not make it unreadable.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí, gracias
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: perfecto
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: adiós
+        route: QUERY
+
+  - name: the_whole_confirmation_dance
+    why: >
+      Ten turns, one payment, and nine of them do not move it. This is the episode that says the
+      seam between asking for something and paying for it survives a messy conversation.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: continuar con el bizum
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: ¿y cuánto me quedaría?
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: bueno
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: QUERY

@@ -1,0 +1,228 @@
+# How much money there is, which is a state and never a sum over a window.
+#
+# The first question of the first reported conversation — "¿podrías decirme cuánto dinero tengo en
+# mis cuentas?" — came back as "no he encontrado movimientos del 2026-08-04 al 2026-08-04". There
+# were five intents and none of them was the balance, so it fell through to the financial planner,
+# and a plan cannot express a balance at all. The model built the nearest thing available to it,
+# which was today's movements.
+#
+# Three accounts and the investment is not spendable. An ASSET balance is a cost basis and never a
+# valuation, so it is left out of the figure and named after it — a client that could not tell the
+# kinds apart would add all three and call it what somebody has.
+
+episodes:
+  - name: the_question_that_started_everything
+    why: The first turn of the first reported conversation, and the four phrasings around it.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿podrías decirme cuánto dinero tengo en mis cuentas?
+        route: BALANCE
+        total: 775592
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿de cuánto dispongo?
+        route: BALANCE
+      - say: ¿cuál es mi saldo?
+        route: BALANCE
+      - say: ¿cuánto dinero me queda?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_investment_is_never_inside_the_figure
+    why: >
+      2.700,00 € is what was paid, not what it is worth, and there is no price source. Adding it in
+      would report a purchase price as somebody's money.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+        total: 775592
+        says: no lo que vale hoy
+      - say: ¿y en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en la corriente?
+        route: BALANCE
+        says: "2.270,42"
+      - say: ¿y en total?
+        route: BALANCE
+        total: 775592
+      - say: vale
+        route: QUERY
+
+  - name: naming_an_account_the_holder_does_not_have
+    why: >
+      A kind nobody holds has no figure, and inventing one would be the worst answer here. It says
+      what does exist instead.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la cuenta de la empresa?
+        route: QUERY
+      - say: ¿y en la hucha?
+        route: QUERY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: counting_things_is_not_a_balance
+    why: >
+      "Tengo" is about a state and also about a count, and the two overlap in every sentence that
+      counts movements. Answering one with the other is a real figure about something else.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuántos movimientos tengo este mes?
+        route: QUERY
+      - say: ¿cuántas compras tengo?
+        route: QUERY
+      - say: ¿cuántos bizums tengo?
+        route: QUERY
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: which_accounts_do_i_have
+    why: >
+      A balance answer *is* the account list: a total with every account and its figure under it. It
+      used to come back "eso no puedo calcularlo todavía".
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿qué cuentas tengo?
+        route: BALANCE
+        no_model: true
+        says: Fondo indexado
+      - say: ¿cuántas cuentas tengo?
+        route: BALANCE
+        no_model: true
+      # "Cuánto hay" is a balance question too, and the breakdown under the figure is the answer.
+      - say: ¿y cuánto hay en cada una?
+        route: BALANCE
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: ¿y en el fondo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_state_of_an_account_without_the_word_cuanto
+    why: >
+      "El estado actual de mi hucha" and "¿cómo va mi cuenta corriente?" are balance questions with
+      no figure word in them. Both came back asking which period.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuál es el estado actual de mi hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿cómo va mi cuenta corriente?
+        route: BALANCE
+        says: "2.270,42"
+      - say: ¿cómo está el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en total?
+        route: BALANCE
+      - say: perfecto
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_balance_asked_six_times_in_six_ways
+    why: >
+      Nobody asks the same question the same way twice, and the router has to hold all six or the
+      user concludes it only works sometimes.
+    metrics: [wrong_tool]
+    turns:
+      - say: saldo
+        route: BALANCE
+      - say: ¿cuánto tengo disponible?
+        route: BALANCE
+      - say: dinero disponible
+        route: BALANCE
+      - say: ¿cuánto hay?
+        route: BALANCE
+      - say: ¿cuánto tenía?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: a_balance_between_two_spending_questions
+    why: >
+      The window of the first survives the balance, and the third turn is a follow-up of the first
+      rather than of the second.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: ¿y en restaurantes?
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: the_balance_after_moving_money
+    why: >
+      Read, move, read again. Nothing is staged by the chat, so the second reading is the same
+      figure — and saying otherwise would be inventing a movement.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: mueve 200 € a la hucha
+        route: TRANSFER
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en la corriente?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: ten_turns_of_nothing_but_balances
+    why: >
+      A conversation that never leaves one subject. The point is that nothing drifts: the tenth
+      answer is the same as the second.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en el fondo?
+        route: BALANCE
+      - say: ¿y en la corriente?
+        route: BALANCE
+      - say: ¿y en total?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en los ahorros?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y todo junto?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: gracias
+        route: QUERY

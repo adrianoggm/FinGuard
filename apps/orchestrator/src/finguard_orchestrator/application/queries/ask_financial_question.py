@@ -610,7 +610,15 @@ class AskFinancialQuestionHandler:
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.UNSUPPORTED.value,
             text=_MISSING_CAPABILITY.get(capability, _CANNOT_YET),
-            conversation=was.with_active(UnsupportedCapability(capability=capability)),
+            conversation=(
+                # A suspended payment survives a refusal, exactly as it survives an answer: it
+                # belongs to the conversation before this turn and stepped aside for it. Replacing
+                # it lost a half-built Bizum to "¿cuál es mi gasto medio?" — a question about the
+                # product, answered by throwing away something the user was in the middle of.
+                was
+                if isinstance(was.active, PaymentInProgress) and was.active.suspended
+                else was.with_active(UnsupportedCapability(capability=capability))
+            ),
         )
 
     async def _contact_list(
