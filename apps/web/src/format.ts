@@ -86,6 +86,18 @@ export function spendable(
   };
 }
 
+/**
+ * An account number in groups of four, which is how it is printed and how it is read aloud.
+ *
+ * Whole and unmasked, deliberately. Approving a transfer means recognising twenty-four characters
+ * as the ones you meant, and "····1332" is not something anybody can check against a note — a
+ * masked destination turns the confirmation step into a formality, which is the one thing it must
+ * not become.
+ */
+export function ibanGroups(iban: string): string {
+  return iban.replace(/(.{4})/g, "$1 ").trim();
+}
+
 const DAY = new Intl.DateTimeFormat("es-ES", { day: "2-digit", month: "short" });
 
 export function day(iso: string): string {

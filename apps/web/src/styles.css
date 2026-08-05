@@ -1327,3 +1327,53 @@ summary {
   padding: 0.1rem 0.35rem;
   border-radius: 0.35rem;
 }
+
+/* --- what a payment is about to do ------------------------------------------------ */
+
+/* The preview's fields, under the sentence. A Bizum and a transfer used to draw the identical
+   prompt, so what distinguishes them was on no screen anybody approves anything from. */
+.preview-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.75rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+}
+
+.preview-detail dt {
+  color: var(--ink-soft);
+}
+
+.preview-detail dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 550;
+}
+
+/* Whole, grouped and monospaced. Recognising twenty-four characters is the job of this step, and
+   proportional digits make two account numbers look alike. */
+.preview-detail dd.iban {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
+.preview-detail dd.preview-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A payment the user walked away from. The service remembers it; until now the screen did not,
+   so resuming was something you had to know was possible. */
+.paused {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  background: rgba(180, 120, 0, 0.12);
+  color: #7a5200;
+  font-size: 0.78rem;
+}
