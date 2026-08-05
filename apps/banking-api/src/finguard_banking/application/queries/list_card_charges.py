@@ -35,7 +35,10 @@ class ListCardChargesQuery(Query[ListCardChargesResult]):
     card_id: UUID
     since: date
     limit: int
-    reporting_timezone: str = "Europe/Madrid"
+    # Required, like on `ListCardsQuery` and for the same reason: the default was a zone the
+    # controller never overrode, so the list and the charges behind it agreed with each other and
+    # with nobody else.
+    reporting_timezone: str
 
 
 class ListCardChargesHandler:

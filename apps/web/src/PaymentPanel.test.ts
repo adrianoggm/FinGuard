@@ -25,6 +25,7 @@ function state(over: Partial<ConversationState>): ConversationState {
   return {
     workflow: null,
     awaiting: null,
+    last_asked: null,
     last_plan: null,
     retry_plan: null,
     draft: null,

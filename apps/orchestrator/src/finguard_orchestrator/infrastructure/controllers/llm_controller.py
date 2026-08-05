@@ -676,7 +676,12 @@ async def cards(
     month that is really thirty days is wrong on the 1st by everything that happened on the 31st.
     """
     result = await queries.ask(
-        ListCardsQuery(account_id=who.account_id, since=today - timedelta(days=days))
+        ListCardsQuery(
+            account_id=who.account_id,
+            since=today - timedelta(days=days),
+            today=today,
+            reporting_timezone=who.reporting_timezone,
+        )
     )
     return llm_mapper.wallet_to_dto(result)
 
@@ -707,6 +712,8 @@ async def card_charges(
             account_id=who.account_id,
             card_id=card_id,
             since=today - timedelta(days=days),
+            today=today,
+            reporting_timezone=who.reporting_timezone,
             limit=limit,
         )
     )

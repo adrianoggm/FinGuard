@@ -38,6 +38,7 @@ from finguard_banking.domain.errors import (
     IntentExpiredError,
     IntentNotConfirmableError,
     IntentNotFoundError,
+    KeyReusedForAnotherPaymentError,
 )
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.destination import (
@@ -54,6 +55,40 @@ from finguard_banking.infrastructure.persistence.financial_query_repository impo
 )
 
 _AWAITING = "AWAITING_CONFIRMATION"
+
+
+def _must_be_the_same_payment(
+    stored: asyncpg.Record, *, to: Destination, amount: Money, rail: Rail, key: str
+) -> None:
+    """Refuses a key that has already been used for a different payment.
+
+    Without this, replaying a key answers with the stored intent while the preview is built from
+    the *current* request — so a caller who corrected 200 € to 300 € and kept the key was shown
+    300 € above an identifier that pays 200 €, and confirming it moved 200 €. An approval binding
+    something other than what was shown defeats the entire two-step flow, and neither side would
+    report anything wrong.
+
+    Compared over what the caller chose, which is what the key is a promise about. `expires_at`
+    and the status are this service's own and change on their own.
+    """
+    asked = (
+        rail.value,
+        to.contact_id if isinstance(to, ToPhone | ToAccount) else None,
+        str(to.iban) if isinstance(to, ToAccount) else None,
+        to.account_id if isinstance(to, ToOwnAccount) else None,
+        amount.amount_minor,
+        amount.currency,
+    )
+    if asked != (
+        stored["rail"],
+        stored["contact_id"],
+        stored["recipient_iban"],
+        stored["to_account_id"],
+        stored["amount_minor"],
+        stored["currency"],
+    ):
+        raise KeyReusedForAnotherPaymentError(key)
+
 
 _BALANCE_SQL = """
     SELECT booked_minor, currency FROM assistant_read.account_balances_v1 WHERE account_id = $1
@@ -108,12 +143,14 @@ class PostgresPaymentRepository:
             balance = await self._balance(connection, account_id)
 
             existing = await connection.fetchrow(
-                "SELECT id, expires_at FROM payment_intents "
-                "WHERE account_id = $1 AND idempotency_key = $2",
+                "SELECT id, expires_at, rail, contact_id, recipient_iban, to_account_id, "
+                "       amount_minor, currency "
+                "FROM payment_intents WHERE account_id = $1 AND idempotency_key = $2",
                 account_id,
                 key,
             )
             if existing is not None:
+                _must_be_the_same_payment(existing, to=to, amount=amount, rail=rail, key=key)
                 # The same intention, not a second one. Returned as it stands rather than
                 # refreshed: the user is being shown the thing they already have.
                 intent_id, expires_at = existing["id"], existing["expires_at"]

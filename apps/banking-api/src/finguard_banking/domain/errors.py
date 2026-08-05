@@ -146,6 +146,28 @@ class IntentNotConfirmableError(DomainError):
         super().__init__(f"payment intent {intent_id} is {status}")
 
 
+class KeyReusedForAnotherPaymentError(DomainError):
+    """The same idempotency key, a different payment.
+
+    A key is a promise that two requests are one intention. Answering a key that has been reused
+    with the intent it already made looks like idempotency working and is the opposite: the caller
+    sees a preview of what they asked for now and an intent identifier of what they asked for
+    before, and confirming it moves the earlier amount to the earlier recipient. An approval that
+    binds something other than what was shown is the one failure this whole two-step flow exists
+    to prevent.
+
+    Refused rather than reconciled. Which of the two is the real intention is the caller's
+    question, and a bank answering it by picking one would be guessing about money.
+    """
+
+    code = "key_reused_for_another_payment"
+
+    def __init__(self, key: str) -> None:
+        # The key is not echoed: it comes from a caller and ends up in logs and error bodies.
+        super().__init__("this idempotency key already belongs to a different payment")
+        self.key = key
+
+
 class UnknownCategoryError(DomainError):
     """A category this ledger does not use.
 

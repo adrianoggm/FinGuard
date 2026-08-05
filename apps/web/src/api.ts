@@ -157,6 +157,10 @@ export type Slot =
 export type ConversationState = {
   workflow: Workflow | null;
   awaiting: Slot | null;
+  // What the last turn asked for even when it left no workflow behind. Round-tripped like the
+  // rest and never read here: it is how the service notices it has asked the same question twice
+  // and offers choices instead of a third open question.
+  last_asked: Slot | null;
   last_plan: PlanContext | null;
   retry_plan: PlanContext | null;
   draft: PlanContext | null;

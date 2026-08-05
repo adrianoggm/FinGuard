@@ -30,13 +30,22 @@ def get_command_bus(request: Request) -> CommandBus:
     return bus
 
 
+def reporting_zone(request: Request) -> str:
+    """The zone this deployment measures days in, used only when a caller did not say.
+
+    Beside `reporting_today` because the two are one setting read two ways, and a route that took
+    one without the other would resolve a date in one zone and bin timestamps in another.
+    """
+    return get_settings().reporting_timezone
+
+
 def reporting_today(request: Request) -> date:
     """What day it is in the reporting time zone.
 
     The clock lives at the edge: the domain resolves periods with a pure function and
     never reads the time, so its results do not depend on when they run.
     """
-    return datetime.now(ZoneInfo(get_settings().reporting_timezone)).date()
+    return datetime.now(ZoneInfo(reporting_zone(request))).date()
 
 
 async def database_answers(request: Request) -> bool:

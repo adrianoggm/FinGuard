@@ -1172,11 +1172,18 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         # the answers this service is certain about instead of asking an open question again.
         text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
 
+    conversation = was.with_active(_next_state(planned))
+    if planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION:
+        # Recorded whether or not a workflow survived. A clarification carrying a draft keeps its
+        # slot on the state and `awaiting` reads it there; this is what remembers it when there is
+        # no draft and therefore no state — the case that used to loop.
+        conversation = conversation.asking(planned.awaiting)
+
     return AskFinancialQuestionResult(
         outcome=planned.outcome.value,
         text=text,
         question=planned.question,
-        conversation=was.with_active(_next_state(planned)),
+        conversation=conversation,
         suggestions=suggestions,
     )
 
@@ -1187,16 +1194,16 @@ def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bo
     The slot rather than the wording, because the wording comes from a model and two phrasings of
     "which period?" are the same dead end.
 
-    ponytail: `was.awaiting` is read off the active workflow, so a clarification that carried no
-    draft leaves no state and can still loop. The planner emits a draft whenever it read anything
-    at all, which is the ordinary case. The upgrade is remembering the last slot asked beside
-    `last_plan` — memory rather than a workflow — and it is worth doing when a draft-less repeat
-    is actually observed rather than imagined.
+    Two places to look, and they mean the same thing. `awaiting` is the slot of an open workflow,
+    which exists when the clarification carried a draft; `last_asked` is the same slot when it did
+    not, and there was nothing else to hang it on. Reading only the first was the hole: a
+    draft-less question left no state, so every repeat of it looked like the first.
     """
+    asked_before = was.awaiting or was.last_asked
     return (
         planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION
-        and was.awaiting is not None
-        and was.awaiting is planned.awaiting
+        and asked_before is not None
+        and asked_before is planned.awaiting
     )
 
 

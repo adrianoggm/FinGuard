@@ -38,6 +38,26 @@ class _Body(_Payload):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
 
+def known_zone(value: str | None) -> str | None:
+    """A zone this machine has, or a refusal.
+
+    Refused rather than ignored. Falling back silently is the dangerous outcome: the caller
+    believes it asked about Canarian days and is answered about peninsular ones, with a real
+    figure and no error.
+
+    A function rather than only a validator, because the card routes take the zone as a query
+    parameter instead of in a body. Two copies of "which zones exist" is how one endpoint ends up
+    stricter than the one beside it.
+    """
+    if value is None:
+        return None
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown time zone: {value!r}") from exc
+    return value
+
+
 class DateRangeRequest(_Body):
     start: date = Field(alias="from")
     end: date = Field(alias="to")
@@ -55,16 +75,7 @@ class RelativePeriodRequest(_Body):
     @field_validator("timezone")
     @classmethod
     def _known_zone(cls, value: str | None) -> str | None:
-        """Refused rather than ignored. Falling back silently is the dangerous outcome:
-        the caller believes it asked about Canarian days and is answered about peninsular
-        ones, with a real figure and no error."""
-        if value is None:
-            return None
-        try:
-            ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise ValueError(f"unknown time zone: {value!r}") from exc
-        return value
+        return known_zone(value)
 
 
 class FinancialQueryRequest(_Body):
