@@ -200,6 +200,43 @@ def _invested_clause(invested: list[Holding]) -> str:
     return f"tienes {listed}, que es lo que invertiste y no lo que vale hoy."
 
 
+def which_account(candidates: list[Holding]) -> str:
+    """Two accounts of one kind, so the word did not pick one.
+
+    The only question this service asks about an account, and the reason is that the alternatives
+    are both worse. A breakdown answers an ambiguous *question* well — it shows every account and
+    lets the reader take what they meant — but this is an instruction, and there is nothing to show
+    somebody who asked to move money: either it moves or it does not. Picking the first would move
+    money into an account they did not name.
+    """
+    names = _listed(tuple(_name_of(holding) for holding in candidates))
+    return f"Tienes más de una cuenta de ese tipo: {names}. ¿A cuál lo muevo?"
+
+
+def how_much_to_move(target: Holding) -> str:
+    """The amount, when the sentence named an account and no figure."""
+    return f"¿Cuánto quieres mover a {_name_of(target)}?"
+
+
+def ready_to_move(target: Holding, amount_minor: int) -> str:
+    """What was understood, and where the confirmation lives.
+
+    It does not prepare the transfer. The chat route reads sentences and this one has an account
+    and an amount in it — but preparing is a `payments:prepare` scope on a different route, and a
+    read path that quietly acquired the ability to stage a payment would be the seam between asking
+    and paying disappearing. So it says what it heard and points at the screen that does it.
+    """
+    return (
+        f"Puedes mover {money(amount_minor, target.currency)} a {_name_of(target)} desde "
+        f"Cuentas › Mover dinero entre cuentas. Te pediré que lo confirmes antes de moverlo."
+    )
+
+
+def no_such_account_to_move_to(summary: AccountSummary) -> str:
+    have = ", ".join(_name_of(holding) for holding in summary.holdings)
+    return f"No tienes ninguna cuenta de ese tipo. Tienes: {have}."
+
+
 def _no_such_account(summary: AccountSummary) -> str:
     """A kind the holder does not have. Answering with the total instead would be answering a
     question they did not ask, and they would have no way to tell."""

@@ -179,3 +179,7 @@ class Spoken(StrEnum):
     # A deterministic conversation control such as abandoning a saved retry. No model or ledger
     # produced it, so it belongs with the other spoken outcomes rather than planning failures.
     GUIDANCE = "GUIDANCE"
+    # A transfer between the holder own accounts, understood but not staged. The chat reads the
+    # sentence; preparing it is a payments:prepare scope on a different route, and a read path that
+    # quietly gained the ability to stage a payment would erase the seam between asking and paying.
+    TRANSFER_READY = "TRANSFER_READY"

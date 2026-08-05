@@ -18,7 +18,7 @@ from typing import Final
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.domain.enums import PlanningOutcome, Spoken
+from finguard_orchestrator.domain.enums import Direction, PlanningOutcome, Spoken
 from finguard_orchestrator.domain.errors import (
     BankingUnavailableError,
     InvalidValueError,
@@ -49,6 +49,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     explicit_facts,
     intent_router,
+    payment_words,
     plan_verifier,
     query_recovery,
     window_words,
@@ -372,6 +373,10 @@ class AskFinancialQuestionHandler:
             yield await self._contact_list(query, was)
             return
 
+        if intent is Intent.OWN_TRANSFER:
+            yield await self._own_transfer(query, was)
+            return
+
         if intent is Intent.ACCOUNT_BALANCE:
             # Not a plan and not a model. `FinancialPlan` expresses aggregations over movements —
             # window, direction, categories, merchants, grouping, SUM or COUNT — and a balance is
@@ -634,6 +639,73 @@ class AskFinancialQuestionHandler:
             # because a second copy of the rule is a second answer waiting to disagree with the
             # first — and the two would sit side by side on one screen.
             total_minor=answer_writer.leading_figure(summary, named),
+        )
+
+    async def _own_transfer(
+        self, query: AskFinancialQuestionQuery, was: Conversation
+    ) -> AskFinancialQuestionResult:
+        """Money into one of the holder's own accounts, asked for in words.
+
+        No model anywhere on this path. The account comes from a closed vocabulary and the amount
+        from a closed grammar — digits and a currency word — so what is left to decide is nothing.
+
+        It stops at a question rather than guessing, in both directions. An amount nobody said is
+        asked for; an account name matching two of the holder's accounts is asked about, and that
+        is the one thing `Slot.ACCOUNT` is for. It has had no emitter until now precisely because
+        every other ambiguity here is better answered with a breakdown than with a question — this
+        one cannot be, because moving money to the wrong account is not a sentence, it is an act.
+        """
+        try:
+            summary = await self._accounts.of(
+                query.account_id, today=query.today, reporting_timezone=query.reporting_timezone
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tus cuentas ahora mismo. Vuelve a intentarlo.",
+                conversation=was,
+            )
+
+        named = account_words.named_in(query.sentence)
+        wanted = [holding for holding in summary.holdings if holding.kind in named]
+        amount = payment_words.amount_in(query.sentence)
+
+        if not wanted:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.BALANCE.value,
+                text=answer_writer.no_such_account_to_move_to(summary),
+                conversation=was,
+            )
+        if len(wanted) > 1:
+            # Two accounts of one kind. The only place this service asks which — see the docstring.
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=answer_writer.which_account(wanted),
+                question=answer_writer.which_account(wanted),
+                conversation=was.with_active(
+                    FinancialClarification(
+                        # A draft with nothing read into it: the sentence was an instruction and
+                        # not a question, so there is no plan half-built behind this. The slot is
+                        # what the next turn answers, and the draft is the shape the state needs.
+                        draft=FinancialPlanDraft(direction=Direction.ALL),
+                        awaiting=Slot.ACCOUNT,
+                    )
+                ),
+            )
+        if amount is None:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=answer_writer.how_much_to_move(wanted[0]),
+                question=answer_writer.how_much_to_move(wanted[0]),
+                conversation=was,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.TRANSFER_READY.value,
+            text=answer_writer.ready_to_move(wanted[0], amount),
+            conversation=was,
+            currency=wanted[0].currency,
+            total_minor=amount,
         )
 
     def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:

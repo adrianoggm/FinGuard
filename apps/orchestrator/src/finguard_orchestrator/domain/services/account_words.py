@@ -36,8 +36,22 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
         "la nómina",
         "la cuenta nómina",
     ),
-    "SAVINGS": ("la hucha", "hucha", "los ahorros", "la cuenta de ahorro", "la cuenta de ahorros"),
-    "ASSET": ("el fondo", "fondo indexado", "el fondo de inversión", "la cuenta de inversión"),
+    "SAVINGS": (
+        "la hucha",
+        "hucha",
+        "los ahorros",
+        "la cuenta de ahorro",
+        "la cuenta de ahorros",
+    ),
+    # "al fondo" as well as "el fondo": Spanish contracts "a el" and a sentence about moving money
+    # reaches for the preposition every time — "traspasa 100 al fondo" named no account without it.
+    "ASSET": (
+        "el fondo",
+        "al fondo",
+        "fondo indexado",
+        "el fondo de inversión",
+        "la cuenta de inversión",
+    ),
 }
 
 

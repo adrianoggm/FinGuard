@@ -41,6 +41,7 @@ class Intent(StrEnum):
     CORRECTION = "CORRECTION"
     EXPLAIN_PREVIOUS = "EXPLAIN_PREVIOUS"
     ACCOUNT_BALANCE = "ACCOUNT_BALANCE"
+    OWN_TRANSFER = "OWN_TRANSFER"
     LIST_CONTACTS = "LIST_CONTACTS"
     FINANCIAL_QUERY = "FINANCIAL_QUERY"
 
@@ -178,6 +179,48 @@ _ABOUT_THE_ANSWER: Final = re.compile(
 )
 
 
+# Moving money between the holder's own accounts.
+#
+# **Both halves are required, and that is the whole safety of it.** A verb of moving *and* one of
+# this holder's accounts by name. "Mueve el dinero" alone is not an instruction anybody could act
+# on, and "en la hucha" alone is a question about a balance — reading either as a transfer would
+# offer to move money at somebody who asked something else.
+#
+# `mandar` and `enviar` are deliberately absent: they are what a person says about paying somebody,
+# and `payment_router` sees this sentence first anyway. What is here is the vocabulary of moving
+# something from one place to another that is still yours.
+_MOVING: Final = re.compile(
+    r"\b(mueve|mover|muevo|mueva|pasa|pasar|paso|traspasa|traspasar|traspaso"
+    r"|mete|meter|meto|ingresa|ingresar|guarda|guardar|ahorra|ahorrar)\b",
+    re.IGNORECASE,
+)
+
+
+# What those same verbs mean when the sentence is asking rather than instructing. "¿Cuánto paso a
+# la hucha cada mes?" is a question about a habit and it carries a moving verb and an account, so
+# without this it read as an order to move money — and the answer to a question would have been a
+# preview asking somebody to confirm a payment they never asked for. That is the worst shape a
+# misreading can take here, which is why the exclusion is checked first rather than tuned into the
+# verb list.
+_ASKING: Final = re.compile(r"\b(cu[áa]nt[oa]s?|qu[ée]|cu[áa]l|cu[áa]ndo|por\s+qu[ée])\b", re.I)
+
+
+def _moving_money_inside(sentence: str) -> bool:
+    """A verb of moving *and* one of this holder's accounts, and not a question.
+
+    All three are required. "Mueve el dinero" is not an instruction anybody could act on, "en la
+    hucha" alone is a question about a balance, and an interrogative turns the same words back into
+    a question — reading any of them as a transfer would offer to move money at somebody who asked
+    something else.
+    """
+    from finguard_orchestrator.domain.services import account_words
+
+    folded = spanish.folded(sentence)
+    if _ASKING.search(folded):
+        return False
+    return bool(_MOVING.search(folded)) and bool(account_words.named_in(sentence))
+
+
 def route(sentence: str, *, has_previous: bool) -> Intent:
     """Which conversation this sentence belongs to.
 
@@ -202,6 +245,12 @@ def route(sentence: str, *, has_previous: bool) -> Intent:
         return Intent.CORRECTION
     if has_previous and _ABOUT_THE_ANSWER.search(sentence):
         return Intent.EXPLAIN_PREVIOUS
+    if _moving_money_inside(sentence):
+        # After PAYMENT and before the balance, and both positions are the point. A sentence that
+        # `payment_router` claims is a payment to a person, and this must never take one from it;
+        # "mueve 200 € a la hucha" carries "cuánto" in neither direction and would otherwise fall
+        # all the way through to the planner, which built a query about the last 200 days.
+        return Intent.OWN_TRANSFER
     if _ABOUT_THE_BALANCE.search(sentence) and not _NOT_THE_BALANCE.search(sentence):
         # Last of the deterministic ones, and not gated on `has_previous`: "¿cuánto tengo?" is a
         # whole question on the first turn. The exclusion is what keeps "¿cuántos movimientos
