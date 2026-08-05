@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { movements as fetchMovements, type Movements, type Summary } from "./api";
-import { categoryName, day, glyph, money, signed } from "./format";
+import { accountGlyph, accountName, categoryName, day, glyph, money, signed } from "./format";
 
 /** The categories worth a chip. The ledger has more; these are the ones a phone can show. */
 const CHIPS = [
@@ -75,11 +75,38 @@ export function Accounts({ summary, searching }: Props) {
     <div className="screen">
       <h1 className="screen-title">Cuentas</h1>
 
-      {summary && (
-        <section className="account small">
-          <p className="account-name">Cuenta corriente · ES-0001</p>
-          <p className="balance">{money(summary.booked_minor, summary.currency)}</p>
+      {/*
+        Every account the holder has, not the one the credential names. The header used to be the
+        literal string "Cuenta corriente · ES-0001", which was true of the only account there was.
+
+        The investment is listed with the rest and says what its figure is. Hiding it would leave
+        somebody with 2.700 € invested unaware of it; adding it into a total would report what they
+        paid as what they have. Both are wrong, and only the second is wrong silently.
+      */}
+      {summary?.holdings?.length ? (
+        <section className="holdings" aria-label="Tus cuentas">
+          {summary.holdings.map((holding) => (
+            <article className="holding" key={holding.account_id}>
+              <span className="holding-glyph" aria-hidden="true">
+                {accountGlyph(holding.kind)}
+              </span>
+              <span className="holding-what">
+                <strong>{accountName(holding)}</strong>
+                {holding.kind === "ASSET" && <small>lo invertido, no lo que vale hoy</small>}
+              </span>
+              <span className="holding-balance">
+                {money(holding.booked_minor, holding.currency)}
+              </span>
+            </article>
+          ))}
         </section>
+      ) : (
+        summary && (
+          <section className="account small">
+            <p className="account-name">Cuenta corriente</p>
+            <p className="balance">{money(summary.booked_minor, summary.currency)}</p>
+          </section>
+        )
       )}
 
       <div className="finder">

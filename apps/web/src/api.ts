@@ -38,12 +38,36 @@ export type Movement = {
   category_is_custom?: boolean;
 };
 
+/**
+ * One of the holder's accounts.
+ *
+ * `kind` has to be read before anything is added up. On an `ASSET` the balance is what was paid,
+ * not what it is worth — there is no price source — so a total across all three without saying so
+ * reports a purchase price as somebody's money.
+ *
+ * `display_name` is null when the holder never named the account. Fall back to the kind, never to
+ * the reference: "ES-0001-2" is not something anybody recognises as theirs.
+ */
+export type Holding = {
+  account_id: string;
+  kind: "CURRENT" | "SAVINGS" | "ASSET";
+  display_name: string | null;
+  currency: string;
+  booked_minor: number;
+};
+
 export type Summary = {
+  /**
+   * Of the account the credential names, not of the holder. `holdings` is all of them, so the sum
+   * of those is a different number — see `spendable` in format.ts for the one this app shows.
+   */
   currency: string;
   booked_minor: number;
   available_minor: number;
   as_of: string;
   movements: Movement[];
+  /** Empty from a service that predates multi-account, which is why nothing here may require it. */
+  holdings?: Holding[];
 };
 
 /**
