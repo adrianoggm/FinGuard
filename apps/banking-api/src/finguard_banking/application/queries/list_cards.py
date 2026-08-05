@@ -40,7 +40,11 @@ class ListCardsResult:
 class ListCardsQuery(Query[ListCardsResult]):
     account_id: UUID
     since: date
-    reporting_timezone: str = "Europe/Madrid"
+    # No default. It was "Europe/Madrid", which the controller never overrode, so every card screen
+    # binned its charges in that zone whatever the caller or the deployment had said. A default here
+    # cannot be right: the zone belongs to whoever is asking, and a wrong one moves a charge made
+    # near midnight into the neighbouring day with a perfectly real figure.
+    reporting_timezone: str
 
 
 class ListCardsHandler:
