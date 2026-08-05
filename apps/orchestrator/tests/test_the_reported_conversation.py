@@ -643,3 +643,127 @@ def test_and_the_question_it_points_at_answers() -> None:
 
     assert "2.700,00 €" in answer["text"]
     assert "no lo que vale hoy" in answer["text"]
+
+
+# =========================================================================================
+# The third conversation, in one walk. Its failures compounded like the first one's: a
+# balance question answered as a spending query left the next turn looking like a new
+# subject, and the loop detector then refused a question nobody had asked twice.
+# =========================================================================================
+
+
+def test_the_third_transcript_end_to_end() -> None:
+    """Eight turns as they were typed, and the model is needed for none of them.
+
+    Everything here is a closed vocabulary — the accounts, the balance, the destination, the amount
+    — and a model in any of it is a different answer on a machine with a different one installed.
+    """
+    client, planner, ledger = wired()
+    chat = Chat(client)
+
+    state = chat.say("Oye cual es el estado actual de mi hucha de ahorros")
+    saldo = chat.say("Cual es el saldo de mi hucha")
+    sending = chat.say("Me gustaria enviarme dinero a la cuenta corriente")
+    amount = chat.say("300 euros")
+    between = chat.say("Me gustaria tranferir dinero entre cuentas")
+    which = chat.say("a la hucha")
+    fund = chat.say("quiero traspasar del fondo a hucha")
+    done = chat.say("1000 pavos")
+
+    assert state["text"] == "Tienes 5.485,50 € en Hucha."
+    assert saldo["text"] == "Tienes 5.485,50 € en Hucha."
+    assert sending["conversation"]["awaiting"] == "AMOUNT"
+    assert amount["outcome"] == Spoken.TRANSFER_READY.value
+    assert amount["total_minor"] == 300_00
+    assert between["conversation"]["awaiting"] == "ACCOUNT"
+    assert which["conversation"]["awaiting"] == "AMOUNT"
+    assert fund["conversation"]["awaiting"] == "AMOUNT"
+    assert done["total_minor"] == 100_000
+    assert planner.asked == [] and ledger.plans == []
+
+
+def test_the_first_two_turns_no_longer_cascade() -> None:
+    """Turns one to three of the third transcript, and the reason a wrong answer is expensive.
+
+        "¿el estado actual de mi hucha?"  →  "¿de qué periodo?"
+        "el total"                        →  "sigo sin tener claro el periodo"
+        "este año"                        →  14.019,05 €, every movement of the year
+
+    Three turns to reach a figure about everything, from a question about one account's balance.
+    None of the three questions was about a window and all three were answered about one.
+    """
+    client, _, ledger = wired()
+    chat = Chat(client)
+
+    first = chat.say("Oye cual es el estado actual de mi hucha de ahorros")
+    second = chat.say("El total")
+
+    assert first["outcome"] == Spoken.BALANCE.value
+    assert first["conversation"]["awaiting"] is None, "it asked a question it did not need to"
+    assert (
+        second["text"]
+        != "Sigo sin tener claro el periodo. Dime uno de estos, o unas fechas concretas."
+    )
+    assert ledger.plans == []
+
+
+# --- what the new state may and may not survive -------------------------------------------
+
+
+def test_a_transfer_waiting_for_an_amount_survives_an_aside() -> None:
+    """The same rule every other state follows. Asking who you are talking to, in the middle of
+    moving money, must not lose the account that was already settled."""
+    client, _, _ = wired()
+    chat = Chat(client)
+
+    chat.say("quiero traspasar del fondo a hucha")
+    aside = chat.say("¿quién eres?")
+    finished = chat.say("1000 pavos")
+
+    assert aside["outcome"] == Spoken.IDENTITY.value
+    assert finished["outcome"] == Spoken.TRANSFER_READY.value
+    assert finished["total_minor"] == 100_000
+
+
+def test_a_question_in_the_middle_of_a_transfer_is_answered_as_a_question() -> None:
+    """The other direction, and the one that costs more. A transfer under way must not swallow a
+    change of subject — "¿cuánto gasté el mes pasado?" is a question however open the transfer is,
+    and answering it with "¿cuánto quieres mover?" would be the payment defect all over again.
+    """
+    spending = FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH)
+    )
+    client, _, ledger = wired({"gasté": PlanningResult.planned(spending)})
+    chat = Chat(client)
+
+    chat.say("quiero traspasar del fondo a hucha")
+    asked = chat.say("¿cuánto gasté el mes pasado?")
+
+    assert asked["outcome"] == PlanningOutcome.PLANNED.value
+    assert ledger.plans, "a question during a transfer never reached the ledger"
+
+
+def test_a_finished_transfer_leaves_nothing_open() -> None:
+    """Read in full, so there is nothing to answer. What is left is the confirmation, and that is a
+    screen with a `payments:prepare` scope behind it rather than a turn of this chat — a read path
+    that quietly gained the ability to stage a payment would erase the seam."""
+    client, _, _ = wired()
+
+    answer = Chat(client).say("mueve 200 € a la hucha")
+
+    assert answer["outcome"] == Spoken.TRANSFER_READY.value
+    assert answer["conversation"]["workflow"] is None
+    assert answer["conversation"]["transfer_amount_minor"] is None
+
+
+def test_a_transfer_state_survives_the_round_trip_through_the_client() -> None:
+    """It crosses the wire twice per turn, through a Pydantic model on each side, and either
+    crossing can drop a field. A dropped amount here is the question asked a second time."""
+    client, _, _ = wired()
+    chat = Chat(client)
+
+    asked = chat.say("quiero traspasar del fondo a hucha")
+
+    assert asked["conversation"]["workflow"] == "TRANSFER_IN_PROGRESS"
+    assert asked["conversation"]["transfer_to"] is not None
+    assert asked["conversation"]["awaiting"] == "AMOUNT"
