@@ -576,6 +576,14 @@ class Agreement:
     # Which intent was expected and which was read, counted. The pairs are what a migration is
     # steered by: "it calls a balance a query" is actionable and "92 %" is not.
     confusions: dict[tuple[str, str], int] = field(default_factory=dict)
+    # A few of the sentences behind each pair. A count says a disagreement exists; the sentence is
+    # what says whose fault it is — five models reading one transfer as a payment is a prompt to
+    # fix, and the same count spread over five different sentences is a model to reject.
+    #
+    # These are ours. The corpus is written in this repository and read from it, so printing one is
+    # printing a fixture — it is not the rule about a person's typing reaching a log, which is why
+    # the shadow in production counts and this names.
+    examples: dict[tuple[str, str], list[str]] = field(default_factory=dict)
 
     @property
     def rate(self) -> float:
@@ -583,6 +591,15 @@ class Agreement:
 
     def worst(self, limit: int = 8) -> list[tuple[tuple[str, str], int]]:
         return sorted(self.confusions.items(), key=lambda pair: -pair[1])[:limit]
+
+    def saw(self, expected: str, read: str, sentence: str, *, keep: int = 4) -> None:
+        key = (expected, read)
+        self.confusions[key] = self.confusions.get(key, 0) + 1
+        seen = self.examples.setdefault(key, [])
+        # Capped, because a full run is 879 turns and a report nobody reads to the end is a report.
+        # The first few are enough to tell one bad rule from a scattering of bad guesses.
+        if len(seen) < keep and sentence not in seen:
+            seen.append(sentence)
 
 
 async def compare(
@@ -612,8 +629,7 @@ async def compare(
             if read is expected:
                 report.agreed += 1
             else:
-                key = (expected.value, read.value)
-                report.confusions[key] = report.confusions.get(key, 0) + 1
+                report.saw(expected.value, read.value, turn.say)
 
             answered = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}

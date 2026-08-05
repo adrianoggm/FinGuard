@@ -80,8 +80,13 @@ def _table(report: episodes.Agreement, limit: int) -> str:
         "",
         f"where they differ, worst {limit}",
     ]
-    for (rules, model), count in report.worst(limit):
+    for pair, count in report.worst(limit):
+        rules, model = pair
         lines.append(f"  {rules:<20} → {model:<20} {count}")
+        # The sentences, indented under their pair. A count tells you a disagreement exists; these
+        # tell you whether it is one rule misfiring on a phrasing or a model guessing at random,
+        # and those are opposite conclusions from the same number.
+        lines += [f"      {said}" for said in report.examples.get(pair, ())]
     if not report.confusions:
         lines.append("  (none)")
     return "\n".join(lines)
