@@ -146,6 +146,7 @@ export type Workflow =
   | "FINANCIAL_CLARIFICATION"
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
+  | "TRANSFER_IN_PROGRESS"
   | "PAYMENT_CONFIRMATION";
 
 /** What the last turn asked the user for. */
@@ -191,6 +192,10 @@ export type ConversationState = {
   payment: PaymentDraft | null;
   suspended: boolean;
   candidates: Candidate[];
+  // TRANSFER_IN_PROGRESS: where the money is going and how much, whichever of the two the sentence
+  // supplied. Round-tripped so the reply that fills in the other one can be understood.
+  transfer_to: string | null;
+  transfer_amount_minor: number | null;
   intent_id: string | null;
   recipient: string | null;
   amount_minor: number | null;

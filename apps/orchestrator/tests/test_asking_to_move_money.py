@@ -18,6 +18,12 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 )
 from finguard_orchestrator.domain.enums import Spoken
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
+from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
+    Conversation,
+    Slot,
+    TransferInProgress,
+)
 from finguard_orchestrator.domain.services import intent_router
 from finguard_orchestrator.domain.services.intent_router import Intent
 
@@ -54,7 +60,7 @@ class Never:
         raise AssertionError(f"a transfer sentence reached {name}")
 
 
-async def said(sentence: str, of: AccountSummary | None = None):  # type: ignore[no-untyped-def]
+async def said(sentence: str, of: AccountSummary | None = None, was: Conversation = IDLE):  # type: ignore[no-untyped-def]
     handler = AskFinancialQuestionHandler(
         Never(),  # type: ignore[arg-type]
         Never(),  # type: ignore[arg-type]
@@ -63,7 +69,9 @@ async def said(sentence: str, of: AccountSummary | None = None):  # type: ignore
     )
     last = None
     async for step in handler.stream(
-        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+        AskFinancialQuestionQuery(
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=was
+        )
     ):
         if not hasattr(step, "name"):
             last = step
@@ -144,23 +152,55 @@ async def test_an_account_the_holder_does_not_have_is_said_plainly() -> None:
 # --- the one question this service asks about an account --------------------------------
 
 
-async def test_two_accounts_of_one_kind_asks_for_the_whole_instruction_again() -> None:
-    """The ambiguity is real and the question has to be asked. What it may not do is leave a slot.
+async def test_two_accounts_of_one_kind_is_asked_about_and_the_answer_is_heard() -> None:
+    """The ambiguity is real, so the question has to be asked — and for one release it was a
+    question this path could not hear the answer to.
 
-    It used to leave `Slot.ACCOUNT` open — the one place this service asked which account — and the
-    one place it could not hear the answer. Nothing on this path holds state: reading a sentence is
-    all it does, and preparing is a `payments:prepare` scope on another route. So the amount was
-    already gone when the reply arrived, and "¿a cuál lo muevo?" answered with "a Hucha" fell
-    through to the financial planner, which asked which period. Reported from a real conversation.
+    Nothing here held state: reading a sentence was all it did, and preparing is a
+    `payments:prepare` scope on another route. So the amount was already gone when the reply
+    arrived, and "¿a cuál lo muevo?" answered "a Hucha" fell through to the financial planner, which
+    asked which period. Reported twice from real conversations, once for this question and once for
+    the amount.
 
-    Naming both accounts is what makes repeating the instruction cheap, and repeating it is the only
-    answer this path can act on.
+    The turn keeps what it read, so the reply only has to name the account.
     """
     other = Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00)
+    accounts = summary(CURRENT, PIGGY, other)
 
-    answer = await said("mueve 200 € a la hucha", summary(CURRENT, PIGGY, other))
+    asked = await said("mueve 200 € a la hucha", accounts)
 
-    assert "Hucha" in answer.text and "Hucha viajes" in answer.text
-    assert answer.conversation.awaiting is None, "a question this path cannot hear the answer to"
-    assert answer.conversation.active is None
-    assert "otra vez" in answer.text, "it does not say what to do instead"
+    assert "Hucha" in asked.text and "Hucha viajes" in asked.text
+    assert asked.conversation.awaiting is Slot.ACCOUNT
+    active = asked.conversation.active
+    assert isinstance(active, TransferInProgress)
+    assert active.amount_minor == 200_00, "the amount was dropped and cannot be asked for twice"
+
+    finished = await said("a Hucha viajes", accounts, was=asked.conversation)
+
+    assert finished.outcome == Spoken.TRANSFER_READY.value
+    assert finished.total_minor == 200_00
+    assert "Hucha viajes" in finished.text
+    assert finished.conversation.active is None
+
+
+async def test_the_amount_asked_for_is_the_amount_it_hears() -> None:
+    """The other half of the same defect, and the turn that reported it: "¿Cuánto quieres mover a
+    Hucha?" answered "1000 pavos" came back "¿de qué periodo?"."""
+    asked = await said("quiero traspasar del fondo a hucha")
+    assert asked.conversation.awaiting is Slot.AMOUNT
+
+    finished = await said("1000 pavos", was=asked.conversation)
+
+    assert finished.outcome == Spoken.TRANSFER_READY.value
+    assert finished.total_minor == 100_000
+    assert "Hucha" in finished.text
+
+
+async def test_a_transfer_that_names_no_account_asks_which_rather_than_refusing() -> None:
+    """ "Me gustaría transferir dinero entre cuentas" is an instruction with the destination left
+    out. It used to reach the capability guard and be refused with a sentence about *querying* the
+    transfers between accounts — a refusal about reading, to somebody asking to write."""
+    answer = await said("me gustaria transferir dinero entre cuentas")
+
+    assert answer.conversation.awaiting is Slot.ACCOUNT
+    assert "Hucha" in answer.text and "Cuenta corriente" in answer.text

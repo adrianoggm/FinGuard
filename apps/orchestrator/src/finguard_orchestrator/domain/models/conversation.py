@@ -61,6 +61,9 @@ class Workflow(StrEnum):
     FINANCIAL_CLARIFICATION = "FINANCIAL_CLARIFICATION"
     UNSUPPORTED_CAPABILITY = "UNSUPPORTED_CAPABILITY"
     PAYMENT_IN_PROGRESS = "PAYMENT_IN_PROGRESS"
+    # Between the holder's own accounts. Its own state and not a payment: there is nobody to name,
+    # and the two questions it can ask are which account and how much.
+    TRANSFER_IN_PROGRESS = "TRANSFER_IN_PROGRESS"
     PAYMENT_CONFIRMATION = "PAYMENT_CONFIRMATION"
 
 
@@ -127,6 +130,31 @@ class PaymentInProgress:
 
 
 @dataclass(frozen=True)
+class TransferInProgress:
+    """Money on its way between the holder's own accounts, and what the sentence did not say.
+
+    This path used to hold no state at all, on the argument that reading a sentence is all it does
+    and preparing is a `payments:prepare` scope on another route. That is still true of the
+    *preparing*, and it was the wrong conclusion about the *reading*: the path asks two questions —
+    which account, and how much — and could hear the answer to neither.
+
+        "quiero traspasar del fondo a hucha"  →  "¿Cuánto quieres mover a Hucha?"
+        "1000 pavos"                          →  "¿De qué periodo?"
+
+    A question whose answer falls through to the financial planner is worse than no question. So the
+    two things a transfer needs are remembered here, and exactly those: the account it is going to,
+    once one is resolved, and the amount, once one is said. Nothing is staged and no money moves —
+    the answer is still a sentence telling the holder where to confirm it.
+    """
+
+    # The account, when the sentence named one and only one matched. `None` while that is the
+    # question being asked.
+    to_account_id: UUID | None = None
+    amount_minor: int | None = None
+    awaiting: Slot = Slot.AMOUNT
+
+
+@dataclass(frozen=True)
 class PaymentConfirmation:
     """A payment the bank is holding, waiting for a yes. The one state that can move money next."""
 
@@ -144,7 +172,11 @@ class PaymentConfirmation:
 
 
 type ActiveWorkflow = (
-    FinancialClarification | UnsupportedCapability | PaymentInProgress | PaymentConfirmation
+    FinancialClarification
+    | UnsupportedCapability
+    | PaymentInProgress
+    | TransferInProgress
+    | PaymentConfirmation
 )
 
 
@@ -189,7 +221,7 @@ class Conversation:
         Read off the state rather than off the question's wording, which is the point: the sentence
         is written by a model, and "de este" only means something against the slot.
         """
-        if isinstance(self.active, FinancialClarification | PaymentInProgress):
+        if isinstance(self.active, FinancialClarification | PaymentInProgress | TransferInProgress):
             return self.active.awaiting
         if isinstance(self.active, PaymentConfirmation):
             return Slot.CONFIRMATION
@@ -300,6 +332,8 @@ def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
             return Workflow.UNSUPPORTED_CAPABILITY
         case PaymentInProgress():
             return Workflow.PAYMENT_IN_PROGRESS
+        case TransferInProgress():
+            return Workflow.TRANSFER_IN_PROGRESS
         case PaymentConfirmation():
             return Workflow.PAYMENT_CONFIRMATION
         case _:
@@ -325,6 +359,7 @@ __all__ = [
     "FinancialClarification",
     "PaymentConfirmation",
     "PaymentInProgress",
+    "TransferInProgress",
     "Slot",
     "UnsupportedCapability",
     "Workflow",

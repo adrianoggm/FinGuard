@@ -70,7 +70,16 @@ _ABOUT_THE_BALANCE: Final = re.compile(
     # answered it, so it reached the planner and came back "eso no puedo calcularlo todavía" about
     # a list this service holds and had printed one turn earlier.
     r"|\bqu[ée]\s+cuentas\s+(tengo|tiene|hay)\b"
-    r"|\bcu[áa]ntas\s+cuentas\s+(tengo|tiene|hay)\b",
+    r"|\bcu[áa]ntas\s+cuentas\s+(tengo|tiene|hay)\b"
+    # "El estado actual de mi hucha", "¿cómo está mi cuenta corriente?" — a state, asked without
+    # the word "cuánto". It reached the planner and came back "¿de qué periodo te gustaría saber el
+    # estado actual de tu hucha de ahorros?": a question about a window, to somebody asking about a
+    # balance, quoting their own sentence back at them.
+    #
+    # Both need an account beside them, which is what keeps "¿en qué estado está el pago?" and
+    # "¿cómo va el mes?" out — neither is about how much money there is.
+    r"|\b(estado\s+(actual\s+)?(de|en)|c[óo]mo\s+(est[áa]|va|anda))\b.{0,30}"
+    r"\b(cuenta|hucha|ahorros?|fondo|n[óo]mina|corriente)\b",
     re.IGNORECASE,
 )
 
@@ -201,7 +210,17 @@ _ABOUT_THE_ANSWER: Final = re.compile(
 # something from one place to another that is still yours.
 _MOVING: Final = re.compile(
     r"\b(mueve|mover|muevo|mueva|pasa|pasar|paso|traspasa|traspasar|traspaso"
-    r"|mete|meter|meto|ingresa|ingresar|guarda|guardar|ahorra|ahorrar)\b",
+    r"|mete|meter|meto|ingresa|ingresar|guarda|guardar|ahorra|ahorrar"
+    # Moving money to *oneself*. `enviar` and `mandar` are what a person says about paying somebody
+    # else and are deliberately absent — but the reflexive is the opposite: "enviarme dinero a la
+    # cuenta corriente" has exactly one possible destination and it is the holder's own account.
+    # Without these the sentence fell through and was answered with that account's balance.
+    r"|enviarme|mandarme|pasarme|traspasarme|transferirme|ingresarme"
+    # A transfer between one's own accounts, which the rail is named after. Safe here and not in
+    # `payment_router` for the reason the whole function is safe: it also needs one of *this
+    # holder's* accounts by name, and a payment to a person names a person. "Tranferir" is in the
+    # list because it is what somebody typed, twice, and a typo is not a change of intent.
+    r"|transferir|transfiere|transfiero|tranferir|tranferirme)\b",
     re.IGNORECASE,
 )
 
@@ -213,6 +232,13 @@ _MOVING: Final = re.compile(
 # misreading can take here, which is why the exclusion is checked first rather than tuned into the
 # verb list.
 _ASKING: Final = re.compile(r"\b(cu[áa]nt[oa]s?|qu[ée]|cu[áa]l|cu[áa]ndo|por\s+qu[ée])\b", re.I)
+
+
+# "Entre mis cuentas" names no account and says which kind of movement this is. With a moving verb
+# in front of it the sentence is an instruction — "me gustaría transferir dinero entre cuentas" —
+# and it was reaching the capability guard, which refused it with a sentence about *querying* the
+# transfers. A refusal about reading, to somebody asking to write.
+_BETWEEN_ACCOUNTS: Final = re.compile(r"\bentre\s+(mis|tus|sus|las)?\s*cuentas\b", re.IGNORECASE)
 
 
 def _moving_money_inside(sentence: str) -> bool:
@@ -228,7 +254,9 @@ def _moving_money_inside(sentence: str) -> bool:
     folded = spanish.folded(sentence)
     if _ASKING.search(folded):
         return False
-    return bool(_MOVING.search(folded)) and bool(account_words.named_in(sentence))
+    if not _MOVING.search(folded):
+        return False
+    return bool(account_words.named_in(sentence)) or bool(_BETWEEN_ACCOUNTS.search(folded))
 
 
 def route(sentence: str, *, has_previous: bool) -> Intent:

@@ -360,35 +360,94 @@ def test_the_account_it_comes_from_is_not_offered_as_somewhere_to_put_it() -> No
     assert "más de una cuenta" not in answer["text"]
 
 
-def test_a_genuine_ambiguity_asks_for_the_instruction_rather_than_the_missing_word() -> None:
-    """Two piggy banks, one word for both — the ambiguity that is real. It may be asked about, and
-    it may not leave a slot open: nothing on this path holds state, so a reply naming only the
-    account arrives with the amount already gone. "¿A cuál lo muevo?" answered with "a Hucha" was
-    turn twelve, and it came back "¿de qué periodo?".
+def test_a_genuine_ambiguity_is_asked_about_and_the_answer_is_heard() -> None:
+    """Two piggy banks, one word for both — the ambiguity that is real, and turn twelve.
+
+    "¿A cuál lo muevo?" answered "a Hucha" came back "¿de qué periodo?", because the path held no
+    state: the amount was gone by the time the reply arrived, and the sentence was classified from
+    scratch. Now the turn keeps what it read, so the reply only has to name the account — and it is
+    read by the holder's own name for it, since "Hucha" and "Hucha viajes" are the same kind.
     """
-    travels = Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00)
-    client, _, _ = wired({}, CURRENT_ACCOUNT, SAVINGS, travels)
-
-    answer = Chat(client).say("mueve 200 € a la hucha")
-
-    assert "Hucha" in answer["text"] and "Hucha viajes" in answer["text"]
-    assert "otra vez" in answer["text"], "it asks a question and does not say what to answer"
-    assert answer["conversation"]["awaiting"] is None
-    assert answer["conversation"]["workflow"] is None
-
-
-def test_the_repeated_instruction_is_understood() -> None:
-    """The turn after. Naming both accounts is what makes repeating it cheap, so repeating it has
-    to work — otherwise the advice is as much of a dead end as the question was."""
     travels = Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00)
     client, planner, _ = wired({}, CURRENT_ACCOUNT, SAVINGS, travels)
     chat = Chat(client)
 
-    chat.say("mueve 200 € a la hucha")
-    again = chat.say("pasa 200 € a Hucha viajes")
+    asked = chat.say("mueve 200 € a la hucha")
+    assert "Hucha" in asked["text"] and "Hucha viajes" in asked["text"]
+    assert asked["conversation"]["awaiting"] == "ACCOUNT"
+    assert asked["conversation"]["transfer_amount_minor"] == 200_00, "the amount was dropped"
 
-    assert planner.asked == [], "a transfer instruction reached the model"
-    assert again["outcome"] == Spoken.TRANSFER_READY.value
+    finished = chat.say("a Hucha viajes")
+
+    assert finished["outcome"] == Spoken.TRANSFER_READY.value
+    assert finished["total_minor"] == 200_00
+    assert "Hucha viajes" in finished["text"]
+    assert finished["conversation"]["workflow"] is None
+    assert planner.asked == [], "answering a transfer question reached the model"
+
+
+def test_the_amount_asked_for_is_the_amount_it_hears() -> None:
+    """The turn that reported it: "¿Cuánto quieres mover a Hucha?" answered "1000 pavos" came back
+    "¿de qué periodo?". The question and the answer are one exchange, and the state is what makes
+    them one."""
+    client, planner, _ = wired()
+    chat = Chat(client)
+
+    asked = chat.say("quiero traspasar del fondo a hucha")
+    assert asked["conversation"]["awaiting"] == "AMOUNT"
+
+    finished = chat.say("1000 pavos")
+
+    assert finished["outcome"] == Spoken.TRANSFER_READY.value
+    assert finished["total_minor"] == 100_000
+    assert planner.asked == []
+
+
+def test_a_transfer_that_names_no_account_asks_which_rather_than_refusing() -> None:
+    """ "Me gustaría transferir dinero entre cuentas" is an instruction with the destination left
+    out. It reached the capability guard and was refused with a sentence about *querying* the
+    transfers between accounts — a refusal about reading, to somebody asking to write."""
+    client, _, _ = wired()
+
+    answer = Chat(client).say("Me gustaria tranferir dinero entre cuentas")
+
+    assert answer["conversation"]["awaiting"] == "ACCOUNT"
+    assert "Hucha" in answer["text"] and "Cuenta corriente" in answer["text"]
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Me gustaria enviarme dinero a la cuenta corriente",
+        "Me gustaria tranferir dinero a mi cuenta corriente desde mi hucha",
+    ],
+)
+def test_an_instruction_to_move_money_is_not_answered_with_a_balance(said: str) -> None:
+    """Both were answered with a figure — "Tienes 2.270,42 € en Cuenta corriente" — because neither
+    verb was in the moving vocabulary. `enviar` and `mandar` are deliberately absent, since they are
+    what a person says about paying somebody else; the *reflexive* is the opposite and has exactly
+    one possible destination, which is the holder's own account.
+    """
+    client, _, _ = wired()
+
+    answer = Chat(client).say(said)
+
+    assert answer["outcome"] != Spoken.BALANCE.value
+    assert answer["conversation"]["awaiting"] == "AMOUNT"
+    assert "Cuenta corriente" in answer["text"]
+
+
+def test_the_state_of_my_savings_is_a_balance_question() -> None:
+    """ "¿Cuál es el estado actual de mi hucha de ahorros?" came back "¿de qué periodo te gustaría
+    saber el estado actual de tu hucha de ahorros?" — a question about a window, to somebody asking
+    about a state, quoting their own sentence back at them."""
+    client, planner, _ = wired()
+
+    answer = Chat(client).say("Oye cual es el estado actual de mi hucha de ahorros")
+
+    assert answer["outcome"] == Spoken.BALANCE.value
+    assert answer["text"] == "Tienes 5.485,50 € en Hucha."
+    assert planner.asked == []
 
 
 # --- what the whole thing does end to end ----------------------------------------------------

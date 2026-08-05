@@ -158,3 +158,31 @@ def destination_in(sentence: str) -> tuple[str, ...]:
                 found.setdefault(kind, match.start())
                 break
     return tuple(sorted(found, key=lambda kind: found[kind]))
+
+
+def chosen_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
+    """Which of the holder's own account names this sentence contains, longest first.
+
+    The rest of this module answers with a *kind*, which is right for reading a question — the
+    three kinds belong to the ledger and the names belong to the holder and change. It is not
+    enough to answer one: asked "¿a cuál de tus cuentas lo muevo? Tienes Hucha y Hucha viajes", a
+    reply of "a Hucha viajes" names the same kind as "a Hucha" and resolves nothing.
+
+    Longest first is the whole of it. "Hucha viajes" contains "Hucha", so matching the shorter one
+    would move the money into the account the user did not pick — out of the two they were just
+    shown, which is worse than not understanding at all.
+
+    The names come from the caller because they come from banking. Nothing here holds a list of
+    somebody's accounts, and the day this reads one from a table is the day it stops being about
+    words.
+    """
+    haystack = spanish.folded(sentence)
+    found: list[tuple[int, str]] = []
+    for name in sorted(names, key=len, reverse=True):
+        pattern = rf"(?<![a-z0-9]){re.escape(spanish.folded(name))}(?![a-z0-9])"
+        match = re.search(pattern, haystack)
+        # A name already claimed by a longer one is the same words read twice.
+        if match and not any(taken <= match.start() < taken + len(other) for taken, other in found):
+            found.append((match.start(), spanish.folded(name)))
+    chosen = {spanish.folded(name): name for name in names}
+    return tuple(chosen[folded] for _, folded in sorted(found))

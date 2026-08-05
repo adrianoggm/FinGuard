@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentConfirmation,
     PaymentInProgress,
     Slot,
+    TransferInProgress,
     UnsupportedCapability,
     Workflow,
     workflow_of,
@@ -159,6 +160,12 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
                 ),
                 suspended=payload.suspended,
             )
+        case Workflow.TRANSFER_IN_PROGRESS:
+            return TransferInProgress(
+                to_account_id=payload.transfer_to,
+                amount_minor=payload.transfer_amount_minor,
+                awaiting=payload.awaiting or Slot.AMOUNT,
+            )
         case Workflow.PAYMENT_CONFIRMATION:
             assert payload.intent_id is not None  # the payload's validator requires all three
             assert payload.recipient is not None
@@ -237,6 +244,11 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
                 )
                 for contact in active.candidates
             ],
+        }
+    if isinstance(active, TransferInProgress):
+        return {
+            "transfer_to": active.to_account_id,
+            "transfer_amount_minor": active.amount_minor,
         }
     if isinstance(active, PaymentConfirmation):
         return {

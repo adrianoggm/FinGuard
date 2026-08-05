@@ -34,6 +34,8 @@ function state(over: Partial<ConversationState>): ConversationState {
     payment: null,
     suspended: false,
     candidates: [],
+    transfer_to: null,
+    transfer_amount_minor: null,
     intent_id: null,
     recipient: null,
     amount_minor: null,

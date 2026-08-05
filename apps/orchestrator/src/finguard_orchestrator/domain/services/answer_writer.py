@@ -203,18 +203,16 @@ def _invested_clause(invested: list[Holding]) -> str:
 def which_account(candidates: list[Holding]) -> str:
     """Two accounts of one kind, so the word did not pick one.
 
-    It asks for the whole instruction again rather than for the missing word, and that is not
-    politeness — it is the only version of this question that can be answered. Nothing on the spoken
-    transfer path holds state, so a reply naming only the account arrives with the amount already
-    gone; "¿a cuál lo muevo?" answered with "a Hucha" used to reach the financial planner, which
-    asked which period. Naming both accounts is what makes the repetition cheap.
+    It asks for the missing word and no more, which it can only do because the turn leaves a
+    `TransferInProgress` behind. For one release it asked for the whole instruction again: the path
+    held no state, so a reply naming only the account arrived with the amount already gone and "¿a
+    cuál lo muevo?" answered with "a Hucha" reached the financial planner, which asked which period.
+
+    The names are listed because they are what the reply has to contain, and a holder with two
+    piggy banks does not necessarily remember what they called them.
     """
     names = _listed(tuple(_name_of(holding) for holding in candidates))
-    example = _name_of(candidates[0])
-    return (
-        f"Tienes más de una cuenta de ese tipo: {names}. "
-        f"Dímelo otra vez con el nombre completo, por ejemplo «pasa 200 € a {example}»."
-    )
+    return f"¿A cuál de tus cuentas lo muevo? Tienes {names}."
 
 
 def how_much_to_move(target: Holding) -> str:
