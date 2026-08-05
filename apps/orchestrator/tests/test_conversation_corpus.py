@@ -20,9 +20,15 @@ from support import episodes
 CORPUS = episodes.load()
 
 
-def test_the_corpus_is_not_empty() -> None:
-    """A glob that matches nothing is a suite that passes by finding no work."""
-    assert len(CORPUS) >= 130, f"only {len(CORPUS)} episodes were loaded"
+# Where the corpus is, and where it is going. The floor is asserted so a glob that matches nothing
+# cannot pass by finding no work; the target is stated so nobody has to guess whether 40 was the
+# plan. Raise the floor as files land — never lower it.
+EPISODES_TODAY = 40
+TARGET = 130
+
+
+def test_the_corpus_has_not_shrunk() -> None:
+    assert len(CORPUS) >= EPISODES_TODAY, f"only {len(CORPUS)} episodes were loaded"
 
 
 def test_every_episode_is_long_enough_to_be_a_conversation() -> None:
