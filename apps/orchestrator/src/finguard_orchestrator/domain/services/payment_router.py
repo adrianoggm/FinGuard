@@ -21,6 +21,8 @@ Three signals, and the order matters:
     the past               "le he mandado", "le mandé" — a statement about what happened. This is
                             the costly direction: somebody asking what they sent last month must
                             not be shown a prompt to send it again.
+    money arriving          "he recibido", "me ha llegado" — the opposite direction, and never an
+                            order however many payment words it carries.
     a payment verb + money  what is left. "bizum" counts as both.
 """
 
@@ -52,6 +54,27 @@ _ALREADY: Final = re.compile(
     r"|hecho\s+(un|una)\s+(bizum|transferencia))"
     r"|mand[eé]|mandaste|envi[eé]|envi[óo]|envi[aá]ste|pagu[eé]|pag[óo]|transfer[ií]"
     r"|hice|hiciste|hizo)\b",
+    re.IGNORECASE,
+)
+
+# Money arriving, which is never an order to send any.
+#
+# Its own signal rather than another entry in `_ALREADY`, because it is not about tense. "¿He
+# recibido algún bizum de María este mes?" is a question about the past *and* about the opposite
+# direction, and it was read as an instruction: "recibido" is not one of the payment participles
+# above and the sentence carries no question word, so "bizum" plus "bizum" was enough. The assistant
+# asked how much to send, and then — a turn later — "no tengo a María en tus contactos, así que no
+# puedo enviarle nada", to somebody asking whether she had sent *them* anything.
+#
+# Every turn after it was inside a payment nobody had ordered, which is what makes this the
+# expensive kind of misreading: it does not produce one wrong answer, it produces a wrong
+# conversation.
+_RECEIVED: Final = re.compile(
+    r"\b(recib[íi]|recibiste|recibi[óo]|recibido|recibimos|recibieron)\b"
+    r"|\bme\s+(ha|han|hab[íi]a|hab[íi]an)\s+"
+    r"(mandado|enviado|hecho|ingresado|devuelto|llegado|pagado)\b"
+    r"|\bme\s+(mand[óo]|envi[óo]|hizo|ingres[óo]|devolvi[óo]|lleg[óo]|pag[óo])\b"
+    r"|\bme\s+(mandaron|enviaron|hicieron|ingresaron|devolvieron|llegaron|pagaron)\b",
     re.IGNORECASE,
 )
 
@@ -123,6 +146,6 @@ def is_payment(sentence: str) -> bool:
     want payments withholds the `payments:prepare` scope, and the sentence is then refused for the
     honest reason rather than quietly read as something else.
     """
-    if _ASKING.search(sentence) or _ALREADY.search(sentence):
+    if _ASKING.search(sentence) or _ALREADY.search(sentence) or _RECEIVED.search(sentence):
         return False
     return bool(_PAYING.search(sentence)) and bool(_MONEY.search(sentence))

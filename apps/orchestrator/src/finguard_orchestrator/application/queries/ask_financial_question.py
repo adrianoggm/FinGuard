@@ -1059,6 +1059,11 @@ class AskFinancialQuestionHandler:
 # Each one says what is missing and what to ask instead, because the second half is the only part
 # the user can act on. Spanish, like every string a person reads.
 _MISSING_CAPABILITY: Final[dict[str, str]] = {
+    "INVESTING": (
+        "Todavía no sé sumar lo que has invertido en un periodo: el dinero que entra en el fondo "
+        "son traspasos entre tus cuentas y no puedo separarlos del resto. Pregúntame «¿cuánto "
+        "tengo en el fondo?» y te digo lo que llevas puesto."
+    ),
     "INTERNAL_ONLY": (
         "Todavía no sé separar los traspasos entre tus cuentas del resto de movimientos. "
         "Puedo darte el total de un periodo o lo que has gastado por categoría, y en la pantalla "

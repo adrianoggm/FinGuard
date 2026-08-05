@@ -456,3 +456,131 @@ def test_the_same_words_about_a_balance_are_still_a_balance() -> None:
 
     assert answer["outcome"] == Spoken.BALANCE.value
     assert answer["total_minor"] == 775_592
+
+
+# =========================================================================================
+# The same demo, further down. Four more turns, and the first of them wrote off the rest:
+# a question about money *arriving* was read as an order to send some, so every turn after
+# it was inside a payment nobody had asked for.
+# =========================================================================================
+
+
+def test_a_question_about_money_arriving_is_not_an_order_to_send_any() -> None:
+    """ "¿He recibido algún bizum de María este mes?" answered "¿de cuánto fue el bizum que
+    recibiste de María?" and then, a turn later, "no tengo a María en tus contactos, así que no
+    puedo enviarle nada" — to somebody asking whether she had sent *them* anything.
+
+    "Recibido" was not one of the payment participles and the sentence carries no question word, so
+    "bizum" as a verb plus "bizum" as money was enough to read it as an instruction. The cost is not
+    one wrong answer: every turn afterwards belonged to a payment that was never ordered.
+    """
+    received = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        categories=("TRANSFER_BIZUM",),
+        merchants=("María",),
+    )
+    client, _, ledger = wired({"recibido": PlanningResult.planned(received)})
+
+    answer = Chat(client).say("He recibido algún bizum de María este mes ?")
+
+    assert answer["outcome"] == PlanningOutcome.PLANNED.value
+    assert ledger.plans, "a question about received money never reached the ledger"
+    assert ledger.plans[0].direction is Direction.INCOME
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "He recibido algún bizum de María este mes ?",
+        "¿me ha llegado el bizum de Marta?",
+        "¿me hizo Javi la transferencia?",
+        "me han hecho un bizum de 20 €",
+    ],
+)
+def test_every_way_of_saying_the_money_came_in(said: str) -> None:
+    """Read as one signal rather than as tense, because it is not about tense: these are about the
+    other direction, and no amount of payment vocabulary makes them an instruction."""
+    from finguard_orchestrator.domain.services import payment_router
+
+    assert not payment_router.is_payment(said)
+
+
+def test_ordering_a_payment_is_still_ordering_one() -> None:
+    """The rule leans towards reading a sentence as a question, and it still has to let a real
+    instruction through — a payment dropped into the read path is a payment that cannot be made."""
+    from finguard_orchestrator.domain.services import payment_router
+
+    assert payment_router.is_payment("hazle un bizum de 20 € a Marta")
+    assert payment_router.is_payment("mándale 15 euros a Javi")
+
+
+def test_a_word_answering_an_open_question_is_not_a_payment_order() -> None:
+    """A word offered as the answer to a question, read as an order.
+
+    "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and asked who to send
+    it to. A one-word reply while a question is open belongs to the question.
+    """
+    client, _, ledger = wired(
+        {
+            "de algun otro": PlanningResult.needs_clarification("¿De qué comercio o categoría?"),
+            "algún otro": PlanningResult.needs_clarification("¿De qué comercio o categoría?"),
+            "bizum": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.INCOME,
+                    period=RelativePeriod(period=Period.LAST_N_MONTHS, n=2),
+                    categories=("TRANSFER_BIZUM",),
+                )
+            ),
+        }
+    )
+    chat = Chat(client)
+
+    chat.say("Y de algún otro en los 2 ultimos meses")
+    answered = chat.say("pues bizum")
+
+    assert answered["outcome"] == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].categories == ("TRANSFER_BIZUM",)
+
+
+def test_a_real_instruction_still_interrupts_an_open_question() -> None:
+    """The other half, and what keeps the rule narrow: a figure is what tells a change of subject
+    from a one-word reply. Losing a payment to a clarification nobody remembers is the failure in
+    the opposite direction."""
+    client, _, _ = wired({"llevo gastado": PlanningResult.needs_clarification("¿De qué periodo?")})
+    chat = Chat(client)
+
+    chat.say("¿cuánto llevo gastado?")
+    paid = chat.say("hazle un bizum de 20 € a Marta")
+
+    # Payments are off in this harness, so the honest answer is that it cannot make one — which is
+    # the payment path answering, and that is what this asserts.
+    assert "pagos" in paid["text"]
+
+
+def test_how_much_have_i_invested_is_not_answered_with_everything_that_came_in() -> None:
+    """The worst answer of the second conversation. "¿Cuánto he invertido en el último año?" came
+    back 30.279,48 € over 35 movements, and the movements listed were the salary — every euro that
+    arrived, labelled as what the holder had put away.
+
+    Money reaching the fund arrives as an internal transfer, so this is the same contract gap as the
+    first turn of the first conversation, wearing a different word. The refusal says where the
+    figure actually is, and that question works.
+    """
+    client, planner, ledger = wired()
+
+    refused = Chat(client).say("Caunto he invertido en el ultimo año ?")
+
+    assert refused["outcome"] == PlanningOutcome.UNSUPPORTED.value
+    assert ledger.plans == [] and planner.asked == []
+    assert "cuánto tengo en el fondo" in refused["text"]
+
+
+def test_and_the_question_it_points_at_answers() -> None:
+    """A refusal that names a question has to name one that works, or it is a second dead end."""
+    client, _, _ = wired()
+
+    answer = Chat(client).say("¿cuánto tengo en el fondo?")
+
+    assert "2.700,00 €" in answer["text"]
+    assert "no lo que vale hoy" in answer["text"]

@@ -222,8 +222,23 @@ def _is_an_order_to_pay(sentence: str, was: Conversation) -> bool:
 
     Asked here rather than copying the exception, because two copies of "is this a payment" is how
     the first one came to be incomplete.
+
+    An open question takes precedence over a payment word, unless the sentence carries an amount.
+    "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and asked who to send
+    it to — a word offered as the answer to a question, read as an order. A real instruction is not
+    lost to this: "hazle un bizum de 20 € a Marta" names a figure, and that is what tells a change
+    of subject from a one-word reply.
     """
-    return intent_router.route(sentence, has_previous=was.last_plan is not None) is Intent.PAYMENT
+    if intent_router.route(sentence, has_previous=was.last_plan is not None) is not Intent.PAYMENT:
+        return False
+    asked = was.awaiting or was.last_asked
+    return asked not in _FINANCIAL_SLOTS or payment_words.amount_in(sentence) is not None
+
+
+# The slots a financial question leaves open. A reply while one of these is waiting belongs to it.
+_FINANCIAL_SLOTS: frozenset[Slot | None] = frozenset(
+    {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION, Slot.ACCOUNT}
+)
 
 
 async def _as_payment(
