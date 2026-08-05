@@ -309,6 +309,7 @@ class Conversation:
                 last_plan=self.last_plan,
                 retry_plan=self.retry_plan,
                 last_asked=self.last_asked,
+                answered_the_balance=self.answered_the_balance,
             )
         return Conversation(
             active=PaymentInProgress(
@@ -320,6 +321,10 @@ class Conversation:
             last_plan=self.last_plan,
             retry_plan=self.retry_plan,
             last_asked=self.last_asked,
+            # Kept, like every other piece of memory here. Dropping it meant a payment under way
+            # silently turned "¿y en la hucha?" back into a question about spending, so a balance
+            # follow-up worked or not depending on whether a Bizum happened to be half-built.
+            answered_the_balance=self.answered_the_balance,
         )
 
 

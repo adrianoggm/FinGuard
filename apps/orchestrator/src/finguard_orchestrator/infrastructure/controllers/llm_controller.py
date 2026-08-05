@@ -590,6 +590,13 @@ async def _continues_a_payment(
     active = was.active
     if not isinstance(active, PaymentInProgress):
         return None
+    if intent_router.route(question, has_previous=was.last_plan is not None) is Intent.OWN_TRANSFER:
+        # An instruction to move money between the holder's own accounts, not a reply to the Bizum.
+        # "Mueve 200 euros a la hucha" carries a figure, and a half-built payment missing its amount
+        # took it — so a sentence naming one of the holder's own accounts completed a payment to
+        # somebody else. Both halves of a transfer have to be present for the router to say so, and
+        # neither of them belongs to a Bizum.
+        return None
     drafted = active.draft
     if active.suspended:
         # A value for the missing slot is intercepted above and gets a reminder. Only an explicit

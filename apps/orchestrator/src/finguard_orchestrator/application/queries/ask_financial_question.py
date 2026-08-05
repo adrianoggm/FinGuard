@@ -1273,7 +1273,9 @@ def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
 # "El total", "en total", "todo junto" - the whole of it, said about a balance that had just named
 # one account. It is the second turn of a reported conversation, and it went to the planner and came
 # back "sigo sin tener claro el periodo", to a sentence that is not about a period at all.
-_THE_WHOLE_LOT: Final = re.compile(r"\b(el\s+)?total\b|\btodo\s+junto\b|\ben\s+conjunto\b")
+_THE_WHOLE_LOT: Final = re.compile(
+    r"(?:el\s+)?total(?![a-z])|todo(?:\s+junto)?(?![a-z])|en\s+conjunto|todas(?![a-z])"
+)
 
 
 def _narrows_the_balance(query: AskFinancialQuestionQuery, was: Conversation) -> bool:
