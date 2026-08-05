@@ -32,6 +32,12 @@ from finguard_banking.application.queries.get_balance import (
     GetBalanceQuery,
     GetBalanceResult,
 )
+from finguard_banking.application.queries.list_accounts import (
+    AccountRow,
+    ListAccountsHandler,
+    ListAccountsQuery,
+    ListAccountsResult,
+)
 from finguard_banking.application.queries.list_card_charges import (
     CardChargeRow,
     ListCardChargesHandler,
@@ -76,6 +82,10 @@ __all__ = [
     "ListCardChargesQuery",
     "ListCardChargesResult",
     "ContactRow",
+    "AccountRow",
+    "ListAccountsHandler",
+    "ListAccountsQuery",
+    "ListAccountsResult",
     "ListCardsHandler",
     "ListCardsQuery",
     "ListCardsResult",

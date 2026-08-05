@@ -23,6 +23,7 @@ from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Perio
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.infrastructure.banking.http_accounts import HttpAccounts
 from finguard_orchestrator.infrastructure.banking.http_financial_query import HttpFinancialQuery
 
 
@@ -51,6 +52,7 @@ class HttpAccountSummary:
             timeout_seconds=timeout_seconds,
             supporting_movements=movements,
         )
+        self._accounts = HttpAccounts(base_url=base_url, timeout_seconds=timeout_seconds)
 
     async def of(self, account_id: UUID, *, today: date, reporting_timezone: str) -> AccountSummary:
         balance = await self._balance(account_id)
@@ -73,6 +75,12 @@ class HttpAccountSummary:
             available_minor=balance["availableMinor"],
             as_of=balance["asOf"],
             movements=recent.movements,
+            # The holder's other accounts, beside the declared one's figures rather than replacing
+            # them. A client written before this keeps reading exactly what it read: the balance at
+            # the top is still the account the credential names, and `holdings` is a field it can
+            # ignore. Migrating a home screen is then a decision somebody makes rather than a
+            # number that changed under it.
+            holdings=await self._accounts.all_of(account_id),
         )
 
     async def _balance(self, account_id: UUID) -> dict[str, Any]:

@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Final
 
 from finguard_orchestrator.domain.enums import Direction, Metric
-from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import category_words
@@ -65,20 +65,146 @@ def money(amount_minor: int, currency: str | None) -> str:
     return f"{sign}{grouped},{cents:02d}{symbol}"
 
 
-def balance(summary: AccountSummary) -> str:
+def balance(summary: AccountSummary, named: tuple[str, ...] = ()) -> str:
     """How much money there is, in words.
 
-    Two figures or one, and the difference matters. Booked is what the ledger has settled and
+    `named` is what `account_words` read out of the sentence — the kinds of account it mentioned,
+    empty when it mentioned none, which is the ordinary case.
+    """
+    if not summary.holdings:
+        # One account, or a banking that has not been deployed yet. The sentence this service
+        # always gave, unchanged, rather than a degraded version of the new one.
+        return _one_account(summary)
+    wanted = [h for h in summary.holdings if h.kind in named] if named else list(summary.holdings)
+    if named and not wanted:
+        return _no_such_account(summary)
+    return _across(wanted, everything=not named)
+
+
+def leading_figure(summary: AccountSummary, named: tuple[str, ...] = ()) -> int | None:
+    """The number `balance()` leads with, as data beside the prose.
+
+    Its own function and not the handler's own arithmetic, because the two would then be two
+    representations of one decision — and a client that renders the field beside the sentence would
+    show 2.270,42 € under a sentence saying 7.755,92 €. Both go through `_total_of`, so they cannot
+    disagree about which accounts were counted.
+
+    `None` when there is no single figure, and every case of that is real: accounts in more than
+    one currency have no total, and a kind the holder does not have has no figure at all. A client
+    that gets `None` renders the sentence, which was the whole answer either way.
+    """
+    if not summary.holdings:
+        return summary.available_minor
+    if not named:
+        return _total_of(list(summary.holdings))
+    wanted = [holding for holding in summary.holdings if holding.kind in named]
+    return _total_of(wanted) if wanted else None
+
+
+def _spendable(holdings: list[Holding]) -> list[Holding]:
+    """The accounts a total may add up.
+
+    Investments are out, unless they are all there is — "¿y en el fondo?" is asking about exactly
+    that one, and answering it with nothing would be worse than answering it with a caveat.
+    """
+    without_assets = [holding for holding in holdings if holding.kind != "ASSET"]
+    return without_assets or holdings
+
+
+def _total_of(holdings: list[Holding]) -> int | None:
+    """What the accounts add up to, or `None` when they do not add up to anything.
+
+    Adding minor units across currencies produces a perfectly valid integer that means nothing, so
+    two currencies have no total rather than a misleading one.
+    """
+    countable = _spendable(holdings)
+    if not countable or len({holding.currency for holding in countable}) > 1:
+        return None
+    return sum(holding.booked_minor for holding in countable)
+
+
+def _one_account(summary: AccountSummary) -> str:
+    """Two figures or one, and the difference matters. Booked is what the ledger has settled and
     available is what can be spent; when something is pending they differ, and showing one under
     the other's name tells somebody they have money they do not. When they agree, saying the same
     number twice under two labels reads like a discrepancy the user has to work out — so it is
-    said once.
-    """
+    said once."""
     available = money(summary.available_minor, summary.currency)
     if summary.available_minor == summary.booked_minor:
         return f"Tienes {available} en tu cuenta."
     booked = money(summary.booked_minor, summary.currency)
     return f"Tienes {available} disponibles en tu cuenta. El saldo contabilizado es de {booked}."
+
+
+def _name_of(holding: Holding) -> str:
+    """What to call an account the holder never named. The kind, never the reference: "ES-0001-2"
+    is not something anybody recognises as theirs."""
+    return holding.display_name or _KIND_NAMES.get(holding.kind, "otra cuenta")
+
+
+_KIND_NAMES: Final[dict[str, str]] = {
+    "CURRENT": "tu cuenta corriente",
+    "SAVINGS": "tus ahorros",
+    "ASSET": "tu fondo",
+}
+
+
+def _with_amounts(holdings: list[Holding]) -> str:
+    """ "2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha", through the same enumeration the
+    rest of this module uses — Spanish joins the last item with "y", and a comma there reads as
+    one more item."""
+    return _listed(tuple(f"{money(h.booked_minor, h.currency)} en {_name_of(h)}" for h in holdings))
+
+
+def _across(holdings: list[Holding], *, everything: bool) -> str:
+    """The figure, with the accounts it came from under it.
+
+    **Investments are not added in, and this is the decision the whole sentence turns on.** An
+    `ASSET` balance is what was paid, not what it is worth — there is no price source (ADR-009 §1)
+    — so folding it into "tienes X" reports a purchase price as somebody's money. It is said
+    afterwards, in its own clause, with what it actually is.
+
+    No total when the currencies differ, either. Adding minor units across currencies produces a
+    perfectly valid integer that means nothing, and the breakdown alone is the honest answer.
+    """
+    spendable = _spendable(holdings)
+    invested = [h for h in holdings if h.kind == "ASSET"]
+
+    if not [h for h in holdings if h.kind != "ASSET"]:
+        return _invested_only(invested)
+
+    # A total needs more than one account to be a total, and one currency to be a number. Without
+    # either, the list on its own is the whole answer and no figure is invented to lead it.
+    total_minor = _total_of(holdings) if len(spendable) > 1 else None
+    if total_minor is None:
+        said = f"Tienes {_with_amounts(spendable)}."
+    else:
+        between = "entre tus cuentas" if everything else "entre esas cuentas"
+        total = money(total_minor, spendable[0].currency)
+        said = f"Tienes {total} {between}: {_with_amounts(spendable)}."
+
+    if invested and everything:
+        said += f" Aparte, {_invested_clause(invested)}"
+    return said
+
+
+def _invested_only(invested: list[Holding]) -> str:
+    return f"En inversión {_invested_clause(invested)}"
+
+
+def _invested_clause(invested: list[Holding]) -> str:
+    """The caveat is not decoration. Somebody reading "2.700 € en tu fondo" beside their current
+    account will read it as money they have, and it is what they paid — the fund may be worth more
+    or less today and this service has no way to know which."""
+    listed = _with_amounts(invested)
+    return f"tienes {listed}, que es lo que invertiste y no lo que vale hoy."
+
+
+def _no_such_account(summary: AccountSummary) -> str:
+    """A kind the holder does not have. Answering with the total instead would be answering a
+    question they did not ask, and they would have no way to tell."""
+    have = ", ".join(_name_of(h) for h in summary.holdings)
+    return f"No tienes ninguna cuenta de ese tipo. Tienes: {have}."
 
 
 def contacts(found: tuple[Contact, ...]) -> str:

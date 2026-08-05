@@ -23,7 +23,7 @@ from finguard_banking.domain.constants import (
     MAX_RECIPIENT_NAME,
     MAX_SUPPORTING_MOVEMENTS,
 )
-from finguard_banking.domain.enums import Direction, GroupBy, Metric, Period, Rail
+from finguard_banking.domain.enums import AccountKind, Direction, GroupBy, Metric, Period, Rail
 
 
 class _Payload(BaseModel):
@@ -290,6 +290,37 @@ class ContactsResponse(_Payload):
     somebody was looking for is the one that did not fit."""
 
     contacts: list[ContactResponse] = []
+
+
+class HoldingResponse(_Payload):
+    """One of the holder's accounts.
+
+    `bookedMinor` and `currency` travel as a pair, like everywhere else money crosses this
+    boundary: an amount whose currency is implicit is an amount somebody eventually labels in
+    euros.
+
+    `kind` is what tells a client whether the figure can be added to a total. On an `ASSET` it is
+    the cost basis and not a valuation, so a screen that sums all three without saying so is
+    reporting a purchase price as if it were worth.
+    """
+
+    account_id: UUID
+    kind: AccountKind
+    display_name: str | None
+    currency: str
+    booked_minor: int
+    status: str
+
+
+class HoldingsResponse(_Payload):
+    """Every account this holder has, the declared one included.
+
+    No total. Accounts in different currencies do not have one, and a field here would have to be
+    filled with something — the caller decides, because only the caller knows whether it is about
+    to print the number or compare it.
+    """
+
+    accounts: list[HoldingResponse] = []
 
 
 class CardResponse(_Payload):

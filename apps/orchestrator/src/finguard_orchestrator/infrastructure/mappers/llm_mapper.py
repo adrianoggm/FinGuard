@@ -36,6 +36,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ContactPayload,
     ContactsResponse,
     GroupPayload,
+    HoldingPayload,
     MessageResponse,
     ModelResponse,
     MovementsResponse,
@@ -199,6 +200,16 @@ def summary_to_dto(result: AccountSummaryResult) -> AccountSummaryResponse:
                 category=movement.category,
             )
             for movement in result.movements
+        ],
+        holdings=[
+            HoldingPayload(
+                account_id=holding.account_id,
+                kind=holding.kind,
+                display_name=holding.display_name,
+                currency=holding.currency,
+                booked_minor=holding.booked_minor,
+            )
+            for holding in result.holdings
         ],
     )
 

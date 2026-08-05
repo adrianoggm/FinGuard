@@ -26,7 +26,16 @@ from finguard_orchestrator.domain.services import spanish
 # breakdown is a better answer than a guess anyway. It is also a verb: "cuenta cuánto gasté" is an
 # instruction and names no account, and word boundaries are no help against that.
 _KINDS: Final[dict[str, tuple[str, ...]]] = {
-    "CURRENT": ("la cuenta corriente", "cuenta corriente", "la nómina", "la cuenta nómina"),
+    # "La corriente" without the noun, because that is how the second half of a sentence says it:
+    # "en la hucha y en la corriente". Reading only the first half there answers about one account
+    # and looks like a complete answer.
+    "CURRENT": (
+        "la cuenta corriente",
+        "cuenta corriente",
+        "la corriente",
+        "la nómina",
+        "la cuenta nómina",
+    ),
     "SAVINGS": ("la hucha", "hucha", "los ahorros", "la cuenta de ahorro", "la cuenta de ahorros"),
     "ASSET": ("el fondo", "fondo indexado", "el fondo de inversión", "la cuenta de inversión"),
 }

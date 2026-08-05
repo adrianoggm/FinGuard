@@ -36,6 +36,23 @@ class AccountStatus(StrEnum):
     ACTIVE = "ACTIVE"
 
 
+class AccountKind(StrEnum):
+    """What an account is for, which decides what a figure about it means.
+
+    The three of migration 0014, whose CHECK constraint is the other copy of this list. Written
+    out here as well because the constraint cannot be imported: what it protects is the table, and
+    what this protects is every read path that would otherwise pass the kind around as a string.
+
+    CURRENT is money to spend, SAVINGS is money set aside, ASSET is a holding whose worth is not
+    its cost — and that last one is why this is not cosmetic. Adding an ASSET balance into a total
+    labelled "what you have" reports a purchase price as if it were a valuation.
+    """
+
+    CURRENT = "CURRENT"
+    SAVINGS = "SAVINGS"
+    ASSET = "ASSET"
+
+
 class TransactionType(StrEnum):
     ACCOUNT_OPENING = "ACCOUNT_OPENING"
     SALARY = "SALARY"

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from finguard_banking.application import (
     GetBalanceResult,
+    ListAccountsResult,
     ListCardChargesResult,
     ListCardsResult,
     ListContactsResult,
@@ -20,6 +21,7 @@ from finguard_banking.application import (
     SummaryTrace,
 )
 from finguard_banking.application.queries.ranked_movement import RankedMovementResult
+from finguard_banking.domain.enums import AccountKind
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.payment import PaymentPreview, PaymentReceipt
 from finguard_banking.domain.value_objects.category import Category
@@ -39,6 +41,8 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     FinancialQueryRequest,
     FinancialQueryResponse,
     GroupResponse,
+    HoldingResponse,
+    HoldingsResponse,
     MovementResponse,
     PaymentPreviewResponse,
     PaymentReceiptResponse,
@@ -207,6 +211,22 @@ def receipt_to_dto(receipt: PaymentReceipt) -> PaymentReceiptResponse:
         currency=receipt.amount.currency,
         balance_after_minor=receipt.balance_after.amount_minor,
         confirmed_at=receipt.confirmed_at,
+    )
+
+
+def holdings_to_dto(result: ListAccountsResult) -> HoldingsResponse:
+    return HoldingsResponse(
+        accounts=[
+            HoldingResponse(
+                account_id=account.account_id,
+                kind=AccountKind(account.kind),
+                display_name=account.display_name,
+                currency=account.currency,
+                booked_minor=account.booked_minor,
+                status=account.status,
+            )
+            for account in result.accounts
+        ]
     )
 
 

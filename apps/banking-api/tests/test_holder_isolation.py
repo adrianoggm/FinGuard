@@ -19,8 +19,12 @@ import uuid
 
 import asyncpg
 import pytest
-from support import create_account, create_contact, record_movement
+from support import as_pool, create_account, create_contact, record_movement
 
+from finguard_banking.domain.enums import AccountKind
+from finguard_banking.infrastructure.persistence.account_repository import (
+    PostgresAccountRepository,
+)
 from finguard_banking.infrastructure.persistence.financial_query_repository import declare
 
 pytestmark = pytest.mark.integration
@@ -125,6 +129,50 @@ async def test_declaring_an_account_that_does_not_exist_shows_nothing(
     await a_holder_with_two_accounts(connection)
 
     assert await visible_accounts(connection, uuid.uuid4()) == set()
+
+
+async def test_the_directory_lists_both_accounts_with_their_balances(
+    connection: asyncpg.Connection,
+) -> None:
+    """What the endpoint is for, through the repository that serves it.
+
+    The balance comes from `account_balances_v1` and not from a sum written here, so this also says
+    the join holds: an account is listed with its own figure and not with the other one's.
+    """
+    current, piggy = await a_holder_with_two_accounts(connection)
+
+    found = await PostgresAccountRepository(as_pool(connection)).all_of(current)
+
+    assert {h.account_id: h.balance.amount_minor for h in found} == {current: 100_00, piggy: 30_00}
+
+
+async def test_the_directory_never_lists_another_holders_account(
+    connection: asyncpg.Connection,
+) -> None:
+    """The refusal, at the layer a route will actually call.
+
+    `my_accounts_v1` is tested above, but this is the path with a repository, a pool and a
+    `declare()` in it — and a missing declaration reads as a working query that happens to return
+    every account in the bank.
+    """
+    current, _ = await a_holder_with_two_accounts(connection)
+    stranger = await create_account(connection)
+
+    found = await PostgresAccountRepository(as_pool(connection)).all_of(current)
+
+    assert stranger not in {holding.account_id for holding in found}
+
+
+async def test_a_savings_account_says_that_is_what_it_is(
+    connection: asyncpg.Connection,
+) -> None:
+    """The kind travels, because it decides what a figure means. An ASSET balance is a cost basis
+    and not a valuation, and a client that could not tell them apart would add them up."""
+    _, piggy = await a_holder_with_two_accounts(connection)
+
+    found = await PostgresAccountRepository(as_pool(connection)).all_of(piggy)
+
+    assert {h.account_id: h.kind for h in found}[piggy] is AccountKind.SAVINGS
 
 
 async def test_contacts_are_scoped_the_same_way(connection: asyncpg.Connection) -> None:
