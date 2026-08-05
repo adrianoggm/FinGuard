@@ -116,6 +116,10 @@ class Rail(StrEnum):
 
     BIZUM = "BIZUM"
     TRANSFER = "TRANSFER"
+    # Between the holder's own accounts. Not a setting of TRANSFER: the destination is an account
+    # id rather than an IBAN, and what banking books is a type the read views keep out of spending.
+    # Mirrored from banking's contract like the rest of this file — no shared package.
+    INTERNAL = "INTERNAL"
 
 
 class Metric(StrEnum):

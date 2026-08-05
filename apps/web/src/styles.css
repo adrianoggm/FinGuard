@@ -1397,3 +1397,25 @@ summary {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* Reaching the transfer screen from the account list, which is where somebody looking at two
+   balances wants it. Not a sixth tab: a sixth icon costs the other five their labels. */
+.move-money {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.7rem;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--brand-bright);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.from-account {
+  margin: 0;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}

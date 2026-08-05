@@ -66,11 +66,16 @@ class HttpPayments:
     ) -> PaymentPreview:
         # One or the other, never both: banking refuses a body that names its recipient twice,
         # and the identifier is the one that can tell two people with the same name apart.
-        recipient: dict[str, object] = (
-            {"recipientContactId": str(request.recipient_contact_id)}
-            if request.recipient_contact_id is not None
-            else {"recipientName": request.recipient_name}
-        )
+        # An internal transfer names no recipient at all: the destination is an account, and
+        # banking refuses a body that carries both. The other two name one, and never twice — the
+        # identifier is what tells two people with the same name apart.
+        recipient: dict[str, object]
+        if request.to_account_id is not None:
+            recipient = {"toAccountId": str(request.to_account_id)}
+        elif request.recipient_contact_id is not None:
+            recipient = {"recipientContactId": str(request.recipient_contact_id)}
+        else:
+            recipient = {"recipientName": request.recipient_name}
         response = await self._post(
             self._payments(account_id),
             json={

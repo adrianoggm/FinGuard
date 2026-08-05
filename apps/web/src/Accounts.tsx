@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { movements as fetchMovements, type Movements, type Summary } from "./api";
+import type { Tab } from "./tabs";
 import {
   accountGlyph,
   accountName,
@@ -38,9 +39,9 @@ const WINDOWS = [
   [365, "1 año"],
 ] as const;
 
-type Props = { summary: Summary | null; searching: boolean };
+type Props = { summary: Summary | null; searching: boolean; onGo: (tab: Tab) => void };
 
-export function Accounts({ summary, searching }: Props) {
+export function Accounts({ summary, searching, onGo }: Props) {
   const [days, setDays] = useState(90);
   const [category, setCategory] = useState<string | null>(null);
   const [term, setTerm] = useState("");
@@ -110,6 +111,13 @@ export function Accounts({ summary, searching }: Props) {
               </span>
             </article>
           ))}
+          {/* Only with somewhere to move money to. A button that always refuses is worse than no
+              button: it teaches somebody the app is broken, and they are right. */}
+          {summary.holdings.length > 1 && (
+            <button className="move-money" onClick={() => onGo("traspaso")}>
+              ⇄ Mover dinero entre cuentas
+            </button>
+          )}
         </section>
       ) : (
         summary && (

@@ -15,9 +15,12 @@ export const TABS = [
   ["bizum", "Bizum", "📲"],
 ] as const;
 
-export type Tab = (typeof TABS)[number][0] | "cuentas-buscar";
+export type Tab = (typeof TABS)[number][0] | "cuentas-buscar" | "traspaso";
 
 /** Which tab is highlighted for a destination. */
 export function tabOf(where: Tab): string {
-  return where === "cuentas-buscar" ? "cuentas" : where;
+  // Both reached from the accounts screen and both highlight it. Destinations rather than tabs: a
+  // sixth icon in a five-icon bar costs every other one its label, and neither of these is
+  // somewhere people spend time.
+  return where === "cuentas-buscar" || where === "traspaso" ? "cuentas" : where;
 }

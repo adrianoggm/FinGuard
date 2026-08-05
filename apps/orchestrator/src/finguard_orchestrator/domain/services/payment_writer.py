@@ -7,6 +7,7 @@ can round one.
 Spanish because it reaches the user, which is the one exception the English-everywhere rule makes.
 """
 
+from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
 from finguard_orchestrator.domain.services.answer_writer import money
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
@@ -24,17 +25,38 @@ def confirm_question(preview: PaymentPreview, concept: str | None = None) -> str
     on it.
     """
     for_what = f' con el concepto "{concept}"' if concept else ""
+    verb = "mover" if preview.rail is Rail.INTERNAL else "enviar"
     return (
-        f"Vas a enviar {money(preview.amount_minor, preview.currency)} a "
-        f"{preview.recipient} ({preview.recipient_phone}){for_what}. "
+        f"Vas a {verb} {money(preview.amount_minor, preview.currency)} a "
+        f"{preview.recipient}{_where(preview)}{for_what}. "
         f"Te quedarían {money(preview.balance_after_minor, preview.currency)}. "
         f"¿Confirmas? Responde sí o no."
     )
 
 
+def _where(preview: PaymentPreview) -> str:
+    """The destination beside the name, spelled per rail.
+
+    A Bizum repeats the phone, so a name that matched the wrong person can be caught by whoever
+    knows the number. A transfer repeats the account, whole, because that is the thing being
+    recognised. An internal transfer says nothing extra: the name *is* the account, and the holder
+    named it themselves.
+
+    Per rail rather than "the identifier that is not None". That version printed "(None)" on every
+    transfer — a real defect this rail exposed rather than caused — because the phone was read
+    unconditionally and a transfer has no phone.
+    """
+    if preview.rail is Rail.BIZUM:
+        return f" ({preview.recipient_phone})"
+    if preview.rail is Rail.TRANSFER and preview.recipient_iban:
+        return f", a la cuenta {preview.recipient_iban}"
+    return ""
+
+
 def receipt(paid: PaymentReceipt) -> str:
+    moved = "movidos" if paid.rail is Rail.INTERNAL else "enviados"
     return (
-        f"Hecho: {money(paid.amount_minor, paid.currency)} enviados a {paid.recipient}. "
+        f"Hecho: {money(paid.amount_minor, paid.currency)} {moved} a {paid.recipient}. "
         f"Te quedan {money(paid.balance_after_minor, paid.currency)}."
     )
 
