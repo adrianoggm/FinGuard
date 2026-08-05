@@ -208,3 +208,35 @@ def test_only_a_bare_continuation_shifts_a_window() -> None:
 
     assert window_words.a_year_earlier("¿cuánto gasté el año anterior en ocio?", july) is None
     assert window_words.a_year_earlier("¿y el año anterior?", None) is None
+
+
+@pytest.mark.parametrize("number", list(range(1, 13)))
+def test_every_month_maps_to_its_own_number(number: int) -> None:
+    """It was `enumerate` over a list with "setiembre" in the middle of it, skipped by an `if`, so
+    every month after September was one too high. "En octubre de 2025" answered about November — a
+    real figure about the wrong thirty-one days — and December was month 13, which is a
+    `ValueError` on the way to a 500."""
+    spelled = [
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    ][number - 1]
+
+    assert window_words.window_in(f"en {spelled} de 2025", today=TODAY) == window_words.whole_month(
+        2025, number
+    )
+
+
+def test_both_spellings_of_september_are_september() -> None:
+    assert window_words.window_in("en setiembre de 2025", today=TODAY) == window_words.window_in(
+        "en septiembre de 2025", today=TODAY
+    )

@@ -62,27 +62,27 @@ _NAMED: Final[tuple[tuple[str, Period], ...]] = (
 # and answered as a calendar range, so the phrase can never fall through to the wrong one.
 _THE_YEAR_BEFORE: Final = re.compile(r"\bano\s+(pasado|anterior)\b")
 
-_MONTHS: Final[tuple[str, ...]] = (
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "setiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-)
+# Spelled out rather than counted off a list. It was `enumerate(_MONTHS)` with "setiembre" — the
+# way half of Spain writes September — sitting in the middle of it and skipped by an `if`, so
+# everything after it was one too high: October answered November, and December was month 13 and
+# raised `ValueError: month must be in 1..12` on the way to a 500. A position in a list is not a
+# month number, and writing the number down is the only version of this that cannot drift again.
 _MONTH_NUMBER: Final[dict[str, int]] = {
-    name: number
-    for number, name in enumerate(_MONTHS, start=1)
-    # "setiembre" is the same month spelled the way half of Spain writes it.
-    if name != "setiembre"
-} | {"setiembre": 9}
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+_MONTHS: Final[tuple[str, ...]] = tuple(_MONTH_NUMBER)
 
 # "julio de 2026", "en julio del 2026", "julio de este año". A month is the window somebody means
 # when they name one, and it has to be read *before* the year — "julio de 2026" contains "de 2026",
