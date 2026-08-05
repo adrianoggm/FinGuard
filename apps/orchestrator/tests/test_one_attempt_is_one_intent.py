@@ -26,6 +26,7 @@ from finguard_orchestrator.application.commands.pay import (
     PrepareChosenPaymentCommand,
     PrepareOwnTransferCommand,
     PreparePaymentCommand,
+    _refusal,
 )
 from finguard_orchestrator.application.queries.list_contacts import (
     ListContactsQuery,
@@ -38,6 +39,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import PaymentOutcome
+from finguard_orchestrator.domain.services import payment_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 
@@ -179,3 +181,29 @@ def test_the_streaming_route_carries_it_too() -> None:
 
     assert response.status_code == 200
     assert preparing.keys == [MINE]
+
+
+# --- what the user is told when the key was already used ----------------------------------
+
+
+def test_a_refused_request_does_not_claim_a_payment_already_happened() -> None:
+    """Found by sending a reused key at the running stack.
+
+    Every `PaymentRefusedError` this service does not have a name for fell through to "ese pago ya
+    no está pendiente, comprueba tus movimientos" — a claim that a payment existed and was dealt
+    with. Nothing had been sent, so it sent somebody looking through their movements for a payment
+    that was never made: the alarming direction of wrong, about money.
+
+    An intent that really is spent arrives as `IntentGoneError` and keeps that sentence.
+    """
+    answer = _refusal("HTTP 409: key_reused_for_another_payment")
+
+    assert answer.outcome == PaymentOutcome.REFUSED.value
+    assert answer.text == payment_writer.nothing_was_sent()
+    assert "movimientos" not in answer.text
+
+
+def test_a_balance_that_did_not_cover_it_still_says_so() -> None:
+    """The one refusal with a cause worth naming: the user can act on it, and "no he enviado nada"
+    alone would leave them guessing why."""
+    assert _refusal("insufficient_funds").text == payment_writer.insufficient_funds()
