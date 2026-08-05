@@ -1,0 +1,221 @@
+# An operation left half-built, and what it takes to come back to it.
+#
+# A payment suspends and a transfer does not, and the difference is not an inconsistency: a payment
+# has an intent behind it that somebody may be about to approve, and a transfer read out of a
+# sentence has nothing staged at all. What both must never do is resume silently — a bare amount
+# after a change of subject belongs to whatever the subject became.
+
+episodes:
+  - name: a_bizum_resumed_by_name
+    why: >
+      Reported through the corpus. "Continuar con el bizum" adds no field, so the continuation
+      dropped it and the reader — finding no recipient in those four words — started the payment
+      over.
+    metrics: [context_retention, correction_recovery]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: continuar con el bizum
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+
+  - name: a_bare_amount_does_not_resume_a_suspended_bizum
+    why: >
+      The rule the suspension exists for. The same amount would have completed an active draft;
+      after a change of subject it is ambiguous, and resuming on it silently is how somebody pays
+      a figure they wrote about something else.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: ¿cuánto gasté en gasolina?
+        route: QUERY
+      - say: 20 euros
+        not_says: Confirmas
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: retomar el pago
+        route: PAYMENT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+
+  - name: two_asides_and_then_the_payment
+    why: >
+      Contacts and identity, both of which pass the conversation through untouched. The contact list
+      is usually asked *in order to* finish a payment, so it is the one that must not lose it.
+    metrics: [context_retention]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: continuar con el bizum
+        route: PAYMENT
+      - say: 20 euros
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+
+  - name: a_transfer_does_not_survive_a_change_of_subject
+    why: >
+      Unlike a payment, and for a reason: nothing is staged. The question it asked is either
+      answered or it is not, and keeping one alive would let a later figure move money.
+    metrics: [unsafe_action]
+    turns:
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        ends: true
+      - say: 1000
+        not_says: Hucha
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: mueve 1000 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: gracias
+        route: QUERY
+
+  - name: a_suspended_payment_through_five_other_turns
+    why: >
+      The state has to survive a long detour, because a user who went to look something up comes
+      back expecting the payment to still be there.
+    metrics: [context_retention]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: dime las categorías
+        route: CATEGORIES
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: continuar con el bizum
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+
+  - name: the_payment_is_abandoned_rather_than_resumed
+    why: >
+      Somebody who changed their mind. The state has to be closable without paying anything, and
+      the turn after it must be an ordinary turn.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: déjalo
+        not_says: Confirmas
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: 20 euros
+        not_says: Confirmas
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_clarification_left_open_and_never_answered
+    why: >
+      Six turns after a question back, and the answer to it never comes. Nothing may hold it open
+      that long, and nothing may complete it from a sentence about something else.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto llevo gastado?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: este año
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: two_operations_cannot_be_open_at_once
+    why: >
+      One workflow at a time is the invariant the conversation type exists for. A transfer started
+      while a payment is under way ends the payment, which is also what happens in the conversation.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: mueve 200 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: 20 euros
+        not_says: Confirmas
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+
+  - name: coming_back_to_a_transfer_by_repeating_it
+    why: >
+      A transfer has no suspension, so coming back to it means saying it again — and saying it again
+      has to work first time.
+    metrics: [correction_recovery]
+    turns:
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: espera
+        route: QUERY
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: vale, mueve 500 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto me queda en el fondo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: a_confirmation_that_arrives_after_an_aside
+    why: >
+      A preview is the one state that can move money next, and it owns the turn after it whatever
+      the words are. An aside in between must not leave a yes pointing at nothing.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: ¿quién eres?
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+      - say: ¿cuánto gasté este mes?
+        route: QUERY

@@ -216,6 +216,9 @@ _MOVING: Final = re.compile(
     # cuenta corriente" has exactly one possible destination and it is the holder's own account.
     # Without these the sentence fell through and was answered with that account's balance.
     r"|enviarme|mandarme|pasarme|traspasarme|transferirme|ingresarme"
+    # The imperative with the pronoun stuck on, which is how it is actually typed: "pásame
+    # 50 al fondo". Folded, so the accent is already gone by the time this is matched.
+    r"|pasame|mandame|enviame|muevelo|pasalo|metelo|traspasame|transfiereme"
     # A transfer between one's own accounts, which the rail is named after. Safe here and not in
     # `payment_router` for the reason the whole function is safe: it also needs one of *this
     # holder's* accounts by name, and a payment to a person names a person. "Tranferir" is in the

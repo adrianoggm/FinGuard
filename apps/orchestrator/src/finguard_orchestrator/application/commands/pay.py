@@ -33,7 +33,12 @@ from finguard_orchestrator.domain.models.payment_result import PaymentPreview, P
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.payment_gateway import PaymentGatewayPort
 from finguard_orchestrator.domain.ports.payment_reader import PaymentReaderPort
-from finguard_orchestrator.domain.services import confirmation, payment_words, payment_writer
+from finguard_orchestrator.domain.services import (
+    confirmation,
+    payment_router,
+    payment_words,
+    payment_writer,
+)
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
@@ -462,6 +467,15 @@ class PreparePaymentHandler:
             )
 
         if amount is None and not named and not chose and concept is None and not clears_concept:
+            if payment_router.resumes(command.sentence):
+                # An explicit resumption adds no field and is not nothing: it is the turn that
+                # brings the payment back. Falling through here read the sentence afresh, and
+                # "continuar con el bizum" names nobody — so the reader found no recipient and the
+                # Bizum started over, having been suspended precisely to avoid that.
+                #
+                # It asks for whatever is still missing, which is the question the payment was
+                # holding when the subject changed.
+                return _asking_for(pending)
             return None
 
         if clears_concept:

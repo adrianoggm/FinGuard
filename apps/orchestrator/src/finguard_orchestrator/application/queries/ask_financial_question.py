@@ -10,6 +10,7 @@ the evaluation depends on it.
 """
 
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
@@ -59,6 +60,7 @@ from finguard_orchestrator.domain.services import (
     payment_words,
     plan_verifier,
     query_recovery,
+    spanish,
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
@@ -389,13 +391,26 @@ class AskFinancialQuestionHandler:
             yield await self._contact_list(query, was)
             return
 
-        if intent is Intent.OWN_TRANSFER or isinstance(was.active, TransferInProgress):
+        waiting = was.active if isinstance(was.active, TransferInProgress) else None
+        if intent is Intent.OWN_TRANSFER or (
+            waiting is not None and _answers_the_transfer(query.sentence, waiting)
+        ):
             # A transfer under way takes the reply that answers its question, before the sentence is
             # classified again. "1000 pavos" is an amount because something asked for one, and
             # classifying it afresh is how it reached the planner and came back asking which month —
             # the same rule a half-built payment has had since the review.
             yield await self._own_transfer(query, was)
             return
+        if waiting is not None:
+            # It answers nothing the transfer asked, so it is a change of subject. The transfer ends
+            # rather than swallowing it: routing *every* sentence here while one was open answered
+            # "cuanto gaste el mes pasado" with "cuanto quieres mover", which is the payment defect
+            # the review fixed, reintroduced by a state that had just been given one.
+            #
+            # Ends rather than suspends, like a clarification and unlike a payment: the question it
+            # asked is either answered or it is not, and nothing has been staged.
+            was = was.with_active(None)
+            query = replace(query, conversation=was)
 
         if intent is Intent.FINANCIAL_QUERY and _narrows_the_balance(query, was):
             # "¿Y en la hucha?" after a balance is about the balance of that account. The same words
@@ -595,7 +610,15 @@ class AskFinancialQuestionHandler:
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.UNSUPPORTED.value,
             text=_MISSING_CAPABILITY.get(capability, _CANNOT_YET),
-            conversation=was.with_active(UnsupportedCapability(capability=capability)),
+            conversation=(
+                # A suspended payment survives a refusal, exactly as it survives an answer: it
+                # belongs to the conversation before this turn and stepped aside for it. Replacing
+                # it lost a half-built Bizum to "¿cuál es mi gasto medio?" — a question about the
+                # product, answered by throwing away something the user was in the middle of.
+                was
+                if isinstance(was.active, PaymentInProgress) and was.active.suspended
+                else was.with_active(UnsupportedCapability(capability=capability))
+            ),
         )
 
     async def _contact_list(
@@ -1237,17 +1260,45 @@ _ASIDES: Final = frozenset(
 )
 
 
+def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
+    """Whether this sentence fills the slot the transfer is waiting on.
+
+    Narrow on purpose, and the mirror of `payment_router.continues`. A state that took every
+    sentence would answer a genuine change of subject with its own question, which is exactly the
+    defect the payment path was fixed for — and giving the transfer a state is what made it
+    possible here.
+
+    ponytail: an account is recognised by the kind vocabulary, so a holder whose accounts are named
+    without one of those words has to repeat the instruction instead of naming it. The reply is
+    matched against their real account names one layer down, where the list exists; doing it here
+    would mean fetching the accounts on every turn to decide how to route one.
+    """
+    if waiting.awaiting is Slot.AMOUNT:
+        return payment_words.amount_in(sentence) is not None
+    return bool(account_words.named_in(sentence))
+
+
+# "El total", "en total", "todo junto" - the whole of it, said about a balance that had just named
+# one account. It is the second turn of a reported conversation, and it went to the planner and came
+# back "sigo sin tener claro el periodo", to a sentence that is not about a period at all.
+_THE_WHOLE_LOT: Final = re.compile(
+    r"(?:el\s+)?total(?![a-z])|todo(?:\s+junto)?(?![a-z])|en\s+conjunto|todas(?![a-z])"
+)
+
+
 def _narrows_the_balance(query: AskFinancialQuestionQuery, was: Conversation) -> bool:
-    """Whether this sentence is a balance question that names only an account.
+    """Whether this sentence is a balance question that names only an account, or asks for all.
 
     Three conditions, and all three are needed. The previous turn answered a balance, or the same
-    words are a follow-up about spending. The sentence names an account, or there is nothing to
-    narrow to. And it states no window and no category, because a sentence that does has moved on
-    to a question the ledger answers — "¿y en la hucha el mes pasado?" is about movements.
+    words are a follow-up about spending. The sentence names an account - or asks for the total,
+    which is the same follow-up pointing the other way. And it states no window and no category,
+    because a sentence that does has moved on to a question the ledger answers: "y en la hucha el
+    mes pasado" is about movements.
     """
     if not was.answered_the_balance:
         return False
-    if not account_words.named_in(query.sentence):
+    folded = spanish.folded(query.sentence)
+    if not account_words.named_in(query.sentence) and not _THE_WHOLE_LOT.search(folded):
         return False
     facts = explicit_facts.read(query.sentence, today=query.today)
     return facts.window is None and not facts.names_a_category

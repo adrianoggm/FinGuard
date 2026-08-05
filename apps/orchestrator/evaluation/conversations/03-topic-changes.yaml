@@ -1,0 +1,229 @@
+# Abrupt changes of subject, and the ones that only look abrupt.
+#
+# A conversation is not a list of sentences and it is not one thread either. Somebody asks about
+# last month, then about a card, then who they can pay, then back to last month — and the last turn
+# only means anything if the three in between kept their hands off the plan.
+#
+# The rule the whole file measures: three kinds of turn are answered from this repository, two from
+# banking, and none of the five may change what a follow-up inherits.
+
+episodes:
+  - name: spending_identity_spending
+    why: An aside in the middle, and the follow-up four turns later still has its window.
+    metrics: [context_retention, wrong_tool]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+      - say: ¿quién eres?
+        route: IDENTITY
+        no_model: true
+      - say: ¿qué sabes hacer?
+        route: IDENTITY
+        no_model: true
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: ¿y en restaurantes?
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: five_subjects_in_eight_turns
+    why: >
+      A tour of the whole surface, in the order somebody actually wanders through it. Every turn is
+      a different kind and none of them may be answered by the one before.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿a quién puedo hacerle un bizum?
+        route: CONTACTS
+      - say: dime las categorías disponibles
+        route: CATEGORIES
+      - say: ¿cómo lo has calculado?
+        route: EXPLANATION
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: ¿y cuánto gasté en gasolina?
+        route: QUERY
+
+  - name: a_payment_interrupted_by_three_questions
+    why: >
+      The half-built Bizum steps aside for each one and is still there afterwards. A bare amount in
+      the middle must not silently resume it — the user had stopped thinking about the payment.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: continuar con el bizum
+        route: PAYMENT
+      - say: 20 euros
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+
+  - name: from_a_balance_to_a_transfer_and_back
+    why: >
+      Reading a balance, moving money, then reading it again. Three different paths and the middle
+      one leaves nothing open once it has been read in full.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: ¿y en el fondo?
+        route: BALANCE
+      - say: mueve 200 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto tengo ahora en la hucha?
+        route: BALANCE
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+      - say: vale
+        route: QUERY
+
+  - name: a_question_about_cards_in_the_middle
+    why: >
+      Cards have a screen of their own and no answer on this path, so the question goes to the
+      planner rather than being invented an answer. What matters is that the turn after it is
+      unaffected.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+      - say: ¿qué tarjetas tengo?
+        route: QUERY
+      - say: ¿y en restaurantes?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_subject_changes_mid_clarification
+    why: >
+      A clarification does not suspend. The question it asked is either answered or it is not, and
+      keeping one alive across a change of subject is how "este año" completed a plan the user had
+      moved on from.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto llevo gastado?
+        route: QUERY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: este año
+        route: QUERY
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: ¿cuánto gasté este año?
+        route: QUERY
+      - say: vale
+        route: QUERY
+
+  - name: a_greeting_in_the_middle_of_everything
+    why: >
+      Politeness is a turn too, and it must not be given an answer about money. What it also must
+      not do is reset anything.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: buenas
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+      - say: muy amable
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+
+  - name: a_transfer_abandoned_for_a_question
+    why: >
+      A transfer under way is not a payment and does not suspend. Asking something else ends it, and
+      the reply that would have finished it belongs to the new subject.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ends: true
+      - say: 1000
+        not_says: Hucha
+      - say: mueve 1000 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: gracias
+        route: QUERY
+
+  - name: back_and_forth_between_two_accounts
+    why: >
+      Six turns alternating between two accounts, so a scope that leaked would show as an answer
+      about the wrong one. The words are the only thing that decides.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en la corriente?
+        route: BALANCE
+        says: "2.270,42"
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en total?
+        route: BALANCE
+        says: "7.755,92"
+      - say: gracias
+        route: QUERY
+
+  - name: a_long_wander
+    why: >
+      Twelve turns with no thread at all, which is what a demo looks like when somebody is exploring
+      rather than asking. Nothing here is hard; the point is that nothing accumulates.
+    metrics: [wrong_tool]
+    turns:
+      - say: hola
+        route: QUERY
+      - say: ¿qué puedes hacer?
+        route: IDENTITY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: dime las categorías
+        route: CATEGORIES
+      - say: ¿cuánto gasté en gasolina?
+        route: QUERY
+      - say: ¿cómo lo has calculado?
+        route: EXPLANATION
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: ¿puedes hacer transferencias?
+        route: IDENTITY
+      - say: gracias, adiós
+        route: QUERY

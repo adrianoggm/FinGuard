@@ -1,0 +1,237 @@
+# Elliptical replies: the sentences that mean nothing on their own.
+#
+# "1000", "a Marta", "el anterior", "en la hucha". Every one of them is meaningless in isolation and
+# obvious in place, and the whole cost of getting one wrong is that it reaches the financial planner
+# and comes back asking which period — the shape of half the failures reported from the demo.
+#
+# What each episode asserts is the *tool*, not the figure. A reply read by a vocabulary must not
+# reach a model: which model is installed is a deployment's choice, and a conversation that only
+# works on one of them is not a conversation this service can promise.
+
+episodes:
+  - name: the_amount_after_a_transfer_question
+    why: >
+      Reported. "¿Cuánto quieres mover a Hucha?" answered "1000 pavos" came back "¿de qué periodo?",
+      because the transfer path held no state and the reply was classified from scratch.
+    metrics: [context_retention, correction_recovery]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+        no_model: true
+      - say: ¿y en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: 1000 pavos
+        route: TRANSFER
+        says: "1.000,00"
+        ends: true
+        no_model: true
+      - say: ¿y cuánto me queda en el fondo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: a_bare_amount_with_nothing_open
+    why: >
+      The other side of the same word. "1000 pavos" with no question behind it is not an amount for
+      anything, and reading it as one would offer to move money nobody asked to move.
+    metrics: [unsafe_action]
+    turns:
+      - say: hola
+        route: QUERY
+      - say: 1000 pavos
+        not_says: mover
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: 200
+        not_says: Hucha
+      - say: ¿y en la hucha?
+        route: QUERY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: vale gracias
+        route: QUERY
+
+  - name: which_account_after_being_asked
+    why: >
+      Two piggy banks, one word for both. The question is real; the reply names one of the two it
+      was just shown, and it is read by the holder's own name for the account.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+        total: 775592
+      - say: quiero mover 200 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿y cuánto me queda?
+        route: BALANCE
+      - say: pásame 50 al fondo
+        route: TRANSFER
+        says: Fondo indexado
+      - say: perfecto
+        route: QUERY
+      - say: ¿cuánto tengo en total?
+        route: BALANCE
+
+  - name: an_account_named_alone_after_a_balance
+    why: >
+      Reported twice in one conversation. "¿En mi Hucha?" and "Y en EL FONDO" both came back
+      "¿de qué periodo?" — a question about a window, to somebody who had been told a figure and
+      asked which account it was in.
+    metrics: [context_retention, unnecessary_clarification]
+    turns:
+      - say: Oye cual es el estado actual de mi hucha de ahorros
+        route: BALANCE
+        no_model: true
+        says: "5.485,50"
+      - say: El total
+        route: BALANCE
+        no_model: true
+      - say: En mi Hucha ?
+        route: BALANCE
+        says: "5.485,50"
+      - say: Y en EL FONDO
+        route: BALANCE
+        says: "2.700,00"
+      - say: y la corriente
+        route: BALANCE
+        says: "2.270,42"
+      - say: vale
+        route: QUERY
+
+  - name: an_account_named_alone_after_a_spending_question
+    why: >
+      The same sentence, the other meaning. After a question about spending, "¿y en la hucha?"
+      narrows the spending — and answering the balance would be the same mistake pointing the other
+      way.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y en la hucha?
+        route: QUERY
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: gracias
+        route: QUERY
+
+  - name: the_ordinal_walk
+    why: >
+      "¿Y el segundo?" and "¿y el tercero?" mean nothing alone and are a position each. Reading the
+      second as "one more than wherever we are" answered "el tercero" with the second.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuál fue el gasto más caro del año en gasolina?
+        route: QUERY
+      - say: ¿y el segundo?
+        route: QUERY
+        no_model: true
+      - say: ¿y el siguiente?
+        route: QUERY
+        no_model: true
+      - say: ¿y el quinto?
+        route: QUERY
+        no_model: true
+      - say: ¿quién eres?
+        route: IDENTITY
+        no_model: true
+      - say: ¿y el sexto?
+        route: QUERY
+        no_model: true
+
+  - name: a_recipient_named_alone
+    why: >
+      "A Marta" answers a question about who, and there are two of them in this directory. The
+      choice comes back as an identifier rather than the name again, which is what stops the second
+      Marta from being resolved by matching a string twice.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: ¿a quién puedo hacerle un bizum?
+        route: CONTACTS
+        no_model: true
+      - say: hazle un bizum de 20 € a Marta
+        route: PAYMENT
+      - say: a Marta Solis Vega
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: the_window_alone
+    why: >
+      "El mes pasado" answers a question about a period and starts nothing. Both halves are closed
+      vocabularies, so the completion needs no model at all.
+    metrics: [unnecessary_clarification]
+    turns:
+      - say: ¿cuánto gasté?
+        route: QUERY
+      - say: el mes pasado
+        route: QUERY
+      - say: ¿y este año?
+        route: QUERY
+      - say: en 2025
+        route: QUERY
+      - say: ¿y en junio?
+        route: QUERY
+      - say: ¿y el año anterior?
+        route: QUERY
+        no_model: true
+
+  - name: a_reply_that_answers_nothing
+    why: >
+      "Pues no sé" fills no slot, and inventing a window for it would answer a question the user
+      never finished asking. Precision over coverage, in a conversation.
+    metrics: [unnecessary_clarification]
+    turns:
+      - say: ¿cuánto llevo gastado?
+        route: QUERY
+      - say: pues no sé
+        route: QUERY
+      - say: bueno da igual
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+        no_model: true
+      - say: vale
+        route: QUERY
+      - say: adiós
+        route: QUERY
+
+  - name: short_replies_all_the_way_down
+    why: >
+      Nine turns and not one of them is a sentence. The point is that a conversation made entirely
+      of fragments still has to route each one, and the balance path must not start swallowing them.
+    metrics: [context_retention, wrong_tool]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: la hucha
+        route: BALANCE
+      - say: el fondo
+        route: BALANCE
+      - say: la corriente
+        route: BALANCE
+      - say: todo
+        route: BALANCE
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: la hucha
+        route: BALANCE
+      - say: ¿cuánto gasté?
+        route: QUERY
+      - say: la hucha
+        route: QUERY

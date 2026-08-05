@@ -1,0 +1,216 @@
+# Being told no, and what happens next.
+#
+# Five families are declined before the model is asked, and that ordering is the whole control:
+# refusing afterwards is whatever disposition the configured model happens to have, and two models
+# were measured sixty points apart on it.
+#
+# What every episode here checks is the turn *after* the refusal. A refusal that colours the rest of
+# the conversation teaches somebody to start over, and a user who starts over stops asking.
+
+episodes:
+  - name: each_family_refused_and_the_conversation_continues
+    why: Five different things to tell somebody, and one sentence for all of them would say nothing.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuál es mi gasto medio en gasolina?
+        route: REFUSED
+        no_model: true
+      - say: ¿qué porcentaje de mi gasto es el alquiler?
+        route: REFUSED
+        no_model: true
+      - say: ¿gasté más en julio que en junio?
+        route: REFUSED
+        no_model: true
+      - say: a este ritmo, ¿cuánto voy a gastar?
+        route: REFUSED
+        no_model: true
+      - say: ¿debería recortar en restaurantes?
+        route: REFUSED
+        no_model: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+
+  - name: the_refusal_does_not_outlive_its_question
+    why: >
+      The state that names the capability is gone by the next turn, and the conversation after it is
+      an ordinary conversation.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿cuál es mi gasto medio?
+        route: REFUSED
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: a_superlative_is_not_a_comparison
+    why: >
+      "El bizum más alto que he hecho" carries "más … que" where the "que" opens a relative clause.
+      It was refused as a comparison — to a question with one period and a real answer.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuál es el bizum más alto que he hecho este año?
+        route: QUERY
+      - say: ¿y el segundo?
+        route: QUERY
+      - say: ¿gasté más este mes que el pasado?
+        route: REFUSED
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+      - say: ¿y el mes pasado?
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: investing_is_refused_and_the_refusal_names_a_question_that_works
+    why: >
+      "¿Cuánto he invertido en el último año?" came back with every euro that arrived, labelled as
+      what the holder had put away. A refusal that names no alternative is a second dead end.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto he invertido en el último año?
+        route: REFUSED
+        says: cuánto tengo en el fondo
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿cuánto he gastado en inversiones?
+        route: REFUSED
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: movements_between_my_own_accounts
+    why: >
+      No plan can express only the internal transfers, so the answer is to say so. It came back with
+      every movement of the year, which is a real figure about a different question.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿qué movimientos he tenido entre mis cuentas?
+        route: REFUSED
+        no_model: true
+      - say: ¿cuánto tengo entre mis cuentas?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y los traspasos entre cuentas?
+        route: REFUSED
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: a_refusal_between_two_halves_of_one_thread
+    why: >
+      The plan behind the refusal is still there afterwards, so the follow-up two turns later still
+      has its window.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+      - say: ¿cuál es la media?
+        route: REFUSED
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: ¿y en restaurantes?
+        route: QUERY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: asking_for_advice_repeatedly
+    why: >
+      Reading a ledger is not advising on it, and the distance between the two is regulatory rather
+      than technical. Asked three times, refused three times, and the fourth turn still works.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿debería ahorrar más?
+        route: REFUSED
+      - say: ¿qué me recomiendas?
+        route: REFUSED
+      - say: ¿podría ahorrar en algo?
+        route: REFUSED
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: a_forecast_and_then_the_past
+    why: >
+      Only what already happened is in the ledger. The refusal has to be about the future rather
+      than about the question being unclear, or somebody rephrases it forever.
+    metrics: [wrong_tool]
+    turns:
+      - say: a este ritmo, ¿cuánto voy a gastar este mes?
+        route: REFUSED
+      - say: ¿cuánto llevo gastado este mes?
+        route: QUERY
+      - say: ¿y el mes pasado?
+        route: QUERY
+      - say: ¿y llegaré a fin de mes?
+        route: REFUSED
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+
+  - name: the_guard_runs_before_the_model_every_time
+    why: >
+      Six refused sentences in a row, and the planner is never asked once. Refusing after the model
+      would be a control that moves with whichever one is installed.
+    metrics: [unnecessary_clarification]
+    turns:
+      - say: ¿cuál es mi gasto medio?
+        route: REFUSED
+        no_model: true
+      - say: ¿qué porcentaje va en alquiler?
+        route: REFUSED
+        no_model: true
+      - say: compárame julio y junio
+        route: REFUSED
+        no_model: true
+      - say: ¿cuánto voy a gastar?
+        route: REFUSED
+        no_model: true
+      - say: ¿me recomiendas algo?
+        route: REFUSED
+        no_model: true
+      - say: ¿cuánto he invertido?
+        route: REFUSED
+        no_model: true
+
+  - name: a_refusal_in_the_middle_of_a_payment
+    why: >
+      The Bizum survives it. A refusal is an answer about the product and not a reset of whatever
+      was under way.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: ¿cuál es mi gasto medio?
+        route: REFUSED
+      - say: continuar con el bizum
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: QUERY

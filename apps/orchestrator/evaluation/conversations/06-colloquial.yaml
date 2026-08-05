@@ -1,0 +1,218 @@
+# How people actually talk to a chat box.
+#
+# Not the sentences a specification would write. "Oye", "a ver", "pues", "venga", "qué tal va la
+# cosa", "échame un cable", "cuánta pasta tengo". Half of it is filler with a real question inside
+# and half of it is filler with nothing inside, and telling those apart without a model is the whole
+# difficulty.
+#
+# The rule this file holds to: filler in front of a question does not change the question. A
+# sentence that is *only* filler goes to the model, because there is nothing here to read.
+
+episodes:
+  - name: filler_in_front_of_every_question
+    why: >
+      "Oye", "a ver", "pues" and "venga" carry no meaning and appear in front of everything. A
+      vocabulary anchored to the start of a sentence would miss all four.
+    metrics: [wrong_tool]
+    turns:
+      - say: oye, ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: a ver, ¿y en la hucha?
+        route: BALANCE
+      - say: pues dime cuánto gasté el mes pasado
+        route: QUERY
+      - say: venga, ¿quién eres?
+        route: IDENTITY
+      - say: oye una cosa, ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: vale, gracias
+        route: QUERY
+
+  - name: money_by_its_slang_names
+    why: >
+      "Pasta", "pavos", "dinero". The amount grammar reads one of them as a currency word, and the
+      balance router reads another as a question about a state.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: mueve 50 pavos a la hucha
+        route: TRANSFER
+        ends: true
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: guay
+        route: QUERY
+
+  - name: a_question_with_no_question_in_it
+    why: >
+      "¿Qué tal va la cosa este mes?" names no figure, no category and no shape of answer. It goes
+      to the model, and if the model cannot make a plan of it the refusal stands — this service
+      recovers a plan the words contain and never invents one.
+    metrics: [unnecessary_clarification]
+    turns:
+      - say: ¿qué tal va la cosa este mes?
+        route: QUERY
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+      - say: ah vale
+        route: QUERY
+      - say: ¿y cuánto tengo?
+        route: BALANCE
+      - say: menos mal
+        route: QUERY
+      - say: gracias
+        route: QUERY
+
+  - name: asking_for_help_in_four_different_ways
+    why: >
+      From a real conversation where three turns in a row asked what the thing does and all three
+      came back "¿de qué periodo?". The answer already existed; the recogniser was the whole defect.
+    metrics: [wrong_tool]
+    turns:
+      - say: oye, ¿con qué cosas me puedes ayudar?
+        route: IDENTITY
+        no_model: true
+      - say: del banco me refiero
+        route: QUERY
+      - say: ¿puedes hacer transferencias o solo bizums?
+        route: IDENTITY
+        no_model: true
+      - say: ¿qué sabes hacer?
+        route: IDENTITY
+        no_model: true
+      - say: vale, ¿cuánto tengo?
+        route: BALANCE
+      - say: perfecto
+        route: QUERY
+
+  - name: thinking_out_loud
+    why: >
+      Somebody working out what they want to ask, one fragment at a time. None of it may move
+      money and none of it may be answered with a figure about the wrong thing.
+    metrics: [unsafe_action]
+    turns:
+      - say: a ver
+        route: QUERY
+      - say: es que quería saber una cosa
+        route: QUERY
+      - say: de lo del mes pasado
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: eso es
+        route: QUERY
+      - say: gracias
+
+  - name: politeness_wrapped_around_an_order
+    why: >
+      "¿Me podrías hacer un bizum de 20 € a Marta Solis Vega?" is an instruction phrased as a
+      question, and the question mark is not the signal — a question *word* is.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: ¿me podrías hacer un bizum de 20 € a Marta Solis Vega?
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: muchas gracias
+        route: QUERY
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+
+  - name: a_habit_phrased_with_a_moving_verb
+    why: >
+      "¿Cuánto paso a la hucha cada mes?" carries a moving verb and an account, and it is a question
+      about a habit. Reading it as an order would answer a question with an offer to move money.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿cuánto paso a la hucha cada mes?
+        route: QUERY
+      - say: ¿y cuánto traspaso al fondo?
+        route: QUERY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: mueve 100 € a la hucha
+        route: TRANSFER
+        ends: true
+      - say: gracias
+        route: QUERY
+      - say: ¿cuánto me queda?
+        route: BALANCE
+
+  - name: regional_words_for_the_same_accounts
+    why: >
+      "Los ahorros", "la nómina", "el fondo de inversión". The vocabulary carries the words people
+      use rather than the ones the ledger does, and every one of them is somebody's ordinary word.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto tengo en los ahorros?
+        route: BALANCE
+        says: "5.485,50"
+      # "Nómina" is an account *and* a category, so the sentence names both and the balance
+      # declines rather than choosing. Pinned as it is: guessing here would answer a question about
+      # a salary with a balance, or the other way round.
+      - say: ¿y en la nómina?
+        route: QUERY
+      - say: ¿cuánto tengo en la cuenta corriente?
+        route: BALANCE
+        says: "2.270,42"
+      - say: ¿y en el fondo de inversión?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en la cuenta de ahorros?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en total?
+        route: BALANCE
+      - say: gracias
+        route: QUERY
+
+  - name: an_interjection_between_every_turn
+    why: >
+      "Ajá", "vale", "ya", "hombre". A conversation is half acknowledgements, and none of them may
+      be answered as a question about money or reset anything.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ajá
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ya
+        route: QUERY
+      - say: ¿y en gasolina?
+        route: QUERY
+
+  - name: two_questions_in_one_sentence
+    why: >
+      "¿Cuánto tengo y cuánto gasté?" asks two things, and this service answers one. Which one is
+      the model's to decide — what is asserted here is that the turn after it is unaffected.
+    metrics: [wrong_tool]
+    turns:
+      # A sentence that says "gasté" is about spending, whatever else it also asks. The exclusion
+      # is what keeps "¿cuántos movimientos tengo?" off the balance path, and it fires here too.
+      - say: ¿cuánto tengo y cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: ¿y cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: vale
+        route: QUERY
+      - say: gracias
+        route: QUERY

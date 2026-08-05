@@ -60,7 +60,10 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         # relative pronoun rather than a second term. That knowledge was here to *refuse*
         # the sentence; now that rankings are answered it keeps this rule off one.
         "COMPARISON",
-        re.compile(r"(\bmas\b.*\bque\b|\bcomparad|\bcomparacion\b|\bfrente a\b)", re.IGNORECASE),
+        # `compara` and not `comparad`: "compárame julio y junio" is the imperative with the pronoun
+        # on it, which is how somebody asks for a comparison, and it reached the planner instead.
+        # It cannot catch "comparte" — that starts `compart`.
+        re.compile(r"(\bmas\b.*\bque\b|\bcompara|\bcomparacion\b|\bfrente a\b)", re.IGNORECASE),
     ),
     (
         # Only what already happened is in the ledger.
