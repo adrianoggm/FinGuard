@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentConfirmation,
     PaymentInProgress,
     Slot,
+    TransferInProgress,
     UnsupportedCapability,
     Workflow,
     workflow_of,
@@ -115,6 +116,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # comes back exactly here — no workflow — and dropping the slot on the way in is what
             # let the same question be asked forever.
             last_asked=payload.last_asked if payload else None,
+            answered_the_balance=bool(payload and payload.answered_the_balance),
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -125,6 +127,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_plan=last_plan,
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
+        answered_the_balance=payload.answered_the_balance,
     )
 
 
@@ -156,6 +159,12 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
                     for row in payload.candidates
                 ),
                 suspended=payload.suspended,
+            )
+        case Workflow.TRANSFER_IN_PROGRESS:
+            return TransferInProgress(
+                to_account_id=payload.transfer_to,
+                amount_minor=payload.transfer_amount_minor,
+                awaiting=payload.awaiting or Slot.AMOUNT,
             )
         case Workflow.PAYMENT_CONFIRMATION:
             assert payload.intent_id is not None  # the payload's validator requires all three
@@ -201,6 +210,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
+            "answered_the_balance": conversation.answered_the_balance,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "retry_plan": (
                 plan_payload(conversation.retry_plan) if conversation.retry_plan else None
@@ -234,6 +244,11 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
                 )
                 for contact in active.candidates
             ],
+        }
+    if isinstance(active, TransferInProgress):
+        return {
+            "transfer_to": active.to_account_id,
+            "transfer_amount_minor": active.amount_minor,
         }
     if isinstance(active, PaymentConfirmation):
         return {

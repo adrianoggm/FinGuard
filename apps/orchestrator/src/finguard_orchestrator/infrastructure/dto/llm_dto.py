@@ -151,6 +151,8 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     ),
     Workflow.UNSUPPORTED_CAPABILITY: frozenset(),
     Workflow.PAYMENT_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.RECIPIENT, Slot.RECIPIENT_CHOICE}),
+    # Two questions and no more: which of the holder's accounts, and how much.
+    Workflow.TRANSFER_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.ACCOUNT}),
     Workflow.PAYMENT_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
     None: frozenset(),
 }
@@ -185,6 +187,10 @@ class ConversationPayload(_Payload):
     # payment would let a reply meant for a period complete a Bizum, and this decides one thing —
     # whether the same question has now been asked twice.
     last_asked: Slot | None = None
+    # Whether the last turn said how much money there is. Memory, like the two below, and it is
+    # what makes "¿y en la hucha?" a balance question after a balance and a spending question after
+    # a spending one — the same sentence, two meanings, decided by the turn before.
+    answered_the_balance: bool = False
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
@@ -201,6 +207,11 @@ class ConversationPayload(_Payload):
     payment: PaymentDraftPayload | None = None
     suspended: bool = False
     candidates: list[SpokenContactResponse] = []
+    # TRANSFER_IN_PROGRESS: the account it is going to, once one is settled, and the amount, once
+    # one is said. Named apart from the payment fields so the validator can keep the two states from
+    # borrowing each other's — a transfer has nobody to name and a payment has no account.
+    transfer_to: UUID | None = None
+    transfer_amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
     # PAYMENT_CONFIRMATION: the intent the bank is holding.
     #
     # A UUID, not a string. It was a string that `uuid.UUID(...)` parsed inside the mapper, so
@@ -238,6 +249,8 @@ class ConversationPayload(_Payload):
             Workflow.FINANCIAL_CLARIFICATION: ("draft",),
             Workflow.UNSUPPORTED_CAPABILITY: ("capability",),
             Workflow.PAYMENT_IN_PROGRESS: ("payment",),
+            # Neither field is required: the state exists precisely while one of them is missing.
+            Workflow.TRANSFER_IN_PROGRESS: (),
             Workflow.PAYMENT_CONFIRMATION: ("intent_id", "recipient", "amount_minor"),
             None: (),
         }
@@ -247,6 +260,7 @@ class ConversationPayload(_Payload):
             Workflow.FINANCIAL_CLARIFICATION: frozenset({"draft"}),
             Workflow.UNSUPPORTED_CAPABILITY: frozenset({"capability"}),
             Workflow.PAYMENT_IN_PROGRESS: frozenset({"payment", "candidates", "suspended"}),
+            Workflow.TRANSFER_IN_PROGRESS: frozenset({"transfer_to", "transfer_amount_minor"}),
             Workflow.PAYMENT_CONFIRMATION: frozenset(
                 {
                     "intent_id",

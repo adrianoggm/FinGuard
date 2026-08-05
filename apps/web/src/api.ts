@@ -146,6 +146,7 @@ export type Workflow =
   | "FINANCIAL_CLARIFICATION"
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
+  | "TRANSFER_IN_PROGRESS"
   | "PAYMENT_CONFIRMATION";
 
 /** What the last turn asked the user for. */
@@ -181,6 +182,9 @@ export type ConversationState = {
   // rest and never read here: it is how the service notices it has asked the same question twice
   // and offers choices instead of a third open question.
   last_asked: Slot | null;
+  // Whether the last turn said how much money there is. Round-tripped and never read here: it is
+  // how the service knows that "¿y en la hucha?" is about the balance rather than about spending.
+  answered_the_balance: boolean;
   last_plan: PlanContext | null;
   retry_plan: PlanContext | null;
   draft: PlanContext | null;
@@ -188,6 +192,10 @@ export type ConversationState = {
   payment: PaymentDraft | null;
   suspended: boolean;
   candidates: Candidate[];
+  // TRANSFER_IN_PROGRESS: where the money is going and how much, whichever of the two the sentence
+  // supplied. Round-tripped so the reply that fills in the other one can be understood.
+  transfer_to: string | null;
+  transfer_amount_minor: number | null;
   intent_id: string | null;
   recipient: string | null;
   amount_minor: number | null;

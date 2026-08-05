@@ -282,7 +282,13 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         # Spelled out rather than "*": the answer to a preflight is a statement about what this
         # service accepts, and a wildcard makes that statement unfalsifiable.
-        allow_headers=["Authorization", "Content-Type"],
+        #
+        # `Idempotency-Key` is the one that has to be remembered here. A header the routes read and
+        # CORS does not list is not a header that gets ignored — the browser refuses the preflight
+        # and never sends the request at all, so adding it to the client took the whole chat down
+        # while every route still answered `curl` perfectly. A wildcard would have hidden that, and
+        # would hide the next one too.
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
 
     # Outermost, so it sees the status a handler's exception turns into and the ones CORS answers
