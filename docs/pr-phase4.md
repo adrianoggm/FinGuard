@@ -1,8 +1,7 @@
 # Phase 4 — `task/phase4` → `develop`
 
-The body for this pull request. It is written for somebody deciding whether to merge, not for
-somebody reading 282 files, and it says plainly what is finished, what is deliberately not, and
-what is known to be wrong.
+Written for somebody deciding whether to merge, not for somebody reading 282 files. It says plainly
+what is finished, what is deliberately not, and what is known to be wrong.
 
 ## What this is, honestly
 
