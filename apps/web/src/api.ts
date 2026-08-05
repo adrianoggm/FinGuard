@@ -366,6 +366,10 @@ export async function movements(options: {
   /** Money moved between the holder's own accounts. Off by default: the tally is a net, and a
       transfer nets to nothing across the household. */
   includeInternal?: boolean;
+  /** One of the holder's accounts. Absent is the one the credential names. */
+  account?: string;
+  /** Every account the holder has. It cannot reach past them — the scope is the server's. */
+  acrossAccounts?: boolean;
 }): Promise<Movements> {
   const query = new URLSearchParams();
   query.set("days", String(options.days ?? 90));
@@ -373,6 +377,8 @@ export async function movements(options: {
   if (options.category) query.set("category", options.category);
   if (options.merchant) query.set("merchant", options.merchant);
   if (options.includeInternal) query.set("include_internal", "true");
+  if (options.account) query.set("account", options.account);
+  if (options.acrossAccounts) query.set("across_accounts", "true");
   return read<Movements>(`/v1/account/movements?${query}`);
 }
 

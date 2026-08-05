@@ -89,10 +89,13 @@ class PostgresFinancialQueryRepository:
         compiled = compile_ranked(query, zone, rank=rank)
 
         async with self._pool.acquire() as connection, connection.transaction():
+            # The credential's account, always, and never the one being asked about. `declare`
+            # resolves the holder from what it is given, so declaring a narrowed account opens
+            # ITS holder's scope — for a stranger's id, a leak wearing the shape of a filter.
             await declare(connection, str(query.account_id))
-            currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
+            currency = await connection.fetchval(_ACCOUNT_SQL, query.scoped_to)
             if currency is None:
-                raise AccountNotFoundError(query.account_id)
+                raise AccountNotFoundError(query.scoped_to)
             row = await connection.fetchrow(compiled.sql, *compiled.parameters)
 
         return row_mapper.to_movement(row, currency) if row is not None else None
@@ -116,10 +119,13 @@ class PostgresFinancialQueryRepository:
             # security enforces it underneath, so this is the one statement that decides
             # whose rows exist for the rest of the transaction.
             await declare(connection, str(query.account_id))
-            currency = await connection.fetchval(_ACCOUNT_SQL, query.account_id)
+            # The narrowed account when there is one, and it is looked up through the same scoped
+            # view: an account that is not this holder's has no currency here, so it answers 404 —
+            # the same as one that does not exist, which is all a caller probing should learn.
+            currency = await connection.fetchval(_ACCOUNT_SQL, query.scoped_to)
             # An account that does not exist is not an account without movements.
             if currency is None:
-                raise AccountNotFoundError(query.account_id)
+                raise AccountNotFoundError(query.scoped_to)
 
             rows = await connection.fetch(aggregate.sql, *aggregate.parameters)
             supporting = (

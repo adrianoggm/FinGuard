@@ -30,6 +30,7 @@ _GLOSS: Final[dict[str, tuple[str, ...]]] = {
     "HOUSING_RENT": ("alquiler", "la renta", "la casa", "la vivienda"),
     "SALARY": ("nómina", "sueldo", "salario", "la paga"),
     "TRANSFER_BIZUM": ("bizum", "transferencias entre personas"),
+    "INTEREST": ("intereses", "lo que me da la hucha", "rendimiento"),
 }
 
 # What a category is called in a sentence the user reads. Not the gloss: a list of five synonyms is
@@ -45,6 +46,7 @@ _NAMES: Final[dict[str, str]] = {
     "HOUSING_RENT": "alquiler",
     "SALARY": "nómina",
     "TRANSFER_BIZUM": "bizum",
+    "INTEREST": "intereses",
 }
 
 

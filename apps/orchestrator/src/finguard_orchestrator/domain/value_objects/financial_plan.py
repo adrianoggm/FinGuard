@@ -12,6 +12,7 @@ that would be one too many.
 
 from dataclasses import dataclass, field
 from datetime import date
+from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
@@ -88,6 +89,13 @@ class FinancialPlan:
     # explicitly by a list, where hiding a 200 € transfer means the movements do not reconcile with
     # the balance and the person looking for it cannot find it.
     include_internal: bool = False
+    # Every account the holder has rather than the one the credential names. It cannot widen past
+    # them: banking drops its own account filter and leaves the view's, which is the scope rule.
+    across_accounts: bool = False
+    # Narrow to one of the holder's accounts. It is a filter and never what banking declares: the
+    # credential's account is what opens the scope, and declaring a different one would open that
+    # account holder's instead — a leak shaped exactly like a filter.
+    only_account_id: UUID | None = None
     explain: bool = False
 
     def __post_init__(self) -> None:

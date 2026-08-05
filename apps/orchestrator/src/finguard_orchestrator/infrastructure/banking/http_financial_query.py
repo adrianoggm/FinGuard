@@ -194,6 +194,8 @@ def to_body(
         "merchants": list(plan.merchants),
         "supportingLimit": supporting_movements,
         "includeInternal": plan.include_internal,
+        "acrossAccounts": plan.across_accounts,
+        **({"onlyAccountId": str(plan.only_account_id)} if plan.only_account_id else {}),
     }
 
     if plan.period is not None:
