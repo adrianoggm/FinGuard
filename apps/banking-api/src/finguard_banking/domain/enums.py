@@ -19,12 +19,38 @@ class EntryType(StrEnum):
 
 
 class TransactionStatus(StrEnum):
-    BOOKED = "BOOKED"
+    """Where a transaction is in its life, and the database enforces the transitions.
+
+    PENDING is where every transaction starts and the only state that accepts entries.
+    BOOKED and CANCELLED are terminal: a correction is a compensating transaction, which
+    leaves the mistake and the fix both in the record. Migration 0004 has the triggers, and
+    the read views only ever show BOOKED.
+    """
+
     PENDING = "PENDING"
+    BOOKED = "BOOKED"
+    CANCELLED = "CANCELLED"
 
 
 class AccountStatus(StrEnum):
     ACTIVE = "ACTIVE"
+
+
+class AccountKind(StrEnum):
+    """What an account is for, which decides what a figure about it means.
+
+    The three of migration 0014, whose CHECK constraint is the other copy of this list. Written
+    out here as well because the constraint cannot be imported: what it protects is the table, and
+    what this protects is every read path that would otherwise pass the kind around as a string.
+
+    CURRENT is money to spend, SAVINGS is money set aside, ASSET is a holding whose worth is not
+    its cost — and that last one is why this is not cosmetic. Adding an ASSET balance into a total
+    labelled "what you have" reports a purchase price as if it were a valuation.
+    """
+
+    CURRENT = "CURRENT"
+    SAVINGS = "SAVINGS"
+    ASSET = "ASSET"
 
 
 class TransactionType(StrEnum):
@@ -34,6 +60,10 @@ class TransactionType(StrEnum):
     CARD_PAYMENT = "CARD_PAYMENT"
     BIZUM = "BIZUM"
     TRANSFER = "TRANSFER"
+    # Money between two accounts the same person owns. Its own type rather than a TRANSFER
+    # with a flag beside it: what makes it different is not how it moved but that it never
+    # left the household, and every question about spending has to know that.
+    INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
 
 
 class Metric(StrEnum):
@@ -98,3 +128,24 @@ class Period(StrEnum):
     THIS_YEAR = "THIS_YEAR"
     LAST_N_DAYS = "LAST_N_DAYS"
     LAST_N_MONTHS = "LAST_N_MONTHS"
+
+
+class Rail(StrEnum):
+    """How the money moves.
+
+    Three, and they are not three settings of one operation: a Bizum names a person by phone and
+    the bank finds the account, a transfer names the account and there may be no person behind it
+    at all, and an internal transfer names another account of the same holder. They differ in what
+    has to be on the preview, in what the intent has to remember, and in what can go wrong — which
+    is why the destination check in the schema is written per rail rather than as a set of nullable
+    columns and a convention.
+    """
+
+    BIZUM = "BIZUM"
+    TRANSFER = "TRANSFER"
+    # Between the holder's own accounts. Not a setting of TRANSFER: the destination is an account
+    # id rather than an IBAN, no clearing account is involved because the money does not leave the
+    # household, and what it books is `INTERNAL_TRANSFER` — the type the read views already keep
+    # out of spending. Calling it a transfer would make "¿cuánto gasté?" wrong by every euro
+    # somebody moved into their savings.
+    INTERNAL = "INTERNAL"

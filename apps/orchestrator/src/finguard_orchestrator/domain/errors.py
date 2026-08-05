@@ -112,3 +112,76 @@ class FeatureDisabledError(DomainError):
     exists, it is simply not being served here."""
 
     code = "feature_disabled"
+
+
+class RecipientHasNoAccountError(DomainError):
+    """A contact this account can Bizum and cannot transfer to.
+
+    Its own error rather than a not-found, because the two need different sentences. "No tengo a
+    Elena en tus contactos" is wrong about somebody in the holder's own list, and the thing that is
+    actually missing — an account number — is a thing they can supply.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"no account number saved for {name}")
+        self.name = name
+
+
+class RecipientNotFoundError(DomainError):
+    """Nobody in this account's contacts answers to that name.
+
+    Deliberately the same answer whether the contact belongs to somebody else or to nobody: banking
+    makes that choice and this carries it, because a caller who could tell the two apart could
+    enumerate other people's contacts one name at a time.
+    """
+
+    code = "recipient_not_found"
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"no contact matching {name!r}")
+
+
+class AmbiguousRecipientError(DomainError):
+    """More than one contact answers to that name.
+
+    Not a failure — it is the answer. Choosing between two Martas would be the assistant deciding
+    who gets the money, and the candidates travel with it because the user cannot resolve it
+    without them.
+    """
+
+    code = "ambiguous_recipient"
+
+    def __init__(self, name: str, candidates: tuple[str, ...]) -> None:
+        self.name = name
+        self.candidates = candidates
+        super().__init__(f"{name!r} matches several contacts: {', '.join(candidates)}")
+
+
+class PaymentRefusedError(DomainError):
+    """Banking would not make the payment, and said why in a code.
+
+    `reason` is banking's code rather than its sentence: the sentence the user reads is written
+    here, in Spanish, and matching on prose across a service boundary is how two services start
+    disagreeing about what happened.
+    """
+
+    code = "payment_refused"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"the bank refused the payment: {reason}")
+
+
+class IntentGoneError(DomainError):
+    """The intent is no longer a live offer: expired, cancelled, or already paid.
+
+    All three mean the same thing to whoever is looking at the preview, which is why they are one
+    error. What they must never mean is a second payment.
+    """
+
+    code = "intent_gone"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"the payment intent is no longer live: {reason}")

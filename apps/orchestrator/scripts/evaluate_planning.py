@@ -65,7 +65,7 @@ CATEGORIES = (
     "TRANSFER_BIZUM",
 )
 
-FIELDS = ("window", "direction", "categories", "groupBy", "metric")
+FIELDS = ("window", "direction", "categories", "merchants", "groupBy", "metric")
 
 
 def resolve(period: str, n: int | None, today: date) -> tuple[str, str]:
@@ -253,6 +253,11 @@ def expected_fields(plan: dict[str, Any], today: date) -> dict[str, Any]:
         out["direction"] = plan["direction"]
     if "categories" in plan:
         out["categories"] = tuple(sorted(plan["categories"]))
+    if "merchants" in plan:
+        # Compared case-insensitively, like banking matches them: a model that writes
+        # "mercadona" found the same movements as one that wrote "Mercadona", and scoring
+        # them differently would measure capitalisation.
+        out["merchants"] = tuple(sorted(m.lower() for m in plan["merchants"]))
     if "groupBy" in plan:
         out["groupBy"] = plan["groupBy"]
     if "metric" in plan:
@@ -272,6 +277,7 @@ def actual_fields(result: PlanningResult, today: date) -> dict[str, Any]:
         "window": window,
         "direction": plan.direction.value,
         "categories": tuple(sorted(plan.categories)),
+        "merchants": tuple(sorted(m.lower() for m in plan.merchants)),
         "groupBy": plan.group_by.value,
         "metric": plan.metric.value,
     }

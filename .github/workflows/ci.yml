@@ -1,21 +1,50 @@
 name: ci
 
-# Runs on every push: until now the only verification was running `just check` by hand.
+# One run per merge into main, and nothing else without asking.
+#
+# This used to run on every push to every branch plus every PR into main or develop: up to ten
+# jobs a push, four of them on Windows runners, which bill at twice a Linux minute. A feature
+# branch with a day's worth of commits could spend a meaningful slice of a month's included
+# minutes on a question already answered by `just check` locally.
+#
+# So the gate moved to where a mistake actually becomes expensive — the merge into main — and
+# `workflow_dispatch` covers verifying a branch before that.
 on:
-  push:
-    branches: ["**"]
   pull_request:
-    branches: [main, develop]
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
 
+  workflow_dispatch:
+
+# Keyed on the pull request, not the ref: `github.ref` on a pull_request event is the merge ref,
+# so a manual run and a PR run on the same branch would otherwise cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Every job below repeats one condition:
+#
+#     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
+#
+# `branches:` above filters the *target*, so a PR from anywhere into main matches it; this filters
+# the source. It is written out three times because there is nowhere to put it once — a workflow
+# level `if` does not exist, `env` is not readable from a job level `if`, and a shared gate job
+# would spend a runner to say no. An anchor would deduplicate the text and not the maintenance.
+#
+# Worth knowing before these become required checks: GitHub counts a skipped job as satisfied. A
+# hotfix branch opened straight against main would go green having run nothing, so if they are
+# made required, restrict what may target main at the branch protection level as well.
 jobs:
   # Fast and database-free: PEP 8, types and unit tests, across the Python versions
   # and the operating systems the team develops on. Development happens on Windows
   # and the images run on Linux, so both have to be green.
   check:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -48,6 +77,37 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest -q -m "not integration"
 
+  # The client, which until now was verified by opening it and looking. It holds the whole
+  # conversation — the service keeps none — so a mistake there deletes context and the model
+  # then answers a question nobody asked. That is worth a build breaking over.
+  #
+  # No Python, no database and no service: the client talks to an orchestrator that is not
+  # running here. What this can check is that it compiles, that its types agree with the
+  # payloads it claims to receive, and that the state machine holding the conversation still
+  # follows its four rules.
+  web:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      # `ci` rather than `install`: it fails if the lock has drifted from the manifest, the
+      # same property `uv sync --frozen` gives the Python jobs.
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
   # What can only be checked against a real PostgreSQL: the ledger invariants, the
   # query compiler, and that the dataset loads and adds up.
   #
@@ -55,6 +115,7 @@ jobs:
   # coverage of the integration path is therefore a gap — running it there means
   # installing PostgreSQL on the runner, which is a decision of its own.
   integration:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'develop'
     runs-on: ubuntu-latest
     services:
       postgres:

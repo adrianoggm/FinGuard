@@ -20,14 +20,22 @@ turns that into one choice per field.
 
 from typing import Any, Final
 
-from finguard_orchestrator.domain.constants import MAX_PERIOD_DAYS
+from finguard_orchestrator.domain.constants import (
+    MAX_MERCHANT_LENGTH,
+    MAX_MERCHANTS,
+    MAX_PERIOD_DAYS,
+    MAX_RANK,
+)
 from finguard_orchestrator.domain.enums import (
+    Action,
     Direction,
     GroupBy,
     Metric,
     Period,
     PlanningOutcome,
 )
+from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.services.plan_merger import Field
 
 # The outcomes a model may choose. The other three are things that happen TO a model —
 # malformed output, a rejected plan, a dead daemon — and it cannot report those about
@@ -37,6 +45,11 @@ CHOOSABLE_OUTCOMES: Final = (
     PlanningOutcome.NEEDS_CLARIFICATION,
     PlanningOutcome.UNSUPPORTED,
 )
+
+# The slots a clarification may ask about. A subset of the conversation's vocabulary: the planner
+# can only be missing something a plan has, so RECIPIENT and CONFIRMATION are not offered — they
+# belong to the payment conversation, and a decoder that cannot emit them cannot confuse the two.
+ASKABLE_SLOTS: Final = (Slot.WINDOW.value, Slot.YEAR.value, Slot.CATEGORY.value)
 
 # What `period` carries when the window is an explicit range instead of a named one.
 ABSOLUTE: Final = "ABSOLUTE"
@@ -58,7 +71,21 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "outcome": {"type": "string", "enum": [o.value for o in CHOOSABLE_OUTCOMES]},
+            # Which kind of question this is. Two actions, not a wider metric: AGGREGATE totals or
+            # counts movements, RANK_MOVEMENTS picks one out by size. They answer with different
+            # shapes — a figure with groups against a single row with a date and a shop — so the
+            # decision belongs here rather than being inferred from the other fields.
+            "action": {"type": "string", "enum": [a.value for a in Action]},
+            # Which position, for a ranking. 0 is the sentinel for "not a ranking", like `n`.
+            "rank": {"type": "integer", "minimum": 0, "maximum": MAX_RANK},
             "question": {"type": "string"},
+            # Which field the question is about. Emitted rather than inferred from the wording:
+            # the question is Spanish prose written by the model, and reading it back to find out
+            # what it asked is how the window vocabulary ended up carrying "del año" and "el año".
+            # With this, "de este" is read against the slot instead of against a phrase list.
+            #
+            # Empty for every outcome but NEEDS_CLARIFICATION, like `question` itself.
+            "awaiting": {"type": "string", "enum": [*ASKABLE_SLOTS, ""]},
             "period": {"type": "string", "enum": [p.value for p in Period] + [ABSOLUTE, ""]},
             # Bounded here as well as in the domain: a schema that permits 5000 makes
             # the decoder able to emit it, and every value it cannot emit is one the
@@ -71,19 +98,43 @@ def build_schema(categories: tuple[str, ...]) -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string", "enum": [*categories, NO_CATEGORY]},
             },
+            # The one field with no enum. A merchant name is data rather than vocabulary,
+            # so the decoder is free here in a way it is nowhere else — bounded in length and
+            # count, and the domain checks the shape. What it cannot do is reach SQL as
+            # anything but a bound parameter, which is banking's test to make.
+            "merchants": {
+                "type": "array",
+                "maxItems": MAX_MERCHANTS,
+                "items": {"type": "string", "maxLength": MAX_MERCHANT_LENGTH},
+            },
+            # A follow-up says what it changes instead of restating what it does not. Both
+            # fields are always present because the schema is built once, and they are ignored
+            # when there is no previous plan to inherit from — a question with no context is
+            # its own whole answer.
+            "isFollowUp": {"type": "boolean"},
+            "changed": {
+                "type": "array",
+                "items": {"type": "string", "enum": [f.value for f in Field]},
+            },
             "groupBy": {"type": "string", "enum": [g.value for g in GroupBy]},
             "metric": {"type": "string", "enum": [m.value for m in Metric]},
         },
         "additionalProperties": False,
         "required": [
             "outcome",
+            "action",
+            "rank",
             "question",
+            "awaiting",
             "period",
             "n",
             "from",
             "to",
             "direction",
             "categories",
+            "merchants",
+            "isFollowUp",
+            "changed",
             "groupBy",
             "metric",
         ],

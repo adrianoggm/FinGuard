@@ -6,19 +6,44 @@ import asyncpg
 from fastapi import FastAPI
 
 from finguard_banking.application import (
+    CancelPaymentCommand,
+    CancelPaymentHandler,
+    CategoriseMovementCommand,
+    CategoriseMovementHandler,
     CommandBus,
+    ConfirmPaymentCommand,
+    ConfirmPaymentHandler,
     GetBalanceHandler,
     GetBalanceQuery,
+    ListAccountsHandler,
+    ListAccountsQuery,
+    ListCardChargesHandler,
+    ListCardChargesQuery,
+    ListCardsHandler,
+    ListCardsQuery,
+    ListContactsHandler,
+    ListContactsQuery,
     MovementSummaryHandler,
     MovementSummaryQuery,
+    PreparePaymentCommand,
+    PreparePaymentHandler,
     QueryBus,
+    RankedMovementHandler,
+    RankedMovementQuery,
 )
 from finguard_banking.bootstrap.config import get_settings
 from finguard_banking.infrastructure import (
+    PostgresAccountRepository,
+    PostgresAuditLog,
+    PostgresCardRepository,
+    PostgresContactRepository,
     PostgresFinancialQueryRepository,
     PostgresLedgerRepository,
+    PostgresMovementCategoryRepository,
+    PostgresPaymentRepository,
     accounts_router,
     health_router,
+    payments_router,
     queries_router,
     register_error_handlers,
 )
@@ -62,6 +87,51 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.query_bus.register(GetBalanceQuery, GetBalanceHandler(ledger))
     app.state.query_bus.register(MovementSummaryQuery, MovementSummaryHandler(financial_queries))
+    # The ranking shares the repository with the aggregate: same filters, same containment, one
+    # place where the account is declared.
+    app.state.query_bus.register(RankedMovementQuery, RankedMovementHandler(financial_queries))
+
+    # Payments write, so they hold the owner pool. Contacts are resolved through it too:
+    # the read-only role reaches the views, and the payment path needs the contact row it
+    # is about to point a ledger movement at.
+    contacts = PostgresContactRepository(pool)
+    # The contact list is read through the restricted role, like every other read: the
+    # payment path needs the owner pool, and showing a list does not.
+    app.state.query_bus.register(
+        ListContactsQuery, ListContactsHandler(PostgresContactRepository(query_pool))
+    )
+    # The holder's accounts, through the restricted role like every other read. This is the
+    # widest read in the service — it is the one that says which accounts exist for a session — so
+    # it goes through the role that cannot reach a base table.
+    app.state.query_bus.register(
+        ListAccountsQuery, ListAccountsHandler(PostgresAccountRepository(query_pool))
+    )
+    cards = PostgresCardRepository(query_pool)
+    app.state.query_bus.register(ListCardsQuery, ListCardsHandler(cards))
+    app.state.query_bus.register(ListCardChargesQuery, ListCardChargesHandler(cards))
+    payments = PostgresPaymentRepository(
+        pool,
+        clearing_reference=settings.clearing_account_reference,
+        validity_seconds=settings.payment_validity_seconds,
+    )
+    # Rebuilt here rather than in create_app: the trail needs the pool, and every command is
+    # audited by the bus so no handler can be the one that forgets.
+    app.state.command_bus = bus = CommandBus(audit=PostgresAuditLog(pool))
+    # The account directory goes in because an internal transfer has to prove the destination is
+    # this holder's. Through the restricted role, like every read: it answers from the same view
+    # that listed the accounts, so one belonging to somebody else is not there to be found.
+    bus.register(
+        PreparePaymentCommand,
+        PreparePaymentHandler(contacts, payments, PostgresAccountRepository(query_pool)),
+    )
+    bus.register(ConfirmPaymentCommand, ConfirmPaymentHandler(payments))
+    bus.register(CancelPaymentCommand, CancelPaymentHandler(payments))
+    # The holder's own category. A write, so it holds the owner pool — and it never touches
+    # the ledger: the opinion goes in a table beside it.
+    bus.register(
+        CategoriseMovementCommand,
+        CategoriseMovementHandler(PostgresMovementCategoryRepository(pool)),
+    )
 
     try:
         yield
@@ -81,6 +151,7 @@ def create_app() -> FastAPI:
             {"name": "health", "description": "Liveness and readiness."},
             {"name": "accounts", "description": "Accounts and balances (§13.1)."},
             {"name": "queries", "description": "Financial queries over the ledger (§13.2)."},
+            {"name": "payments", "description": "Payments: prepare, then confirm (§4.1)."},
         ],
         docs_url="/docs",
         redoc_url="/redoc",
@@ -95,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(accounts_router)
     app.include_router(queries_router)
+    app.include_router(payments_router)
     register_error_handlers(app)
     return app
 

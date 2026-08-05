@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# The development token lives here and is never committed.
+.env.local

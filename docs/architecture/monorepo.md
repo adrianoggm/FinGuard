@@ -888,17 +888,21 @@ tests/
 
 ## 14. CI/CD
 
-What exists today is [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), running on every push and on every PR against `main`, with two jobs:
+What exists today is [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), with three jobs:
 
 | Job | What it runs | With a database |
 | --- | --- | --- |
-| `check` | One per service in parallel: `uv sync --frozen`, `ruff check`, `ruff format --check`, `mypy src`, `pytest -m "not integration"` | No |
+| `check` | One per service in parallel: `uv sync --frozen`, `ruff check`, `ruff format --check`, `mypy src`, `pytest -m "not integration"`. Across two Python versions and both Linux and Windows | No |
+| `web` | `npm ci`, `npm run typecheck`, `npm test`, `npm run build` | No |
 | `integration` | Creates the databases and roles with the same `01-databases.sql` the compose file uses, applies the migrations, runs the full suite, loads the dataset and verifies it, and checks that the generator is still deterministic | PostgreSQL 18 as a service container |
 
-Two decisions:
+Three decisions:
 
 - **`uv sync --frozen`**, not `uv sync`. If the lock has drifted from `pyproject.toml`, the job fails instead of re-resolving and verifying something different from what runs locally.
 - **No path filters and no `nx affected`.** With two services, the matrix runs both in parallel and finishes sooner than it would take to reason about what changed. Filters come in when CI time starts to hurt; at that point `dorny/paths-filter` is enough and does not force Nx into the repo.
+- **It runs on `develop` → `main`, and otherwise only when asked.** It used to run on every push to every branch, which is up to ten jobs a push — and four of them are Windows runners, billed at twice a Linux minute. GitHub Pro includes 3.000 minutes a month on private repositories and invoices the excess, so a branch with a day's worth of commits was spending real money answering a question `just check` answers locally for free. The `branches:` filter matches the *target*, so each job also carries `github.head_ref == 'develop'` to filter the source, and `workflow_dispatch` verifies a branch before it gets there. One caveat if these ever become required checks: GitHub counts a skipped job as satisfied, so a branch opened straight against `main` would go green having run nothing.
+
+The verification a working branch gets is therefore local, and [`just check`](../../justfile) is the whole of it.
 
 Pending, once the things they verify exist:
 

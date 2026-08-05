@@ -3,10 +3,12 @@ from pathlib import Path
 from typing import Final
 from uuid import UUID
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
+from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure import TomlModelCatalogue
 
 # The values live in .env.defaults, versioned and free of secrets, beside the reason each
@@ -54,6 +56,14 @@ class Settings(BaseSettings):
     # Both were constants inside the adapter, which made them parameters and not
     # configuration — a slower machine needed a commit.
     banking_timeout_seconds: float
+    # How many times a *read* against banking is attempted before the failure becomes visible
+    # state. Reads have no side effects, so one immediate retry recovers a short transport
+    # interruption; a second failure lets the user decide whether to try again.
+    #
+    # Operational policy, so it lives here rather than beside the code that uses it. Commands
+    # deliberately do not retry at all: their outcome may be indeterminate after a timeout, and
+    # this number must never be able to reach them.
+    banking_read_attempts: int = 2
     supporting_movements: int
 
     # Where the local runtime listens. Configurable because inside a container 127.0.0.1
@@ -87,20 +97,41 @@ class Settings(BaseSettings):
 
     # The financial endpoints, off unless a deployment turns them on.
     #
-    # Not caution for its own sake. Both reasons produce a confident, plausible, wrong
-    # figure rather than an error, which is the one failure mode nobody downstream
-    # catches. Documenting a risk is not controlling it; a flag is, and it makes turning
-    # this on a decision somebody takes rather than a default nobody chose.
+    # Not caution for its own sake. Both open risks produce a confident, plausible, wrong
+    # figure rather than an error, which is the one failure mode nobody downstream catches.
+    # Documenting a risk is not controlling it; a flag is, and it makes turning this on a
+    # decision somebody takes rather than a default nobody chose.
     #
-    # One of the two has moved: refusing what it cannot express was 0% on the held-out
-    # set and is 60% since the planner changed model. Better is not the bar, and it is a
-    # model's disposition rather than a guarantee — two in five still come back as a real
-    # figure answering a question about a ratio. The known live injection has not moved
-    # at all, even though the aggregate injection group score changed with the model.
+    # The bar is now written down and signed, in docs/next.md — two gates, because a scripted
+    # demo over seeded data and somebody's real balance are not the same risk. Zero for what
+    # deterministic code can guarantee, a number for what a model decides.
     #
-    # It comes off when unsupported has a deterministic guard and injection clears the
-    # agreed bar — see docs/next.md.
+    # As measured today, gate 1 fails on two of eight: unsafe execution is 12.7% against a
+    # bar of 10%, and one invalid structure survives in the adversarial set where the bar is
+    # zero. Both have identified work rather than needing a discovery.
     questions_enabled: bool
+    payments_enabled: bool
+
+    # The commit this image was built from, stamped in by the build rather than read from git at
+    # runtime — a container has no repository in it. "unknown" is honest for a build that did not
+    # pass one, and it is what a local `uvicorn` run reports.
+    build_sha: str = "unknown"
+    build_ref: str = "unknown"
+
+    # The home screen's window and movement count. Product decisions about what a bank app shows
+    # when it opens, so configuration rather than constants in the adapter that uses them.
+    summary_days: int = Field(ge=1, le=366)
+    summary_movements: int = Field(ge=1, le=50)
+
+    # Browser origins allowed to call this service. Exact origins, never a wildcard: the credential
+    # is in a header, and `*` with credentials lets any page a user visits spend their session.
+    web_origins: tuple[str, ...]
+
+    # How loud, and in which shape. Operational policy, so configuration — a developer wants lines
+    # they can read in a terminal and a deployment wants objects something can index. What is *in*
+    # a record is not configurable and never should be: see the redaction note in observability.py.
+    log_level: str = "INFO"
+    log_json: bool = True
 
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
@@ -154,18 +185,46 @@ class Settings(BaseSettings):
         "HOUSING_RENT",
         "SALARY",
         "TRANSFER_BIZUM",
+        "INTEREST",
     )
 
     def callers(self) -> dict[str, Caller]:
         """Parses the token table. Fails loudly on a malformed entry rather than
         skipping it: a silently dropped token is a caller who cannot log in and an
-        afternoon spent looking at the wrong layer."""
+        afternoon spent looking at the wrong layer.
+
+        The zone is the optional fourth field. Optional because most holders share the
+        deployment's, present because "hoy" belongs to whoever is asking — a holder in the
+        Canaries has a different one for an hour every night, and being told about the wrong
+        day is a real figure answering a question nobody asked.
+        """
         table: dict[str, Caller] = {}
         for entry in self.dev_tokens:
-            parts = entry.split(":")
-            if len(parts) != 3:
-                raise ValueError(f"a token entry is token:holder:account_uuid, got {entry!r}")
-            token, holder, account = parts
+            # maxsplit, because a scope name contains a colon: "questions:read" would
+            # otherwise be split into two fields and the entry rejected as malformed. The
+            # scopes are last precisely so they can keep their own separator.
+            parts = entry.split(":", 4)
+            if len(parts) not in (3, 4, 5):
+                raise ValueError(
+                    f"a token entry is token:holder:account_uuid[:timezone[:scopes]], got {entry!r}"
+                )
+            token, holder, account = parts[:3]
+            zone = parts[3] if len(parts) > 3 and parts[3] else "Europe/Madrid"
+            # Comma-separated, because the entry is already colon-delimited. Absent means
+            # the two read permissions, which is what a development credential needs and
+            # deliberately not the admin one: swapping the model that answers every
+            # question for everybody has to be granted on purpose.
+            granted = (
+                parts[4].split(",")
+                if len(parts) == 5 and parts[4]
+                else [
+                    Scope.QUESTIONS_READ.value,
+                    Scope.ASSISTANT_USE.value,
+                    # Relabelling your own movement moves no money and is undone by another
+                    # request. A development credential that can read the account can file it.
+                    Scope.MOVEMENTS_CATEGORISE.value,
+                ]
+            )
             if token in table:
                 # Two entries sharing a secret is a typo, and the quiet outcome is the
                 # dangerous one: the token would resolve to whichever account came last.
@@ -173,7 +232,12 @@ class Settings(BaseSettings):
                 # operator already has the table in front of them; repeating even a
                 # prefix of the shared secret there only creates another copy to leak.
                 raise ValueError("a development token is configured twice")
-            table[token] = Caller(holder_reference=holder, account_id=UUID(account))
+            table[token] = Caller(
+                holder_reference=holder,
+                account_id=UUID(account),
+                reporting_timezone=zone,
+                scopes=frozenset(granted),
+            )
         return table
 
     def guard_policy(self) -> GuardPolicy:

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from finguard_banking.domain.constants import MAX_GROUPS, UNCATEGORISED, UNKNOWN_MERCHANT
-from finguard_banking.domain.enums import Direction, GroupBy
+from finguard_banking.domain.enums import Direction, GroupBy, Metric
 from finguard_banking.domain.models.financial_query import FinancialQuery
 
 VIEW = "assistant_read.transactions_v1"
@@ -61,6 +61,29 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
             return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
 
 
+def _group_ordering(group_by: GroupBy, metric: Metric) -> str:
+    """Which groups survive the limit.
+
+    This was `ORDER BY 1`, which with a LIMIT keeps the groups whose *key* sorts first.
+    For a category or a merchant that is alphabetical, so "¿en qué me he gastado más?"
+    returned the first five names and presented them as the largest. A wrong answer with
+    no error anywhere, and the demo's opening question.
+
+    Derived from the plan rather than carried in the contract, deliberately. The correct
+    ordering is a function of what was asked in every case the dataset has, so deriving it
+    is always right, while three new contract fields would be three more things for a model
+    to choose wrongly. `limit` is the separable part — "los tres comercios donde más gasté"
+    needs it — and it can arrive when top-N is actually wanted.
+    """
+    if group_by in (GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH):
+        # Time is the one grouping whose key carries the meaning. A month is not more
+        # interesting for being expensive, and a series out of order is not a series.
+        return "key"
+    if metric is Metric.COUNT:
+        return "movement_count DESC"
+    return "total_minor DESC"
+
+
 def _amount_expression(direction: Direction) -> str:
     if direction is Direction.ALL:
         # With both directions mixed, only a signed total makes sense.
@@ -70,22 +93,45 @@ def _amount_expression(direction: Direction) -> str:
 
 
 def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list[str]:
-    account = parameters.bind(query.account_id)
     start = parameters.bind(query.date_range.start)
     end = parameters.bind(query.date_range.end)
 
     conditions = [
-        f"t.account_id = {account}",
         # The range includes the whole final day, in the reporting time zone.
         f"t.occurred_at >= (({start}::date)::timestamp AT TIME ZONE {tz})",
         f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
+
+    if not query.across_accounts:
+        # The same fact enforced twice from two independent places: the session declared this
+        # account and the compiler filters on it, so a compiler that dropped its WHERE would still
+        # see only the holder's rows.
+        #
+        # Asking across accounts drops *this* filter and nothing else. The view's own scope is what
+        # remains, which is the rule written once — there is no list of accounts to pass and so no
+        # way for this to reach past the holder. `across_accounts` cannot widen; it can only stop
+        # narrowing.
+        conditions.append(f"t.account_id = {parameters.bind(query.scoped_to)}")
+
+    if not query.include_internal:
+        # Before the direction, because it is the wider cut and reads in the order somebody
+        # would say it: money that left the household, then which way it went.
+        conditions.append("NOT t.is_internal")
 
     if query.direction is not Direction.ALL:
         conditions.append(f"t.direction = {parameters.bind(query.direction.value)}")
 
     if query.categories:
         conditions.append(f"t.category = ANY({parameters.bind(query.category_values())})")
+
+    if query.merchants:
+        # Lowered on both sides rather than ILIKE: this is equality, not a pattern, and a
+        # name the user typed must not be read as one — "100%" is a legitimate shop name and
+        # a wildcard in LIKE. Case-insensitive because a filter that needs the ledger's exact
+        # capitalisation answers "no movements" to a real question, which reads as "you spent
+        # nothing there".
+        names = parameters.bind([merchant.strip().lower() for merchant in query.merchants])
+        conditions.append(f"lower(t.merchant_name) = ANY({names})")
 
     return conditions
 
@@ -105,7 +151,7 @@ def compile_aggregate(
         FROM {VIEW} t
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
-        ORDER BY 1
+        ORDER BY {_group_ordering(query.group_by, query.metric)}
         LIMIT {min(group_limit, MAX_GROUPS)}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
@@ -124,6 +170,9 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
             COALESCE(t.description, '') AS description,
             t.merchant_name,
             t.category,
+            t.category_is_custom,
+            t.category_source,
+            t.is_internal,
             {_amount_expression(query.direction)} AS amount_minor,
             t.direction
         FROM {VIEW} t
@@ -132,3 +181,56 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
         LIMIT {limit}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
+
+
+def compile_ranked(query: FinancialQuery, reporting_timezone: str, *, rank: int) -> CompiledQuery:
+    """The nth largest movement of the period, or nothing when the period has fewer than n.
+
+    A different statement from `compile_movements` in two places: the ordering, and the offset. It
+    shares `_conditions` with everything else here, which is the point — the filters of "the largest
+    expense in fuel this year" are exactly the filters of "how much did I spend on fuel this year",
+    and two copies of them would be two places for the account to be forgotten.
+
+    **The ordering is total.** `amount_minor DESC` alone leaves ties to the plan, so "el segundo"
+    would be either of two equal charges and could differ between two runs of the same question. The
+    date breaks the tie and the identifier breaks the rest.
+
+    `rank` becomes an OFFSET and travels as a parameter, like every other value here. It is a number
+    a model chose, and §9.3 does not care how harmless a number looks.
+    """
+    parameters = _Parameters()
+    tz = parameters.bind(reporting_timezone)
+    conditions = _conditions(query, parameters, tz)
+    offset = parameters.bind(max(0, rank - 1))
+
+    sql = f"""
+        SELECT
+            t.transaction_id,
+            t.occurred_at,
+            COALESCE(t.description, '') AS description,
+            t.merchant_name,
+            t.category,
+            t.category_is_custom,
+            t.category_source,
+            t.is_internal,
+            {_amount_expression(query.direction)} AS amount_minor,
+            t.direction
+        FROM {VIEW} t
+        WHERE {" AND ".join(conditions)}
+        ORDER BY {_ranking_ordering(query.direction)}, t.occurred_at DESC, t.transaction_id
+        LIMIT 1 OFFSET {offset}
+    """
+    return CompiledQuery(sql=sql, parameters=parameters.values)
+
+
+def _ranking_ordering(direction: Direction) -> str:
+    """Which movement is "the largest" when both directions are in scope.
+
+    In one direction the amount is already positive, so `DESC` is the size order. With `ALL` the
+    amount is signed, and `DESC` then puts the biggest *income* first — so "¿cuál fue mi movimiento
+    más grande?" answered with a salary while a larger charge sat below zero. Magnitude is what
+    "más grande" means about a movement whose direction was never narrowed.
+    """
+    if direction is Direction.ALL:
+        return "ABS(amount_minor) DESC"
+    return "amount_minor DESC"

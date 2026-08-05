@@ -18,9 +18,12 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.banking.http_financial_query import (
     HttpFinancialQuery,
     from_body,
+    movement_from_body,
+    ranked_body,
     to_body,
 )
 
@@ -28,7 +31,13 @@ ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 def body_for(plan: FinancialPlan) -> dict:
-    return to_body(plan, account_id=ACCOUNT, today=date(2026, 7, 15), supporting_movements=10)
+    return to_body(
+        plan,
+        account_id=ACCOUNT,
+        today=date(2026, 7, 15),
+        supporting_movements=10,
+        reporting_timezone="Europe/Madrid",
+    )
 
 
 # --- plan to request ---------------------------------------------------------------
@@ -39,7 +48,12 @@ def test_a_named_period_travels_as_a_period() -> None:
         FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH))
     )
 
-    assert body["period"] == {"period": "LAST_MONTH", "reference": "2026-07-15"}
+    # The zone travels with the date, because neither describes a window alone.
+    assert body["period"] == {
+        "period": "LAST_MONTH",
+        "reference": "2026-07-15",
+        "timezone": "Europe/Madrid",
+    }
     # No stray key: banking forbids extras, so an n that does not apply is a 422.
     assert "dateRange" not in body
 
@@ -52,7 +66,12 @@ def test_a_counted_period_carries_its_count() -> None:
         )
     )
 
-    assert body["period"] == {"period": "LAST_N_DAYS", "reference": "2026-07-15", "n": 30}
+    assert body["period"] == {
+        "period": "LAST_N_DAYS",
+        "reference": "2026-07-15",
+        "timezone": "Europe/Madrid",
+        "n": 30,
+    }
 
 
 def test_an_absolute_window_uses_the_contract_spelling() -> None:
@@ -167,6 +186,66 @@ async def test_an_unreachable_banking_is_a_domain_error() -> None:
     with pytest.raises(BankingUnavailableError) as caught:
         await HttpFinancialQuery(
             base_url="http://127.0.0.1:1", timeout_seconds=2.0, supporting_movements=10
-        ).run(plan, account_id=ACCOUNT, today=date(2026, 7, 15))
+        ).run(
+            plan,
+            account_id=ACCOUNT,
+            today=date(2026, 7, 15),
+            reporting_timezone="Europe/Madrid",
+        )
 
     assert caught.value.code == "banking_unavailable"
+
+
+# --- the ranking ---------------------------------------------------------------------
+
+
+def test_the_ranking_body_carries_the_filters_and_the_rank() -> None:
+    """It reuses the aggregate's body builder for the window and the filters — including the
+    reference date, which is what makes both services agree on which days a period covers — and
+    drops the three fields the ranking endpoint does not take."""
+    body = ranked_body(
+        TopMovements(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            categories=("TRANSPORT_FUEL",),
+            rank=2,
+        ),
+        account_id=ACCOUNT,
+        today=date(2026, 8, 4),
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert body["rank"] == 2
+    assert body["categories"] == ["TRANSPORT_FUEL"]
+    assert body["direction"] == "EXPENSE"
+    assert body["period"]["reference"] == "2026-08-04"
+    assert body["period"]["timezone"] == "Europe/Madrid"
+    for absent in ("groupBy", "metric", "supportingLimit"):
+        assert absent not in body, f"{absent} means nothing to a ranking"
+
+
+def test_the_movement_of_a_ranking_is_read_whole() -> None:
+    """Every field, because a maximum is answered by naming it: the amount alone would send the user
+    to the movement list to work out which charge it was.
+
+    One reader shared with the supporting movements of an aggregate. Two copies would drift the
+    first time a field is added to one of them, and this is the one that would go unnoticed.
+    """
+    read = movement_from_body(
+        {
+            "transactionId": "11111111-1111-1111-1111-111111111111",
+            "occurredAt": "2026-03-14T10:00:00+00:00",
+            "description": "Repostaje",
+            "merchantName": "Cepsa",
+            "category": "TRANSPORT_FUEL",
+            "categoryIsCustom": False,
+            "amountMinor": 8240,
+            "direction": "EXPENSE",
+        }
+    )
+
+    assert read.amount_minor == 8240
+    assert read.merchant_name == "Cepsa"
+    assert read.category == "TRANSPORT_FUEL"
+    assert read.direction == "EXPENSE"
+    assert read.occurred_at.date() == date(2026, 3, 14)

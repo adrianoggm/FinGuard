@@ -1,5 +1,6 @@
 """The HTTP surface: the contract shape, and that no domain object is the body."""
 
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -19,8 +20,14 @@ from finguard_orchestrator.application.queries.get_llm_catalogue import (
     GetLlmCatalogueHandler,
     GetLlmCatalogueQuery,
 )
-from finguard_orchestrator.bootstrap.dependencies import get_command_bus, get_query_bus
+from finguard_orchestrator.bootstrap.dependencies import (
+    authenticated_caller,
+    get_command_bus,
+    get_query_bus,
+)
 from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.scope import Scope
 
 
 @pytest.fixture(autouse=True)
@@ -42,9 +49,19 @@ def _wired() -> Iterator[None]:
 
     app.dependency_overrides[get_query_bus] = lambda: queries
     app.dependency_overrides[get_command_bus] = lambda: commands
+    # /admin now needs a scope, so these tests present a credential that has it. Overriding
+    # the identity rather than a real token keeps the test about the endpoints; that the
+    # scope is enforced at all is test_scopes.py's job.
+    app.dependency_overrides[authenticated_caller] = lambda: ADMIN
     yield
     app.dependency_overrides.clear()
 
+
+ADMIN = Caller(
+    holder_reference="ES-0001",
+    account_id=uuid.UUID("08aba04f-2b30-4639-88a6-eac741153ce0"),
+    scopes=frozenset({Scope.QUESTIONS_READ, Scope.ASSISTANT_USE, Scope.ASSISTANT_ADMIN}),
+)
 
 client = TestClient(app)
 
@@ -150,7 +167,10 @@ def test_ready_is_false_while_financial_questions_are_disabled() -> None:
     previous_enabled = app.state.questions_enabled
     previous_planner = app.state.planner_probe
     previous_banking = app.state.banking_probe
-    client.put("/admin/llm-policy", json={"model_alias": "backup"})
+    # Swapped to the provider this build can talk to, so the only false check is the one
+    # under test. It used to rely on an earlier test having done this swap — which is why
+    # it started failing the moment /admin needed a scope, several tests away.
+    assert client.put("/admin/llm-policy", json={"model_alias": "backup"}).status_code == 200
     app.state.questions_enabled = False
     app.state.planner_probe = ReadyProbe()
     app.state.banking_probe = ReadyProbe()
@@ -176,3 +196,17 @@ def test_the_openapi_document_is_served() -> None:
     assert document["info"]["title"] == "FinGuard Assistant API"
     assert "/v1/messages" in document["paths"]
     assert client.get("/docs").status_code == 200
+
+
+def test_ready_says_whether_payments_are_on_without_that_making_it_unready() -> None:
+    """Reported, not checked. Payments are off by default, so putting the flag in `checks` would
+    make every deployment that answers questions and nothing else report 503 — and a readiness probe
+    that is red on a correctly configured service is a probe somebody switches off.
+
+    It is reported at all because a flag that reaches nothing observable is a flag nobody can prove
+    arrived: "payments are enabled and the endpoint 404s" is a debugging session this prevents.
+    """
+    body = client.get("/ready").json()
+
+    assert body["payments"] is app.state.payments_enabled
+    assert "payments" not in body["checks"]

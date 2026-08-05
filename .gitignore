@@ -22,6 +22,10 @@ build/
 .env.local
 .env.*.local
 
+# Playwright's MCP output: page snapshots and console logs from driving the web client. They are a
+# record of one session, not of the repository.
+.playwright-mcp/
+
 # Herramientas y SO
 .DS_Store
 Thumbs.db
