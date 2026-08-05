@@ -180,6 +180,11 @@ class ConversationPayload(_Payload):
     # What the last turn asked for, when it asked for anything. This is what makes "de este"
     # readable: the slot says which field the sentence is filling.
     awaiting: Slot | None = None
+    # What the last turn asked for, when it left nothing open. Memory rather than a workflow, which
+    # is why it has no per-state rule below: `awaiting` is constrained because a window slot on a
+    # payment would let a reply meant for a period complete a Bizum, and this decides one thing —
+    # whether the same question has now been asked twice.
+    last_asked: Slot | None = None
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None

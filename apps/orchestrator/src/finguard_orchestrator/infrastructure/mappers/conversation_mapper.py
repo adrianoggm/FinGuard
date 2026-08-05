@@ -111,12 +111,21 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             retry_plan=(
                 query_to_domain(payload.retry_plan) if payload and payload.retry_plan else None
             ),
+            # The branch this field exists for. A question asked with nothing half-built behind it
+            # comes back exactly here — no workflow — and dropping the slot on the way in is what
+            # let the same question be asked forever.
+            last_asked=payload.last_asked if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
     retry_plan = query_to_domain(payload.retry_plan) if payload.retry_plan else None
     active = _active(payload)
-    return Conversation(active=active, last_plan=last_plan, retry_plan=retry_plan)
+    return Conversation(
+        active=active,
+        last_plan=last_plan,
+        retry_plan=retry_plan,
+        last_asked=payload.last_asked,
+    )
 
 
 def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
@@ -191,6 +200,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
         {
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
+            "last_asked": conversation.last_asked,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "retry_plan": (
                 plan_payload(conversation.retry_plan) if conversation.retry_plan else None

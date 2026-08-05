@@ -166,6 +166,12 @@ class Conversation:
     # payment may coexist with it, and retrying must execute this exact plan instead of asking the
     # model to interpret "reintenta" as a new financial question.
     retry_plan: PlannedQuery | None = None
+    # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
+    # a clarification records its slot on the workflow, and a question asked with nothing
+    # half-built behind it leaves no workflow to record it on. Without this, that question can be
+    # asked forever — and the user cannot escape by rephrasing, because rephrasing is what already
+    # failed. It survives exactly one turn: everything that is not another question clears it.
+    last_asked: Slot | None = None
 
     @property
     def awaiting(self) -> Slot | None:
@@ -186,6 +192,10 @@ class Conversation:
         One active workflow is the invariant this type exists for, so there is no method that adds a
         second. A payment starting while a clarification is open ends the clarification, which is
         also what happens in the conversation.
+
+        `last_asked` is deliberately dropped. This builds the state a turn *leaves behind*, and a
+        turn that asked something says so by calling `asking` — so the memory lasts one turn and a
+        slot from three questions ago cannot make an unrelated one look like a repeat.
         """
         return Conversation(
             active=active,
@@ -193,13 +203,29 @@ class Conversation:
             retry_plan=self.retry_plan,
         )
 
+    def asking(self, slot: Slot) -> "Conversation":
+        """Remember the question this turn asked, whether or not it left a workflow behind."""
+        return Conversation(
+            active=self.active,
+            last_plan=self.last_plan,
+            retry_plan=self.retry_plan,
+            last_asked=slot,
+        )
+
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
         """Remember the exact validated read that banking could not execute."""
-        return Conversation(active=self.active, last_plan=self.last_plan, retry_plan=plan)
+        return Conversation(
+            active=self.active,
+            last_plan=self.last_plan,
+            retry_plan=plan,
+            last_asked=self.last_asked,
+        )
 
     def without_retry(self) -> "Conversation":
         """Abandon a failed read while preserving the rest of the conversation."""
-        return Conversation(active=self.active, last_plan=self.last_plan)
+        return Conversation(
+            active=self.active, last_plan=self.last_plan, last_asked=self.last_asked
+        )
 
     def answered(self, plan: PlannedQuery) -> "Conversation":
         """Remember a financial answer and close only the workflow that answer resolves.
@@ -227,6 +253,7 @@ class Conversation:
                 active=None,
                 last_plan=self.last_plan,
                 retry_plan=self.retry_plan,
+                last_asked=self.last_asked,
             )
         return Conversation(
             active=PaymentInProgress(
@@ -237,6 +264,7 @@ class Conversation:
             ),
             last_plan=self.last_plan,
             retry_plan=self.retry_plan,
+            last_asked=self.last_asked,
         )
 
 
