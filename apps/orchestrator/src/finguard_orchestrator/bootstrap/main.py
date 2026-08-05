@@ -158,6 +158,7 @@ def create_app() -> FastAPI:
         # with no model in the path.
         accounts=accounts,
         contacts=contacts,
+        read_attempts=settings.banking_read_attempts,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.

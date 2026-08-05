@@ -71,10 +71,10 @@ from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, 
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.observability import account_ref
 
-# Reads have no side effects, so one immediate retry can recover a short transport interruption.
-# A second failure becomes visible state and lets the user decide whether to try again; commands
-# deliberately do not use this policy because their outcome may be indeterminate after a timeout.
-BANK_READ_ATTEMPTS = 2
+# The default when a handler is built without one, which is every test that does not care. The
+# deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
+# a constant here was a policy nobody could change without a release.
+DEFAULT_BANK_READ_ATTEMPTS = 2
 
 logger = logging.getLogger(__name__)
 
@@ -220,10 +220,12 @@ class AskFinancialQuestionHandler:
         *,
         accounts: AccountSummaryPort,
         contacts: ContactDirectoryPort,
+        read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
     ) -> None:
         self._planner = planner
         self._queries = queries
         self._policy = policy
+        self._read_attempts = read_attempts
         self._accounts = accounts
         self._contacts = contacts
 
@@ -854,7 +856,7 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery, ranking: TopMovements
     ) -> AskFinancialQuestionResult:
         """One movement, named. The figure alone would send the user to the movement list."""
-        for attempt in range(BANK_READ_ATTEMPTS):
+        for attempt in range(self._read_attempts):
             try:
                 found = await self._queries.ranked(
                     ranking,
@@ -873,7 +875,7 @@ class AskFinancialQuestionHandler:
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
-                if attempt + 1 < BANK_READ_ATTEMPTS:
+                if attempt + 1 < self._read_attempts:
                     continue
                 return AskFinancialQuestionResult(
                     outcome="BANKING_UNAVAILABLE",
@@ -962,7 +964,7 @@ class AskFinancialQuestionHandler:
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
         scoped = await self._scoped(plan, query)
-        for attempt in range(BANK_READ_ATTEMPTS):
+        for attempt in range(self._read_attempts):
             try:
                 answer = await self._queries.run(
                     scoped,
@@ -983,7 +985,7 @@ class AskFinancialQuestionHandler:
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
-                if attempt + 1 < BANK_READ_ATTEMPTS:
+                if attempt + 1 < self._read_attempts:
                     continue
                 return AskFinancialQuestionResult(
                     outcome="BANKING_UNAVAILABLE",
