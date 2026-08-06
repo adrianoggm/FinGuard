@@ -25,7 +25,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto gasté este mes?
         route: QUERY
 
@@ -48,7 +48,7 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto me queda?
         route: BALANCE
 
@@ -72,7 +72,7 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: three_unclear_replies_then_a_yes
     why: >
@@ -96,7 +96,7 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: yes_in_several_words
     why: >
@@ -119,7 +119,7 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: changing_the_recipient_at_the_preview
     why: >
@@ -140,7 +140,7 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_yes_with_nothing_to_confirm
     why: >
@@ -159,7 +159,7 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_yes_arriving_after_the_payment_was_settled
     why: >
@@ -181,7 +181,7 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_confirmation_that_also_says_thank_you
     why: >
@@ -201,7 +201,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: adiós
-        route: QUERY
+        route: COURTESY
 
   - name: the_whole_confirmation_dance
     why: >
@@ -234,4 +234,4 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY

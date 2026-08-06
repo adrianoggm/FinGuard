@@ -7,7 +7,7 @@ turn reach the right part of the service?**
 Every defect reported from the demo so far has been that and only that. Not a wrong figure — a
 question routed to the payment path, a balance sent to the planner, a reply to an open question read
 as an order. The figures were right every time; the *tool* was wrong. So that is what an episode
-asserts: which of eleven places handled each turn, and what the turn left behind.
+asserts: which of twelve places handled each turn, and what the turn left behind.
 
 **No model, and that is the design.** The planner is stubbed to answer any sentence with a plan, so
 `QUERY` means "it reached the planner" and nothing more. Everything else is a path this service
@@ -17,7 +17,7 @@ this one runs in a second.
 
 What each turn may say:
 
-    route        which of the eleven handled it. The whole point of the file
+    route        which of the twelve handled it. The whole point of the file
     says         a phrase the answer must contain
     not_says     a phrase it must not
     keeps        a workflow that has to still be open afterwards
@@ -125,7 +125,7 @@ CONTACTS = (
 )
 
 
-# --- the eleven places a turn can be handled ---------------------------------------------
+# --- the twelve places a turn can be handled ---------------------------------------------
 #
 # Named here rather than derived at the assertion, because "which tool answered" is the measurement
 # and a measurement whose definition lives in three branches is three definitions.
@@ -136,6 +136,7 @@ IDENTITY = "IDENTITY"
 CATEGORIES = "CATEGORIES"
 EXPLANATION = "EXPLANATION"
 GUIDANCE = "GUIDANCE"
+COURTESY = "COURTESY"
 TRANSFER = "TRANSFER"
 PAYMENT = "PAYMENT"
 QUERY = "QUERY"
@@ -149,6 +150,7 @@ _SPOKEN = {
     "CATEGORIES": CATEGORIES,
     "EXPLANATION": EXPLANATION,
     "GUIDANCE": GUIDANCE,
+    "COURTESY": COURTESY,
     "TRANSFER_READY": TRANSFER,
 }
 _PAYMENT_WORKFLOWS = {"PAYMENT_IN_PROGRESS", "PAYMENT_CONFIRMATION"}
@@ -162,7 +164,7 @@ _PAYMENT_OUTCOMES = {
 
 
 def tool_of(answer: dict[str, Any]) -> str:
-    """Which of the eleven answered this turn.
+    """Which of the twelve answered this turn.
 
     The outcome alone is not enough and that is not an accident of the enums: a payment asking for
     an amount and a financial question asking for a period are both NEEDS_CLARIFICATION, and telling

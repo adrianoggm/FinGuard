@@ -25,7 +25,7 @@ episodes:
       - say: ¿y en restaurantes?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: five_subjects_in_eight_turns
     why: >
@@ -110,7 +110,7 @@ episodes:
       - say: ¿y en la hucha?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_subject_changes_mid_clarification
     why: >
@@ -139,13 +139,13 @@ episodes:
     metrics: [wrong_tool, context_retention]
     turns:
       - say: buenas
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: muy amable
         route: QUERY
       - say: ¿cuánto gasté el mes pasado?
@@ -171,7 +171,7 @@ episodes:
         route: TRANSFER
         ends: true
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: back_and_forth_between_two_accounts
     why: >
@@ -195,7 +195,7 @@ episodes:
         route: BALANCE
         says: "7.755,92"
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_long_wander
     why: >
@@ -204,7 +204,7 @@ episodes:
     metrics: [wrong_tool]
     turns:
       - say: hola
-        route: QUERY
+        route: COURTESY
       - say: ¿qué puedes hacer?
         route: IDENTITY
       - say: ¿cuánto tengo?

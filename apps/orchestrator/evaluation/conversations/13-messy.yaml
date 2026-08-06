@@ -41,7 +41,7 @@ episodes:
       - say: ¿cuánto tengo ahora?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_second_reported_conversation
     why: >
@@ -64,7 +64,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_third_reported_conversation
     why: >
@@ -97,7 +97,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: sixteen_turns_of_everything
     why: >
@@ -106,7 +106,7 @@ episodes:
     metrics: [wrong_tool, context_retention, unsafe_action]
     turns:
       - say: hola
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
       - say: ¿cuánto tengo?
@@ -169,9 +169,9 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: adiós
-        route: QUERY
+        route: COURTESY
 
   - name: everything_goes_wrong_and_then_it_works
     why: >
@@ -198,7 +198,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: three_operations_started_and_one_finished
     why: >
@@ -228,7 +228,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: twenty_turns
     why: >
@@ -237,7 +237,7 @@ episodes:
     metrics: [wrong_tool, context_retention, unsafe_action]
     turns:
       - say: buenas
-        route: QUERY
+        route: COURTESY
       - say: ¿qué puedes hacer?
         route: IDENTITY
       - say: ¿cuánto dinero tengo?
@@ -319,7 +319,7 @@ episodes:
         route: BALANCE
         says: "2.700,00"
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_same_question_five_times
     why: >

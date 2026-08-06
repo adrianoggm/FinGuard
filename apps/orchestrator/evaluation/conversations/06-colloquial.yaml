@@ -66,7 +66,7 @@ episodes:
       - say: menos mal
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: asking_for_help_in_four_different_ways
     why: >
@@ -107,6 +107,7 @@ episodes:
       - say: eso es
         route: QUERY
       - say: gracias
+        route: COURTESY
 
   - name: politeness_wrapped_around_an_order
     why: >
@@ -123,7 +124,7 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: muchas gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
@@ -145,7 +146,7 @@ episodes:
         route: TRANSFER
         ends: true
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto me queda?
         route: BALANCE
 
@@ -175,7 +176,7 @@ episodes:
       - say: ¿y en total?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: an_interjection_between_every_turn
     why: >
@@ -215,4 +216,4 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY

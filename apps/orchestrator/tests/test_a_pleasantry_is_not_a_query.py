@@ -1,0 +1,193 @@
+"""«Gracias» stopped invoking a language model.
+
+Ninety-eight of the corpus's 879 turns are a greeting, a thank-you or a goodbye, and every one of
+them reached the financial planner. Six intents were about money and the seventh was a catch-all,
+so a pleasantry fell into the catch-all and the catch-all plans queries — a model asked what period
+«gracias» refers to.
+
+**It was found by a model disagreeing with us.** `qwen3.5:9b` answered IDENTITY_OR_HELP for
+fifty-seven of them, the closest of nine to "not about their account", and it was more right than
+the rules were. That is what the shadow migration is for: a missing category is invisible until
+something is forced to choose within it. See `evaluation/conversations/RESULTS.md`.
+
+The behaviour is one line — say something back — and the tests are almost all about what must
+*not* change. A pleasantry is not a turn: it does not end a subject, it does not pause a payment,
+and it does not throw away a saved retry.
+"""
+
+import uuid
+from datetime import date
+
+import pytest
+
+from finguard_orchestrator.application import (
+    AskFinancialQuestionHandler,
+    AskFinancialQuestionQuery,
+)
+from finguard_orchestrator.domain.enums import Direction, Period, Spoken
+from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
+    Conversation,
+    PaymentInProgress,
+    Slot,
+)
+from finguard_orchestrator.domain.services import courtesy
+from finguard_orchestrator.domain.services.intent_router import Intent, route
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    RelativePeriod,
+)
+from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+
+ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
+TODAY = date(2026, 8, 5)
+LAST_MONTH = FinancialPlan(
+    direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH)
+)
+
+
+class UnusedPlanner:
+    """A pleasantry that reaches this is the defect, so reaching it is the failure."""
+
+    async def plan(self, sentence: str, **kwargs: object) -> object:
+        raise AssertionError(f"a language model was asked to plan a query for {sentence!r}")
+
+
+class UnusedLedger:
+    async def run(self, plan: object, **kwargs: object) -> object:
+        raise AssertionError("the bank was read")
+
+
+class NoAccounts:
+    async def of(self, account_id: uuid.UUID, **kwargs: object) -> object:
+        raise AssertionError("the balance was read")
+
+
+class NoContacts:
+    async def all_of(self, account_id: uuid.UUID) -> tuple[()]:
+        return ()
+
+
+def a_handler() -> AskFinancialQuestionHandler:
+    return AskFinancialQuestionHandler(
+        UnusedPlanner(),  # type: ignore[arg-type]
+        UnusedLedger(),  # type: ignore[arg-type]
+        accounts=NoAccounts(),  # type: ignore[arg-type]
+        contacts=NoContacts(),  # type: ignore[arg-type]
+    )
+
+
+async def answer(sentence: str, was: Conversation = IDLE):
+    return await a_handler().handle(
+        AskFinancialQuestionQuery(
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=was
+        )
+    )
+
+
+# --- the vocabulary ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "gracias",
+        "Gracias",
+        "GRACIAS",
+        "gracias!!",
+        "¡gracias!",
+        "muchas gracias",
+        "mil gracias",
+        "vale gracias",
+        "te lo agradezco",
+        "hola",
+        "Hola!",
+        "buenas",
+        "buenos días",
+        "buenas tardes",
+        "adiós",
+        "hasta luego",
+        "nos vemos",
+    ],
+)
+def test_these_are_pleasantries(said: str) -> None:
+    assert route(said, has_previous=True) is Intent.COURTESY
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # Manners with a question attached. The question is what has to be answered, so the whole
+        # turn belongs to whatever answers it — the patterns are anchored end to end for this.
+        "gracias, ¿y en la hucha?",
+        "hola, ¿cuánto gasté el mes pasado?",
+        "buenas, quiero hacer un bizum a Marta",
+        # Half the time these are pleasantries and the other half they answer a question, and only
+        # the open slot can tell. Deliberately out of the vocabulary until something reads it.
+        "sí",
+        "vale",
+        "ok",
+        "perfecto",
+        "claro",
+        "eso es",
+    ],
+)
+def test_these_are_not(said: str) -> None:
+    assert route(said, has_previous=True) is not Intent.COURTESY
+
+
+def test_a_pleasantry_gets_an_answer_rather_than_a_plan() -> None:
+    """The planner raises if it is reached, so this passing is the whole point of the change."""
+    assert courtesy.reply("gracias") is not None
+
+
+async def test_thanks_is_answered_without_a_model() -> None:
+    said = await answer("gracias")
+
+    assert said.outcome == Spoken.COURTESY.value
+    assert "de nada" in said.text.lower()
+
+
+async def test_a_greeting_says_what_can_be_asked() -> None:
+    """Different text from a thank-you, because "de nada" to «hola» reads like a machine — and it
+    is the one turn where saying what this thing does is useful rather than noise."""
+    said = await answer("hola")
+
+    assert "gastos" in said.text.lower()
+
+
+# --- and everything it must not disturb --------------------------------------------------
+
+
+async def test_the_previous_question_survives_it() -> None:
+    """«¿cuánto gasté?» → «gracias» → «¿y en la hucha?» has to still narrow the spending. If the
+    pleasantry cleared the plan, the follow-up would be a question about nothing."""
+    was = IDLE.answered(LAST_MONTH)
+
+    said = await answer("gracias", was)
+
+    assert said.conversation.last_plan == LAST_MONTH
+
+
+async def test_a_half_built_payment_is_not_even_paused() -> None:
+    """Every other aside pauses a Bizum, so a later bare amount cannot silently resume it after the
+    subject changed. Saying thank you is not changing the subject, and pausing it would make the
+    user repeat the amount they were about to give."""
+    draft = PaymentDraft(recipient_name="Marta Solis Vega")
+    was = IDLE.with_active(PaymentInProgress(draft=draft, awaiting=Slot.AMOUNT))
+
+    said = await answer("gracias", was)
+
+    active = said.conversation.active
+    assert isinstance(active, PaymentInProgress)
+    assert not active.suspended
+
+
+async def test_a_saved_retry_survives_it() -> None:
+    """A pleasantry between a bank outage and the retry must not throw the query away while the
+    button offering it is still on screen."""
+    was = IDLE.awaiting_retry(LAST_MONTH)
+
+    said = await answer("gracias", was)
+
+    assert said.conversation.retry_plan == LAST_MONTH

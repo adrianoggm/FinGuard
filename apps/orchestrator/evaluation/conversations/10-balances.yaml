@@ -27,7 +27,7 @@ episodes:
       - say: ¿cuánto dinero me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_investment_is_never_inside_the_figure
     why: >
@@ -71,7 +71,7 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: counting_things_is_not_a_balance
     why: >
@@ -90,7 +90,7 @@ episodes:
       - say: ¿y en la hucha?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: which_accounts_do_i_have
     why: >
@@ -113,7 +113,7 @@ episodes:
       - say: ¿y en el fondo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_state_of_an_account_without_the_word_cuanto
     why: >
@@ -135,7 +135,7 @@ episodes:
       - say: perfecto
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_balance_asked_six_times_in_six_ways
     why: >
@@ -154,7 +154,7 @@ episodes:
       - say: ¿cuánto tenía?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_balance_between_two_spending_questions
     why: >
@@ -173,7 +173,7 @@ episodes:
       - say: ¿y en restaurantes?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_balance_after_moving_money
     why: >
@@ -194,7 +194,7 @@ episodes:
       - say: vale
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: ten_turns_of_nothing_but_balances
     why: >
@@ -225,4 +225,4 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: gracias
-        route: QUERY
+        route: COURTESY

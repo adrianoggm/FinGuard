@@ -91,7 +91,7 @@ episodes:
         route: TRANSFER
         ends: true
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_suspended_payment_through_five_other_turns
     why: >
@@ -135,7 +135,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_clarification_left_open_and_never_answered
     why: >
@@ -154,7 +154,7 @@ episodes:
       - say: este año
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: two_operations_cannot_be_open_at_once
     why: >
@@ -197,7 +197,7 @@ episodes:
       - say: ¿cuánto me queda en el fondo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_confirmation_that_arrives_after_an_aside
     why: >
@@ -216,6 +216,6 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto gasté este mes?
         route: QUERY
