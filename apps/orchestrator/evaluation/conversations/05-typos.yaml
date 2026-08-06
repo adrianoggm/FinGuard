@@ -152,7 +152,11 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: qeu categorias hay
-        route: QUERY
+        # It used to be QUERY, and that was the typo winning: the catalogue patterns all began at
+        # "qué", so a misspelt one sent a question about the product's own vocabulary to a language
+        # model. Anchoring on "categorias hay" instead makes the spelling of "qué" irrelevant,
+        # which is the point of this episode.
+        route: CATEGORIES
       - say: dime las categorías disponibles
         route: CATEGORIES
 

@@ -162,6 +162,15 @@ _CATEGORY_CATALOGUE: Final = re.compile(
     r"|\bdime\s+las\s+categorias(\s+disponibles)?\b"
     r"|\bque\s+categorias\s+(entiendes|manejas|usas|hay|tienes|soportas)\b"
     r"|\bque\s+opciones\s+de\s+categoria\s+(hay|tienes)\b"
+    # "¿Qué categorías puedo consultar?" — asked in the demo, and it fell through to the planner,
+    # which answered a question about *which categories exist* with "¿de qué categoría se trata?".
+    # A loop, and an insulting one: the list is repository data and was one branch away.
+    #
+    # The verbs a person reaches for are about *them* doing something with the list rather than
+    # the list existing, which is the shape the four patterns above all miss.
+    r"|\bcategorias\s+(puedo|se\s+pueden|podria)\s+(consultar|usar|ver|filtrar|pedir)\b"
+    r"|\bque\s+categorias\s+(puedo|se\s+pueden|podria)\b"
+    r"|\bcategorias\s+(disponibles|existen|hay)\b"
 )
 
 # The user says the last answer was wrong. Two shapes: naming the misunderstanding, or restating
