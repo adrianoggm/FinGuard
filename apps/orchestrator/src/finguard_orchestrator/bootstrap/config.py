@@ -281,9 +281,32 @@ class Settings(BaseSettings):
     # instructing anybody to send money — so the two points are the rule doing its job, not its
     # price.
     #
-    # Still not the default. Flipping how every turn in production is read is the operator's call,
-    # not a value shipped in a settings class, and `model` costs a model call on the critical path
-    # of every single turn where the rules cost none.
+    # **And then the other side was measured, and `model` is not ready.** Replaying all 133
+    # episodes through `Promoted` — 900 turns, the tool each one reached — costs 35 failures, and
+    # two of them move money:
+    #
+    #   * "Déjalo" is read as manners, so the transfer it was cancelling stays open, and the "500"
+    #     in the next turn lands inside it. Two episodes, and it is the failure this service exists
+    #     to make impossible.
+    #   * "¿Qué traspaso al fondo?" and "mueve 200 € a la cuenta de la empresa" — a question and an
+    #     account the holder does not have — both come back as transfers. `Promoted` refuses to let
+    #     a model start a PAYMENT and says nothing about OWN_TRANSFER, which is the same decision
+    #     one rail over. A hole in the rule, found by measuring rather than by reading it.
+    #   * The short balance vocabulary regresses: "saldo", "dinero disponible" and "¿cuánto tenía?"
+    #     stop reaching the balance, and "cuánto he gastado con cada tarjeta" stops reaching the
+    #     wallet and answers with the account total — the exact defect the wallet intent fixed.
+    #
+    # The other 23 are one shape: the model over-specifies when the reading depends on the turn
+    # before. "¿Y en la hucha?" after a question about spending is a narrowed *query*, and the
+    # model calls it a balance. That is the interpreter's prompt, not the arrangement, and it is
+    # where the work goes before this is worth revisiting.
+    #
+    # So the honest summary is that neither reader dominates. The rules lose to phrasing and the
+    # model loses to context, and the corpus and the drift set each only measure one of those.
+    #
+    # Still not the default, and now for a second reason. Flipping how every turn in production is
+    # read is the operator's call rather than a value shipped in a settings class; and on today's
+    # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "model"] = "router"
 
     # The categories that exist in the data. They belong to banking; until there is a
