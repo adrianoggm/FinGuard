@@ -265,6 +265,24 @@ def test_an_explicit_average_overrides_a_sum_plan() -> None:
     assert explicit_facts.enforce(planned, facts).metric is Metric.AVERAGE
 
 
+def test_a_monthly_average_is_not_confused_with_an_average_movement() -> None:
+    facts = explicit_facts.read(
+        "¿Cuál es mi gasto medio anual en supermercados por mes?", today=TODAY
+    )
+
+    assert facts.metric is Metric.PERIOD_AVERAGE
+    assert facts.group_by is GroupBy.MONTH
+    assert facts.window == TWELVE_MONTHS
+    assert facts.names_a_category
+
+
+def test_a_monthly_breakdown_of_average_movements_keeps_the_movement_divisor() -> None:
+    facts = explicit_facts.read("¿Cuál es el importe medio por movimiento mensual?", today=TODAY)
+
+    assert facts.metric is Metric.AVERAGE
+    assert facts.group_by is GroupBy.MONTH
+
+
 def test_two_compared_categories_are_both_kept_and_grouped() -> None:
     facts = explicit_facts.read("Compara gasolina frente a restaurantes el mes pasado", today=TODAY)
     wrong = FinancialPlan(

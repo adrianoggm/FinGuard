@@ -377,16 +377,13 @@ def test_the_slot_a_question_asked_does_not_outlive_the_answer_to_it() -> None:
 # --- a refusal, and what comes after it -----------------------------------------------------
 
 
-def test_a_refusal_does_not_outlive_the_question_it_refused() -> None:
-    """An average is declined by the deterministic guard, which is a control and stays one. What
-    must not happen is the refusal colouring the next turn: the conversation after it is an
-    ordinary conversation, and the state that named the capability is gone."""
+def test_an_answered_average_does_not_colour_the_next_question() -> None:
     client, _, _ = wired({"gasté": PlanningResult.planned(GROCERIES)})
     chat = Chat(client)
 
-    refused = chat.say("¿cuál es mi gasto medio en gasolina el mes pasado?")
-    assert refused["outcome"] == PlanningOutcome.UNSUPPORTED.value
-    assert refused["conversation"]["workflow"] == "UNSUPPORTED_CAPABILITY"
+    average = chat.say("¿cuál es mi gasto medio en gasolina el mes pasado?")
+    assert average["outcome"] == PlanningOutcome.PLANNED.value
+    assert average["conversation"]["workflow"] is None
 
     after = chat.say("¿cuánto gasté el mes pasado en el súper?")
 

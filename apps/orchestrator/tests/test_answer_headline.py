@@ -16,12 +16,16 @@ The filter is named in Spanish, from the same vocabulary the planner's prompt us
 `GROCERIES` is an identifier and "supermercado" is what the user said.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import answer_writer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 
 LAST_MONTH = RelativePeriod(period=Period.LAST_MONTH)
 
@@ -92,6 +96,60 @@ def test_an_average_rounds_half_away_from_zero_in_minor_units() -> None:
     said = answer_writer.write(answer(total=101, count=2), plan(metric=Metric.AVERAGE))
 
     assert "0,51 €" in said
+
+
+def test_a_monthly_average_includes_calendar_months_with_no_movements() -> None:
+    answered = QueryAnswer(
+        currency="EUR",
+        total_minor=120_000,
+        movement_count=9,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 6, 30),
+        # No row for February or May: they still belong in the six-month divisor.
+        groups=(
+            Group("2026-01", 30_000, 2),
+            Group("2026-03", 30_000, 2),
+            Group("2026-04", 30_000, 2),
+            Group("2026-06", 30_000, 3),
+        ),
+    )
+
+    said = answer_writer.write(
+        answered,
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            date_range=AbsoluteRange(start=date(2026, 1, 1), end=date(2026, 6, 30)),
+            categories=("GROCERIES",),
+            group_by=GroupBy.MONTH,
+            metric=Metric.PERIOD_AVERAGE,
+        ),
+    )
+
+    assert "gasto medio por mes en supermercado" in said
+    assert "200,00 €" in said
+    assert "6 meses" in said
+
+
+def test_a_rolling_twelve_month_average_divides_by_twelve_not_endpoint_labels() -> None:
+    answered = QueryAnswer(
+        currency="EUR",
+        total_minor=1_200_000,
+        movement_count=20,
+        period_start=date(2025, 8, 6),
+        period_end=date(2026, 8, 6),
+    )
+    monthly = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    said = answer_writer.write(answered, monthly)
+
+    assert "1.000,00 €" in said
+    assert "12 meses" in said
 
 
 def test_a_category_comparison_shows_an_average_for_each_category() -> None:

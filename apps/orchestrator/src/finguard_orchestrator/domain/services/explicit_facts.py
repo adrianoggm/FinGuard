@@ -45,7 +45,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.services import category_words, spanish, window_words
 from finguard_orchestrator.domain.services.window_words import Window
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -99,6 +99,28 @@ _ASKS_WHEN: Final = re.compile(
 )
 
 _AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
+_PER_MOVEMENT_AVERAGE: Final = re.compile(
+    r"\b(?:media|promedio|importe\s+medio|ticket\s+medio)\s+"
+    r"(?:por|de\s+cada)\s+(?:cada\s+)?(?:movimiento|operacion|compra|pago|cargo|ingreso)s?\b"
+)
+_TEMPORAL_GROUPS: Final[tuple[tuple[GroupBy, re.Pattern[str]], ...]] = (
+    (
+        GroupBy.DAY,
+        re.compile(r"\b(?:por|al|cada)\s+dia\b|\b(?:media|promedio)\s+diari[oa]\b"),
+    ),
+    (
+        GroupBy.WEEK,
+        re.compile(r"\b(?:por|a\s+la|cada)\s+semana\b|\b(?:media|promedio)\s+semanal\b"),
+    ),
+    (
+        GroupBy.MONTH,
+        re.compile(
+            r"\b(?:por|al|cada)\s+mes\b|\bmes\s+a\s+mes\b|"
+            r"\b(?:media|promedio|gasto\s+medio|importe\s+medio)\s+mensual\b|\bmensualmente\b"
+            r"|\b(?:movimientos?|operaciones?|compras?|pagos?|cargos?)\s+mensual(?:es)?\b"
+        ),
+    ),
+)
 _COMPARES: Final = re.compile(
     r"\bcompara|\bcomparacion\b|\bfrente\s+a\b|\bpor\s+separado\b|\buna\s+y\s+otra\b"
 )
@@ -150,14 +172,29 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     comparison = bool(_COMPARES.search(folded)) and len(named) >= 2
     says_income = bool(_INCOME.search(folded)) or "SALARY" in named
     says_expense = bool(_EXPENSE.search(folded))
+    temporal_group = next(
+        (group for group, pattern in _TEMPORAL_GROUPS if pattern.search(folded)), None
+    )
+    asks_average = bool(_AVERAGE.search(folded))
+    per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
+    window = window_words.window_in(sentence, today=today)
+    # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
+    # months unless a more precise year/window was written, in which case that explicit window won
+    # above. This is a duration, not a forecast.
+    if window is None and asks_average and re.search(r"\banual(?:es)?\b", folded):
+        window = RelativePeriod(period=Period.LAST_N_MONTHS, n=12)
     return ExplicitFacts(
-        window=window_words.window_in(sentence, today=today),
+        window=window,
         group_by=(
             _COUNTERPARTY
             if _ASKS_WHO.search(folded)
-            else (GroupBy.CATEGORY if comparison else None)
+            else (GroupBy.CATEGORY if comparison else temporal_group)
         ),
-        metric=Metric.AVERAGE if _AVERAGE.search(folded) else None,
+        metric=(
+            Metric.AVERAGE
+            if asks_average and (per_movement or temporal_group is None)
+            else (Metric.PERIOD_AVERAGE if asks_average else None)
+        ),
         direction=Direction.INCOME if says_income and not says_expense else None,
         compared_categories=named if comparison else (),
         names_a_category=bool(named),

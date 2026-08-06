@@ -280,6 +280,8 @@ def from_body(body: Any, *, account_id: UUID | None = None) -> QueryAnswer:
         currency=body["currency"],
         total_minor=body["totalMinor"],
         movement_count=body["movementCount"],
+        period_start=(date.fromisoformat(body["periodStart"]) if body.get("periodStart") else None),
+        period_end=date.fromisoformat(body["periodEnd"]) if body.get("periodEnd") else None,
         groups=tuple(
             Group(
                 key=group["key"],

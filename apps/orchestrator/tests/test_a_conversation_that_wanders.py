@@ -721,7 +721,7 @@ def test_a_balance_about_one_account_does_not_scope_the_question_after_it() -> N
 # =========================================================================================
 
 
-def test_a_refusal_never_reaches_the_model_even_mid_conversation() -> None:
+def test_an_average_never_reaches_the_model_even_mid_conversation() -> None:
     """The guard is a control and runs before the planner. Refusing afterwards would be whatever
     disposition the configured model happens to have, which moved by sixty points between two
     models that were measured."""
@@ -730,16 +730,15 @@ def test_a_refusal_never_reaches_the_model_even_mid_conversation() -> None:
 
     chat.say("¿cuánto gasté el mes pasado en el supermercado?")
     asked = len(planner.asked)
-    refused = chat.say("¿cuál es mi gasto medio en gasolina?")
+    answered = chat.say("¿cuál es mi gasto medio en gasolina?")
 
-    assert refused["outcome"] == PlanningOutcome.UNSUPPORTED.value
+    assert answered["outcome"] == PlanningOutcome.PLANNED.value
     assert len(planner.asked) == asked
 
 
 @pytest.mark.parametrize(
     ("said", "family"),
     [
-        ("¿cuál es mi gasto medio en gasolina el mes pasado?", "AVERAGE"),
         ("¿qué porcentaje de mi gasto es el alquiler?", "RATIO"),
         ("¿gasté más en julio que en junio?", "COMPARISON"),
         ("a este ritmo, ¿cuánto voy a gastar este mes?", "FORECAST"),

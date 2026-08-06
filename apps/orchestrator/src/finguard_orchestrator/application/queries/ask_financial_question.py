@@ -23,6 +23,7 @@ from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
     Metric,
+    Period,
     PlanningOutcome,
     Spoken,
 )
@@ -44,7 +45,7 @@ from finguard_orchestrator.domain.models.conversation import (
     workflow_of,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
@@ -66,6 +67,7 @@ from finguard_orchestrator.domain.services import (
     plan_verifier,
     query_recovery,
     spanish,
+    spanish_numbers,
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
@@ -88,6 +90,21 @@ DEFAULT_BANK_READ_ATTEMPTS = 2
 # How far back the wallet's "spent" column looks when the chat asks. The wallet screen has its own
 # setting; this is the fallback for a handler built without one.
 DEFAULT_CARD_DAYS = 30
+
+_RECENT_MOVEMENTS: Final = re.compile(
+    r"\b(?:ultim[oa]s?|utlim[oa]s?|recientes?)\s+"
+    r"(?P<count>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
+    r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
+    r"|\b(?P<count_first>\d{1,3})\s+"
+    r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\s+"
+    r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
+)
+_MOVEMENT_EXAMPLE: Final = re.compile(
+    r"\b(?:dame|ponme|muestrame|ensename)\b.{0,45}\b(?:ejemplo|ejemlo)\b.{0,45}"
+    r"\b(?:esos?|estos?|los)?\s*(?:movimientos?|operaciones?|cargos?|compras?)\b"
+    r"|\b(?:ejemplo|ejemlo)\s+de\s+(?:esos?|estos?|los)\s+"
+    r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -515,6 +532,21 @@ class AskFinancialQuestionHandler:
             yield await self._balance(query, was)
             return
 
+        recent = _recent_movement_count(query.sentence)
+        if recent is not None:
+            yield Stage("querying")
+            yield await self._recent_movements(query, recent)
+            return
+
+        if (
+            previous is not None
+            and isinstance(previous, FinancialPlan)
+            and _MOVEMENT_EXAMPLE.search(spanish.folded(query.sentence))
+        ):
+            yield Stage("querying")
+            yield await self._movement_example(query, previous)
+            return
+
         if intent is Intent.CORRECTION:
             if isinstance(previous, FinancialPlan) and intent_router.is_bare_correction(
                 query.sentence
@@ -567,6 +599,29 @@ class AskFinancialQuestionHandler:
                 yield await self._ranked(query, shifted)
             else:
                 yield await self._answer(query, shifted)
+            return
+
+        average = _average_plan(query)
+        if isinstance(average, FinancialPlanDraft):
+            conversation = (
+                was
+                if isinstance(was.active, PaymentInProgress) and was.active.suspended
+                else was.with_active(FinancialClarification(draft=average, awaiting=Slot.WINDOW))
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text="¿De qué periodo quieres que calcule la media?",
+                question="¿De qué periodo quieres que calcule la media?",
+                conversation=conversation,
+                suggestions=["Este mes", "El mes pasado", "Los últimos 12 meses", "En 2025"],
+            )
+            return
+        if average is not None:
+            # Average vocabulary is closed enough to plan without a model. This branch sits before
+            # the legacy guard that used to reject all time-normalised means.
+            yield Stage("planned", answer_writer.describe(average))
+            yield Stage("querying")
+            yield await self._answer(query, average)
             return
 
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
@@ -1158,6 +1213,89 @@ class AskFinancialQuestionHandler:
             conversation=query.conversation.answered(ranking),
         )
 
+    async def _recent_movements(
+        self, query: AskFinancialQuestionQuery, limit: int
+    ) -> AskFinancialQuestionResult:
+        """The latest N rows, where N is a count and never a number of days."""
+        plan = FinancialPlan(
+            direction=Direction.ALL,
+            period=RelativePeriod(period=Period.LAST_N_MONTHS, n=24),
+            group_by=GroupBy.NONE,
+            metric=Metric.SUM,
+            include_internal=True,
+            across_accounts=True,
+        )
+        scoped = await self._scoped(plan, query)
+        try:
+            answer = await self._queries.run(
+                scoped,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=limit,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido la lista, pero el banco ha rechazado la consulta.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        movements = answer.movements[:limit]
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=answer_writer.recent_movements(len(movements)),
+            plan=f"últimos {limit} movimientos, todas tus cuentas",
+            conversation=query.conversation.answered(plan),
+            currency=answer.currency,
+            movement_count=len(movements),
+            movements=[_spoken_movement(movement) for movement in movements],
+        )
+
+    async def _movement_example(
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan
+    ) -> AskFinancialQuestionResult:
+        """One concrete row from the last answer, without asking the model what «esos» means."""
+        scoped = await self._scoped(plan, query)
+        try:
+            answer = await self._queries.run(
+                scoped,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=1,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="No he podido volver a consultar esos movimientos.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        movement = next(iter(answer.movements), None)
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=answer_writer.movement_example(movement, answer.currency),
+            plan=answer_writer.describe(plan),
+            conversation=query.conversation,
+            currency=answer.currency,
+            total_minor=movement.amount_minor if movement is not None else None,
+            movement_count=1 if movement is not None else 0,
+            movements=[_spoken_movement(movement)] if movement is not None else [],
+        )
+
     async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
         """Which of the holder's accounts the question is about.
 
@@ -1495,6 +1633,73 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # For a family with nothing specific to say, which today is none of them. It exists so adding a
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
+
+
+def _average_plan(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """Build either kind of average from explicit words, preserving safe conversation context.
+
+    The distinction is arithmetic, not semantic guesswork: AVERAGE divides by matching movements;
+    PERIOD_AVERAGE divides by the DAY/WEEK/MONTH buckets named in the sentence. A missing window is
+    kept as a draft so the next turn can answer it instead of being told the capability is absent.
+    """
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if facts.metric not in {Metric.AVERAGE, Metric.PERIOD_AVERAGE}:
+        return None
+
+    previous = query.conversation.last_plan
+    named = category_words.precisely_named_in(query.sentence)
+    previous_categories = previous.categories if previous is not None else ()
+    previous_merchants = previous.merchants if previous is not None else ()
+    categories = named or previous_categories
+    merchants = () if named else previous_merchants
+    asks_to_spend = re.search(
+        r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr", spanish.folded(query.sentence)
+    )
+    direction = facts.direction or (Direction.EXPENSE if asks_to_spend else None)
+    direction = direction or (previous.direction if previous is not None else None)
+    if direction is None:
+        direction = _direction_of(categories) if categories else Direction.ALL
+
+    if facts.group_by is not None:
+        group_by = facts.group_by
+    elif not named and isinstance(previous, FinancialPlan):
+        group_by = previous.group_by
+    else:
+        group_by = GroupBy.NONE
+
+    # PERIOD_AVERAGE is only produced together with a temporal group by explicit_facts. Keeping
+    # this defensive check here turns future vocabulary drift into a clarification, not an invalid
+    # plan sent to banking.
+    if facts.metric is Metric.PERIOD_AVERAGE and group_by not in {
+        GroupBy.DAY,
+        GroupBy.WEEK,
+        GroupBy.MONTH,
+    }:
+        return None
+
+    window = facts.window
+    if window is None and previous is not None:
+        window = previous.period or previous.date_range
+
+    if window is None:
+        return FinancialPlanDraft(
+            direction=direction,
+            categories=categories,
+            merchants=merchants,
+            group_by=group_by,
+            metric=facts.metric,
+        )
+    return FinancialPlan(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=categories,
+        merchants=merchants,
+        group_by=group_by,
+        metric=facts.metric,
+    )
 
 
 def _from_what_the_sentence_said(
@@ -1875,6 +2080,26 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         merchants=list(plan.merchants),
         group_by=plan.group_by.value,
         metric=plan.metric.value,
+    )
+
+
+def _recent_movement_count(sentence: str) -> int | None:
+    found = _RECENT_MOVEMENTS.search(spanish.folded(sentence))
+    if found is None:
+        return None
+    written = found.group("count") or found.group("count_first")
+    count = int(written) if written.isdigit() else spanish_numbers.integer(written)
+    return count if count is not None and 1 <= count <= 50 else None
+
+
+def _spoken_movement(movement: Movement) -> SpokenMovement:
+    return SpokenMovement(
+        occurred_at=movement.occurred_at.isoformat(),
+        description=movement.description,
+        amount_minor=movement.amount_minor,
+        direction=movement.direction,
+        merchant_name=movement.merchant_name,
+        category=movement.category,
     )
 
 

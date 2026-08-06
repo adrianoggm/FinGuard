@@ -204,7 +204,7 @@ episodes:
     metrics: [correction_recovery]
     turns:
       - say: ¿cuál es mi gasto medio en gasolina?
-        route: REFUSED
+        route: CLARIFY
       - say: no me has entendido
         not_says: medias
       - say: ¿cuánto gasté en gasolina el mes pasado?

@@ -13,7 +13,7 @@ episodes:
     metrics: [wrong_tool]
     turns:
       - say: ¿cuál es mi gasto medio en gasolina?
-        route: REFUSED
+        route: CLARIFY
         no_model: true
       - say: ¿qué porcentaje de mi gasto es el alquiler?
         route: REFUSED
@@ -39,7 +39,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: ¿cuál es mi gasto medio?
-        route: REFUSED
+        route: QUERY
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
         ends: true
@@ -119,7 +119,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
       - say: ¿cuál es la media?
-        route: REFUSED
+        route: QUERY
       - say: ¿y en gasolina?
         route: QUERY
       - say: ¿y en restaurantes?
@@ -174,7 +174,7 @@ episodes:
     metrics: [unnecessary_clarification]
     turns:
       - say: ¿cuál es mi gasto medio?
-        route: REFUSED
+        route: CLARIFY
         no_model: true
       - say: ¿qué porcentaje va en alquiler?
         route: REFUSED
@@ -202,7 +202,7 @@ episodes:
         route: PAYMENT
         awaiting: AMOUNT
       - say: ¿cuál es mi gasto medio?
-        route: REFUSED
+        route: PAYMENT
       - say: continuar con el bizum
         route: PAYMENT
         awaiting: AMOUNT
@@ -265,7 +265,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: ¿cuál es mi gasto medio en la hucha?
-        route: REFUSED
+        route: CLARIFY
         not_says: "5.485,50"
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE

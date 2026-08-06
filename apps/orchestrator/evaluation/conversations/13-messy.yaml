@@ -115,7 +115,7 @@ episodes:
         route: PAYMENT
         awaiting: AMOUNT
       - say: ¿cuál es mi gasto medio?
-        route: REFUSED
+        route: QUERY
       - say: continuar con el bizum
         route: PAYMENT
         awaiting: AMOUNT
@@ -181,7 +181,7 @@ episodes:
     metrics: [correction_recovery, wrong_tool]
     turns:
       - say: ¿cuál es mi gasto medio?
-        route: REFUSED
+        route: CLARIFY
       - say: cunato gaste
         route: QUERY
       - say: no es eso
@@ -251,7 +251,7 @@ episodes:
       - say: ¿y en gasolina?
         route: QUERY
       - say: ¿cuál es mi gasto medio?
-        route: REFUSED
+        route: QUERY
       - say: ¿y en restaurantes?
         route: QUERY
       - say: ¿a quién puedo pagar?
