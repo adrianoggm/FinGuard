@@ -1,6 +1,7 @@
 """Measures how well a model reads a turn, against the rules that read it today.
 
     uv run python scripts/evaluate_interpreting.py --model qwen3.5:4b
+    uv run python scripts/evaluate_interpreting.py --provider xai --model grok-4-fast
 
 The number that decides whether the migration in ADR-0xx is worth having. The rules get 100 % by
 definition — they are the reference — so this is not "is the model right", it is "where does the
@@ -34,6 +35,7 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 # A Windows console is cp1252 and this table has arrows in it. Said here rather than avoided in the
 # output: the corpus is Spanish, so a report that cannot print an accent is a report of the wrong
@@ -62,6 +64,9 @@ from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter impo
 )
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import (  # noqa: E402
     OllamaLlmProvider,
+)
+from finguard_orchestrator.infrastructure.llm.xai_llm_provider import (  # noqa: E402
+    XaiLlmProvider,
 )
 
 
@@ -102,8 +107,15 @@ def _table(report: episodes.Agreement, limit: int) -> str:
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, help="an installed Ollama model")
-    parser.add_argument("--base-url", default="http://localhost:11434")
+    parser.add_argument("--model", required=True, help="a model name the provider serves")
+    parser.add_argument(
+        "--provider",
+        default="ollama",
+        choices=["ollama", "xai"],
+        help="ollama runs locally; xai needs ORCHESTRATOR_XAI_API_KEY and sends every corpus "
+        "sentence over the internet",
+    )
+    parser.add_argument("--base-url", default=None, help="overrides the provider's own default")
     parser.add_argument(
         "--episodes",
         type=int,
@@ -119,17 +131,33 @@ async def main() -> int:
         print(f"# only the first {len(corpus)} episodes — this is a sample, not a result")
 
     settings = get_settings()
-    provider = OllamaLlmProvider(
-        base_url=args.base_url,
-        keep_alive=settings.ollama_keep_alive,
-        timeout_seconds=settings.ollama_timeout_seconds,
-        context_tokens=settings.ollama_context_tokens,
-        # Fixed, like everywhere else. A classifier that answers differently on a rerun is one
-        # whose measurement cannot be repeated, and a measurement nobody can repeat is an opinion.
-        seed=settings.ollama_seed,
-    )
+    provider: Any
+    if args.provider == "xai":
+        if settings.xai_api_key is None:
+            print("ORCHESTRATOR_XAI_API_KEY is not set — see .env.defaults", file=sys.stderr)
+            return 2
+        # Said out loud rather than assumed. The corpus is written to look like a person's bank
+        # questions, and this sends every sentence in it to a third party.
+        print(f"# {len(corpus)} episodes going to {args.provider}. They leave this machine.")
+        provider = XaiLlmProvider(
+            api_key=settings.xai_api_key.get_secret_value(),
+            base_url=args.base_url or settings.xai_base_url,
+            timeout_seconds=settings.xai_timeout_seconds,
+        )
+    else:
+        provider = OllamaLlmProvider(
+            base_url=args.base_url or settings.ollama_base_url,
+            keep_alive=settings.ollama_keep_alive,
+            timeout_seconds=settings.ollama_timeout_seconds,
+            context_tokens=settings.ollama_context_tokens,
+            # Fixed, like everywhere else. A classifier that answers differently on a rerun is
+            # one whose measurement cannot be repeated, and a measurement nobody can repeat is
+            # an opinion. The hosted provider offers no equivalent, which is a real difference
+            # between the two rows of any table this produces.
+            seed=settings.ollama_seed,
+        )
     if not await provider.ping():
-        print(f"no Ollama at {args.base_url}", file=sys.stderr)
+        print(f"{args.provider} did not answer", file=sys.stderr)
         return 2
 
     started = time.monotonic()

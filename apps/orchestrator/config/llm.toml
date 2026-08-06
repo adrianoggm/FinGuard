@@ -37,3 +37,24 @@ model = "echo-2"
 # alias = "local"
 # provider = "ollama"
 # model = "qwen2.5-coder:7b"
+
+# Hosted inference, for comparing against something bigger than an 8 GB card fits.
+#
+# The provider is `xai` and not `grok`: Grok is the family of models it serves, and this
+# file's own rule is that the unit is the model. Two Grok models are two entries.
+#
+# It only exists when ORCHESTRATOR_XAI_API_KEY is set — see .env.defaults for where the key
+# goes, which is not there and not here. With no key these entries name a provider this
+# build does not have, and the catalogue refuses to load rather than failing at the first
+# question.
+#
+# Everything typed here leaves the machine. That is the difference from `ollama` above and
+# it is a decision about somebody's bank questions, not a performance setting.
+#
+# Model names come from the vendor and change; `curl -H "Authorization: Bearer $KEY"
+# https://api.x.ai/v1/models` lists what your key can reach today.
+#
+# [[models]]
+# alias = "grok"
+# provider = "xai"
+# model = "grok-4-fast"

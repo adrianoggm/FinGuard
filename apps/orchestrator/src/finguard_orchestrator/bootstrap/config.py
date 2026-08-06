@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Final
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -80,6 +80,35 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float
     ollama_context_tokens: int
     ollama_seed: int
+
+    # --- hosted inference, for comparing against a bigger model ----------------------
+    #
+    # The key, and the only field in this class that is a secret. `SecretStr` so a stray log
+    # line, a `repr` or a `/version`-style dump prints `**********` instead of a live
+    # credential — the characters come out at exactly one call site, the composition root.
+    #
+    # **None means the provider does not exist.** Not "exists and fails at the first request":
+    # a provider nobody configured cannot be built, which is the same rule that took Ollama out
+    # of the registry's zero-argument builders. It also means the whole feature is off by
+    # default, and turning it on is a deliberate act by whoever holds the key.
+    #
+    # It belongs in `.env`, which is gitignored, and never in `.env.defaults`, which is not.
+    xai_api_key: SecretStr | None = None
+
+    # Defaults rather than required fields, unlike every operational number above, because
+    # these have a right answer that does not belong to a deployment: the endpoint is the
+    # vendor's and the timeout is a ceiling for "something is wrong". A deployment that never
+    # uses the provider should not have to state them.
+    xai_base_url: str = "https://api.x.ai/v1"
+    xai_timeout_seconds: float = 60.0
+
+    # Which provider turns a sentence into a plan, and reads a turn.
+    #
+    # It was `ollama` in code at the composition root, which made "try a bigger model" a patch
+    # rather than a setting. The catalogue beside it chooses who *answers* /v1/messages; this
+    # chooses who *plans*, and they stay separate for the reason they always have — planning is
+    # measured its own way and one knob for both would hide which one moved.
+    planner_provider: str = "ollama"
 
     # Planner sampling. These were literals at the composition root, which is the same
     # defect one layer up. Temperature 0 is deliberate: the planner is not being creative,
