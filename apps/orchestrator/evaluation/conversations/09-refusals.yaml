@@ -271,5 +271,7 @@ episodes:
         route: BALANCE
       - say: ¿qué porcentaje tengo en el fondo?
         route: REFUSED
+      - say: ¿y en la hucha?
+        route: BALANCE
       - say: vale
         route: COURTESY

@@ -655,7 +655,7 @@ class AskFinancialQuestionHandler:
                 # product, answered by throwing away something the user was in the middle of.
                 was
                 if isinstance(was.active, PaymentInProgress) and was.active.suspended
-                else was.with_active(UnsupportedCapability(capability=capability))
+                else was.refused(capability)
             ),
         )
 
@@ -1395,7 +1395,16 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         # the answers this service is certain about instead of asking an open question again.
         text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
 
-    conversation = was.with_active(_next_state(planned))
+    left_open = _next_state(planned)
+    conversation = (
+        # The same rule the guard's own refusal follows one branch over: a refusal answers nothing,
+        # so the thread the user was on survives it. Written here as well because a capability can
+        # be missed by the guard and caught by the planner, and the two must not leave different
+        # conversations behind for the same sentence.
+        was.refused(left_open.capability)
+        if isinstance(left_open, UnsupportedCapability)
+        else was.with_active(left_open)
+    )
     if planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION:
         # Recorded whether or not a workflow survived. A clarification carrying a draft keeps its
         # slot on the state and `awaiting` reads it there; this is what remembers it when there is
