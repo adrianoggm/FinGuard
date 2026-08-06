@@ -272,6 +272,27 @@ class Conversation:
             last_asked=slot,
         )
 
+    def refused(self, capability: str) -> "Conversation":
+        """A capability this service does not have, recorded — and nothing else disturbed.
+
+        A refusal answers nothing, so it must not end the thread the user was on. `last_plan`
+        already survived one and `answered_the_balance` did not, which made the spending thread
+        outlive a refusal while the balance thread died on it:
+
+            "¿cuánto tengo en el fondo?"           the fund's balance
+            "¿qué porcentaje tengo en el fondo?"   refused
+            "¿y en la hucha?"                      …a question about spending
+
+        `last_asked` still goes, and that is not the same thing: the refusal genuinely asked
+        nothing, so there is no open question for the next turn to be answering.
+        """
+        return Conversation(
+            active=UnsupportedCapability(capability=capability),
+            last_plan=self.last_plan,
+            retry_plan=self.retry_plan,
+            answered_the_balance=self.answered_the_balance,
+        )
+
     def answering_the_balance(self) -> "Conversation":
         """This turn said how much money there is, so a bare account name is about that.
 

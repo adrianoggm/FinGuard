@@ -450,7 +450,7 @@ class AskFinancialQuestionHandler:
             was = was.with_active(None)
             query = replace(query, conversation=was)
 
-        if intent is Intent.FINANCIAL_QUERY and _narrows_the_balance(query, was):
+        if intent is Intent.FINANCIAL_QUERY and _narrows_the_balance(query, was, self._policy):
             # "¿Y en la hucha?" after a balance is about the balance of that account. The same words
             # after a spending question narrow the spending, which is why this reads the turn before
             # rather than the sentence: they are identical sentences and they mean different things.
@@ -655,7 +655,7 @@ class AskFinancialQuestionHandler:
                 # product, answered by throwing away something the user was in the middle of.
                 was
                 if isinstance(was.active, PaymentInProgress) and was.active.suspended
-                else was.with_active(UnsupportedCapability(capability=capability))
+                else was.refused(capability)
             ),
         )
 
@@ -1333,19 +1333,39 @@ _THE_WHOLE_LOT: Final = re.compile(
 )
 
 
-def _narrows_the_balance(query: AskFinancialQuestionQuery, was: Conversation) -> bool:
+def _narrows_the_balance(
+    query: AskFinancialQuestionQuery, was: Conversation, policy: GuardPolicy
+) -> bool:
     """Whether this sentence is a balance question that names only an account, or asks for all.
 
-    Three conditions, and all three are needed. The previous turn answered a balance, or the same
+    Four conditions, and all four are needed. The previous turn answered a balance, or the same
     words are a follow-up about spending. The sentence names an account - or asks for the total,
-    which is the same follow-up pointing the other way. And it states no window and no category,
+    which is the same follow-up pointing the other way. It states no window and no category,
     because a sentence that does has moved on to a question the ledger answers: "y en la hucha el
     mes pasado" is about movements.
+
+    And **the guard does not refuse it**, which is the fourth and was missing. An ellipsis is a
+    fragment; the other three conditions try to say so and a sentence with a verb of its own slips
+    through all of them the moment it happens to name an account:
+
+        "¿cuál es mi gasto medio en la hucha?"   → "Tienes 5.485,50 € en Hucha."
+        "vende mis acciones del fondo indexado"  → the fund's balance
+        "¿qué porcentaje tengo en el fondo?"     → the fund's balance
+
+    Every one is a refused capability answered with a real figure about something else, stated as
+    fact, and none of them ever reached the guard — the balance is routed before it. Asking the
+    guard here is the general rule rather than a list of families: if the domain would decline the
+    sentence, it is not a follow-up about the balance.
+
+    The policy travels rather than `EVERY_RULE` being assumed, so a deployment that switches a rule
+    off gets one behaviour and not two.
     """
     if not was.answered_the_balance:
         return False
     folded = spanish.folded(query.sentence)
     if not account_words.named_in(query.sentence) and not _THE_WHOLE_LOT.search(folded):
+        return False
+    if capability_guard.unsupported_reason(query.sentence, policy) is not None:
         return False
     facts = explicit_facts.read(query.sentence, today=query.today)
     return facts.window is None and not facts.names_a_category
@@ -1375,7 +1395,16 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         # the answers this service is certain about instead of asking an open question again.
         text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
 
-    conversation = was.with_active(_next_state(planned))
+    left_open = _next_state(planned)
+    conversation = (
+        # The same rule the guard's own refusal follows one branch over: a refusal answers nothing,
+        # so the thread the user was on survives it. Written here as well because a capability can
+        # be missed by the guard and caught by the planner, and the two must not leave different
+        # conversations behind for the same sentence.
+        was.refused(left_open.capability)
+        if isinstance(left_open, UnsupportedCapability)
+        else was.with_active(left_open)
+    )
     if planned.outcome is PlanningOutcome.NEEDS_CLARIFICATION:
         # Recorded whether or not a workflow survived. A clarification carrying a draft keeps its
         # slot on the state and `awaiting` reads it there; this is what remembers it when there is

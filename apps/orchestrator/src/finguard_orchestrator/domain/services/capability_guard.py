@@ -87,9 +87,37 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     (
         # A request to act, not to read. Phase 5 adds payments behind a confirmation
         # step; until it does, and after, this path only answers questions.
+        #
+        # It used to be the verbs of moving money and nothing else, which left every other operation
+        # a bank app performs falling through to the planner. Eight of them, measured: «vende mis
+        # acciones del fondo», «contrata un plan de pensiones», «bloquea mi tarjeta» — all eight
+        # reached the model, and whatever it planned came back as a figure. A real figure answering
+        # a different question is the one failure nothing downstream can contradict, and here it
+        # answers a *request* with one.
+        #
+        # The refusal is also the honest one. Falling through produced "eso no puedo calcularlo
+        # todavía" for a request to sell shares, which is true of the wrong thing: nobody asked for
+        # a calculation. What the family says instead is what this can and cannot do.
+        #
+        # **Two of these needed an object to be safe.** «Compra» is a noun before it is an
+        # imperative — "¿cuánto gasté en la compra?" — and «abre»/«cierra» are about periods as
+        # often as accounts. Both are narrowed to the thing they act on rather than left to a word
+        # boundary, because a guard that refuses an answerable question is the expensive direction.
         "ACTION",
         re.compile(
-            r"\b(hazle|haz un|hazme|envia|manda|mandale|transfiere|paga|cambiame|cambia)\b",
+            r"\b(hazle|haz un|hazme|envia|manda|mandale|transfiere|paga|cambiame|cambia)\b"
+            # Buying and selling. Every one of these is something the app a person already uses
+            # does, so asking for it here is the natural mistake rather than an exotic one.
+            r"|\bvend(e|eme|er)\b|\binvertir\b|\binvierte\b|\btrasp[aá]same\b"
+            r"|\bcompra(me)?\s+(\d+\s+)?(acciones|participaciones|bitcoin|cripto|fondos?)"
+            # Contracting a product, and ending one.
+            r"|\bcontrat(a|ar|ame)\b|\bdomicilia(r|me)?\b|\bda(r|me)?\s+de\s+(alta|baja)\b"
+            r"|\b(abre|abrir|cierra|cerrar)\s+(una?\s+|mi\s+|la\s+|el\s+)?"
+            r"(cuenta|hucha|dep[oó]sito|fondo|plan|tarjeta)"
+            # The card, and cash. «Sacado» and «retirado» are questions about what already
+            # happened, so both need what follows rather than a bare stem.
+            r"|\bbloquea(r|me)?\b|\banula(r|me)?\b"
+            r"|\b(saca|sacar|retira|retirar)\s+(dinero|efectivo|\d)",
             re.IGNORECASE,
         ),
     ),

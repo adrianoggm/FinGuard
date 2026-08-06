@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
     Conversation,
     FinancialClarification,
     PaymentInProgress,
@@ -968,3 +969,20 @@ async def test_an_average_is_not_told_about_forecasts() -> None:
 
     assert "medias" in result.text
     assert "previsiones" not in result.text
+
+
+async def test_a_refusal_the_planner_found_keeps_the_balance_thread() -> None:
+    """The guard's own refusal preserves it, and this is the other path to the same state.
+
+    A capability can be missed by the guard's patterns and caught by the planner — that is what
+    `_next_state` maps back to an `UnsupportedCapability` for. Both must leave the same
+    conversation behind, or the same sentence ends the user's thread or not depending on which
+    layer happened to notice.
+
+    Found by mutation: reverting this branch failed nothing.
+    """
+    was = IDLE.answering_the_balance()
+
+    result = await ask(PlanningResult.unsupported("AVERAGE"), conversation=was)
+
+    assert result.conversation.answered_the_balance

@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -39,6 +41,7 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyHandler,
 )
 from finguard_orchestrator.bootstrap.config import get_settings
+from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic, Shadowed
 from finguard_orchestrator.infrastructure import (
@@ -61,6 +64,7 @@ from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter impo
 )
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
+from finguard_orchestrator.infrastructure.llm.xai_llm_provider import XaiLlmProvider
 from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
@@ -102,18 +106,29 @@ def create_app() -> FastAPI:
     catalogue = settings.catalogue()
     # The registry builds providers with no arguments; the one that needs configuration
     # gets it here, in the only place allowed to know what the deployment looks like.
-    providers = ProviderRegistry(
-        {
-            EchoLlmProvider.name: EchoLlmProvider,
-            OllamaLlmProvider.name: lambda: OllamaLlmProvider(
-                base_url=settings.ollama_base_url,
-                keep_alive=settings.ollama_keep_alive,
-                timeout_seconds=settings.ollama_timeout_seconds,
-                context_tokens=settings.ollama_context_tokens,
-                seed=settings.ollama_seed,
-            ),
-        }
-    )
+    builders: dict[str, Callable[[], LlmProviderPort]] = {
+        EchoLlmProvider.name: EchoLlmProvider,
+        OllamaLlmProvider.name: lambda: OllamaLlmProvider(
+            base_url=settings.ollama_base_url,
+            keep_alive=settings.ollama_keep_alive,
+            timeout_seconds=settings.ollama_timeout_seconds,
+            context_tokens=settings.ollama_context_tokens,
+            seed=settings.ollama_seed,
+        ),
+    }
+    if (xai_key := settings.xai_api_key) is not None:
+        # Registered only when a key exists, so an unconfigured deployment cannot reach a
+        # provider that would 401 every request — and `providers.available()`, which /admin
+        # reports and the catalogue is validated against, tells the truth about this build.
+        #
+        # The one place the secret is unwrapped. Everywhere else it is a `SecretStr` whose repr
+        # is `**********`, which is what keeps a stray log line from being a live credential.
+        builders[XaiLlmProvider.name] = lambda: XaiLlmProvider(
+            api_key=xai_key.get_secret_value(),
+            base_url=settings.xai_base_url,
+            timeout_seconds=settings.xai_timeout_seconds,
+        )
+    providers = ProviderRegistry(builders)
     # The active policy is created at startup and lives in the application state: the
     # service is deliberately not stateless, its configuration changes at runtime.
     policies = PolicyStore(catalogue, catalogue.default_policy())
@@ -126,7 +141,11 @@ def create_app() -> FastAPI:
     # The planning path. It does not go through the LLM policy on purpose: the policy
     # chooses who *answers*, and planning is a different job measured a different way
     # (scripts/evaluate_planning.py). One knob per decision beats one knob for both.
-    planner_provider = providers.get(OllamaLlmProvider.name)
+    # Configured rather than hardcoded, which is what makes "try a bigger model" a setting and
+    # not a patch. An unknown or unconfigured name is a startup error from the registry, and
+    # that is the right moment for it: the alternative is a service that starts and then fails
+    # every financial question.
+    planner_provider = providers.get(settings.planner_provider)
     banking = HttpFinancialQuery(
         base_url=settings.banking_base_url,
         timeout_seconds=settings.banking_timeout_seconds,
