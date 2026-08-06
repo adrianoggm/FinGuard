@@ -21,7 +21,15 @@ from finguard_orchestrator.domain.services import spanish
 
 _GLOSS: Final[dict[str, tuple[str, ...]]] = {
     "GROCERIES": ("el súper", "el supermercado", "la compra", "comida de casa", "supermercado"),
-    "TRANSPORT_FUEL": ("gasolina", "gasoil", "diésel", "repostar", "la gasolinera"),
+    "TRANSPORT_FUEL": (
+        "gasolina",
+        "gasoil",
+        "diésel",
+        "repostar",
+        "la gasolinera",
+        "el coche",
+        "combustible",
+    ),
     "RESTAURANTS": ("restaurantes", "bares", "comer fuera", "cenar fuera", "cañas", "café"),
     "TRANSPORT_PUBLIC": ("transporte público", "tren", "metro", "autobús", "taxi", "VTC"),
     "HEALTH": ("salud", "farmacia", "médico", "dentista", "óptica"),
@@ -85,7 +93,23 @@ def names() -> tuple[str, ...]:
 # What is left is equivalences the product itself defines: cine is ocio the way EUR is euros.
 _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "GROCERIES": ("supermercado", "súper"),
-    "TRANSPORT_FUEL": ("gasolina", "gasoil", "diésel", "gasolinera", "repostar"),
+    # "Coche" is here and "transporte" is not, which looks inconsistent until you read the ledger:
+    # TRANSPORT_FUEL is 184 movements of BP and Cepsa and there is no insurance, no repairs and no
+    # parking category, so spending "on the car" is fuel *entirely* rather than approximately.
+    # "Transporte" stays out because it is the parent of two categories and a gate cannot be right
+    # about both.
+    #
+    # What it costs to leave out is measured rather than argued. "¿Qué he gastado con el coche este
+    # año?" was answered three different ways by one model on three runs: TRANSPORT_FUEL, then
+    # TRANSPORT_PUBLIC — a car is not a bus — and then no filter at all, which reported 14.019,05 €
+    # of everything as the car. Any deterministic answer beats a three-way coin flip, and this one
+    # also arms `plan_verifier`: with the word recognised, the two wrong readings stop being
+    # answers and become refusals.
+    #
+    # ponytail: true of this ledger. The day a CAR_INSURANCE or a REPAIRS category exists, "coche"
+    # becomes the parent of several and belongs out here with "transporte" — the upgrade is to
+    # delete this line, not to grow it.
+    "TRANSPORT_FUEL": ("gasolina", "gasoil", "diésel", "gasolinera", "repostar", "coche"),
     "RESTAURANTS": ("restaurantes", "restaurante", "comer fuera", "cenar fuera"),
     "TRANSPORT_PUBLIC": ("transporte público", "metro", "autobús", "taxi"),
     "HEALTH": ("salud", "farmacia", "dentista", "óptica"),

@@ -12,7 +12,7 @@ is camelCase and that a date range is spelled from/to.
 """
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 import httpx2 as httpx
@@ -143,6 +143,24 @@ class HttpFinancialQuery:
             return False
 
 
+# Every field `RankedMovementRequest` declares, and the only ones sent. Written out rather than
+# derived, because deriving it would mean importing banking — the duplication between these two
+# services is deliberate and the drift is supposed to surface as a 422. What is new is that it now
+# surfaces in a test instead of in somebody's conversation.
+RANKED_FIELDS: Final = frozenset(
+    {
+        "accountId",
+        "direction",
+        "categories",
+        "merchants",
+        "dateRange",
+        "period",
+        "reportingTimezone",
+        "rank",
+    }
+)
+
+
 def ranked_body(
     ranking: TopMovements,
     *,
@@ -154,8 +172,23 @@ def ranked_body(
 
     It reuses `to_body` for the filters and the window — the same fields, resolved the same way,
     including the reference date that makes both services agree on which days a period covers — and
-    then drops the three the ranking endpoint does not take. Dropping is safer than rebuilding: a
-    second copy of the window logic is a second chance for the two services to disagree.
+    then keeps only what the ranking endpoint accepts. Reusing is still right: a second copy of the
+    window logic is a second chance for the two services to disagree.
+
+    **An allow-list, and the deny-list it replaced is why.** This used to pop three names with a
+    comment calling them "the three the ranking endpoint does not take". `to_body` then grew
+    `includeInternal` and `acrossAccounts`, nobody came back here, and banking — which forbids
+    extra inputs — started 422ing every ranking. The user saw "la consulta que he construido no es
+    válida" for "¿cuál es el gasto más caro que he realizado?", which is a question this service
+    added a whole endpoint to answer.
+
+    Nothing caught it: the corpus drives a stubbed bank, so the one thing being got wrong was the
+    real contract. That is item 5 of docs/next.md arriving as promised — "drift arrives as a 422 at
+    runtime, which is better than a wrong number and still an error found by a user."
+
+    A deny-list is wrong here for a structural reason rather than a stylistic one: it has to be
+    updated when *the other* function changes, and nothing links the two. An allow-list is wrong
+    only when this endpoint changes, which is the change a reader is already looking at.
     """
     body = to_body(
         FinancialPlan(
@@ -170,10 +203,8 @@ def ranked_body(
         supporting_movements=0,
         reporting_timezone=reporting_timezone,
     )
-    for absent in ("groupBy", "metric", "supportingLimit"):
-        body.pop(absent, None)
     body["rank"] = ranking.rank
-    return body
+    return {name: value for name, value in body.items() if name in RANKED_FIELDS}
 
 
 def to_body(

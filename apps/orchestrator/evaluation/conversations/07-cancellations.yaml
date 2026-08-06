@@ -37,7 +37,11 @@ episodes:
       - say: cancelar consulta
         route: QUERY
       - say: reintentar
-        route: QUERY
+        # It used to be QUERY, and that was the word "reintentar" being handed to a language model
+        # to turn into a financial question. This episode exists so a retry cannot reach an
+        # abandoned query; saying there is nothing saved honours that better than planning it.
+        route: GUIDANCE
+        says: No tengo ninguna consulta guardada
       - say: ¿cuánto gasté este año?
         route: QUERY
       - say: gracias

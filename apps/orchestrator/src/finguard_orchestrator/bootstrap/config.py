@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Final
 from uuid import UUID
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -93,7 +93,21 @@ class Settings(BaseSettings):
     # default, and turning it on is a deliberate act by whoever holds the key.
     #
     # It belongs in `.env`, which is gitignored, and never in `.env.defaults`, which is not.
+    # Compose reads that same file, so there is one place for it whichever way this is started.
     xai_api_key: SecretStr | None = None
+
+    @field_validator("xai_api_key", mode="before")
+    @classmethod
+    def _a_blank_key_is_no_key(cls, value: object) -> object:
+        """`ORCHESTRATOR_XAI_API_KEY=` means the provider does not exist, not that it has a
+        blank credential.
+
+        An empty string is what a half-filled `.env` line produces, and what compose passes when
+        a `${VAR:-}` interpolation finds nothing. Taken literally it builds a provider whose every
+        request is a 401 — the exact failure the "no key, no provider" rule exists to prevent,
+        arriving by the one route that rule does not cover.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
 
     # Defaults rather than required fields, unlike every operational number above, because
     # these have a right answer that does not belong to a deployment: the endpoint is the

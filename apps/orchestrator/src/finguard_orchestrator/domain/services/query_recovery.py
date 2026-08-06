@@ -68,6 +68,20 @@ def retry_action(sentence: str) -> RetryAction | None:
         "intentalo otra vez",
         "vuelve a intentarlo",
         "reintentar consulta",
+        # The words a person uses when the button says "Reintentar" and they type instead. Reported
+        # from the demo: "vuelve a hacerla" reached the planner as a sentence to turn into a query,
+        # and came back asking which period "vuelve a hacerla" refers to.
+        #
+        # Still whole-turn and exact, which is what keeps "vuelve a hacerlo pero en junio" out —
+        # that is a new question and belongs to the planner. A misspelling still misses, and that
+        # is the standing cost of a closed vocabulary rather than something this list can fix.
+        "vuelve a hacerla",
+        "vuelve a hacerlo",
+        "hazlo otra vez",
+        "hazla otra vez",
+        "repitelo",
+        "repitela",
+        "otra vez",
     }:
         return RetryAction.RETRY
     if said in {"cambiar consulta", "quiero cambiar la consulta", "otra consulta"}:
