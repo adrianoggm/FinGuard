@@ -61,6 +61,24 @@ export function transfersBelong(only: string | null, asked: boolean): boolean {
   return asked || only !== null;
 }
 
+/**
+ * One load of the list, and the two things the screen holds afterwards.
+ *
+ * They travel together because they are one state. The failure used to set the message and leave
+ * the previous answer on screen, so a filtered request that was refused — an account banking cannot
+ * find answers 400 — left every account's movements sitting under the words "no he podido cargar",
+ * which is a real list answering a question nobody asked.
+ */
+export async function load(
+  ask: () => Promise<Movements>,
+): Promise<{ found: Movements | null; error: string | null }> {
+  try {
+    return { found: await ask(), error: null };
+  } catch {
+    return { found: null, error: "No he podido cargar los movimientos." };
+  }
+}
+
 type Props = {
   summary: Summary | null;
   searching: boolean;
@@ -99,8 +117,8 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
     // Debounced, because every keystroke is a query against the ledger. 300ms is long enough that a
     // typed word is one query and short enough that it does not feel like waiting.
     const timer = setTimeout(async () => {
-      try {
-        const answer = await fetchMovements({
+      const settled = await load(() =>
+        fetchMovements({
           days,
           limit: 50,
           category: category ?? undefined,
@@ -108,13 +126,11 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
           includeInternal: transfersBelong(only, internal),
           account: only ?? undefined,
           acrossAccounts: only === null,
-        });
-        if (current) {
-          setFound(answer);
-          setError(null);
-        }
-      } catch {
-        if (current) setError("No he podido cargar los movimientos.");
+        }),
+      );
+      if (current) {
+        setFound(settled.found);
+        setError(settled.error);
       }
     }, 300);
     return () => {

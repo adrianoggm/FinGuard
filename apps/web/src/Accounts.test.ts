@@ -16,9 +16,9 @@ import { describe, expect, it } from "vitest";
 import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { Accounts, transfersBelong } from "./Accounts";
+import { Accounts, load, transfersBelong } from "./Accounts";
 import { Home } from "./Home";
-import type { Summary } from "./api";
+import { ApiError, type Movements, type Summary } from "./api";
 import { accountOf, tabOf, type Tab } from "./tabs";
 
 const CURRENT = "08aba04f-2b30-4639-88a6-eac741153ce0";
@@ -175,5 +175,30 @@ describe("a list about one account", () => {
     // Across every account the chip still decides, because there a traspaso is counted twice.
     expect(transfersBelong(null, false)).toBe(false);
     expect(transfersBelong(null, true)).toBe(true);
+  });
+});
+
+describe("a load that failed", () => {
+  it("takes the list that was on screen with it", async () => {
+    /**
+     * The list on screen is the answer to the question asked *before* this one. Leaving it there
+     * shows real movements as though they answered the request that just failed — and the failure
+     * is reachable rather than theoretical: narrowing to an account banking cannot find comes back
+     * 400, so the screen would say "no he podido cargar" over a list of every account.
+     */
+    const answer: Movements = {
+      currency: "EUR",
+      total_minor: 2_550,
+      movement_count: 3,
+      movements: [],
+    };
+
+    // Something to lose: a list arrives and the screen is holding it.
+    expect(await load(async () => answer)).toEqual({ found: answer, error: null });
+
+    const settled = await load(() => Promise.reject(new ApiError("query_rejected", 400)));
+
+    expect(settled.found).toBeNull();
+    expect(settled.error).toBe("No he podido cargar los movimientos.");
   });
 });
