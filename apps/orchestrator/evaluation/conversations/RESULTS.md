@@ -16,11 +16,13 @@ question, both before anything is classified. No interpreter is asked about thos
 
 ## Where it stands
 
-`qwen3:8b` is the best of six local models measured. It is not good enough to promote.
+Seven local models measured. None is good enough to promote whole, and the agreement rate is
+the least interesting thing about any of them.
 
 | model | agreed | invented a payment | dropped one | ms/turn |
 | --- | ---: | ---: | ---: | ---: |
-| **qwen3:8b** | **81.3 %** | 15 | 4 | 722 |
+| **qwen3.5:9b** | **83.3 %** | 18 | 0 | 1869 |
+| qwen3:8b | 81.3 % | 15 | 4 | 722 |
 | qwen3.5:4b | 79.2 % \* | 3 \* | 0 \* | 1194 |
 | mistral-nemo:12b | 69.8 % \* | 4 \* | 0 \* | 1419 |
 | granite4.1:8b | 68.8 % \* | 2 \* | 0 \* | 7007 |
@@ -28,31 +30,81 @@ question, both before anything is classified. No interpreter is asked about thos
 | ministral-3:8b | 46.9 % \* | 8 \* | 0 \* | 1164 |
 
 \* sampled over the first 15 episodes and measured before the harness was corrected, so the
-payment columns are inflated. Only the `qwen3:8b` row is a full, corrected run.
+payment columns are inflated. Only the top two rows are full, corrected runs.
 
-## The gap is one confusion
+Two points between 8B and 9B, and the two points are a lie in both directions. What actually
+changed is the *shape*.
+
+## 8B: the gap is one confusion, and it is a comprehension failure
 
 | the rules say | the model says | turns |
 | --- | --- | ---: |
 | FINANCIAL_QUERY | ACCOUNT_BALANCE | **94** |
 | FINANCIAL_QUERY | OWN_TRANSFER | 17 |
 | FINANCIAL_QUERY | PAYMENT | 13 |
-| FINANCIAL_QUERY | LIST_CATEGORIES | 9 |
-| FINANCIAL_QUERY | LIST_CONTACTS | 6 |
-| everything else | | 14 |
+| everything else | | 29 |
 
-94 of 153. Fix that one and the rate is ~92 %.
-
-It is not one thing, though. Two kinds of sentence are in it:
+94 of 153, and half of those are not ambiguous at all:
 
     "¿cuánto gasté el mes pasado?"   spending. Not a balance in any context.
     "¿cuánto gasté?"                 the same.
     "El total"                       ambiguous — depends on the question before it.
     "En mi Hucha ?"                  ambiguous — a balance after a balance, a filter after a query.
 
-The ambiguous half is the interesting one and the unambiguous half is the worrying one. A
-model that reads "¿cuánto gasté?" as a balance question answers a real figure to a question
+A model that reads "¿cuánto gasté?" as a balance question answers a real figure to a question
 nobody asked, which is the failure this service is built around not having.
+
+## 9B: that failure is gone, and what replaces it is more interesting
+
+| the rules say | the model says | turns |
+| --- | --- | ---: |
+| FINANCIAL_QUERY | IDENTITY_OR_HELP | **57** |
+| FINANCIAL_QUERY | ACCOUNT_BALANCE | 19 |
+| FINANCIAL_QUERY | PAYMENT | 16 |
+| FINANCIAL_QUERY | OWN_TRANSFER | 13 |
+| CORRECTION | FINANCIAL_QUERY | 12 |
+| ACCOUNT_BALANCE | FINANCIAL_QUERY | 9 |
+| everything else | | 11 |
+
+**The balance confusion collapsed 94 → 19** and «¿cuánto gasté?» is not in it. What is left is
+the genuinely ambiguous ellipsis — plus one where the model is right and the rules are wrong:
+
+    "cunato tengo"   the rules say FINANCIAL_QUERY. The typo defeats the regex.
+                     The model says ACCOUNT_BALANCE, which is what the person asked.
+
+So the spending/balance ceiling was the model, and one size up clears it.
+
+### The 57 are a defect in this service, not in the model
+
+«gracias», «hola», «buenas», «eso es». The rules have nowhere to put a pleasantry, so the
+catch-all takes it — and the corpus records where the catch-all sends it:
+
+    - say: gracias
+      route: QUERY        # it reached the financial planner
+
+A language model is invoked to build a financial plan for the word «gracias». The model
+answers IDENTITY_OR_HELP because that is the closest of nine intents to "not about money", and
+it is more right than we are. There is no tenth intent for small talk, and that is the finding.
+
+Judged that way the 9B makes **80 real errors to the 8B's ~151** — roughly half — and the
+headline rate barely moves because most of the difference is a model disagreeing with a bug.
+
+### What the 9B is worse at
+
+`CORRECTION → FINANCIAL_QUERY` went 2 → 12: «no es eso», «me refería a gasolina», «quería
+decir el año pasado». A correction read as a new question re-plans from scratch instead of
+patching the previous plan, and the user has to say it twice.
+
+`ACCOUNT_BALANCE → FINANCIAL_QUERY ×9` is new: «¿cuánto tengo en el fondo?» dropped into the
+query path. The balance confusion did not disappear, it turned around.
+
+**A bigger model is not monotonically better.** It moved the errors; it did not remove them.
+
+### Latency
+
+1869 ms per turn, 2.6× the 8B, 25 minutes for the corpus. Not interactive. Measured anyway,
+because the question was whether size is the ceiling, and that is answered before latency
+gets a vote.
 
 ## Three prompt fixes, all measured, all worse
 
@@ -78,14 +130,37 @@ naming a spending question as an example of it.
 > «vale», «hola», «perfecto». Making the catch-all specific stopped it being the catch-all.
 > Its vagueness was load-bearing.
 
-The prompt is not the bottleneck. Nothing was kept.
+The prompt is not the bottleneck on the 8B. Nothing was kept.
+
+Worth reading next to the 9B run: experiment 3 produced, on a smaller model, exactly the
+pleasantry bucket the 9B produces unprompted. Two different routes to the same place, which is
+what a real gap in the intents looks like rather than a model having a bad day.
 
 ## What a promotion would need
 
 `Promoted` already refuses to let a model start a payment the rules did not find, and refuses
-to let it drop one they did. Those 19 turns are therefore contained by construction. What is
-not contained is the 94: a balance answered to a spending question is a real figure answering
-a different question, and no guard downstream can tell.
+to let it drop one they did. The payment columns above are therefore contained by construction.
 
-So the bar is that confusion, not the headline rate. Either a model that does not make it, or
-a reason the rules keep the balance decision while the model widens everything else.
+What is not contained is a balance answered to a spending question — a real figure answering a
+different question, which no guard downstream can tell from a right one. On the 8B that is 94
+turns and the whole argument. On the 9B it is 19, all of them genuinely ambiguous.
+
+So the bar is that confusion, not the headline rate, and the shape of the answer is a hybrid
+rather than a flip: the rules keep the decisions where being wrong is expensive and cannot be
+detected, the model widens the rest. `Promoted` is already that shape for payments; the balance
+and the correction are the two candidates for the same treatment.
+
+## Open, in the order they are worth doing
+
+1. **Somewhere for a pleasantry to go.** 57 turns of «gracias» reach a planner today. It needs
+   a decision — a tenth intent, or a deterministic filter before any interpreter — and it is
+   worth fixing whether or not a model is ever promoted.
+2. **Few-shot.** All three prompt experiments were *instructions*. Nobody has tried three
+   worked sentence → intent pairs, which is a different mechanism and usually the stronger one
+   for classification.
+3. **`qwen2.5-coder:14b-instruct`**, installed and unmeasured. The 8B→9B step moved the error
+   profile rather than shrinking it, so a third point on that curve is worth having before
+   anybody concludes size is the answer.
+4. **Reasoning.** The provider runs `think: false`, and that is a correctness requirement with
+   Ollama, not a preference: `think: true` plus `format` puts the JSON in the thinking channel
+   and returns an empty `response`. Testing it means adapter work first.
