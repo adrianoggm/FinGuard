@@ -1,0 +1,5 @@
+# Generated files are compared byte for byte against what their generator produces
+# (just seed-generate plus an empty git diff). Their line endings cannot depend on the
+# system doing the checkout, or regenerating would mark the whole file as modified on
+# Windows.
+apps/banking-api/seeds/*.sql text eol=lf

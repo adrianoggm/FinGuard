@@ -1,0 +1,134 @@
+name: finguard
+
+# Profiles:
+#   core  skeleton: database + backend APIs
+#   poc   everything that exists: core + skin (web, and later a mobile app)
+#   voice / a2a / events  arrive in their own iterations
+#
+# A single component needs no profile: docker compose up postgres
+# Everything is published on 127.0.0.1 only: the credentials are for development
+# (rule 13).
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    profiles: ["core", "poc"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-finguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
+      POSTGRES_DB: ${POSTGRES_DB:-finguard}
+    # Development credentials are trivial, so localhost only: publishing on 0.0.0.0
+    # would expose the database to the whole local network.
+    # 5442 on the host: 5432 and 5433 are usually taken by other projects.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5442}:5432"
+    volumes:
+      # On Postgres 18+ the volume mounts at /var/lib/postgresql, not at .../data.
+      - postgres-data:/var/lib/postgresql
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-finguard} -d ${POSTGRES_DB:-finguard}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  banking-api:
+    build:
+      context: .
+      dockerfile: apps/banking-api/Dockerfile
+    profiles: ["core", "poc"]
+    environment:
+      BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
+      # Read-only role for the query engine (§8.6)
+      BANKING_QUERY_DATABASE_URL: postgresql://finguard_query_reader:finguard_query_reader@postgres:5432/finguard_banking
+    ports:
+      - "127.0.0.1:${BANKING_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+      args:
+        # Passed by `just up`, "unknown" when somebody runs compose directly. /version reports it,
+        # so "which build am I talking to" is one request rather than an inference.
+        BUILD_SHA: ${FINGUARD_SHA:-unknown}
+        BUILD_REF: ${FINGUARD_REF:-unknown}
+    profiles: ["core", "poc"]
+    environment:
+      # Which models exist, which provider serves each one and what happens when one
+      # fails come from this file, not from code. Mounted read-only so it can change
+      # without rebuilding the image.
+      ORCHESTRATOR_LLM_CATALOGUE_FILE: /app/config/llm.toml
+      # The ledger, by service name on the compose network.
+      ORCHESTRATOR_BANKING_BASE_URL: http://banking-api:8001
+      # The local model runs on the host, not in a container: that is where the GPU is,
+      # and 127.0.0.1 inside a container is the container. Nothing leaves the machine.
+      ORCHESTRATOR_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      # Operational numbers, each a measurement rather than a preference — see
+      # apps/orchestrator/evaluation/planning/RESULTS.md. Stated here rather than left
+      # to the defaults so the knobs are visible to whoever runs this.
+      ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS: "4096"
+      ORCHESTRATOR_OLLAMA_SEED: "0"
+      ORCHESTRATOR_OLLAMA_KEEP_ALIVE: 30m
+      ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
+      ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
+      ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
+      # Identity, first layer of the security stack (§12.1). A development token table,
+      # not the design: §12.2 asks for OAuth with short-lived tokens. What matters is
+      # that the account now comes from the credential, so a caller cannot name one.
+      #
+      # Only defensible because nothing is published beyond 127.0.0.1 (rule 13). A
+      # deployment injects these from a secret store and never from a compose file.
+      # The financial endpoints are off by default while two measured risks stay open
+      # (see docs/next.md). Compose turns them on because this is the demo stack.
+      ORCHESTRATOR_QUESTIONS_ENABLED: "true"
+      # Payments too, separately, because they are a separate risk: this is the surface where a
+      # sentence somebody typed ends in a bank transfer. It is behind a preview, an explicit
+      # confirmation read by an allow-list, and two scopes.
+      ORCHESTRATOR_PAYMENTS_ENABLED: "true"
+      # The web client's origins. Loopback only (rule 13), and exact rather than `*` because the
+      # credential travels in a header.
+      ORCHESTRATOR_WEB_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000","http://127.0.0.1:5173","http://localhost:5173"]'
+      # token:holder:account[:timezone]. The zone is the holder's, not the deployment's:
+      # between midnight and 01:00 peninsular time "hoy" in the Canaries is the previous
+      # day, and it travels to banking beside the reference date so both services bin the
+      # same purchase on the same day.
+      # Two holders, because one cannot express containment. The seed always had three;
+      # the token table had one entry, so "a caller cannot read another account" was a
+      # claim with no way to test it. Diego is in a different zone on purpose.
+      #
+      # A fourth entry holds the payment scopes, and Laura's ordinary token does not: the demo
+      # can move money only with a credential issued for it. `payments:prepare` and
+      # `payments:confirm` travel together there because the account holder is one person doing
+      # two turns — the split exists so a credential *can* be issued with only the first, for an
+      # integration that drafts payments somebody else approves.
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm"]'
+    extra_hosts:
+      # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
+      # Stating it keeps the compose file working on both.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./apps/orchestrator/config:/app/config:ro
+    ports:
+      - "127.0.0.1:${ORCHESTRATOR_PORT:-8000}:8000"
+    depends_on:
+      banking-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres-data:

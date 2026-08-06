@@ -1,0 +1,32 @@
+# Hooks that run before a commit lands. Install them once with `just hooks`.
+#
+# The boundary is deliberate: only checks that finish in about a second live here.
+# mypy and the test suites stay in `just check` and in CI, because a hook that takes
+# thirty seconds is a hook people bypass with --no-verify.
+#
+# ruff is pinned to the same version as the one in both uv.lock files. A formatter that
+# disagrees with itself between the hook and CI produces diffs nobody asked for, so the
+# two versions move together or not at all.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      # Ruff resolves the config per file, so each service is checked against its own
+      # pyproject.toml without listing them here.
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # The generated dataset is compared byte for byte against its generator and its
+      # line endings are pinned in .gitattributes: nothing may rewrite it on the way in.
+      - id: trailing-whitespace
+        exclude: ^apps/banking-api/seeds/.*\.sql$
+      - id: end-of-file-fixer
+        exclude: ^apps/banking-api/seeds/.*\.sql$
+      # A broken compose.yaml or ci.yml currently only fails after the push.
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict

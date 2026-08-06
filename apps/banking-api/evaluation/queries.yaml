@@ -1,0 +1,131 @@
+# Evaluation dataset for the query engine (phase 2).
+#
+# Each case is a plan like the one the LLM will emit, plus what the engine must return
+# over seeds/0001_demo.sql. The expected figures do NOT come from the engine: they were
+# computed with evaluation/expected.sql, SQL written separately, over the tables, with
+# explicit dates. If they came from the engine itself, this would measure nothing.
+#
+# `question` is not used yet: it is the text against which interpretation accuracy will
+# be measured once the assistant turns natural language into a plan (phase 3). It stays
+# in Spanish because that is the language of the product.
+#
+# Cases with a relative period pin `reference`: without it the result would change
+# every day and this would stop being a measurement.
+
+- id: fuel_july
+  question: ¿Cuánto he gastado en gasolina este mes?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+  expected: {totalMinor: 15946, movementCount: 3}
+
+- id: fuel_last_month
+  question: ¿Y cuánto gasté el mes anterior?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    period: {period: LAST_MONTH, reference: 2026-07-15}
+  expected: {totalMinor: 10280, movementCount: 2}
+
+- id: groceries_last_three_months
+  question: ¿Cuánto llevo gastado en supermercado en los últimos tres meses?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [GROCERIES]
+    period: {period: LAST_N_MONTHS, n: 3, reference: 2026-07-15}
+  # Three months back from the 15th of July, so from the 15th of April. It used to be from the 1st
+  # of May: LAST_N_MONTHS counted the current month from its 1st, which made a window called three
+  # months span two and a half. This is the only expectation the correction moved.
+  expected: {totalMinor: 169219, movementCount: 29}
+
+- id: total_spending_june
+  question: ¿Cuánto gasté en total en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 208140, movementCount: 28}
+
+- id: income_june
+  question: ¿Cuánto ingresé en junio?
+  account: ES-0001
+  plan:
+    direction: INCOME
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 251617, movementCount: 3}
+
+# With both directions mixed the total is the net figure: 251617 - 208140.
+- id: net_june
+  question: ¿Cuánto ahorré en junio?
+  account: ES-0001
+  plan:
+    direction: ALL
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 43477, movementCount: 31}
+
+- id: fuel_july_by_week
+  question: Compara mi gasto en gasolina de este mes por semanas
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [TRANSPORT_FUEL]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+    groupBy: WEEK
+  expected:
+    totalMinor: 15946
+    movementCount: 3
+    groups:
+      - {key: "2026-07-06", totalMinor: 7009, movementCount: 1}
+      - {key: "2026-07-13", totalMinor: 4098, movementCount: 1}
+      - {key: "2026-07-20", totalMinor: 4839, movementCount: 1}
+
+- id: june_by_category
+  question: ¿En qué me fui el dinero en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+    groupBy: CATEGORY
+  expected: {totalMinor: 208140, movementCount: 28}
+
+- id: groceries_june_by_merchant
+  question: ¿En qué supermercados compré en junio?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [GROCERIES]
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+    groupBy: MERCHANT
+  expected: {totalMinor: 50693, movementCount: 8}
+
+# A period with no movements: zero is not an error and must not be confused with one.
+- id: health_this_week
+  question: ¿He gastado algo en farmacia esta semana?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [HEALTH]
+    period: {period: THIS_WEEK, reference: 2026-07-15}
+  expected: {totalMinor: 0, movementCount: 0}
+
+# The dataset has a PENDING leisure purchase on 31 July: it must not count.
+- id: leisure_july_excluding_pending
+  question: ¿Cuánto he gastado en ocio este mes?
+  account: ES-0001
+  plan:
+    direction: EXPENSE
+    categories: [LEISURE]
+    dateRange: {from: 2026-07-01, to: 2026-07-31}
+  expected: {totalMinor: 4459, movementCount: 2}
+
+- id: spending_june_third_account
+  question: ¿Cuánto gasté en junio?
+  account: ES-0003
+  plan:
+    direction: EXPENSE
+    dateRange: {from: 2026-06-01, to: 2026-06-30}
+  expected: {totalMinor: 243979, movementCount: 30}
