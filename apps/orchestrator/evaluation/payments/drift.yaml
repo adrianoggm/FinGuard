@@ -1,0 +1,104 @@
+# The same payment, ordered the way different people order it.
+#
+# Every sentence in a group is the same instruction, so every one of them has to yield the same
+# amount and the same note. This is the layer where being wrong costs money, and it is read
+# deterministically for exactly that reason: which slots a payment carries must not depend on
+# whichever model a deployment installed. That argument is sound and it says nothing about whether
+# these particular patterns read Spanish -- the dispatch layer made the same argument and scored 37
+# of 96 the first time somebody else wrote the sentences.
+#
+# The amount survives everything here. The note does not, and its four failure modes are all in the
+# corpus below:
+#
+#   * the rest of the sentence is swallowed -- "con el concepto cena por bizum ahora mismo" writes
+#     all six words into the note, because the pattern ends a concept at a recipient or at the end
+#     of the string and there is no recipient after it;
+#   * a note is cut at its own preposition -- "viaje a Málaga" becomes "viaje", the reported bug,
+#     and it is eight of eight rather than an unlucky phrasing;
+#   * the words that introduce the note are kept -- "el concepto del pago es viaje a Málaga" yields
+#     "del pago es viaje";
+#   * "concepto" misspelt yields nothing, which is the one of the four that is arguably right:
+#     guessing a note out of a word nobody recognised would write arbitrary text onto a payment.
+#
+# The first three are worse than a wrong figure. A note is the user's own text, quoted back in the
+# confirmation and then sent to the bank, so getting it wrong sends words they never wrote.
+#
+# Provenance: llama-3.3-70b-versatile via Groq, 2026-08-06, prompt in the generator's docstring.
+# It was told what the customer wants and never how any of it is parsed. Amounts and names were
+# pinned in the prompt and every generated line was checked to contain them literally before it was
+# kept -- a paraphrase that rounds 12,50 to 12 is a different instruction, not the same one said
+# differently. Forty of forty survived that check.
+#
+# `concept: null` means the sentence names no note. Reading one anyway is the expensive direction.
+
+groups:
+
+  - means: plain
+    minor: 2000
+    recipient: Marta
+    concept: null
+    says:
+      - "Voy a enviar 20 euros a Marta por bizum"
+      - "Quiero hacer una transferencia de 20 euros a Marta"
+      - "Tengo que mandar 20 euros a Marta vía bizum"
+      - "Necesito trasnferir 20 euros a Marta por bizum"
+      - "Mira, voy a enviar 20 euros a Marta por bizum, ¿vale?"
+      - "Voy a hacer una transerencia de 20 euros a Marta por bizum"
+      - "Estoy intentando enviar 20 euros a Marta por bizm"
+      - "Así que, envío 20 euros a Marta por bizaum"
+
+  - means: with_cents
+    minor: 1250
+    recipient: Lucía
+    concept: null
+    says:
+      - "Quiero enviar 12,50 euros a Lucía por bizum"
+      - "Voy a hacer una transferencia de 12,50 a Lucía por bizum"
+      - "Mira, necesito enviar 12,50 a Lucía mediante bizum"
+      - "Eh, mando 12,50 a Lucía por bizum, vale"
+      - "Tengo que hacer una transfeencia de 12,50 a Lucía por bizum"
+      - "Puedo enviar 12,50 a Lucía con bizum, ¿no?"
+      - "Vale, entonces envío 12,50 a Lucía por bizum, gracias"
+      - "Necesito tranferir 12,50 a Lucía por bizum"
+
+  - means: with_concept
+    minor: 3000
+    recipient: Javi
+    concept: "cena"
+    says:
+      - "Voy a enviar 30 euros a Javi por bizum con el concepto cena"
+      - "Me gustaría realizar un pago de 30 a Javi con el concepto cena por favor"
+      - "Tengo que pagar 30 a Javi con el concepto cena por bizum"
+      - "Voy a hacer una transferencia de 30 a Javi con el concepto cena"
+      - "Necesito enviar 30 a Javi con el concepto cena por bizum ahora mismo"
+      - "Quiero pagar 30 a Javi con el concepto cena por favor lo antes posible"
+      - "Voy a intentar enviar 30 a Javi con el concepto cena por bizummm"
+      - "Estoy tratando de realizar un pago de 30 a Javi con el conecpto cena por bizum"
+
+  - means: concept_with_a_place
+    minor: 5000
+    recipient: Marta
+    concept: "viaje a Málaga"
+    says:
+      - "Voy a enviar 50 euros a Marta por bizum con el concepto viaje a Málaga"
+      - "Me gustaría hacer una transferencia de 50 euros a Marta con el concepto viaje a Málaga"
+      - "Tengo que pagar 50 euros a Marta por bizum y el concepto es viaje a Málaga"
+      - "Vale, entonces envío 50 euros a Marta con el concepto viaje a Málaga por bizum"
+      - "Quiero transferir 50 euros a Marta, el concepto del pago es viaje a Málaga"
+      - "Pues bueno, envio 50 euros a Marta por bizum, con el concepyo viaje a Málaga"
+      - "Hacer una transacción de 50 euros a Marta por bizum con concepto viaje a Málaga está bien"
+      - "Así que voy a hacer una transferencia de 50 euros a Marta con concepot viaje a Málaga por bizum"
+
+  - means: concept_two_words
+    minor: 1500
+    recipient: Javi
+    concept: "la comida del sábado"
+    says:
+      - "Voy a enviar 15 euros a Javi por bizum con el concepto la comida del sábado"
+      - "Quiero realizar un pago de 15 euros a Javi con el concepto la comida del sábado por bizum"
+      - "Mira, necesito enviar 15 euros a Javi por bizum y que el concepto sea la comida del sábado"
+      - "Tengo que pagar 15 euros a Javi por bizum con el concepto la comida del sábado"
+      - "Vale, pago 15 euros a Javi por bizum, concepto la comida del sábado, gracias"
+      - "Pues envío 15 euros a Javi por bizum, con el conecpto la comida del sábado"
+      - "Necesito hacer un pago de 15 euros a Javi por bizum, con el concepto la comida del sábado, oye"
+      - "Voy a tranferir 15 euros a Javi por bizum con el conzepto la comida del sábado"
