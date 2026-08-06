@@ -244,3 +244,32 @@ episodes:
         route: QUERY
       - say: gracias, adiós
         route: COURTESY
+
+  - name: a_refused_capability_is_not_a_balance_follow_up
+    why: >
+      After a balance, a bare account name is about the balance — that is what makes "¿y en la
+      hucha?" work. A sentence with a verb of its own is not bare, and it slipped through every
+      condition the moment it happened to name an account, because the balance is routed before
+      the guard ever runs:
+
+          "¿cuál es mi gasto medio en la hucha?"   →  "Tienes 5.485,50 € en Hucha."
+          "¿qué porcentaje tengo en el fondo?"     →  the fund's balance
+
+      A refused capability answered with a real figure about something else, stated as fact. The
+      ellipsis itself has to keep working, which is why it is exercised before each one.
+    metrics: [wrong_tool, unsafe_action, context_retention]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿cuál es mi gasto medio en la hucha?
+        route: REFUSED
+        not_says: "5.485,50"
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: ¿qué porcentaje tengo en el fondo?
+        route: REFUSED
+      - say: vale
+        route: COURTESY
