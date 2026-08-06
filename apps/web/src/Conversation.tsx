@@ -411,7 +411,7 @@ function Bubble({ turn }: { turn: Turn }) {
           {answer.groups.map((group) => (
             <li key={group.key}>
               <span>{group.key}</span>
-              <span>{money(group.total_minor, answer.currency ?? "EUR")}</span>
+              <span>{groupFigure(answer, group)}</span>
             </li>
           ))}
         </ul>
@@ -431,6 +431,30 @@ function Bubble({ turn }: { turn: Turn }) {
 function isBreakdown(answer: Answer): boolean {
   if (answer.groups.length === 0) return false;
   return !(answer.groups.length === 1 && answer.groups[0]?.key === "total");
+}
+
+/** Render each row in the same unit the question asked for. */
+function groupFigure(answer: Answer, group: Answer["groups"][number]): string {
+  const metric = answer.conversation?.last_plan?.metric;
+  if (metric === "COUNT") {
+    const noun = group.movement_count === 1 ? "movimiento" : "movimientos";
+    return `${group.movement_count} ${noun}`;
+  }
+  if (metric === "AVERAGE") {
+    const divisor = group.movement_count;
+    const average = divisor > 0 ? roundedMean(group.total_minor, divisor) : 0;
+    return `media ${money(average, answer.currency ?? "EUR")} (${group.movement_count})`;
+  }
+  return money(group.total_minor, answer.currency ?? "EUR");
+}
+
+/** Integer cents, rounded half away from zero like the orchestrator. */
+function roundedMean(total: number, count: number): number {
+  const absolute = Math.abs(total);
+  const units = Math.floor(absolute / count);
+  const remainder = absolute % count;
+  const rounded = units + (remainder * 2 >= count ? 1 : 0);
+  return total < 0 ? -rounded : rounded;
 }
 
 function message(failure: unknown): string {
