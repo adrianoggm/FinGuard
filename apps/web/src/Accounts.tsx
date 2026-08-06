@@ -44,6 +44,23 @@ const WINDOWS = [
   [365, "1 año"],
 ] as const;
 
+/**
+ * Whether money the holder moved between their own accounts belongs in this list.
+ *
+ * Across every account it does not, and that is what the chip is for: a traspaso is a debit here
+ * and a credit there, so counting both reports twice a movement that happened once.
+ *
+ * Scoped to one account it does, whatever the chip says, because there is nothing left to double —
+ * the same reading the assistant reached in `ask_financial_question._about_one_account`, and after
+ * the same complaint from the same demo: "¿qué movimientos tengo en el fondo indexado?" answered
+ * "no he encontrado movimientos" because every one of the fund's movements is a traspaso. This
+ * screen gave the identical empty list for the identical reason, and a screen and a sentence
+ * disagreeing about one account is worse than either of them being wrong alone.
+ */
+export function transfersBelong(only: string | null, asked: boolean): boolean {
+  return asked || only !== null;
+}
+
 type Props = {
   summary: Summary | null;
   searching: boolean;
@@ -88,7 +105,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
           limit: 50,
           category: category ?? undefined,
           merchant: term.trim() || undefined,
-          includeInternal: internal,
+          includeInternal: transfersBelong(only, internal),
           account: only ?? undefined,
           acrossAccounts: only === null,
         });
@@ -115,6 +132,7 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
   // hides nothing anybody cannot recover.
   const about =
     only === null ? holdings : holdings.filter((holding) => holding.account_id === only);
+  const transfers = transfersBelong(only, internal);
 
   return (
     <div className="screen">
@@ -215,10 +233,17 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
           from totals. With a screen in front of it: excluded by default, because the tally is a net
           and a transfer nets to nothing — and available, because a list that hides a 200 € transfer
           does not reconcile with the balance, and the person hunting for it has nowhere to look.
+
+          Only while the list is about every account, which is the only scope where the question is
+          open. Narrowed to one there is nothing to double and the transfers are simply part of that
+          account's movements (see `transfersBelong`), so a chip here would be one that decides
+          nothing — and this row already refuses to draw those.
         */}
-        <button className={internal ? "chip on" : "chip"} onClick={() => setInternal(!internal)}>
-          Traspasos
-        </button>
+        {only === null && (
+          <button className={internal ? "chip on" : "chip"} onClick={() => setInternal(!internal)}>
+            Traspasos
+          </button>
+        )}
         {CHIPS.map((key) => (
           <button
             key={key}
@@ -236,9 +261,10 @@ export function Accounts({ summary, searching, account, onGo }: Props) {
               beside a movement count it reads as "you spent this", which for a window containing a
               salary is wrong by the size of the salary. */}
           {found.movement_count} movimientos · neto {money(found.total_minor, found.currency)}
-          {/* Said, not implied. With transfers in, the net counts money that never left the
+          {/* Said, not implied, and said whenever they are in — asked for by the chip or carried by
+              a list about one account. With transfers in, the net counts money that never left the
               household, and a figure whose scope is unstated is one somebody will misread. */}
-          {internal && " (traspasos incluidos)"}
+          {transfers && " (traspasos incluidos)"}
         </p>
       )}
 

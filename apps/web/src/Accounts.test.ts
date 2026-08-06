@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { Accounts } from "./Accounts";
+import { Accounts, transfersBelong } from "./Accounts";
 import { Home } from "./Home";
 import type { Summary } from "./api";
 import { accountOf, tabOf, type Tab } from "./tabs";
@@ -159,5 +159,21 @@ describe("tapping an account on the home screen", () => {
     expect(screen).toContain("1.855,42");
     expect(screen).toContain("5.485,50");
     expect(screen).toContain("2.700,00");
+  });
+});
+
+describe("a list about one account", () => {
+  it("counts the transfers into it, which is what the assistant already answers", () => {
+    /**
+     * Breaking this hands somebody an empty list for an account with movements in it — every one
+     * of the fund's is a traspaso — and, worse, hands them a different answer from the one the
+     * assistant gives about the same account on the same phone.
+     */
+    expect(transfersBelong(PIGGY, false)).toBe(true);
+    expect(transfersBelong(PIGGY, true)).toBe(true);
+
+    // Across every account the chip still decides, because there a traspaso is counted twice.
+    expect(transfersBelong(null, false)).toBe(false);
+    expect(transfersBelong(null, true)).toBe(true);
   });
 });
