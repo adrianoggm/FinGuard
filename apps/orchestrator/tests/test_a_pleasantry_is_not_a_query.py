@@ -39,6 +39,21 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 5)
 LAST_MONTH = FinancialPlan(
@@ -73,7 +88,8 @@ def a_handler() -> AskFinancialQuestionHandler:
         UnusedPlanner(),  # type: ignore[arg-type]
         UnusedLedger(),  # type: ignore[arg-type]
         accounts=NoAccounts(),  # type: ignore[arg-type]
-        contacts=NoContacts(),  # type: ignore[arg-type]
+        contacts=NoContacts(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
 
 

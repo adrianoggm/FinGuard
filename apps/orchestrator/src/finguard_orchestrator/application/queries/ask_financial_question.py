@@ -14,7 +14,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 from typing import Final
 from uuid import UUID
 
@@ -46,6 +46,7 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
+from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
@@ -59,6 +60,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     explicit_facts,
     intent_router,
+    merchant_words,
     payment_words,
     plan_verifier,
     query_recovery,
@@ -81,6 +83,10 @@ from finguard_orchestrator.observability import account_ref
 # deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
 # a constant here was a policy nobody could change without a release.
 DEFAULT_BANK_READ_ATTEMPTS = 2
+
+# How far back the wallet's "spent" column looks when the chat asks. The wallet screen has its own
+# setting; this is the fallback for a handler built without one.
+DEFAULT_CARD_DAYS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +245,8 @@ class AskFinancialQuestionHandler:
         *,
         accounts: AccountSummaryPort,
         contacts: ContactDirectoryPort,
+        cards: CardDirectoryPort,
+        card_days: int = DEFAULT_CARD_DAYS,
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
     ) -> None:
@@ -246,6 +254,11 @@ class AskFinancialQuestionHandler:
         self._queries = queries
         self._policy = policy
         self._read_attempts = read_attempts
+        self._cards = cards
+        # The window the wallet screen uses, so the chat and the screen cannot disagree about what
+        # this month has cost. A default here and the deployment's number at the composition root,
+        # like every other operational figure.
+        self._card_days = card_days
         # Only reached when the caller did not classify the turn itself. On the live path the edge
         # always has — it had to, to know this query was the right one — so this is the fallback
         # for a handler used directly, and the default is the behaviour that already existed.
@@ -446,6 +459,10 @@ class AskFinancialQuestionHandler:
             yield await self._contact_list(query, was)
             return
 
+        if intent is Intent.LIST_CARDS:
+            yield await self._card_list(query, was)
+            return
+
         waiting = was.active if isinstance(was.active, TransferInProgress) else None
         if intent is Intent.OWN_TRANSFER or (
             waiting is not None and _answers_the_transfer(query.sentence, waiting)
@@ -472,6 +489,20 @@ class AskFinancialQuestionHandler:
             # after a spending question narrow the spending, which is why this reads the turn before
             # rather than the sentence: they are identical sentences and they mean different things.
             intent = Intent.ACCOUNT_BALANCE
+
+        narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
+        if narrowing is not None:
+            shop, previous = narrowing
+            # A whole turn that is one name, with a question behind it. "Spotify", typed after
+            # being asked "¿querías solo Spotify?", used to reach the planner as a word with no
+            # window and come back "¿de qué periodo?" — a suggestion that asks you something else
+            # when you take it is worse than no suggestion at all.
+            #
+            # No model and no bank call to decide it: the previous plan carries the window and this
+            # replaces one field. A name that matches nothing is not a problem either — the empty
+            # answer then offers the shops that do exist, which is the same repair one turn later.
+            yield await self._answer(query, replace(previous, merchants=(shop,)))
+            return
 
         if intent is Intent.ACCOUNT_BALANCE:
             # Not a plan and not a model. `FinancialPlan` expresses aggregations over movements —
@@ -674,6 +705,45 @@ class AskFinancialQuestionHandler:
                 if isinstance(was.active, PaymentInProgress) and was.active.suspended
                 else was.refused(capability)
             ),
+        )
+
+    async def _card_list(
+        self, query: AskFinancialQuestionQuery, was: Conversation
+    ) -> AskFinancialQuestionResult:
+        """The wallet, and what each card has taken this month.
+
+        Answered from the directory rather than from a plan, for the reason the balance is: a plan
+        has no card dimension at all. Asked to answer "cuánto he gastado con cada tarjeta", the
+        planner could only build the nearest thing it *could* express — the account total — and
+        868,97 € arrived labelled as an answer about cards.
+
+        The window is the deployment's card window, the same one the wallet screen uses, so the
+        chat and the screen cannot disagree about what "this month" has cost. That is the same
+        argument as the balance having one adapter.
+
+        The conversation passes through untouched. Somebody checking which card they used is not
+        abandoning the question they were asking.
+        """
+        since = query.today - timedelta(days=self._card_days)
+        try:
+            wallet = await self._cards.all_of(
+                query.account_id,
+                since=since,
+                today=query.today,
+                timezone=query.reporting_timezone,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PROVIDER_ERROR.value,
+                text="No he podido consultar tus tarjetas ahora mismo. Vuelve a intentarlo.",
+                conversation=was,
+            )
+
+        return AskFinancialQuestionResult(
+            outcome=Spoken.CARDS.value,
+            text=answer_writer.cards(wallet),
+            plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
+            conversation=was,
         )
 
     async def _contact_list(
@@ -1118,8 +1188,41 @@ class AskFinancialQuestionHandler:
             include_internal=plan.include_internal or plan.direction is Direction.ALL,
         )
 
+    async def _shops_like(
+        self, plan: FinancialPlan, query: AskFinancialQuestionQuery
+    ) -> tuple[str, ...]:
+        """The shops in this account that look like the one nothing matched.
+
+        A second query, and it only happens on a turn that already found nothing — so the cost is
+        paid exactly where the alternative was telling the user to give up. The same plan with the
+        merchant filter dropped and grouped by merchant answers "which shops are in this window",
+        which is the list a suggestion has to come from: guessing from a vocabulary of our own
+        would offer shops this account has never paid.
+
+        An outage here is not worth reporting. The turn already has an answer — "no encontré
+        nada" — and a second failure on top of it would replace a true statement with a vaguer
+        one.
+        """
+        try:
+            wider = await self._queries.run(
+                replace(plan, merchants=(), group_by=GroupBy.MERCHANT),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except (BankingUnavailableError, QueryRejectedError):
+            return ()
+        return merchant_words.close_to(
+            plan.merchants[0], tuple(group.key for group in wider.groups)
+        )
+
     async def _answer(
-        self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, widened: bool = False
+        self,
+        query: AskFinancialQuestionQuery,
+        plan: FinancialPlan,
+        *,
+        widened: bool = False,
+        narrowed: bool = False,
     ) -> AskFinancialQuestionResult:
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
@@ -1184,6 +1287,91 @@ class AskFinancialQuestionHandler:
                             f" anterior.)"
                         ),
                     )
+
+        if plan.categories and not plan.merchants and not narrowed:
+            # The question named a shop and the plan filtered by the category the shop belongs to.
+            # Reported from the demo: "¿cuánto llevo gastado en spotify este año?" answered
+            # "421,79 € en suscripciones, en 23 movimientos" — five times the real figure, with
+            # Netflix, Steam and the gym listed underneath as the evidence.
+            #
+            # The proof was already in hand. A category answer carries the movements behind it, and
+            # those movements carry their merchants, so "did the sentence name one of these?" needs
+            # no vocabulary, no second source of truth and no extra call to decide. It is the same
+            # evidence a reader uses to notice the answer is wrong; the service had simply been the
+            # last to see it.
+            #
+            # The mirror of the widening below, and it recurses the same way and for the same
+            # reason: one repair per turn, and if the narrower query finds nothing then the shop
+            # was not what the question was about after all.
+            seen = tuple(
+                dict.fromkeys(
+                    movement.merchant_name
+                    for movement in answer.movements
+                    if movement.merchant_name
+                )
+            )
+            shop = merchant_words.named_in(query.sentence, seen)
+            if shop is None:
+                # Named it, nearly. "Spoti" was in the sentence and Spotify was in the evidence,
+                # and no token matched — so the answer stayed the whole category. A near miss is a
+                # guess, though, and a guess that produces a figure is what this service does not
+                # do, so it asks instead of narrowing. The next turn inherits this window and is an
+                # ordinary follow-up.
+                nearly = merchant_words.almost_named_in(query.sentence, seen)
+                if nearly:
+                    # The figure that was planned is still the honest answer to the plan, so it is
+                    # given rather than thrown away, and the question goes underneath it. The plan
+                    # stays as the last answered one, which is what makes the reply — "Spotify" —
+                    # an ordinary follow-up carrying this window instead of a bare word nobody can
+                    # date.
+                    answered = _answered(plan, answer, query.conversation, query.sentence)
+                    return replace(
+                        answered,
+                        text=(f"{answered.text}\n¿Querías solo {answer_writer.listed(nearly)}?"),
+                        suggestions=list(nearly),
+                    )
+            if shop is not None:
+                tighter = replace(plan, categories=(), merchants=(shop,))
+                again = await self._answer(query, tighter, narrowed=True)
+                if again.outcome == PlanningOutcome.PLANNED.value and again.movement_count:
+                    named = " y ".join(category_words.name_of(c) for c in plan.categories)
+                    return replace(
+                        again,
+                        text=(
+                            f"{again.text}\n"
+                            f"(Solo {shop}. La consulta que había construido cubría"
+                            f" {named} entera.)"
+                        ),
+                    )
+
+        if answer.is_empty and plan.merchants and not narrowed:
+            did_you_mean = await self._shops_like(plan, query)
+            if did_you_mean:
+                # A merchant filter matches exactly, so a near miss is an empty answer — and the
+                # advice under it, "puedes buscar sin comercio o ampliar el periodo", is a dead end
+                # dressed as help: neither would ever find the shop. Reported from the demo three
+                # turns in a row, "spoti", "spotiy" and then "spotify !!".
+                #
+                # After the widening above, deliberately. When a plan carries an inherited category
+                # as well, that category is the likelier culprit — it is the case the widening was
+                # written from — and asking about shops first would spend a query on a merchant
+                # that was spelled correctly all along.
+                #
+                # It asks rather than assuming. The names are the ledger's and a wrong guess would
+                # be a real figure about a shop nobody named, which is the failure this service is
+                # built around — so the candidates go back as suggestions and the next turn, which
+                # inherits the window from this plan, is an ordinary follow-up.
+                asked = plan.merchants[0]
+                return AskFinancialQuestionResult(
+                    outcome=Spoken.GUIDANCE.value,
+                    text=(
+                        f"No he encontrado nada en «{asked}». "
+                        f"¿Te refieres a {answer_writer.listed(did_you_mean)}?"
+                    ),
+                    plan=answer_writer.describe(plan),
+                    conversation=query.conversation,
+                    suggestions=list(did_you_mean),
+                )
 
         return _answered(plan, answer, query.conversation, query.sentence)
 
@@ -1366,6 +1554,47 @@ def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
 _THE_WHOLE_LOT: Final = re.compile(
     r"(?:el\s+)?total(?![a-z])|todo(?:\s+junto)?(?![a-z])|en\s+conjunto|todas(?![a-z])"
 )
+
+
+def _a_bare_shop_name(
+    query: AskFinancialQuestionQuery, was: Conversation
+) -> tuple[str, FinancialPlan] | None:
+    """A turn that is nothing but a name, answered by narrowing the last question to it.
+
+    Only reached once the router *and* the balance ellipsis have had their say, which is the guard
+    that matters: "¿cuánto tengo?" and "el total" are both two words no vocabulary consulted here
+    claims, and both are balances. Everything those two name is already gone by the time this
+    runs, which is why this checks what is left rather than trying to recognise a shop.
+
+    The reply to "¿querías solo Spotify?" is "Spotify", and it used to reach the planner as a bare
+    word with no window attached. What makes it readable here is everything it is *not*: the other
+    vocabularies of this service each own a word class, so a token none of them claims, with a
+    question behind it, is a proper noun — and the only proper nouns a financial question carries
+    are shops.
+
+    Deliberately not checked against a list of real merchants. Doing so would need a query on every
+    turn to answer a question that is usually no, and getting it wrong costs nothing: a name the
+    ledger does not have produces an empty answer, and the empty answer already offers the shops
+    it does have.
+    """
+    plan = was.last_plan
+    if not isinstance(plan, FinancialPlan):
+        return None
+    said = spanish.folded(query.sentence).strip(" ¿?¡!.,;:")
+    if not said or len(said.split()) > 2 or len(said) < 4 or any(c.isdigit() for c in said):
+        # One or two words. Beyond that it is a sentence, and a sentence has a verb this cannot
+        # read — the planner is better at those and this must not take them.
+        return None
+    if (
+        category_words.named_in(query.sentence)
+        or account_words.named_in(query.sentence)
+        or explicit_facts.read(query.sentence, today=query.today).window is not None
+        or intent_router.asks_for_something_else(query.sentence)
+    ):
+        # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
+        # and "enero" a window, and each of them has a path that answers it properly.
+        return None
+    return query.sentence.strip(" ¿?¡!.,;:"), plan
 
 
 def _narrows_the_balance(

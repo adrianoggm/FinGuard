@@ -44,6 +44,21 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 7, 15)
 LAST_MONTH = RelativePeriod(period=Period.LAST_MONTH)
@@ -162,6 +177,7 @@ def chat(planner: object, ledger: object) -> AskFinancialQuestionHandler:
         ledger,  # type: ignore[arg-type]
         accounts=FakeAccounts(),
         contacts=FakeContacts(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
 
 
@@ -296,14 +312,31 @@ async def test_a_count_question_is_answered_with_a_count() -> None:
 async def test_a_count_breakdown_shows_counts_not_amounts() -> None:
     result = await ask(PlanningResult.planned(plan(metric=Metric.COUNT, group_by=GroupBy.CATEGORY)))
 
-    assert "GROCERIES: 2" in result.text
+    assert "supermercado: 2" in result.text
     assert "80,00" not in result.text
 
 
 async def test_a_sum_breakdown_shows_amounts() -> None:
     result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.CATEGORY)))
 
-    assert "GROCERIES: 80,00 € (2)" in result.text
+    assert "supermercado: 80,00 € (2)" in result.text
+
+
+async def test_a_breakdown_is_read_in_words_and_not_in_ledger_keys() -> None:
+    """Somebody asking where their money goes read `HOUSING_RENT`, `TRANSPORT_FUEL` and
+    `TRANSFER_BIZUM` down the side of their own answer. The glossary existed and `filter_of` was
+    already using it; this was the one place that printed the key."""
+    result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.CATEGORY)))
+
+    assert "GROCERIES" not in result.text and "HEALTH" not in result.text
+
+
+async def test_a_merchant_breakdown_keeps_the_name_the_ledger_gave_it() -> None:
+    """Only categories are translated. A merchant key is already a name, and putting "Mercadona"
+    through a category glossary would be looking up a word that is not in it."""
+    result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.MERCHANT)))
+
+    assert "GROCERIES" in result.text or "HEALTH" in result.text
 
 
 # --- every outcome reaches the user as something different --------------------------

@@ -275,3 +275,34 @@ episodes:
         route: BALANCE
       - say: vale
         route: COURTESY
+
+  - name: the_wallet_from_the_chat
+    why: >
+      Reported from the demo. "¿Qué tarjetas tengo de crédito?" came back "eso no puedo calcularlo
+      todavía" — about data this service holds and a screen the user can open — and "¿cuánto he
+      gastado con cada tarjeta?" came back with the *account* total, 868,97 €, wearing the label of
+      an answer about cards.
+
+      A plan has no card dimension, so the planner could only approximate one, and an approximation
+      with a euro sign on it is the failure this service exists to avoid. Both questions were always
+      one query: the card row carries the name, the kind and what has been charged.
+
+      Mixed with real questions, because a new intent that swallows neighbouring turns has traded
+      one wrong answer for several.
+    metrics: [wrong_tool, unnecessary_clarification]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+      - say: Que tarjetas tengo de credito ?
+        route: CARDS
+        no_model: true
+        not_says: calcularlo
+      - say: cuanto he gastado con cada tarjeta en el ultimo mes
+        route: CARDS
+        no_model: true
+      - say: ¿y en gasolina?
+        route: QUERY
+      - say: mis tarjetas
+        route: CARDS
+      - say: gracias
+        route: COURTESY

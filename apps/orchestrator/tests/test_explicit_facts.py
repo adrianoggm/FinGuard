@@ -33,6 +33,23 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
+
+class NoCards:
+    """The card directory, required like the balance and the address book so no build can be
+    half-wired. A chat that could not reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from datetime import date
+
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
 
@@ -94,7 +111,7 @@ class FakeContacts:
 
 async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: object):
     handler = AskFinancialQuestionHandler(
-        planner, ledger, accounts=FakeAccounts(), contacts=FakeContacts()
+        planner, ledger, accounts=FakeAccounts(), contacts=FakeContacts(), cards=NoCards()
     )
     return await handler.handle(
         AskFinancialQuestionQuery(
@@ -438,4 +455,8 @@ async def test_a_category_the_sentence_names_is_never_dropped() -> None:
         conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
     )
 
-    assert [p.categories for p in ledger.plans] == [("HEALTH",)]
+    # Twice now, and the category survives both. The second call is the shop lookup an empty
+    # answer with a merchant filter makes before giving up: it asks which shops are in this
+    # window so it can offer a spelling, finds the name spelled correctly and offers nothing.
+    # What this test is about is that neither call dropped a category the sentence named.
+    assert [p.categories for p in ledger.plans] == [("HEALTH",), ("HEALTH",)]

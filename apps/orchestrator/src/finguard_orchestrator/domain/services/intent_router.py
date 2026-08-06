@@ -38,6 +38,7 @@ from finguard_orchestrator.domain.services import courtesy, payment_router, span
 
 class Intent(StrEnum):
     COURTESY = "COURTESY"
+    LIST_CARDS = "LIST_CARDS"
     PAYMENT = "PAYMENT"
     IDENTITY_OR_HELP = "IDENTITY_OR_HELP"
     LIST_CATEGORIES = "LIST_CATEGORIES"
@@ -108,6 +109,32 @@ _NOT_THE_BALANCE: Final = re.compile(
 )
 
 
+# The cards in the wallet, and what has been charged to each.
+#
+# The data was always there — `ListCardsQuery` is registered on the bus, the wallet screen draws it,
+# and `CardRow` carries `spent_minor` per card. The conversation could not reach any of it, so
+# "¿qué tarjetas tengo de crédito?" came back "eso no puedo calcularlo todavía" about a screen the
+# user can open, and "¿cuánto he gastado con cada tarjeta este mes?" came back 868,97 € — the
+# account total, labelled as an answer about cards.
+#
+# The same shape as LIST_CONTACTS and fixed the same way: a question with an answer in this
+# service does not belong to a model that has no way to express it. A plan has no card dimension
+# at all, so the planner could only ever approximate, and an approximation with a euro sign on it
+# is the failure this service is built around not having.
+#
+# Narrow on purpose. It needs the noun, so "¿cuánto gasté con la tarjeta en Mercadona?" — a
+# question about spending that mentions how it was paid — is not caught by the plural forms here.
+_ABOUT_CARDS: Final = re.compile(
+    r"\b(qu[ée]|cu[áa]ntas)\s+tarjetas\b"
+    r"|\btarjetas\s+(tengo|tiene|hay|tengo\s+activas)\b"
+    r"|\bmis\s+tarjetas\b"
+    r"|\bcon\s+cada\s+tarjeta\b"
+    r"|\bpor\s+tarjeta\b"
+    r"|\bcu[áa]nto\s+.{0,20}\bcada\s+tarjeta\b",
+    re.IGNORECASE,
+)
+
+
 # Who can be paid, which is a question and not an order.
 #
 # From the reported conversation: "¿podrías decirme qué contactos tengo para mandar bizum?" was read
@@ -147,7 +174,13 @@ _ABOUT_CONTACTS: Final = re.compile(
 # telling, which is what separates "¿puedes hacer transferencias?" from "¿puedes decirme cuánto
 # gasté?".
 _ABOUT_ITSELF: Final = re.compile(
-    r"\b(qui[ée]n\s+eres|qu[ée]\s+eres|c[óo]mo\s+funcionas|c[óo]mo\s+te\s+llamas"
+    # "¿Cómo puedo utilizarte?" was refused with "eso no puedo calcularlo todavía" and the very
+    # next turn, "¿qué eres capaz de hacer?", was answered in full. The same question twice, and
+    # the difference was which verb the person reached for. A third shape: **how do I use you**.
+    r"\b(c[óo]mo\s+(puedo|se\s+puede|te\s+puedo)\s+(usar|utilizar|usarte|utilizarte)"
+    r"|c[óo]mo\s+(te\s+)?(usas|utilizas)|para\s+qu[ée]\s+(vales|te\s+uso)"
+    r"|qu[ée]\s+eres\s+capaz\s+de\s+hacer"
+    r"|qui[ée]n\s+eres|qu[ée]\s+eres|c[óo]mo\s+funcionas|c[óo]mo\s+te\s+llamas"
     r"|eres\s+(una?\s+)?(ia|bot|robot|m[áa]quina|humano|persona)"
     r"|qu[ée]\s+(puedes|sabes|sabr[íi]as)\s+hacer|para\s+qu[ée]\s+sirves"
     r"|^\s*ayuda\s*[?!.]*$|qu[ée]\s+es\s+finguard"
@@ -299,6 +332,10 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
         # would work equally well and would read as an afterthought — this is a whole turn, and 98
         # of the corpus's 879 are it.
         return Intent.COURTESY
+    if _ABOUT_CARDS.search(sentence):
+        # Before the balance, which used to exclude "qué tarjetas" without giving it anywhere to
+        # go, and before the planner, which has no card dimension to plan with.
+        return Intent.LIST_CARDS
     if _ABOUT_CONTACTS.search(sentence):
         # Before the payment check, and the comment on the pattern is the argument for why. A
         # sentence naming a contact list is asking who exists, even when it also says "bizum".

@@ -226,6 +226,7 @@ def create_app() -> FastAPI:
         # with no model in the path.
         accounts=accounts,
         contacts=contacts,
+        cards=cards,
         read_attempts=settings.banking_read_attempts,
         # Only used when a caller did not classify the turn itself. Both HTTP routes do, so on the
         # live path this is unreachable — it is here so the handler and the edge cannot end up

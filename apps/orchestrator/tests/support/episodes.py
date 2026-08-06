@@ -7,7 +7,7 @@ turn reach the right part of the service?**
 Every defect reported from the demo so far has been that and only that. Not a wrong figure — a
 question routed to the payment path, a balance sent to the planner, a reply to an open question read
 as an order. The figures were right every time; the *tool* was wrong. So that is what an episode
-asserts: which of twelve places handled each turn, and what the turn left behind.
+asserts: which of thirteen places handled each turn, and what the turn left behind.
 
 **No model, and that is the design.** The planner is stubbed to answer any sentence with a plan, so
 `QUERY` means "it reached the planner" and nothing more. Everything else is a path this service
@@ -17,7 +17,7 @@ this one runs in a second.
 
 What each turn may say:
 
-    route        which of the twelve handled it. The whole point of the file
+    route        which of the thirteen handled it. The whole point of the file
     says         a phrase the answer must contain
     not_says     a phrase it must not
     keeps        a workflow that has to still be open afterwards
@@ -100,6 +100,21 @@ from finguard_orchestrator.domain.value_objects.payment_request import PaymentRe
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("08aba04f-2b30-4639-88a6-eac741153ce0")
 PIGGY = uuid.UUID("22222222-2222-2222-2222-222222222222")
 FUND = uuid.UUID("33333333-3333-3333-3333-333333333333")
@@ -125,7 +140,7 @@ CONTACTS = (
 )
 
 
-# --- the twelve places a turn can be handled ---------------------------------------------
+# --- the thirteen places a turn can be handled ---------------------------------------------
 #
 # Named here rather than derived at the assertion, because "which tool answered" is the measurement
 # and a measurement whose definition lives in three branches is three definitions.
@@ -137,6 +152,7 @@ CATEGORIES = "CATEGORIES"
 EXPLANATION = "EXPLANATION"
 GUIDANCE = "GUIDANCE"
 COURTESY = "COURTESY"
+CARDS = "CARDS"
 TRANSFER = "TRANSFER"
 PAYMENT = "PAYMENT"
 QUERY = "QUERY"
@@ -151,6 +167,7 @@ _SPOKEN = {
     "EXPLANATION": EXPLANATION,
     "GUIDANCE": GUIDANCE,
     "COURTESY": COURTESY,
+    "CARDS": CARDS,
     "TRANSFER_READY": TRANSFER,
 }
 _PAYMENT_WORKFLOWS = {"PAYMENT_IN_PROGRESS", "PAYMENT_CONFIRMATION"}
@@ -164,7 +181,7 @@ _PAYMENT_OUTCOMES = {
 
 
 def tool_of(answer: dict[str, Any]) -> str:
-    """Which of the twelve answered this turn.
+    """Which of the thirteen answered this turn.
 
     The outcome alone is not enough and that is not an accident of the enums: a payment asking for
     an amount and a financial question asking for a period are both NEEDS_CLARIFICATION, and telling
@@ -399,6 +416,7 @@ def a_stack() -> Stack:
         ledger,  # type: ignore[arg-type]
         accounts=Accounts(),  # type: ignore[arg-type]
         contacts=Contacts(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
     queries = QueryBus()
     queries.register(AskFinancialQuestionQuery, handler)

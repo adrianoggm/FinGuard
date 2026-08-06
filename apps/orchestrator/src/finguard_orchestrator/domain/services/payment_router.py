@@ -81,8 +81,17 @@ _RECEIVED: Final = re.compile(
 # Sending money to somebody. Conjugations only, never participles: "mandado" and "mandé" are the
 # past, and they are handled above rather than here — but leaving them out of this list means a
 # sentence has to pass two checks to be read as an order instead of one.
+#
+# `bi[xz]um` and not `bizum`: reported from the demo, four turns in a row. "Le hacemos un bixum a
+# marta" came back "eso no puedo calcularlo todavía", three times, until the user spelled it right.
+# One transposed letter in the single word that routes money, and the whole path was unreachable —
+# and it is a word most people have never had to write down.
+#
+# A misspelling of a payment verb is not a different intent, and the risk runs one way: `_MONEY`
+# below still has to agree before any of this is read as an order, so a wider verb list cannot make
+# a payment out of a sentence with no money in it.
 _PAYING: Final = re.compile(
-    r"\b(bizum|transferencia|transferir|transfiere|transfi[eé]rele"
+    r"\b(bi[xz]um|transferencia|tra[nm]sferir|transfiere|transfi[eé]rele"
     r"|env[ií]a|env[ií]ale|manda|m[áa]ndale|paga|p[áa]gale|ingresa|ingr[ée]sale"
     r"|devuelve|devu[eé]lvele)\b",
     re.IGNORECASE,
@@ -90,7 +99,7 @@ _PAYING: Final = re.compile(
 
 # Money in the sentence: a figure, a symbol, the word, or a means of payment that is only ever
 # money. Without one, "manda un correo a Marta" would be read as a payment.
-_MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbizum\b|\btransferencia\b)", re.IGNORECASE)
+_MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbi[xz]um\b|\btransferencia\b)", re.IGNORECASE)
 
 # A whole reply that says the user cannot fill the slot yet. Narrow and anchored so "no sé a
 # quién tengo en contactos" remains a contact-list question, while a bare "no sé" does not fall
