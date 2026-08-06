@@ -30,7 +30,7 @@ import {
   signed,
   spendable,
 } from "./format";
-import type { Tab } from "./tabs";
+import { accountTab, type Tab } from "./tabs";
 
 type Props = {
   summary: Summary | null;
@@ -205,13 +205,19 @@ export function Home({ summary, error, holder, onGo, onAsk }: Props) {
           corriente · ES-0001", which was accurate while there was one account and became a lie the
           moment there were three — and the kind of lie nobody notices, because the figure beside
           it was real.
+
+          Tapping one goes to the accounts screen *about that account*, and the account travels in
+          the destination. It used to go to a bare "cuentas", so somebody who tapped Hucha landed on
+          every account's balances with the movements of all three underneath — the screen showing
+          one thing while the tap asked for another, which is the reading error this whole client is
+          written against.
         */}
         {holdings.length > 0
           ? holdings.map((holding) => (
               <button
                 className="account-row"
                 key={holding.account_id}
-                onClick={() => onGo("cuentas")}
+                onClick={() => onGo(accountTab(holding.account_id))}
               >
                 <span className="account-glyph" aria-hidden="true">
                   {accountGlyph(holding.kind)}
