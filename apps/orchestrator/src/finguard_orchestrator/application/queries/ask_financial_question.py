@@ -302,9 +302,26 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
-        retry_control = (
-            query_recovery.retry_action(query.sentence) if was.retry_plan is not None else None
-        )
+        asked_again = query_recovery.retry_action(query.sentence)
+        if asked_again is query_recovery.RetryAction.RETRY and was.retry_plan is None:
+            # A whole turn asking to repeat something, and nothing saved to repeat. Said plainly
+            # rather than planned: "vuelve a hacerla" reached the planner as a sentence to turn
+            # into a query, and came back asking which period it referred to — which reads as the
+            # assistant not having understood the last five turns either.
+            #
+            # A query is only kept when the *bank* could not run it. Everything else either
+            # answered or was refused for a reason repeating cannot change, and offering a retry
+            # there would be offering the same failure again with more ceremony.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    "No tengo ninguna consulta guardada para repetir. "
+                    "Vuelve a preguntármelo y la hago."
+                ),
+                conversation=was,
+            )
+            return
+        retry_control = asked_again if was.retry_plan is not None else None
         if retry_control is query_recovery.RetryAction.RETRY:
             # Execute the validated plan verbatim. Re-planning the word "reintenta" would make a
             # transient bank outage change the question, which is the opposite of a retry.
