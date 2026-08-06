@@ -203,6 +203,8 @@ class FinancialQueryResponse(_Payload):
     currency: str
     total_minor: int
     movement_count: int
+    period_start: date
+    period_end: date
     groups: list[GroupResponse]
     supporting_movements: list[MovementResponse]
     trace: TraceResponse | None = None

@@ -90,6 +90,12 @@ class FinancialQuery:
             raise InvalidValueError("onlyAccountIds cannot contain duplicates")
         if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
             raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
+        if self.metric is Metric.PERIOD_AVERAGE and self.group_by not in {
+            GroupBy.DAY,
+            GroupBy.WEEK,
+            GroupBy.MONTH,
+        }:
+            raise InvalidValueError("PERIOD_AVERAGE requires DAY, WEEK or MONTH grouping")
         if not 0 <= self.supporting_limit <= MAX_SUPPORTING_MOVEMENTS:
             raise InvalidValueError(
                 f"supportingLimit must be between 0 and {MAX_SUPPORTING_MOVEMENTS}"

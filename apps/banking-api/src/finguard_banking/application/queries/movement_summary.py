@@ -6,7 +6,7 @@ query as a domain object, which is fine: it is input, not an answer.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from finguard_banking.application.bus.query_bus import Query
@@ -51,6 +51,8 @@ class MovementSummaryResult:
     currency: str
     total_minor: int
     movement_count: int
+    period_start: date
+    period_end: date
     groups: list[SummaryGroup] = field(default_factory=list)
     movements: list[SummaryMovement] = field(default_factory=list)
     trace: SummaryTrace | None = None
@@ -72,15 +74,23 @@ class MovementSummaryHandler:
         self._queries = queries
 
     async def handle(self, query: MovementSummaryQuery) -> MovementSummaryResult:
-        return _to_result(await self._queries.run(query.plan))
+        return _to_result(
+            await self._queries.run(query.plan),
+            query.plan.date_range.start,
+            query.plan.date_range.end,
+        )
 
 
-def _to_result(result: FinancialQueryResult) -> MovementSummaryResult:
+def _to_result(
+    result: FinancialQueryResult, period_start: date, period_end: date
+) -> MovementSummaryResult:
     return MovementSummaryResult(
         account_id=result.account_id,
         currency=result.currency,
         total_minor=result.total.amount_minor,
         movement_count=result.movement_count,
+        period_start=period_start,
+        period_end=period_end,
         groups=[
             SummaryGroup(
                 key=group.key,
