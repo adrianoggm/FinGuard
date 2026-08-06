@@ -20,6 +20,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.banking.http_financial_query import (
+    RANKED_FIELDS,
     HttpFinancialQuery,
     from_body,
     movement_from_body,
@@ -249,3 +250,52 @@ def test_the_movement_of_a_ranking_is_read_whole() -> None:
     assert read.category == "TRANSPORT_FUEL"
     assert read.direction == "EXPENSE"
     assert read.occurred_at.date() == date(2026, 3, 14)
+
+
+# --- the ranked endpoint takes fewer fields than a query, and drift is silent -----------------
+
+
+def test_the_ranked_body_carries_only_what_banking_accepts() -> None:
+    """Banking's `RankedMovementRequest` forbids extra inputs, so one field too many is a 422 for
+    every ranking question — not a degraded answer, no answer at all.
+
+    That is what happened. `ranked_body` used to name the fields to *drop*, `to_body` later grew
+    `includeInternal` and `acrossAccounts`, and nothing linked the two. "¿Cuál es el gasto más caro
+    que he realizado?" came back "la consulta que he construido no es válida" — a question this
+    service added an endpoint to answer.
+
+    The corpus could not catch it: it drives a stubbed bank, so the real contract is the one thing
+    it never exercises. This is the cheapest stand-in until `packages/contracts` exists — it fails
+    the moment a field is added to `to_body` and not considered here, which is the exact mistake.
+    """
+    body = ranked_body(
+        TopMovements(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            rank=3,
+        ),
+        account_id=ACCOUNT,
+        today=date(2026, 8, 6),
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert set(body) <= RANKED_FIELDS, f"banking would refuse: {sorted(set(body) - RANKED_FIELDS)}"
+    assert body["rank"] == 3
+    # The window still travels with its reference date, which is what keeps the two services
+    # agreeing about which days "this year" covers.
+    assert body["period"]["reference"] == "2026-08-06"
+
+
+def test_a_query_body_carries_more_than_a_ranking_can() -> None:
+    """The guard above only means something while the two shapes genuinely differ. If `to_body`
+    ever stopped emitting the fields the ranked endpoint refuses, the subset assertion would pass
+    for the wrong reason and stop protecting anything."""
+    body = to_body(
+        FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period=Period.THIS_YEAR)),
+        account_id=ACCOUNT,
+        today=date(2026, 8, 6),
+        supporting_movements=10,
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert set(body) - RANKED_FIELDS, "the two bodies are the same shape; this guard is now empty"
