@@ -37,6 +37,8 @@ from finguard_orchestrator.domain.services import payment_router
         # refusal about capabilities — which is the answer somebody who said this wants.
         "hazle un bizum a Marta",
         "quiero hacerle un bizum a Marta",
+        "Tengo que enviar 20 euros a Marta, puedo hacerlo por bizum, ¿verdad?",
+        "Quiero mandrle 20 euros a Marta por bizum, ¿cómo lo hago?",
     ],
 )
 def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
@@ -58,6 +60,12 @@ def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
         "cancela mi suscripción a Netflix",
         "cámbiame el límite de la tarjeta",
         "dame de baja del gimnasio",
+        # Information about how to pay is not an instruction to pay now.
+        "Quiero saber cómo enviar 20 euros a Marta",
+        "Necesito saber cuánto envié a Marta",
+        # The recipient-less transfer vocabulary belongs to the own-account workflow.
+        "Quiero transferir dinero de una de mis cuentas a otra",
+        "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?",
     ],
 )
 def test_everything_else_is_not_a_payment(sentence: str) -> None:

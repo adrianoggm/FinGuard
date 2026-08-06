@@ -19,7 +19,7 @@ import pytest
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.domain.enums import Direction, Period, Spoken
 from finguard_orchestrator.domain.errors import BankingUnavailableError
-from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
 )
@@ -169,6 +169,30 @@ async def test_the_figures_travel_with_the_answer() -> None:
 
     assert result.currency == "EUR"
     assert result.total_minor == 1_037_042
+
+
+async def test_a_balance_can_be_narrowed_by_the_holders_custom_account_name() -> None:
+    vacations = uuid.UUID(int=5)
+    custom = AccountSummary(
+        currency="EUR",
+        booked_minor=1_042_042,
+        available_minor=1_037_042,
+        as_of=datetime(2026, 8, 4, 8, 12),
+        holdings=(
+            Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
+            Holding(vacations, "SAVINGS", "Vacaciones", "EUR", 75_000),
+        ),
+    )
+    _, _, handler = ask("¿cuánto tengo en Vacaciones?", FakeAccounts(custom))
+
+    result = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto tengo en Vacaciones?", account_id=ACCOUNT, today=TODAY
+        )
+    )
+
+    assert result.total_minor == 75_000
+    assert "Vacaciones" in result.text
 
 
 async def test_a_balance_question_does_not_erase_the_previous_plan() -> None:

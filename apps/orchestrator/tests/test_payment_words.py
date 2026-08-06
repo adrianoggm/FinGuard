@@ -42,6 +42,14 @@ EVERYBODY = (AITOR, CARMEN, MARTA_RUIZ, MARTA_SOLIS)
         ("1.000 euros", 100_000),
         ("0,99 €", 99),
         ("EUR 30", 3_000),
+        ("veinte euros", 2_000),
+        ("venti euros", 2_000),
+        ("treinta y cinco euros", 3_500),
+        ("mil doscientos euros", 120_000),
+        ("un bizum de veinte euros", 2_000),
+        ("veinte euros y cincuenta céntimos", 2_050),
+        ("cincuenta céntimos", 50),
+        ("pues veinte", 2_000),
     ],
 )
 def test_an_amount_is_read_from_the_reply(sentence: str, minor: int) -> None:
@@ -54,6 +62,9 @@ def test_an_amount_is_read_from_the_reply(sentence: str, minor: int) -> None:
         "",
         "no sé",
         "a Marta",
+        "un bizum a Marta",
+        # Typo tolerance is an explicit allow-list, not arbitrary fuzzy arithmetic.
+        "vienti euros",
         "lo que tú veas",
         # A phone number is not an amount, and neither is a date. Both would otherwise arrive as
         # enormous payments in front of a confirmation prompt.
@@ -72,6 +83,10 @@ def test_the_first_amount_wins() -> None:
     """A payment of 15, not of 100. Reading the largest figure, or the last, would both be
     defensible — and neither is what the sentence says first."""
     assert payment_words.amount_in("15 euros de los 100 que le debo") == 1_500
+
+
+def test_a_written_amount_beyond_the_payment_ceiling_is_refused() -> None:
+    assert payment_words.amount_in("once mil euros") is None
 
 
 # --- the recipient -------------------------------------------------------------------
@@ -196,7 +211,11 @@ def test_the_order_of_the_parts_does_not_matter() -> None:
         ("con el concepto tapas", "tapas"),
         ("15 euros concepto: cena del viernes", "cena del viernes"),
         ("mándale 20 en concepto de alquiler", "alquiler"),
-        ("con concepto de la cena de ayer a Marta", "la cena de ayer"),
+        ("con concepto de la cena de ayer", "la cena de ayer"),
+        ("con el concepto viaje a Málaga", "viaje a Málaga"),
+        ("con el concepto cena por bizum ahora mismo", "cena"),
+        ("con el conecpto cena por favor", "cena"),
+        ("el concepto del pago es viaje a Málaga", "viaje a Málaga"),
     ],
 )
 def test_the_concept_is_read_when_it_is_named(sentence: str, concept: str) -> None:
@@ -222,7 +241,18 @@ def test_nothing_else_is_a_concept(sentence: str) -> None:
 def test_the_recipient_is_not_swallowed_into_the_concept() -> None:
     """ "con concepto de comida a Marta" ends at "a Marta": the name is a different slot, and a
     concept that ate it would put the recipient in the ledger's description."""
-    assert payment_words.concept_in("con concepto de comida a Marta") == "comida"
+    assert payment_words.concept_in("con concepto de comida a Marta", EVERYBODY) == "comida"
+
+
+def test_a_place_is_not_mistaken_for_a_recipient() -> None:
+    assert payment_words.concept_in("con concepto de viaje a Málaga", EVERYBODY) == "viaje a Málaga"
+
+
+def test_a_place_before_a_real_recipient_stays_in_the_concept() -> None:
+    assert (
+        payment_words.concept_in("con concepto viaje a Málaga a Marta Solis Vega", EVERYBODY)
+        == "viaje a Málaga"
+    )
 
 
 def test_a_concept_longer_than_the_field_is_refused() -> None:

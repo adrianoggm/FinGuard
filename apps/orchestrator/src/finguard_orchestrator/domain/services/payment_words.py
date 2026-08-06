@@ -3,8 +3,9 @@
 The two slots a half-built payment can be missing, and both are decidable here — which is what makes
 "¿de cuánto?" and "¿a quién?" answerable in one turn instead of restarting the conversation.
 
-An **amount** is a closed grammar: digits, an optional decimal, a currency word or symbol. "15
-euros" is unambiguous in every dialect, and it is the exact sentence that broke the
+An **amount** is a closed grammar: digits with an optional decimal, or compositional Spanish
+cardinals such as "treinta y cinco" and "mil doscientos". "15 euros" is unambiguous in every
+dialect, and it is the exact sentence that broke the
 reported conversation — a sentence with money and no payment verb is not a payment, so it
 reached the financial planner and came back asking which month.
 
@@ -23,7 +24,7 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import spanish
+from finguard_orchestrator.domain.services import spanish, spanish_numbers
 
 # A figure with an optional thousands separator and an optional two-decimal part. The currency is
 # optional because "pues 20" is an answer to "¿de cuánto?" and carries no unit — but see the
@@ -44,14 +45,27 @@ _NOT_AN_AMOUNT: Final = re.compile(
 )
 
 
-# The note, in the one form that says so out loud: "con concepto de X", "en concepto de X",
-# "concepto: X". It ends at the recipient, because "a Marta" is a different slot and "para" is how
-# the next clause usually starts.
+# The explicit word that introduces a note. The misspellings are a finite allow-list taken from
+# measured drift cases, never edit-distance matching: accepting an arbitrary near-match here could
+# put unrelated user text on a payment. What follows is parsed in stages because ``a`` may be a
+# recipient boundary (``comida a Marta``) or part of the note (``viaje a Malaga``).
 _CONCEPT: Final = re.compile(
-    r"(?:en|con)?\s*(?:el\s+)?concepto\s*(?:de\s+|a\s+|:\s*)?(.+?)"
-    r"(?=\s+(?:a|para|al)\s+\S|$)",
+    r"\b(?:concepto|conecpto|concepyo|concepot|conzepto)\b\s*"
+    r"(?:del\s+pago\s+(?:es|sea)\s+|(?:de|a|es|sea)\s+|:\s*)?"
+    r"(?P<concept>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
+
+# Phrases that qualify the instruction, not the ledger note. They are deliberately specific:
+# stripping every trailing ``por ...`` would corrupt perfectly valid concepts.
+_CONCEPT_SUFFIXES: Final = (
+    re.compile(r"\s+por\s+bi(?:zum+|zm|zaum)\b.*$", re.IGNORECASE),
+    re.compile(r"\s+por\s+favor(?:\s+lo\s+antes\s+posible)?\s*$", re.IGNORECASE),
+    re.compile(r"\s+(?:ahora\s+mismo|lo\s+antes\s+posible|est[aá]\s+bien)\s*$", re.IGNORECASE),
+    re.compile(r"\s*,\s*(?:gracias|oye|vale)\s*$", re.IGNORECASE),
+)
+
+_RECIPIENT_BOUNDARY: Final = re.compile(r"\s+(?:a|para|al)\s+", re.IGNORECASE)
 
 # Changing a recipient while a preview is open must be explicit. A contact name alone may be a
 # question or part of a concept; cancelling a held intent on that guess would be destructive. These
@@ -89,7 +103,7 @@ def amount_in(sentence: str) -> int | None:
 
     match = _AMOUNT.search(sentence)
     if match is None:
-        return None
+        return spanish_numbers.money_in(sentence)
 
     units = int(match.group(1).replace(".", ""))
     cents = int((match.group(2) or "0").ljust(2, "0"))
@@ -102,7 +116,7 @@ def amount_in(sentence: str) -> int | None:
     return minor
 
 
-def concept_in(sentence: str) -> str | None:
+def concept_in(sentence: str, directory: tuple[Contact, ...] = ()) -> str | None:
     """The note this sentence names, or None.
 
     Read here because a continuation never reaches the model: "pues 15 euros con concepto de comida
@@ -120,7 +134,17 @@ def concept_in(sentence: str) -> str | None:
     match = _CONCEPT.search(sentence)
     if match is None:
         return None
-    written = match.group(1).strip(" .,;:\"'")
+    written = match.group("concept").strip(" .,;:\"'")
+    for suffix in _CONCEPT_SUFFIXES:
+        written = suffix.sub("", written).strip(" .,;:\"'")
+
+    if directory:
+        # Last boundary first: ``viaje a Malaga a Marta`` keeps the place and removes the payee.
+        for boundary in reversed(tuple(_RECIPIENT_BOUNDARY.finditer(written))):
+            recipient = written[boundary.end() :]
+            if contacts_in(recipient, directory):
+                written = written[: boundary.start()].strip(" .,;:\"'")
+                break
     if not written or len(written) > MAX_CONCEPT:
         # A note longer than the field is refused rather than cut: half a sentence is not what the
         # user wrote, and the model path can ask about it instead.

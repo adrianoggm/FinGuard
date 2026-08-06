@@ -263,9 +263,11 @@ class Settings(BaseSettings):
     #   shadow   both. The rules still decide and the model's opinion becomes a log line, which is
     #            the number that has to exist before anybody argues about the third value. Costs a
     #            model call per turn and changes no answer.
+    #   hybrid   the rules keep every turn they recognise; the model may widen only their catch-all
+    #            and may never create a payment or own-account transfer.
     #   model    `Promoted`: the model decides everything except a payment, which the rules keep.
     #
-    # Three values rather than two booleans because "shadow and promoted" is not a thing — a model
+    # Named modes rather than booleans because "shadow and promoted" is not a thing — a model
     # cannot both be watched and be the authority, and a pair of switches would let somebody
     # configure that and get one of them silently ignored.
     #
@@ -307,7 +309,7 @@ class Settings(BaseSettings):
     # Still not the default, and now for a second reason. Flipping how every turn in production is
     # read is the operator's call rather than a value shipped in a settings class; and on today's
     # numbers there is no case for flipping it.
-    turn_interpreter: Literal["router", "shadow", "model"] = "router"
+    turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

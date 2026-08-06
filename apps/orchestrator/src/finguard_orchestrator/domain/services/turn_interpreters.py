@@ -1,4 +1,4 @@
-"""The interpreters that need no model, and the one that compares two.
+"""Rule, shadow, hybrid and model-authoritative turn interpreters.
 
 `Deterministic` is `intent_router.route` behind the port — the behaviour that exists today, renamed
 into a shape a model can also fill. It is not a step towards anything on its own; what it buys is
@@ -12,10 +12,12 @@ with it.
 """
 
 import logging
+import re
+from typing import Final
 
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
-from finguard_orchestrator.domain.services import intent_router
+from finguard_orchestrator.domain.services import intent_router, spanish
 from finguard_orchestrator.domain.services.intent_router import Intent
 
 logger = logging.getLogger(__name__)
@@ -122,4 +124,102 @@ class Promoted:
         if read is Intent.PAYMENT:
             logger.info("turn.payment_refused_to_model router=%s", deterministic.value)
             return deterministic
+        return read
+
+
+# Broad stems, not complete phrases. Their only job is deciding whether the catch-all is worth a
+# second reading; the model still chooses the intent and the guards below still decide whether that
+# choice is safe to use. This keeps an ordinary financial query on the one-model-call path while
+# letting phrasings such as "personas de mi agenda", "propósito del asistente" and misspelt balance
+# questions reach the reader that can understand them.
+_MAY_BE_A_SHORTCUT: Final = re.compile(
+    r"\b(tarj|agenda|contact|asistent|finguard|categor|respuesta|cifra|cantidad|saldo|"
+    r"dispon|cuent|dinero|tien|tng|huch|ahorr|fondo|agradec|graci|salud|adios|"
+    r"explic|revis|error)",
+    re.IGNORECASE,
+)
+_QUERY_SPECIFIC_SHORTCUT: Final = re.compile(
+    r"\b(tarj|agenda|contact|asistent|finguard|categor)", re.IGNORECASE
+)
+
+
+def _worth_a_second_read(sentence: str, conversation: Conversation) -> bool:
+    """Whether a deterministic catch-all resembles one of the shortcut intents.
+
+    A model call on every genuine spending question would add classification latency in front of
+    the planning call that question already needs. The broad markers above name the families that
+    bypass planning altogether, so only a catch-all that may belong to one of them pays for the
+    second opinion. Corrections and explanations also need an answer behind them; without one there
+    is no context for a model to recover.
+    """
+    folded = spanish.folded(sentence)
+    if _MAY_BE_A_SHORTCUT.search(folded) is None:
+        return False
+    if intent_router.asks_for_something_else(sentence) and (
+        _QUERY_SPECIFIC_SHORTCUT.search(folded) is None
+    ):
+        # "dinero/cuenta" also occur in ordinary spending questions. Those already need the query
+        # planner, so a classifier in front of it would add latency and another chance to redirect
+        # a sentence the deterministic path understood.
+        return False
+    if conversation.last_plan is None and any(
+        marker in folded for marker in ("respuesta", "cifra", "cantidad", "explic", "revis")
+    ):
+        return False
+    return True
+
+
+def _contextual_fragment(sentence: str) -> bool:
+    """Whether a short phrase is more likely to narrow the previous plan than replace it."""
+    cleaned = spanish.folded(sentence).strip(" \t\u00bf?\u00a1!.,;:")
+    return len(cleaned.split()) <= 5 or cleaned.startswith(("y ", "el total", "en total"))
+
+
+class Hybrid:
+    """Rules keep every decision they can make; a model widens only the catch-all.
+
+    `Promoted` lets the model replace a known deterministic reading. Measurements showed that this
+    regresses precisely the contextual turns the rules already handle well. This arrangement moves
+    the other boundary instead: a rule that recognised a turn remains authoritative, while a turn
+    it called `FINANCIAL_QUERY` may be recovered as a safe shortcut.
+
+    A model can never create a payment or an own-account transfer. It may propose a balance only
+    when the sentence does not explicitly ask for movements and is not a fragment narrowing the
+    previous financial plan. Those are read-only operations, but a wrong balance is still a real
+    figure answering another question and therefore needs its own guard.
+    """
+
+    def __init__(self, model: TurnInterpreterPort, router: TurnInterpreterPort) -> None:
+        self._model = model
+        self._router = router
+
+    async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
+        deterministic = await self._router.interpret(sentence, conversation=conversation)
+        if deterministic is not Intent.FINANCIAL_QUERY:
+            return deterministic
+        if not _worth_a_second_read(sentence, conversation):
+            return deterministic
+
+        try:
+            read = await self._model.interpret(sentence, conversation=conversation)
+        except Exception:
+            logger.warning("turn.hybrid_model_failed", exc_info=True)
+            return deterministic
+
+        if read in {Intent.PAYMENT, Intent.OWN_TRANSFER}:
+            logger.info("turn.action_refused_to_model proposed=%s", read.value)
+            return deterministic
+        if read in {Intent.CORRECTION, Intent.EXPLAIN_PREVIOUS} and (
+            conversation.last_plan is None
+        ):
+            return deterministic
+        if read is Intent.ACCOUNT_BALANCE:
+            if intent_router.asks_for_something_else(sentence):
+                return deterministic
+            if (
+                conversation.last_plan is not None
+                and not conversation.answered_the_balance
+                and _contextual_fragment(sentence)
+            ):
+                return deterministic
         return read

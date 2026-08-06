@@ -23,20 +23,9 @@ from support import episodes
 
 CORPUS = Path(__file__).resolve().parents[1] / "evaluation" / "conversations_drift.yaml"
 
-# Where it stood when the file was written: 50 of 60. Raised whenever a change earns it, never
-# lowered to make a change pass.
-#
-# The ten are worth reading before touching this number, because eight of them are one bug. Seven
-# come from a single group: "¿de dónde sale eso?" is understood and "¿de dónde has sacado esa
-# cifra?", "¿en qué te basas?", "¿qué has consultado?" and "¿cómo has llegado a esa cifra?" all
-# fall through to the planner, which answers with a figure instead of explaining the last one. That
-# is `_ABOUT_THE_ANSWER` matching word sequences, the same disease the dispatch corpus measured —
-# and here it is measured through the whole stack, so it is what a person actually gets.
-#
-# The other three are typos landing on the one word that carries the meaning: "cuanto tngo",
-# "cuanto tiengo en mi huch", and "son venti euros", which has no digit in it at all and so has no
-# amount to read.
-FLOOR = 50
+# All sixty variants now preserve the conversation they continue. Add a new corpus case when a
+# genuinely different phrasing is discovered; never lower this target to make a regression pass.
+FLOOR = 60
 
 
 def _variants() -> list[tuple[str, episodes.Episode]]:

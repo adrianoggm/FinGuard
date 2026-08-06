@@ -35,13 +35,15 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from finguard_orchestrator.domain.services import spanish
+from finguard_orchestrator.domain.services import category_words, spanish
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
 # Each entry is a capability the domain has no representation for. The name travels with
 # the refusal so the answer can say which one, rather than "no puedo con eso".
 _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     (
+        # A precisely requested per-movement mean is supported. Bare "gasto medio" stays
+        # here because it does not say whether the divisor is movements, days or months.
         "AVERAGE",
         re.compile(r"\b(medio|media|promedio)\b", re.IGNORECASE),
     ),
@@ -240,6 +242,13 @@ _A_SUPERLATIVE_NOUN: Final = re.compile(
     re.IGNORECASE,
 )
 
+_PER_MOVEMENT_AVERAGE: Final = re.compile(
+    r"\b(importe|ticket)\s+medio\b"
+    r"|\b(media|promedio)\s+(?:por|de\s+cada)\s+"
+    r"(movimiento|operacion|compra|pago|cargo|ingreso|nomina)s?\b",
+    re.IGNORECASE,
+)
+
 
 def ordinal_in(sentence: str) -> OrdinalReference | None:
     """Which row of a ranking this sentence asks for, when it asks for nothing else.
@@ -277,11 +286,19 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
     # that produced the worst answer in the reported conversation.
     folded = spanish.folded(sentence)
     ranking = bool(_A_SUPERLATIVE_NOUN.search(folded))
+    per_movement_average = bool(_PER_MOVEMENT_AVERAGE.search(folded))
+    compared_categories = len(category_words.precisely_named_in(sentence)) >= 2
     for name, pattern in _FAMILIES:
         if not policy.allows(name):
             continue
         if ranking and name == "COMPARISON":
             # It is asking for one movement, not relating two windows. See the note on the family.
+            continue
+        if per_movement_average and name == "AVERAGE":
+            continue
+        if compared_categories and name == "COMPARISON":
+            # One window split into two category groups is one aggregate query. It is
+            # unlike comparing two periods, which still needs two independent plans.
             continue
         if pattern.search(folded):
             return name

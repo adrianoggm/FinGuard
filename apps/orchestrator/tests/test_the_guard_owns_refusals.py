@@ -25,7 +25,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
 )
-from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
@@ -175,6 +175,35 @@ async def test_the_guard_still_refuses_before_the_model_is_asked() -> None:
 
     assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
     assert planner.asked == 0, "the guard let an average reach the model"
+
+
+async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement() -> None:
+    ledger = Ledger()
+
+    answer = await asked(
+        "¿Cuál fue el importe medio de las compras de gasolina el mes pasado?",
+        GivesUp("AVERAGE"),
+        ledger,
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.AVERAGE
+
+
+async def test_a_model_cannot_refuse_a_supported_category_comparison() -> None:
+    ledger = Ledger()
+
+    answer = await asked(
+        "Compara gasolina frente a restaurantes el mes pasado",
+        GivesUp("COMPARISON"),
+        ledger,
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("TRANSPORT_FUEL", "RESTAURANTS")
+    assert ledger.plan.group_by is GroupBy.CATEGORY
 
 
 async def test_a_sentence_stating_nothing_certain_keeps_the_refusal() -> None:

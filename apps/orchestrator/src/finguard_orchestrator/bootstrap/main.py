@@ -45,10 +45,12 @@ from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services.turn_interpreters import (
     Deterministic,
+    Hybrid,
     Promoted,
     Shadowed,
 )
 from finguard_orchestrator.infrastructure import (
+    HttpAccounts,
     HttpAccountSummary,
     HttpCards,
     HttpContacts,
@@ -198,18 +200,23 @@ def create_app() -> FastAPI:
         days=settings.summary_days,
         movements=settings.summary_movements,
     )
+    account_directory = HttpAccounts(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
     # How a turn is read, chosen once. The rules always exist — under `shadow` they still decide
     # and under `model` they keep the payments and catch the outages — so this builds one and then
-    # decides what stands in front of it. See `Shadowed` and `Promoted`.
+    # decides what stands in front of it. See `Shadowed`, `Hybrid` and `Promoted`.
     rules: TurnInterpreterPort = Deterministic()
     interpreter = rules
     if settings.turn_interpreter != "router":
         reading = LlmTurnInterpreter(planner_provider, model=settings.planner_model)
-        interpreter = (
-            Shadowed(rules, reading)
-            if settings.turn_interpreter == "shadow"
-            else Promoted(reading, rules)
-        )
+        if settings.turn_interpreter == "shadow":
+            interpreter = Shadowed(rules, reading)
+        elif settings.turn_interpreter == "hybrid":
+            interpreter = Hybrid(reading, rules)
+        else:
+            interpreter = Promoted(reading, rules)
 
     # One adapter for both readers of the wallet, like the balance and the address book. The chat
     # answering "cuánto llevo con cada tarjeta" from a different window than the screen shows would
@@ -233,6 +240,7 @@ def create_app() -> FastAPI:
         # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
         # with no model in the path.
         accounts=accounts,
+        account_directory=account_directory,
         contacts=contacts,
         cards=cards,
         read_attempts=settings.banking_read_attempts,

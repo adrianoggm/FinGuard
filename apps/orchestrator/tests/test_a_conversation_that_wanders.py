@@ -675,9 +675,8 @@ def test_an_account_the_holder_does_not_have_widens_rather_than_guessing() -> No
     assert ledger.plans[0].only_account_id is None
 
 
-def test_a_word_matching_two_accounts_widens_rather_than_picking_one() -> None:
-    """The same rule from the other side. Two piggy banks and one word for both: choosing is a
-    guess about which of somebody's accounts they meant, and the total is at least true."""
+def test_a_word_matching_two_accounts_selects_both_without_other_kinds() -> None:
+    """Two piggy banks and one kind word selects both without adding the current account."""
     other = Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00)
     client, _, ledger, _ = wired(
         {"hucha": PlanningResult.planned(spending(categories=()))},
@@ -686,7 +685,8 @@ def test_a_word_matching_two_accounts_widens_rather_than_picking_one() -> None:
 
     Chat(client).say("¿cuánto gasté el mes pasado en la hucha?")
 
-    assert ledger.plans[0].across_accounts is True
+    assert ledger.plans[0].across_accounts is False
+    assert ledger.plans[0].only_account_ids == (SAVINGS.account_id, other.account_id)
 
 
 def test_an_account_list_that_cannot_be_read_widens_rather_than_narrowing_wrongly() -> None:

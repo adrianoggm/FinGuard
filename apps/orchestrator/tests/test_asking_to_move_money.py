@@ -12,6 +12,8 @@ would answer somebody with an offer to move money they never asked to move.
 import uuid
 from datetime import UTC, date, datetime
 
+import pytest
+
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
@@ -48,6 +50,7 @@ TODAY = date(2026, 8, 5)
 CURRENT = Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042)
 PIGGY = Holding(uuid.UUID(int=2), "SAVINGS", "Hucha", "EUR", 548_550)
 FUND = Holding(uuid.UUID(int=3), "ASSET", "Fondo indexado", "EUR", 270_000)
+VACATIONS = Holding(uuid.UUID(int=5), "SAVINGS", "Vacaciones", "EUR", 75_000)
 
 
 def summary(*holdings: Holding) -> AccountSummary:
@@ -111,6 +114,37 @@ def test_a_question_carrying_the_same_words_is_not() -> None:
         assert intent_router.route(sentence, has_previous=False) is not Intent.OWN_TRANSFER
 
 
+def test_wanting_information_about_transfers_does_not_prepare_one() -> None:
+    sentence = "Quiero saber cómo transferir dinero entre mis cuentas"
+
+    assert intent_router.route(sentence, has_previous=False) is Intent.FINANCIAL_QUERY
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Quiero transferir dinero de una de mis cuentas a otra",
+        "Tengo que pasar dinero de una cuenta mía a otra cuenta que también es mía",
+        "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?",
+        "Necesito trasvasar dinero de una cuenta a otra, ambas mías",
+    ],
+)
+def test_explicitly_owned_account_relationships_are_internal_transfers(sentence: str) -> None:
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
+
+
+def test_a_damaged_phrase_without_ownership_is_left_for_semantic_interpretation() -> None:
+    sentence = "Quiero mover dinreo de una cuenta a otr, ¿es posible?"
+
+    assert intent_router.route(sentence, has_previous=False) is Intent.FINANCIAL_QUERY
+
+
+def test_two_generic_accounts_are_not_assumed_to_belong_to_the_holder() -> None:
+    sentence = "Quiero transferir dinero de una cuenta a otra cuenta"
+
+    assert intent_router.route(sentence, has_previous=False) is Intent.FINANCIAL_QUERY
+
+
 def test_a_moving_verb_with_no_account_is_not() -> None:
     """ "Mueve el dinero" is not an instruction anybody could act on."""
     assert intent_router.route("mueve el dinero", has_previous=False) is not Intent.OWN_TRANSFER
@@ -165,6 +199,17 @@ async def test_an_account_the_holder_does_not_have_is_said_plainly() -> None:
     assert "No tienes ninguna cuenta de ese tipo" in answer.text
 
 
+async def test_an_unknown_custom_account_keeps_the_transfer_open_without_guessing() -> None:
+    answer = await said("mueve 200 € a la cuenta Empresa", summary(CURRENT, VACATIONS))
+
+    assert answer.conversation.awaiting is Slot.ACCOUNT
+    assert "No encuentro una cuenta con ese nombre" in answer.text
+    assert "Cuenta corriente" in answer.text and "Vacaciones" in answer.text
+    active = answer.conversation.active
+    assert isinstance(active, TransferInProgress)
+    assert active.amount_minor == 20_000
+
+
 # --- the one question this service asks about an account --------------------------------
 
 
@@ -210,6 +255,34 @@ async def test_the_amount_asked_for_is_the_amount_it_hears() -> None:
     assert finished.outcome == Spoken.TRANSFER_READY.value
     assert finished.total_minor == 100_000
     assert "Hucha" in finished.text
+
+
+async def test_a_transfer_hears_an_amount_written_in_words() -> None:
+    answer = await said("mueve doscientos euros a la hucha")
+
+    assert answer.outcome == Spoken.TRANSFER_READY.value
+    assert answer.total_minor == 20_000
+
+
+async def test_a_transfer_resolves_the_holders_custom_account_name() -> None:
+    answer = await said(
+        "mueve doscientos euros a la cuenta Vacaciones",
+        summary(CURRENT, PIGGY, VACATIONS),
+    )
+
+    assert answer.outcome == Spoken.TRANSFER_READY.value
+    assert answer.total_minor == 20_000
+    assert "Vacaciones" in answer.text
+
+
+async def test_a_custom_name_answers_the_account_choice_the_service_asked() -> None:
+    accounts = summary(CURRENT, VACATIONS)
+    asked = await said("quiero transferir dinero entre mis cuentas", accounts)
+
+    finished = await said("Vacaciones", accounts, was=asked.conversation)
+
+    assert finished.conversation.awaiting is Slot.AMOUNT
+    assert "Vacaciones" in finished.text
 
 
 async def test_a_transfer_that_names_no_account_asks_which_rather_than_refusing() -> None:

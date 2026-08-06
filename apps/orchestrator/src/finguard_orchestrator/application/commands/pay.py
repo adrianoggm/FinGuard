@@ -386,6 +386,25 @@ class PreparePaymentHandler:
 
         reading = await self._reader.read(command.sentence, policy=self._policy)
 
+        # Concepts are user-owned text. When the sentence marks one explicitly, the deterministic
+        # reader is authoritative over a model that may truncate ``viaje a Malaga`` or append
+        # ``por bizum``. The directory is what lets it distinguish a trailing payee from a place.
+        explicit_concept = payment_words.concept_in(command.sentence)
+        directory: tuple[Contact, ...] | None = None
+        if explicit_concept is not None:
+            directory = await self._contacts.all_of(command.account_id)
+            explicit_concept = payment_words.concept_in(command.sentence, directory)
+            if reading.request is not None:
+                reading = replace(
+                    reading,
+                    request=replace(reading.request, concept=explicit_concept),
+                )
+            elif reading.draft is not None:
+                reading = replace(
+                    reading,
+                    draft=replace(reading.draft, concept=explicit_concept),
+                )
+
         # Stamped here, from the sentence, on whatever the reader produced. The rail is not
         # in the prompt and not in the schema: "bizum" and "transferencia" are a closed
         # vocabulary of two, and letting a decoder choose between them would be letting it
@@ -407,7 +426,11 @@ class PreparePaymentHandler:
             account_id=command.account_id,
             key=command.idempotency_key,
             # So an ambiguous name comes back with identifiers rather than as prose to retype.
-            directory=await self._contacts.all_of(command.account_id),
+            directory=(
+                directory
+                if directory is not None
+                else await self._contacts.all_of(command.account_id)
+            ),
         )
 
     async def _chosen(
@@ -457,14 +480,16 @@ class PreparePaymentHandler:
         amount = payment_words.amount_in(command.sentence)
         concept = payment_words.concept_in(command.sentence)
         clears_concept = payment_words.clears_concept(command.sentence)
+        directory: tuple[Contact, ...] = ()
+        if concept is not None or PaymentField.RECIPIENT in missing:
+            directory = await self._contacts.all_of(command.account_id)
+            concept = payment_words.concept_in(command.sentence, directory)
         named: tuple[Contact, ...] = ()
         if PaymentField.RECIPIENT in missing:
             # Only when the recipient is what is missing. Otherwise a sentence that happens to
             # mention a contact — "los 15 de la cena con Marta" — would silently change who is
             # being paid.
-            named = payment_words.contacts_in(
-                command.sentence, await self._contacts.all_of(command.account_id)
-            )
+            named = payment_words.contacts_in(command.sentence, directory)
 
         if amount is None and not named and not chose and concept is None and not clears_concept:
             if payment_router.resumes(command.sentence):
@@ -487,11 +512,7 @@ class PreparePaymentHandler:
             # Ambiguous, and this is the one place that can say so with the names in hand. Banking
             # refuses to choose too, and reaching it would spend a round trip to be told the same
             # thing without the candidates.
-            drafted = pending.filled_with(
-                PaymentDraft(
-                    amount_minor=amount, concept=payment_words.concept_in(command.sentence)
-                )
-            )
+            drafted = pending.filled_with(PaymentDraft(amount_minor=amount, concept=concept))
             return PaymentAnswer(
                 outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
                 text=payment_writer.several_candidates(tuple(c.display_name for c in named)),

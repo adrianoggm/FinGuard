@@ -199,14 +199,15 @@ episodes:
 
   - name: two_questions_in_one_sentence
     why: >
-      "¿Cuánto tengo y cuánto gasté?" asks two things, and this service answers one. Which one is
-      the model's to decide — what is asserted here is that the turn after it is unaffected.
+      "¿Cuánto tengo y cuánto gasté?" asks two things. Silently choosing one produced a valid
+      figure for only half the request, so the service now exposes both clauses and asks which to
+      handle first; the turn after it remains unaffected.
     metrics: [wrong_tool]
     turns:
-      # A sentence that says "gasté" is about spending, whatever else it also asks. The exclusion
-      # is what keeps "¿cuántos movimientos tengo?" off the balance path, and it fires here too.
+      # Neither half runs until the holder chooses. This is an intentional clarification, not the
+      # planner failing to understand a single request.
       - say: ¿cuánto tengo y cuánto gasté el mes pasado?
-        route: QUERY
+        route: CLARIFY
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: ¿y cuánto tengo?

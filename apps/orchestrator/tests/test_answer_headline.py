@@ -76,6 +76,45 @@ def test_a_count_names_the_filter_too() -> None:
     assert said == "2 movimientos en ocio el mes pasado."
 
 
+def test_an_average_is_derived_from_the_exact_sum_and_count() -> None:
+    said = answer_writer.write(
+        answer(total=1_001, count=4),
+        plan(categories=("RESTAURANTS",), metric=Metric.AVERAGE),
+    )
+
+    assert said == (
+        "El importe medio por movimiento en restaurantes el mes pasado fue de 2,50 €, "
+        "calculado sobre 4 movimientos."
+    )
+
+
+def test_an_average_rounds_half_away_from_zero_in_minor_units() -> None:
+    said = answer_writer.write(answer(total=101, count=2), plan(metric=Metric.AVERAGE))
+
+    assert "0,51 €" in said
+
+
+def test_a_category_comparison_shows_an_average_for_each_category() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=2_000,
+        movement_count=4,
+        groups=(Group("GROCERIES", 1_500, 3), Group("RESTAURANTS", 500, 1)),
+    )
+
+    said = answer_writer.write(
+        grouped,
+        plan(
+            categories=("GROCERIES", "RESTAURANTS"),
+            group_by=GroupBy.CATEGORY,
+            metric=Metric.AVERAGE,
+        ),
+    )
+
+    assert "supermercado: media 5,00 € (3)" in said
+    assert "restaurantes: media 5,00 € (1)" in said
+
+
 def test_an_empty_answer_says_what_it_looked_for() -> None:
     """ "No he encontrado movimientos el mes pasado" invites the user to believe there were none.
     Naming the filter is what lets them see the query was wrong instead."""

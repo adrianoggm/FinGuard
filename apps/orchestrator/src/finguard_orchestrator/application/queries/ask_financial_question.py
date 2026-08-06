@@ -45,6 +45,7 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
@@ -244,6 +245,7 @@ class AskFinancialQuestionHandler:
         policy: GuardPolicy = EVERY_RULE,
         *,
         accounts: AccountSummaryPort,
+        account_directory: AccountDirectoryPort | None = None,
         contacts: ContactDirectoryPort,
         cards: CardDirectoryPort,
         card_days: int = DEFAULT_CARD_DAYS,
@@ -264,6 +266,7 @@ class AskFinancialQuestionHandler:
         # for a handler used directly, and the default is the behaviour that already existed.
         self._interpreter = interpreter or Deterministic()
         self._accounts = accounts
+        self._account_directory = account_directory
         self._contacts = contacts
 
     # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
@@ -808,10 +811,17 @@ class AskFinancialQuestionHandler:
         # breakdown is a better answer than a question. That is also why no clarification is asked
         # here even when a kind matches two accounts — both are listed, and nobody has to reply.
         named = account_words.named_in(query.sentence)
+        names = tuple(holding.display_name for holding in summary.holdings if holding.display_name)
+        custom = account_words.custom_chosen_among(query.sentence, names)
+        selected = (
+            tuple(holding for holding in summary.holdings if holding.display_name in custom)
+            if custom
+            else (() if account_words.explicitly_names_a_custom_account(query.sentence) else None)
+        )
 
         return AskFinancialQuestionResult(
             outcome=Spoken.BALANCE.value,
-            text=answer_writer.balance(summary, named),
+            text=answer_writer.balance(summary, named, selected=selected),
             plan=answer_writer.describe(was.last_plan) if was.last_plan else None,
             # Remembered, so "¿y en la hucha?" on the next turn is about the balance rather than
             # about spending. The rest of the conversation passes through: a balance is a turn, not
@@ -822,7 +832,7 @@ class AskFinancialQuestionHandler:
             # prose to find it. It comes from the writer rather than being recomputed here,
             # because a second copy of the rule is a second answer waiting to disagree with the
             # first — and the two would sit side by side on one screen.
-            total_minor=answer_writer.leading_figure(summary, named),
+            total_minor=answer_writer.leading_figure(summary, named, selected=selected),
         )
 
     async def _own_transfer(
@@ -830,8 +840,8 @@ class AskFinancialQuestionHandler:
     ) -> AskFinancialQuestionResult:
         """Money into one of the holder's own accounts, asked for in words.
 
-        No model anywhere on this path. The account comes from a closed vocabulary and the amount
-        from a closed grammar — digits and a currency word — so what is left to decide is nothing.
+        No model anywhere on this path. The account comes from the holder's directory and a closed
+        kind vocabulary; the amount comes from a closed grammar of digits or Spanish cardinals.
 
         It stops at a question rather than guessing, in both directions: an amount nobody said is
         asked for, and an account name matching two of the holder's accounts is asked about. Both
@@ -862,6 +872,12 @@ class AskFinancialQuestionHandler:
             query.sentence
         )
         wanted = [holding for holding in summary.holdings if holding.kind in towards]
+        account_names = tuple(
+            holding.display_name for holding in summary.holdings if holding.display_name
+        )
+        custom = account_words.custom_destination_among(query.sentence, account_names)
+        if custom:
+            wanted = [holding for holding in summary.holdings if holding.display_name in custom]
         if resuming is not None and resuming.awaiting is Slot.ACCOUNT:
             # The reply to "¿a cuál lo muevo?", read by the holder's own name for the account —
             # the only thing that separates two of one kind, since the kind vocabulary answers
@@ -871,9 +887,7 @@ class AskFinancialQuestionHandler:
             # as it is the name of the account called Hucha, and picking the exact match would move
             # money into one of two accounts on the strength of a coincidence. Asked and then
             # answered, the reply is a choice among names the user was just shown.
-            picked = account_words.chosen_among(
-                query.sentence, tuple(h.display_name for h in summary.holdings if h.display_name)
-            )
+            picked = account_words.chosen_among(query.sentence, account_names)
             if picked:
                 wanted = [h for h in summary.holdings if h.display_name in picked]
         if not wanted and resuming is not None and resuming.to_account_id is not None:
@@ -883,7 +897,11 @@ class AskFinancialQuestionHandler:
             resuming.amount_minor if resuming else None
         )
 
-        if not wanted and not account_words.named_in(query.sentence):
+        if (
+            not wanted
+            and not account_words.named_in(query.sentence)
+            and not account_words.explicitly_names_a_custom_account(query.sentence)
+        ):
             # The sentence says to move money and does not say where. "Me gustaría transferir dinero
             # entre cuentas" is that, and it used to reach the capability guard and be refused with
             # a sentence about *querying* the transfers — a refusal about reading, to somebody
@@ -899,6 +917,17 @@ class AskFinancialQuestionHandler:
                 ),
             )
         if not wanted:
+            if account_words.explicitly_names_a_custom_account(query.sentence):
+                movable = [holding for holding in summary.holdings]
+                question = answer_writer.which_account(movable)
+                return AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                    text=answer_writer.unknown_named_account_to_move_to(movable),
+                    question=question,
+                    conversation=was.with_active(
+                        TransferInProgress(amount_minor=amount, awaiting=Slot.ACCOUNT)
+                    ),
+                )
             # A kind was named and the holder has none of it. Keeping the state alive when one was
             # under way: the question is still open and the reply simply named the wrong account.
             return AskFinancialQuestionResult(
@@ -1145,11 +1174,40 @@ class AskFinancialQuestionHandler:
         Internal transfers stay excluded, so widening does not double anything: money moved into
         the piggy bank is not income there any more than it was spending here.
 
-        The holder's accounts are only fetched when the sentence named one, which is the rare case.
-        Widening needs no list — banking drops its own filter and the view's scope is what remains.
+        The holder's account directory is fetched only for an explicit custom-name form. Fixed
+        kinds retain the existing summary path, while widening needs no list at all.
         """
         named = account_words.named_in(query.sentence)
-        if not named:
+        explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
+        if not named and not explicit_custom:
+            return replace(plan, across_accounts=True)
+
+        if not named and self._account_directory is not None:
+            try:
+                holdings = await self._account_directory.all_of(query.account_id)
+            except BankingUnavailableError:
+                logger.warning(
+                    "scope.accounts_unavailable account=%s", account_ref(query.account_id)
+                )
+                return replace(plan, across_accounts=True)
+            names = tuple(holding.display_name for holding in holdings if holding.display_name)
+            custom = account_words.custom_chosen_among(query.sentence, names)
+            wanted_custom = [holding for holding in holdings if holding.display_name in custom]
+            if len(wanted_custom) == 1:
+                return replace(
+                    plan,
+                    across_accounts=False,
+                    only_account_id=wanted_custom[0].account_id,
+                    only_account_ids=(),
+                    include_internal=plan.include_internal or plan.direction is Direction.ALL,
+                )
+            if wanted_custom:
+                return replace(
+                    plan,
+                    across_accounts=False,
+                    only_account_id=None,
+                    only_account_ids=tuple(holding.account_id for holding in wanted_custom),
+                )
             return replace(plan, across_accounts=True)
 
         try:
@@ -1163,14 +1221,28 @@ class AskFinancialQuestionHandler:
             logger.warning("scope.accounts_unavailable account=%s", account_ref(query.account_id))
             return replace(plan, across_accounts=True)
 
-        wanted = [holding for holding in summary.holdings if holding.kind in named]
-        if len(wanted) != 1:
-            # None of that kind, or more than one. Neither narrows to a single account, and
-            # inventing one would answer about an account the sentence did not choose.
+        names = tuple(holding.display_name for holding in summary.holdings if holding.display_name)
+        custom = account_words.custom_chosen_among(query.sentence, names)
+        wanted = (
+            [holding for holding in summary.holdings if holding.display_name in custom]
+            if custom
+            else [holding for holding in summary.holdings if holding.kind in named]
+        )
+        if not wanted:
+            # None of that kind. Narrowing to nothing would look like a genuinely empty period.
             return replace(plan, across_accounts=True)
+        if len(wanted) > 1:
+            return replace(
+                plan,
+                across_accounts=False,
+                only_account_id=None,
+                only_account_ids=tuple(holding.account_id for holding in wanted),
+            )
         return replace(
             plan,
+            across_accounts=False,
             only_account_id=wanted[0].account_id,
+            only_account_ids=(),
             # Internal transfers come back in when the question is about *this account's*
             # movements, and only then. The exclusion exists to stop double counting: a traspaso is
             # a debit here and a credit there, so across accounts it appears twice. Scoped to one
@@ -1397,8 +1469,9 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "de movimientos los verás marcados uno a uno."
     ),
     "AVERAGE": (
-        "Todavía no calculo medias. Puedo darte el total de cada mes por separado y así ves la "
-        "evolución — por ejemplo «¿cuánto gasté en gasolina el mes pasado?»."
+        "Puedo calcular el importe medio por movimiento, pero todavía no medias mensuales o "
+        "semanal que incluya periodos sin movimientos. Prueba con «importe medio de mis compras "
+        "este mes»."
     ),
     "RATIO": (
         "Todavía no calculo porcentajes de una cifra sobre otra. Puedo darte las dos por "
@@ -1430,8 +1503,8 @@ def _from_what_the_sentence_said(
     """A plan built from the sentence alone, when the model gave up on one it could have made.
 
     **The guard owns refusals; the model does not get to invent one.** `capability_guard` is what
-    decides which questions this product declines — averages, ratios, comparisons — and it runs
-    *before* the model. So an `UNSUPPORTED` naming a family the guard does not have is not a
+    decides which questions this product declines — ratios and multi-period comparisons — and
+    it runs *before* the model. So an `UNSUPPORTED` naming a family the guard does not have is not a
     refusal this service makes; it is the model failing, dressed as a product limit. Handing it to
     the user is the worst kind of wrong answer: "no puedo" about something that can be, said with
     the authority of a rule.
@@ -1448,11 +1521,13 @@ def _from_what_the_sentence_said(
     """
     if planned.outcome is not PlanningOutcome.UNSUPPORTED:
         return None
-    if planned.reason in _MISSING_CAPABILITY:
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    supported_average = planned.reason == "AVERAGE" and facts.metric is Metric.AVERAGE
+    supported_comparison = planned.reason == "COMPARISON" and bool(facts.compared_categories)
+    if planned.reason in _MISSING_CAPABILITY and not (supported_average or supported_comparison):
         # A family the guard owns. The refusal is this product's and it is correct.
         return None
 
-    facts = explicit_facts.read(query.sentence, today=query.today)
     named = category_words.precisely_named_in(query.sentence)
     if not named:
         # Nothing certain to build from. The decline stands, and it is honest: what this rescues is
@@ -1469,18 +1544,21 @@ def _from_what_the_sentence_said(
                 "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
             ),
             draft=FinancialPlanDraft(
-                direction=_direction_of(named), categories=named, group_by=GroupBy.NONE
+                direction=facts.direction or _direction_of(named),
+                categories=named,
+                group_by=facts.group_by or GroupBy.NONE,
+                metric=facts.metric or Metric.SUM,
             ),
             awaiting=Slot.WINDOW,
         )
 
     plan = FinancialPlan(
-        direction=_direction_of(named),
+        direction=facts.direction or _direction_of(named),
         period=facts.window if isinstance(facts.window, RelativePeriod) else None,
         date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
         categories=named,
         group_by=facts.group_by or GroupBy.NONE,
-        metric=Metric.SUM,
+        metric=facts.metric or Metric.SUM,
     )
     logger.info(
         "plan.rescued account=%s reason=%s categories=%s",
@@ -1538,14 +1616,15 @@ def _answers_the_transfer(sentence: str, waiting: TransferInProgress) -> bool:
     defect the payment path was fixed for — and giving the transfer a state is what made it
     possible here.
 
-    ponytail: an account is recognised by the kind vocabulary, so a holder whose accounts are named
-    without one of those words has to repeat the instruction instead of naming it. The reply is
-    matched against their real account names one layer down, where the list exists; doing it here
-    would mean fetching the accounts on every turn to decide how to route one.
+    A short phrase may be an account choice because this branch runs only while an ACCOUNT slot is
+    open. It still selects nothing here: the next layer compares it exactly with the holder's real
+    account names, so a false positive can only repeat the question.
     """
     if waiting.awaiting is Slot.AMOUNT:
         return payment_words.amount_in(sentence) is not None
-    return bool(account_words.named_in(sentence))
+    return bool(account_words.named_in(sentence)) or account_words.looks_like_account_choice(
+        sentence
+    )
 
 
 # "El total", "en total", "todo junto" - the whole of it, said about a balance that had just named
@@ -1656,6 +1735,16 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
             text = _MISSING_CAPABILITY.get(planned.reason or "", _CANNOT_YET)
         case PlanningOutcome.PROVIDER_ERROR:
             text = "No he podido pensar la respuesta ahora mismo. Vuelve a intentarlo."
+        case PlanningOutcome.INVALID_STRUCTURE:
+            text = (
+                "He entendido tu petición, pero el planificador no ha devuelto una consulta "
+                "válida. No necesitas cambiar la pregunta; vuelve a intentarlo."
+            )
+        case PlanningOutcome.INVALID_DOMAIN:
+            text = (
+                "He entendido la petición, pero no he podido convertirla en una consulta válida. "
+                "Prueba a concretar el periodo o el filtro."
+            )
         case _:
             text = "No he entendido la pregunta. ¿Puedes decirla de otra forma?"
 

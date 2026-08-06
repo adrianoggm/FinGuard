@@ -88,12 +88,27 @@ class Bank:
         return self._summary
 
 
-async def ran(sentence: str, of: AccountSummary | None = None) -> FinancialPlan:
+class Directory:
+    def __init__(self, *holdings: Holding) -> None:
+        self.holdings = holdings
+        self.asked_for: uuid.UUID | None = None
+
+    async def all_of(self, account_id: uuid.UUID) -> tuple[Holding, ...]:
+        self.asked_for = account_id
+        return self.holdings
+
+
+async def ran(
+    sentence: str,
+    of: AccountSummary | None = None,
+    directory: Directory | None = None,
+) -> FinancialPlan:
     ledger = Ledger()
     handler = AskFinancialQuestionHandler(
         Planner(),  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Bank(of or summary()),  # type: ignore[arg-type]
+        account_directory=directory,
         contacts=None,
         cards=NoCards(),  # type: ignore[arg-type]
     )
@@ -120,6 +135,32 @@ async def test_a_question_naming_an_account_is_about_that_account() -> None:
     assert plan.across_accounts is False
 
 
+async def test_a_question_can_use_the_holders_custom_account_name() -> None:
+    vacations = uuid.UUID(int=5)
+    accounts = summary(
+        Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
+        Holding(vacations, "SAVINGS", "Vacaciones", "EUR", 75_000),
+    )
+
+    directory = Directory(*accounts.holdings)
+    plan = await ran(
+        "¿cuánto gasté este mes en la cuenta Vacaciones?", accounts, directory=directory
+    )
+
+    assert plan.only_account_id == vacations
+    assert plan.across_accounts is False
+    assert directory.asked_for == ACCOUNT
+
+
+async def test_an_unknown_custom_account_name_widens_instead_of_guessing() -> None:
+    directory = Directory(*summary().holdings)
+
+    plan = await ran("¿cuánto gasté en la cuenta Viajes?", directory=directory)
+
+    assert plan.only_account_id is None
+    assert plan.across_accounts is True
+
+
 async def test_a_kind_the_holder_does_not_have_widens_rather_than_narrowing_to_nothing() -> None:
     """Narrowing to an account that is not there would answer about nothing and look like an empty
     month. The wider answer is the honest one: the word was not understood, and the figures say so
@@ -132,9 +173,9 @@ async def test_a_kind_the_holder_does_not_have_widens_rather_than_narrowing_to_n
     assert plan.only_account_id is None
 
 
-async def test_two_accounts_of_one_kind_widen_rather_than_picking_one() -> None:
-    """A question, unlike an instruction, has a better answer than "which one?" — cover both. And
-    picking the first would answer about an account the sentence did not choose."""
+async def test_two_accounts_of_one_kind_select_both_without_widening_to_other_kinds() -> None:
+    """The kind names a subset even when it contains two accounts. Widening would silently add the
+    current account, while picking one would silently drop the other hucha."""
     two = summary(
         Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
         Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550),
@@ -143,8 +184,24 @@ async def test_two_accounts_of_one_kind_widen_rather_than_picking_one() -> None:
 
     plan = await ran("¿cuánto gasté en la hucha?", two)
 
-    assert plan.across_accounts is True
+    assert plan.across_accounts is False
     assert plan.only_account_id is None
+    assert plan.only_account_ids == (PIGGY, uuid.UUID(int=4))
+
+
+async def test_two_different_named_accounts_form_a_selected_subset() -> None:
+    fund = uuid.UUID(int=6)
+    three = summary(
+        Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042),
+        Holding(PIGGY, "SAVINGS", "Hucha", "EUR", 548_550),
+        Holding(fund, "ASSET", "Fondo indexado", "EUR", 270_000),
+    )
+
+    plan = await ran("¿qué movimientos tuve en la cuenta corriente y la hucha este mes?", three)
+
+    assert plan.across_accounts is False
+    assert plan.only_account_id is None
+    assert plan.only_account_ids == (ACCOUNT, PIGGY)
 
 
 async def test_the_scope_is_not_part_of_the_plan_that_is_remembered() -> None:

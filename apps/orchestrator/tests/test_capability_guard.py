@@ -41,8 +41,17 @@ def test_an_average_is_refused_however_it_is_worded() -> None:
     assert unsupported_reason("¿Cuánto gasto de media a la semana?") is not None
 
 
+def test_an_explicit_average_per_movement_is_supported() -> None:
+    assert unsupported_reason("¿Cuál fue el importe medio de mis compras este mes?") is None
+    assert unsupported_reason("Dame la media por movimiento de gasolina este año") is None
+
+
 def test_a_comparison_between_periods_is_refused() -> None:
     assert unsupported_reason("¿He gastado más este mes que el anterior?") is not None
+
+
+def test_a_comparison_between_two_named_categories_is_one_supported_breakdown() -> None:
+    assert unsupported_reason("Compara gasolina frente a restaurantes este mes") is None
 
 
 def test_a_ranking_is_not_a_comparison() -> None:

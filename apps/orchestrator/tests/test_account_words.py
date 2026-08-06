@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.services import account_words
     ("sentence", "expected"),
     [
         ("¿Cuánto tengo en la hucha?", ("SAVINGS",)),
+        ("Cuanto tiengo en mi huch", ("SAVINGS",)),
         ("¿y en el fondo?", ("ASSET",)),
         ("¿Cuánto me queda en la cuenta corriente?", ("CURRENT",)),
         ("¿cuánto me ha entrado de la nómina?", ("CURRENT",)),
@@ -57,3 +58,26 @@ def test_accents_are_not_required() -> None:
     """Somebody typing "nomina" means "nómina". A match that needed the exact spelling would answer
     "I do not know that word" to a word it knows — the property `spanish.folded` exists for."""
     assert account_words.named_in("lo de la nomina") == ("CURRENT",)
+
+
+def test_an_explicit_custom_account_reference_is_recognised_without_knowing_its_name() -> None:
+    assert account_words.explicitly_names_a_custom_account("en mi cuenta Vacaciones")
+    assert account_words.names_a_custom_destination("mueve 20 a la cuenta Vacaciones")
+    assert not account_words.names_a_custom_destination("mueve mi cuenta Vacaciones")
+    assert not account_words.explicitly_names_a_custom_account("cuenta cuánto gasté")
+
+
+def test_a_custom_name_resolves_without_turning_a_generic_label_into_a_choice() -> None:
+    names = ("Hucha", "Hucha viajes", "Vacaciones")
+
+    assert account_words.custom_chosen_among("en Hucha viajes", names) == ("Hucha viajes",)
+    assert account_words.custom_chosen_among("en la hucha", names) == ()
+    assert account_words.custom_chosen_among("en mi cuenta Vacaciones", names) == ("Vacaciones",)
+    assert account_words.custom_destination_among(
+        "mueve de la cuenta Vacaciones a Hucha viajes", names
+    ) == ("Hucha viajes",)
+
+
+def test_a_short_custom_name_can_answer_an_open_account_slot() -> None:
+    assert account_words.looks_like_account_choice("Vacaciones")
+    assert not account_words.looks_like_account_choice("¿cuánto gasté este mes?")

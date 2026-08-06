@@ -11,16 +11,13 @@ the layer where the rigidity lives: a hundred regular expressions deciding which
 turn belongs to. A vocabulary that knows "gasolina" and not "el coche" scores perfectly on the
 corpus and fails a person.
 
-It currently passes 37 of 96, and the failures are not scattered — all 59 land in FINANCIAL_QUERY.
-That is the shape of the problem this file was built to expose: the router reads short imperative
-Spanish and loses the sentence as soon as it is wrapped in politeness. See the corpus header for
-where the sentences came from and why they could not be written here.
+It now passes 95 of 96. The remaining sentence lost the only ownership markers from an internal
+transfer, so deterministic routing deliberately leaves it to semantic interpretation instead of
+turning an ambiguous phrase into an operation.
 
-Nobody should read 37/96 as "the service answers 39 % of questions". Several of those meanings are
-partly recovered downstream — the handler narrows a balance follow-up that arrived in the catch-all
-— and this measures the first decision, not the reply. It is the first decision that matters most,
-because a turn in the catch-all is handed to a planner with no plan for it, and the failure mode of
-that is the one this whole service is arranged around: a real figure answering a different question.
+Nobody should read the original 37/96 as "the service answers 39 % of questions". This measures the
+first deterministic decision, not the final hybrid reply. Raising it to 95/96 removes avoidable
+model calls while retaining the semantic fallback for a phrase whose ownership signal was lost.
 
 The floor moves up and never down, like the corpus gate. What it is not is a target: the honest use
 of this file is to run it before and after a change to the interpretation layer, because a
@@ -35,14 +32,8 @@ from finguard_orchestrator.domain.services.intent_router import Intent, route
 
 PARAPHRASES = Path(__file__).resolve().parents[1] / "evaluation" / "paraphrases"
 
-# Where it stood when the file was written: 37 of 96 sentences reach the same place as the rest of
-# their group. Raised whenever a change earns it, never lowered to make a change pass — a floor
-# that moves both ways measures nothing.
-#
-# Deliberately far below 96. Every other test here states what the service must do; this one states
-# what it currently does, so the number can be watched while it is fixed. Turning the 59 into
-# failing assertions would buy a red suite and no information that this line does not already carry.
-FLOOR = 37
+# The sole remaining miss is intentionally ambiguous after its ownership words are lost.
+FLOOR = 95
 
 
 def _groups() -> list[dict[str, object]]:

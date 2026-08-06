@@ -33,9 +33,9 @@ class PlanningOutcome(StrEnum):
     one returns a real figure for a question nobody asked — worse than asking."""
 
     UNSUPPORTED = "UNSUPPORTED"
-    """Outside what a financial query can express: an average, a comparison of two
-    periods, a forecast. Answering with the nearest expressible plan is a wrong answer
-    delivered confidently."""
+    """Outside what a financial query can express: a time-normalised average, a
+    comparison of two periods or a forecast. Answering with the nearest expressible plan is a
+    wrong answer delivered confidently."""
 
     INVALID_STRUCTURE = "INVALID_STRUCTURE"
     """The answer was not JSON matching the schema. Under constrained decoding this
@@ -125,6 +125,10 @@ class Rail(StrEnum):
 class Metric(StrEnum):
     SUM = "SUM"
     COUNT = "COUNT"
+    # Arithmetic mean of the matching movements. Banking still returns the exact sum and
+    # count; the deterministic answer writer derives the displayed mean from those two
+    # integers, so no rounded model-generated number enters the response.
+    AVERAGE = "AVERAGE"
 
 
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum
