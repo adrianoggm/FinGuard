@@ -227,6 +227,25 @@ class Conversation:
             return Slot.CONFIRMATION
         return None
 
+    @property
+    def at_rest(self) -> bool:
+        """Whether anything is waiting for a reply.
+
+        The one fact that decides whether an acknowledgement is an acknowledgement. «Vale» after an
+        answer is a person being polite; «vale» while something is waiting for a value might be an
+        answer to it, and reading it as manners would swallow the turn. Thirty of the corpus's turns
+        are a bare «vale», so this is not a corner.
+
+        Built on `awaiting` rather than on `active`, and the difference is a real turn: a refusal
+        leaves `UnsupportedCapability` open, and that workflow is a *record* of the last turn rather
+        than a question. Reading "something is active" as "something is waiting" sent a «vale» two
+        turns after a refused forecast back to the planner.
+
+        `last_asked` as well, because a question this service asked and then closed is still a
+        question the *user* is answering on the next turn.
+        """
+        return self.awaiting is None and self.last_asked is None
+
     def with_active(self, active: ActiveWorkflow | None) -> "Conversation":
         """The same conversation with a different workflow — replacing, never accumulating.
 

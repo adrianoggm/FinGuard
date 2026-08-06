@@ -74,7 +74,7 @@ episodes:
         route: TRANSFER
         says: Fondo indexado
       - say: perfecto
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto tengo en total?
         route: BALANCE
 
@@ -102,7 +102,7 @@ episodes:
         route: BALANCE
         says: "2.270,42"
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: an_account_named_alone_after_a_spending_question
     why: >
@@ -207,7 +207,7 @@ episodes:
         route: BALANCE
         no_model: true
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: adiós
         route: COURTESY
 

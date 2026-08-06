@@ -24,13 +24,18 @@ logger = logging.getLogger(__name__)
 class Deterministic:
     """The routers, behind the port. Exactly today's behaviour and nothing else.
 
-    `has_previous` is whether there is an answered plan behind this turn, and it gates the two
-    intents that are *about* that answer. The router takes it as a boolean because that is all it
-    reads; an interpreter that wants more of the conversation gets the whole thing.
+    The router reads two booleans off the conversation rather than taking it whole: whether there
+    is an answered plan behind this turn, which gates the two intents that are *about* that answer,
+    and whether anything is waiting for a reply, which decides whether «vale» is manners. An
+    interpreter that wants more than that gets the whole conversation — this one does not.
     """
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
-        return intent_router.route(sentence, has_previous=conversation.last_plan is not None)
+        return intent_router.route(
+            sentence,
+            has_previous=conversation.last_plan is not None,
+            at_rest=conversation.at_rest,
+        )
 
 
 class Shadowed:

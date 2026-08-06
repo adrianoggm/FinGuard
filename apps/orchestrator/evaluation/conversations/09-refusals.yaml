@@ -165,7 +165,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: the_guard_runs_before_the_model_every_time
     why: >

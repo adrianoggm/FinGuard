@@ -52,7 +52,7 @@ episodes:
         route: BALANCE
         total: 775592
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: naming_an_account_the_holder_does_not_have
     why: >
@@ -69,7 +69,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -133,7 +133,7 @@ episodes:
       - say: ¿y en total?
         route: BALANCE
       - say: perfecto
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -192,7 +192,7 @@ episodes:
       - say: ¿y en la corriente?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 

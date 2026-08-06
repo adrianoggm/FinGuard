@@ -29,7 +29,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -50,7 +50,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -73,7 +73,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -97,7 +97,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -139,7 +139,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -161,7 +161,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -183,7 +183,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -235,6 +235,6 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY

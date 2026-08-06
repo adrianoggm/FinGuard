@@ -103,7 +103,7 @@ episodes:
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -143,7 +143,7 @@ episodes:
       - say: en el supermercado
         route: QUERY
       - say: eso es
-        route: QUERY
+        route: COURTESY
 
   - name: cancelling_by_changing_the_subject_entirely
     why: >

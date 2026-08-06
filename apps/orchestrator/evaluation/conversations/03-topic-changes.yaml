@@ -90,7 +90,7 @@ episodes:
       - say: ¿cuánto gasté este mes?
         route: QUERY
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: a_question_about_cards_in_the_middle
     why: >
@@ -130,7 +130,7 @@ episodes:
       - say: ¿cuánto gasté este año?
         route: QUERY
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: a_greeting_in_the_middle_of_everything
     why: >
@@ -147,7 +147,7 @@ episodes:
       - say: gracias
         route: COURTESY
       - say: muy amable
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
 
@@ -226,4 +226,4 @@ episodes:
       - say: ¿puedes hacer transferencias?
         route: IDENTITY
       - say: gracias, adiós
-        route: QUERY
+        route: COURTESY

@@ -153,13 +153,13 @@ episodes:
       - say: quería
         route: QUERY
       - say: bueno
-        route: QUERY
+        route: COURTESY
       - say: es que
         route: QUERY
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ya
-        route: QUERY
+        route: COURTESY
       - say: pues eso
         route: QUERY
       - say: nada
@@ -167,7 +167,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
       - say: adiós
@@ -278,7 +278,7 @@ episodes:
       - say: en gasolina
         route: QUERY
       - say: gracias, hasta luego
-        route: QUERY
+        route: COURTESY
 
   - name: a_demo_being_shown_to_somebody
     why: >

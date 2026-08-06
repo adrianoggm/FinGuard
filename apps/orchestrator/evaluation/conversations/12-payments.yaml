@@ -47,7 +47,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -113,7 +113,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -177,7 +177,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -258,4 +258,4 @@ episodes:
       - say: ¿y en gasolina?
         route: QUERY
       - say: gracias, adiós
-        route: QUERY
+        route: COURTESY

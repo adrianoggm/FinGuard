@@ -378,7 +378,7 @@ class AskFinancialQuestionHandler:
             yield AskFinancialQuestionResult(
                 outcome=Spoken.COURTESY.value,
                 # Never None here: the intent is only this because `courtesy.reply` answered.
-                text=courtesy.reply(query.sentence) or "",
+                text=courtesy.reply(query.sentence, at_rest=was.at_rest) or "",
                 conversation=was,
             )
             return

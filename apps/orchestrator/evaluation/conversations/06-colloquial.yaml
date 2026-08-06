@@ -26,7 +26,7 @@ episodes:
       - say: oye una cosa, ¿a quién puedo pagar?
         route: CONTACTS
       - say: vale, gracias
-        route: QUERY
+        route: COURTESY
 
   - name: money_by_its_slang_names
     why: >
@@ -46,7 +46,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: guay
-        route: QUERY
+        route: COURTESY
 
   - name: a_question_with_no_question_in_it
     why: >
@@ -88,7 +88,7 @@ episodes:
       - say: vale, ¿cuánto tengo?
         route: BALANCE
       - say: perfecto
-        route: QUERY
+        route: COURTESY
 
   - name: thinking_out_loud
     why: >
@@ -105,7 +105,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: eso es
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -128,7 +128,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: a_habit_phrased_with_a_moving_verb
     why: >
@@ -193,7 +193,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: ya
-        route: QUERY
+        route: COURTESY
       - say: ¿y en gasolina?
         route: QUERY
 
@@ -214,6 +214,6 @@ episodes:
       - say: ¿y en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY

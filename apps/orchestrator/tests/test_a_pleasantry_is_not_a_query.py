@@ -108,10 +108,29 @@ async def answer(sentence: str, was: Conversation = IDLE):
         "adiós",
         "hasta luego",
         "nos vemos",
+        # The model's words, not ours. It read these as courtesy while the rules sent them to a
+        # planner, and there is no reading of either under which they are about money.
+        "muy amable",
+        "gracias, adiós",
+        "gracias, hasta luego",
     ],
 )
-def test_these_are_pleasantries(said: str) -> None:
-    assert route(said, has_previous=True) is Intent.COURTESY
+def test_these_are_pleasantries_whatever_is_open(said: str) -> None:
+    """The first tier. None of these can be an answer to anything, so no state has to be consulted:
+    nobody replies «gracias» to «¿de cuánto quieres el bizum?» and means fifteen euros."""
+    assert route(said, has_previous=True, at_rest=False) is Intent.COURTESY
+
+
+@pytest.mark.parametrize(
+    "said",
+    ["vale", "ok", "perfecto", "genial", "eso es", "ya", "bueno", "de acuerdo", "entendido"],
+)
+def test_these_are_pleasantries_only_when_nothing_is_waiting(said: str) -> None:
+    """The second tier, and the reason it needs the conversation. Thirty of the corpus's turns are
+    a bare «vale» after an answer — manners, and every one of them reached the planner. The same
+    word while a slot is open might be an answer to it, and reading it as manners eats the turn."""
+    assert route(said, has_previous=True, at_rest=True) is Intent.COURTESY
+    assert route(said, has_previous=True, at_rest=False) is not Intent.COURTESY
 
 
 @pytest.mark.parametrize(
@@ -122,23 +141,22 @@ def test_these_are_pleasantries(said: str) -> None:
         "gracias, ¿y en la hucha?",
         "hola, ¿cuánto gasté el mes pasado?",
         "buenas, quiero hacer un bizum a Marta",
-        # Half the time these are pleasantries and the other half they answer a question, and only
-        # the open slot can tell. Deliberately out of the vocabulary until something reads it.
+        # «Sí» is in neither tier and never will be: it is the word that confirms a payment, and a
+        # rule that could read it as manners is a rule that could swallow a confirmation.
         "sí",
-        "vale",
-        "ok",
-        "perfecto",
-        "claro",
-        "eso es",
+        "si",
+        # A question with manners on the front. The question is what has to be answered.
+        "vale, ¿y en la hucha?",
+        "gracias, ¿cuánto tengo?",
     ],
 )
 def test_these_are_not(said: str) -> None:
-    assert route(said, has_previous=True) is not Intent.COURTESY
+    assert route(said, has_previous=True, at_rest=True) is not Intent.COURTESY
 
 
 def test_a_pleasantry_gets_an_answer_rather_than_a_plan() -> None:
     """The planner raises if it is reached, so this passing is the whole point of the change."""
-    assert courtesy.reply("gracias") is not None
+    assert courtesy.reply("gracias", at_rest=True) is not None
 
 
 async def test_thanks_is_answered_without_a_model() -> None:
@@ -146,6 +164,15 @@ async def test_thanks_is_answered_without_a_model() -> None:
 
     assert said.outcome == Spoken.COURTESY.value
     assert "de nada" in said.text.lower()
+
+
+async def test_an_acknowledgement_is_not_answered_de_nada() -> None:
+    """«Vale» is not gratitude. Answering it "de nada" is the kind of reply that makes somebody
+    stop typing to the thing."""
+    said = await answer("vale")
+
+    assert said.outcome == Spoken.COURTESY.value
+    assert "de nada" not in said.text.lower()
 
 
 async def test_a_greeting_says_what_can_be_asked() -> None:

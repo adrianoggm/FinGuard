@@ -70,7 +70,7 @@ episodes:
       - say: en restaurantes
         route: QUERY
       - say: eso es
-        route: QUERY
+        route: COURTESY
 
   - name: a_correction_after_a_balance
     why: >
@@ -88,7 +88,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: eso es
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
 
@@ -110,7 +110,7 @@ episodes:
       - say: en gasolina
         route: QUERY
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: a_correction_in_the_middle_of_a_payment
     why: >
@@ -131,7 +131,7 @@ episodes:
       - say: en gasolina
         route: QUERY
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: a_correction_of_the_window_only
     why: >
@@ -172,7 +172,7 @@ episodes:
       - say: en gasolina
         route: QUERY
       - say: perfecto
-        route: QUERY
+        route: COURTESY
 
   - name: a_correction_about_who_rather_than_what
     why: >
@@ -212,6 +212,6 @@ episodes:
       - say: ¿y el mes anterior?
         route: QUERY
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
         route: COURTESY
