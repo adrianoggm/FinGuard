@@ -63,6 +63,19 @@ services:
         BUILD_SHA: ${FINGUARD_SHA:-unknown}
         BUILD_REF: ${FINGUARD_REF:-unknown}
     profiles: ["core", "poc"]
+    # The same file the host reads, so a credential lives in exactly one place whichever way
+    # the service is started. The Dockerfile deliberately does not COPY it — a secret baked
+    # into an image is a secret in every registry that image reaches — so without this,
+    # `uv run` saw the key and `just up` did not.
+    #
+    # Optional, because the file is gitignored and a fresh clone has none. `required: true`
+    # is compose's default and would refuse to start the demo for a provider nobody is using.
+    #
+    # Read *before* `environment:` below, which is the order that matters: the service names
+    # on this network are not something a developer's .env should be able to override.
+    env_file:
+      - path: ./apps/orchestrator/.env
+        required: false
     environment:
       # Which models exist, which provider serves each one and what happens when one
       # fails come from this file, not from code. Mounted read-only so it can change

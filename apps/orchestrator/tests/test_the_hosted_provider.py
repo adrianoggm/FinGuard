@@ -206,3 +206,35 @@ async def test_an_http_error_does_not_carry_the_body(sent: Endpoint) -> None:
 
     assert "cuánto gasté" not in str(raised.value)
     assert "400" in str(raised.value)
+
+
+# --- when it exists at all -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_key_means_no_provider(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ORCHESTRATOR_XAI_API_KEY=` is what a half-filled .env line produces, and what compose
+    passes when a `${VAR:-}` interpolation finds nothing.
+
+    Taken literally it registers a provider whose every request is a 401 — the exact failure the
+    "no key, no provider" rule exists to prevent, arriving by the one route the rule does not
+    cover, and reported as a model outage rather than as a missing credential.
+    """
+    from finguard_orchestrator.bootstrap.config import Settings
+
+    monkeypatch.setenv("ORCHESTRATOR_XAI_API_KEY", value)
+
+    assert Settings().xai_api_key is None  # type: ignore[call-arg]
+
+
+def test_a_real_key_survives_and_still_does_not_print(monkeypatch: pytest.MonkeyPatch) -> None:
+    from finguard_orchestrator.bootstrap.config import Settings
+
+    monkeypatch.setenv("ORCHESTRATOR_XAI_API_KEY", KEY)
+    settings = Settings()  # type: ignore[call-arg]
+
+    assert settings.xai_api_key is not None
+    assert settings.xai_api_key.get_secret_value() == KEY
+    # The property the SecretStr is for: a log line, a repr or a dump of the settings object
+    # prints the mask and not the credential.
+    assert KEY not in repr(settings)
