@@ -1,0 +1,164 @@
+# The last turn, said differently. Everything before it held still.
+#
+# Three layers were measured before this one and all three read a sentence on its own: dispatch
+# (37 of 96), planning (74 of 75), the payment slots (20 of 40). None of them touches what a
+# conversation is. "¿Y en gasolina?" means nothing by itself and everything after a question about
+# last month, and the reported failures that started all of this were of exactly that kind -- a
+# reply that was correct until it had to inherit something.
+#
+# So the property here is different. Not "does this sentence reach the right place" but **does
+# rewording a follow-up change what it inherits**. Eight base conversations, each ending on a turn
+# that only means something in place, and eight ways of writing that last turn. The turns in front
+# of it never vary: the inheritance is what is being measured, so everything it inherits from is
+# held still.
+#
+# Every `before` and every `route` is copied from evaluation/conversations/, where that exact shape
+# is already asserted. What is new here is only the wording of the last turn, which is the whole
+# point -- the corpus was written by people who knew this vocabulary, and this was not.
+#
+# **A gap found while writing this file, and left as a gap.** The corpus opens four kinds of slot:
+# AMOUNT 29 times, CONFIRMATION 45, CORRECTION 4, RECIPIENT_CHOICE 5. It never once opens a slot for
+# a *period*, and "¿de qué periodo?" is a question this service asks in production -- it is the
+# middle turn of the worst defect still open, where "¿cuál es el mayor gasto?" answered "del año"
+# comes back with the year's total instead of the largest expense. A conversation shape that
+# nothing asserts is a conversation shape nothing protects. It is not invented here: the group
+# below is the CORRECTION shape the corpus does write down, and the period slot needs episodes of
+# its own before it can be measured.
+#
+# Four of the sixty-four generated sentences were dropped, and they are named here rather than
+# quietly filtered. "euros" carries no amount, "Quedan 20 euros" states a fact instead of giving an
+# instruction, "Escribi 20 euros" is in the past tense, and "Eh t la gastofna el mes pasado" put
+# its typo on top of the only word carrying the meaning. Typos are wanted -- two per group were
+# asked for, and "gasolna" and "gasolyna" are both kept below -- but a typo that destroys the
+# content word tests nothing.
+#
+# Provenance: llama-3.3-70b-versatile via Groq, 2026-08-06. It was shown the conversation so far
+# and told what the customer means next, never how any of it is read.
+
+groups:
+
+  - means: narrow_a_balance_to_an_account
+    before:
+      - say: "¿cuánto tengo?"
+        route: BALANCE
+    route: BALANCE
+    # the corpus writes this turn as: ¿y en la hucha?
+    says:
+      - "Cuánto tengo en la Hucha"
+      - "Qué saldo tengo en Hucha"
+      - "Hucha cuánto tengo"
+      - "La Hucha cuánto"
+      - "Cuanto tiengo en mi huch"
+      - "Y en hucha cuánto"
+      - "En Hucha tengo cuánto dinero"
+      - "Cuánto hay en mi cuenta Huch"
+
+  - means: narrow_spending_to_an_account
+    before:
+      - say: "¿cuánto gasté el mes pasado?"
+        route: QUERY
+    route: QUERY
+    # the corpus writes this turn as: ¿y en la hucha?
+    says:
+      - "¿Y en la Hucha?"
+      - "¿Cuánto se ha gastado en la Hucha?"
+      - "Oye, dime cuánto he gastado en la Hucha el mes pasado"
+      - "Cuánto he gastado en la cuenta Hucha"
+      - "Eh, cuánto he gastado el mes pasado en mi Hucha"
+      - "¿Cuánto he gastao en la Hucha el mes pasado?"
+      - "¿Cuánto he gastadp en Hucha el mes pasado?"
+      - "¿Cuánto he gastado solo en la Hucha el mes pasado?"
+
+  - means: narrow_spending_to_a_category
+    before:
+      - say: "¿cuánto gasté el mes pasado?"
+        route: QUERY
+    route: QUERY
+    # the corpus writes this turn as: ¿y en gasolina?
+    says:
+      - "¿Cuánto gasté en gasolina?"
+      - "Gasté en gasolina"
+      - "La gasolina ¿cuánto"
+      - "Pues en gasolina"
+      - "En gasolona cuánto"
+      - "¿Cuánto se ha gastado en gasolina"
+      - "Cuánto eh gastao en gasolina"
+
+  - means: name_the_replacement_after_a_correction
+    before:
+      - say: "¿cuánto gasté el mes pasado en el supermercado?"
+        route: QUERY
+      - say: "no es eso"
+        route: CLARIFY
+    route: QUERY
+    # the corpus writes this turn as: en gasolina
+    says:
+      - "Me refiero a la gasolina"
+      - "Quería saber de la gasolina"
+      - "La gasolina es lo que busco"
+      - "Eh que queria saber sobre la gasolyna"
+      - "Esto es un error queria preguntar por la gasolina"
+      - "Pues resulta que queria preguntar sobre la gasolna"
+      - "Es que necesitaba saber cuanto gaste en gasolina"
+      - "Bueno pues la cosa es que queria saber sobre la gasolina"
+
+  - means: correct_the_period
+    before:
+      - say: "¿cuánto gasté este mes?"
+        route: QUERY
+    route: QUERY
+    # the corpus writes this turn as: no, me refería al mes pasado
+    says:
+      - "Perdona, me refiero al mes pasado"
+      - "Oye, quería saber el gasto del mes pasado"
+      - "Es que me equivoqué, necesito el del mes anterior"
+      - "Lo siento, me he confundido, dime el gasto del mes pasado"
+      - "Eh, mira, quería el gasto del mes anterio"
+      - "Quería decir el mes pasado, no este"
+      - "Perdón, me he liado, el gasto del mes pasaso"
+      - "Quiero saber el gasto del mes pasadp"
+
+  - means: ask_where_the_figure_came_from
+    before:
+      - say: "¿cuánto gasté el mes pasado?"
+        route: QUERY
+    route: EXPLANATION
+    # the corpus writes this turn as: ¿de dónde sale eso?
+    says:
+      - "¿De dónde has sacado esa cifra?"
+      - "¿Qué has consultado para llegar a ese dato?"
+      - "¿En qué te basas para decirme eso?"
+      - "¿Qué registros has mirado para darme esa cantidad?"
+      - "¿De dónde sale esa cantidad que me has dicho?"
+      - "¿Cómo has llegado a esa cifra en concreto?"
+      - "¿En qeu te basas para dar esa cifra?"
+      - "¿Dond sale esa cantidad exactamnte?"
+
+  - means: fill_the_amount_of_a_payment
+    before:
+      - say: "hazle un bizum a Marta"
+        route: PAYMENT
+    route: PAYMENT
+    # the corpus writes this turn as: 20 euros
+    says:
+      - "Quiero enviarle 20 euros"
+      - "Son 20 euros"
+      - "Me da igual pero que sean 20 euros"
+      - "Eh que pone 20 euros"
+      - "Son venti euros"
+
+  - means: leave_the_spending_for_the_balance
+    before:
+      - say: "¿cuánto gasté el mes pasado?"
+        route: QUERY
+    route: BALANCE
+    # the corpus writes this turn as: ¿cuánto tengo?
+    says:
+      - "¿Cuánto tengo ahora?"
+      - "Cuanto tengo en este momento"
+      - "Eh tmbn queria saber cuanto tengo ahorra"
+      - "Tengo que saber cuánto dinero tengo en este instante"
+      - "Cuanto tengo ahoar"
+      - "Bueno y ahora cuánto me queda"
+      - "Cuánto es el saldo actual"
+      - "Cuanto tngo"
