@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 from uuid import UUID
 
 from pydantic import Field, SecretStr, field_validator
@@ -257,16 +257,28 @@ class Settings(BaseSettings):
     # worthless.
     disabled_guards: tuple[str, ...] = ()
 
-    # Ask a model to read every turn as well, and record whether it agreed with the rules.
+    # Who reads a turn: the rules, the rules with a model watching, or the model.
     #
-    # Off by default and it changes no answer when on: the deterministic reading still decides,
-    # the model's opinion becomes a log line. What it buys is the number that has to exist before
-    # anybody argues about promoting it — the corpus says how a model does on 879 sentences
-    # somebody wrote down, and this says how it does on the ones a real person types.
+    #   router   the deterministic rules alone. Today's behaviour, and the default.
+    #   shadow   both. The rules still decide and the model's opinion becomes a log line, which is
+    #            the number that has to exist before anybody argues about the third value. Costs a
+    #            model call per turn and changes no answer.
+    #   model    `Promoted`: the model decides everything except a payment, which the rules keep.
     #
-    # It costs a model call per turn, in parallel with nothing, which is why it is a switch rather
-    # than always on: a demo does not need to pay for an experiment it is not reading.
-    turn_interpreter_shadow: bool = False
+    # Three values rather than two booleans because "shadow and promoted" is not a thing — a model
+    # cannot both be watched and be the authority, and a pair of switches would let somebody
+    # configure that and get one of them silently ignored.
+    #
+    # The case for `model` is measured and it is lopsided. On the 879-turn corpus the rules score
+    # 100 % by construction — their answers *are* its labels — so that corpus can never show them
+    # failing, and the model's 91.5 % on it is a disagreement rate with the rules rather than an
+    # error rate. On 96 sentences written by something that had never seen this vocabulary, the
+    # rules reach 37 and the model 88. See tests/test_the_same_question_said_differently.py.
+    #
+    # Still not the default. Flipping how every turn in production is read is the operator's call,
+    # not a value shipped in a settings class, and `model` costs a model call on the critical path
+    # of every single turn where the rules cost none.
+    turn_interpreter: Literal["router", "shadow", "model"] = "router"
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

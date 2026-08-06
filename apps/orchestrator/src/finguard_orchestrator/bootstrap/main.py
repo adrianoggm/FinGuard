@@ -43,7 +43,11 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
-from finguard_orchestrator.domain.services.turn_interpreters import Deterministic, Shadowed
+from finguard_orchestrator.domain.services.turn_interpreters import (
+    Deterministic,
+    Promoted,
+    Shadowed,
+)
 from finguard_orchestrator.infrastructure import (
     HttpAccountSummary,
     HttpCards,
@@ -194,13 +198,17 @@ def create_app() -> FastAPI:
         days=settings.summary_days,
         movements=settings.summary_movements,
     )
-    # How a turn is read, chosen once. The deterministic rules decide; a model gets to have an
-    # opinion when the shadow is on, and it is recorded rather than acted on. See `Shadowed`.
-    interpreter: TurnInterpreterPort = Deterministic()
-    if settings.turn_interpreter_shadow:
-        interpreter = Shadowed(
-            interpreter,
-            LlmTurnInterpreter(planner_provider, model=settings.planner_model),
+    # How a turn is read, chosen once. The rules always exist — under `shadow` they still decide
+    # and under `model` they keep the payments and catch the outages — so this builds one and then
+    # decides what stands in front of it. See `Shadowed` and `Promoted`.
+    rules: TurnInterpreterPort = Deterministic()
+    interpreter = rules
+    if settings.turn_interpreter != "router":
+        reading = LlmTurnInterpreter(planner_provider, model=settings.planner_model)
+        interpreter = (
+            Shadowed(rules, reading)
+            if settings.turn_interpreter == "shadow"
+            else Promoted(reading, rules)
         )
 
     # One adapter for both readers of the wallet, like the balance and the address book. The chat
