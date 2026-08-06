@@ -166,6 +166,9 @@ class Spoken(StrEnum):
 
     # About the assistant: what it is, what it can do.
     IDENTITY = "IDENTITY"
+    # «Gracias», «hola», «adiós». Not about their account and not about the assistant either, which
+    # is why it is its own outcome: without one, 98 of the corpus's turns reached the planner.
+    COURTESY = "COURTESY"
     # About the previous answer: which query ran, and what a category means.
     EXPLANATION = "EXPLANATION"
     # How much money there is. Read from the ledger, but through the fixed question the home

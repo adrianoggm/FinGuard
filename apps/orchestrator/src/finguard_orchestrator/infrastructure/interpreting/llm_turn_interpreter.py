@@ -1,7 +1,8 @@
-"""Reads one turn with a model, constrained to the nine intents.
+"""Reads one turn with a model, constrained to the ten intents.
 
 The schema is generated from the enum rather than written out, for the reason the plan schema is:
-a hand-copied list of nine names is a list that goes stale the first time somebody adds a tenth.
+a hand-copied list of names is one that goes stale the first time somebody adds one, which has
+now happened once.
 
 **It never raises.** Every way this can fail — a dead daemon, a malformed answer, a name that is not
 an intent — becomes `FINANCIAL_QUERY`, which is the long way round and always safe. An exception

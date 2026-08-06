@@ -26,7 +26,7 @@ episodes:
       - say: oye una cosa, ¿a quién puedo pagar?
         route: CONTACTS
       - say: vale, gracias
-        route: QUERY
+        route: COURTESY
 
   - name: money_by_its_slang_names
     why: >
@@ -46,7 +46,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: guay
-        route: QUERY
+        route: COURTESY
 
   - name: a_question_with_no_question_in_it
     why: >
@@ -66,7 +66,7 @@ episodes:
       - say: menos mal
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: asking_for_help_in_four_different_ways
     why: >
@@ -88,7 +88,7 @@ episodes:
       - say: vale, ¿cuánto tengo?
         route: BALANCE
       - say: perfecto
-        route: QUERY
+        route: COURTESY
 
   - name: thinking_out_loud
     why: >
@@ -105,8 +105,9 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: eso es
-        route: QUERY
+        route: COURTESY
       - say: gracias
+        route: COURTESY
 
   - name: politeness_wrapped_around_an_order
     why: >
@@ -123,11 +124,11 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: muchas gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: a_habit_phrased_with_a_moving_verb
     why: >
@@ -145,7 +146,7 @@ episodes:
         route: TRANSFER
         ends: true
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto me queda?
         route: BALANCE
 
@@ -175,7 +176,7 @@ episodes:
       - say: ¿y en total?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: an_interjection_between_every_turn
     why: >
@@ -192,7 +193,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: ya
-        route: QUERY
+        route: COURTESY
       - say: ¿y en gasolina?
         route: QUERY
 
@@ -213,6 +214,6 @@ episodes:
       - say: ¿y en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY

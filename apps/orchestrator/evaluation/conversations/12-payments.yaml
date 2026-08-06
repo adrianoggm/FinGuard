@@ -25,7 +25,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto gasté este mes?
         route: QUERY
 
@@ -47,9 +47,9 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: two_people_with_the_same_name
     why: >
@@ -72,7 +72,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_name_nobody_in_the_list_answers_to
     why: >
@@ -93,7 +93,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_concept_arrives_with_the_amount
     why: >
@@ -113,9 +113,9 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: asking_who_can_be_paid_in_the_middle_of_paying
     why: >
@@ -136,7 +136,7 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: gracias
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto me queda?
         route: BALANCE
 
@@ -160,7 +160,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_payment_that_already_happened
     why: >
@@ -177,9 +177,9 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: two_payments_one_after_the_other
     why: >
@@ -202,7 +202,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_messiest_payment_in_the_file
     why: >
@@ -211,7 +211,7 @@ episodes:
     metrics: [unsafe_action, context_retention]
     turns:
       - say: hola
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿a quién puedo pagar?
@@ -258,4 +258,4 @@ episodes:
       - say: ¿y en gasolina?
         route: QUERY
       - say: gracias, adiós
-        route: QUERY
+        route: COURTESY

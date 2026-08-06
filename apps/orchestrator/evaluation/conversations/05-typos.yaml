@@ -71,7 +71,7 @@ episodes:
       - say: MUEVE 200 EUROS A LA HUCHA
         route: TRANSFER
       - say: GRACIAS
-        route: QUERY
+        route: COURTESY
 
   - name: a_transposed_letter_falls_through_to_the_model
     why: >
@@ -94,7 +94,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: extra_spaces_and_stray_punctuation
     why: >
@@ -113,7 +113,7 @@ episodes:
       - say: "mueve 200 € a la hucha."
         route: TRANSFER
       - say: "gracias!!"
-        route: QUERY
+        route: COURTESY
 
   - name: a_misspelt_recipient_is_still_ambiguous
     why: >
@@ -135,7 +135,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: typos_do_not_accumulate
     why: >
@@ -176,7 +176,7 @@ episodes:
       - say: ¿cuánto me queda en el fondo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: writing_the_amount_three_different_ways
     why: >
@@ -199,7 +199,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_question_mark_that_never_closes
     why: >
@@ -218,4 +218,4 @@ episodes:
       - say: a quien puedo pagar?
         route: CONTACTS
       - say: gracias
-        route: QUERY
+        route: COURTESY

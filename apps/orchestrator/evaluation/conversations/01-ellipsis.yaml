@@ -32,7 +32,7 @@ episodes:
       - say: ¿y cuánto me queda en el fondo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_bare_amount_with_nothing_open
     why: >
@@ -41,7 +41,7 @@ episodes:
     metrics: [unsafe_action]
     turns:
       - say: hola
-        route: QUERY
+        route: COURTESY
       - say: 1000 pavos
         not_says: mover
       - say: ¿cuánto tengo?
@@ -54,7 +54,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: vale gracias
-        route: QUERY
+        route: COURTESY
 
   - name: which_account_after_being_asked
     why: >
@@ -74,7 +74,7 @@ episodes:
         route: TRANSFER
         says: Fondo indexado
       - say: perfecto
-        route: QUERY
+        route: COURTESY
       - say: ¿cuánto tengo en total?
         route: BALANCE
 
@@ -102,7 +102,7 @@ episodes:
         route: BALANCE
         says: "2.270,42"
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: an_account_named_alone_after_a_spending_question
     why: >
@@ -123,7 +123,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_ordinal_walk
     why: >
@@ -169,7 +169,7 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_window_alone
     why: >
@@ -207,9 +207,9 @@ episodes:
         route: BALANCE
         no_model: true
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: adiós
-        route: QUERY
+        route: COURTESY
 
   - name: short_replies_all_the_way_down
     why: >

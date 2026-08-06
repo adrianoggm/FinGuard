@@ -29,9 +29,9 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: from_one_account_to_another_both_named
     why: The source is never offered as somewhere to put the money.
@@ -50,9 +50,9 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_reflexive_verb_is_a_transfer_and_not_a_payment
     why: >
@@ -73,9 +73,9 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: no_destination_named_at_all
     why: >
@@ -97,9 +97,9 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_amount_and_the_account_in_either_order
     why: >
@@ -121,7 +121,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: an_account_the_holder_does_not_have
     why: >
@@ -139,9 +139,9 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_transfer_never_stages_anything
     why: >
@@ -161,9 +161,9 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: three_transfers_in_a_row
     why: >
@@ -183,9 +183,9 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_transfer_asked_about_rather_than_ordered
     why: >
@@ -207,7 +207,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: the_whole_transfer_conversation
     why: >
@@ -235,6 +235,6 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY

@@ -1,7 +1,7 @@
 """What the model is told in order to classify one turn.
 
 Short on purpose. This is not the planning prompt: nothing here needs a category glossary, a period
-vocabulary or a worked example of a merge, because the answer is one word from a list of nine. A
+vocabulary or a worked example of a merge, because the answer is one word from a list of ten. A
 long prompt for a small decision buys latency and invites the model to reason about things it is not
 being asked.
 
@@ -31,6 +31,11 @@ from finguard_orchestrator.domain.models.conversation import (
 # the *user* is doing, never about which function answers: an intent named after its handler invites
 # a model to reason about our architecture.
 _INTENTS: Final[tuple[tuple[str, str], ...]] = (
+    (
+        "COURTESY",
+        "greeting you, thanking you or saying goodbye, and nothing else. A whole turn of "
+        "manners. «gracias, ¿y en la hucha?» is not this — it carries a question.",
+    ),
     (
         "LIST_CONTACTS",
         "asking who they can send money to. A question about the list, even when it says «bizum».",
@@ -126,7 +131,7 @@ def build_prompt(sentence: str, conversation: Conversation) -> str:
     hypothetical. Ordering is the cheapest defence there is: whatever the sentence claims, the last
     thing the model reads is the instruction to pick from a closed list and to answer
     FINANCIAL_QUERY when unsure. It is not a guarantee — nothing about a prompt is — which is why
-    the schema constrains the answer to nine values and why a model may not start a payment
+    the schema constrains the answer to ten values and why a model may not start a payment
     whatever it picks.
     """
     intents = "\n".join(f"- {name}: {about}" for name, about in _INTENTS)

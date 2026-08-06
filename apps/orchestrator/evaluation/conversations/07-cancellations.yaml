@@ -22,7 +22,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: cancelling_a_query_that_could_not_be_run
     why: >
@@ -41,7 +41,7 @@ episodes:
       - say: ¿cuánto gasté este año?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_payment_dropped_before_it_was_previewed
     why: >
@@ -61,7 +61,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: cancelling_and_then_doing_it_after_all
     why: >
@@ -84,7 +84,7 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_transfer_dropped_by_saying_something_else
     why: >
@@ -103,9 +103,9 @@ episodes:
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: changing_the_query_rather_than_cancelling_it
     why: >
@@ -124,7 +124,7 @@ episodes:
       - say: ¿cuánto gasté en restaurantes?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_no_in_the_middle_of_a_question
     why: >
@@ -143,7 +143,7 @@ episodes:
       - say: en el supermercado
         route: QUERY
       - say: eso es
-        route: QUERY
+        route: COURTESY
 
   - name: cancelling_by_changing_the_subject_entirely
     why: >
@@ -164,7 +164,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: two_cancellations_in_a_row
     why: >
@@ -184,7 +184,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: everything_cancelled_and_then_a_clean_conversation
     why: >

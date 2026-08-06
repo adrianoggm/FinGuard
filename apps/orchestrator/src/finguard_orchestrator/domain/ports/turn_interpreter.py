@@ -1,6 +1,6 @@
 """Which kind of turn this is — the one decision the whole conversation hangs on.
 
-Today it is `intent_router.route`: nine intents, decided by regular expressions over the sentence.
+Today it is `intent_router.route`: ten intents, decided by regular expressions over the sentence.
 That has been the right thing while the vocabulary was small and it is where the cost has moved.
 Every conversation reported from the demo cost a new pattern — a reflexive verb, a way of saying
 "the state of my savings", a participle for money arriving — and the next one will cost another.

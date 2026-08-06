@@ -11,6 +11,8 @@ all, because the answer is in the previous plan or in this repository.
 
 **The order is the design.**
 
+    COURTESY           «gracias», «hola», «adiós» and nothing else. First, because a turn that
+                       is entirely manners has nothing below it to steal.
     LIST_CONTACTS      who can be paid. *Before* PAYMENT, which is the one place that rule is
                        reversed — see the pattern for why it is safe.
     PAYMENT            then this. It is the one where being wrong costs money.
@@ -31,10 +33,11 @@ import re
 from enum import StrEnum
 from typing import Final
 
-from finguard_orchestrator.domain.services import payment_router, spanish
+from finguard_orchestrator.domain.services import courtesy, payment_router, spanish
 
 
 class Intent(StrEnum):
+    COURTESY = "COURTESY"
     PAYMENT = "PAYMENT"
     IDENTITY_OR_HELP = "IDENTITY_OR_HELP"
     LIST_CATEGORIES = "LIST_CATEGORIES"
@@ -262,13 +265,23 @@ def _moving_money_inside(sentence: str) -> bool:
     return bool(account_words.named_in(sentence)) or bool(_BETWEEN_ACCOUNTS.search(folded))
 
 
-def route(sentence: str, *, has_previous: bool) -> Intent:
+def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
     """Which conversation this sentence belongs to.
 
     `has_previous` is whether there is an answer behind it — a plan the client echoed back. It
     gates the two intents that are *about* that answer, so the same words mean different things on
     the first turn and on the second, which is what "conversation" means.
+
+    `at_rest` is whether anything is waiting for a reply, and it gates one word class: «vale» after
+    an answer is manners, «vale» while a slot is open might be one. It defaults to True because a
+    caller with no conversation in its hands has nothing open by definition.
     """
+    if courtesy.is_courtesy(sentence, at_rest=at_rest):
+        # First, because its vocabulary is anchored end to end and can therefore not steal a turn
+        # from anything below: a sentence that is entirely «gracias» has nothing else in it. Last
+        # would work equally well and would read as an afterthought — this is a whole turn, and 98
+        # of the corpus's 879 are it.
+        return Intent.COURTESY
     if _ABOUT_CONTACTS.search(sentence):
         # Before the payment check, and the comment on the pattern is the argument for why. A
         # sentence naming a contact list is asking who exists, even when it also says "bizum".

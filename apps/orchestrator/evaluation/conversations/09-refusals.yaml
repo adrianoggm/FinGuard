@@ -48,7 +48,7 @@ episodes:
       - say: ¿y en la hucha?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_superlative_is_not_a_comparison
     why: >
@@ -67,7 +67,7 @@ episodes:
       - say: ¿y el mes pasado?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: investing_is_refused_and_the_refusal_names_a_question_that_works
     why: >
@@ -88,7 +88,7 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: movements_between_my_own_accounts
     why: >
@@ -108,7 +108,7 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_refusal_between_two_halves_of_one_thread
     why: >
@@ -127,7 +127,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: asking_for_advice_repeatedly
     why: >
@@ -146,7 +146,7 @@ episodes:
       - say: ¿y en gasolina?
         route: QUERY
       - say: gracias
-        route: QUERY
+        route: COURTESY
 
   - name: a_forecast_and_then_the_past
     why: >
@@ -165,7 +165,7 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
-        route: QUERY
+        route: COURTESY
 
   - name: the_guard_runs_before_the_model_every_time
     why: >
@@ -213,4 +213,4 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: gracias
-        route: QUERY
+        route: COURTESY

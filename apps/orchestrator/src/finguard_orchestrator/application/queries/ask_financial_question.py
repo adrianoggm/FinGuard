@@ -55,6 +55,7 @@ from finguard_orchestrator.domain.services import (
     answer_writer,
     capability_guard,
     category_words,
+    courtesy,
     explainer,
     explicit_facts,
     intent_router,
@@ -347,7 +348,7 @@ class AskFinancialQuestionHandler:
             was = was.without_retry()
             query = replace(query, conversation=was)
 
-        if isinstance(was.active, PaymentInProgress) and intent is not Intent.LIST_CONTACTS:
+        if isinstance(was.active, PaymentInProgress) and intent not in _KEEPS_THE_PAYMENT:
             # This turn belongs to another subject. Keep the half-built Bizum, but mark that it
             # stepped aside so a later bare amount or name cannot resume it without warning.
             was = was.suspend()
@@ -363,6 +364,23 @@ class AskFinancialQuestionHandler:
                 yield await self._ranked(query, relaxed)
             else:
                 yield await self._answer(query, relaxed)
+            return
+
+        if intent is Intent.COURTESY:
+            # «Gracias», «hola», «adiós». Every one of these used to reach the planner — a language
+            # model asked to build a query about last month's spending for the word «gracias» —
+            # because six intents were about money and the seventh was the catch-all.
+            #
+            # `was` goes back untouched, and that is the whole behaviour. A pleasantry is not a
+            # turn: the previous plan survives it, so «¿cuánto gasté?» → «gracias» → «¿y en la
+            # hucha?» still narrows the spending, and the half-built Bizum above is not even
+            # paused, because saying thank you is not changing the subject.
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.COURTESY.value,
+                # Never None here: the intent is only this because `courtesy.reply` answered.
+                text=courtesy.reply(query.sentence, at_rest=was.at_rest) or "",
+                conversation=was,
+            )
             return
 
         if intent is Intent.IDENTITY_OR_HELP:
@@ -1269,8 +1287,17 @@ def _direction_of(categories: tuple[str, ...]) -> Direction:
 # Turns that are *about* something else without changing the subject. Each of these already passes
 # the conversation through untouched — the user did not stop asking about last month by asking who
 # they can pay — so a saved retry survives them too, and for the same reason.
+# Turns that leave a half-built Bizum exactly where it is, rather than setting it aside.
+#
+# Everything else pauses it, because after a change of subject the next bare amount must not
+# silently resume a payment. These two are not a change of subject: asking who you can pay is
+# about the payment, and «gracias» is about nothing at all.
+_KEEPS_THE_PAYMENT: Final = frozenset({Intent.COURTESY, Intent.LIST_CONTACTS})
+
+
 _ASIDES: Final = frozenset(
     {
+        Intent.COURTESY,
         Intent.IDENTITY_OR_HELP,
         Intent.LIST_CATEGORIES,
         Intent.EXPLAIN_PREVIOUS,
