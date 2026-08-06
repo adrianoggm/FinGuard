@@ -1,7 +1,9 @@
 """Measures how well a model reads a turn, against the rules that read it today.
 
     uv run python scripts/evaluate_interpreting.py --model qwen3.5:4b
-    uv run python scripts/evaluate_interpreting.py --provider xai --model grok-4-fast
+    uv run python scripts/evaluate_interpreting.py --provider groq --model openai/gpt-oss-120b
+    uv run python scripts/evaluate_interpreting.py --provider cloudflare \
+        --model @cf/qwen/qwen3-30b-a3b-fp8
 
 The number that decides whether the migration in ADR-0xx is worth having. The rules get 100 % by
 definition — they are the reference — so this is not "is the model right", it is "where does the
@@ -21,6 +23,26 @@ the rest for that reason.
 The corpus is replayed through the real service to rebuild the conversation state, because half of
 what decides a turn is where the conversation was. That makes a run take minutes rather than
 seconds, and it is the only version of this that measures the right thing.
+
+**A hosted endpoint rate-limits, and the fallback hides it.** `LlmTurnInterpreter` answers
+FINANCIAL_QUERY whenever a provider fails, which is right in production — a model outage must not
+break a conversation — and turns a 429 into an opinion here. The first run against Groq produced a
+plausible confusion table in which every row was an HTTP 429. The failures are now counted and
+reported above the table, and `--rpm` paces the run.
+
+Groq's free tier, for `openai/gpt-oss-120b`: 30 requests/minute, **8K tokens/minute**, 200K
+tokens/day. One turn of this corpus costs about 750 tokens — roughly 500 of prompt and 224 of
+reasoning the model does before answering — so the token limit binds first:
+
+    8000 / 750   ->  --rpm 10, not 30
+    200000 / 750 ->  about 260 turns a day, so the full 818 does not fit in one
+
+Which means a full run is a three-day job on the free tier, and a 20-episode sample is the honest
+unit of measurement. That sample was within 0.2 points of the full run for qwen3:8b.
+
+None of that arithmetic transfers to `--provider cloudflare`: Workers AI meters in *neurons* per
+day rather than tokens per minute, so what a turn of this corpus costs there is unmeasured and
+`--rpm` has no known right value. Watch the failure count above the table on the first run.
 
 It also means fewer turns are scored than the corpus has. A preview owns the next turn and a
 half-built payment takes the reply that answers its question, both before anything is classified,
@@ -62,11 +84,14 @@ from finguard_orchestrator.domain.services.turn_interpreters import Deterministi
 from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (  # noqa: E402
     LlmTurnInterpreter,
 )
+from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (  # noqa: E402
+    cloudflare_workers_ai,
+)
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import (  # noqa: E402
     OllamaLlmProvider,
 )
-from finguard_orchestrator.infrastructure.llm.xai_llm_provider import (  # noqa: E402
-    XaiLlmProvider,
+from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (  # noqa: E402
+    OpenAiCompatibleProvider,
 )
 
 
@@ -111,11 +136,18 @@ async def main() -> int:
     parser.add_argument(
         "--provider",
         default="ollama",
-        choices=["ollama", "xai"],
-        help="ollama runs locally; xai needs ORCHESTRATOR_XAI_API_KEY and sends every corpus "
-        "sentence over the internet",
+        choices=["ollama", "groq", "cloudflare"],
+        help="ollama runs locally; groq and cloudflare need a token in .env and send every "
+        "corpus sentence over the internet",
     )
-    parser.add_argument("--base-url", default=None, help="overrides the provider's own default")
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        # For cloudflare this is the API root before /accounts/{id}/…, because the account id is
+        # configuration and the URL is assembled from both. Overriding the assembled URL instead
+        # would let a run silently measure a different account than the one configured.
+        help="overrides the provider's own default; for cloudflare, the API root",
+    )
     parser.add_argument(
         "--episodes",
         type=int,
@@ -123,6 +155,13 @@ async def main() -> int:
         help="only the first N, for a quick look. 0 means all of them.",
     )
     parser.add_argument("--worst", type=int, default=12, help="how many confusion pairs to print")
+    parser.add_argument(
+        "--rpm",
+        type=int,
+        default=0,
+        help="requests per minute, for an endpoint that rate-limits. 0 means as fast as it goes. "
+        "On Groq's free tier the binding limit is tokens rather than requests — see below.",
+    )
     args = parser.parse_args()
 
     corpus = episodes.load()
@@ -132,17 +171,33 @@ async def main() -> int:
 
     settings = get_settings()
     provider: Any
-    if args.provider == "xai":
-        if settings.xai_api_key is None:
-            print("ORCHESTRATOR_XAI_API_KEY is not set — see .env.defaults", file=sys.stderr)
+    if args.provider == "groq":
+        if settings.groq_api_key is None:
+            print("ORCHESTRATOR_GROQ_API_KEY is not set — see .env.defaults", file=sys.stderr)
             return 2
-        # Said out loud rather than assumed. The corpus is written to look like a person's bank
-        # questions, and this sends every sentence in it to a third party.
-        print(f"# {len(corpus)} episodes going to {args.provider}. They leave this machine.")
-        provider = XaiLlmProvider(
-            api_key=settings.xai_api_key.get_secret_value(),
-            base_url=args.base_url or settings.xai_base_url,
-            timeout_seconds=settings.xai_timeout_seconds,
+        provider = OpenAiCompatibleProvider(
+            name=args.provider,
+            api_key=settings.groq_api_key.get_secret_value(),
+            base_url=args.base_url or settings.groq_base_url,
+            timeout_seconds=settings.groq_timeout_seconds,
+            reasoning_headroom=settings.groq_reasoning_headroom,
+        )
+    elif args.provider == "cloudflare":
+        # Both halves, the same rule the composition root applies: the account id is not a
+        # secret and is just as required, because it is the path every request is posted to.
+        if settings.cloudflare_api_token is None or settings.cloudflare_account_id is None:
+            print(
+                "ORCHESTRATOR_CLOUDFLARE_API_TOKEN and ORCHESTRATOR_CLOUDFLARE_ACCOUNT_ID must "
+                "both be set — see .env.defaults",
+                file=sys.stderr,
+            )
+            return 2
+        provider = cloudflare_workers_ai(
+            api_token=settings.cloudflare_api_token.get_secret_value(),
+            account_id=settings.cloudflare_account_id,
+            api_base=args.base_url or settings.cloudflare_api_base,
+            timeout_seconds=settings.cloudflare_timeout_seconds,
+            reasoning_headroom=settings.cloudflare_reasoning_headroom,
         )
     else:
         provider = OllamaLlmProvider(
@@ -156,18 +211,45 @@ async def main() -> int:
             # between the two rows of any table this produces.
             seed=settings.ollama_seed,
         )
+    if args.provider != "ollama":
+        # Said out loud rather than assumed, and after the provider is built so it is only said
+        # when a run is actually going to happen. The corpus is written to look like a person's
+        # bank questions, and this sends every sentence in it to a third party.
+        print(f"# {len(corpus)} episodes going to {args.provider}. They leave this machine.")
     if not await provider.ping():
         print(f"{args.provider} did not answer", file=sys.stderr)
         return 2
 
-    started = time.monotonic()
-    report = await episodes.compare(
-        corpus, LlmTurnInterpreter(provider, model=args.model), Deterministic()
+    interpreter = LlmTurnInterpreter(
+        provider, model=args.model, pace_seconds=60 / args.rpm if args.rpm else 0.0
     )
+    started = time.monotonic()
+    report = await episodes.compare(corpus, interpreter, Deterministic())
     elapsed = time.monotonic() - started
 
+    # Before the table, and loudly, because the fallback is silent by design: every failed call
+    # was scored as FINANCIAL_QUERY. The first run against Groq produced a plausible-looking
+    # confusion table in which every row was an HTTP 429, and nothing in the output said so.
+    lost = interpreter.unavailable + interpreter.unreadable
+    if lost:
+        share = 100 * lost / report.turns if report.turns else 0
+        print(
+            f"\n!! {lost} of {report.turns} turns ({share:.0f} %) never reached the model: "
+            f"{interpreter.unavailable} provider failures, {interpreter.unreadable} unreadable "
+            "answers. Each was scored as FINANCIAL_QUERY, so the table below is not a "
+            "measurement of this model.",
+            file=sys.stderr,
+        )
+        if share > 5:
+            print(
+                "   Rate limited? See --rpm; on Groq's free tier 10 is the number.", file=sys.stderr
+            )
+
     said = sum(len(episode.turns) for episode in corpus)
-    print(f"\n{args.model} vs the deterministic rules — {len(corpus)} episodes, {said} turns\n")
+    print(
+        f"\n{args.provider}/{args.model} vs the deterministic rules "
+        f"— {len(corpus)} episodes, {said} turns\n"
+    )
     print(_table(report, args.worst))
     per_turn = elapsed / report.turns if report.turns else 0
     print(f"\n{elapsed:.0f} s total, {per_turn * 1000:.0f} ms per turn")

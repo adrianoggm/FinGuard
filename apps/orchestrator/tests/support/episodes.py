@@ -398,7 +398,7 @@ def a_stack() -> Stack:
         planner,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Accounts(),  # type: ignore[arg-type]
-        contacts=Contacts(),  # type: ignore[arg-type]
+        contacts=Contacts(),
     )
     queries = QueryBus()
     queries.register(AskFinancialQuestionQuery, handler)
@@ -500,9 +500,21 @@ def load() -> list[Episode]:
     return episodes
 
 
-def walk(episode: Episode) -> Iterator[Failure]:
-    """One episode, turn by turn, exactly as a browser would have it."""
+def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failure]:
+    """One episode, turn by turn, exactly as a browser would have it.
+
+    `interpreter` swaps what reads a turn, and it is how a model gets measured on the question that
+    matters. Scoring an interpreter against `intent_router` measures whether it guesses our enum;
+    scoring it here measures whether the turn reached the right *place*, which is what the corpus
+    wrote down and what a user experiences. The two are not the same, and the gap is not small:
+    sixty-one turns are answered with a balance while the router calls them FINANCIAL_QUERY,
+    because the balance is decided downstream in `_narrows_the_balance`. A model reading one of
+    those as ACCOUNT_BALANCE is right about the destination and wrong about our plumbing, and only
+    one of those two is worth counting.
+    """
     stack = a_stack()
+    if interpreter is not None:
+        app.dependency_overrides[turn_interpreter] = lambda: interpreter
     conversation: dict[str, Any] | None = None
 
     for number, turn in enumerate(episode.turns, start=1):
@@ -544,12 +556,18 @@ def _complaints(turn: Turn, answer: dict[str, Any], *, reached_model: bool) -> I
         yield f"the figure should be {turn.total} and is {answer.get('total_minor')}"
 
 
-def run(episodes: list[Episode]) -> Report:
-    """Every episode, with the review's metrics counted as it goes."""
+def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
+    """Every episode, with the review's metrics counted as it goes.
+
+    With an `interpreter`, this is the honest version of the migration measurement: install the
+    candidate where the deployment installs one and count the turns that end up in the wrong
+    place. The number it produces is about the product — "N of 879 turns were answered by the
+    wrong tool" — rather than about how well a model predicts an internal enum.
+    """
     report = Report(episodes=len(episodes))
     for episode in episodes:
         report.turns += len(episode.turns)
-        for failure in walk(episode):
+        for failure in walk(episode, interpreter):
             report.failures.append(failure)
             if "answered" in failure.complaint:
                 report.wrong_tool += 1
@@ -623,13 +641,25 @@ class _Scored:
     and the state each turn is scored against is the real one.
     """
 
-    def __init__(self, reference: Any, candidate: Any, report: Agreement) -> None:
+    def __init__(
+        self,
+        reference: Any,
+        candidate: Any,
+        report: Agreement,
+        only: frozenset[Intent] = frozenset(),
+    ) -> None:
         self._reference = reference
         self._candidate = candidate
         self._report = report
+        self._only = only
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
         expected = await self._reference.interpret(sentence, conversation=conversation)
+        if self._only and expected not in self._only:
+            # Not asked, and not counted either. The turn still replays, because the state is half
+            # of what decides the *next* one — a filtered run that skipped the replay would be
+            # measuring sentences in isolation, which is the thing this harness exists not to do.
+            return expected
         read = await self._candidate.interpret(sentence, conversation=conversation)
         self._report.turns += 1
         if read is expected:
@@ -640,7 +670,10 @@ class _Scored:
 
 
 async def compare(
-    episodes: list[Episode], candidate: object, authority: object | None = None
+    episodes: list[Episode],
+    candidate: object,
+    authority: object | None = None,
+    only: frozenset[Intent] = frozenset(),
 ) -> Agreement:
     """Replay every episode through the service and score `candidate` against `authority`.
 
@@ -652,6 +685,13 @@ async def compare(
     `report.turns` is therefore the turns that were *classified*, not the turns in the corpus. The
     gap between the two is not loss — it is the part of the conversation the deterministic state
     machine owns, which no interpreter is consulted about and none can get wrong.
+
+    `only` narrows it further, to the turns whose *reference* answer is one of the given intents.
+    It exists because a hosted endpoint charges per turn and rate-limits by the minute, so
+    "re-measure the one bucket I just changed" is the difference between a fifteen-call check and
+    a twelve-minute run. Everything still replays; only the asking is skipped. A report produced
+    with this set describes that slice and nothing else, and printing it as an overall rate would
+    be lying with a real number.
     """
     from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 
@@ -659,7 +699,9 @@ async def compare(
     report = Agreement()
     for episode in episodes:
         stack = a_stack()
-        app.dependency_overrides[turn_interpreter] = lambda: _Scored(reference, candidate, report)
+        app.dependency_overrides[turn_interpreter] = lambda: _Scored(
+            reference, candidate, report, only
+        )
         conversation: dict[str, Any] | None = None
         for turn in episode.turns:
             answered = stack.client.post(
