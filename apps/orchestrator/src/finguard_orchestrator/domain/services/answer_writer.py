@@ -375,8 +375,14 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
     if name in _WINDOWS:
         return _WINDOWS[name]
     count = plan.period.n or 0
-    unit = "días" if name == "LAST_N_DAYS" else "meses"
-    return f"en los últimos {count} {unit}"
+    day = name == "LAST_N_DAYS"
+    if count == 1:
+        # "En los últimos 1 meses" was on screen under every answer about the last month, which is
+        # the sort of thing that makes a person stop trusting the figure above it. Spanish does not
+        # pluralise one, and the singular is also what they said: nobody asks for "the last 1
+        # months".
+        return "en el último día" if day else "en el último mes"
+    return f"en los últimos {count} {'días' if day else 'meses'}"
 
 
 def describe(plan: FinancialPlan | TopMovements) -> str:
