@@ -61,7 +61,7 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
             return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
 
 
-def _group_ordering(group_by: GroupBy, metric: Metric) -> str:
+def _group_ordering(group_by: GroupBy, metric: Metric, direction: Direction) -> str:
     """Which groups survive the limit.
 
     This was `ORDER BY 1`, which with a LIMIT keeps the groups whose *key* sorts first.
@@ -81,6 +81,10 @@ def _group_ordering(group_by: GroupBy, metric: Metric) -> str:
         return "key"
     if metric is Metric.COUNT:
         return "movement_count DESC"
+    if metric is Metric.AVERAGE:
+        # Use the aggregate directly. PostgreSQL accepts an output alias as a bare
+        # ORDER BY item, but not embedded inside another expression.
+        return f"AVG({_amount_expression(direction)}) DESC"
     return "total_minor DESC"
 
 
@@ -102,7 +106,10 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
 
-    if not query.across_accounts:
+    if query.only_account_ids:
+        selected = parameters.bind(list(query.only_account_ids))
+        conditions.append(f"t.account_id = ANY({selected})")
+    elif not query.across_accounts:
         # The same fact enforced twice from two independent places: the session declared this
         # account and the compiler filters on it, so a compiler that dropped its WHERE would still
         # see only the holder's rows.
@@ -151,7 +158,7 @@ def compile_aggregate(
         FROM {VIEW} t
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
-        ORDER BY {_group_ordering(query.group_by, query.metric)}
+        ORDER BY {_group_ordering(query.group_by, query.metric, query.direction)}
         LIMIT {min(group_limit, MAX_GROUPS)}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)

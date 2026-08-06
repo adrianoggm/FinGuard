@@ -16,6 +16,7 @@ from finguard_banking.domain.constants import (
     MAX_CATEGORIES,
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
+    MAX_SELECTED_ACCOUNTS,
     MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_banking.domain.enums import Direction, GroupBy, Metric
@@ -72,13 +73,23 @@ class FinancialQuery:
     # An account that is not the holder is therefore not refused, it is absent: the balance lookup
     # finds no currency for it and the read answers 404, the same as an account that does not exist.
     only_account_id: UUID | None = None
+    # A bounded-by-holder subset. The compiler binds these identifiers as one array and
+    # the read view still applies holder isolation underneath, so this can narrow but
+    # never widen the session's scope.
+    only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
     @property
     def scoped_to(self) -> UUID:
         """Which account the figures are about. Not which one gets declared."""
-        return self.only_account_id or self.account_id
+        return self.only_account_id or next(iter(self.only_account_ids), self.account_id)
 
     def __post_init__(self) -> None:
+        if self.only_account_id is not None and self.only_account_ids:
+            raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
+        if len(set(self.only_account_ids)) != len(self.only_account_ids):
+            raise InvalidValueError("onlyAccountIds cannot contain duplicates")
+        if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
         if not 0 <= self.supporting_limit <= MAX_SUPPORTING_MOVEMENTS:
             raise InvalidValueError(
                 f"supportingLimit must be between 0 and {MAX_SUPPORTING_MOVEMENTS}"

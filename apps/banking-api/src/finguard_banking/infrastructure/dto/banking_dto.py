@@ -21,6 +21,7 @@ from finguard_banking.domain.constants import (
     MAX_PERIOD_DAYS,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
+    MAX_SELECTED_ACCOUNTS,
     MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_banking.domain.enums import AccountKind, Direction, GroupBy, Metric, Period, Rail
@@ -105,6 +106,8 @@ class FinancialQueryRequest(_Body):
     # Narrow to one account within what the session can already see. Never what gets declared —
     # that is `accountId`, the credential's — because declaring an account opens its holder scope.
     only_account_id: UUID | None = None
+    # Several explicitly selected accounts, still within the holder opened by accountId.
+    only_account_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_ACCOUNTS)
     supporting_limit: int = Field(
         default=DEFAULT_SUPPORTING_MOVEMENTS, ge=0, le=MAX_SUPPORTING_MOVEMENTS
     )
@@ -114,6 +117,8 @@ class FinancialQueryRequest(_Body):
     def _exactly_one_range(self) -> Self:
         if (self.date_range is None) == (self.period is None):
             raise ValueError("provide exactly one of dateRange or period")
+        if self.only_account_id is not None and self.only_account_ids:
+            raise ValueError("use onlyAccountId or onlyAccountIds, not both")
         return self
 
 
