@@ -299,3 +299,17 @@ def test_a_query_body_carries_more_than_a_ranking_can() -> None:
     )
 
     assert set(body) - RANKED_FIELDS, "the two bodies are the same shape; this guard is now empty"
+
+
+def test_a_query_body_carries_an_explicit_account_subset() -> None:
+    selected = (uuid.UUID(int=2), uuid.UUID(int=3))
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.ALL,
+            period=RelativePeriod(period=Period.THIS_MONTH),
+            only_account_ids=selected,
+        )
+    )
+
+    assert body["onlyAccountIds"] == [str(account_id) for account_id in selected]
+    assert "onlyAccountId" not in body

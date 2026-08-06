@@ -5,7 +5,7 @@ another holder's card id selects nothing. Containment does not depend on this ha
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from finguard_banking.application.bus.query_bus import Query
@@ -15,7 +15,7 @@ from finguard_banking.domain.ports.card_directory import CardDirectoryPort
 @dataclass(frozen=True)
 class CardChargeRow:
     transaction_id: UUID
-    occurred_at: str
+    occurred_at: datetime
     description: str
     merchant_name: str | None
     category: str | None
@@ -59,7 +59,7 @@ class ListCardChargesHandler:
             charges=[
                 CardChargeRow(
                     transaction_id=charge.transaction_id,
-                    occurred_at=charge.occurred_at.isoformat(),
+                    occurred_at=charge.occurred_at,
                     description=charge.description,
                     merchant_name=charge.merchant_name,
                     category=charge.category,

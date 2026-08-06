@@ -1,8 +1,9 @@
-"""Turns a sentence into a PlanningResult using one model, once.
+"""Turns a sentence into a PlanningResult using one model.
 
-One attempt on purpose. Walking the catalogue when a provider fails is application
-policy and already lives in the handler; a second copy here would mean two places
-decide what a failure means and they would disagree eventually.
+One ordinary attempt, plus one schema-repair attempt when the provider returned bytes
+that cannot be read as its constrained contract. Walking the catalogue when a provider
+fails remains application policy and lives in the handler; the repair is narrower and
+never changes, widens, or guesses a financial plan.
 
 Everything that can go wrong becomes an outcome rather than an exception. The caller
 has to say something to the user whatever happened, so an exception would only move the
@@ -22,6 +23,7 @@ the difference visible instead of silent.
 """
 
 import json
+import logging
 from datetime import date
 from typing import Any, Final
 
@@ -54,6 +56,13 @@ from finguard_orchestrator.infrastructure.planning.plan_schema import (
 )
 from finguard_orchestrator.infrastructure.planning.prompt import build_prompt
 
+logger = logging.getLogger(__name__)
+
+_STRUCTURE_REPAIR: Final = (
+    "\n\nYour previous response did not satisfy the required JSON schema. "
+    "Return only one JSON object that matches the supplied schema exactly."
+)
+
 
 class LlmQueryPlanner:
     """Implements QueryPlannerPort against a single model."""
@@ -82,29 +91,50 @@ class LlmQueryPlanner:
         previous: FinancialPlan | None = None,
         force_follow_up: bool = False,
     ) -> PlanningResult:
+        prompt = build_prompt(
+            sentence,
+            today=today,
+            categories=self._categories,
+            previous=previous,
+            force_follow_up=force_follow_up,
+        )
         try:
-            answer = await self._provider.complete(
-                build_prompt(
-                    sentence,
-                    today=today,
-                    categories=self._categories,
-                    previous=previous,
-                    force_follow_up=force_follow_up,
-                ),
-                model=self._model,
-                temperature=self._temperature,
-                max_output_tokens=self._max_output_tokens,
-                schema=self._schema,
-            )
+            answer = await self._complete(prompt)
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc))
 
-        return _read(
+        planned = _read(
             answer,
             today=today,
             categories=self._categories,
             previous=previous,
             force_follow_up=force_follow_up,
+        )
+        if planned.outcome is not PlanningOutcome.INVALID_STRUCTURE:
+            return planned
+
+        # Never echo malformed provider text into the repair prompt. The original question and the
+        # exact schema are sufficient, and the second result is still validated without coercion.
+        logger.warning("planner.invalid_structure retrying=true")
+        try:
+            repaired = await self._complete(prompt + _STRUCTURE_REPAIR)
+        except ProviderFailedError as exc:
+            return PlanningResult.provider_error(str(exc))
+        return _read(
+            repaired,
+            today=today,
+            categories=self._categories,
+            previous=previous,
+            force_follow_up=force_follow_up,
+        )
+
+    async def _complete(self, prompt: str) -> str:
+        return await self._provider.complete(
+            prompt,
+            model=self._model,
+            temperature=self._temperature,
+            max_output_tokens=self._max_output_tokens,
+            schema=self._schema,
         )
 
 

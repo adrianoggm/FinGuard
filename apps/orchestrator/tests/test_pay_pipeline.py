@@ -80,6 +80,7 @@ class FakeGateway:
         self.confirmed = 0
         self.cancelled = 0
         self.keys: list[str] = []
+        self.requests: list[PaymentRequest] = []
 
     async def prepare(
         self, request: PaymentRequest, *, account_id: UUID, key: str
@@ -88,6 +89,7 @@ class FakeGateway:
             raise self._error
         self.prepared += 1
         self.keys.append(key)
+        self.requests.append(request)
         return PREVIEW
 
     async def confirm(self, *, account_id: UUID, intent_id: UUID) -> PaymentReceipt:
@@ -139,6 +141,17 @@ async def test_a_payment_is_previewed_and_nothing_moves() -> None:
     assert gateway.prepared == 1
     assert gateway.confirmed == 0
     assert answer.intent_id == INTENT
+
+
+async def test_an_explicit_concept_is_read_from_user_text_not_model_drift() -> None:
+    misread = PaymentRequest(
+        recipient_name="Marta", amount_minor=2_000, currency="EUR", concept="viaje"
+    )
+    handler, gateway = preparing(PaymentReading.read(misread))
+
+    await handler.handle(prepare("envía 20 euros a Marta con el concepto viaje a Málaga por bizum"))
+
+    assert gateway.requests[0].concept == "viaje a Málaga"
 
 
 async def test_the_preview_says_who_how_much_and_what_it_leaves() -> None:

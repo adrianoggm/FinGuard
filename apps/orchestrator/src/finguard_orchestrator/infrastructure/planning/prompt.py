@@ -68,8 +68,11 @@ nobody asked, which is worse than a question.
 
 "awaiting" matters as much as the question. The reply is often two words — "de este", "el \
 pasado" — and it can only be read against the field it answers.
-UNSUPPORTED — the query cannot be expressed at all. There is no average, no comparison \
-between two periods, and no forecast: only what already happened.
+UNSUPPORTED — the query cannot be expressed at all. There is no comparison between two \
+periods and no forecast: only what already happened. An average amount per matching movement \
+is supported with metric AVERAGE.
+AVERAGE is only the mean amount per matching movement. A monthly, weekly or daily average \
+normalised by calendar periods is UNSUPPORTED.
 
 ## Which kind of question: "action"
 
@@ -159,6 +162,9 @@ naming a shop is the clarification case above and not a grouping.
 whatever period the sentence names.
 
 metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimientos".
+Use AVERAGE for "media", "promedio", "importe medio" or "ticket medio". It means the \
+average amount of each matching movement, not an estimate. If two named categories are compared \
+or requested "por separado", include both categories and use groupBy CATEGORY.
 
 ## Examples
 

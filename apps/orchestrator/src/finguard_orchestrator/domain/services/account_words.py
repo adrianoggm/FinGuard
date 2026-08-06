@@ -39,6 +39,8 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
     "SAVINGS": (
         "la hucha",
         "hucha",
+        # Observed clipped spelling in a balance follow-up. Exact alias, not fuzzy matching.
+        "huch",
         "los ahorros",
         "la cuenta de ahorro",
         "la cuenta de ahorros",
@@ -74,6 +76,16 @@ _DETERMINERS: Final = r"(?:el|la|los|las|mi|mis|tu|tus|su|sus|al|a\s+la|a\s+mi|u
 # "corriente" — an adjective, and a property of water — from naming an account on its own.
 _ARTICLES: Final = ("la ", "el ", "los ", "las ", "al ")
 
+_CUSTOM_ACCOUNT: Final = re.compile(
+    r"\bcuenta\s+(?:(?:que\s+se\s+llama|llamada)\s+)?"
+    r"(?!corriente\b|nomina\b|de\s+ahorros?\b|de\s+inversion\b|"
+    r"cuanto\b|que\b|como\b|cuando\b|donde\b)[a-z][a-z0-9 -]{1,60}",
+)
+_NOT_A_CHOICE: Final = re.compile(
+    r"\b(cuanto|que|como|cuando|donde|gaste|ingrese|movimientos|compras|saldo|"
+    r"bizum|pago|transferencia|no|cancel|gracias|vale)\b"
+)
+
 
 def _pattern(word: str) -> str:
     folded = spanish.folded(word)
@@ -89,6 +101,9 @@ def _pattern(word: str) -> str:
 # carrying these words never reaches this function, because the router excludes interrogatives from
 # a transfer before anything is read.
 _TOWARDS: Final = r"(?:al|a|hacia|para|en)"
+_CUSTOM_DESTINATION: Final = re.compile(
+    rf"\b{_TOWARDS}\s+(?:{_DETERMINERS}\s+)?{_CUSTOM_ACCOUNT.pattern}"
+)
 
 
 def _noun_of(word: str) -> str:
@@ -186,3 +201,59 @@ def chosen_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
             found.append((match.start(), spanish.folded(name)))
     chosen = {spanish.folded(name): name for name in names}
     return tuple(chosen[folded] for _, folded in sorted(found))
+
+
+def explicitly_names_a_custom_account(sentence: str) -> bool:
+    """Whether the sentence uses the explicit ``cuenta <nombre>`` form."""
+    return _CUSTOM_ACCOUNT.search(spanish.folded(sentence)) is not None
+
+
+def names_a_custom_destination(sentence: str) -> bool:
+    """Whether an instruction explicitly points towards ``cuenta <nombre>``."""
+    return _CUSTOM_DESTINATION.search(spanish.folded(sentence)) is not None
+
+
+def _only_a_generic_name(name: str) -> bool:
+    folded = spanish.folded(name).strip()
+    for determiner in ("mi ", "la ", "el ", "los ", "las "):
+        folded = folded.removeprefix(determiner)
+    generic = {_noun_of(word) for words in _KINDS.values() for word in words}
+    return folded in generic
+
+
+def custom_chosen_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
+    """Real display names in the sentence, excluding labels that are only generic kinds.
+
+    If two savings accounts are called ``Hucha`` and ``Hucha viajes``, saying ``la hucha`` keeps
+    the genuine ambiguity and saying ``Hucha viajes`` resolves it. An exact display-name accident
+    may therefore never turn a generic word into an instruction to use the first account.
+    """
+    custom = tuple(name for name in names if not _only_a_generic_name(name))
+    return chosen_among(sentence, custom)
+
+
+def custom_destination_among(sentence: str, names: tuple[str, ...]) -> tuple[str, ...]:
+    """A custom display name after a directional preposition, longest match first."""
+    chosen = custom_chosen_among(sentence, names)
+    haystack = spanish.folded(sentence)
+    directed = tuple(
+        name
+        for name in chosen
+        if re.search(
+            rf"\b(?:a|hacia|para|en)\s+(?:(?:la|mi)\s+)?(?:cuenta\s+)?"
+            rf"{re.escape(spanish.folded(name))}(?![a-z0-9])",
+            haystack,
+        )
+    )
+    return directed
+
+
+def looks_like_account_choice(sentence: str) -> bool:
+    """Whether a short reply could be one of the account names just offered.
+
+    This only gates an already-open account slot. The next layer still compares it exactly with
+    the holder's directory, so this predicate can make the assistant repeat a question but cannot
+    select an account by itself.
+    """
+    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
+    return bool(folded) and len(folded.split()) <= 6 and _NOT_A_CHOICE.search(folded) is None

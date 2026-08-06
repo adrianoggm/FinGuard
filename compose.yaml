@@ -95,6 +95,9 @@ services:
       ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
       ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
       ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
+      # The deterministic router remains authoritative wherever it recognises a turn. A model only
+      # widens its generic catch-all, and cannot create a payment or an own-account transfer.
+      ORCHESTRATOR_TURN_INTERPRETER: hybrid
       # Identity, first layer of the security stack (§12.1). A development token table,
       # not the design: §12.2 asks for OAuth with short-lived tokens. What matters is
       # that the account now comes from the credential, so a caller cannot name one.

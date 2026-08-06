@@ -120,6 +120,26 @@ def test_an_unknown_account_returns_404() -> None:
     assert response.status_code == 404
 
 
+def test_average_and_a_selected_account_subset_reach_the_domain() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+    selected = [uuid.UUID(int=3), uuid.UUID(int=4)]
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={
+            **BODY,
+            "metric": "AVERAGE",
+            "onlyAccountIds": [str(account_id) for account_id in selected],
+        },
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric.value == "AVERAGE"
+    assert repository.received.only_account_ids == tuple(selected)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

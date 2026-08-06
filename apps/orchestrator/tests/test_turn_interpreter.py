@@ -239,6 +239,60 @@ async def test_a_model_that_cannot_answer_leaves_the_conversation_working() -> N
     )
 
 
+# --- the hybrid widens only a deterministic catch-all ------------------------------------
+
+
+async def test_the_hybrid_keeps_a_known_deterministic_read_without_asking_the_model() -> None:
+    model = Says(Intent.FINANCIAL_QUERY)
+    interpreter = turn_interpreters.Hybrid(model, turn_interpreters.Deterministic())
+
+    decided = await interpreter.interpret("¿cuánto tengo?", conversation=IDLE)
+
+    assert decided is Intent.ACCOUNT_BALANCE
+    assert model.asked == []
+
+
+async def test_the_hybrid_recovers_a_safe_shortcut_from_the_catch_all() -> None:
+    model = Says(Intent.LIST_CONTACTS)
+    interpreter = turn_interpreters.Hybrid(model, turn_interpreters.Deterministic())
+
+    decided = await interpreter.interpret("enséñame las personas de mi agenda", conversation=IDLE)
+
+    assert decided is Intent.LIST_CONTACTS
+    assert model.asked == ["enséñame las personas de mi agenda"]
+
+
+async def test_a_known_misspelt_balance_stays_on_the_deterministic_path() -> None:
+    model = Says(Intent.ACCOUNT_BALANCE)
+    interpreter = turn_interpreters.Hybrid(model, turn_interpreters.Deterministic())
+
+    decided = await interpreter.interpret("Cuanto tiengo en mi huch", conversation=IDLE)
+
+    assert decided is Intent.ACCOUNT_BALANCE
+    assert model.asked == []
+
+
+@pytest.mark.parametrize("proposed", [Intent.PAYMENT, Intent.OWN_TRANSFER])
+async def test_the_hybrid_never_creates_a_money_movement(proposed: Intent) -> None:
+    interpreter = turn_interpreters.Hybrid(Says(proposed), turn_interpreters.Deterministic())
+
+    assert (
+        await interpreter.interpret("quiero mover dinero", conversation=IDLE)
+        is Intent.FINANCIAL_QUERY
+    )
+
+
+async def test_the_hybrid_does_not_turn_a_spending_question_into_a_balance() -> None:
+    model = Says(Intent.ACCOUNT_BALANCE)
+    interpreter = turn_interpreters.Hybrid(model, turn_interpreters.Deterministic())
+
+    assert (
+        await interpreter.interpret("quiero saber cuánto dinero gasté este mes", conversation=IDLE)
+        is Intent.FINANCIAL_QUERY
+    )
+    assert model.asked == []
+
+
 # --- the model adapter --------------------------------------------------------------------
 
 

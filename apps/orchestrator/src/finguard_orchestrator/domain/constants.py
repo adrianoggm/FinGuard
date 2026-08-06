@@ -61,6 +61,10 @@ MAX_CATEGORY_LENGTH = 40
 MAX_MERCHANTS = 10
 MAX_MERCHANT_LENGTH = 140
 
+# Accounts explicitly selected for one query. A normal chat names one or two; the
+# ceiling prevents a list-shaped scan from travelling through the plan contract.
+MAX_SELECTED_ACCOUNTS = 20
+
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
 

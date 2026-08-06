@@ -1,7 +1,7 @@
 # The last turn, said differently. Everything before it held still.
 #
-# Three layers were measured before this one and all three read a sentence on its own: dispatch
-# (37 of 96), planning (74 of 75), the payment slots (20 of 40). None of them touches what a
+# Three layers were measured before this one and all three read a sentence on its own: dispatch,
+# planning and payment slots. None of them touches what a
 # conversation is. "¿Y en gasolina?" means nothing by itself and everything after a question about
 # last month, and the reported failures that started all of this were of exactly that kind -- a
 # reply that was correct until it had to inherit something.
@@ -16,14 +16,15 @@
 # is already asserted. What is new here is only the wording of the last turn, which is the whole
 # point -- the corpus was written by people who knew this vocabulary, and this was not.
 #
-# **A gap found while writing this file, and left as a gap.** The corpus opens four kinds of slot:
+# **A gap found while writing this file.** The corpus opens four kinds of slot:
 # AMOUNT 29 times, CONFIRMATION 45, CORRECTION 4, RECIPIENT_CHOICE 5. It never once opens a slot for
 # a *period*, and "¿de qué periodo?" is a question this service asks in production -- it is the
 # middle turn of the worst defect still open, where "¿cuál es el mayor gasto?" answered "del año"
 # comes back with the year's total instead of the largest expense. A conversation shape that
 # nothing asserts is a conversation shape nothing protects. It is not invented here: the group
 # below is the CORRECTION shape the corpus does write down, and the period slot needs episodes of
-# its own before it can be measured.
+# its own before it can be measured. That recovery now lives in the main conversation corpus; this
+# file remains focused on rewording the last turn and currently passes all 60 variants.
 #
 # Four of the sixty-four generated sentences were dropped, and they are named here rather than
 # quietly filtered. "euros" carries no amount, "Quedan 20 euros" states a fact instead of giving an

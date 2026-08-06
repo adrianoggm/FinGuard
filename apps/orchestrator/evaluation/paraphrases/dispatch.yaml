@@ -16,11 +16,11 @@
 #
 # So the sentences were generated instead, by a model given only what the customer *wants* -- never
 # a word about intents, routers or the shapes this service matches on. Same twelve meanings, same
-# eight variants each, written by something with no stake in them passing. That corpus scored 39 %,
-# and every one of the 59 failures fell into FINANCIAL_QUERY, the catch-all: the router recognises
+# eight variants each, written by something with no stake in them passing. That corpus initially
+# scored 39 %, and every one of the 59 failures fell into FINANCIAL_QUERY, the catch-all: the router recognises
 # the short imperative form and loses the sentence the moment it carries politeness or a
-# subordinate clause. "¿qué cuentas tengo?" is understood; "me gustaría conocer el listado de mis
-# cuentas bancarias actuales" is not.
+# subordinate clause. The current router reaches 95/96; the remaining damaged internal-transfer
+# phrase has no ownership marker and is intentionally left to semantic interpretation.
 #
 # Two dead ends worth recording, because both produced numbers that meant nothing:
 #

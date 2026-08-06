@@ -129,6 +129,12 @@ async def answer(sentence: str, was: Conversation = IDLE):
         "muy amable",
         "gracias, adiós",
         "gracias, hasta luego",
+        "Hola, gracias por atenderme",
+        "Me alegra saludarte, gracias",
+        "Un saludo y muchsas gracias, adios",
+        "Gracias por la ayuda, hasta luego, gracias",
+        "Estoy agradecido, gracias, adiós ya",
+        "Muchas gracias, fue un placer, adiós, grazias",
     ],
 )
 def test_these_are_pleasantries_whatever_is_open(said: str) -> None:
@@ -164,6 +170,7 @@ def test_these_are_pleasantries_only_when_nothing_is_waiting(said: str) -> None:
         # A question with manners on the front. The question is what has to be answered.
         "vale, ¿y en la hucha?",
         "gracias, ¿cuánto tengo?",
+        "hola, dime mi saldo",
     ],
 )
 def test_these_are_not(said: str) -> None:

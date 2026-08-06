@@ -21,7 +21,7 @@ from datetime import date, datetime
 import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
@@ -254,6 +254,47 @@ def test_the_direction_is_left_to_the_verifier() -> None:
     planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.LAST_MONTH))
 
     assert explicit_facts.enforce(planned, facts).direction is Direction.ALL
+
+
+def test_an_explicit_average_overrides_a_sum_plan() -> None:
+    facts = explicit_facts.read(
+        "¿Cuál fue el importe medio de mis compras el mes pasado?", today=TODAY
+    )
+    planned = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH))
+
+    assert explicit_facts.enforce(planned, facts).metric is Metric.AVERAGE
+
+
+def test_two_compared_categories_are_both_kept_and_grouped() -> None:
+    facts = explicit_facts.read("Compara gasolina frente a restaurantes el mes pasado", today=TODAY)
+    wrong = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("TRANSPORT_FUEL",),
+    )
+
+    repaired = explicit_facts.enforce(wrong, facts)
+
+    assert repaired.categories == ("TRANSPORT_FUEL", "RESTAURANTS")
+    assert repaired.group_by is GroupBy.CATEGORY
+
+
+def test_salary_and_income_words_force_incoming_movements() -> None:
+    for sentence in (
+        "¿Qué nómina he recibido este año?",
+        "¿Qué ingresos he tenido este mes?",
+        "¿Cuánto he cobrado el mes pasado?",
+    ):
+        facts = explicit_facts.read(sentence, today=TODAY)
+        planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.THIS_MONTH))
+
+        assert explicit_facts.enforce(planned, facts).direction is Direction.INCOME
+
+
+def test_income_and_expenses_together_do_not_get_narrowed_to_income() -> None:
+    facts = explicit_facts.read("Compara mis ingresos y gastos este mes", today=TODAY)
+
+    assert facts.direction is None
 
 
 # --- when, not how much -----------------------------------------------------------------

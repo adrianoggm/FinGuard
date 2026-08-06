@@ -65,7 +65,8 @@ class Intent(StrEnum):
 # error this fixes — a real figure about something else.
 _ABOUT_THE_BALANCE: Final = re.compile(
     r"\bsaldos?\b"
-    r"|\bcu[áa]nto\s+(dinero\s+)?(tengo|ten[íi]a|me\s+queda|hay)\b"
+    r"|\bcu[áa]nto\s+(dinero\s+)?(tengo|tiengo|tieno|tngo|ten[íi]a|me\s+queda|hay)\b"
+    r"|\bcu[áa]nto\s+dinero\s+dispongo\b"
     r"|\bcu[áa]nto\s+(tengo\s+)?disponible\b"
     r"|\bde\s+cu[áa]nto\s+dispongo\b"
     r"|\bdinero\s+(disponible|tengo)\b"
@@ -84,6 +85,19 @@ _ABOUT_THE_BALANCE: Final = re.compile(
     # "¿cómo va el mes?" out — neither is about how much money there is.
     r"|\b(estado\s+(actual\s+)?(de|en)|c[óo]mo\s+(est[áa]|va|anda))\b.{0,30}"
     r"\b(cuenta|hucha|ahorros?|fondo|n[óo]mina|corriente)\b",
+    re.IGNORECASE,
+)
+
+# Asking which accounts exist is served by the same deterministic summary as a balance. These
+# patterns require catalogue words (list/open/active/how many), so ``gastos de mis cuentas`` stays
+# a ledger query.
+_ABOUT_ACCOUNTS: Final = re.compile(
+    r"\b(?:lista|listado)\s+de\s+(?:mis\s+)?cuentas(?:\s+bancarias)?\b"
+    r"|\b(?:cu[áa]les|quales)\s+(?:son\s+)?(?:las\s+|mis\s+)?cuentas"
+    r"(?:\s+bancarias)?\b.{0,45}\b(?:tengo|abiertas|activas|actuales)\b"
+    r"|\b(?:qu[eé]|cu[áa]ntas)\s+cuentas(?:\s+bancarias|\s+bancarais)?\s+"
+    r"(?:tengo|tiene|hay)\b"
+    r"|\bmis\s+cuentas\b.{0,35}\b(?:cu[áa]les|abiertas|activas)\b",
     re.IGNORECASE,
 )
 
@@ -134,6 +148,13 @@ _ABOUT_CARDS: Final = re.compile(
     re.IGNORECASE,
 )
 
+_ABOUT_CARDS_BY_EACH: Final = re.compile(
+    r"\b(?:tarjetas|tarjtas)\b.{0,100}"
+    r"\b(?:cada\s+una|gastos?\s+asociados?|gasto\s+total)\b"
+    r"|\bcada\s+una\s+de\s+(?:mis|las)\s+tarjetas\b",
+    re.IGNORECASE,
+)
+
 
 # Who can be paid, which is a question and not an order.
 #
@@ -150,6 +171,13 @@ _ABOUT_CARDS: Final = re.compile(
 _ABOUT_CONTACTS: Final = re.compile(
     r"\bcontactos?\b"
     r"|\ba\s+qui[ée]n\s+(le\s+)?(puedo|podr[íi]a|puedes|se\s+(le\s+)?puede)\b",
+    re.IGNORECASE,
+)
+
+_ABOUT_AGENDA: Final = re.compile(
+    r"\b(?:quiero|quieo|necesito|puedo)\s+saber\b.{0,90}\b(?:agend(?:a)?|personas)\b"
+    r"|\b(?:lista|listado)\s+de\s+(?:las\s+)?personas\s+de\s+mi\s+agend(?:a)?\b"
+    r"|\ba\s+qui(?:[ée]n|e)\s+de\s+mi\s+agend(?:a)?\b",
     re.IGNORECASE,
 )
 
@@ -196,6 +224,13 @@ _ABOUT_ITSELF: Final = re.compile(
     re.IGNORECASE,
 )
 
+_ASSISTANT_NOUN: Final = re.compile(r"\b(?:este\s+)?asistente\b", re.IGNORECASE)
+_ASSISTANT_PURPOSE: Final = re.compile(
+    r"\b(?:qu[eé]|qe)\s+(?:es|hace)\b|\b(?:prop[oó]sito|objetivo)\b"
+    r"|\b(?:ayudar(?:me)?|echarme\s+una\s+mano|gestionar)\b",
+    re.IGNORECASE,
+)
+
 # Product vocabulary rather than account data. Narrow enough not to capture "¿en qué categoría has
 # clasificado el cine?", which is about the previous answer and belongs to the explainer below.
 _CATEGORY_CATALOGUE: Final = re.compile(
@@ -212,6 +247,10 @@ _CATEGORY_CATALOGUE: Final = re.compile(
     r"|\bcategorias\s+(puedo|se\s+pueden|podria)\s+(consultar|usar|ver|filtrar|pedir)\b"
     r"|\bque\s+categorias\s+(puedo|se\s+pueden|podria)\b"
     r"|\bcategorias\s+(disponibles|existen|hay)\b"
+    r"|\bcategorias(?:\s+de\s+gast[op])?\b.{0,110}"
+    r"\b(hay|disponibles|seleccionar|utilizar|usar)\b"
+    r"|\bcategorias\s+de\s+gast[op]\b.{0,90}\bapp\b.{0,90}\bfiltrar\b"
+    r"|\b(?:cuales|quales)\s+son\s+las\s+categorias\b"
 )
 
 # The user says the last answer was wrong. Two shapes: naming the misunderstanding, or restating
@@ -220,6 +259,14 @@ _CORRECTING: Final = re.compile(
     r"\b(no\s+me\s+has\s+entendido|no\s+es\s+eso|no\s+era\s+eso|eso\s+no\s+es\s+lo\s+que"
     r"|me\s+refer[íi]a|me\s+refiero|quer[íi]a\s+decir|te\s+has\s+equivocado"
     r"|no\s+te\s+he\s+preguntado)\b",
+    re.IGNORECASE,
+)
+
+_ANSWER_NOUN: Final = re.compile(r"\brespues(?:ta|a)\b", re.IGNORECASE)
+_ANSWER_REJECTION: Final = re.compile(
+    r"\bno\b.{0,60}\b(?:correcta|adecuada|esperaba|resuelto|convence)\b"
+    r"|\b(?:error|revisarla|intentarlo\s+de\s+nuevo)\b"
+    r"|\b(?:perdido|repetirla|explicarla|explicarmelo)\b",
     re.IGNORECASE,
 )
 
@@ -237,7 +284,13 @@ _BARE_CORRECTION: Final = re.compile(
 # and it is not one this pipeline can answer either, but the refusal it deserves is a different one.
 _ABOUT_THE_ANSWER: Final = re.compile(
     r"\b(qu[ée]\s+consulta|c[óo]mo\s+(lo\s+)?has\s+(calculado|hecho|sacado)"
-    r"|de\s+d[óo]nde\s+(sale|viene|sacas)"
+    r"|(?:de\s+)?d(?:[óo]nde|ond)\s+(?:"
+    r"(?:has\s+)?(?:sacado|sacdo|sacao|sacas)"
+    r"|(?:sale|viene)(?:\b.{0,35}\b(?:eso|n[úu]mero|cifra|cantidad|dato|respuesta)"
+    r"|(?=\s*[?!.]*$)))"
+    r"|qu[ée]\s+(?:registros\s+)?has\s+(consultado|mirado)"
+    r"|en\s+(?:qu[ée]|qeu)\s+te\s+basas"
+    r"|c[óo]mo\s+has\s+llegado\s+a"
     r"|(por\s+qu[ée]|c[óo]mo)\s+(me\s+)?has\s+(mostrado|ense[ñn]ado|clasificado|puesto|contado)"
     r"|en\s+qu[ée]\s+categor[íi]a|no\s+entiendo\s+(el|este|ese)?\s*desglose"
     r"|qu[ée]\s+has\s+entendido"
@@ -262,7 +315,7 @@ _ABOUT_THE_ANSWER: Final = re.compile(
 # and `payment_router` sees this sentence first anyway. What is here is the vocabulary of moving
 # something from one place to another that is still yours.
 _MOVING: Final = re.compile(
-    r"\b(mueve|mover|muevo|mueva|pasa|pasar|paso|traspasa|traspasar|traspaso"
+    r"\b(mueve|mover|muevo|mueva|pasa|pasar|paso|traspasa|traspasar|traspaso|trasvasar"
     r"|mete|meter|meto|ingresa|ingresar|guarda|guardar|ahorra|ahorrar"
     # Moving money to *oneself*. `enviar` and `mandar` are what a person says about paying somebody
     # else and are deliberately absent — but the reflexive is the opposite: "enviarme dinero a la
@@ -276,7 +329,7 @@ _MOVING: Final = re.compile(
     # `payment_router` for the reason the whole function is safe: it also needs one of *this
     # holder's* accounts by name, and a payment to a person names a person. "Tranferir" is in the
     # list because it is what somebody typed, twice, and a typo is not a change of intent.
-    r"|transferir|transfiere|transfiero|tranferir|tranferirme)\b",
+    r"|transferencia|transferir|transfiere|transfiero|tranferir|tranferirme)\b",
     re.IGNORECASE,
 )
 
@@ -287,7 +340,10 @@ _MOVING: Final = re.compile(
 # preview asking somebody to confirm a payment they never asked for. That is the worst shape a
 # misreading can take here, which is why the exclusion is checked first rather than tuned into the
 # verb list.
-_ASKING: Final = re.compile(r"\b(cu[áa]nt[oa]s?|qu[ée]|cu[áa]l|cu[áa]ndo|por\s+qu[ée])\b", re.I)
+_ASKING: Final = re.compile(
+    r"\b(cu[áa]nt[oa]s?|qu[ée]|cu[áa]l|cu[áa]ndo|c[óo]mo|d[óo]nde|por\s+qu[ée])\b",
+    re.I,
+)
 
 
 # "Entre mis cuentas" names no account and says which kind of movement this is. With a moving verb
@@ -295,6 +351,25 @@ _ASKING: Final = re.compile(r"\b(cu[áa]nt[oa]s?|qu[ée]|cu[áa]l|cu[áa]ndo|por
 # and it was reaching the capability guard, which refused it with a sentence about *querying* the
 # transfers. A refusal about reading, to somebody asking to write.
 _BETWEEN_ACCOUNTS: Final = re.compile(r"\bentre\s+(mis|tus|sus|las)?\s*cuentas\b", re.IGNORECASE)
+
+_OWN_ACCOUNT_RELATION: Final = re.compile(
+    r"\bde\s+una\s+(?:de\s+)?mis\s+cuentas\s+a\s+otra\b"
+    r"|\bde\s+una\s+cuenta\s+mia\s+a\s+otra\s+cuenta\b"
+    r"|\bde\s+una\s+cuenta\s+a\s+otra\s+cuenta\b.{0,35}"
+    r"\b(?:es\s+mia|tambien\s+es\s+mia|tengo\s+yo)\b"
+    r"|\bde\s+una\s+cuenta\s+a\s+otra\b.{0,30}\bambas\s+mias\b",
+    re.IGNORECASE,
+)
+
+_CORRECTION_REPLACEMENT: Final = re.compile(
+    r"\b(?:era|sino|me\s+refiero|me\s+referia|queria\s+decir)\b", re.IGNORECASE
+)
+
+_ACTION_INTENT: Final = re.compile(
+    r"\b(?:quiero(?!\s+saber)|necesito(?!\s+saber)|me\s+gustaria|tengo\s+que"
+    r"|estoy\s+intentando|voy\s+a\s+intentar)\b",
+    re.IGNORECASE,
+)
 
 
 def _moving_money_inside(sentence: str) -> bool:
@@ -308,11 +383,16 @@ def _moving_money_inside(sentence: str) -> bool:
     from finguard_orchestrator.domain.services import account_words
 
     folded = spanish.folded(sentence)
-    if _ASKING.search(folded):
+    if _ASKING.search(folded) and _ACTION_INTENT.search(folded) is None:
         return False
     if not _MOVING.search(folded):
         return False
-    return bool(account_words.named_in(sentence)) or bool(_BETWEEN_ACCOUNTS.search(folded))
+    return (
+        bool(account_words.named_in(sentence))
+        or account_words.names_a_custom_destination(sentence)
+        or bool(_BETWEEN_ACCOUNTS.search(folded))
+        or bool(_OWN_ACCOUNT_RELATION.search(folded))
+    )
 
 
 def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
@@ -326,17 +406,18 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
     an answer is manners, «vale» while a slot is open might be one. It defaults to True because a
     caller with no conversation in its hands has nothing open by definition.
     """
+    folded = spanish.folded(sentence)
     if courtesy.is_courtesy(sentence, at_rest=at_rest):
         # First, because its vocabulary is anchored end to end and can therefore not steal a turn
         # from anything below: a sentence that is entirely «gracias» has nothing else in it. Last
         # would work equally well and would read as an afterthought — this is a whole turn, and 98
         # of the corpus's 879 are it.
         return Intent.COURTESY
-    if _ABOUT_CARDS.search(sentence):
+    if _ABOUT_CARDS.search(folded) or _ABOUT_CARDS_BY_EACH.search(folded):
         # Before the balance, which used to exclude "qué tarjetas" without giving it anywhere to
         # go, and before the planner, which has no card dimension to plan with.
         return Intent.LIST_CARDS
-    if _ABOUT_CONTACTS.search(sentence):
+    if _ABOUT_CONTACTS.search(folded) or _ABOUT_AGENDA.search(folded):
         # Before the payment check, and the comment on the pattern is the argument for why. A
         # sentence naming a contact list is asking who exists, even when it also says "bizum".
         return Intent.LIST_CONTACTS
@@ -345,13 +426,18 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
         # the preview and the confirmation are still in front of it, and the other reading would
         # drop a real payment into a path that cannot make one.
         return Intent.PAYMENT
-    if _ABOUT_ITSELF.search(sentence):
+    if _ABOUT_ITSELF.search(folded) or (
+        _ASSISTANT_NOUN.search(folded) and _ASSISTANT_PURPOSE.search(folded)
+    ):
         return Intent.IDENTITY_OR_HELP
-    if _CATEGORY_CATALOGUE.search(spanish.folded(sentence)):
+    if _CATEGORY_CATALOGUE.search(folded):
         return Intent.LIST_CATEGORIES
-    if has_previous and _CORRECTING.search(sentence):
+    if has_previous and (
+        _CORRECTING.search(folded)
+        or (_ANSWER_NOUN.search(folded) and _ANSWER_REJECTION.search(folded))
+    ):
         return Intent.CORRECTION
-    if has_previous and _ABOUT_THE_ANSWER.search(sentence):
+    if has_previous and _ABOUT_THE_ANSWER.search(folded):
         return Intent.EXPLAIN_PREVIOUS
     if _moving_money_inside(sentence):
         # After PAYMENT and before the balance, and both positions are the point. A sentence that
@@ -359,7 +445,11 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
         # "mueve 200 € a la hucha" carries "cuánto" in neither direction and would otherwise fall
         # all the way through to the planner, which built a query about the last 200 days.
         return Intent.OWN_TRANSFER
-    if _ABOUT_THE_BALANCE.search(sentence) and not _NOT_THE_BALANCE.search(sentence):
+    if (
+        _ABOUT_ACCOUNTS.search(folded)
+        or _ABOUT_THE_BALANCE.search(folded)
+        and not _NOT_THE_BALANCE.search(folded)
+    ):
         # Last of the deterministic ones, and not gated on `has_previous`: "¿cuánto tengo?" is a
         # whole question on the first turn. The exclusion is what keeps "¿cuántos movimientos
         # tengo este mes?" on the path that can answer it.
@@ -381,4 +471,10 @@ def asks_for_something_else(sentence: str) -> bool:
 def is_bare_correction(sentence: str) -> bool:
     """Whether the sentence rejects the previous answer without supplying a replacement."""
     cleaned = spanish.folded(sentence).strip(" ¿?¡!.,")
-    return _BARE_CORRECTION.fullmatch(cleaned) is not None
+    if _BARE_CORRECTION.fullmatch(cleaned) is not None:
+        return True
+    return bool(
+        _ANSWER_NOUN.search(cleaned)
+        and _ANSWER_REJECTION.search(cleaned)
+        and _CORRECTION_REPLACEMENT.search(cleaned) is None
+    )

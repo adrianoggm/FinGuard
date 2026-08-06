@@ -5,12 +5,10 @@ costs money rather than credibility. Same method throughout: a model that has ne
 patterns writes eight ways of saying one thing, and the layer is scored on whether all eight land
 in the same place. See evaluation/payments/drift.yaml for where the sentences came from.
 
-It stands at 20 of 40, and the split is the finding rather than the rate. **The amount is right
-forty times out of forty** — `amount_in` reads Spanish money properly, including "12,50" and the
-phone numbers it has to refuse. Every one of the twenty failures is the note, and the note is worse
-to get wrong than a figure: it is the user's own text, quoted back in the confirmation and then
-written to the bank. "Con el concepto cena por bizum ahora mismo" sends six words the user never
-meant as a note; "viaje a Málaga" arrives as "viaje".
+It now stands at 40 of 40. `amount_in` reads Spanish money, and `concept_in` separates introductory
+words, the user's note, known contacts and instructional suffixes. This is more than a score: the
+note is quoted back in the confirmation and then written to the bank, so neither truncating it nor
+adding words the user did not mean is acceptable.
 
 Not asserted per sentence. Like the dispatch corpus this states what the layer does rather than
 what it must do, so the twenty are printed and one floor stops the rate regressing quietly while
@@ -26,9 +24,8 @@ from finguard_orchestrator.domain.services import payment_words
 
 CORPUS = Path(__file__).resolve().parents[1] / "evaluation" / "payments" / "drift.yaml"
 
-# Where it stood when the file was written: 20 of 40 instructions yield both the amount and the
-# note the sentence names. Raised whenever a change earns it, never lowered to make one pass.
-FLOOR = 20
+# Every instruction must yield both the amount and the note it names.
+FLOOR = 40
 
 
 def _cases() -> list[tuple[str, int, str | None, str]]:

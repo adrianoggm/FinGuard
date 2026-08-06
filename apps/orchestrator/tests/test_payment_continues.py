@@ -313,6 +313,16 @@ async def test_the_concept_arrives_on_the_same_turn_as_the_amount() -> None:
     assert "comida" in answer.text
 
 
+async def test_a_place_and_instruction_suffix_are_kept_out_of_each_others_slots() -> None:
+    _, reader, gateway = await prepare(
+        "50 euros con concepto viaje a Málaga por bizum ahora mismo",
+        pending=PaymentDraft(recipient_name="Marta Solis Vega"),
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].concept == "viaje a Málaga"
+
+
 async def test_the_concept_survives_an_ambiguous_name() -> None:
     answer, _, gateway = await prepare(
         "pues 15 euros con concepto de comida a Marta", pending=PaymentDraft()

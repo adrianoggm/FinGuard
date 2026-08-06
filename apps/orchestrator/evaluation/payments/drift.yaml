@@ -7,8 +7,8 @@
 # these particular patterns read Spanish -- the dispatch layer made the same argument and scored 37
 # of 96 the first time somebody else wrote the sentences.
 #
-# The amount survives everything here. The note does not, and its four failure modes are all in the
-# corpus below:
+# The amount and note now survive all forty cases. The four original failure modes remain in the
+# corpus as regression inputs:
 #
 #   * the rest of the sentence is swallowed -- "con el concepto cena por bizum ahora mismo" writes
 #     all six words into the note, because the pattern ends a concept at a recipient or at the end
@@ -20,8 +20,9 @@
 #   * "concepto" misspelt yields nothing, which is the one of the four that is arguably right:
 #     guessing a note out of a word nobody recognised would write arbitrary text onto a payment.
 #
-# The first three are worse than a wrong figure. A note is the user's own text, quoted back in the
-# confirmation and then sent to the bank, so getting it wrong sends words they never wrote.
+# A note is the user's own text, quoted back in the confirmation and then sent to the bank. The
+# reader therefore uses explicit typo aliases, known suffixes and the contact directory rather than
+# approximate matching.
 #
 # Provenance: llama-3.3-70b-versatile via Groq, 2026-08-06, prompt in the generator's docstring.
 # It was told what the customer wants and never how any of it is parsed. Amounts and names were

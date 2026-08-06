@@ -92,8 +92,31 @@ _RECEIVED: Final = re.compile(
 # a payment out of a sentence with no money in it.
 _PAYING: Final = re.compile(
     r"\b(bi[xz]um|transferencia|tra[nm]sferir|transfiere|transfi[eé]rele"
-    r"|env[ií]a|env[ií]ale|manda|m[áa]ndale|paga|p[áa]gale|ingresa|ingr[ée]sale"
+    r"|enviar|env[ií]a|env[ií]ale|mandar|mandrle|manda|m[áa]ndale"
+    r"|pagar|paga|p[áa]gale|ingresa|ingr[ée]sale"
     r"|devuelve|devu[eé]lvele)\b",
+    re.IGNORECASE,
+)
+
+# A fully stated instruction remains an instruction when the user appends ``¿cómo lo hago?`` or
+# ``¿verdad?``. The volitional prefix is required; without it, ``¿cómo puedo enviar dinero?`` is a
+# capability question and must not start a payment.
+_EXPLICIT_ORDER: Final = re.compile(
+    r"\b(?:quiero|necesito|voy\s+a|tengo\s+que)\s+"
+    r"(?:hacer\s+(?:una?\s+)?)?"
+    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar)\b",
+    re.IGNORECASE,
+)
+
+# A transfer explicitly framed as movement between the holder's accounts belongs to the own-account
+# workflow, never to a recipient payment. This is checked before payment vocabulary because the
+# word ``transferencia`` is shared by both rails.
+_OWN_ACCOUNTS: Final = re.compile(
+    r"\bentre\s+(?:mis|las)\s+cuentas\b"
+    r"|\bde\s+una\s+(?:de\s+)?mis\s+cuentas\s+a\s+otra\b"
+    r"|\bde\s+una\s+cuenta(?:\s+mia)?\s+a\s+otra\s+cuenta\b.{0,35}"
+    r"\b(?:mia|mias|tengo\s+yo)\b"
+    r"|\bde\s+una\s+cuenta\s+a\s+otra\b.{0,30}\bambas\s+mias\b",
     re.IGNORECASE,
 )
 
@@ -155,6 +178,11 @@ def is_payment(sentence: str) -> bool:
     want payments withholds the `payments:prepare` scope, and the sentence is then refused for the
     honest reason rather than quietly read as something else.
     """
-    if _ASKING.search(sentence) or _ALREADY.search(sentence) or _RECEIVED.search(sentence):
+    folded = spanish.folded(sentence)
+    if _OWN_ACCOUNTS.search(folded):
+        return False
+    if _ALREADY.search(sentence) or _RECEIVED.search(sentence):
+        return False
+    if _ASKING.search(sentence) and _EXPLICIT_ORDER.search(sentence) is None:
         return False
     return bool(_PAYING.search(sentence)) and bool(_MONEY.search(sentence))

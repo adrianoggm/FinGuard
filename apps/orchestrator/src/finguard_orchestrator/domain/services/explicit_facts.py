@@ -45,7 +45,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import Final
 
-from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
 from finguard_orchestrator.domain.services import category_words, spanish, window_words
 from finguard_orchestrator.domain.services.window_words import Window
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -98,6 +98,16 @@ _ASKS_WHEN: Final = re.compile(
     r"|\bcada\s+cuantos\s+dias\b|\bsuelo\s+ir\b|\ben\s+que\s+fechas?\b"
 )
 
+_AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
+_COMPARES: Final = re.compile(
+    r"\bcompara|\bcomparacion\b|\bfrente\s+a\b|\bpor\s+separado\b|\buna\s+y\s+otra\b"
+)
+_INCOME: Final = re.compile(
+    r"\bingres(?:o|os|e|ado|aron)\b|\bcobr(?:e|ado|aron|os?)\b|\brecibi(?:do)?\b"
+    r"|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
+)
+_EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
+
 
 def asks_when(sentence: str) -> bool:
     """Whether the sentence asks *when* something happens rather than how much of it there was.
@@ -115,6 +125,9 @@ class ExplicitFacts:
 
     window: Window | None = None
     group_by: GroupBy | None = None
+    metric: Metric | None = None
+    direction: Direction | None = None
+    compared_categories: tuple[str, ...] = ()
     # Whether the sentence named a category at all. Not *which* — that is the verifier's business.
     # What this answers is "did the user touch the filter", which is what decides whether a
     # correction about the period is allowed to drop it.
@@ -133,10 +146,21 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     clock, like everywhere else in this pipeline, so the evaluation can replay a turn.
     """
     folded = spanish.folded(sentence)
+    named = category_words.precisely_named_in(sentence)
+    comparison = bool(_COMPARES.search(folded)) and len(named) >= 2
+    says_income = bool(_INCOME.search(folded)) or "SALARY" in named
+    says_expense = bool(_EXPENSE.search(folded))
     return ExplicitFacts(
         window=window_words.window_in(sentence, today=today),
-        group_by=_COUNTERPARTY if _ASKS_WHO.search(folded) else None,
-        names_a_category=bool(category_words.precisely_named_in(sentence)),
+        group_by=(
+            _COUNTERPARTY
+            if _ASKS_WHO.search(folded)
+            else (GroupBy.CATEGORY if comparison else None)
+        ),
+        metric=Metric.AVERAGE if _AVERAGE.search(folded) else None,
+        direction=Direction.INCOME if says_income and not says_expense else None,
+        compared_categories=named if comparison else (),
+        names_a_category=bool(named),
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),
         asks_when=asks_when(sentence),
@@ -163,6 +187,13 @@ def enforce[T: FinancialPlan | TopMovements](plan: T, facts: ExplicitFacts) -> T
         )
     if facts.group_by is not None and isinstance(plan, FinancialPlan):
         plan = replace(plan, group_by=facts.group_by)
+    if isinstance(plan, FinancialPlan):
+        if facts.metric is not None:
+            plan = replace(plan, metric=facts.metric)
+        if facts.direction is not None:
+            plan = replace(plan, direction=facts.direction)
+        if facts.compared_categories:
+            plan = replace(plan, categories=facts.compared_categories)
     return plan
 
 

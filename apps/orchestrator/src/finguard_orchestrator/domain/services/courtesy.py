@@ -36,21 +36,24 @@ from finguard_orchestrator.domain.services import spanish
 # Three kinds, because they get three different replies and a single "de nada" to «hola» reads like
 # a machine. Ordered longest-first inside each pattern so «muchas gracias» is matched whole.
 _THANKS: Final = re.compile(
-    r"^(muchas|mil|muchisimas)?\s*gracias(\s+(a\s+ti|de\s+nada|por\s+todo))?$"
+    r"^(muchas|muchsas|mil|muchisimas)?\s*(gracias|grazias)"
+    r"(\s+(a\s+ti|de\s+nada|por\s+(todo|atenderme|la\s+ayuda)))?$"
     r"|^(vale|ok|okay|genial|perfecto|pues)\s+gracias$"
     r"|^te\s+lo\s+agradezco$"
     # "Muy amable" was the model's word and not ours: it read it as courtesy, the rules sent it to
     # a planner, and there is no reading under which it is a question about money.
-    r"|^(muy\s+amable|mil\s+gracias|un\s+placer)$",
+    r"|^(muy\s+amable|mil\s+gracias|un\s+placer|fue\s+un\s+placer|estoy\s+agradecido)$",
 )
 _GREETING: Final = re.compile(
     r"^(hola|buenas|hey|holi)$"
     r"|^buenos\s+dias$"
     r"|^buenas\s+(tardes|noches)$"
-    r"|^(hola|buenas)[,\s]+(que\s+tal|como\s+estas|buenas)$",
+    r"|^(hola|buenas)[,\s]+(que\s+tal|como\s+estas|buenas)$"
+    r"|^me\s+alegra\s+saludarte$",
 )
 _FAREWELL: Final = re.compile(
-    r"^(adios|chao|chau|bye)$|^hasta\s+(luego|pronto|otra|manana)$|^nos\s+vemos$",
+    r"^(adios(?:\s+ya)?|chao|chau|bye|un\s+saludo)$"
+    r"|^hasta\s+(luego|pronto|otra|manana)$|^nos\s+vemos$",
 )
 
 # The second tier: manners only when nothing is waiting for a reply. See the module docstring.

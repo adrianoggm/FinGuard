@@ -227,6 +227,11 @@ def to_body(
         "includeInternal": plan.include_internal,
         "acrossAccounts": plan.across_accounts,
         **({"onlyAccountId": str(plan.only_account_id)} if plan.only_account_id else {}),
+        **(
+            {"onlyAccountIds": [str(account_id) for account_id in plan.only_account_ids]}
+            if plan.only_account_ids
+            else {}
+        ),
     }
 
     if plan.period is not None:

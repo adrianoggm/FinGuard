@@ -75,6 +75,9 @@ class Metric(StrEnum):
 
     SUM = "SUM"
     COUNT = "COUNT"
+    # Average amount per matching movement. Aggregate rows deliberately keep carrying
+    # both their sum and their count; callers derive the mean without losing either fact.
+    AVERAGE = "AVERAGE"
 
 
 class Direction(StrEnum):

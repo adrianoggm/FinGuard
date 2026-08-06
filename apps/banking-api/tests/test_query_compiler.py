@@ -43,6 +43,7 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
     object.__setattr__(plan, "direction", Direction.EXPENSE)
     object.__setattr__(plan, "group_by", GroupBy.NONE)
     object.__setattr__(plan, "merchants", ())
+    object.__setattr__(plan, "only_account_ids", ())
     object.__setattr__(plan, "supporting_limit", 20)
     object.__setattr__(plan, "explain", False)
 
@@ -149,6 +150,33 @@ def test_a_breakdown_of_counts_is_ordered_by_counts() -> None:
     )
 
     assert "ORDER BY movement_count DESC" in compiled.sql
+
+
+def test_a_breakdown_of_averages_is_ordered_by_each_groups_mean() -> None:
+    compiled = compile_aggregate(
+        query(
+            group_by=GroupBy.CATEGORY,
+            metric=Metric.AVERAGE,
+            direction=Direction.EXPENSE,
+        ),
+        "Europe/Madrid",
+    )
+
+    assert "ORDER BY AVG(t.amount_minor) DESC" in compiled.sql
+
+
+def test_a_selected_account_subset_is_one_bound_array_filter() -> None:
+    first = uuid.UUID(int=2)
+    second = uuid.UUID(int=3)
+
+    compiled = compile_aggregate(
+        query(only_account_ids=(first, second), across_accounts=False), "Europe/Madrid"
+    )
+
+    assert "t.account_id = ANY($" in compiled.sql
+    assert [first, second] in compiled.parameters
+    assert str(first) not in compiled.sql
+    assert str(second) not in compiled.sql
 
 
 @pytest.mark.parametrize("group_by", [GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH])

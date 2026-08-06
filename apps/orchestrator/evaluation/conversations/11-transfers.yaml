@@ -125,14 +125,16 @@ episodes:
 
   - name: an_account_the_holder_does_not_have
     why: >
-      It names what does exist rather than refusing. A holder told "no puedo" about their own
-      accounts learns the wrong thing about the product.
+      A custom account name is checked against the holder's real directory. If it does not exist,
+      the transfer remains open and offers the actual accounts instead of guessing or refusing the
+      capability.
     metrics: [wrong_tool]
     turns:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: mueve 200 € a la cuenta de la empresa
-        route: QUERY
+        route: TRANSFER
+        awaiting: ACCOUNT
       - say: mueve 200 € a la hucha
         route: TRANSFER
         ends: true

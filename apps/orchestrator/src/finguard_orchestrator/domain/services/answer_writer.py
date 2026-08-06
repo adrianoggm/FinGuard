@@ -66,7 +66,12 @@ def money(amount_minor: int, currency: str | None) -> str:
     return f"{sign}{grouped},{cents:02d}{symbol}"
 
 
-def balance(summary: AccountSummary, named: tuple[str, ...] = ()) -> str:
+def balance(
+    summary: AccountSummary,
+    named: tuple[str, ...] = (),
+    *,
+    selected: tuple[Holding, ...] | None = None,
+) -> str:
     """How much money there is, in words.
 
     `named` is what `account_words` read out of the sentence — the kinds of account it mentioned,
@@ -76,13 +81,22 @@ def balance(summary: AccountSummary, named: tuple[str, ...] = ()) -> str:
         # One account, or a banking that has not been deployed yet. The sentence this service
         # always gave, unchanged, rather than a degraded version of the new one.
         return _one_account(summary)
-    wanted = [h for h in summary.holdings if h.kind in named] if named else list(summary.holdings)
-    if named and not wanted:
+    wanted = (
+        list(selected)
+        if selected is not None
+        else ([h for h in summary.holdings if h.kind in named] if named else list(summary.holdings))
+    )
+    if (named or selected is not None) and not wanted:
         return _no_such_account(summary)
-    return _across(wanted, everything=not named)
+    return _across(wanted, everything=not named and selected is None)
 
 
-def leading_figure(summary: AccountSummary, named: tuple[str, ...] = ()) -> int | None:
+def leading_figure(
+    summary: AccountSummary,
+    named: tuple[str, ...] = (),
+    *,
+    selected: tuple[Holding, ...] | None = None,
+) -> int | None:
     """The number `balance()` leads with, as data beside the prose.
 
     Its own function and not the handler's own arithmetic, because the two would then be two
@@ -96,6 +110,8 @@ def leading_figure(summary: AccountSummary, named: tuple[str, ...] = ()) -> int 
     """
     if not summary.holdings:
         return summary.available_minor
+    if selected is not None:
+        return _total_of(list(selected)) if selected else None
     if not named:
         return _total_of(list(summary.holdings))
     wanted = [holding for holding in summary.holdings if holding.kind in named]
@@ -238,6 +254,10 @@ def ready_to_move(target: Holding, amount_minor: int) -> str:
 def no_such_account_to_move_to(summary: AccountSummary) -> str:
     have = ", ".join(_name_of(holding) for holding in summary.holdings)
     return f"No tienes ninguna cuenta de ese tipo. Tienes: {have}."
+
+
+def unknown_named_account_to_move_to(candidates: list[Holding]) -> str:
+    return f"No encuentro una cuenta con ese nombre. {which_account(candidates)}"
 
 
 def _no_such_account(summary: AccountSummary) -> str:
@@ -482,6 +502,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     """
     window = window_of(plan)
     counting = plan.metric is Metric.COUNT
+    averaging = plan.metric is Metric.AVERAGE
     # What the figure is of. Empty for a question that named no filter, which is most of them.
     about = filter_of(plan)
 
@@ -502,6 +523,12 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
     if counting:
         head = f"{answer.movement_count} {noun}{about} {window}."
+    elif averaging:
+        average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
+        head = (
+            f"El importe medio por movimiento{about} {window} fue de {average}, "
+            f"calculado sobre {answer.movement_count} {noun}."
+        )
     else:
         total = money(answer.total_minor, answer.currency)
         head = f"{total}{about} {window}, en {answer.movement_count} {noun}."
@@ -511,7 +538,8 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
 
     shown = answer.groups[:MAX_SPOKEN_GROUPS]
     lines = "\n".join(
-        f"  · {_group_name(group.key, plan)}: {_figure(group, answer, counting)}" for group in shown
+        f"  · {_group_name(group.key, plan)}: {_figure(group, answer, plan.metric)}"
+        for group in shown
     )
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
@@ -564,11 +592,23 @@ def when(answer: QueryAnswer, plan: FinancialPlan) -> str:
     )
 
 
-def _figure(group: Group, answer: QueryAnswer, counting: bool) -> str:
+def _rounded_mean(total_minor: int, count: int) -> int:
+    """Mean in minor units, rounded half away from zero without using a float."""
+    if count <= 0:
+        return 0
+    units, remainder = divmod(abs(total_minor), count)
+    rounded = units + int(remainder * 2 >= count)
+    return -rounded if total_minor < 0 else rounded
+
+
+def _figure(group: Group, answer: QueryAnswer, metric: Metric) -> str:
     """A breakdown of a count is counts. Amounts under a "how many" question would be
     the same mistake again, one row at a time."""
-    if counting:
+    if metric is Metric.COUNT:
         return f"{group.movement_count}"
+    if metric is Metric.AVERAGE:
+        average = _rounded_mean(group.total_minor, group.movement_count)
+        return f"media {money(average, answer.currency)} ({group.movement_count})"
     return f"{money(group.total_minor, answer.currency)} ({group.movement_count})"
 
 

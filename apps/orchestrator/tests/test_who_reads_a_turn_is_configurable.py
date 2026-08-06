@@ -1,4 +1,4 @@
-"""Three arrangements of the same two readers, chosen by one setting.
+"""Four arrangements of the same two readers, chosen by one setting.
 
 `Deterministic`, `Shadowed` and `Promoted` were all written before any of them could be selected:
 the first ran, the second was reachable through a boolean, and the third — the one that flips the
@@ -22,6 +22,7 @@ from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import create_app
 from finguard_orchestrator.domain.services.turn_interpreters import (
     Deterministic,
+    Hybrid,
     Promoted,
     Shadowed,
 )
@@ -32,7 +33,12 @@ from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter impo
 
 @pytest.mark.parametrize(
     ("chosen", "expected"),
-    [("router", Deterministic), ("shadow", Shadowed), ("model", Promoted)],
+    [
+        ("router", Deterministic),
+        ("shadow", Shadowed),
+        ("hybrid", Hybrid),
+        ("model", Promoted),
+    ],
 )
 def test_the_setting_chooses_who_reads(monkeypatch, chosen: str, expected: type) -> None:  # noqa: ANN001
     monkeypatch.setenv("ORCHESTRATOR_TURN_INTERPRETER", chosen)

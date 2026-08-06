@@ -178,6 +178,7 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         "income",
         "all",
         "count",
+        "average",
         "day",
         "week",
         "month",

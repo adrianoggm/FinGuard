@@ -72,6 +72,7 @@ from finguard_orchestrator.domain.services import (
     payment_router,
     payment_words,
     payment_writer,
+    turn_analyzer,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -561,6 +562,17 @@ def _open_payment_events(answer: QuestionResponse) -> StreamingResponse:
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
+def _compound_reply(clauses: tuple[str, ...], was: Conversation) -> QuestionResponse:
+    """Ask the holder to choose instead of silently executing one half of their turn."""
+    return QuestionResponse(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text="Has pedido varias cosas. ¿Con cuál empezamos?",
+        question="¿Con cuál empezamos?",
+        suggestions=list(clauses),
+        conversation=conversation_mapper.to_payload(was),
+    )
+
+
 def _sse(payload: Mapping[str, object]) -> str:
     """One JSON object per `data:` line, blank line between.
 
@@ -878,7 +890,10 @@ async def ask(
     # One reading, before any of the three decisions that need one. It is asked after the
     # confirmation and open-payment branches above on purpose: those turns belong to a state
     # machine whatever the words mean, and paying to classify them would be paying for nothing.
-    read_as = await reads.interpret(request.question, conversation=was)
+    analysis = await turn_analyzer.analyze(request.question, conversation=was, interpreter=reads)
+    if analysis.is_compound:
+        return _compound_reply(analysis.clauses, was)
+    read_as = analysis.intent
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
@@ -959,7 +974,10 @@ async def ask_streaming(
         if immediate is not None:
             return _open_payment_events(immediate)
 
-    read_as = await reads.interpret(request.question, conversation=was)
+    analysis = await turn_analyzer.analyze(request.question, conversation=was, interpreter=reads)
+    if analysis.is_compound:
+        return _open_payment_events(_compound_reply(analysis.clauses, was))
+    read_as = analysis.intent
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:

@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_MERCHANTS,
     MAX_PERIOD_DAYS,
     MAX_PERIOD_MONTHS,
+    MAX_SELECTED_ACCOUNTS,
 )
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
@@ -96,11 +97,21 @@ class FinancialPlan:
     # credential's account is what opens the scope, and declaring a different one would open that
     # account holder's instead — a leak shaped exactly like a filter.
     only_account_id: UUID | None = None
+    # A selected subset of the holder's accounts. Additive beside `only_account_id` so
+    # older clients keep their one-account contract while chat can express "corriente y
+    # hucha, pero no el fondo" without widening the query to every account.
+    only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
     explain: bool = False
 
     def __post_init__(self) -> None:
         if (self.period is None) == (self.date_range is None):
             raise InvalidValueError("a plan needs exactly one of period and dateRange")
+        if self.only_account_id is not None and self.only_account_ids:
+            raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
+        if len(set(self.only_account_ids)) != len(self.only_account_ids):
+            raise InvalidValueError("onlyAccountIds cannot contain duplicates")
+        if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
         check_filters(self.categories, self.merchants)
 
 
