@@ -95,7 +95,15 @@ _ABOUT_THE_BALANCE: Final = re.compile(
 _NOT_THE_BALANCE: Final = re.compile(
     r"\bcu[áa]nt[oa]s?\s+(movimientos|compras|cargos|pagos|operaciones|veces|bizums?)\b"
     r"|\bgast[éeoa]|\bingres[éeoa]|\bhe\s+gastado\b|\bme\s+he\s+gastado\b"
-    r"|\bqu[ée]\s+(contactos|tarjetas)\b",
+    r"|\bqu[ée]\s+(contactos|tarjetas)\b"
+    # The noun on its own, not only after "cuántos". A balance is one figure; the moment a sentence
+    # names the *things* that make it up, it is asking for a list however it is phrased.
+    #
+    # "En el fondo Indexado que movimientos tengo en el utlimo año?" came back as the fund's
+    # balance. Eleven words, a verb, and `movimientos` in the middle of it — taken by the balance
+    # ellipsis because a misspelt "utlimo" hid the period, and with the period hidden every
+    # remaining condition read like a bare account name.
+    r"|\b(movimientos|compras|cargos|operaciones)\b",
     re.IGNORECASE,
 )
 
@@ -320,6 +328,17 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
         # tengo este mes?" on the path that can answer it.
         return Intent.ACCOUNT_BALANCE
     return Intent.FINANCIAL_QUERY
+
+
+def asks_for_something_else(sentence: str) -> bool:
+    """Whether the sentence names a subject of its own instead of narrowing the last answer.
+
+    Exposed for the balance ellipsis in the handler, which needs exactly the judgement this module
+    already makes when it keeps «¿cuántos movimientos tengo?» off the balance path. One vocabulary
+    for one question: a second list of nouns over there would drift from this one, which is
+    precisely how the model's prompt drifted from these rules.
+    """
+    return _NOT_THE_BALANCE.search(sentence) is not None
 
 
 def is_bare_correction(sentence: str) -> bool:

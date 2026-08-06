@@ -1081,7 +1081,25 @@ class AskFinancialQuestionHandler:
             # None of that kind, or more than one. Neither narrows to a single account, and
             # inventing one would answer about an account the sentence did not choose.
             return replace(plan, across_accounts=True)
-        return replace(plan, only_account_id=wanted[0].account_id)
+        return replace(
+            plan,
+            only_account_id=wanted[0].account_id,
+            # Internal transfers come back in when the question is about *this account's*
+            # movements, and only then. The exclusion exists to stop double counting: a traspaso is
+            # a debit here and a credit there, so across accounts it appears twice. Scoped to one
+            # account it appears once, and there is nothing to double.
+            #
+            # What that exclusion cost, reported from the demo: "¿qué movimientos tengo en el fondo
+            # indexado?" answered "no he encontrado movimientos". Every one of the fund's eleven
+            # movements is a traspaso, so the filter removed all of them — and the answer then
+            # offered to widen the period, which could never have worked. A dead end dressed as
+            # advice is worse than a refusal.
+            #
+            # `direction is ALL` is the whole condition. A traspaso out of the piggy bank is not
+            # spending, so "¿cuánto gasté en la hucha?" must keep excluding them; the question that
+            # earns them back is the one asking what *happened* in the account.
+            include_internal=plan.include_internal or plan.direction is Direction.ALL,
+        )
 
     async def _answer(
         self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, widened: bool = False
@@ -1366,6 +1384,13 @@ def _narrows_the_balance(
     if not account_words.named_in(query.sentence) and not _THE_WHOLE_LOT.search(folded):
         return False
     if capability_guard.unsupported_reason(query.sentence, policy) is not None:
+        return False
+    if intent_router.asks_for_something_else(query.sentence):
+        # An ellipsis narrows the previous answer and carries nothing else with it. A sentence that
+        # names what it wants — «movimientos», «compras» — is not narrowing anything, whatever it
+        # omits, and the omission is the trap: a misspelt "utlimo" hid the period in an eleven-word
+        # question about the fund's movements, and every remaining condition then read like a bare
+        # account name. It was answered with the fund's balance.
         return False
     facts = explicit_facts.read(query.sentence, today=query.today)
     return facts.window is None and not facts.names_a_category
