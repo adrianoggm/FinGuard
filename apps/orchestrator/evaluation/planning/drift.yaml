@@ -1,0 +1,565 @@
+# Drift set: the same question, said the way somebody else says it -> the same plan.
+#
+# dev.yaml says it in its own header -- "THE PROMPT IS TUNED AGAINST THIS FILE, so its scores
+# are an upper bound" -- and validation.yaml is untuned but a model was selected on it. Both
+# were written by people who knew what this planner understands. That is the bias this file
+# exists outside of: nobody who wrote these sentences had seen the prompt, the vocabulary or
+# the schema.
+#
+# The dispatch layer got the same treatment first, in tests/test_the_same_question_said_
+# differently.py, and the result is the reason this exists. A hand-written robustness corpus
+# scored 100 % there and a generated one scored 39 %, on the same twelve meanings. The gap was
+# not the service getting worse between two Tuesdays; it was the author knowing the answers.
+#
+# Ten canonical questions and eight paraphrases of each, from a model told only what the
+# customer wants -- never a word about periods, categories, directions or what this planner can
+# express. Two of the ten must be REFUSED rather than planned: a guard that only refuses the
+# phrasings it was built against is the exact failure this service is arranged around, which is
+# a real figure answering a different question.
+#
+# **Every `plan` here is copied from dev.yaml, never invented.** The paraphrases are new; the
+# opinion about what the right answer is stays where it already was, so a disagreement between
+# the two files is a bug in one of them rather than a difference of taste.
+#
+# `paraphrase_of` chains each group to its own first case, so `_check_paraphrases` reports the
+# splits: "this phrasing right, that one wrong" is the finding, and the rate is the summary.
+#
+# Five of the eighty generated sentences were dropped, under a rule fixed before anything was
+# run and applied before the planner had answered anything: the time expression has to survive.
+# Two lost it entirely ("en gasolina para el coche hasta ahora"), two swapped LAST_WEEK for a
+# seven-day window, one blurred thirty days into "el último mes más o menos". Recorded here
+# rather than quietly filtered -- a corpus that loses its inconvenient cases is the bias again,
+# wearing a different hat.
+#
+# Provenance: llama-3.3-70b-versatile via Groq, 2026-08-06, prompt in the generator's docstring.
+# Typos are the model's own. Regenerating produces a NEW corpus with a new baseline, not a
+# reshuffle of this one.
+#
+# The reference date is dev.yaml's, and for dev.yaml's reason: on the 1st of a month, or a
+# Monday, THIS_MONTH and LAST_MONTH and LAST_N_DAYS collapse into each other and every case
+# here stops discriminating. The generator was told never to write an absolute date.
+
+reference: 2026-07-15
+account: ES-0001
+
+cases:
+
+
+  # --- period_named ----------------------------------------------------------
+
+  - id: drift_last_month_0
+    group: period_named
+    question: "Quiero saber cuánto dinero gasté en total el mes pasado"
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_1
+    group: period_named
+    question: "Me gustaría saber cuál es el total de mis gastos del mes anterior"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_2
+    group: period_named
+    question: "¿Cuánto he gastado en total el mes pasado, por favor?"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_3
+    group: period_named
+    question: "Tengo curiosidad por saber cuánto he gastado el mes pasado en total"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_4
+    group: period_named
+    question: "Gasté mucho el mes pasado y quiero saber el total de mis gastos"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_5
+    group: period_named
+    question: "Eh, oye, ¿podrías decirme cuánto he gastado el mes pasaso en total?"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_6
+    group: period_named
+    question: "Quisiera conocer el total de mis gastos del último mes, gracias"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_month_7
+    group: period_named
+    question: "He gastao mucho el mes pasado y necesito saber cuánto he gastado en total"
+    expect: plan
+    paraphrase_of: drift_last_month_0
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: drift_last_30_days_0
+    group: period_named
+    question: "Me gustaría saber cuánto he gastado en los últimos 30 días"
+    expect: plan
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: drift_last_30_days_2
+    group: period_named
+    question: "He de saber cuánto he gastado en total en estos últimos treinta días"
+    expect: plan
+    paraphrase_of: drift_last_30_days_0
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: drift_last_30_days_3
+    group: period_named
+    question: "Puedes decirme cuánto he gastado en los ultimos 30 dias?"
+    expect: plan
+    paraphrase_of: drift_last_30_days_0
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: drift_last_30_days_4
+    group: period_named
+    question: "Me interesa conocer el gasto total de mis cuentas en los últimos 30 días"
+    expect: plan
+    paraphrase_of: drift_last_30_days_0
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: drift_last_30_days_5
+    group: period_named
+    question: "Estoy tratando de llevar un control de mis gastos, así que necesito saber cuánto he gastado en los últimos treinta días"
+    expect: plan
+    paraphrase_of: drift_last_30_days_0
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: drift_last_30_days_6
+    group: period_named
+    question: "Quiero saber cúanto he gastado en los ultimos 30 dias, gracias"
+    expect: plan
+    paraphrase_of: drift_last_30_days_0
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+  - id: drift_last_30_days_7
+    group: period_named
+    question: "Me gustaria saber cuantp he gastado en los últimos 30 días, por favor"
+    expect: plan
+    paraphrase_of: drift_last_30_days_0
+    plan: {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE}
+
+
+  # --- category_single -------------------------------------------------------
+
+  - id: drift_fuel_1
+    group: category_single
+    question: "Quiero saber cuánto me he gastado en gasolina este mes en total"
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+  - id: drift_fuel_2
+    group: category_single
+    question: "Estoy intentando llevar un control de mis gastos y me gustaría saber cuánto he gastado en gasolina este mes"
+    expect: plan
+    paraphrase_of: drift_fuel_1
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+  - id: drift_fuel_4
+    group: category_single
+    question: "Me gustaria saber cuantp he gastado en gasolina para el coche este mes"
+    expect: plan
+    paraphrase_of: drift_fuel_1
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+  - id: drift_fuel_5
+    group: category_single
+    question: "He de saber cuánto he gastado en gasolina para el coche hasta la fecha de este mes"
+    expect: plan
+    paraphrase_of: drift_fuel_1
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+  - id: drift_fuel_6
+    group: category_single
+    question: "Quiero saber cuanto he gastado en gasolna para el coche este mes en concreto"
+    expect: plan
+    paraphrase_of: drift_fuel_1
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+  - id: drift_fuel_7
+    group: category_single
+    question: "Me interesa saber cuánto me he gastado en gasolina para el coche en lo que va de mes"
+    expect: plan
+    paraphrase_of: drift_fuel_1
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+
+
+  # --- merchant --------------------------------------------------------------
+
+  - id: drift_mercadona_0
+    group: merchant
+    question: "Quiero saber cuánto he gastado en Mercadona este mes"
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_1
+    group: merchant
+    question: "Me gustaría saber cuánto he gastado en el supermercado Mercadona este mes"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_2
+    group: merchant
+    question: "Estoy intentando llevar la cuenta de mis gastos y me pregunto cuánto he gastado en Mercadona este mes"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_3
+    group: merchant
+    question: "A ver, ¿cuánto he gastado en Mercadona hasta ahora este mes?"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_4
+    group: merchant
+    question: "He de saber cuánto he gastado en Mercadona durante este mes"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_5
+    group: merchant
+    question: "Cuanto he gastado en Mercadona este mes exactamente, por favor"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_6
+    group: merchant
+    question: "Me parece que he gastado mucho en Mercadona este mes, ¿cuanto es exactamente?"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+  - id: drift_mercadona_7
+    group: merchant
+    question: "Cuanto he gastado en el supermecado Mercadona ehte mes, eso es lo que quiero saber"
+    expect: plan
+    paraphrase_of: drift_mercadona_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, merchants: [Mercadona]}
+
+
+  # --- direction -------------------------------------------------------------
+
+  - id: drift_income_0
+    group: direction
+    question: "Me gustaría saber cuánto dinero entró en mi cuenta el mes pasado"
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_1
+    group: direction
+    question: "¿Cuánto se ingresó en mi cuenta el mes anterior?"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_2
+    group: direction
+    question: "Quiero saber cuánto dinero me entró en la cuenta el mes pasado, por favor"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_3
+    group: direction
+    question: "Tengo que saber cuánto dinero he recibido en mi cuenta el mes que acaba de pasar"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_4
+    group: direction
+    question: "Me interesa conocer el importe que se ha ingresado en mi cuenta el mes pasado"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_5
+    group: direction
+    question: "Cuánto me ha entrado en la cuenta el mes pasao, por favor"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_6
+    group: direction
+    question: "Quiero conocer el saldo que se ha ingresado en mi cuenta el último mes"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+  - id: drift_income_7
+    group: direction
+    question: "Cuánto me ha entrado en mi cuenra el mes pasado, gracias"
+    expect: plan
+    paraphrase_of: drift_income_0
+    plan: {period: {period: LAST_MONTH}, direction: INCOME}
+
+
+  # --- grouping --------------------------------------------------------------
+
+  - id: drift_by_category_0
+    group: grouping
+    question: "Quiero saber en qué se me ha ido el dinero este mes, categoría por categoría"
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_1
+    group: grouping
+    question: "Me gustaría ver el desglose de mis gastos de este mes, clasificados por categorías"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_2
+    group: grouping
+    question: "Este mes me ha parecido que he gastado mucho, así que me encantaría ver el desglose de mis gastos por categorías"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_3
+    group: grouping
+    question: "Estoy un poco perdido con mis finanzas, así que necesito saber en qué me he gastado el dinero este mes, categoría por categoría"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_4
+    group: grouping
+    question: "Quisiera saber en qué he gastado mi dinero este mes, todo clasificado por categorías, por favor"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_5
+    group: grouping
+    question: "Este mes se me ha ido un montón de dinero y quiero saber en qué, así que dame el desglose por categorías"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_6
+    group: grouping
+    question: "Me he gastado un pastón este mes y quiero ver en qué, asi que un desglose por categorías me vendria bien"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_category_7
+    group: grouping
+    question: "Este mes he tenido un gasto bestial y me gustaria saber en qué me lo he gastado, todo clasificado por categorias"
+    expect: plan
+    paraphrase_of: drift_by_category_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: drift_by_merchant_0
+    group: grouping
+    question: "Me gustaría saber en qué comercios o tiendas he gastado más dinero este mes"
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_1
+    group: grouping
+    question: "Este mes, ¿en qué tiendas o comercios he gastado más, por favor?"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_2
+    group: grouping
+    question: "Quiero saber, si es posible, en qué tiendas he gastado más este mes"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_3
+    group: grouping
+    question: "He de saber en qué tiendas o establecimientos he gastado más este mes, ¿puedes decírmelo?"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_4
+    group: grouping
+    question: "Me interesa saber en qué comercios o tiendas he gastado más este mes, ¿me lo puedes decir?"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_5
+    group: grouping
+    question: "Estoy intentando controlar mis gastos y me gustaría saber en qué tiendas o comercios he gastado más este mes, tio"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_6
+    group: grouping
+    question: "Quería saber en qué comercios o tiendas he gastad más este mes, lo siento si es mucha molestia"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: drift_by_merchant_7
+    group: grouping
+    question: "Este mes he gastado un montón y me gustarìa saber en qué tiendas o comercios he gastado más, ¿me lo puedes decir?"
+    expect: plan
+    paraphrase_of: drift_by_merchant_0
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+
+  # --- metric ----------------------------------------------------------------
+
+  - id: drift_count_0
+    group: metric
+    question: "Me gustaría saber cuántos movimientos hubo en mi cuenta la semana pasada"
+    expect: plan
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+  - id: drift_count_1
+    group: metric
+    question: "La semana pasada, ¿cuántos movimientos hubo en mi cuenta exactamente?"
+    expect: plan
+    paraphrase_of: drift_count_0
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+  - id: drift_count_4
+    group: metric
+    question: "La semana anterior, ¿hubo muchos movimientos en mi cuenta, exactamente cuántos?"
+    expect: plan
+    paraphrase_of: drift_count_0
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+  - id: drift_count_5
+    group: metric
+    question: "Estoy intentando llevar la cuenta, así que ¿cuántos movimientos hubo en mi cuenta la semana pasada?"
+    expect: plan
+    paraphrase_of: drift_count_0
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+  - id: drift_count_6
+    group: metric
+    question: "Quiero saber el número de transacciones que se realizaron en mi cuenta la semana pasada, no el importe, solo el número"
+    expect: plan
+    paraphrase_of: drift_count_0
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+  - id: drift_count_7
+    group: metric
+    question: "Me podrías decir cuantos movimietos hubo en mi cuanta la semana pasada, por favor, solo el número de transacciones"
+    expect: plan
+    paraphrase_of: drift_count_0
+    plan: {period: {period: LAST_WEEK}, direction: ALL, metric: COUNT}
+
+
+  # --- unsupported -----------------------------------------------------------
+
+  - id: drift_forecast_0
+    group: unsupported
+    question: "Quiero saber cuánto voy a gastar el mes que viene"
+    expect: unsupported
+
+  - id: drift_forecast_1
+    group: unsupported
+    question: "Me gustaría hacer una previsión de mis gastos para el próximo mes"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_forecast_2
+    group: unsupported
+    question: "Estoy intentando planificar mis finanzas y necesito saber cuánto gastaré el mes que viene"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_forecast_3
+    group: unsupported
+    question: "¿Cuánto voy a gastar el mes próximo, más o menos?"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_forecast_4
+    group: unsupported
+    question: "Tengo que hacer un presupuesto y necesito saber cuánto voy a gastar el mes que viene"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_forecast_5
+    group: unsupported
+    question: "Quiero hacer una previsión de mis gastos para el mes siguiente, ¿cuánto va a ser?"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_forecast_6
+    group: unsupported
+    question: "Voy a gastar cuánto el mes que vien3, por favor?"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_forecast_7
+    group: unsupported
+    question: "Me da igual cómo, pero necesito saber cuánto voy a gastar el mes que está por venir"
+    expect: unsupported
+    paraphrase_of: drift_forecast_0
+
+  - id: drift_average_0
+    group: unsupported
+    question: "Me gustaría saber cuál es mi gasto medio al mes"
+    expect: unsupported
+
+  - id: drift_average_1
+    group: unsupported
+    question: "Puedo saber cuánto gasto de media al mes en mis cuentas"
+    expect: unsupported
+    paraphrase_of: drift_average_0
+
+  - id: drift_average_2
+    group: unsupported
+    question: "Mi gasto medio mensual, ¿cuánto es?"
+    expect: unsupported
+    paraphrase_of: drift_average_0
+
+  - id: drift_average_3
+    group: unsupported
+    question: "A mí me interesa conocer mi gasto medio por mes"
+    expect: unsupported
+    paraphrase_of: drift_average_0
+
+  - id: drift_average_4
+    group: unsupported
+    question: "Quiero saber, por favor, cuál es mi gasto medio al mes"
+    expect: unsupported
+    paraphrase_of: drift_average_0
+
+  - id: drift_average_5
+    group: unsupported
+    question: "Estoy intentando controlar mis finanzas, así que necesito saber mi gasto medio mensual"
+    expect: unsupported
+    paraphrase_of: drift_average_0
+
+  - id: drift_average_6
+    group: unsupported
+    question: "Mi gast medio al mes, ¿puedes decime cuánto es?"
+    expect: unsupported
+    paraphrase_of: drift_average_0
+
+  - id: drift_average_7
+    group: unsupported
+    question: "Me gustaria saber mi gasto mediu al mes, por favor"
+    expect: unsupported
+    paraphrase_of: drift_average_0

@@ -599,10 +599,12 @@ def main() -> int:
     parser.add_argument(
         "--dataset",
         default="dev",
-        choices=("dev", "validation", "adversarial"),
+        choices=("dev", "validation", "adversarial", "drift"),
         help="dev is what the prompt was tuned against; validation is what eleven models were "
         "compared against, so it selected a model and is no longer held out. Neither is a "
-        "release number — see evaluation/planning/RESULTS.md.",
+        "release number — see evaluation/planning/RESULTS.md. drift is the only one nobody "
+        "here wrote: ten questions from dev, paraphrased by a model that had never seen the "
+        "prompt, and it scores robustness rather than accuracy.",
     )
     parser.add_argument(
         "--timeout",
