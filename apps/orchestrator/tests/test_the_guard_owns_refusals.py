@@ -27,10 +27,10 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 )
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
-from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.models.conversation import IDLE, Conversation, Slot
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
 
 class NoCards:
@@ -78,6 +78,34 @@ class Ledger:
         )
 
 
+class ListingLedger(Ledger):
+    def __init__(self) -> None:
+        super().__init__()
+        self.requested_movements: int | None = None
+
+    async def run(
+        self, plan: FinancialPlan, *, movements: int | None = None, **_: object
+    ) -> QueryAnswer:
+        self.plan = plan
+        self.requested_movements = movements
+        available = tuple(
+            Movement(
+                occurred_at=datetime(2026, 8, day, 10, 0, tzinfo=UTC),
+                description=f"Movimiento {day}",
+                amount_minor=day * 100,
+                direction="EXPENSE",
+                merchant_name=f"Comercio {day}",
+            )
+            for day in range(5, 0, -1)
+        )
+        return QueryAnswer(
+            currency="EUR",
+            total_minor=1_500,
+            movement_count=100,
+            movements=available[:movements],
+        )
+
+
 class Bank:
     async def of(self, *_: object, **__: object) -> AccountSummary:
         return AccountSummary(
@@ -92,7 +120,12 @@ class Bank:
         )
 
 
-async def asked(sentence: str, planner: GivesUp, ledger: Ledger | None = None):  # type: ignore[no-untyped-def]
+async def asked(
+    sentence: str,
+    planner: GivesUp,
+    ledger: Ledger | None = None,
+    conversation: Conversation = IDLE,
+):  # type: ignore[no-untyped-def]
     handler = AskFinancialQuestionHandler(
         planner,  # type: ignore[arg-type]
         ledger or Ledger(),  # type: ignore[arg-type]
@@ -101,7 +134,9 @@ async def asked(sentence: str, planner: GivesUp, ledger: Ledger | None = None): 
         cards=NoCards(),  # type: ignore[arg-type]
     )
     return await handler.handle(
-        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+        AskFinancialQuestionQuery(
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=conversation
+        )
     )
 
 
@@ -166,15 +201,62 @@ async def test_a_refusal_the_guard_owns_is_left_alone(family: str) -> None:
     assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
 
 
-async def test_the_guard_still_refuses_before_the_model_is_asked() -> None:
-    """An average is declined by the deterministic gate, so the planner is never called and there
-    is nothing to rescue. None of this weakened that."""
+async def test_a_plain_average_is_planned_before_the_legacy_guard_or_model() -> None:
+    """A bare category average now has one useful meaning: amount per matching movement."""
     planner = GivesUp()
+    ledger = Ledger()
 
-    answer = await asked("¿cuál es mi gasto medio en gasolina el mes pasado?", planner)
+    answer = await asked("¿cuál es mi gasto medio en gasolina el mes pasado?", planner, ledger)
 
-    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
-    assert planner.asked == 0, "the guard let an average reach the model"
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.AVERAGE
+
+
+async def test_latest_five_movements_means_five_rows_not_five_days() -> None:
+    planner = GivesUp()
+    ledger = ListingLedger()
+
+    answer = await asked(
+        "Perdona, ¿cuáles son los utlimos 5 movimientos de mis cuentas?", planner, ledger
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.requested_movements == 5
+    assert answer.movement_count == 5
+    assert len(answer.movements) == 5
+    assert "últimos 5 movimientos" in answer.text
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["Dame un ejemplo de esos movimientos", "Dame un ejemlo de esos movimientos"],
+)
+async def test_an_example_reuses_the_previous_query(sentence: str) -> None:
+    planner = GivesUp()
+    ledger = ListingLedger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.COUNT,
+    )
+
+    answer = await asked(
+        sentence,
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.requested_movements == 1
+    assert answer.movement_count == 1
+    assert answer.text.startswith("Por ejemplo: Comercio 5")
+    assert answer.conversation.last_plan == previous
 
 
 async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement() -> None:

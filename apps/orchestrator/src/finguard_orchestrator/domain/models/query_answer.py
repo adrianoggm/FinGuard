@@ -9,7 +9,7 @@ decision that depends on the currency, and a float in between is how cents go mi
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,8 @@ class QueryAnswer:
     currency: str
     total_minor: int
     movement_count: int
+    period_start: date | None = None
+    period_end: date | None = None
     groups: tuple[Group, ...] = field(default_factory=tuple)
     movements: tuple[Movement, ...] = field(default_factory=tuple)
 

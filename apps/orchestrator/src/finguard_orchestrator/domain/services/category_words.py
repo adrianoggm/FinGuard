@@ -20,7 +20,14 @@ from typing import Final
 from finguard_orchestrator.domain.services import spanish
 
 _GLOSS: Final[dict[str, tuple[str, ...]]] = {
-    "GROCERIES": ("el súper", "el supermercado", "la compra", "comida de casa", "supermercado"),
+    "GROCERIES": (
+        "el súper",
+        "el supermercado",
+        "la compra",
+        "comida de casa",
+        "supermercado",
+        "supermercados",
+    ),
     "TRANSPORT_FUEL": (
         "gasolina",
         "gasoil",
@@ -92,7 +99,7 @@ def names() -> tuple[str, ...]:
 #
 # What is left is equivalences the product itself defines: cine is ocio the way EUR is euros.
 _PRECISE: Final[dict[str, tuple[str, ...]]] = {
-    "GROCERIES": ("supermercado", "súper"),
+    "GROCERIES": ("supermercado", "supermercados", "súper"),
     # "Coche" is here and "transporte" is not, which looks inconsistent until you read the ledger:
     # TRANSPORT_FUEL is 184 movements of BP and Cepsa and there is no insurance, no repairs and no
     # parking category, so spending "on the car" is fuel *entirely* rather than approximately.

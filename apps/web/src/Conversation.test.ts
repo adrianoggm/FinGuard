@@ -336,3 +336,35 @@ describe("the one field this client writes", () => {
     expect(withChoice(idle, "contact-2")).toBe(idle);
   });
 });
+
+describe("financial breakdowns", () => {
+  it("renders a count by merchant as movement counts, not monetary totals", () => {
+    const countPlan = { ...LAST_MONTH, group_by: "MERCHANT", metric: "COUNT" };
+    const counted = thread({
+      turns: [
+        {
+          who: "assistant",
+          answer: answer({
+            text: "8 movimientos.",
+            currency: "EUR",
+            conversation: state({ last_plan: countPlan }),
+            groups: [{ key: "Mercadona", total_minor: 48_945, movement_count: 8 }],
+          }),
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: counted,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Mercadona");
+    expect(markup).toContain("8 movimientos");
+    expect(markup).not.toContain("489,45");
+  });
+});

@@ -143,6 +143,7 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         for d in Direction
         for g in GroupBy
         for m in Metric
+        if m is not Metric.PERIOD_AVERAGE or g in (GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH)
     ]
     windows.append(
         FinancialPlan(
@@ -179,6 +180,8 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         "all",
         "count",
         "average",
+        "media",
+        "periodo",
         "day",
         "week",
         "month",

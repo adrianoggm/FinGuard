@@ -169,6 +169,8 @@ def summary_to_dto(result: MovementSummaryResult) -> FinancialQueryResponse:
         currency=result.currency,
         total_minor=result.total_minor,
         movement_count=result.movement_count,
+        period_start=result.period_start,
+        period_end=result.period_end,
         groups=[_group_to_dto(group) for group in result.groups],
         supporting_movements=[_movement_to_dto(m) for m in result.movements],
         trace=_trace_to_dto(result.trace) if result.trace is not None else None,

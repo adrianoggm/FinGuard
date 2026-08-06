@@ -78,6 +78,9 @@ class Metric(StrEnum):
     # Average amount per matching movement. Aggregate rows deliberately keep carrying
     # both their sum and their count; callers derive the mean without losing either fact.
     AVERAGE = "AVERAGE"
+    # The aggregate still returns exact sums per temporal bucket. The caller uses
+    # the resolved date range to include empty buckets in the divisor.
+    PERIOD_AVERAGE = "PERIOD_AVERAGE"
 
 
 class Direction(StrEnum):

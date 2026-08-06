@@ -90,6 +90,8 @@ def test_it_answers_with_the_contract_names() -> None:
         "currency": "EUR",
         "totalMinor": 12_743,
         "movementCount": 3,
+        "periodStart": "2026-07-01",
+        "periodEnd": "2026-07-31",
         "groups": [{"key": "2026-07-06", "totalMinor": 3_420, "movementCount": 1}],
         "supportingMovements": [
             {

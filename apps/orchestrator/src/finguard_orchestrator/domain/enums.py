@@ -129,6 +129,10 @@ class Metric(StrEnum):
     # count; the deterministic answer writer derives the displayed mean from those two
     # integers, so no rounded model-generated number enters the response.
     AVERAGE = "AVERAGE"
+    # Mean of the totals of every calendar bucket in the requested window. The
+    # temporal GroupBy says whether the divisor is days, weeks or months. This is
+    # deliberately distinct from AVERAGE, whose divisor is movements.
+    PERIOD_AVERAGE = "PERIOD_AVERAGE"
 
 
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum

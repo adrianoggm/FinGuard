@@ -13,10 +13,10 @@ The text is Spanish because it is product data, which is the one exception rule 
 makes.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.contact import Contact
@@ -430,6 +430,25 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
     return f"{_position(ranking.rank)} fue de {amount}: {what}, el {when}."
 
 
+def recent_movements(count: int) -> str:
+    if count == 0:
+        return "No he encontrado movimientos recientes en tus cuentas."
+    noun = "movimiento" if count == 1 else "movimientos"
+    return f"Estos son tus últimos {count} {noun}."
+
+
+def movement_example(movement: Movement | None, currency: str) -> str:
+    if movement is None:
+        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
+    amount = abs(movement.amount_minor)
+    if movement.direction == Direction.EXPENSE.value:
+        amount = -amount
+    what = movement.merchant_name or movement.description
+    return (
+        f"Por ejemplo: {what}, {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}."
+    )
+
+
 def _position(rank: int) -> str:
     return _ORDINALS.get(rank, f"El número {rank}")
 
@@ -486,7 +505,9 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         # appended above — where the reader is looking for what makes the two lines different.
         if plan.group_by.value != "NONE":
             parts.append(f"por {plan.group_by.value.lower()}")
-        if plan.metric.value != "SUM":
+        if plan.metric is Metric.PERIOD_AVERAGE:
+            parts.append("media por periodo")
+        elif plan.metric.value != "SUM":
             parts.append(plan.metric.value.lower())
     return ", ".join(parts)
 
@@ -503,6 +524,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     window = window_of(plan)
     counting = plan.metric is Metric.COUNT
     averaging = plan.metric is Metric.AVERAGE
+    averaging_periods = plan.metric is Metric.PERIOD_AVERAGE
     # What the figure is of. Empty for a question that named no filter, which is most of them.
     about = filter_of(plan)
 
@@ -528,6 +550,19 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         head = (
             f"El importe medio por movimiento{about} {window} fue de {average}, "
             f"calculado sobre {answer.movement_count} {noun}."
+        )
+    elif averaging_periods:
+        periods = _period_count(answer, plan)
+        average = money(_rounded_mean(answer.total_minor, periods), answer.currency)
+        unit = {
+            GroupBy.DAY: ("día", "días"),
+            GroupBy.WEEK: ("semana", "semanas"),
+            GroupBy.MONTH: ("mes", "meses"),
+        }[plan.group_by]
+        period_noun = unit[0] if periods == 1 else unit[1]
+        head = (
+            f"El gasto medio por {unit[0]}{about} {window} fue de {average}, "
+            f"calculado sobre {periods} {period_noun}, incluidos los periodos sin movimientos."
         )
     else:
         total = money(answer.total_minor, answer.currency)
@@ -599,6 +634,35 @@ def _rounded_mean(total_minor: int, count: int) -> int:
     units, remainder = divmod(abs(total_minor), count)
     rounded = units + int(remainder * 2 >= count)
     return -rounded if total_minor < 0 else rounded
+
+
+def _period_count(answer: QueryAnswer, plan: FinancialPlan) -> int:
+    """Calendar buckets touched by the exact range banking executed, including empty ones."""
+    group_by = plan.group_by
+    if (
+        group_by is GroupBy.MONTH
+        and plan.period is not None
+        and plan.period.period is Period.LAST_N_MONTHS
+        and plan.period.n is not None
+    ):
+        # A rolling twelve-month window touches thirteen YYYY-MM labels when both endpoint months
+        # are partial. The requested duration is still twelve months, so its monthly mean has
+        # twelve equal units rather than thirteen uneven calendar fragments.
+        return plan.period.n
+    start = answer.period_start
+    end = answer.period_end
+    if start is None or end is None:
+        # Compatibility for in-memory ports and older recordings. A real HTTP answer carries the
+        # exact resolved bounds; grouped rows are the safest fallback available without them.
+        return max(1, len(answer.groups))
+    if group_by is GroupBy.DAY:
+        return (end - start).days + 1
+    if group_by is GroupBy.WEEK:
+        first_monday = start - timedelta(days=start.weekday())
+        return (end - first_monday).days // 7 + 1
+    if group_by is GroupBy.MONTH:
+        return (end.year - start.year) * 12 + end.month - start.month + 1
+    return 1
 
 
 def _figure(group: Group, answer: QueryAnswer, metric: Metric) -> str:
