@@ -7,7 +7,7 @@ turn reach the right part of the service?**
 Every defect reported from the demo so far has been that and only that. Not a wrong figure — a
 question routed to the payment path, a balance sent to the planner, a reply to an open question read
 as an order. The figures were right every time; the *tool* was wrong. So that is what an episode
-asserts: which of twelve places handled each turn, and what the turn left behind.
+asserts: which of thirteen places handled each turn, and what the turn left behind.
 
 **No model, and that is the design.** The planner is stubbed to answer any sentence with a plan, so
 `QUERY` means "it reached the planner" and nothing more. Everything else is a path this service
@@ -17,7 +17,7 @@ this one runs in a second.
 
 What each turn may say:
 
-    route        which of the twelve handled it. The whole point of the file
+    route        which of the thirteen handled it. The whole point of the file
     says         a phrase the answer must contain
     not_says     a phrase it must not
     keeps        a workflow that has to still be open afterwards
@@ -100,6 +100,21 @@ from finguard_orchestrator.domain.value_objects.payment_request import PaymentRe
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("08aba04f-2b30-4639-88a6-eac741153ce0")
 PIGGY = uuid.UUID("22222222-2222-2222-2222-222222222222")
 FUND = uuid.UUID("33333333-3333-3333-3333-333333333333")
@@ -125,7 +140,7 @@ CONTACTS = (
 )
 
 
-# --- the twelve places a turn can be handled ---------------------------------------------
+# --- the thirteen places a turn can be handled ---------------------------------------------
 #
 # Named here rather than derived at the assertion, because "which tool answered" is the measurement
 # and a measurement whose definition lives in three branches is three definitions.
@@ -137,6 +152,7 @@ CATEGORIES = "CATEGORIES"
 EXPLANATION = "EXPLANATION"
 GUIDANCE = "GUIDANCE"
 COURTESY = "COURTESY"
+CARDS = "CARDS"
 TRANSFER = "TRANSFER"
 PAYMENT = "PAYMENT"
 QUERY = "QUERY"
@@ -151,6 +167,7 @@ _SPOKEN = {
     "EXPLANATION": EXPLANATION,
     "GUIDANCE": GUIDANCE,
     "COURTESY": COURTESY,
+    "CARDS": CARDS,
     "TRANSFER_READY": TRANSFER,
 }
 _PAYMENT_WORKFLOWS = {"PAYMENT_IN_PROGRESS", "PAYMENT_CONFIRMATION"}
@@ -164,7 +181,7 @@ _PAYMENT_OUTCOMES = {
 
 
 def tool_of(answer: dict[str, Any]) -> str:
-    """Which of the twelve answered this turn.
+    """Which of the thirteen answered this turn.
 
     The outcome alone is not enough and that is not an accident of the enums: a payment asking for
     an amount and a financial question asking for a period are both NEEDS_CLARIFICATION, and telling
@@ -398,7 +415,8 @@ def a_stack() -> Stack:
         planner,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Accounts(),  # type: ignore[arg-type]
-        contacts=Contacts(),  # type: ignore[arg-type]
+        contacts=Contacts(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
     queries = QueryBus()
     queries.register(AskFinancialQuestionQuery, handler)
@@ -500,9 +518,21 @@ def load() -> list[Episode]:
     return episodes
 
 
-def walk(episode: Episode) -> Iterator[Failure]:
-    """One episode, turn by turn, exactly as a browser would have it."""
+def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failure]:
+    """One episode, turn by turn, exactly as a browser would have it.
+
+    `interpreter` swaps what reads a turn, and it is how a model gets measured on the question that
+    matters. Scoring an interpreter against `intent_router` measures whether it guesses our enum;
+    scoring it here measures whether the turn reached the right *place*, which is what the corpus
+    wrote down and what a user experiences. The two are not the same, and the gap is not small:
+    sixty-one turns are answered with a balance while the router calls them FINANCIAL_QUERY,
+    because the balance is decided downstream in `_narrows_the_balance`. A model reading one of
+    those as ACCOUNT_BALANCE is right about the destination and wrong about our plumbing, and only
+    one of those two is worth counting.
+    """
     stack = a_stack()
+    if interpreter is not None:
+        app.dependency_overrides[turn_interpreter] = lambda: interpreter
     conversation: dict[str, Any] | None = None
 
     for number, turn in enumerate(episode.turns, start=1):
@@ -544,12 +574,18 @@ def _complaints(turn: Turn, answer: dict[str, Any], *, reached_model: bool) -> I
         yield f"the figure should be {turn.total} and is {answer.get('total_minor')}"
 
 
-def run(episodes: list[Episode]) -> Report:
-    """Every episode, with the review's metrics counted as it goes."""
+def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
+    """Every episode, with the review's metrics counted as it goes.
+
+    With an `interpreter`, this is the honest version of the migration measurement: install the
+    candidate where the deployment installs one and count the turns that end up in the wrong
+    place. The number it produces is about the product — "N of 879 turns were answered by the
+    wrong tool" — rather than about how well a model predicts an internal enum.
+    """
     report = Report(episodes=len(episodes))
     for episode in episodes:
         report.turns += len(episode.turns)
-        for failure in walk(episode):
+        for failure in walk(episode, interpreter):
             report.failures.append(failure)
             if "answered" in failure.complaint:
                 report.wrong_tool += 1
@@ -623,13 +659,25 @@ class _Scored:
     and the state each turn is scored against is the real one.
     """
 
-    def __init__(self, reference: Any, candidate: Any, report: Agreement) -> None:
+    def __init__(
+        self,
+        reference: Any,
+        candidate: Any,
+        report: Agreement,
+        only: frozenset[Intent] = frozenset(),
+    ) -> None:
         self._reference = reference
         self._candidate = candidate
         self._report = report
+        self._only = only
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
         expected = await self._reference.interpret(sentence, conversation=conversation)
+        if self._only and expected not in self._only:
+            # Not asked, and not counted either. The turn still replays, because the state is half
+            # of what decides the *next* one — a filtered run that skipped the replay would be
+            # measuring sentences in isolation, which is the thing this harness exists not to do.
+            return expected
         read = await self._candidate.interpret(sentence, conversation=conversation)
         self._report.turns += 1
         if read is expected:
@@ -640,7 +688,10 @@ class _Scored:
 
 
 async def compare(
-    episodes: list[Episode], candidate: object, authority: object | None = None
+    episodes: list[Episode],
+    candidate: object,
+    authority: object | None = None,
+    only: frozenset[Intent] = frozenset(),
 ) -> Agreement:
     """Replay every episode through the service and score `candidate` against `authority`.
 
@@ -652,6 +703,13 @@ async def compare(
     `report.turns` is therefore the turns that were *classified*, not the turns in the corpus. The
     gap between the two is not loss — it is the part of the conversation the deterministic state
     machine owns, which no interpreter is consulted about and none can get wrong.
+
+    `only` narrows it further, to the turns whose *reference* answer is one of the given intents.
+    It exists because a hosted endpoint charges per turn and rate-limits by the minute, so
+    "re-measure the one bucket I just changed" is the difference between a fifteen-call check and
+    a twelve-minute run. Everything still replays; only the asking is skipped. A report produced
+    with this set describes that slice and nothing else, and printing it as an overall rate would
+    be lying with a real number.
     """
     from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 
@@ -659,7 +717,9 @@ async def compare(
     report = Agreement()
     for episode in episodes:
         stack = a_stack()
-        app.dependency_overrides[turn_interpreter] = lambda: _Scored(reference, candidate, report)
+        app.dependency_overrides[turn_interpreter] = lambda: _Scored(
+            reference, candidate, report, only
+        )
         conversation: dict[str, Any] | None = None
         for turn in episode.turns:
             answered = stack.client.post(

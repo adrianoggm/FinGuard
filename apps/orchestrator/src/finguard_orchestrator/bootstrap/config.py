@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     ollama_context_tokens: int
     ollama_seed: int
 
-    # --- hosted inference, for comparing against a bigger model ----------------------
+    # --- hosted inference (Groq), for comparing against a bigger model ----------------
     #
     # The key, and the only field in this class that is a secret. `SecretStr` so a stray log
     # line, a `repr` or a `/version`-style dump prints `**********` instead of a live
@@ -94,9 +94,23 @@ class Settings(BaseSettings):
     #
     # It belongs in `.env`, which is gitignored, and never in `.env.defaults`, which is not.
     # Compose reads that same file, so there is one place for it whichever way this is started.
-    xai_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
 
-    @field_validator("xai_api_key", mode="before")
+    # --- hosted inference (Cloudflare Workers AI) -------------------------------------
+    #
+    # A second registration of the same protocol rather than a second adapter — see
+    # infrastructure/llm/cloudflare_workers_ai.py, which is where the reasoning lives and
+    # where the three things a live token still has to settle are written down.
+    #
+    # Two fields, and the provider exists only when **both** are set. The token is the secret.
+    # The account id is not one, but it is equally personal — it names whose Cloudflare account
+    # is billed for every question asked — so it belongs in `.env` with the token and never as a
+    # value in this file or in .env.defaults. Half a credential is worse than none: a missing
+    # account id interpolates into `/accounts//ai/v1`, which is a 404 that reads like an outage.
+    cloudflare_api_token: SecretStr | None = None
+    cloudflare_account_id: str | None = None
+
+    @field_validator("groq_api_key", "cloudflare_api_token", "cloudflare_account_id", mode="before")
     @classmethod
     def _a_blank_key_is_no_key(cls, value: object) -> object:
         """`ORCHESTRATOR_XAI_API_KEY=` means the provider does not exist, not that it has a
@@ -106,6 +120,9 @@ class Settings(BaseSettings):
         a `${VAR:-}` interpolation finds nothing. Taken literally it builds a provider whose every
         request is a 401 — the exact failure the "no key, no provider" rule exists to prevent,
         arriving by the one route that rule does not cover.
+
+        The account id gets the same treatment because it fails the same way from one line lower:
+        blank, it is not a rejected credential but a URL with a hole in it.
         """
         return None if isinstance(value, str) and not value.strip() else value
 
@@ -113,8 +130,34 @@ class Settings(BaseSettings):
     # these have a right answer that does not belong to a deployment: the endpoint is the
     # vendor's and the timeout is a ceiling for "something is wrong". A deployment that never
     # uses the provider should not have to state them.
-    xai_base_url: str = "https://api.x.ai/v1"
-    xai_timeout_seconds: float = 60.0
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_timeout_seconds: float = 60.0
+
+    # The floor this puts under a caller's token budget when the endpoint is a hosted one.
+    #
+    # A reasoning model generates its thinking first and bills it against the same ceiling, so a
+    # budget sized for the answer truncates the reasoning and the request fails with a message
+    # about JSON rather than about tokens. Measured against openai/gpt-oss-120b with this
+    # service's own prompts: reading a turn generated 224 tokens for a ten-token answer, and
+    # planning a query generated 698-907 for a plan of about 120. The callers ask for 32 and 384.
+    #
+    # A ceiling and not a reservation — you pay for what is generated — so this is generous on
+    # purpose. It buys nothing on a non-reasoning model and it is the difference between working
+    # and not on a reasoning one.
+    groq_reasoning_headroom: int = 2048
+
+    # The API root the account path is hung off. A default for the same reason Groq's base URL
+    # is one — the endpoint is the vendor's, not the deployment's — and a field at all so a
+    # proxy or a recorded fixture can stand in front of it without a commit.
+    cloudflare_api_base: str = "https://api.cloudflare.com/client/v4"
+    cloudflare_timeout_seconds: float = 60.0
+
+    # The same floor as Groq's, for the same reason, on a different endpoint.
+    # `@cf/qwen/qwen3-30b-a3b-fp8` is a reasoning model, so a budget sized for the answer is a
+    # budget the thinking eats. The number is borrowed from the measurement above and is not a
+    # measurement of Cloudflare — it costs nothing to be generous, because a ceiling is only
+    # billed when a model reaches it.
+    cloudflare_reasoning_headroom: int = 2048
 
     # Which provider turns a sentence into a plan, and reads a turn.
     #

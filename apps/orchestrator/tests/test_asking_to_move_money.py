@@ -27,6 +27,21 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.services import intent_router
 from finguard_orchestrator.domain.services.intent_router import Intent
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 5)
 
@@ -65,7 +80,8 @@ async def said(sentence: str, of: AccountSummary | None = None, was: Conversatio
         Never(),  # type: ignore[arg-type]
         Never(),  # type: ignore[arg-type]
         accounts=FakeBank(of or summary()),  # type: ignore[arg-type]
-        contacts=Never(),  # type: ignore[arg-type]
+        contacts=Never(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
     last = None
     async for step in handler.stream(

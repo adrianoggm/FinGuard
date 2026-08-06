@@ -16,8 +16,9 @@ makes.
 from datetime import datetime
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, Metric
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
+from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import category_words
@@ -153,7 +154,7 @@ def _with_amounts(holdings: list[Holding]) -> str:
     """ "2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha", through the same enumeration the
     rest of this module uses — Spanish joins the last item with "y", and a comma there reads as
     one more item."""
-    return _listed(tuple(f"{money(h.booked_minor, h.currency)} en {_name_of(h)}" for h in holdings))
+    return listed(tuple(f"{money(h.booked_minor, h.currency)} en {_name_of(h)}" for h in holdings))
 
 
 def _across(holdings: list[Holding], *, everything: bool) -> str:
@@ -211,7 +212,7 @@ def which_account(candidates: list[Holding]) -> str:
     The names are listed because they are what the reply has to contain, and a holder with two
     piggy banks does not necessarily remember what they called them.
     """
-    names = _listed(tuple(_name_of(holding) for holding in candidates))
+    names = listed(tuple(_name_of(holding) for holding in candidates))
     return f"¿A cuál de tus cuentas lo muevo? Tienes {names}."
 
 
@@ -260,6 +261,56 @@ def contacts(found: tuple[Contact, ...]) -> str:
     return f"Tienes {plural} para enviar dinero: {names}."
 
 
+def cards(wallet: Wallet) -> str:
+    """The wallet, and what each card has taken since the window opened.
+
+    Both questions from the reported conversation are answered by one sentence, because both were
+    already one query: "¿qué tarjetas tengo de crédito?" and "¿cuánto he gastado con cada tarjeta
+    este mes?" differ only in which column of `Card` the reader cares about, and the row carries
+    both. The first used to come back "eso no puedo calcularlo todavía" and the second came back
+    with the account total, 868,97 €, wearing the label of an answer about cards.
+
+    The amount is included unconditionally rather than only when asked. A card with a figure beside
+    it answers the second question for somebody who asked the first, and the alternative is two
+    almost-identical sentences and a rule deciding between them — which is the kind of rule that
+    ends up answering the wrong one.
+
+    No currency symbol, and that is this module's own rule rather than an oversight: banking's card
+    contract does not carry one — `CardResponse` has eleven fields and none of them is a currency —
+    so there is nothing to print. `money` prints a bare figure when the currency is unknown for the
+    reason written there: "82,40" is a number somebody asks about and "82,40 €" on a dollar account
+    is a number they believe.
+
+    ponytail: the gap is banking's, and the ranked adapter already solved the same one by attaching
+    the answer's currency to each row. The upgrade is for the card views to carry it, not for this
+    to assume euros.
+
+    Kind rather than brand, because "de crédito" is what people filter by and Visa is not an
+    answer to it. The last four digits are what tells two cards of the same kind apart, which is
+    the same job the phone number does for two contacts named Marta.
+    """
+    if not wallet.cards:
+        return "No tienes tarjetas asociadas a esta cuenta."
+    lines = [
+        f"· {card.display_name} ({_KINDS.get(card.kind, card.kind.lower())} ··{card.last_four}): "
+        f"{money(card.spent_minor, None)} en {card.charge_count} "
+        f"{'cargo' if card.charge_count == 1 else 'cargos'}"
+        for card in wallet.cards
+    ]
+    plural = "estas tarjetas" if len(wallet.cards) > 1 else "esta tarjeta"
+    # Through this module's own month table rather than `strftime`. `%-d` is a GNU extension that
+    # does not exist on Windows, and `%B` answers in whatever locale the process happens to have —
+    # two ways for a date to come out wrong that a nine-element tuple does not have.
+    since = f"{wallet.since.day} de {_MONTHS[wallet.since.month - 1]}"
+    opening = f"Tienes {plural}, con lo gastado desde el {since}:"
+    return "\n".join([opening, *lines])
+
+
+# The card kinds, in the words a person uses to ask for one. `kind` is the ledger's vocabulary and
+# "DEBIT" is not something anybody types.
+_KINDS: Final[dict[str, str]] = {"DEBIT": "débito", "CREDIT": "crédito", "PREPAID": "prepago"}
+
+
 def filter_of(plan: FinancialPlan | TopMovements) -> str:
     """What the figure is a figure *of*, in words, or "" when the question named no filter.
 
@@ -277,14 +328,19 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     identifier — worse than a name, much better than an invented one.
     """
     if plan.merchants:
-        return f" en {_listed(plan.merchants)}"
+        return f" en {listed(plan.merchants)}"
     if plan.categories:
-        return f" en {_listed(tuple(category_words.name_of(c) for c in plan.categories))}"
+        return f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
     return ""
 
 
-def _listed(names: tuple[str, ...]) -> str:
-    """Spanish enumeration: "a", "a y b", "a, b y c"."""
+def listed(names: tuple[str, ...]) -> str:
+    """Spanish enumeration: "a", "a y b", "a, b y c".
+
+    Public because the handler needs it too, to offer the shops a misspelt merchant might have
+    meant. Spanish joins the last item with "y" and a comma there reads as one more item — a rule
+    worth having in one place rather than in every sentence that lists something.
+    """
     if len(names) == 1:
         return names[0]
     return f"{', '.join(names[:-1])} y {names[-1]}"
@@ -454,7 +510,9 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         return head
 
     shown = answer.groups[:MAX_SPOKEN_GROUPS]
-    lines = "\n".join(f"  · {group.key}: {_figure(group, answer, counting)}" for group in shown)
+    lines = "\n".join(
+        f"  · {_group_name(group.key, plan)}: {_figure(group, answer, counting)}" for group in shown
+    )
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
@@ -512,6 +570,21 @@ def _figure(group: Group, answer: QueryAnswer, counting: bool) -> str:
     if counting:
         return f"{group.movement_count}"
     return f"{money(group.total_minor, answer.currency)} ({group.movement_count})"
+
+
+def _group_name(key: str, plan: FinancialPlan) -> str:
+    """What to call a row of a breakdown.
+
+    A category key is the ledger's vocabulary and it reached the screen raw: somebody asking where
+    their money goes read `HOUSING_RENT`, `TRANSPORT_FUEL` and `TRANSFER_BIZUM` down the side of
+    their own answer. The translation existed and `filter_of` was already using it two hundred
+    lines up — this was the one place that printed the key instead.
+
+    Only for categories. A merchant key is already a name and a month key is already a date; both
+    are the ledger writing something a person reads, and putting either through a category glossary
+    would be looking up a word that is not in it.
+    """
+    return category_words.name_of(key) if plan.group_by is GroupBy.CATEGORY else key
 
 
 def _is_breakdown(answer: QueryAnswer) -> bool:

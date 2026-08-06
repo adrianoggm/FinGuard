@@ -317,11 +317,71 @@ def test_the_state_reaches_the_prompt_as_facts(conversation: Conversation, expec
 
 def test_the_prompt_offers_every_intent_and_no_others() -> None:
     """Generated from the enum rather than written out, so a tenth intent cannot be added without
-    the model being told about it."""
+    the model being told about it.
+
+    Naming is not describing, and this test only holds the first. `COURTESY` grew a second tier —
+    a bare «vale» when nothing is waiting — and this passed throughout, because the name was
+    already there. The model was measured against a rule nobody had told it, and seven turns of a
+    Groq run were scored as its mistake. The test below covers that specific gap; the general
+    version of it does not exist and probably cannot.
+    """
     prompt = turn_prompt.build_prompt("¿cuánto tengo?", IDLE)
 
     for intent in Intent:
         assert intent.value in prompt
+
+
+@pytest.mark.parametrize(
+    ("said", "intent"),
+    [
+        # Every one of these is quoted in the prompt as an example of its intent, and every one
+        # was added because a model got it wrong. If the router stops agreeing, the prompt has
+        # become a lie — which is worse than the silence it replaced, because a model believes it.
+        ("no es eso", Intent.CORRECTION),
+        ("no me has entendido", Intent.CORRECTION),
+        ("me refería a gasolina", Intent.CORRECTION),
+        ("quería decir el año pasado", Intent.CORRECTION),
+        ("te has equivocado", Intent.CORRECTION),
+        ("dime las categorías", Intent.LIST_CATEGORIES),
+        ("¿qué categorías hay?", Intent.LIST_CATEGORIES),
+        ("¿cómo lo has calculado?", Intent.EXPLAIN_PREVIOUS),
+        ("¿de dónde sale?", Intent.EXPLAIN_PREVIOUS),
+        ("¿qué cuentas tengo?", Intent.ACCOUNT_BALANCE),
+        ("¿cómo está mi hucha?", Intent.ACCOUNT_BALANCE),
+        ("gracias", Intent.COURTESY),
+        ("¿qué tarjetas tengo?", Intent.LIST_CARDS),
+        ("¿cuánto he gastado con cada tarjeta?", Intent.LIST_CARDS),
+    ],
+)
+def test_the_prompt_does_not_promise_what_the_rules_do_not_do(said: str, intent: Intent) -> None:
+    """The prompt is a hand-written paraphrase of the router, and paraphrases drift.
+
+    That drift is not hypothetical and it is not one bug. `COURTESY` grew a second tier and the
+    prompt kept describing only the first. Five other lines described less than their rule
+    recognised — `CORRECTION` was thirty-three characters against a pattern with eight phrasings
+    in it — and each gap showed up as a confusion bucket that looked like a model failing and was
+    us never telling it. On the 9B, twelve turns of `CORRECTION` alone.
+
+    This is the half of the coupling a test can hold: every phrase the prompt quotes as an example
+    must be one the router actually reads that way. The other half — that the prompt covers
+    everything the rule does — is a judgement, and the only instrument for it is the corpus.
+    """
+    assert intent_router.route(said, has_previous=True, at_rest=True) is intent
+
+
+def test_the_prompt_describes_the_acknowledgement_tier_and_its_condition() -> None:
+    """Both halves, because either alone is wrong.
+
+    Without the words, a model reads «vale» as a financial question — which is what the rules did
+    before `COURTESY` existed and exactly the defect it was added to fix. Without the condition, a
+    model reads the «vale» that answers «¿de qué periodo?» as manners and swallows the turn, which
+    is the failure the `at_rest` gate exists to prevent. The state block already reports the fact;
+    this is the sentence that tells the model what to do with it.
+    """
+    prompt = turn_prompt.build_prompt("vale", IDLE)
+
+    assert "«vale»" in prompt
+    assert "waiting for a reply" in prompt
 
 
 def test_the_rules_are_restated_after_the_sentence() -> None:

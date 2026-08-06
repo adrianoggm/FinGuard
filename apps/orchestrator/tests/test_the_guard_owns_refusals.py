@@ -32,6 +32,21 @@ from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 5)
 
@@ -82,7 +97,8 @@ async def asked(sentence: str, planner: GivesUp, ledger: Ledger | None = None): 
         planner,  # type: ignore[arg-type]
         ledger or Ledger(),  # type: ignore[arg-type]
         accounts=Bank(),  # type: ignore[arg-type]
-        contacts=None,  # type: ignore[arg-type]
+        contacts=None,
+        cards=NoCards(),  # type: ignore[arg-type]
     )
     return await handler.handle(
         AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)

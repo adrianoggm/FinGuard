@@ -14,6 +14,7 @@ That is also why there is no fallback across models. Walking the catalogue is ap
 already lives in the handler; a second copy here would be two places deciding what a failure means.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Final
@@ -43,7 +44,7 @@ MAX_OUTPUT_TOKENS: Final = 32
 class LlmTurnInterpreter:
     """Implements TurnInterpreterPort against one model."""
 
-    def __init__(self, provider: LlmProviderPort, *, model: str) -> None:
+    def __init__(self, provider: LlmProviderPort, *, model: str, pace_seconds: float = 0.0) -> None:
         """The model by name, like the planner takes it, and nothing else.
 
         No temperature and no token budget: both are decided here rather than configured, because
@@ -54,8 +55,26 @@ class LlmTurnInterpreter:
         """
         self._provider = provider
         self._model = model
+        # Counted because the fallback is silent by design, and a silent fallback is
+        # indistinguishable from an opinion. A rate-limited endpoint returns FINANCIAL_QUERY for
+        # every turn, which reads as a model that cannot tell a balance from a query — the first
+        # run against Groq produced exactly that table, and every row of it was an HTTP 429.
+        #
+        # Production wants the fallback: a model outage must not break a conversation. A
+        # measurement wants to know it happened. One counter serves both, and `Shadowed` already
+        # keeps its own for the same reason.
+        self.unavailable = 0
+        self.unreadable = 0
+        # Seconds to wait before each call. Zero for a local runtime and for production, where
+        # turns arrive at human speed; a benchmark fires 818 of them back to back and a hosted
+        # endpoint answers the first few and then 429s the rest. Here rather than in the adapter
+        # because pacing a measurement is the measurement's business — the adapter's contract is
+        # to fail honestly, which it did.
+        self._pace_seconds = pace_seconds
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
+        if self._pace_seconds:
+            await asyncio.sleep(self._pace_seconds)
         try:
             answered = await self._provider.complete(
                 build_prompt(sentence, conversation),
@@ -65,14 +84,24 @@ class LlmTurnInterpreter:
                 schema=SCHEMA,
             )
         except Exception:
+            self.unavailable += 1
             logger.warning("turn.interpreter_unavailable", exc_info=True)
             return Intent.FINANCIAL_QUERY
 
-        return _read(answered)
+        try:
+            return _read(answered)
+        except _UnreadableError:
+            self.unreadable += 1
+            logger.warning("turn.unreadable_intent")
+            return Intent.FINANCIAL_QUERY
+
+
+class _UnreadableError(Exception):
+    """An answer that is not one of the ten. Caught one frame up so it can be counted."""
 
 
 def _read(answered: str) -> Intent:
-    """The intent in the answer, or the safe one.
+    """The intent in the answer, or `_UnreadableError`.
 
     Nothing is normalised and nothing is guessed at. A decoder that honoured the schema cannot get
     here with anything else; a decoder that did not is a runtime this pipeline cannot rely on, and
@@ -81,6 +110,5 @@ def _read(answered: str) -> Intent:
     try:
         named = json.loads(answered).get("intent")
         return Intent(named)
-    except (ValueError, TypeError, AttributeError):
-        logger.warning("turn.unreadable_intent")
-        return Intent.FINANCIAL_QUERY
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise _UnreadableError(str(exc)) from exc

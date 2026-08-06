@@ -17,14 +17,17 @@ concerned.
 
 from typing import Final
 
+from finguard_orchestrator.domain.enums import Direction, GroupBy
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
     FinancialClarification,
     PaymentConfirmation,
     PaymentInProgress,
+    PlannedQuery,
     TransferInProgress,
     UnsupportedCapability,
 )
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 
 # One line per intent, in the order the deterministic router checks them — because the order is the
 # design and a model that reads them in it inherits the same tie-breaks. The wording is about what
@@ -33,8 +36,16 @@ from finguard_orchestrator.domain.models.conversation import (
 _INTENTS: Final[tuple[tuple[str, str], ...]] = (
     (
         "COURTESY",
-        "greeting you, thanking you or saying goodbye, and nothing else. A whole turn of "
-        "manners. «gracias, ¿y en la hucha?» is not this — it carries a question.",
+        "greeting you, thanking you or saying goodbye — a whole turn of manners with nothing "
+        "else in it. «gracias, ¿y en la hucha?» is not this: it carries a question. A bare "
+        "«vale», «perfecto» or «eso es» is also this, but only when nothing above is waiting "
+        "for a reply — while something is, the same word may be the reply.",
+    ),
+    (
+        "LIST_CARDS",
+        "asking about the cards in their wallet — which they have, of what kind, or what each one "
+        "has been charged. «¿cuánto gasté con la tarjeta en Mercadona?» is not this: that is one "
+        "purchase, not the wallet.",
     ),
     (
         "LIST_CONTACTS",
@@ -43,12 +54,29 @@ _INTENTS: Final[tuple[tuple[str, str], ...]] = (
     (
         "PAYMENT",
         "telling you to send money to another person, or answering a question about one you are "
-        "already building. Never a question about money that has already arrived.",
+        "already building — and only then: with nothing under way above, a bare name or a bare "
+        "amount is not a payment. Never a question about money that has already arrived.",
     ),
     ("IDENTITY_OR_HELP", "asking what you are or what you can do. Not about their account at all."),
-    ("LIST_CATEGORIES", "asking which categories exist. Product vocabulary, not their money."),
-    ("CORRECTION", "saying the last answer was wrong."),
-    ("EXPLAIN_PREVIOUS", "asking how the last answer was reached, or what something was filed as."),
+    (
+        "LIST_CATEGORIES",
+        "asking for the catalogue itself — «dime las categorías», «¿qué categorías hay?». "
+        "*Naming* a category is not this: «¿y en gasolina?» narrows the previous question and "
+        "belongs to FINANCIAL_QUERY.",
+    ),
+    (
+        "CORRECTION",
+        "saying the last answer was wrong — «no es eso», «no me has entendido», «te has "
+        "equivocado». **Also when it carries the fix**: «me refería a gasolina» and «quería "
+        "decir el año pasado» are corrections, not new questions, and that is the half that "
+        "gets missed.",
+    ),
+    (
+        "EXPLAIN_PREVIOUS",
+        "asking how the last answer was reached — «¿cómo lo has calculado?», «¿de dónde sale?» "
+        "— or what something was filed as. Asking for more of it is not this: «¿y el segundo?» "
+        "wants another row, not an explanation.",
+    ),
     (
         "OWN_TRANSFER",
         "telling you to move money between two of their OWN accounts. An instruction, never a "
@@ -56,8 +84,10 @@ _INTENTS: Final[tuple[tuple[str, str], ...]] = (
     ),
     (
         "ACCOUNT_BALANCE",
-        "asking how much money there is right now. A state, not a total over a period — «cuántos "
-        "movimientos tengo» is not this.",
+        "asking how much money there is right now — including «¿qué cuentas tengo?» and «¿cómo "
+        "está mi hucha?», because the answer to both is the total with every account under it. "
+        "A state, not a total over a period: «cuánto gasté» and «cuántos movimientos tengo» are "
+        "never this.",
     ),
     (
         "FINANCIAL_QUERY",
@@ -89,6 +119,54 @@ Do not answer PAYMENT for a question about money the user received.
 """
 
 
+def _the_question_behind_this_one(plan: PlannedQuery | None) -> str:
+    """The previous question in its own terms, because an ellipsis has nothing else to lean on.
+
+    This line used to be a boolean — *"there is a previous answered question they can follow up
+    on"* — and that is the single largest thing wrong with this prompt. 157 of the corpus's turns
+    arrive with a plan behind them and most of the remaining disagreements are elliptical:
+
+        "¿y en gasolina?"   narrows the previous plan by category
+        "¿y el mes pasado?" moves its window
+        "¿y el segundo?"    asks for the next row of its ranking
+        "¿y en la hucha?"   narrows it by account — or asks a balance, if that is what came before
+
+    Resolving any of those without the antecedent is not a hard problem, it is an unanswerable
+    one, and that is the honest explanation for a 120B model scoring no better than a 9B on this
+    corpus: neither of them had the information. A bigger model cannot infer a period nobody told
+    it.
+
+    Stated as fields rather than as the sentence the user typed. The sentence is theirs and has
+    already been through a prompt once; the plan is ours, validated, and cannot carry an
+    instruction. That distinction is the same one `SpokenPlan` exists for on the wire.
+    """
+    if plan is None:
+        return "There is no previous answered question."
+    if not isinstance(plan, FinancialPlan):
+        # A ranking. It has no window or category to narrow, and what a follow-up does to one is
+        # ask for another row — which is a fact about it worth stating rather than describing
+        # fields it does not have.
+        return "The last answer was a ranking of movements; «¿y el segundo?» asks for another row."
+
+    said = [
+        "about money the user spent"
+        if plan.direction is Direction.EXPENSE
+        else "about money the user received"
+    ]
+    if plan.period is not None:
+        said.append(f"over {plan.period.period.value}")
+    if plan.categories:
+        said.append(f"filtered to {', '.join(plan.categories)}")
+    if plan.merchants:
+        said.append(f"at {', '.join(plan.merchants)}")
+    if plan.group_by is not GroupBy.NONE:
+        said.append(f"grouped by {plan.group_by.value}")
+    return (
+        f"The previous answered question was {', '.join(said)}. A turn that only names a period, "
+        "a category, a merchant or an account is narrowing THAT question, not asking a new one."
+    )
+
+
 def _state_of(conversation: Conversation) -> str:
     """The conversation as facts, in the fewest lines that decide anything."""
     lines: list[str] = []
@@ -112,11 +190,7 @@ def _state_of(conversation: Conversation) -> str:
         case _:
             lines.append("Nothing is under way.")
 
-    lines.append(
-        "There is a previous answered question they can follow up on."
-        if conversation.last_plan is not None
-        else "There is no previous answered question."
-    )
+    lines.append(_the_question_behind_this_one(conversation.last_plan))
     if conversation.answered_the_balance:
         lines.append("The last answer was a balance, so a bare account name is about the balance.")
     if conversation.retry_plan is not None:

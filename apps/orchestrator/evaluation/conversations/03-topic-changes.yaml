@@ -94,15 +94,21 @@ episodes:
 
   - name: a_question_about_cards_in_the_middle
     why: >
-      Cards have a screen of their own and no answer on this path, so the question goes to the
-      planner rather than being invented an answer. What matters is that the turn after it is
-      unaffected.
+      Cards have a screen of their own, and this used to say they had "no answer on this path, so
+      the question goes to the planner". That was the defect written down as a rule: the planner
+      has no card dimension either, so it refused — "eso no puedo calcularlo todavía" about data
+      sitting one query away — and when the question named an amount it answered with the account
+      total instead.
+
+      What this episode was always really about is the turn *after* it, and that still holds: a
+      question about the wallet must not cost the thread it interrupted.
     metrics: [wrong_tool, context_retention]
     turns:
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
       - say: ¿qué tarjetas tengo?
-        route: QUERY
+        route: CARDS
+        no_model: true
       - say: ¿y en restaurantes?
         route: QUERY
       - say: ¿cuánto tengo?

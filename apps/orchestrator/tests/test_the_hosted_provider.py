@@ -1,4 +1,4 @@
-"""The xAI adapter, against a fake transport. No key, no network, no bill.
+"""The hosted adapter, against a fake transport. No key, no network, no bill.
 
 Two things are asserted and they are the two that break silently. **The shape of the request**,
 because an adapter that sends a subtly wrong payload gets a 200 and an answer to a different
@@ -7,8 +7,8 @@ what the whole planning pipeline rests on and a schema sent as a suggestion look
 the day a model ignores it. **The shape of a failure**, because reading a malformed response
 optimistically raises `TypeError` out of a component whose entire contract is `ProviderFailedError`.
 
-What is deliberately not tested is whether Grok is any good at this. That is
-`scripts/evaluate_interpreting.py --provider xai`, and it needs a key and somebody's money.
+What is deliberately not tested is whether a hosted model is any good at this. That is
+`scripts/evaluate_interpreting.py --provider groq`, and it needs a key and somebody's money.
 """
 
 from typing import Any
@@ -17,10 +17,12 @@ import pytest
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
-from finguard_orchestrator.infrastructure.llm import xai_llm_provider
-from finguard_orchestrator.infrastructure.llm.xai_llm_provider import XaiLlmProvider
+from finguard_orchestrator.infrastructure.llm import openai_compatible_provider
+from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
+    OpenAiCompatibleProvider,
+)
 
-KEY = "xai-not-a-real-key"
+KEY = "gsk-not-a-real-key"
 SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {"intent": {"type": "string"}},
@@ -37,7 +39,7 @@ class _Response:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise xai_llm_provider.httpx.HTTPStatusError(  # type: ignore[call-arg]
+            raise openai_compatible_provider.httpx.HTTPStatusError(  # type: ignore[call-arg]
                 "boom", request=None, response=self
             )
 
@@ -84,12 +86,18 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> Endpoint:
             endpoint.requests[-1] |= {"url": url, "headers": headers}
             return _Response(endpoint.body, endpoint.status)
 
-    monkeypatch.setattr(xai_llm_provider.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(openai_compatible_provider.httpx, "AsyncClient", FakeClient)
     return endpoint
 
 
-def a_provider() -> XaiLlmProvider:
-    return XaiLlmProvider(api_key=KEY, base_url="https://api.example/v1/", timeout_seconds=7.0)
+def a_provider(reasoning_headroom: int = 0) -> OpenAiCompatibleProvider:
+    return OpenAiCompatibleProvider(
+        name="groq",
+        api_key=KEY,
+        base_url="https://api.example/v1/",
+        timeout_seconds=7.0,
+        reasoning_headroom=reasoning_headroom,
+    )
 
 
 # --- the contract ------------------------------------------------------------------------
@@ -101,10 +109,12 @@ def test_it_fulfils_the_port() -> None:
     assert isinstance(a_provider(), LlmProviderPort)
 
 
-def test_the_provider_is_named_after_the_vendor_not_the_model() -> None:
-    """`grok-4` and `grok-3-mini` are two models of one provider, which is the catalogue's own
-    rule. Naming the provider `grok` would name it after one of the things it serves."""
-    assert XaiLlmProvider.name == "xai"
+def test_the_provider_is_named_at_the_registration_and_not_by_the_class() -> None:
+    """`groq` and `xai` are two registrations of one protocol, not two implementations — the whole
+    diff between them is a base URL. The class is named after what it speaks; the instance carries
+    the vendor, which is what a catalogue entry and the planner setting say."""
+    assert a_provider().name == "groq"
+    assert OpenAiCompatibleProvider.__name__ == "OpenAiCompatibleProvider"
 
 
 # --- the request --------------------------------------------------------------------------
@@ -162,6 +172,46 @@ async def test_the_sampling_arguments_reach_the_wire(sent: Endpoint) -> None:
     assert sent[0]["json"]["model"] == "grok-x"
 
 
+async def test_a_reasoning_model_gets_room_to_think(sent: Endpoint) -> None:
+    """The finding that cost a morning, fixed so it cannot cost a second one.
+
+    `max_output_tokens` means "how long may the answer be". On a reasoning model the hidden
+    reasoning is generated first and billed against the same ceiling, so a budget sized for the
+    answer truncates the reasoning — and the endpoint reports it as *"Failed to validate JSON"*,
+    which reads like a schema problem and is a budget problem.
+
+    Measured against openai/gpt-oss-120b with this service's own prompts: reading a turn generated
+    224 tokens for a ten-token answer, and the callers ask for 32.
+    """
+    provider = OpenAiCompatibleProvider(
+        name="groq",
+        api_key=KEY,
+        base_url="https://api.example/v1",
+        timeout_seconds=7.0,
+        reasoning_headroom=2048,
+    )
+
+    await provider.complete("hola", model="m", temperature=0.0, max_output_tokens=32)
+
+    assert sent[0]["json"]["max_tokens"] == 2048
+
+
+async def test_the_headroom_is_a_floor_and_not_an_override(sent: Endpoint) -> None:
+    """A caller that genuinely wants a long answer keeps it. The floor is for the reasoning a
+    caller cannot know about, not a second opinion about how long the answer should be."""
+    provider = OpenAiCompatibleProvider(
+        name="groq",
+        api_key=KEY,
+        base_url="https://api.example/v1",
+        timeout_seconds=7.0,
+        reasoning_headroom=256,
+    )
+
+    await provider.complete("hola", model="m", temperature=0.0, max_output_tokens=4000)
+
+    assert sent[0]["json"]["max_tokens"] == 4000
+
+
 async def test_the_ping_authenticates_rather_than_only_connecting(
     sent: Endpoint,
 ) -> None:
@@ -188,11 +238,11 @@ async def test_the_ping_authenticates_rather_than_only_connecting(
 )
 def test_a_malformed_body_is_a_provider_failure(body: Any, why: str) -> None:
     with pytest.raises(ProviderFailedError):
-        xai_llm_provider._answer_in(body, "xai")
+        openai_compatible_provider._answer_in(body, "xai")
 
 
 def test_a_good_body_returns_its_content() -> None:
-    assert xai_llm_provider._answer_in(AN_ANSWER, "xai") == '{"intent":"COURTESY"}'
+    assert openai_compatible_provider._answer_in(AN_ANSWER, "xai") == '{"intent":"COURTESY"}'
 
 
 async def test_an_http_error_does_not_carry_the_body(sent: Endpoint) -> None:
@@ -213,7 +263,7 @@ async def test_an_http_error_does_not_carry_the_body(sent: Endpoint) -> None:
 
 @pytest.mark.parametrize("value", ["", "   "])
 def test_a_blank_key_means_no_provider(value: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`ORCHESTRATOR_XAI_API_KEY=` is what a half-filled .env line produces, and what compose
+    """`ORCHESTRATOR_GROQ_API_KEY=` is what a half-filled .env line produces, and what compose
     passes when a `${VAR:-}` interpolation finds nothing.
 
     Taken literally it registers a provider whose every request is a 401 — the exact failure the
@@ -222,19 +272,19 @@ def test_a_blank_key_means_no_provider(value: str, monkeypatch: pytest.MonkeyPat
     """
     from finguard_orchestrator.bootstrap.config import Settings
 
-    monkeypatch.setenv("ORCHESTRATOR_XAI_API_KEY", value)
+    monkeypatch.setenv("ORCHESTRATOR_GROQ_API_KEY", value)
 
-    assert Settings().xai_api_key is None  # type: ignore[call-arg]
+    assert Settings().groq_api_key is None  # type: ignore[call-arg]
 
 
 def test_a_real_key_survives_and_still_does_not_print(monkeypatch: pytest.MonkeyPatch) -> None:
     from finguard_orchestrator.bootstrap.config import Settings
 
-    monkeypatch.setenv("ORCHESTRATOR_XAI_API_KEY", KEY)
+    monkeypatch.setenv("ORCHESTRATOR_GROQ_API_KEY", KEY)
     settings = Settings()  # type: ignore[call-arg]
 
-    assert settings.xai_api_key is not None
-    assert settings.xai_api_key.get_secret_value() == KEY
+    assert settings.groq_api_key is not None
+    assert settings.groq_api_key.get_secret_value() == KEY
     # The property the SecretStr is for: a log line, a repr or a dump of the settings object
     # prints the mask and not the credential.
     assert KEY not in repr(settings)

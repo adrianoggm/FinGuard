@@ -62,14 +62,26 @@ from finguard_orchestrator.infrastructure import (
 from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
     LlmTurnInterpreter,
 )
+from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (
+    CLOUDFLARE,
+    cloudflare_workers_ai,
+)
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
-from finguard_orchestrator.infrastructure.llm.xai_llm_provider import XaiLlmProvider
+from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
+    OpenAiCompatibleProvider,
+)
 from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
 from finguard_orchestrator.observability import configure_logging
+
+# The vendor behind the OpenAI-compatible adapter. A name and a base URL are the whole of
+# what distinguishes one from another, which is why the adapter is not named after this one.
+# `CLOUDFLARE` is the second such vendor and is imported rather than spelled here, because that
+# one needs a builder to assemble its URLs and the name belongs beside them.
+GROQ = "groq"
 
 DESCRIPTION = """
 Conversational orchestrator of FinGuard.
@@ -116,17 +128,33 @@ def create_app() -> FastAPI:
             seed=settings.ollama_seed,
         ),
     }
-    if (xai_key := settings.xai_api_key) is not None:
+    if (groq_key := settings.groq_api_key) is not None:
         # Registered only when a key exists, so an unconfigured deployment cannot reach a
         # provider that would 401 every request — and `providers.available()`, which /admin
         # reports and the catalogue is validated against, tells the truth about this build.
         #
         # The one place the secret is unwrapped. Everywhere else it is a `SecretStr` whose repr
         # is `**********`, which is what keeps a stray log line from being a live credential.
-        builders[XaiLlmProvider.name] = lambda: XaiLlmProvider(
-            api_key=xai_key.get_secret_value(),
-            base_url=settings.xai_base_url,
-            timeout_seconds=settings.xai_timeout_seconds,
+        builders[GROQ] = lambda: OpenAiCompatibleProvider(
+            name=GROQ,
+            api_key=groq_key.get_secret_value(),
+            base_url=settings.groq_base_url,
+            timeout_seconds=settings.groq_timeout_seconds,
+            reasoning_headroom=settings.groq_reasoning_headroom,
+        )
+    if (cf_token := settings.cloudflare_api_token) is not None and (
+        cf_account := settings.cloudflare_account_id
+    ) is not None:
+        # Both halves or nothing, which is the same rule as Groq's above with one more way to
+        # break: the account id is not a credential, it is the path segment every request is
+        # posted to, so a deployment holding only the token would register a provider whose URL
+        # has a hole in it. Neither half alone is a provider.
+        builders[CLOUDFLARE] = lambda: cloudflare_workers_ai(
+            api_token=cf_token.get_secret_value(),
+            account_id=cf_account,
+            api_base=settings.cloudflare_api_base,
+            timeout_seconds=settings.cloudflare_timeout_seconds,
+            reasoning_headroom=settings.cloudflare_reasoning_headroom,
         )
     providers = ProviderRegistry(builders)
     # The active policy is created at startup and lives in the application state: the
@@ -175,6 +203,13 @@ def create_app() -> FastAPI:
             LlmTurnInterpreter(planner_provider, model=settings.planner_model),
         )
 
+    # One adapter for both readers of the wallet, like the balance and the address book. The chat
+    # answering "cuánto llevo con cada tarjeta" from a different window than the screen shows would
+    # be two figures on one phone, which is the failure those two were unified to avoid.
+    cards = HttpCards(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -191,6 +226,7 @@ def create_app() -> FastAPI:
         # with no model in the path.
         accounts=accounts,
         contacts=contacts,
+        cards=cards,
         read_attempts=settings.banking_read_attempts,
         # Only used when a caller did not classify the turn itself. Both HTTP routes do, so on the
         # live path this is unreachable — it is here so the handler and the edge cannot end up
@@ -206,10 +242,6 @@ def create_app() -> FastAPI:
     query_bus.register(GetBreakdownQuery, GetBreakdownHandler(banking))
     # The cards, and the contacts a payment form offers. Both are reads through banking's own
     # restricted role, and neither has a model anywhere in it.
-    cards = HttpCards(
-        base_url=settings.banking_base_url,
-        timeout_seconds=settings.banking_timeout_seconds,
-    )
     query_bus.register(ListCardsQuery, ListCardsHandler(cards))
     query_bus.register(GetCardChargesQuery, GetCardChargesHandler(cards))
     query_bus.register(

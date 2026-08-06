@@ -55,6 +55,21 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
 
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("08aba04f-2b30-4639-88a6-eac741153ce0")
 PIGGY = uuid.UUID("22222222-2222-2222-2222-222222222222")
 FUND = uuid.UUID("33333333-3333-3333-3333-333333333333")
@@ -147,7 +162,8 @@ def wired(script: dict[str, PlanningResult] | None = None, *holdings: Holding): 
         planner,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Accounts(*holdings),  # type: ignore[arg-type]
-        contacts=NoContacts(),  # type: ignore[arg-type]
+        contacts=NoContacts(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
     queries = QueryBus()
     queries.register(AskFinancialQuestionQuery, handler)

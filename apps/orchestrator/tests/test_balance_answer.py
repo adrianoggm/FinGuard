@@ -28,6 +28,23 @@ from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
+
+class NoCards:
+    """The card directory, required like the balance and the address book so no build can be
+    half-wired. A chat that could not reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from datetime import date
+
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
 
@@ -87,7 +104,7 @@ class FakeContacts:
 def ask(sentence: str, accounts: FakeAccounts) -> tuple[FakePlanner, FakeLedger, object]:
     planner, ledger = FakePlanner(), FakeLedger()
     handler = AskFinancialQuestionHandler(
-        planner, ledger, accounts=accounts, contacts=FakeContacts()
+        planner, ledger, accounts=accounts, contacts=FakeContacts(), cards=NoCards()
     )
     return planner, ledger, handler
 
