@@ -273,7 +273,13 @@ class Settings(BaseSettings):
     # 100 % by construction — their answers *are* its labels — so that corpus can never show them
     # failing, and the model's 91.5 % on it is a disagreement rate with the rules rather than an
     # error rate. On 96 sentences written by something that had never seen this vocabulary, the
-    # rules reach 37 and the model 88. See tests/test_the_same_question_said_differently.py.
+    # rules reach 37 and `Promoted` reaches 86. See test_the_same_question_said_differently.py.
+    #
+    # 86 and not the 88 the model scores alone, because nobody can run the model alone: two of the
+    # sentences it read as payments are refused by the rule above. Both are worth the refusal —
+    # "puedo hacerlo por bizum, ¿verdad?" and "¿cómo lo hago?" ask how the thing works rather than
+    # instructing anybody to send money — so the two points are the rule doing its job, not its
+    # price.
     #
     # Still not the default. Flipping how every turn in production is read is the operator's call,
     # not a value shipped in a settings class, and `model` costs a model call on the critical path
