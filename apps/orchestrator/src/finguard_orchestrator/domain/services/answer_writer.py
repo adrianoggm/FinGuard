@@ -449,6 +449,13 @@ def movement_example(movement: Movement | None, currency: str) -> str:
     )
 
 
+def movement_date(occurred_at: datetime | str) -> str:
+    """The date of the ranked movement a pronoun points at."""
+    if isinstance(occurred_at, str):
+        occurred_at = datetime.fromisoformat(occurred_at)
+    return f"Fue el {_spoken_date(occurred_at)}."
+
+
 def _position(rank: int) -> str:
     return _ORDINALS.get(rank, f"El número {rank}")
 

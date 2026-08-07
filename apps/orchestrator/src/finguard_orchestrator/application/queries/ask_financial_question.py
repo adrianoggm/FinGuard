@@ -580,6 +580,38 @@ class AskFinancialQuestionHandler:
             yield await self._movement_example(query, previous)
             return
 
+        if isinstance(previous, TopMovements) and _RANKED_DATE.fullmatch(
+            _clean_turn(query.sentence)
+        ):
+            ranked = await self._ranked(query, previous)
+            movement = ranked.movements[0] if ranked.movements else None
+            text = (
+                answer_writer.movement_date(movement.occurred_at)
+                if movement is not None
+                else "No he encontrado ese movimiento para decirte la fecha."
+            )
+            yield replace(ranked, text=text)
+            return
+
+        if (
+            isinstance(previous, FinancialPlan)
+            and previous.group_by is GroupBy.CATEGORY
+            and len(previous.categories) >= 2
+            and _COMPARISON_DIFFERENCE.fullmatch(_clean_turn(query.sentence))
+        ):
+            yield Stage("querying")
+            yield await self._group_reference(query, previous, difference=True)
+            return
+
+        if (
+            isinstance(previous, FinancialPlan)
+            and previous.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}
+            and _NEXT_GROUP.fullmatch(_clean_turn(query.sentence))
+        ):
+            yield Stage("querying")
+            yield await self._group_reference(query, previous, difference=False)
+            return
+
         contextual = _contextual_follow_up_plan(query)
         if contextual is not None:
             yield Stage("planned", answer_writer.describe(contextual))
@@ -1375,6 +1407,69 @@ class AskFinancialQuestionHandler:
             movements=[_spoken_movement(movement)] if movement is not None else [],
         )
 
+    async def _group_reference(
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, difference: bool
+    ) -> AskFinancialQuestionResult:
+        """Answer a pronoun about the grouped result already on screen.
+
+        The group values are queried again rather than stored in conversation state. That keeps
+        the client carrying meaning (the validated plan), not cached financial data, while making
+        "what comes after that?" and "what is the difference?" real follow-ups.
+        """
+        scoped = await self._scoped(plan, query)
+        try:
+            answer = await self._queries.run(
+                scoped,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido la referencia, pero el banco ha rechazado la consulta.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        groups = [group for group in answer.groups if group.movement_count > 0]
+        if difference:
+            if len(groups) < 2:
+                text = "No hay dos resultados con movimientos entre los que calcular la diferencia."
+            else:
+                first, second = groups[0], groups[1]
+                high, low = (
+                    (first, second) if first.total_minor >= second.total_minor else (second, first)
+                )
+                amount = answer_writer.money(high.total_minor - low.total_minor, answer.currency)
+                text = (
+                    f"Hay {amount} de diferencia: "
+                    f"{category_words.name_of(high.key)} supera a "
+                    f"{category_words.name_of(low.key)}."
+                )
+        elif len(groups) < 2:
+            text = "No hay un segundo resultado en ese desglose."
+        else:
+            second = groups[1]
+            name = (
+                category_words.name_of(second.key)
+                if plan.group_by is GroupBy.CATEGORY
+                else second.key
+            )
+            text = (
+                f"El siguiente es {name}: "
+                f"{answer_writer.money(second.total_minor, answer.currency)}, "
+                f"en {second.movement_count} "
+                f"{'movimiento' if second.movement_count == 1 else 'movimientos'}."
+            )
+        result = _answered(plan, answer, query.conversation, query.sentence)
+        return replace(result, text=text)
+
     async def _compare_periods(
         self,
         query: AskFinancialQuestionQuery,
@@ -1871,6 +1966,16 @@ _DIRECTION_ONLY_FOLLOW_UP: Final = re.compile(
 _TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
     r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"
     r"\b(?:gast|pag|compr)\w*\b.{0,18}\bmas\b"
+)
+_COMPARISON_DIFFERENCE: Final = re.compile(
+    r"^(?:y\s+)?(?:cuanta|que)\s+diferencia(?:\s+hay)?(?:\s+entre\s+(?:las|esas)\s+dos)?$"
+)
+_NEXT_GROUP: Final = re.compile(
+    r"^(?:y\s+)?(?:despues\s+de\s+(?:eso|esa|ese)|cual\s+va\s+despues|el\s+siguiente)$"
+)
+_RANKED_DATE: Final = re.compile(
+    r"^(?:y\s+)?(?:esa|ese|esta|este)?\s*,?\s*(?:de\s+)?que\s+fecha\s+(?:es|fue)$"
+    r"|^(?:y\s+)?cuando\s+(?:fue|ocurrio|entro|salio)$"
 )
 _PERIOD_COMPARISON_REFERENCE: Final = re.compile(
     r"^(?:vale\s+|bueno\s+|y\s+)?(?:"

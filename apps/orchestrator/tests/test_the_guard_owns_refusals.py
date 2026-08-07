@@ -37,6 +37,7 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
 class NoCards:
@@ -81,6 +82,18 @@ class Ledger:
             movement_count=7,
             groups=(Group(key="total", total_minor=5_250, movement_count=7),),
             movements=(),
+        )
+
+    async def ranked(self, ranking: TopMovements, **_: object) -> Movement:
+        self.ranking = ranking
+        return Movement(
+            occurred_at=datetime(2026, 7, 2, 10, 0, tzinfo=UTC),
+            description="Arrendamiento Centro",
+            amount_minor=92_000,
+            direction=ranking.direction.value,
+            merchant_name="Arrendamiento Centro",
+            category=ranking.categories[0] if ranking.categories else "HOUSING_RENT",
+            currency="EUR",
         )
 
 
@@ -302,6 +315,57 @@ async def test_an_example_reuses_the_previous_query(sentence: str) -> None:
     assert answer.movement_count == 1
     assert answer.text.startswith("Por ejemplo: Comercio 5")
     assert answer.conversation.last_plan == previous
+
+
+async def test_a_difference_question_reads_the_two_groups_already_on_screen() -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+    )
+
+    answer = await asked(
+        "¿Cuánta diferencia hay?",
+        GivesUp(),
+        ComparisonLedger(),
+        Conversation(last_plan=previous),
+    )
+
+    assert answer.text == "Hay 50,00 € de diferencia: supermercado supera a restaurantes."
+
+
+async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+    )
+
+    answer = await asked(
+        "¿Y después de eso?",
+        GivesUp(),
+        ComparisonLedger(),
+        Conversation(last_plan=previous),
+    )
+
+    assert answer.text.startswith("El siguiente es restaurantes: 10,00 €")
+
+
+async def test_a_pronoun_can_ask_for_the_ranked_movements_date() -> None:
+    previous = TopMovements(
+        direction=Direction.INCOME,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("SALARY",),
+        rank=2,
+    )
+
+    answer = await asked(
+        "Esa, ¿de qué fecha es?", GivesUp(), Ledger(), Conversation(last_plan=previous)
+    )
+
+    assert answer.text == "Fue el 2 de julio."
 
 
 @pytest.mark.parametrize("sentence", ["Compáralos", "¿En cuál gasté más?"])
