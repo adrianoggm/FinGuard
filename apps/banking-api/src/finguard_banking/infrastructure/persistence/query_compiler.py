@@ -59,6 +59,8 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
             return f"COALESCE(t.category, '{UNCATEGORISED}')"
         case GroupBy.MERCHANT:
             return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
+        case GroupBy.ACCOUNT:
+            return "COALESCE(a.display_name, t.account_id::text)"
 
 
 def _group_ordering(group_by: GroupBy, metric: Metric, direction: Direction) -> str:
@@ -149,6 +151,13 @@ def compile_aggregate(
     parameters = _Parameters()
     tz = parameters.bind(reporting_timezone)
     conditions = _conditions(query, parameters, tz)
+    # The transaction view remains the authority for which movements are visible. This
+    # holder-scoped join adds only the account's display name for an account breakdown.
+    account_join = (
+        "LEFT JOIN assistant_read.my_accounts_v1 a ON a.account_id = t.account_id"
+        if query.group_by is GroupBy.ACCOUNT
+        else ""
+    )
 
     sql = f"""
         SELECT
@@ -156,6 +165,7 @@ def compile_aggregate(
             COALESCE(SUM({_amount_expression(query.direction)}), 0) AS total_minor,
             COUNT(*) AS movement_count
         FROM {VIEW} t
+        {account_join}
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
         ORDER BY {_group_ordering(query.group_by, query.metric, query.direction)}

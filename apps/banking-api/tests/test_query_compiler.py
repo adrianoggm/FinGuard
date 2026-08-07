@@ -83,6 +83,7 @@ def test_the_direction_is_a_parameter_too() -> None:
         (GroupBy.MONTH, "'YYYY-MM'"),
         (GroupBy.CATEGORY, "COALESCE(t.category"),
         (GroupBy.MERCHANT, "COALESCE(t.merchant_name"),
+        (GroupBy.ACCOUNT, "assistant_read.my_accounts_v1"),
     ],
 )
 def test_each_grouping_compiles_to_its_expression(group_by: GroupBy, fragment: str) -> None:
