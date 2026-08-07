@@ -124,6 +124,10 @@ def test_a_frustrated_user_is_not_forced_into_a_financial_slot() -> None:
     assert intent_router.is_frustration("Que te pasa ?")
 
 
+def test_a_clipped_other_account_still_routes_to_the_internal_transfer() -> None:
+    assert route("Quiero mover dinreo de una cuenta a otr, ¿es posible?") is Intent.OWN_TRANSFER
+
+
 @pytest.mark.parametrize(
     "sentence",
     [

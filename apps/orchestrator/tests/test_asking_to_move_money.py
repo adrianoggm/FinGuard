@@ -133,16 +133,18 @@ def test_explicitly_owned_account_relationships_are_internal_transfers(sentence:
     assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
 
 
-def test_a_damaged_phrase_without_ownership_is_left_for_semantic_interpretation() -> None:
+def test_a_damaged_own_account_phrase_stays_on_the_safe_internal_rail() -> None:
     sentence = "Quiero mover dinreo de una cuenta a otr, ¿es posible?"
 
-    assert intent_router.route(sentence, has_previous=False) is Intent.FINANCIAL_QUERY
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
 
 
-def test_two_generic_accounts_are_not_assumed_to_belong_to_the_holder() -> None:
+def test_two_generic_accounts_offer_only_the_holders_internal_accounts() -> None:
     sentence = "Quiero transferir dinero de una cuenta a otra cuenta"
 
-    assert intent_router.route(sentence, has_previous=False) is Intent.FINANCIAL_QUERY
+    # OWN_TRANSFER can only resolve an account from the authenticated holder's directory; this
+    # route cannot invent an external beneficiary or prepare a third-party transfer.
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
 
 
 def test_a_moving_verb_with_no_account_is_not() -> None:
