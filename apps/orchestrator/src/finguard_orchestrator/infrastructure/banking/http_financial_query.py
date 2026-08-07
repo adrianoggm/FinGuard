@@ -232,6 +232,11 @@ def to_body(
             if plan.only_account_ids
             else {}
         ),
+        **(
+            {"transactionIds": [str(item) for item in plan.transaction_ids]}
+            if plan.transaction_ids
+            else {}
+        ),
     }
 
     if plan.period is not None:

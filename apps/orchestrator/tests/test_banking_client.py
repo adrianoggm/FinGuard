@@ -313,3 +313,16 @@ def test_a_query_body_carries_an_explicit_account_subset() -> None:
 
     assert body["onlyAccountIds"] == [str(account_id) for account_id in selected]
     assert "onlyAccountId" not in body
+
+
+def test_a_query_body_carries_an_exact_movement_selection() -> None:
+    selected = (uuid.UUID(int=7), uuid.UUID(int=8))
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.ALL,
+            period=RelativePeriod(period=Period.THIS_MONTH),
+            transaction_ids=selected,
+        )
+    )
+
+    assert body["transactionIds"] == [str(transaction_id) for transaction_id in selected]

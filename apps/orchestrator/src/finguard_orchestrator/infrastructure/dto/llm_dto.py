@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_PROMPT_LENGTH,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
+    MAX_SELECTED_TRANSACTIONS,
 )
 from finguard_orchestrator.domain.enums import (
     Action,
@@ -103,6 +104,11 @@ class PlanPayload(_Payload):
     merchants: list[str] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    include_internal: bool = False
+    across_accounts: bool = False
+    only_account_id: UUID | None = None
+    only_account_ids: list[UUID] = []
+    transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
     # Which kind of query this is. AGGREGATE totals or counts movements; RANK_MOVEMENTS picks one
     # out by size, and then `rank` says which position while the grouping and the metric mean
     # nothing. The tag decides, not the fields: a payload carrying both a rank and a grouping is a

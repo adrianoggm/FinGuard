@@ -134,6 +134,11 @@ class SpokenPlan:
     merchants: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
+    include_internal: bool = False
+    across_accounts: bool = False
+    only_account_id: str | None = None
+    only_account_ids: list[str] = field(default_factory=list)
+    transaction_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -2080,6 +2085,11 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         merchants=list(plan.merchants),
         group_by=plan.group_by.value,
         metric=plan.metric.value,
+        include_internal=plan.include_internal,
+        across_accounts=plan.across_accounts,
+        only_account_id=str(plan.only_account_id) if plan.only_account_id else None,
+        only_account_ids=[str(account_id) for account_id in plan.only_account_ids],
+        transaction_ids=[str(transaction_id) for transaction_id in plan.transaction_ids],
     )
 
 

@@ -60,6 +60,11 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
         end=plan.date_range.end if plan.date_range else None,
         categories=list(plan.categories),
         merchants=list(plan.merchants),
+        include_internal=getattr(plan, "include_internal", False),
+        across_accounts=getattr(plan, "across_accounts", False),
+        only_account_id=getattr(plan, "only_account_id", None),
+        only_account_ids=list(getattr(plan, "only_account_ids", ())),
+        transaction_ids=list(getattr(plan, "transaction_ids", ())),
     )
     if isinstance(plan, TopMovements):
         # No grouping and no metric: the payload keeps their defaults rather than inventing values a

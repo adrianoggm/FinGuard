@@ -105,6 +105,11 @@ def plan_to_domain(payload: PlanPayload) -> FinancialPlan:
         merchants=tuple(payload.merchants),
         group_by=payload.group_by,
         metric=payload.metric,
+        include_internal=payload.include_internal,
+        across_accounts=payload.across_accounts,
+        only_account_id=payload.only_account_id,
+        only_account_ids=tuple(payload.only_account_ids),
+        transaction_ids=tuple(payload.transaction_ids),
     )
 
 
@@ -125,6 +130,11 @@ def draft_to_domain(payload: PlanPayload) -> FinancialPlanDraft:
         merchants=tuple(payload.merchants),
         group_by=payload.group_by,
         metric=payload.metric,
+        include_internal=payload.include_internal,
+        across_accounts=payload.across_accounts,
+        only_account_id=payload.only_account_id,
+        only_account_ids=tuple(payload.only_account_ids),
+        transaction_ids=tuple(payload.transaction_ids),
     )
 
 
@@ -140,6 +150,11 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
             "merchants": plan.merchants,
             "group_by": plan.group_by,
             "metric": plan.metric,
+            "include_internal": plan.include_internal,
+            "across_accounts": plan.across_accounts,
+            "only_account_id": plan.only_account_id,
+            "only_account_ids": plan.only_account_ids,
+            "transaction_ids": plan.transaction_ids,
         }
     )
 
