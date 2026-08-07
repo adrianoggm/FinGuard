@@ -730,6 +730,25 @@ async def test_short_count_and_sum_questions_patch_the_last_query() -> None:
     assert ledger.plan.categories == ("GROCERIES",)
 
 
+async def test_the_ranked_income_can_be_classified_without_starting_a_payment() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = TopMovements(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("SALARY",),
+    )
+
+    result = await asked(
+        "Eso fue nomina o un bizum?", planner, ledger, Conversation(last_plan=previous)
+    )
+
+    assert planner.asked == 0
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert "nómina" in result.text
+    assert "no un bizum" in result.text
+
+
 async def test_a_comparison_reference_reuses_the_two_categories() -> None:
     planner = GivesUp()
     ledger = ComparisonLedger()

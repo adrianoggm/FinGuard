@@ -117,6 +117,10 @@ _MOVEMENT_EXAMPLE: Final = re.compile(
     r"|\b(?:dame|ponme|muestrame|ensename)\b.{0,20}\b(?:un|dos|tres|par\s+de)?\s*"
     r"(?:ejemplo|ejemplos|ejemlo)s?\b"
 )
+_MOVEMENT_CLASSIFICATION: Final = re.compile(
+    r"\b(?:eso|esto|este|ese|el\s+movimiento|el\s+ingreso)\b.{0,25}"
+    r"\b(?:es|era|fue)\b.{0,35}\b(?:bizum|nomina|transferencia)\b"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -592,6 +596,26 @@ class AskFinancialQuestionHandler:
             yield await self._movement_example(
                 query, previous, limit=_movement_example_count(query.sentence)
             )
+            return
+
+        if isinstance(previous, TopMovements) and _MOVEMENT_CLASSIFICATION.search(
+            spanish.folded(query.sentence)
+        ):
+            ranked = await self._ranked(query, previous)
+            movement = ranked.movements[0] if ranked.movements else None
+            if movement is None:
+                yield replace(ranked, text="No he encontrado ese movimiento para clasificarlo.")
+            elif movement.category == "SALARY":
+                yield replace(ranked, text="Fue un ingreso de nómina, no un bizum.")
+            elif movement.category == "TRANSFER_BIZUM":
+                yield replace(ranked, text="Fue un bizum, no un ingreso de nómina.")
+            else:
+                category = (
+                    category_words.name_of(movement.category)
+                    if movement.category
+                    else "sin categoría"
+                )
+                yield replace(ranked, text=f"Ese movimiento está clasificado como {category}.")
             return
 
         if isinstance(previous, TopMovements) and _RANKED_DATE.fullmatch(

@@ -139,6 +139,10 @@ _RESUMING: Final = re.compile(
     r"\b(continuar|continua|continuemos|seguir|sigamos|retomar|retoma|retomemos)\b"
     r".{0,40}\b(bizum|pago|transferencia)\b"
 )
+_CLASSIFYING_A_MOVEMENT: Final = re.compile(
+    r"\b(?:eso|esto|este|ese|el\s+movimiento|el\s+ingreso)\b.{0,25}"
+    r"\b(?:es|era|fue)\b.{0,35}\b(?:bizum|nomina|transferencia)\b"
+)
 
 
 def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]) -> bool:
@@ -180,6 +184,8 @@ def is_payment(sentence: str) -> bool:
     """
     folded = spanish.folded(sentence)
     if _OWN_ACCOUNTS.search(folded):
+        return False
+    if _CLASSIFYING_A_MOVEMENT.search(folded):
         return False
     if _ALREADY.search(sentence) or _RECEIVED.search(sentence):
         return False
