@@ -1,0 +1,30 @@
+# Pronouns refer to validated query state, not to a new sentence for a model to reconstruct.
+
+episodes:
+  - name: two_consecutive_periods_can_be_compared_by_pronoun
+    why: >
+      After asking the same financial question for two different periods, "compáralos" and
+      "en cuál gasté más" refer unambiguously to those two answers. The pair must remain in
+      conversation state after the first comparison so the second wording works as well. When
+      the user then changes topic, "sepáralos" must refer to the exact recent rows just shown.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto gasté en restaurantes el mes pasado?
+        route: QUERY
+      - say: ¿Y este mes?
+        route: QUERY
+        no_model: true
+      - say: Compáralos
+        route: QUERY
+        no_model: true
+        says: mismo
+      - say: ¿Y en cuál gasté más?
+        route: QUERY
+        no_model: true
+        says: mismo
+      - say: Muéstrame los cinco últimos movimientos de mis cuentas
+        route: QUERY
+        no_model: true
+      - say: Sepáralos por cuenta
+        route: QUERY
+        no_model: true
