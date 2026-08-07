@@ -1,0 +1,255 @@
+# Average conversations are changes of divisor, filter and window, not five fresh questions.
+# Every short follow-up here is explicit enough to update the previous plan without a model.
+
+episodes:
+  - name: an_average_changes_divisor_category_and_window
+    why: >
+      A person starts with a per-movement average and then asks for the monthly equivalent, changes
+      category, returns to a per-movement ticket and narrows the period. Each turn must retain every
+      field it did not replace and must say which divisor it actually used.
+    metrics: [context_retention, unnecessary_clarification]
+    turns:
+      - say: ¿Cuál es mi gasto medio por movimiento en supermercados en los últimos 12 meses?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+      - say: ¿Y al mes?
+        route: QUERY
+        no_model: true
+        says: medio por mes
+      - say: ¿Y en alquiler?
+        route: QUERY
+        no_model: true
+        says: alquiler
+      - say: ¿Y por movimiento?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+      - say: ¿Y este mes?
+        route: QUERY
+        no_model: true
+        says: lo que va de mes
+      - say: ¿Y por semana?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+
+  - name: natural_word_orders_for_period_averages
+    why: >
+      Users say "suelo gastar", "mensual medio" and "coste semanal medio" as often as they say
+      "media por mes". These forms name the same arithmetic and should not depend on paraphrasing.
+    metrics: [wrong_tool, unnecessary_clarification]
+    turns:
+      - say: ¿Cuánto suelo gastar al mes en supermercados durante el último año?
+        route: QUERY
+        no_model: true
+        says: medio por mes
+      - say: ¿Y cuál es mi gasto mensual medio en alquiler?
+        route: QUERY
+        no_model: true
+        says: alquiler
+      - say: ¿Y el coste semanal medio en restaurantes?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+      - say: ¿Y por movimiento?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+      - say: ¿Y en supermercados?
+        route: QUERY
+        no_model: true
+        says: supermercado
+      - say: ¿Y los últimos 3 meses?
+        route: QUERY
+        no_model: true
+        says: últimos 3 meses
+      - say: ¿Y cuánto suelo cobrar al mes durante este año?
+        route: QUERY
+        no_model: true
+        says: ingreso medio por mes
+      - say: ¿Y cuánto suelo gastar al mes?
+        route: QUERY
+        no_model: true
+        says: gasto medio por mes
+
+  - name: the_reported_conversation_keeps_its_mean_ranking_and_account_context
+    why: >
+      This is the reported failure chain: a change of average divisor became last week, a category
+      ranking became an explanation of the old query, frustration opened an unrelated money slot,
+      and an account breakdown became a merchant. Every elliptical turn here has enough validated
+      context to be handled without asking the model to reconstruct the conversation.
+    metrics: [context_retention, wrong_tool, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Me gustaria consultar el gasto medio mensual que tengo durante este año
+        route: QUERY
+        no_model: true
+        says: medio por mes
+      - say: Y el semanal ?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+      - say: Vale en que categoria es la que he gastado mas a lo largo de este año?
+        route: QUERY
+        no_model: true
+        says: categoría
+      - say: Que te pasa ?
+        route: GUIDANCE
+        no_model: true
+        says: perdido el hilo
+      - say: En los ulltimos 4 meses
+        route: QUERY
+      - say: Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?
+        route: QUERY
+        no_model: true
+      - say: La principal
+        route: QUERY
+        no_model: true
+      - say: En la que ingreso la nomina vaya ç
+        route: QUERY
+        no_model: true
+
+  - name: an_average_can_become_a_ranking_and_return_to_a_breakdown
+    why: >
+      Natural conversation changes the calculation without restating its year and category. A
+      temporal adjective must not become a merchant, and a superlative must inherit the validated
+      scope before an ordinal advances it.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Me gustaria saber mi gasto medio mensual en supermercados durante este año
+        route: QUERY
+        no_model: true
+        says: medio por mes
+      - say: Y semanal?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+      - say: Y por movimiento?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+      - say: Y en alquiler?
+        route: QUERY
+        no_model: true
+        says: alquiler
+      - say: Cual ha sido el gasto mas alto?
+        route: QUERY
+        no_model: true
+      - say: Y el segundo?
+        route: QUERY
+        no_model: true
+      - say: Y en que categoria he gastado mas?
+        route: QUERY
+        no_model: true
+
+  - name: category_filters_metrics_and_comparisons_are_patches
+    why: >
+      Changing one category, asking which of two is larger and switching between average, count
+      and total are patches to the last query. Treating each fragment as a fresh request loses the
+      period and starts clarification loops even though the missing information is on screen.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Compara mi gasto medio en supermercados y restaurantes este año
+        route: QUERY
+        no_model: true
+      - say: Cual de las dos es mayor?
+        route: QUERY
+        no_model: true
+      - say: Y el mes pasado?
+        route: QUERY
+        no_model: true
+      - say: Ahora solo supermercados
+        route: QUERY
+        no_model: true
+      - say: Cuantas compras hice?
+        route: QUERY
+        no_model: true
+      - say: Y cuanto gaste?
+        route: QUERY
+        no_model: true
+      - say: En que comercio compre mas?
+        route: QUERY
+        no_model: true
+
+  - name: an_account_subset_survives_period_and_direction_changes
+    why: >
+      Account scope is conversational state. Positive selections and exclusions must be applied
+      together, then survive a change from all movements to income without reopening the period.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Enseñame los movimientos de los ultimos 4 meses
+        route: QUERY
+      - say: Hazme el desglose por cuenta
+        route: QUERY
+        no_model: true
+      - say: Solo la principal
+        route: QUERY
+        no_model: true
+      - say: Y el mes pasado?
+        route: QUERY
+      - say: Ahora solo la hucha
+        route: QUERY
+        no_model: true
+      - say: Y este mes?
+        route: QUERY
+      - say: Solo cuenta corriente y hucha, no el fondo
+        route: QUERY
+        no_model: true
+      - say: Y solo los ingresos?
+        route: QUERY
+        no_model: true
+
+  - name: a_natural_comparison_can_be_refined_without_speaking_like_a_query_language
+    why: >
+      A person asks whether one everyday expense is larger than another, supplies the missing
+      period in a second turn, then refers to the result with pronouns. Courtesy words and an
+      elliptical request for examples must not reset the period or categories.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Voy gastando más en el súper o comiendo fuera?
+        route: CLARIFY
+        awaiting: WINDOW
+        no_model: true
+      - say: En lo que llevamos de año
+        route: QUERY
+        no_model: true
+      - say: ¿Cuánta diferencia hay?
+        route: QUERY
+        no_model: true
+      - say: Vale, quédate solo con el súper
+        route: QUERY
+        no_model: true
+      - say: ¿Cuántas veces he comprado?
+        route: QUERY
+        no_model: true
+      - say: Ponme un par de ejemplos
+        route: QUERY
+        no_model: true
+
+  - name: salary_analysis_survives_an_aside_and_pronouns
+    why: >
+      The user changes the divisor conversationally, pauses to inspect their balance, returns to
+      salary without restating the year and then asks about one ranked row as "esa". This is the
+      difference between preserving a topic and merely parsing each sentence independently.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Oye, ¿cuánto he cobrado de nómina este año?
+        route: QUERY
+      - say: ¿Eso cuánto sale al mes?
+        route: QUERY
+        no_model: true
+      - say: ¿Y por semana?
+        route: QUERY
+        no_model: true
+      - say: Espera, ¿cuánto tengo ahora mismo?
+        route: BALANCE
+        no_model: true
+      - say: Volviendo a lo de antes, ¿cuál fue la nómina más alta?
+        route: QUERY
+        no_model: true
+      - say: ¿Y la siguiente?
+        route: QUERY
+        no_model: true
+      - say: Esa, ¿de qué fecha es?
+        route: QUERY
+        no_model: true
