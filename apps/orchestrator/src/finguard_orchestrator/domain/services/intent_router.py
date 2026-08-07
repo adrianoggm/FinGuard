@@ -305,6 +305,11 @@ _ABOUT_THE_ANSWER: Final = re.compile(
     re.IGNORECASE,
 )
 
+_FRUSTRATION: Final = re.compile(
+    r"^(?:pero\s+)?(?:que\s+te\s+pasa|estas\s+bien|por\s+que\s+no\s+me\s+entiendes|"
+    r"no\s+me\s+entiendes|esto\s+no\s+funciona|te\s+has\s+quedado\s+pillad[oa])$"
+)
+
 
 # Moving money between the holder's own accounts.
 #
@@ -437,6 +442,7 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
     if has_previous and (
         _CORRECTING.search(folded)
         or (_ANSWER_NOUN.search(folded) and _ANSWER_REJECTION.search(folded))
+        or _FRUSTRATION.fullmatch(folded.strip(" ¿?¡!.,"))
     ):
         return Intent.CORRECTION
     if has_previous and _ABOUT_THE_ANSWER.search(folded):
@@ -457,6 +463,12 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
         # tengo este mes?" on the path that can answer it.
         return Intent.ACCOUNT_BALANCE
     return Intent.FINANCIAL_QUERY
+
+
+def is_frustration(sentence: str) -> bool:
+    """Whether this turn reports a broken conversation rather than correcting a plan field."""
+    folded = re.sub(r"^[¿?¡!.,\s]+|[¿?¡!.,\s]+$", "", spanish.folded(sentence))
+    return bool(_FRUSTRATION.fullmatch(folded))
 
 
 def asks_for_something_else(sentence: str) -> bool:

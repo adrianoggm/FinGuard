@@ -119,6 +119,11 @@ def test_asking_where_the_user_spent_most_is_a_new_query_not_an_explanation() ->
     )
 
 
+def test_a_frustrated_user_is_not_forced_into_a_financial_slot() -> None:
+    assert route("Que te pasa ?") is Intent.CORRECTION
+    assert intent_router.is_frustration("Que te pasa ?")
+
+
 @pytest.mark.parametrize(
     "sentence",
     [

@@ -589,6 +589,22 @@ async def test_the_reported_highest_category_is_planned_without_the_model() -> N
     assert "categoría" in result.text.lower()
 
 
+async def test_frustration_acknowledges_the_failure_without_opening_an_unrelated_slot() -> None:
+    planner = GivesUp()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_WEEK),
+        group_by=GroupBy.WEEK,
+    )
+
+    result = await asked("Que te pasa ?", planner, conversation=Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert result.outcome == "GUIDANCE"
+    assert result.conversation.last_plan == previous
+    assert result.conversation.active is None
+
+
 async def test_the_reported_account_breakdown_preserves_the_previous_query() -> None:
     planner = GivesUp()
     ledger = Ledger()

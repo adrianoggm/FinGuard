@@ -658,6 +658,18 @@ class AskFinancialQuestionHandler:
             return
 
         if intent is Intent.CORRECTION:
+            if intent_router.is_frustration(query.sentence):
+                yield AskFinancialQuestionResult(
+                    outcome=Spoken.GUIDANCE.value,
+                    text=(
+                        "Perdona: he perdido el hilo de la conversación. "
+                        "Conservo la última consulta, así que puedes corregirme o hacer otra "
+                        "pregunta sin empezar de cero."
+                    ),
+                    plan=answer_writer.describe(previous) if previous else None,
+                    conversation=was,
+                )
+                return
             if isinstance(previous, FinancialPlan) and intent_router.is_bare_correction(
                 query.sentence
             ):
