@@ -274,6 +274,28 @@ async def test_a_natural_category_comparison_asks_for_its_missing_period() -> No
     assert answer.conversation.active.draft.categories == ("GROCERIES", "RESTAURANTS")
 
 
+async def test_a_courtesy_prefix_does_not_reset_the_comparison_window() -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+    )
+    ledger = Ledger()
+
+    await asked(
+        "Vale, quédate solo con el súper",
+        GivesUp(),
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.period is not None
+    assert ledger.plan.period.period is Period.THIS_YEAR
+
+
 async def test_latest_five_movements_means_five_rows_not_five_days() -> None:
     planner = GivesUp()
     ledger = ListingLedger()
@@ -374,6 +396,22 @@ async def test_a_natural_example_without_repeating_movements_reuses_the_query() 
     assert ledger.requested_movements == 2
     assert answer.movement_count == 2
     assert answer.text.startswith("Por ejemplo:")
+
+
+async def test_a_natural_monthly_average_follow_up_keeps_the_salary_query() -> None:
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("SALARY",),
+    )
+
+    await asked("¿Eso cuánto sale al mes?", GivesUp(), ledger, Conversation(last_plan=previous))
+
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("SALARY",)
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+    assert ledger.plan.group_by is GroupBy.MONTH
 
 
 async def test_a_difference_question_reads_the_two_groups_already_on_screen() -> None:
