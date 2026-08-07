@@ -152,6 +152,28 @@ def test_a_rolling_twelve_month_average_divides_by_twelve_not_endpoint_labels() 
     assert "12 meses" in said
 
 
+def test_a_monthly_income_average_is_not_described_as_spending() -> None:
+    answered = QueryAnswer(
+        currency="EUR",
+        total_minor=1_200_000,
+        movement_count=4,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 4, 30),
+    )
+    salary = FinancialPlan(
+        direction=Direction.INCOME,
+        date_range=AbsoluteRange(start=date(2026, 1, 1), end=date(2026, 4, 30)),
+        categories=("SALARY",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    said = answer_writer.write(answered, salary)
+
+    assert "ingreso medio por mes" in said
+    assert "gasto medio" not in said
+
+
 def test_a_category_comparison_shows_an_average_for_each_category() -> None:
     grouped = QueryAnswer(
         currency="EUR",
@@ -171,6 +193,27 @@ def test_a_category_comparison_shows_an_average_for_each_category() -> None:
 
     assert "supermercado: media 5,00 € (3)" in said
     assert "restaurantes: media 5,00 € (1)" in said
+
+
+def test_an_average_comparison_does_not_lead_with_the_combined_average() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=5_028,
+        movement_count=8,
+        groups=(Group("GROCERIES", 3_600, 6), Group("RESTAURANTS", 1_428, 2)),
+    )
+    compared = plan(
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.AVERAGE,
+    )
+
+    said = answer_writer.compare_averages(grouped, compared)
+
+    assert "supermercado: 6,00 € (6 movimientos)" in said
+    assert "restaurantes: 7,14 € (2 movimientos)" in said
+    assert "más alta fue la de restaurantes" in said
+    assert "6,29 €" not in said, "the combined mean does not compare either category"
 
 
 def test_an_empty_answer_says_what_it_looked_for() -> None:

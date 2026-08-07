@@ -562,6 +562,11 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     elif averaging_periods:
         periods = _period_count(answer, plan)
         average = money(_rounded_mean(answer.total_minor, periods), answer.currency)
+        concept = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe",
+        }[plan.direction]
         unit = {
             GroupBy.DAY: ("día", "días"),
             GroupBy.WEEK: ("semana", "semanas"),
@@ -569,7 +574,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         }[plan.group_by]
         period_noun = unit[0] if periods == 1 else unit[1]
         head = (
-            f"El gasto medio por {unit[0]}{about} {window} fue de {average}, "
+            f"El {concept} medio por {unit[0]}{about} {window} fue de {average}, "
             f"calculado sobre {periods} {period_noun}, incluidos los periodos sin movimientos."
         )
     else:
@@ -587,6 +592,30 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
+
+
+def compare_averages(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Answer a category comparison with category means, never their combined mean."""
+    usable = [group for group in answer.groups if group.movement_count > 0]
+    if answer.is_empty or len(usable) < 2:
+        return write(answer, plan)
+
+    figures = [(group, _rounded_mean(group.total_minor, group.movement_count)) for group in usable]
+    details = "; ".join(
+        f"{_group_name(group.key, plan)}: {money(average, answer.currency)} "
+        f"({group.movement_count} {'movimiento' if group.movement_count == 1 else 'movimientos'})"
+        for group, average in figures
+    )
+    highest = max(figures, key=lambda item: item[1])
+    lowest = min(figures, key=lambda item: item[1])
+    if highest[1] == lowest[1]:
+        conclusion = "Todas tuvieron la misma media."
+    else:
+        conclusion = (
+            f"La más alta fue la de {_group_name(highest[0].key, plan)} y la más baja, "
+            f"la de {_group_name(lowest[0].key, plan)}."
+        )
+    return f"Las medias por movimiento {window_of(plan)} fueron: {details}. {conclusion}"
 
 
 def top_category(answer: QueryAnswer, plan: FinancialPlan) -> str:

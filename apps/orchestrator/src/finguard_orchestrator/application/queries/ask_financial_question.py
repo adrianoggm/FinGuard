@@ -673,7 +673,12 @@ class AskFinancialQuestionHandler:
                 text="¿De qué periodo quieres que calcule la media?",
                 question="¿De qué periodo quieres que calcule la media?",
                 conversation=conversation,
-                suggestions=["Este mes", "El mes pasado", "Los últimos 12 meses", "En 2025"],
+                suggestions=[
+                    "Este mes",
+                    "El mes pasado",
+                    "Los últimos 12 meses",
+                    f"En {query.today.year}",
+                ],
             )
             return
         if average is not None:
@@ -1815,6 +1820,20 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
 
+_AVERAGE_PERIOD_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:el\s+|la\s+)?(?:"
+    r"(?:por|al|cada)\s+dia|(?:por|a\s+la|cada)\s+semana|(?:por|al|cada)\s+mes"
+    r"|diari[oa]|semanal|semanl|semnal|mensual(?:mente)?|mensula|mesnual"
+    r")$"
+)
+_NATURAL_PERIOD_AVERAGE_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:eso\s+)?cuanto\s+(?:sale|seria|es)\s+"
+    r"(?:por|al|a\s+la|cada)\s+(?P<unit>dia|semana|mes)$"
+)
+_AVERAGE_MOVEMENT_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:por\s+(?:movimiento|operacion|compra|pago|cargo|ingreso)s?"
+    r"|(?:el\s+)?ticket\s+medio)$"
+)
 _SALARY_ACCOUNT_FOLLOW_UP: Final = re.compile(
     r"^(?:en\s+)?la\s+que\s+(?:ingres\w*|cobr\w*)\s+(?:la\s+)?nomina"
     r"(?:\s+(?:vaya|vamos))?(?:\s+[a-z])?$"
@@ -1987,25 +2006,51 @@ def _average_plan(
     kept as a draft so the next turn can answer it instead of being told the capability is absent.
     """
     facts = explicit_facts.read(query.sentence, today=query.today)
+    previous = query.conversation.last_plan
+    natural_period = _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
+    if natural_period is not None and isinstance(previous, FinancialPlan):
+        groups = {"dia": GroupBy.DAY, "semana": GroupBy.WEEK, "mes": GroupBy.MONTH}
+        return replace(
+            previous,
+            group_by=groups[natural_period.group("unit")],
+            metric=Metric.PERIOD_AVERAGE,
+        )
+    follow_up = _average_follow_up_plan(query, facts, previous)
+    if follow_up is not None:
+        return follow_up
     if facts.metric not in {Metric.AVERAGE, Metric.PERIOD_AVERAGE}:
         return None
 
-    previous = query.conversation.last_plan
     named = category_words.precisely_named_in(query.sentence)
     previous_categories = previous.categories if previous is not None else ()
     previous_merchants = previous.merchants if previous is not None else ()
-    categories = named or previous_categories
-    merchants = () if named else previous_merchants
     asks_to_spend = re.search(
         r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr", spanish.folded(query.sentence)
     )
-    direction = facts.direction or (Direction.EXPENSE if asks_to_spend else None)
+    explicit_direction = facts.direction or (Direction.EXPENSE if asks_to_spend else None)
+    changes_direction = (
+        explicit_direction is not None
+        and previous is not None
+        and explicit_direction is not previous.direction
+    )
+    categories = named or (() if changes_direction else previous_categories)
+    merchants = () if named or changes_direction else previous_merchants
+    direction = explicit_direction
     direction = direction or (previous.direction if previous is not None else None)
     if direction is None:
         direction = _direction_of(categories) if categories else Direction.ALL
 
     if facts.group_by is not None:
         group_by = facts.group_by
+    elif (
+        facts.metric is Metric.AVERAGE
+        and isinstance(previous, FinancialPlan)
+        and previous.metric is Metric.PERIOD_AVERAGE
+        and previous.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+    ):
+        # "Ticket medio" changes the divisor back to movements. A temporal grouping inherited
+        # from the previous period-average would otherwise survive and answer a different question.
+        group_by = GroupBy.NONE
     elif not named and isinstance(previous, FinancialPlan):
         group_by = previous.group_by
     else:
@@ -2032,6 +2077,18 @@ def _average_plan(
             merchants=merchants,
             group_by=group_by,
             metric=facts.metric,
+            include_internal=(
+                previous.include_internal if isinstance(previous, FinancialPlan) else False
+            ),
+            across_accounts=(
+                previous.across_accounts if isinstance(previous, FinancialPlan) else False
+            ),
+            only_account_id=(
+                previous.only_account_id if isinstance(previous, FinancialPlan) else None
+            ),
+            only_account_ids=(
+                previous.only_account_ids if isinstance(previous, FinancialPlan) else ()
+            ),
         )
     return FinancialPlan(
         direction=direction,
@@ -2041,6 +2098,70 @@ def _average_plan(
         merchants=merchants,
         group_by=group_by,
         metric=facts.metric,
+        include_internal=(
+            previous.include_internal if isinstance(previous, FinancialPlan) else False
+        ),
+        across_accounts=(
+            previous.across_accounts if isinstance(previous, FinancialPlan) else False
+        ),
+        only_account_id=(previous.only_account_id if isinstance(previous, FinancialPlan) else None),
+        only_account_ids=(previous.only_account_ids if isinstance(previous, FinancialPlan) else ()),
+    )
+
+
+def _average_follow_up_plan(
+    query: AskFinancialQuestionQuery,
+    facts: explicit_facts.ExplicitFacts,
+    previous: PlannedQuery | None,
+) -> FinancialPlan | None:
+    """Apply short, explicit changes to an average without reconstructing it with a model."""
+    if not isinstance(previous, FinancialPlan) or previous.metric not in {
+        Metric.AVERAGE,
+        Metric.PERIOD_AVERAGE,
+    }:
+        return None
+    # A complete average in the new sentence outranks context. This helper only fills the meaning
+    # of elliptical turns such as "¿y al mes?"; applying it to "coste semanal medio" would retain
+    # the old monthly divisor merely because the sentence also changed category.
+    if facts.metric is not None:
+        return None
+
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    named = category_words.precisely_named_in(query.sentence)
+    metric = previous.metric
+    group_by = previous.group_by
+
+    if _AVERAGE_PERIOD_FOLLOW_UP.fullmatch(folded) and facts.group_by in {
+        GroupBy.DAY,
+        GroupBy.WEEK,
+        GroupBy.MONTH,
+    }:
+        metric = Metric.PERIOD_AVERAGE
+        group_by = facts.group_by
+    elif _AVERAGE_MOVEMENT_FOLLOW_UP.fullmatch(folded):
+        metric = Metric.AVERAGE
+        if group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
+            group_by = GroupBy.NONE
+    elif not (folded.startswith("y ") and (facts.window is not None or named)):
+        return None
+
+    window = facts.window or previous.period or previous.date_range
+    categories = named or previous.categories
+    direction = facts.direction
+    if direction is None:
+        direction = _direction_of(named) if named else previous.direction
+    return FinancialPlan(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=categories,
+        merchants=() if named else previous.merchants,
+        group_by=group_by,
+        metric=metric,
+        include_internal=previous.include_internal,
+        across_accounts=previous.across_accounts,
+        only_account_id=previous.only_account_id,
+        only_account_ids=previous.only_account_ids,
     )
 
 
@@ -2211,11 +2332,16 @@ def _a_bare_shop_name(
         # One or two words. Beyond that it is a sentence, and a sentence has a verb this cannot
         # read — the planner is better at those and this must not take them.
         return None
+    facts = explicit_facts.read(query.sentence, today=query.today)
     if (
         category_words.named_in(query.sentence)
         or account_words.named_in(query.sentence)
-        or explicit_facts.read(query.sentence, today=query.today).window is not None
+        or facts.window is not None
+        or facts.group_by is not None
+        or facts.metric is not None
+        or facts.direction is not None
         or intent_router.asks_for_something_else(query.sentence)
+        or capability_guard.unsupported_reason(query.sentence) is not None
     ):
         # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
         # and "enero" a window, and each of them has a path that answers it properly.
@@ -2462,6 +2588,10 @@ def _answered(
         text = answer_writer.when(answer, plan)
     elif facts.asks_top_category:
         text = answer_writer.top_category(answer, plan)
+    elif (
+        facts.compared_categories or facts.asks_comparison_reference
+    ) and plan.metric is Metric.AVERAGE:
+        text = answer_writer.compare_averages(answer, plan)
     else:
         text = answer_writer.write(answer, plan)
     return AskFinancialQuestionResult(

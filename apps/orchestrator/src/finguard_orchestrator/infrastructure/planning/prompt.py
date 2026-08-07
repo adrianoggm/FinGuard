@@ -214,12 +214,12 @@ pasado o los últimos 30 días.", "awaiting": "WINDOW", "action": "AGGREGATE", "
 "isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
-"¿Cuál es mi gasto medio mensual?"
-{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
-"period": "", "n": 0, "from": "", "to": "", \
+"¿Cuál es mi gasto medio mensual este año?"
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "THIS_YEAR", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
-"isFollowUp": false, "changed": [], "groupBy": "NONE", \
-"metric": "SUM"}}
+"isFollowUp": false, "changed": [], "groupBy": "MONTH", \
+"metric": "PERIOD_AVERAGE"}}
 
 {previous}## The sentence
 

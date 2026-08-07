@@ -354,6 +354,100 @@ async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement(
     assert ledger.plan.metric is Metric.AVERAGE
 
 
+async def test_a_category_average_comparison_answers_the_comparison_not_the_combined_mean() -> None:
+    class ComparisonLedger(Ledger):
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plan = plan
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=5_028,
+                movement_count=8,
+                groups=(Group("GROCERIES", 3_600, 6), Group("RESTAURANTS", 1_428, 2)),
+            )
+
+    planner = GivesUp()
+    ledger = ComparisonLedger()
+
+    answer = await asked(
+        "¿Cuál tiene mayor gasto medio, supermercados o restaurantes, este año?",
+        planner,
+        ledger,
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.group_by is GroupBy.CATEGORY
+    assert "más alta fue la de restaurantes" in answer.text
+    assert "6,29 €" not in answer.text
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected_group"),
+    [("¿Y al mes?", GroupBy.MONTH), ("¿Y por semana?", GroupBy.WEEK)],
+)
+async def test_a_short_period_follow_up_changes_the_average_divisor_without_the_model(
+    sentence: str, expected_group: GroupBy
+) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("GROCERIES",),
+        metric=Metric.AVERAGE,
+    )
+
+    await asked(sentence, planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+    assert ledger.plan.group_by is expected_group
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.period == previous.period
+
+
+async def test_the_reported_weekly_follow_up_keeps_the_year_and_the_average() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    await asked("Y el semanal ?", planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.period == previous.period
+    assert ledger.plan.group_by is GroupBy.WEEK
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+
+
+async def test_weekly_income_average_keeps_its_account_scope_and_valid_grouping() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("SALARY",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+        only_account_id=ACCOUNT,
+    )
+
+    result = await asked("Y semanal?", planner, ledger, Conversation(last_plan=previous))
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.group_by is GroupBy.WEEK
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+    assert ledger.plan.only_account_id == ACCOUNT
+
+
 async def test_the_reported_highest_category_is_planned_without_the_model() -> None:
     planner = GivesUp()
     ledger = Ledger()
@@ -452,6 +546,132 @@ async def test_account_selection_can_include_two_and_exclude_the_fund() -> None:
     assert ledger.plan is not None
     assert ledger.plan.only_account_id is None
     assert ledger.plan.only_account_ids == (ACCOUNT, uuid.UUID(int=2))
+
+
+async def test_per_movement_follow_up_clears_the_old_temporal_divisor() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    await asked("¿Y por movimiento?", planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.AVERAGE
+    assert ledger.plan.group_by is GroupBy.NONE
+
+
+async def test_ticket_average_does_not_inherit_a_monthly_period_divisor() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    await asked("¿Y el ticket medio?", planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.AVERAGE
+    assert ledger.plan.group_by is GroupBy.NONE
+
+
+async def test_a_complete_weekly_average_outranks_the_previous_monthly_context() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("HOUSING_RENT",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    await asked(
+        "¿Y el coste semanal medio en restaurantes?",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+    assert ledger.plan.group_by is GroupBy.WEEK
+    assert ledger.plan.categories == ("RESTAURANTS",)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "previous_direction", "previous_category", "expected_direction"),
+    [
+        ("¿Cuánto suelo cobrar al mes?", Direction.EXPENSE, "GROCERIES", Direction.INCOME),
+        ("¿Cuánto suelo gastar al mes?", Direction.INCOME, "SALARY", Direction.EXPENSE),
+    ],
+)
+async def test_changing_between_income_and_spending_drops_an_incompatible_average_filter(
+    sentence: str,
+    previous_direction: Direction,
+    previous_category: str,
+    expected_direction: Direction,
+) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=previous_direction,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=(previous_category,),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    await asked(sentence, planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.direction is expected_direction
+    assert ledger.plan.categories == ()
+    assert ledger.plan.merchants == ()
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+
+
+@pytest.mark.parametrize(
+    ("sentence", "category", "period"),
+    [
+        ("¿Y en alquiler?", "HOUSING_RENT", Period.LAST_N_MONTHS),
+        ("¿Y este mes?", "GROCERIES", Period.THIS_MONTH),
+    ],
+)
+async def test_an_average_keeps_context_through_short_filter_and_window_follow_ups(
+    sentence: str, category: str, period: Period
+) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    await asked(sentence, planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.PERIOD_AVERAGE
+    assert ledger.plan.categories == (category,)
+    assert ledger.plan.period is not None
+    assert ledger.plan.period.period is period
 
 
 async def test_a_model_cannot_refuse_a_supported_category_comparison() -> None:
