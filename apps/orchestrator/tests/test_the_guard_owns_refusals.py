@@ -396,6 +396,64 @@ async def test_the_reported_account_breakdown_preserves_the_previous_query() -> 
     assert result.conversation.last_plan is not None
 
 
+async def test_principal_and_salary_account_replies_focus_the_previous_query() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.ALL,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=4),
+        group_by=GroupBy.ACCOUNT,
+        across_accounts=True,
+    )
+
+    principal = await asked(
+        "La principal",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.group_by is GroupBy.NONE
+    assert ledger.plan.only_account_id == ACCOUNT
+    assert principal.conversation.last_plan is not None
+
+    salary_account = await asked(
+        "En la que ingreso la nomina vaya ç",
+        planner,
+        ledger,
+        principal.conversation,
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.only_account_id == ACCOUNT
+    assert salary_account.outcome == PlanningOutcome.PLANNED.value
+
+
+async def test_account_selection_can_include_two_and_exclude_the_fund() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.ALL,
+        period=RelativePeriod(Period.THIS_MONTH),
+        only_account_id=uuid.UUID(int=2),
+    )
+
+    await asked(
+        "Solo cuenta corriente y hucha, no el fondo",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.only_account_id is None
+    assert ledger.plan.only_account_ids == (ACCOUNT, uuid.UUID(int=2))
+
+
 async def test_a_model_cannot_refuse_a_supported_category_comparison() -> None:
     ledger = Ledger()
 

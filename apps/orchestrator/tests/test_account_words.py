@@ -67,6 +67,20 @@ def test_principal_is_a_natural_name_for_the_current_account(sentence: str) -> N
     assert account_words.named_in(sentence) == ("CURRENT",)
 
 
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        ("Solo cuenta corriente y hucha, no el fondo", ("ASSET",)),
+        ("Todas menos la hucha", ("SAVINGS",)),
+        ("Cuenta corriente salvo el fondo", ("ASSET",)),
+    ],
+)
+def test_an_account_can_be_named_only_to_exclude_it(
+    sentence: str, expected: tuple[str, ...]
+) -> None:
+    assert account_words.excluded_in(sentence) == expected
+
+
 def test_an_explicit_custom_account_reference_is_recognised_without_knowing_its_name() -> None:
     assert account_words.explicitly_names_a_custom_account("en mi cuenta Vacaciones")
     assert account_words.names_a_custom_destination("mueve 20 a la cuenta Vacaciones")

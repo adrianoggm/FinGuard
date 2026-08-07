@@ -534,6 +534,15 @@ class AskFinancialQuestionHandler:
             yield await self._compare_periods(query, *period_comparison)
             return
 
+        account_follow_up = (
+            _account_follow_up_plan(query) if intent is Intent.FINANCIAL_QUERY else None
+        )
+        if account_follow_up is not None:
+            yield Stage("planned", answer_writer.describe(account_follow_up))
+            yield Stage("querying")
+            yield await self._answer(query, account_follow_up)
+            return
+
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
         if narrowing is not None:
             shop, previous = narrowing
@@ -1453,7 +1462,6 @@ class AskFinancialQuestionHandler:
         The holder's account directory is fetched only for an explicit custom-name form. Fixed
         kinds retain the existing summary path, while widening needs no list at all.
         """
-        named = account_words.named_in(query.sentence)
         if plan.group_by is GroupBy.ACCOUNT:
             return replace(
                 plan,
@@ -1462,8 +1470,14 @@ class AskFinancialQuestionHandler:
                 only_account_ids=(),
             )
 
+        excluded = frozenset(account_words.excluded_in(query.sentence))
+        named = tuple(
+            kind for kind in account_words.named_in(query.sentence) if kind not in excluded
+        )
         explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
-        if not named and not explicit_custom:
+        if not named and not excluded and not explicit_custom:
+            if plan.only_account_id is not None or plan.only_account_ids:
+                return plan
             return replace(plan, across_accounts=True)
 
         if not named and self._account_directory is not None:
@@ -1510,7 +1524,11 @@ class AskFinancialQuestionHandler:
         wanted = (
             [holding for holding in summary.holdings if holding.display_name in custom]
             if custom
-            else [holding for holding in summary.holdings if holding.kind in named]
+            else [
+                holding
+                for holding in summary.holdings
+                if holding.kind in named or (not named and holding.kind not in excluded)
+            ]
         )
         if not wanted:
             # None of that kind. Narrowing to nothing would look like a genuinely empty period.
@@ -1797,6 +1815,14 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
 
+_SALARY_ACCOUNT_FOLLOW_UP: Final = re.compile(
+    r"^(?:en\s+)?la\s+que\s+(?:ingres\w*|cobr\w*)\s+(?:la\s+)?nomina"
+    r"(?:\s+(?:vaya|vamos))?(?:\s+[a-z])?$"
+)
+_ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
+    r"^(?:ahora\s+)?(?:solo|solamente)\b|\b(?:no|menos|excepto|salvo)\s+"
+    r"(?:el|la|los|las|mi|mis)?\s*(?:fondo|hucha|cuenta)\b"
+)
 _PERIOD_COMPARISON_REFERENCE: Final = re.compile(
     r"^(?:vale\s+|bueno\s+|y\s+)?(?:"
     r"compara(?:los|las|melos|melas)?"
@@ -1841,6 +1867,30 @@ def _period_comparison_plans(
     return (
         replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
         replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
+    )
+
+
+def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """Focus the previous query on an account named as a short conversational reply."""
+    previous = query.conversation.last_plan
+    if not isinstance(previous, FinancialPlan) or not account_words.named_in(query.sentence):
+        return None
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    if not _SALARY_ACCOUNT_FOLLOW_UP.fullmatch(folded) and not _ACCOUNT_SELECTION_FOLLOW_UP.search(
+        folded
+    ):
+        if len(folded.split()) > 4:
+            return None
+        if window_words.window_in(query.sentence, today=query.today) is not None:
+            return None
+    selected = replace(previous, group_by=GroupBy.NONE)
+    window = window_words.window_in(query.sentence, today=query.today)
+    if window is None:
+        return selected
+    return replace(
+        selected,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
     )
 
 
