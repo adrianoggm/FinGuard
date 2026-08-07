@@ -1443,7 +1443,7 @@ class AskFinancialQuestionHandler:
                 account_id=query.account_id,
                 today=query.today,
                 reporting_timezone=query.reporting_timezone,
-                movements=1,
+                movements=limit,
             )
         except QueryRejectedError:
             return AskFinancialQuestionResult(
