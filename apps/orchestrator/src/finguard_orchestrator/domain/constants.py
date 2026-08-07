@@ -65,6 +65,10 @@ MAX_MERCHANT_LENGTH = 140
 # ceiling prevents a list-shaped scan from travelling through the plan contract.
 MAX_SELECTED_ACCOUNTS = 20
 
+# A previously displayed movement selection. It is a narrowing filter, and the ceiling matches
+# the largest conversational list the assistant will remember.
+MAX_SELECTED_TRANSACTIONS = 50
+
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
 

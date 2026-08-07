@@ -156,6 +156,8 @@ When one *is* asked for, these are the words that choose it:
 - MERCHANT — comercios, tiendas, establecimientos, sitios, "¿en qué comercio?". It \
 breaks the total down across **all** of them and cannot narrow to one, so a sentence \
 naming a shop is the clarification case above and not a grouping.
+- ACCOUNT — cuentas, cada cuenta, "desglose por cuenta". It breaks the same query down \
+across all accounts owned by the holder.
 
 "Semana a semana" and "mes a mes" are groupings, not windows: the window is still \
 whatever period the sentence names.
@@ -212,12 +214,12 @@ pasado o los últimos 30 días.", "awaiting": "WINDOW", "action": "AGGREGATE", "
 "isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
-"¿Cuál es mi gasto medio mensual?"
-{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
-"period": "", "n": 0, "from": "", "to": "", \
+"¿Cuál es mi gasto medio mensual este año?"
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "THIS_YEAR", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
-"isFollowUp": false, "changed": [], "groupBy": "NONE", \
-"metric": "SUM"}}
+"isFollowUp": false, "changed": [], "groupBy": "MONTH", \
+"metric": "PERIOD_AVERAGE"}}
 
 {previous}## The sentence
 

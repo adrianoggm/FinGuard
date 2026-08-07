@@ -99,6 +99,10 @@ _ASKS_WHEN: Final = re.compile(
 )
 
 _AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
+_TYPICAL_AMOUNT: Final = re.compile(
+    r"\b(?:suelo|solemos)\s+(?:gast|pag|compr|cobr)\w*\b"
+    r"|\b(?:gast|pag|compr|cobr)\w*\s+(?:normalmente|habitualmente)\b"
+)
 _PER_MOVEMENT_AVERAGE: Final = re.compile(
     r"\b(?:media|promedio|importe\s+medio|ticket\s+medio)\s+"
     r"(?:por|de\s+cada)\s+(?:cada\s+)?(?:movimiento|operacion|compra|pago|cargo|ingreso)s?\b"
@@ -106,26 +110,55 @@ _PER_MOVEMENT_AVERAGE: Final = re.compile(
 _TEMPORAL_GROUPS: Final[tuple[tuple[GroupBy, re.Pattern[str]], ...]] = (
     (
         GroupBy.DAY,
-        re.compile(r"\b(?:por|al|cada)\s+dia\b|\b(?:media|promedio)\s+diari[oa]\b"),
+        re.compile(
+            r"\b(?:por|al|cada)\s+dia\b|\b(?:media|promedio)\s+diari[oa]\b"
+            r"|\b(?:gasto|importe|coste)\s+diari[oa]\s+medi[oa]\b"
+            r"|\b(?:y\s+)?(?:el\s+)?diari[oa]\b"
+        ),
     ),
     (
         GroupBy.WEEK,
-        re.compile(r"\b(?:por|a\s+la|cada)\s+semana\b|\b(?:media|promedio)\s+semanal\b"),
+        re.compile(
+            r"\b(?:por|a\s+la|cada)\s+semana\b|\b(?:media|promedio)\s+semanal\b"
+            r"|\b(?:gasto|importe|coste)\s+semanal\s+medio\b"
+            r"|\b(?:y\s+)?(?:el\s+)?(?:semanal|semanl|semnal)\b"
+        ),
     ),
     (
         GroupBy.MONTH,
         re.compile(
             r"\b(?:por|al|cada)\s+mes\b|\bmes\s+a\s+mes\b|"
-            r"\b(?:media|promedio|gasto\s+medio|importe\s+medio)\s+mensual\b|\bmensualmente\b"
+            r"\b(?:media|promedio|gasto\s+medio|importe\s+medio|coste\s+medio)\s+mensual\b"
+            r"|\b(?:gasto|importe|coste)\s+mensual\s+medio\b|\bmensualmente\b"
             r"|\b(?:movimientos?|operaciones?|compras?|pagos?|cargos?)\s+mensual(?:es)?\b"
+            r"|\b(?:y\s+)?(?:el\s+)?(?:mensual|mensula|mesnual)\b"
         ),
     ),
 )
+_TOP_CATEGORY: Final = re.compile(
+    r"\b(?:en\s+)?qu[ée]\s+categor[íi]a\b.{0,55}\b(?:gast|pag|compr)\w*\b.{0,20}\bm[áa]s\b"
+    r"|\bqu[ée]\s+categor[íi]a\s+es\s+la\s+que\b.{0,45}\bm[áa]s\b"
+    r"|\bd[oó]nde\b.{0,35}\b(?:gast|pag|compr)\w*\b.{0,15}\bm[áa]s\b"
+)
+_ACCOUNT_BREAKDOWN: Final = re.compile(
+    r"\bdesglos\w*\s+por\s+(?:cada\s+)?cuentas?\b"
+    r"|\b(?:por|separad[oa]\s+por)\s+cada\s+cuenta\b"
+    r"|\bseparad[oa]\s+por\s+cuentas?\b"
+    r"|\bsepar\w*\s+por\s+cuentas?\b"
+)
+_COMPARISON_REFERENCE: Final = re.compile(
+    r"\bcu[áa]l\s+de\s+(?:las|estas|esas)\s+dos\b.{0,30}"
+    r"\b(?:mayor|menor|m[áa]s\s+alt[oa]|m[áa]s\s+baj[oa])\b"
+    r"|\bcu[áa]l\s+(?:es|fue)\s+(?:la\s+)?(?:mayor|menor)\s+de\s+las\s+dos\b"
+)
 _COMPARES: Final = re.compile(
     r"\bcompara|\bcomparacion\b|\bfrente\s+a\b|\bpor\s+separado\b|\buna\s+y\s+otra\b"
+    r"|\bentre\b|\bcual\b.{0,35}\b(?:mayor|menor|mas\s+alt[oa]|mas\s+baj[oa])\b"
+    r"|\bmas\b.{0,45}\b(?:o|que)\b"
 )
 _INCOME: Final = re.compile(
-    r"\bingres(?:o|os|e|ado|aron)\b|\bcobr(?:e|ado|aron|os?)\b|\brecibi(?:do)?\b"
+    r"\bingres(?:ar|amos|o|os|e|ado|aron)\b|\bcobr(?:ar|amos|e|ado|aron|os?)\b"
+    r"|\brecibi(?:do)?\b"
     r"|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
 )
 _EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
@@ -159,6 +192,9 @@ class ExplicitFacts:
     # Whether the question is about *when* rather than how much. It changes the answer rather than
     # the plan, so `enforce` does nothing with it and the writer reads it.
     asks_when: bool = False
+    asks_top_category: bool = False
+    asks_account_breakdown: bool = False
+    asks_comparison_reference: bool = False
 
 
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
@@ -175,7 +211,11 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     temporal_group = next(
         (group for group, pattern in _TEMPORAL_GROUPS if pattern.search(folded)), None
     )
-    asks_average = bool(_AVERAGE.search(folded))
+    asks_top_category = bool(_TOP_CATEGORY.search(folded))
+    asks_account_breakdown = bool(_ACCOUNT_BREAKDOWN.search(folded))
+    asks_average = bool(_AVERAGE.search(folded)) or (
+        temporal_group is not None and bool(_TYPICAL_AMOUNT.search(folded))
+    )
     per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     window = window_words.window_in(sentence, today=today)
     # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
@@ -188,7 +228,11 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         group_by=(
             _COUNTERPARTY
             if _ASKS_WHO.search(folded)
-            else (GroupBy.CATEGORY if comparison else temporal_group)
+            else (
+                GroupBy.ACCOUNT
+                if asks_account_breakdown
+                else (GroupBy.CATEGORY if comparison or asks_top_category else temporal_group)
+            )
         ),
         metric=(
             Metric.AVERAGE
@@ -201,6 +245,9 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),
         asks_when=asks_when(sentence),
+        asks_top_category=asks_top_category,
+        asks_account_breakdown=asks_account_breakdown,
+        asks_comparison_reference=bool(_COMPARISON_REFERENCE.search(folded)),
     )
 
 

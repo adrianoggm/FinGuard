@@ -117,6 +117,11 @@ export type PlanContext = {
   merchants: string[];
   group_by: string;
   metric: string;
+  include_internal?: boolean;
+  across_accounts?: boolean;
+  only_account_id?: string | null;
+  only_account_ids?: string[];
+  transaction_ids?: string[];
 };
 
 /** A payment being built. Part of the conversation state, never held on its own. */
@@ -186,6 +191,7 @@ export type ConversationState = {
   // how the service knows that "¿y en la hucha?" is about the balance rather than about spending.
   answered_the_balance: boolean;
   last_plan: PlanContext | null;
+  prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
@@ -417,7 +423,7 @@ export async function movements(options: {
   return read<Movements>(`/v1/account/movements?${query}`);
 }
 
-export type GroupBy = "CATEGORY" | "MONTH" | "WEEK" | "MERCHANT";
+export type GroupBy = "CATEGORY" | "MONTH" | "WEEK" | "MERCHANT" | "ACCOUNT";
 
 export async function breakdown(by: GroupBy, days: number): Promise<Breakdown> {
   return read<Breakdown>(`/v1/account/breakdown?by=${by}&days=${days}`);

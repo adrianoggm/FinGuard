@@ -37,7 +37,15 @@ _GLOSS: Final[dict[str, tuple[str, ...]]] = {
         "el coche",
         "combustible",
     ),
-    "RESTAURANTS": ("restaurantes", "bares", "comer fuera", "cenar fuera", "cañas", "café"),
+    "RESTAURANTS": (
+        "restaurantes",
+        "bares",
+        "comer fuera",
+        "comiendo fuera",
+        "cenar fuera",
+        "cañas",
+        "café",
+    ),
     "TRANSPORT_PUBLIC": ("transporte público", "tren", "metro", "autobús", "taxi", "VTC"),
     "HEALTH": ("salud", "farmacia", "médico", "dentista", "óptica"),
     "LEISURE": ("ocio", "cine", "libros", "videojuegos", "deporte", "compras de capricho"),
@@ -117,7 +125,13 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     # becomes the parent of several and belongs out here with "transporte" — the upgrade is to
     # delete this line, not to grow it.
     "TRANSPORT_FUEL": ("gasolina", "gasoil", "diésel", "gasolinera", "repostar", "coche"),
-    "RESTAURANTS": ("restaurantes", "restaurante", "comer fuera", "cenar fuera"),
+    "RESTAURANTS": (
+        "restaurantes",
+        "restaurante",
+        "comer fuera",
+        "comiendo fuera",
+        "cenar fuera",
+    ),
     "TRANSPORT_PUBLIC": ("transporte público", "metro", "autobús", "taxi"),
     "HEALTH": ("salud", "farmacia", "dentista", "óptica"),
     "LEISURE": ("cine", "videojuegos", "ocio"),

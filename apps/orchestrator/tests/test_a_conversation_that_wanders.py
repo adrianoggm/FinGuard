@@ -431,7 +431,7 @@ def test_changing_the_category_keeps_the_window_that_was_never_mentioned_again()
     chat.say("¿cuánto gasté el mes pasado en el supermercado?")
     chat.say("¿y en gasolina?")
 
-    assert planner.inherited[1] == spending(), "the follow-up was planned with no context"
+    assert len(planner.inherited) == 1, "a closed-vocabulary filter should not need the model"
     assert ledger.plans[1].categories == ("TRANSPORT_FUEL",)
     assert ledger.plans[1].period == LAST_MONTH
 
@@ -837,7 +837,7 @@ def test_the_reply_to_a_rejection_patches_the_plan_it_was_holding() -> None:
     chat.say("no es eso")
     chat.say("en gasolina")
 
-    assert planner.inherited[-1] is not None, "the replacement was planned with no context"
+    assert len(planner.inherited) == 1, "the replacement is a deterministic patch of the draft"
     assert ledger.plans[1].categories == ("TRANSPORT_FUEL",)
     assert ledger.plans[1].period == LAST_MONTH
 

@@ -112,6 +112,18 @@ def test_asking_how_the_previous_answer_was_classified_is_not_the_catalogue() ->
     assert route("¿en qué categoría has clasificado el cine?") is Intent.EXPLAIN_PREVIOUS
 
 
+def test_asking_where_the_user_spent_most_is_a_new_query_not_an_explanation() -> None:
+    assert (
+        route("Vale en que categoria es la que he gastado mas a lo largo de este año?")
+        is Intent.FINANCIAL_QUERY
+    )
+
+
+def test_a_frustrated_user_is_not_forced_into_a_financial_slot() -> None:
+    assert route("Que te pasa ?") is Intent.CORRECTION
+    assert intent_router.is_frustration("Que te pasa ?")
+
+
 @pytest.mark.parametrize(
     "sentence",
     [

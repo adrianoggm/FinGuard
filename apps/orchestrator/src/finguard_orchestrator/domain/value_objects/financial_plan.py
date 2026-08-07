@@ -22,6 +22,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_PERIOD_DAYS,
     MAX_PERIOD_MONTHS,
     MAX_SELECTED_ACCOUNTS,
+    MAX_SELECTED_TRANSACTIONS,
 )
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
@@ -101,6 +102,9 @@ class FinancialPlan:
     # older clients keep their one-account contract while chat can express "corriente y
     # hucha, pero no el fondo" without widening the query to every account.
     only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    # Exact movements a conversational pronoun refers to ("esos cinco"). Banking still applies
+    # holder isolation, so identifiers can narrow a query but never widen its scope.
+    transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
     explain: bool = False
 
     def __post_init__(self) -> None:
@@ -112,6 +116,10 @@ class FinancialPlan:
             raise InvalidValueError("onlyAccountIds cannot contain duplicates")
         if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
             raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
+        if len(set(self.transaction_ids)) != len(self.transaction_ids):
+            raise InvalidValueError("transactionIds cannot contain duplicates")
+        if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
         if self.metric is Metric.PERIOD_AVERAGE and self.group_by not in {
             GroupBy.DAY,
             GroupBy.WEEK,
@@ -148,6 +156,11 @@ class FinancialPlanDraft:
     merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    include_internal: bool = False
+    across_accounts: bool = False
+    only_account_id: UUID | None = None
+    only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         # Neither window is allowed — that is what a draft is for — but not both, for the same
@@ -155,6 +168,16 @@ class FinancialPlanDraft:
         # depend on the reader.
         if self.period is not None and self.date_range is not None:
             raise InvalidValueError("a draft cannot carry two windows")
+        if self.only_account_id is not None and self.only_account_ids:
+            raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
+        if len(set(self.only_account_ids)) != len(self.only_account_ids):
+            raise InvalidValueError("onlyAccountIds cannot contain duplicates")
+        if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
+        if len(set(self.transaction_ids)) != len(self.transaction_ids):
+            raise InvalidValueError("transactionIds cannot contain duplicates")
+        if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
         # The window is the one invariant a draft relaxes. Everything else is checked exactly as
         # the plan checks it, because a draft crosses the wire and comes back: leaving the
         # filters until `with_window` meant a bad category was accepted at the edge and only
@@ -186,6 +209,11 @@ class FinancialPlanDraft:
             merchants=self.merchants,
             group_by=self.group_by,
             metric=self.metric,
+            include_internal=self.include_internal,
+            across_accounts=self.across_accounts,
+            only_account_id=self.only_account_id,
+            only_account_ids=self.only_account_ids,
+            transaction_ids=self.transaction_ids,
         )
 
     def into_plan(self) -> FinancialPlan | None:
@@ -200,6 +228,11 @@ class FinancialPlanDraft:
             merchants=self.merchants,
             group_by=self.group_by,
             metric=self.metric,
+            include_internal=self.include_internal,
+            across_accounts=self.across_accounts,
+            only_account_id=self.only_account_id,
+            only_account_ids=self.only_account_ids,
+            transaction_ids=self.transaction_ids,
         )
 
     @classmethod
@@ -213,6 +246,11 @@ class FinancialPlanDraft:
             merchants=plan.merchants,
             group_by=plan.group_by,
             metric=plan.metric,
+            include_internal=plan.include_internal,
+            across_accounts=plan.across_accounts,
+            only_account_id=plan.only_account_id,
+            only_account_ids=plan.only_account_ids,
+            transaction_ids=plan.transaction_ids,
         )
 
 

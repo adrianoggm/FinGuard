@@ -292,7 +292,9 @@ _ABOUT_THE_ANSWER: Final = re.compile(
     r"|en\s+(?:qu[ée]|qeu)\s+te\s+basas"
     r"|c[óo]mo\s+has\s+llegado\s+a"
     r"|(por\s+qu[ée]|c[óo]mo)\s+(me\s+)?has\s+(mostrado|ense[ñn]ado|clasificado|puesto|contado)"
-    r"|en\s+qu[ée]\s+categor[íi]a|no\s+entiendo\s+(el|este|ese)?\s*desglose"
+    r"|en\s+qu[ée]\s+categor[íi]a\s+(?:lo\s+)?(?:has\s+)?"
+    r"(?:clasificado|puesto|metido|contado)\b"
+    r"|no\s+entiendo\s+(el|este|ese)?\s*desglose"
     r"|qu[ée]\s+has\s+entendido"
     # Asking whether two things are filed together. This is the shape the real question took —
     # "¿es que los restaurantes pertenecen a la misma categoría que el cine?" — and the first
@@ -301,6 +303,11 @@ _ABOUT_THE_ANSWER: Final = re.compile(
     r"|misma\s+categor[íi]a|pertenecen?\s+a|cuenta[n]?\s+como|es\s+lo\s+mismo"
     r"|est[áa]n?\s+en\s+la\s+misma)\b",
     re.IGNORECASE,
+)
+
+_FRUSTRATION: Final = re.compile(
+    r"^(?:pero\s+)?(?:que\s+te\s+pasa|estas\s+bien|por\s+que\s+no\s+me\s+entiendes|"
+    r"no\s+me\s+entiendes|esto\s+no\s+funciona|te\s+has\s+quedado\s+pillad[oa])$"
 )
 
 
@@ -435,6 +442,7 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
     if has_previous and (
         _CORRECTING.search(folded)
         or (_ANSWER_NOUN.search(folded) and _ANSWER_REJECTION.search(folded))
+        or _FRUSTRATION.fullmatch(folded.strip(" ¿?¡!.,"))
     ):
         return Intent.CORRECTION
     if has_previous and _ABOUT_THE_ANSWER.search(folded):
@@ -455,6 +463,12 @@ def route(sentence: str, *, has_previous: bool, at_rest: bool = True) -> Intent:
         # tengo este mes?" on the path that can answer it.
         return Intent.ACCOUNT_BALANCE
     return Intent.FINANCIAL_QUERY
+
+
+def is_frustration(sentence: str) -> bool:
+    """Whether this turn reports a broken conversation rather than correcting a plan field."""
+    folded = re.sub(r"^[¿?¡!.,\s]+|[¿?¡!.,\s]+$", "", spanish.folded(sentence))
+    return bool(_FRUSTRATION.fullmatch(folded))
 
 
 def asks_for_something_else(sentence: str) -> bool:

@@ -246,6 +246,42 @@ def test_a_sentence_that_names_no_window_states_nothing_about_one() -> None:
     assert explicit_facts.read("¿y en gasolina?", today=TODAY).window is None
 
 
+def test_the_reported_short_weekly_follow_up_names_the_week_divisor() -> None:
+    facts = explicit_facts.read("Y el semanal ?", today=TODAY)
+
+    assert facts.group_by is GroupBy.WEEK
+    assert facts.metric is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [("Y semanl?", GroupBy.WEEK), ("Y semnal?", GroupBy.WEEK), ("Y mensula?", GroupBy.MONTH)],
+)
+def test_a_small_typo_does_not_turn_an_average_divisor_into_a_merchant(
+    sentence: str, expected: GroupBy
+) -> None:
+    assert explicit_facts.read(sentence, today=TODAY).group_by is expected
+
+
+def test_the_reported_highest_category_is_a_category_ranking() -> None:
+    facts = explicit_facts.read(
+        "Vale en que categoria es la que he gastado mas a lo largo de este año?", today=TODAY
+    )
+
+    assert facts.asks_top_category
+    assert facts.group_by is GroupBy.CATEGORY
+    assert facts.window == RelativePeriod(Period.THIS_YEAR)
+
+
+def test_the_reported_account_breakdown_is_not_a_category_question() -> None:
+    facts = explicit_facts.read(
+        "Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?", today=TODAY
+    )
+
+    assert facts.asks_account_breakdown
+    assert facts.group_by is GroupBy.ACCOUNT
+
+
 def test_the_direction_is_left_to_the_verifier() -> None:
     """Refusing a spending question planned as ALL is a control with a test of its own. Rewriting
     it here would also be the pipeline quietly repairing a prompt injection instead of reporting
@@ -281,6 +317,42 @@ def test_a_monthly_breakdown_of_average_movements_keeps_the_movement_divisor() -
 
     assert facts.metric is Metric.AVERAGE
     assert facts.group_by is GroupBy.MONTH
+
+
+@pytest.mark.parametrize(
+    ("sentence", "group_by"),
+    [
+        ("¿Cuánto suelo gastar al mes en supermercados?", GroupBy.MONTH),
+        ("¿Cuál es mi gasto mensual medio en alquiler?", GroupBy.MONTH),
+        ("¿Qué coste semanal medio tengo en restaurantes?", GroupBy.WEEK),
+        ("¿Cuánto pago normalmente por día en transporte público?", GroupBy.DAY),
+        ("¿Cuánto suelo cobrar al mes?", GroupBy.MONTH),
+    ],
+)
+def test_natural_period_average_word_orders_are_explicit_facts(
+    sentence: str, group_by: GroupBy
+) -> None:
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.metric is Metric.PERIOD_AVERAGE
+    assert facts.group_by is group_by
+
+
+def test_a_typical_monthly_amount_can_be_income() -> None:
+    facts = explicit_facts.read("¿Cuánto suelo cobrar al mes?", today=TODAY)
+
+    assert facts.metric is Metric.PERIOD_AVERAGE
+    assert facts.direction is Direction.INCOME
+
+
+def test_asking_which_category_has_the_higher_average_requests_a_breakdown() -> None:
+    facts = explicit_facts.read(
+        "¿Cuál tiene mayor gasto medio, supermercados o restaurantes, este año?", today=TODAY
+    )
+
+    assert facts.metric is Metric.AVERAGE
+    assert facts.group_by is GroupBy.CATEGORY
+    assert facts.compared_categories == ("GROCERIES", "RESTAURANTS")
 
 
 def test_two_compared_categories_are_both_kept_and_grouped() -> None:

@@ -33,7 +33,13 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
         "la cuenta corriente",
         "cuenta corriente",
         "la corriente",
+        "la cuenta principal",
+        "cuenta principal",
+        "la principal",
+        "la princpal",
+        "cuenta princpal",
         "la nómina",
+        "la nomnia",
         "la cuenta nómina",
     ),
     "SAVINGS": (
@@ -142,6 +148,27 @@ def named_in(sentence: str) -> tuple[str, ...]:
                 found.setdefault(kind, match.start())
                 break
     return tuple(sorted(found, key=lambda kind: found[kind]))
+
+
+def excluded_in(sentence: str) -> tuple[str, ...]:
+    """Account kinds explicitly removed with «no», «menos», «excepto» or «salvo».
+
+    `named_in` deliberately reports every mention. Scope selection needs the second half too:
+    «corriente y hucha, no el fondo» names three accounts but selects two. Treating every noun as
+    positive silently widens the query to precisely the account the user excluded.
+    """
+    haystack = spanish.folded(sentence)
+    excluded: dict[str, int] = {}
+    for kind, words in _KINDS.items():
+        for word in sorted(words, key=len, reverse=True):
+            match = re.search(_pattern(word), haystack)
+            if match is None:
+                continue
+            prefix = haystack[max(0, match.start() - 24) : match.start()]
+            if re.search(r"\b(?:no|menos|excepto|salvo)\s*$", prefix):
+                excluded.setdefault(kind, match.start())
+                break
+    return tuple(sorted(excluded, key=lambda kind: excluded[kind]))
 
 
 def destination_in(sentence: str) -> tuple[str, ...]:

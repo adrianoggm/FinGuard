@@ -66,6 +66,7 @@ def test_an_instruction_to_pay_is_recognised(sentence: str) -> None:
         # The recipient-less transfer vocabulary belongs to the own-account workflow.
         "Quiero transferir dinero de una de mis cuentas a otra",
         "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?",
+        "Eso fue nomina o un bizum?",
     ],
 )
 def test_everything_else_is_not_a_payment(sentence: str) -> None:

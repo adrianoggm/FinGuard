@@ -100,6 +100,7 @@ class GroupBy(StrEnum):
     MONTH = "MONTH"
     CATEGORY = "CATEGORY"
     MERCHANT = "MERCHANT"
+    ACCOUNT = "ACCOUNT"
 
 
 class Rail(StrEnum):

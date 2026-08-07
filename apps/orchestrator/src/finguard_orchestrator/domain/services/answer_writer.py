@@ -449,6 +449,31 @@ def movement_example(movement: Movement | None, currency: str) -> str:
     )
 
 
+def movement_examples(movements: tuple[Movement, ...], currency: str) -> str:
+    """One or several concrete rows, respecting the number the user asked to see."""
+    if not movements:
+        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
+    if len(movements) == 1:
+        return movement_example(movements[0], currency)
+    lines = []
+    for movement in movements:
+        amount = abs(movement.amount_minor)
+        if movement.direction == Direction.EXPENSE.value:
+            amount = -amount
+        what = movement.merchant_name or movement.description
+        lines.append(
+            f"  · {what}: {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}"
+        )
+    return "Por ejemplo:\n" + "\n".join(lines)
+
+
+def movement_date(occurred_at: datetime | str) -> str:
+    """The date of the ranked movement a pronoun points at."""
+    if isinstance(occurred_at, str):
+        occurred_at = datetime.fromisoformat(occurred_at)
+    return f"Fue el {_spoken_date(occurred_at)}."
+
+
 def _position(rank: int) -> str:
     return _ORDINALS.get(rank, f"El número {rank}")
 
@@ -543,7 +568,15 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         return f"No he encontrado movimientos{about} {window}. Puedes {next_step}."
 
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
-    if counting:
+    if plan.group_by is GroupBy.ACCOUNT and len(answer.groups) == 1:
+        account = answer.groups[0]
+        return (
+            f"Todos los {answer.movement_count} {noun} encontrados {window} están en "
+            f"{account.key}: {_figure(account, answer, plan.metric)}."
+        )
+    if plan.group_by is GroupBy.ACCOUNT:
+        head = f"El desglose por cuenta {window} es:"
+    elif counting:
         head = f"{answer.movement_count} {noun}{about} {window}."
     elif averaging:
         average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
@@ -554,6 +587,11 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     elif averaging_periods:
         periods = _period_count(answer, plan)
         average = money(_rounded_mean(answer.total_minor, periods), answer.currency)
+        concept = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe",
+        }[plan.direction]
         unit = {
             GroupBy.DAY: ("día", "días"),
             GroupBy.WEEK: ("semana", "semanas"),
@@ -561,7 +599,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         }[plan.group_by]
         period_noun = unit[0] if periods == 1 else unit[1]
         head = (
-            f"El gasto medio por {unit[0]}{about} {window} fue de {average}, "
+            f"El {concept} medio por {unit[0]}{about} {window} fue de {average}, "
             f"calculado sobre {periods} {period_noun}, incluidos los periodos sin movimientos."
         )
     else:
@@ -579,6 +617,46 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
+
+
+def compare_averages(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Answer a category comparison with category means, never their combined mean."""
+    usable = [group for group in answer.groups if group.movement_count > 0]
+    if answer.is_empty or len(usable) < 2:
+        return write(answer, plan)
+
+    figures = [(group, _rounded_mean(group.total_minor, group.movement_count)) for group in usable]
+    details = "; ".join(
+        f"{_group_name(group.key, plan)}: {money(average, answer.currency)} "
+        f"({group.movement_count} {'movimiento' if group.movement_count == 1 else 'movimientos'})"
+        for group, average in figures
+    )
+    highest = max(figures, key=lambda item: item[1])
+    lowest = min(figures, key=lambda item: item[1])
+    if highest[1] == lowest[1]:
+        conclusion = "Todas tuvieron la misma media."
+    else:
+        conclusion = (
+            f"La más alta fue la de {_group_name(highest[0].key, plan)} y la más baja, "
+            f"la de {_group_name(lowest[0].key, plan)}."
+        )
+    return f"Las medias por movimiento {window_of(plan)} fueron: {details}. {conclusion}"
+
+
+def top_category(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Name the leading category instead of making the user infer it from a breakdown."""
+    if answer.is_empty or not answer.groups:
+        return write(answer, plan)
+    leading = answer.groups[0]
+    category = _group_name(leading.key, plan)
+    amount = money(leading.total_minor, answer.currency)
+    movements = (
+        "1 movimiento" if leading.movement_count == 1 else f"{leading.movement_count} movimientos"
+    )
+    return (
+        f"La categoría en la que más gastaste {window_of(plan)} fue {category}: "
+        f"{amount}, en {movements}."
+    )
 
 
 def when(answer: QueryAnswer, plan: FinancialPlan) -> str:

@@ -95,18 +95,39 @@ _RECENT_MOVEMENTS: Final = re.compile(
     r"\b(?:ultim[oa]s?|utlim[oa]s?|recientes?)\s+"
     r"(?P<count>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
     r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
-    r"|\b(?P<count_first>\d{1,3})\s+"
+    r"|\blos?\s+(?P<count_before>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
+    r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\b.{0,40}\bda\s+igual\s+cuando\b"
+    r"|\b(?!los?\s+(?:ultim|utlim|recient))"
+    r"(?P<count_before_bare>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
+    r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\b.{0,40}\bda\s+igual\s+cuando\b"
+    r"|\b(?P<count_first>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
     r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\s+"
     r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
 )
+_RECENT_UNBOUNDED: Final = re.compile(
+    r"\b(?:ensename|muestrame|quiero\s+ver)\b.{0,30}"
+    r"\b(?:lo\s+ultimo|los\s+movimientos\s+recientes)\b"
+)
 _MOVEMENT_EXAMPLE: Final = re.compile(
     r"\b(?:dame|ponme|muestrame|ensename)\b.{0,45}\b(?:ejemplo|ejemlo)\b.{0,45}"
-    r"\b(?:esos?|estos?|los)?\s*(?:movimientos?|operaciones?|cargos?|compras?)\b"
+    r"\b(?:esos?|estos?|los)?\s*"
+    r"(?:movimientos?|operaciones?|cargos?|compras?|pagos?|gastos?|ingresos?)\b"
     r"|\b(?:ejemplo|ejemlo)\s+de\s+(?:esos?|estos?|los)\s+"
-    r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
+    r"(?:movimientos?|operaciones?|cargos?|compras?|pagos?|gastos?|ingresos?)\b"
+    r"|\b(?:dame|ponme|muestrame|ensename)\b.{0,20}\b(?:un|dos|tres|par\s+de)?\s*"
+    r"(?:ejemplo|ejemplos|ejemlo)s?\b"
+)
+_MOVEMENT_CLASSIFICATION: Final = re.compile(
+    r"\b(?:eso|esto|este|ese|el\s+movimiento|el\s+ingreso)\b.{0,25}"
+    r"\b(?:es|era|fue)\b.{0,35}\b(?:bizum|nomina|transferencia)\b"
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_turn(sentence: str) -> str:
+    """Fold a short conversational turn and remove only punctuation at its edges."""
+    return re.sub(r"[^a-z0-9]+", " ", spanish.folded(sentence)).strip()
 
 
 @dataclass(frozen=True)
@@ -134,6 +155,11 @@ class SpokenPlan:
     merchants: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
+    include_internal: bool = False
+    across_accounts: bool = False
+    only_account_id: str | None = None
+    only_account_ids: list[str] = field(default_factory=list)
+    transaction_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -510,6 +536,29 @@ class AskFinancialQuestionHandler:
             # rather than the sentence: they are identical sentences and they mean different things.
             intent = Intent.ACCOUNT_BALANCE
 
+        early_refusal = capability_guard.unsupported_reason(query.sentence, self._policy)
+        if early_refusal == "CATEGORY_EXCLUSION":
+            yield self._declined(early_refusal, was)
+            return
+
+        period_comparison = _period_comparison_plans(query)
+        if period_comparison is not None:
+            # Two complete, already validated questions are safer context than asking a model to
+            # reconstruct both from "compáralos". Run them again so the comparison uses current
+            # bank data, while the conversation keeps the pair available for another pronoun.
+            yield Stage("querying")
+            yield await self._compare_periods(query, *period_comparison)
+            return
+
+        account_follow_up = (
+            _account_follow_up_plan(query) if intent is Intent.FINANCIAL_QUERY else None
+        )
+        if account_follow_up is not None:
+            yield Stage("planned", answer_writer.describe(account_follow_up))
+            yield Stage("querying")
+            yield await self._answer(query, account_follow_up)
+            return
+
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
         if narrowing is not None:
             shop, previous = narrowing
@@ -544,10 +593,83 @@ class AskFinancialQuestionHandler:
             and _MOVEMENT_EXAMPLE.search(spanish.folded(query.sentence))
         ):
             yield Stage("querying")
-            yield await self._movement_example(query, previous)
+            yield await self._movement_example(
+                query, previous, limit=_movement_example_count(query.sentence)
+            )
+            return
+
+        if isinstance(previous, TopMovements) and _MOVEMENT_CLASSIFICATION.search(
+            spanish.folded(query.sentence)
+        ):
+            ranked = await self._ranked(query, previous)
+            movement = ranked.movements[0] if ranked.movements else None
+            if movement is None:
+                yield replace(ranked, text="No he encontrado ese movimiento para clasificarlo.")
+            elif movement.category == "SALARY":
+                yield replace(ranked, text="Fue un ingreso de nómina, no un bizum.")
+            elif movement.category == "TRANSFER_BIZUM":
+                yield replace(ranked, text="Fue un bizum, no un ingreso de nómina.")
+            else:
+                category = (
+                    category_words.name_of(movement.category)
+                    if movement.category
+                    else "sin categoría"
+                )
+                yield replace(ranked, text=f"Ese movimiento está clasificado como {category}.")
+            return
+
+        if isinstance(previous, TopMovements) and _RANKED_DATE.fullmatch(
+            _clean_turn(query.sentence)
+        ):
+            ranked = await self._ranked(query, previous)
+            movement = ranked.movements[0] if ranked.movements else None
+            text = (
+                answer_writer.movement_date(movement.occurred_at)
+                if movement is not None
+                else "No he encontrado ese movimiento para decirte la fecha."
+            )
+            yield replace(ranked, text=text)
+            return
+
+        if (
+            isinstance(previous, FinancialPlan)
+            and previous.group_by is GroupBy.CATEGORY
+            and len(previous.categories) >= 2
+            and _COMPARISON_DIFFERENCE.fullmatch(_clean_turn(query.sentence))
+        ):
+            yield Stage("querying")
+            yield await self._group_reference(query, previous, difference=True)
+            return
+
+        if (
+            isinstance(previous, FinancialPlan)
+            and previous.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}
+            and _NEXT_GROUP.fullmatch(_clean_turn(query.sentence))
+        ):
+            yield Stage("querying")
+            yield await self._group_reference(query, previous, difference=False)
+            return
+
+        contextual = _contextual_follow_up_plan(query)
+        if contextual is not None:
+            yield Stage("planned", answer_writer.describe(contextual))
+            yield Stage("querying")
+            yield await self._answer(query, contextual)
             return
 
         if intent is Intent.CORRECTION:
+            if intent_router.is_frustration(query.sentence):
+                yield AskFinancialQuestionResult(
+                    outcome=Spoken.GUIDANCE.value,
+                    text=(
+                        "Perdona: he perdido el hilo de la conversación. "
+                        "Conservo la última consulta, así que puedes corregirme o hacer otra "
+                        "pregunta sin empezar de cero."
+                    ),
+                    plan=answer_writer.describe(previous) if previous else None,
+                    conversation=was,
+                )
+                return
             if isinstance(previous, FinancialPlan) and intent_router.is_bare_correction(
                 query.sentence
             ):
@@ -601,6 +723,40 @@ class AskFinancialQuestionHandler:
                 yield await self._answer(query, shifted)
             return
 
+        deterministic = _deterministic_breakdown_plan(query)
+        if isinstance(deterministic, FinancialPlanDraft):
+            comparing = bool(
+                explicit_facts.read(query.sentence, today=query.today).compared_categories
+            )
+            question = (
+                "¿De qué periodo quieres que compare ambos gastos?"
+                if comparing
+                else "¿De qué periodo quieres que haga el desglose?"
+            )
+            conversation = was.with_active(
+                FinancialClarification(draft=deterministic, awaiting=Slot.WINDOW)
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=conversation,
+                suggestions=["Este mes", "Este año", "Los últimos 4 meses"],
+            )
+            return
+        if deterministic is not None:
+            yield Stage("planned", answer_writer.describe(deterministic))
+            yield Stage("querying")
+            yield await self._answer(query, deterministic)
+            return
+
+        ranking = _contextual_ranking_plan(query)
+        if ranking is not None:
+            yield Stage("planned", answer_writer.describe(ranking))
+            yield Stage("querying")
+            yield await self._ranked(query, ranking)
+            return
+
         average = _average_plan(query)
         if isinstance(average, FinancialPlanDraft):
             conversation = (
@@ -613,7 +769,12 @@ class AskFinancialQuestionHandler:
                 text="¿De qué periodo quieres que calcule la media?",
                 question="¿De qué periodo quieres que calcule la media?",
                 conversation=conversation,
-                suggestions=["Este mes", "El mes pasado", "Los últimos 12 meses", "En 2025"],
+                suggestions=[
+                    "Este mes",
+                    "El mes pasado",
+                    "Los últimos 12 meses",
+                    f"En {query.today.year}",
+                ],
             )
             return
         if average is not None:
@@ -751,9 +912,16 @@ class AskFinancialQuestionHandler:
         sentence yet — and the capability plus the rank are enough for the follow-up. What the state
         buys is that "¿y el segundo?" no longer has to be recognised as a sentence at all.
         """
+        text = _MISSING_CAPABILITY.get(capability, _CANNOT_YET)
+        if capability == "CATEGORY_EXCLUSION":
+            text = (
+                "Todavia no puedo excluir una categoria de un calculo sin arriesgarme a darte "
+                "el resultado contrario. Puedo mostrarte el total por categorias para que veas "
+                "el alquiler por separado."
+            )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.UNSUPPORTED.value,
-            text=_MISSING_CAPABILITY.get(capability, _CANNOT_YET),
+            text=text,
             conversation=(
                 # A suspended payment survives a refusal, exactly as it survives an answer: it
                 # belongs to the conversation before this turn and stepped aside for it. Replacing
@@ -1248,18 +1416,24 @@ class AskFinancialQuestionHandler:
             )
 
         movements = answer.movements[:limit]
+        selected_ids = tuple(
+            UUID(movement.transaction_id)
+            for movement in movements
+            if movement.transaction_id is not None
+        )
+        remembered = replace(plan, transaction_ids=selected_ids) if selected_ids else plan
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.recent_movements(len(movements)),
             plan=f"últimos {limit} movimientos, todas tus cuentas",
-            conversation=query.conversation.answered(plan),
+            conversation=query.conversation.answered(remembered),
             currency=answer.currency,
             movement_count=len(movements),
             movements=[_spoken_movement(movement) for movement in movements],
         )
 
     async def _movement_example(
-        self, query: AskFinancialQuestionQuery, plan: FinancialPlan
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, limit: int = 1
     ) -> AskFinancialQuestionResult:
         """One concrete row from the last answer, without asking the model what «esos» means."""
         scoped = await self._scoped(plan, query)
@@ -1284,16 +1458,160 @@ class AskFinancialQuestionHandler:
                 conversation=query.conversation,
             )
 
-        movement = next(iter(answer.movements), None)
+        movements = answer.movements[:limit]
+        movement = next(iter(movements), None)
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
-            text=answer_writer.movement_example(movement, answer.currency),
+            text=answer_writer.movement_examples(movements, answer.currency),
             plan=answer_writer.describe(plan),
             conversation=query.conversation,
             currency=answer.currency,
             total_minor=movement.amount_minor if movement is not None else None,
-            movement_count=1 if movement is not None else 0,
-            movements=[_spoken_movement(movement)] if movement is not None else [],
+            movement_count=len(movements),
+            movements=[_spoken_movement(item) for item in movements],
+        )
+
+    async def _group_reference(
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, difference: bool
+    ) -> AskFinancialQuestionResult:
+        """Answer a pronoun about the grouped result already on screen.
+
+        The group values are queried again rather than stored in conversation state. That keeps
+        the client carrying meaning (the validated plan), not cached financial data, while making
+        "what comes after that?" and "what is the difference?" real follow-ups.
+        """
+        scoped = await self._scoped(plan, query)
+        try:
+            answer = await self._queries.run(
+                scoped,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido la referencia, pero el banco ha rechazado la consulta.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        groups = [group for group in answer.groups if group.movement_count > 0]
+        if difference:
+            if len(groups) < 2:
+                text = "No hay dos resultados con movimientos entre los que calcular la diferencia."
+            else:
+                first, second = groups[0], groups[1]
+                high, low = (
+                    (first, second) if first.total_minor >= second.total_minor else (second, first)
+                )
+                amount = answer_writer.money(high.total_minor - low.total_minor, answer.currency)
+                text = (
+                    f"Hay {amount} de diferencia: "
+                    f"{category_words.name_of(high.key)} supera a "
+                    f"{category_words.name_of(low.key)}."
+                )
+        elif len(groups) < 2:
+            text = "No hay un segundo resultado en ese desglose."
+        else:
+            second = groups[1]
+            name = (
+                category_words.name_of(second.key)
+                if plan.group_by is GroupBy.CATEGORY
+                else second.key
+            )
+            text = (
+                f"El siguiente es {name}: "
+                f"{answer_writer.money(second.total_minor, answer.currency)}, "
+                f"en {second.movement_count} "
+                f"{'movimiento' if second.movement_count == 1 else 'movimientos'}."
+            )
+        result = _answered(plan, answer, query.conversation, query.sentence)
+        return replace(result, text=text)
+
+    async def _compare_periods(
+        self,
+        query: AskFinancialQuestionQuery,
+        earlier: FinancialPlan,
+        latest: FinancialPlan,
+    ) -> AskFinancialQuestionResult:
+        """Compare the two compatible financial questions immediately behind this turn."""
+        try:
+            earlier_answer = await self._queries.run(
+                await self._scoped(earlier, query),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+            latest_answer = await self._queries.run(
+                await self._scoped(latest, query),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido los dos periodos, pero el banco ha rechazado la comparación.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        if earlier_answer.currency != latest_answer.currency:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="No puedo comparar importes expresados en monedas distintas.",
+                conversation=query.conversation,
+            )
+
+        earlier_window = answer_writer.window_of(earlier)
+        latest_window = answer_writer.window_of(latest)
+        earlier_money = answer_writer.money(earlier_answer.total_minor, earlier_answer.currency)
+        latest_money = answer_writer.money(latest_answer.total_minor, latest_answer.currency)
+        difference = abs(latest_answer.total_minor - earlier_answer.total_minor)
+        difference_money = answer_writer.money(difference, latest_answer.currency)
+        noun = "gasto" if latest.direction is Direction.EXPENSE else "importe"
+        if latest_answer.total_minor == earlier_answer.total_minor:
+            conclusion = f"El {noun} fue el mismo en ambos periodos."
+        else:
+            higher_window = (
+                latest_window
+                if latest_answer.total_minor > earlier_answer.total_minor
+                else earlier_window
+            )
+            conclusion = f"El {noun} fue {difference_money} mayor {higher_window}."
+
+        movements = (*latest_answer.movements, *earlier_answer.movements)
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=(
+                f"{latest_window.capitalize()}: {latest_money}; "
+                f"{earlier_window}: {earlier_money}. {conclusion}"
+            ),
+            plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
+            conversation=query.conversation.with_active(None),
+            currency=latest_answer.currency,
+            total_minor=latest_answer.total_minor - earlier_answer.total_minor,
+            movement_count=latest_answer.movement_count + earlier_answer.movement_count,
+            groups=[
+                SpokenGroup(latest_window, latest_answer.total_minor, latest_answer.movement_count),
+                SpokenGroup(
+                    earlier_window, earlier_answer.total_minor, earlier_answer.movement_count
+                ),
+            ],
+            movements=[_spoken_movement(movement) for movement in movements],
         )
 
     async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
@@ -1315,9 +1633,22 @@ class AskFinancialQuestionHandler:
         The holder's account directory is fetched only for an explicit custom-name form. Fixed
         kinds retain the existing summary path, while widening needs no list at all.
         """
-        named = account_words.named_in(query.sentence)
+        if plan.group_by is GroupBy.ACCOUNT:
+            return replace(
+                plan,
+                across_accounts=True,
+                only_account_id=None,
+                only_account_ids=(),
+            )
+
+        excluded = frozenset(account_words.excluded_in(query.sentence))
+        named = tuple(
+            kind for kind in account_words.named_in(query.sentence) if kind not in excluded
+        )
         explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
-        if not named and not explicit_custom:
+        if not named and not excluded and not explicit_custom:
+            if plan.only_account_id is not None or plan.only_account_ids:
+                return plan
             return replace(plan, across_accounts=True)
 
         if not named and self._account_directory is not None:
@@ -1364,7 +1695,11 @@ class AskFinancialQuestionHandler:
         wanted = (
             [holding for holding in summary.holdings if holding.display_name in custom]
             if custom
-            else [holding for holding in summary.holdings if holding.kind in named]
+            else [
+                holding
+                for holding in summary.holdings
+                if holding.kind in named or (not named and holding.kind not in excluded)
+            ]
         )
         if not wanted:
             # None of that kind. Narrowing to nothing would look like a genuinely empty period.
@@ -1438,6 +1773,17 @@ class AskFinancialQuestionHandler:
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
         scoped = await self._scoped(plan, query)
+        # The ordinary all-accounts default is execution policy, not conversational data. An
+        # explicit account choice is different: losing it makes the very next ellipsis widen back
+        # to every account. Keep only scopes the user actually selected (plus ACCOUNT breakdown,
+        # whose meaning is intrinsically across accounts).
+        remembered = (
+            scoped
+            if scoped.only_account_id is not None
+            or scoped.only_account_ids
+            or plan.group_by is GroupBy.ACCOUNT
+            else plan
+        )
         for attempt in range(self._read_attempts):
             try:
                 answer = await self._queries.run(
@@ -1455,7 +1801,7 @@ class AskFinancialQuestionHandler:
                     text=(
                         "He entendido la pregunta, pero la consulta que he construido no es válida."
                     ),
-                    plan=answer_writer.describe(plan),
+                    plan=answer_writer.describe(remembered),
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
@@ -1467,8 +1813,8 @@ class AskFinancialQuestionHandler:
                         "El banco no ha respondido. He conservado esta consulta para que puedas "
                         "reintentarlo sin volver a escribirla."
                     ),
-                    plan=answer_writer.describe(plan),
-                    conversation=query.conversation.awaiting_retry(plan),
+                    plan=answer_writer.describe(remembered),
+                    conversation=query.conversation.awaiting_retry(remembered),
                     suggestions=query_recovery.retry_suggestions(),
                 )
 
@@ -1534,7 +1880,7 @@ class AskFinancialQuestionHandler:
                     # stays as the last answered one, which is what makes the reply — "Spotify" —
                     # an ordinary follow-up carrying this window instead of a bare word nobody can
                     # date.
-                    answered = _answered(plan, answer, query.conversation, query.sentence)
+                    answered = _answered(remembered, answer, query.conversation, query.sentence)
                     return replace(
                         answered,
                         text=(f"{answered.text}\n¿Querías solo {answer_writer.listed(nearly)}?"),
@@ -1583,7 +1929,7 @@ class AskFinancialQuestionHandler:
                     suggestions=list(did_you_mean),
                 )
 
-        return _answered(plan, answer, query.conversation, query.sentence)
+        return _answered(remembered, answer, query.conversation, query.sentence)
 
 
 # One sentence per missing capability, keyed by the guard's family name.
@@ -1596,6 +1942,11 @@ class AskFinancialQuestionHandler:
 # Each one says what is missing and what to ask instead, because the second half is the only part
 # the user can act on. Spanish, like every string a person reads.
 _MISSING_CAPABILITY: Final[dict[str, str]] = {
+    "CATEGORY_EXCLUSION": (
+        "TodavÃ­a no puedo excluir una categorÃ­a de un cÃ¡lculo sin arriesgarme a darte el "
+        "resultado contrario. Puedo darte el total por categorÃ­as para que veas el alquiler por "
+        "separado."
+    ),
     "INVESTING": (
         "Todavía no sé sumar lo que has invertido en un periodo: el dinero que entra en el fondo "
         "son traspasos entre tus cuentas y no puedo separarlos del resto. Pregúntame «¿cuánto "
@@ -1616,8 +1967,9 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "separado: lo que ingresas y lo que gastas en esa categoría."
     ),
     "COMPARISON": (
-        "Todavía no comparo dos periodos en la misma respuesta. Pregúntame por uno y luego por "
-        "el otro, y los ves seguidos."
+        "Puedo comparar dos periodos que acabes de consultar: pregúntame por uno, luego por el "
+        "otro y dime «compáralos». Todavía no interpreto dos periodos nuevos dentro de una sola "
+        "frase."
     ),
     "FORECAST": "Solo consulto lo que ya ha pasado, así que no hago previsiones ni estimaciones.",
     "ADVICE": (
@@ -1634,6 +1986,333 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
 
+_AVERAGE_PERIOD_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:el\s+|la\s+)?(?:"
+    r"(?:por|al|cada)\s+dia|(?:por|a\s+la|cada)\s+semana|(?:por|al|cada)\s+mes"
+    r"|diari[oa]|semanal|semanl|semnal|mensual(?:mente)?|mensula|mesnual"
+    r")$"
+)
+_NATURAL_PERIOD_AVERAGE_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:eso\s+)?cuanto\s+(?:sale|seria|es)\s+"
+    r"(?:por|al|a\s+la|cada)\s+(?P<unit>dia|semana|mes)$"
+)
+_AVERAGE_MOVEMENT_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:por\s+(?:movimiento|operacion|compra|pago|cargo|ingreso)s?"
+    r"|(?:el\s+)?ticket\s+medio)$"
+)
+_SALARY_ACCOUNT_FOLLOW_UP: Final = re.compile(
+    r"^(?:en\s+)?la\s+que\s+(?:ingres\w*|cobr\w*)\s+(?:la\s+)?nomina"
+    r"(?:\s+(?:vaya|vamos))?(?:\s+[a-z])?$"
+)
+_ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
+    r"^(?:ahora\s+)?(?:solo|solamente)\b|\b(?:no|menos|excepto|salvo)\s+"
+    r"(?:el|la|los|las|mi|mis)?\s*(?:fondo|hucha|cuenta)\b"
+)
+_CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
+    r"^(?:(?:y|ahora)\s+)?(?:solo\s+)?en\s+"
+    r"|^(?:ahora\s+)?(?:solo|solamente)\b"
+    r"|^perdona\b.{0,35}\b(?:queria|refiero|referia)\b"
+    r"|^volvamos?\s+a\b"
+    r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
+)
+_COUNT_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?cuant[oa]s?\s+(?:veces|compras|movimientos|operaciones|pagos|cargos)\b"
+)
+_SUM_EXPENSE_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:gaste|gastado|pague|pagado|compre|comprado)\b"
+)
+_SUM_INCOME_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:ingrese|ingresado|cobre|cobrado|recibi|recibido)\b"
+)
+_DIRECTION_ONLY_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:ahora\s+)?solo\s+(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
+)
+_TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
+    r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"
+    r"\b(?:gast|pag|compr)\w*\b.{0,18}\bmas\b"
+)
+_RANKING_REQUEST: Final = re.compile(
+    r"\b(?:cual|que)\b.{0,30}\b"
+    r"(?:gasto|ingreso|movimiento|compra|pago|cargo|cobro|nomina|sueldo|salario)\b.{0,30}"
+    r"\b(?:mas\s+(?:alto|alta|caro|cara|grande)|mayor)\b"
+)
+_COMPARISON_DIFFERENCE: Final = re.compile(
+    r"^(?:y\s+)?(?:cuanta|que)\s+diferencia(?:\s+hay)?(?:\s+entre\s+(?:las|esas)\s+dos)?$"
+)
+_NEXT_GROUP: Final = re.compile(
+    r"^(?:y\s+)?(?:despues\s+de\s+(?:eso|esa|ese)|cual\s+va\s+despues|el\s+siguiente)$"
+)
+_RANKED_DATE: Final = re.compile(
+    r"^(?:y\s+)?(?:esa|ese|esta|este)?\s*,?\s*(?:de\s+)?que\s+fecha\s+(?:es|fue)$"
+    r"|^(?:y\s+)?cuando\s+(?:fue|ocurrio|entro|salio)$"
+)
+_PERIOD_COMPARISON_REFERENCE: Final = re.compile(
+    r"^(?:vale\s+|bueno\s+|y\s+)?(?:"
+    r"compara(?:los|las|melos|melas)?"
+    r"(?:\s+(?:esos?|esas?|los|las)?\s*dos\s+(?:periodos?|meses?|semanas?))?"
+    r"|hazme\s+una\s+comparacion(?:\s+de\s+(?:los|esos)\s+dos)?"
+    r"|(?:en\s+)?(?:cual|que)\s+(?:de\s+los\s+dos\s+)?"
+    r"(?:gaste|he\s+gastado|ingrese|he\s+ingresado|hubo)\s+mas"
+    r")(?:\s+por\s+favor)?$"
+)
+
+
+def _period_comparison_plans(
+    query: AskFinancialQuestionQuery,
+) -> tuple[FinancialPlan, FinancialPlan] | None:
+    """Resolve a comparison pronoun only when the stored plans differ solely by window."""
+    if not _PERIOD_COMPARISON_REFERENCE.fullmatch(_clean_turn(query.sentence)):
+        return None
+    latest = query.conversation.last_plan
+    earlier = query.conversation.prior_plan
+    if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
+        return None
+    if (latest.period, latest.date_range) == (earlier.period, earlier.date_range):
+        return None
+
+    scope = (
+        "direction",
+        "categories",
+        "merchants",
+        "include_internal",
+        "across_accounts",
+        "only_account_id",
+        "only_account_ids",
+        "transaction_ids",
+    )
+    if any(getattr(latest, field_name) != getattr(earlier, field_name) for field_name in scope):
+        return None
+    if latest.transaction_ids:
+        return None
+
+    # A previous answer may have been grouped or averaged. The comparison asks which period had
+    # more money, so both sides become total queries without changing their filters or windows.
+    return (
+        replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
+        replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
+    )
+
+
+def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """Patch explicit filters and calculations onto the last validated financial query."""
+    previous = query.conversation.last_plan
+    if not isinstance(previous, FinancialPlan):
+        return None
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
+    facts = explicit_facts.read(query.sentence, today=query.today)
+
+    # A turn containing only a new window patches the query already on screen. Replanning
+    # "en lo que llevamos de aÃ±o" from scratch discarded both categories in a comparison.
+    if (
+        facts.window is not None
+        and not facts.names_a_category
+        and facts.metric is None
+        and facts.direction is None
+        and len(folded.split()) <= 8
+        and not re.search(r"\bano\s+(?:anterior|pasado)\b", folded)
+        and capability_guard.unsupported_reason(query.sentence) is None
+    ):
+        patched = explicit_facts.enforce(previous, facts)
+        logger.info(
+            "turn.window",
+            extra={
+                "explicit": _window_of(patched),
+                "planned": _window_of(previous),
+                "inherited": _window_of(previous),
+            },
+        )
+        return patched
+
+    if facts.asks_comparison_reference and previous.group_by is not GroupBy.NONE:
+        return previous
+
+    if _TOP_MERCHANT_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(
+                previous,
+                direction=Direction.EXPENSE,
+                merchants=(),
+                group_by=GroupBy.MERCHANT,
+                metric=Metric.SUM,
+            ),
+            facts,
+        )
+
+    named = category_words.precisely_named_in(query.sentence)
+    if named and _CATEGORY_FILTER_FOLLOW_UP.search(folded):
+        group_by = (
+            GroupBy.NONE
+            if previous.group_by is GroupBy.CATEGORY and len(named) == 1
+            else previous.group_by
+        )
+        return explicit_facts.enforce(
+            replace(previous, categories=named, merchants=(), group_by=group_by), facts
+        )
+
+    # These are deliberately short ellipses. A complete question can introduce a merchant or a
+    # category the closed vocabulary does not know, and inheriting the old filters there would
+    # answer a different question with a plausible figure.
+    if named or len(folded.split()) > 5:
+        return None
+    if _COUNT_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(replace(previous, metric=Metric.COUNT), facts)
+    if _SUM_EXPENSE_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(previous, direction=Direction.EXPENSE, metric=Metric.SUM), facts
+        )
+    if _SUM_INCOME_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(previous, direction=Direction.INCOME, metric=Metric.SUM), facts
+        )
+    direction_only = _DIRECTION_ONLY_FOLLOW_UP.fullmatch(folded)
+    if direction_only:
+        direction = (
+            Direction.INCOME
+            if direction_only.group("direction").startswith("ingreso")
+            else Direction.EXPENSE
+        )
+        return replace(previous, direction=direction)
+    return None
+
+
+def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements | None:
+    """Turn a superlative into a ranking while retaining the prior window and filters."""
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if facts.asks_top_category or not _RANKING_REQUEST.search(spanish.folded(query.sentence)):
+        return None
+    previous = query.conversation.last_plan
+    window = facts.window or (
+        previous.period or previous.date_range if previous is not None else None
+    )
+    if window is None:
+        return None
+    folded = spanish.folded(query.sentence)
+    if re.search(r"\bingres|\bcobr|\bnomina|\bsueldo|\bsalario", folded):
+        direction = Direction.INCOME
+    elif re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
+        direction = Direction.EXPENSE
+    elif previous is not None:
+        direction = previous.direction
+    else:
+        direction = Direction.ALL
+    named = category_words.precisely_named_in(query.sentence)
+    return TopMovements(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=named or (previous.categories if previous is not None else ()),
+        merchants=() if named else (previous.merchants if previous is not None else ()),
+        rank=1,
+    )
+
+
+def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """Focus the previous query on an account named as a short conversational reply."""
+    previous = query.conversation.last_plan
+    if not isinstance(previous, FinancialPlan) or not account_words.named_in(query.sentence):
+        return None
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    if not _SALARY_ACCOUNT_FOLLOW_UP.fullmatch(folded) and not _ACCOUNT_SELECTION_FOLLOW_UP.search(
+        folded
+    ):
+        if len(folded.split()) > 4:
+            return None
+        if window_words.window_in(query.sentence, today=query.today) is not None:
+            return None
+    selected = replace(previous, group_by=GroupBy.NONE)
+    window = window_words.window_in(query.sentence, today=query.today)
+    if window is None:
+        return selected
+    return replace(
+        selected,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+    )
+
+
+def _deterministic_breakdown_plan(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """Build the two common breakdowns whose meaning is fully stated by the sentence."""
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if not (
+        facts.asks_top_category
+        or facts.asks_account_breakdown
+        or (facts.compared_categories and facts.metric is None)
+    ):
+        return None
+
+    previous = query.conversation.last_plan
+    previous_financial = previous if isinstance(previous, FinancialPlan) else None
+    window = facts.window or (
+        previous.period or previous.date_range if previous is not None else None
+    )
+    direction = (
+        Direction.EXPENSE
+        if facts.asks_top_category or facts.compared_categories
+        else (previous.direction if previous is not None else (facts.direction or Direction.ALL))
+    )
+    group_by = (
+        GroupBy.CATEGORY
+        if facts.asks_top_category or facts.compared_categories
+        else GroupBy.ACCOUNT
+    )
+    categories = (
+        facts.compared_categories
+        if facts.compared_categories
+        else (
+            () if facts.asks_top_category else (previous.categories if previous is not None else ())
+        )
+    )
+    merchants = (
+        () if facts.asks_top_category else (previous.merchants if previous is not None else ())
+    )
+    include_internal = previous_financial.include_internal if previous_financial else False
+    across_accounts = (
+        True
+        if facts.asks_account_breakdown
+        else (previous_financial.across_accounts if previous_financial else False)
+    )
+    only_account_id = (
+        None
+        if facts.asks_account_breakdown
+        else (previous_financial.only_account_id if previous_financial else None)
+    )
+    only_account_ids = (
+        ()
+        if facts.asks_account_breakdown
+        else (previous_financial.only_account_ids if previous_financial else ())
+    )
+    transaction_ids = previous_financial.transaction_ids if previous_financial else ()
+    if window is None:
+        return FinancialPlanDraft(
+            direction=direction,
+            categories=categories,
+            merchants=merchants,
+            group_by=group_by,
+            metric=Metric.SUM,
+            include_internal=include_internal,
+            across_accounts=across_accounts,
+            only_account_id=only_account_id,
+            only_account_ids=only_account_ids,
+            transaction_ids=transaction_ids,
+        )
+    return FinancialPlan(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=categories,
+        merchants=merchants,
+        group_by=group_by,
+        metric=Metric.SUM,
+        include_internal=include_internal,
+        across_accounts=across_accounts,
+        only_account_id=only_account_id,
+        only_account_ids=only_account_ids,
+        transaction_ids=transaction_ids,
+    )
+
 
 def _average_plan(
     query: AskFinancialQuestionQuery,
@@ -1645,25 +2324,51 @@ def _average_plan(
     kept as a draft so the next turn can answer it instead of being told the capability is absent.
     """
     facts = explicit_facts.read(query.sentence, today=query.today)
+    previous = query.conversation.last_plan
+    natural_period = _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
+    if natural_period is not None and isinstance(previous, FinancialPlan):
+        groups = {"dia": GroupBy.DAY, "semana": GroupBy.WEEK, "mes": GroupBy.MONTH}
+        return replace(
+            previous,
+            group_by=groups[natural_period.group("unit")],
+            metric=Metric.PERIOD_AVERAGE,
+        )
+    follow_up = _average_follow_up_plan(query, facts, previous)
+    if follow_up is not None:
+        return follow_up
     if facts.metric not in {Metric.AVERAGE, Metric.PERIOD_AVERAGE}:
         return None
 
-    previous = query.conversation.last_plan
     named = category_words.precisely_named_in(query.sentence)
     previous_categories = previous.categories if previous is not None else ()
     previous_merchants = previous.merchants if previous is not None else ()
-    categories = named or previous_categories
-    merchants = () if named else previous_merchants
     asks_to_spend = re.search(
         r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr", spanish.folded(query.sentence)
     )
-    direction = facts.direction or (Direction.EXPENSE if asks_to_spend else None)
+    explicit_direction = facts.direction or (Direction.EXPENSE if asks_to_spend else None)
+    changes_direction = (
+        explicit_direction is not None
+        and previous is not None
+        and explicit_direction is not previous.direction
+    )
+    categories = named or (() if changes_direction else previous_categories)
+    merchants = () if named or changes_direction else previous_merchants
+    direction = explicit_direction
     direction = direction or (previous.direction if previous is not None else None)
     if direction is None:
         direction = _direction_of(categories) if categories else Direction.ALL
 
     if facts.group_by is not None:
         group_by = facts.group_by
+    elif (
+        facts.metric is Metric.AVERAGE
+        and isinstance(previous, FinancialPlan)
+        and previous.metric is Metric.PERIOD_AVERAGE
+        and previous.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+    ):
+        # "Ticket medio" changes the divisor back to movements. A temporal grouping inherited
+        # from the previous period-average would otherwise survive and answer a different question.
+        group_by = GroupBy.NONE
     elif not named and isinstance(previous, FinancialPlan):
         group_by = previous.group_by
     else:
@@ -1690,6 +2395,18 @@ def _average_plan(
             merchants=merchants,
             group_by=group_by,
             metric=facts.metric,
+            include_internal=(
+                previous.include_internal if isinstance(previous, FinancialPlan) else False
+            ),
+            across_accounts=(
+                previous.across_accounts if isinstance(previous, FinancialPlan) else False
+            ),
+            only_account_id=(
+                previous.only_account_id if isinstance(previous, FinancialPlan) else None
+            ),
+            only_account_ids=(
+                previous.only_account_ids if isinstance(previous, FinancialPlan) else ()
+            ),
         )
     return FinancialPlan(
         direction=direction,
@@ -1699,6 +2416,70 @@ def _average_plan(
         merchants=merchants,
         group_by=group_by,
         metric=facts.metric,
+        include_internal=(
+            previous.include_internal if isinstance(previous, FinancialPlan) else False
+        ),
+        across_accounts=(
+            previous.across_accounts if isinstance(previous, FinancialPlan) else False
+        ),
+        only_account_id=(previous.only_account_id if isinstance(previous, FinancialPlan) else None),
+        only_account_ids=(previous.only_account_ids if isinstance(previous, FinancialPlan) else ()),
+    )
+
+
+def _average_follow_up_plan(
+    query: AskFinancialQuestionQuery,
+    facts: explicit_facts.ExplicitFacts,
+    previous: PlannedQuery | None,
+) -> FinancialPlan | None:
+    """Apply short, explicit changes to an average without reconstructing it with a model."""
+    if not isinstance(previous, FinancialPlan) or previous.metric not in {
+        Metric.AVERAGE,
+        Metric.PERIOD_AVERAGE,
+    }:
+        return None
+    # A complete average in the new sentence outranks context. This helper only fills the meaning
+    # of elliptical turns such as "¿y al mes?"; applying it to "coste semanal medio" would retain
+    # the old monthly divisor merely because the sentence also changed category.
+    if facts.metric is not None:
+        return None
+
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    named = category_words.precisely_named_in(query.sentence)
+    metric = previous.metric
+    group_by = previous.group_by
+
+    if _AVERAGE_PERIOD_FOLLOW_UP.fullmatch(folded) and facts.group_by in {
+        GroupBy.DAY,
+        GroupBy.WEEK,
+        GroupBy.MONTH,
+    }:
+        metric = Metric.PERIOD_AVERAGE
+        group_by = facts.group_by
+    elif _AVERAGE_MOVEMENT_FOLLOW_UP.fullmatch(folded):
+        metric = Metric.AVERAGE
+        if group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
+            group_by = GroupBy.NONE
+    elif not (folded.startswith("y ") and (facts.window is not None or named)):
+        return None
+
+    window = facts.window or previous.period or previous.date_range
+    categories = named or previous.categories
+    direction = facts.direction
+    if direction is None:
+        direction = _direction_of(named) if named else previous.direction
+    return FinancialPlan(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=categories,
+        merchants=() if named else previous.merchants,
+        group_by=group_by,
+        metric=metric,
+        include_internal=previous.include_internal,
+        across_accounts=previous.across_accounts,
+        only_account_id=previous.only_account_id,
+        only_account_ids=previous.only_account_ids,
     )
 
 
@@ -1869,11 +2650,16 @@ def _a_bare_shop_name(
         # One or two words. Beyond that it is a sentence, and a sentence has a verb this cannot
         # read — the planner is better at those and this must not take them.
         return None
+    facts = explicit_facts.read(query.sentence, today=query.today)
     if (
         category_words.named_in(query.sentence)
         or account_words.named_in(query.sentence)
-        or explicit_facts.read(query.sentence, today=query.today).window is not None
+        or facts.window is not None
+        or facts.group_by is not None
+        or facts.metric is not None
+        or facts.direction is not None
         or intent_router.asks_for_something_else(query.sentence)
+        or capability_guard.unsupported_reason(query.sentence) is not None
     ):
         # A word another vocabulary already owns. "Gasolina" is a category, "la hucha" an account
         # and "enero" a window, and each of them has a path that answers it properly.
@@ -2080,16 +2866,37 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         merchants=list(plan.merchants),
         group_by=plan.group_by.value,
         metric=plan.metric.value,
+        include_internal=plan.include_internal,
+        across_accounts=plan.across_accounts,
+        only_account_id=str(plan.only_account_id) if plan.only_account_id else None,
+        only_account_ids=[str(account_id) for account_id in plan.only_account_ids],
+        transaction_ids=[str(transaction_id) for transaction_id in plan.transaction_ids],
     )
 
 
 def _recent_movement_count(sentence: str) -> int | None:
+    if _RECENT_UNBOUNDED.search(spanish.folded(sentence)):
+        return 5
     found = _RECENT_MOVEMENTS.search(spanish.folded(sentence))
     if found is None:
         return None
-    written = found.group("count") or found.group("count_first")
+    written = (
+        found.group("count")
+        or found.group("count_before")
+        or found.group("count_before_bare")
+        or found.group("count_first")
+    )
     count = int(written) if written.isdigit() else spanish_numbers.integer(written)
     return count if count is not None and 1 <= count <= 50 else None
+
+
+def _movement_example_count(sentence: str) -> int:
+    folded = spanish.folded(sentence)
+    if re.search(r"\b(?:un\s+par(?:\s+de)?|dos)\s+ejempl", folded):
+        return 2
+    if re.search(r"\btres\s+ejempl", folded):
+        return 3
+    return 1
 
 
 def _spoken_movement(movement: Movement) -> SpokenMovement:
@@ -2110,13 +2917,20 @@ def _answered(
     # question decides which sentence the same figures become, so the reading happens here rather
     # than in the writer — a writer that inspected the question would be a writer with a parser
     # in it.
+    facts = explicit_facts.read(sentence)
+    if facts.asks_when:
+        text = answer_writer.when(answer, plan)
+    elif facts.asks_top_category:
+        text = answer_writer.top_category(answer, plan)
+    elif (
+        facts.compared_categories or facts.asks_comparison_reference
+    ) and plan.metric is Metric.AVERAGE:
+        text = answer_writer.compare_averages(answer, plan)
+    else:
+        text = answer_writer.write(answer, plan)
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
-        text=(
-            answer_writer.when(answer, plan)
-            if explicit_facts.asks_when(sentence)
-            else answer_writer.write(answer, plan)
-        ),
+        text=text,
         plan=answer_writer.describe(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.

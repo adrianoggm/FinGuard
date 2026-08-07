@@ -42,6 +42,18 @@ from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, 
 # the refusal so the answer can say which one, rather than "no puedo con eso".
 _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     (
+        # Category filters are inclusive today. Letting the planner turn "without rent" into
+        # HOUSING_RENT produced the exact opposite figure, which is much worse than naming the
+        # limitation. Account exclusions have their own deterministic path and do not match this
+        # rule because a known category must also be present.
+        "CATEGORY_EXCLUSION",
+        re.compile(
+            r"\b(?:sin\s+contar|sin\s+incluir|quitando|excepto|salvo)\b"
+            r"|\b(?:no|ni)\s+(?:contamos|cuentes|incluyas|metas)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         # A precisely requested per-movement mean is supported. Bare "gasto medio" stays
         # here because it does not say whether the divisor is movements, days or months.
         "AVERAGE",
@@ -288,6 +300,7 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
     ranking = bool(_A_SUPERLATIVE_NOUN.search(folded))
     per_movement_average = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     compared_categories = len(category_words.precisely_named_in(sentence)) >= 2
+    names_a_category = bool(category_words.precisely_named_in(sentence))
     for name, pattern in _FAMILIES:
         if not policy.allows(name):
             continue
@@ -299,6 +312,8 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
         if compared_categories and name == "COMPARISON":
             # One window split into two category groups is one aggregate query. It is
             # unlike comparing two periods, which still needs two independent plans.
+            continue
+        if name == "CATEGORY_EXCLUSION" and not names_a_category:
             continue
         if pattern.search(folded):
             return name

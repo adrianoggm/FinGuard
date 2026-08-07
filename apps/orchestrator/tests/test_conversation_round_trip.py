@@ -72,6 +72,33 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     assert back.last_plan == LAST_MONTH
 
 
+def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
+    earlier = LAST_MONTH
+    latest = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        transaction_ids=(uuid.UUID(int=7), uuid.UUID(int=8)),
+    )
+
+    back = there_and_back(Conversation(last_plan=latest, prior_plan=earlier))
+
+    assert back.last_plan == latest
+    assert back.prior_plan == earlier
+
+
+def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
+    scoped = FinancialPlan(
+        direction=Direction.ALL,
+        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=4),
+        only_account_id=uuid.UUID(int=7),
+    )
+
+    back = there_and_back(IDLE.answered(scoped))
+
+    assert back.last_plan == scoped
+
+
 def test_a_query_waiting_for_a_bank_retry_survives_without_becoming_an_answer() -> None:
     out = Conversation(last_plan=None, retry_plan=LAST_MONTH)
 
