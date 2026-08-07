@@ -109,6 +109,11 @@ _MOVEMENT_EXAMPLE: Final = re.compile(
 logger = logging.getLogger(__name__)
 
 
+def _clean_turn(sentence: str) -> str:
+    """Fold a short conversational turn and remove only punctuation at its edges."""
+    return re.sub(r"[^a-z0-9]+", " ", spanish.folded(sentence)).strip()
+
+
 @dataclass(frozen=True)
 class SpokenGroup:
     key: str
@@ -514,6 +519,15 @@ class AskFinancialQuestionHandler:
             # after a spending question narrow the spending, which is why this reads the turn before
             # rather than the sentence: they are identical sentences and they mean different things.
             intent = Intent.ACCOUNT_BALANCE
+
+        period_comparison = _period_comparison_plans(query)
+        if period_comparison is not None:
+            # Two complete, already validated questions are safer context than asking a model to
+            # reconstruct both from "compáralos". Run them again so the comparison uses current
+            # bank data, while the conversation keeps the pair available for another pronoun.
+            yield Stage("querying")
+            yield await self._compare_periods(query, *period_comparison)
+            return
 
         narrowing = _a_bare_shop_name(query, was) if intent is Intent.FINANCIAL_QUERY else None
         if narrowing is not None:
@@ -1301,6 +1315,86 @@ class AskFinancialQuestionHandler:
             movements=[_spoken_movement(movement)] if movement is not None else [],
         )
 
+    async def _compare_periods(
+        self,
+        query: AskFinancialQuestionQuery,
+        earlier: FinancialPlan,
+        latest: FinancialPlan,
+    ) -> AskFinancialQuestionResult:
+        """Compare the two compatible financial questions immediately behind this turn."""
+        try:
+            earlier_answer = await self._queries.run(
+                await self._scoped(earlier, query),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+            latest_answer = await self._queries.run(
+                await self._scoped(latest, query),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido los dos periodos, pero el banco ha rechazado la comparación.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        if earlier_answer.currency != latest_answer.currency:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="No puedo comparar importes expresados en monedas distintas.",
+                conversation=query.conversation,
+            )
+
+        earlier_window = answer_writer.window_of(earlier)
+        latest_window = answer_writer.window_of(latest)
+        earlier_money = answer_writer.money(earlier_answer.total_minor, earlier_answer.currency)
+        latest_money = answer_writer.money(latest_answer.total_minor, latest_answer.currency)
+        difference = abs(latest_answer.total_minor - earlier_answer.total_minor)
+        difference_money = answer_writer.money(difference, latest_answer.currency)
+        noun = "gasto" if latest.direction is Direction.EXPENSE else "importe"
+        if latest_answer.total_minor == earlier_answer.total_minor:
+            conclusion = f"El {noun} fue el mismo en ambos periodos."
+        else:
+            higher_window = (
+                latest_window
+                if latest_answer.total_minor > earlier_answer.total_minor
+                else earlier_window
+            )
+            conclusion = f"El {noun} fue {difference_money} mayor {higher_window}."
+
+        movements = (*latest_answer.movements, *earlier_answer.movements)
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=(
+                f"{latest_window.capitalize()}: {latest_money}; "
+                f"{earlier_window}: {earlier_money}. {conclusion}"
+            ),
+            plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
+            conversation=query.conversation.with_active(None),
+            currency=latest_answer.currency,
+            total_minor=latest_answer.total_minor - earlier_answer.total_minor,
+            movement_count=latest_answer.movement_count + earlier_answer.movement_count,
+            groups=[
+                SpokenGroup(latest_window, latest_answer.total_minor, latest_answer.movement_count),
+                SpokenGroup(
+                    earlier_window, earlier_answer.total_minor, earlier_answer.movement_count
+                ),
+            ],
+            movements=[_spoken_movement(movement) for movement in movements],
+        )
+
     async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
         """Which of the holder's accounts the question is about.
 
@@ -1621,8 +1715,9 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "separado: lo que ingresas y lo que gastas en esa categoría."
     ),
     "COMPARISON": (
-        "Todavía no comparo dos periodos en la misma respuesta. Pregúntame por uno y luego por "
-        "el otro, y los ves seguidos."
+        "Puedo comparar dos periodos que acabes de consultar: pregúntame por uno, luego por el "
+        "otro y dime «compáralos». Todavía no interpreto dos periodos nuevos dentro de una sola "
+        "frase."
     ),
     "FORECAST": "Solo consulto lo que ya ha pasado, así que no hago previsiones ni estimaciones.",
     "ADVICE": (
@@ -1638,6 +1733,52 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # For a family with nothing specific to say, which today is none of them. It exists so adding a
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
+
+_PERIOD_COMPARISON_REFERENCE: Final = re.compile(
+    r"^(?:vale\s+|bueno\s+|y\s+)?(?:"
+    r"compara(?:los|las|melos|melas)?"
+    r"(?:\s+(?:esos?|esas?|los|las)?\s*dos\s+(?:periodos?|meses?|semanas?))?"
+    r"|hazme\s+una\s+comparacion(?:\s+de\s+(?:los|esos)\s+dos)?"
+    r"|(?:en\s+)?(?:cual|que)\s+(?:de\s+los\s+dos\s+)?"
+    r"(?:gaste|he\s+gastado|ingrese|he\s+ingresado|hubo)\s+mas"
+    r")(?:\s+por\s+favor)?$"
+)
+
+
+def _period_comparison_plans(
+    query: AskFinancialQuestionQuery,
+) -> tuple[FinancialPlan, FinancialPlan] | None:
+    """Resolve a comparison pronoun only when the stored plans differ solely by window."""
+    if not _PERIOD_COMPARISON_REFERENCE.fullmatch(_clean_turn(query.sentence)):
+        return None
+    latest = query.conversation.last_plan
+    earlier = query.conversation.prior_plan
+    if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
+        return None
+    if (latest.period, latest.date_range) == (earlier.period, earlier.date_range):
+        return None
+
+    scope = (
+        "direction",
+        "categories",
+        "merchants",
+        "include_internal",
+        "across_accounts",
+        "only_account_id",
+        "only_account_ids",
+        "transaction_ids",
+    )
+    if any(getattr(latest, field_name) != getattr(earlier, field_name) for field_name in scope):
+        return None
+    if latest.transaction_ids:
+        return None
+
+    # A previous answer may have been grouped or averaged. The comparison asks which period had
+    # more money, so both sides become total queries without changing their filters or windows.
+    return (
+        replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
+        replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
+    )
 
 
 def _average_plan(

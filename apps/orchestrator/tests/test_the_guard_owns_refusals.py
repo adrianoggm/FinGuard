@@ -17,6 +17,7 @@ sentence does not contain, and it never overrides a refusal the guard actually m
 """
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
@@ -257,6 +258,42 @@ async def test_an_example_reuses_the_previous_query(sentence: str) -> None:
     assert answer.movement_count == 1
     assert answer.text.startswith("Por ejemplo: Comercio 5")
     assert answer.conversation.last_plan == previous
+
+
+@pytest.mark.parametrize("sentence", ["Compáralos", "¿En cuál gasté más?"])
+async def test_two_consecutive_period_queries_can_be_compared_naturally(sentence: str) -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.period is not None
+            total = 8_000 if plan.period.period is Period.LAST_MONTH else 11_500
+            return QueryAnswer(currency="EUR", total_minor=total, movement_count=4)
+
+    earlier = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("RESTAURANTS",),
+        group_by=GroupBy.MERCHANT,
+    )
+    latest = replace(earlier, period=RelativePeriod(Period.THIS_MONTH), group_by=GroupBy.NONE)
+    conversation = Conversation(last_plan=latest, prior_plan=earlier)
+    planner = GivesUp()
+    ledger = PeriodLedger()
+
+    answer = await asked(sentence, planner, ledger, conversation)
+
+    assert planner.asked == 0
+    assert len(ledger.plans) == 2
+    assert all(plan.metric is Metric.SUM and plan.group_by is GroupBy.NONE for plan in ledger.plans)
+    assert "115,00 €" in answer.text
+    assert "80,00 €" in answer.text
+    assert "35,00 € mayor" in answer.text
+    assert answer.conversation.last_plan == latest
+    assert answer.conversation.prior_plan == earlier
 
 
 async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement() -> None:
