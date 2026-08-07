@@ -580,6 +580,13 @@ class AskFinancialQuestionHandler:
             yield await self._movement_example(query, previous)
             return
 
+        contextual = _contextual_follow_up_plan(query)
+        if contextual is not None:
+            yield Stage("planned", answer_writer.describe(contextual))
+            yield Stage("querying")
+            yield await self._answer(query, contextual)
+            return
+
         if intent is Intent.CORRECTION:
             if isinstance(previous, FinancialPlan) and intent_router.is_bare_correction(
                 query.sentence
@@ -1842,6 +1849,29 @@ _ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
     r"^(?:ahora\s+)?(?:solo|solamente)\b|\b(?:no|menos|excepto|salvo)\s+"
     r"(?:el|la|los|las|mi|mis)?\s*(?:fondo|hucha|cuenta)\b"
 )
+_CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
+    r"^(?:(?:y|ahora)\s+)?(?:solo\s+)?en\s+"
+    r"|^(?:ahora\s+)?(?:solo|solamente)\b"
+    r"|^perdona\b.{0,35}\b(?:queria|refiero|referia)\b"
+    r"|^volvamos?\s+a\b"
+    r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
+)
+_COUNT_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?cuant[oa]s?\s+(?:veces|compras|movimientos|operaciones|pagos|cargos)\b"
+)
+_SUM_EXPENSE_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:gaste|gastado|pague|pagado|compre|comprado)\b"
+)
+_SUM_INCOME_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:ingrese|ingresado|cobre|cobrado|recibi|recibido)\b"
+)
+_DIRECTION_ONLY_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:ahora\s+)?solo\s+(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
+)
+_TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
+    r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"
+    r"\b(?:gast|pag|compr)\w*\b.{0,18}\bmas\b"
+)
 _PERIOD_COMPARISON_REFERENCE: Final = re.compile(
     r"^(?:vale\s+|bueno\s+|y\s+)?(?:"
     r"compara(?:los|las|melos|melas)?"
@@ -1887,6 +1917,89 @@ def _period_comparison_plans(
         replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
         replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
     )
+
+
+def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """Patch explicit filters and calculations onto the last validated financial query."""
+    previous = query.conversation.last_plan
+    if not isinstance(previous, FinancialPlan):
+        return None
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
+    facts = explicit_facts.read(query.sentence, today=query.today)
+
+    # A turn containing only a new window patches the query already on screen. Replanning
+    # "en lo que llevamos de aÃ±o" from scratch discarded both categories in a comparison.
+    if (
+        facts.window is not None
+        and not facts.names_a_category
+        and facts.metric is None
+        and facts.direction is None
+        and len(folded.split()) <= 8
+        and not re.search(r"\bano\s+(?:anterior|pasado)\b", folded)
+        and capability_guard.unsupported_reason(query.sentence) is None
+    ):
+        patched = explicit_facts.enforce(previous, facts)
+        logger.info(
+            "turn.window",
+            extra={
+                "explicit": _window_of(patched),
+                "planned": _window_of(previous),
+                "inherited": _window_of(previous),
+            },
+        )
+        return patched
+
+    if facts.asks_comparison_reference and previous.group_by is not GroupBy.NONE:
+        return previous
+
+    if _TOP_MERCHANT_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(
+                previous,
+                direction=Direction.EXPENSE,
+                merchants=(),
+                group_by=GroupBy.MERCHANT,
+                metric=Metric.SUM,
+            ),
+            facts,
+        )
+
+    named = category_words.precisely_named_in(query.sentence)
+    if named and _CATEGORY_FILTER_FOLLOW_UP.search(folded):
+        group_by = (
+            GroupBy.NONE
+            if previous.group_by is GroupBy.CATEGORY and len(named) == 1
+            else previous.group_by
+        )
+        return explicit_facts.enforce(
+            replace(previous, categories=named, merchants=(), group_by=group_by), facts
+        )
+
+    # These are deliberately short ellipses. A complete question can introduce a merchant or a
+    # category the closed vocabulary does not know, and inheriting the old filters there would
+    # answer a different question with a plausible figure.
+    if named or len(folded.split()) > 5:
+        return None
+    if _COUNT_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(replace(previous, metric=Metric.COUNT), facts)
+    if _SUM_EXPENSE_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(previous, direction=Direction.EXPENSE, metric=Metric.SUM), facts
+        )
+    if _SUM_INCOME_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(previous, direction=Direction.INCOME, metric=Metric.SUM), facts
+        )
+    direction_only = _DIRECTION_ONLY_FOLLOW_UP.fullmatch(folded)
+    if direction_only:
+        direction = (
+            Direction.INCOME
+            if direction_only.group("direction").startswith("ingreso")
+            else Direction.EXPENSE
+        )
+        return replace(previous, direction=direction)
+    return None
 
 
 def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:

@@ -686,9 +686,10 @@ async def test_a_decline_stops_the_stream_without_querying() -> None:
 # --- context -----------------------------------------------------------------------
 
 
-async def test_the_previous_plan_reaches_the_planner() -> None:
+async def test_a_known_category_follow_up_uses_the_previous_plan_without_the_model() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
-    handler = chat(planner, FakeLedger(ANSWER))
+    ledger = FakeLedger(ANSWER)
+    handler = chat(planner, ledger)
     context = plan(categories=("GROCERIES",))
 
     await handler.handle(
@@ -700,7 +701,11 @@ async def test_the_previous_plan_reaches_the_planner() -> None:
         )
     )
 
-    assert planner.previous == context
+    assert planner.asked is None
+    assert planner.previous is None
+    assert ledger.plan is not None
+    assert ledger.plan.period == context.period
+    assert ledger.plan.categories == ("TRANSPORT_FUEL",)
 
 
 async def test_an_answer_carries_the_context_of_the_next_question() -> None:
@@ -831,9 +836,14 @@ async def test_an_ordinary_follow_up_still_inherits() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     before = plan(categories=("RESTAURANTS",))
 
-    await chat(planner, FakeLedger(ANSWER)).handle(spoken("¿y este mes?", before))
+    ledger = FakeLedger(ANSWER)
+    await chat(planner, ledger).handle(spoken("¿y este mes?", before))
 
-    assert planner.previous == before
+    assert planner.asked is None, "an explicit window does not need to be reinterpreted"
+    assert ledger.plan is not None
+    assert ledger.plan.categories == before.categories
+    assert ledger.plan.period is not None
+    assert ledger.plan.period.period is Period.THIS_MONTH
 
 
 # --- finishing a clarification ------------------------------------------------------

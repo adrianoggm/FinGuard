@@ -526,6 +526,108 @@ async def test_principal_and_salary_account_replies_focus_the_previous_query() -
     assert salary_account.outcome == PlanningOutcome.PLANNED.value
 
 
+async def test_a_category_follow_up_keeps_the_year_instead_of_defaulting_to_last_month() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+
+    await asked("Y en gasolina?", planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.period == previous.period
+    assert ledger.plan.categories == ("TRANSPORT_FUEL",)
+
+
+async def test_a_category_correction_replaces_only_the_category() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("TRANSPORT_FUEL",),
+    )
+
+    await asked(
+        "Perdona queria decir restaurantes",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.period == previous.period
+    assert ledger.plan.categories == ("RESTAURANTS",)
+
+
+async def test_only_one_of_two_compared_categories_becomes_a_single_filter() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.AVERAGE,
+    )
+
+    await asked("Ahora solo supermercados", planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.group_by is GroupBy.NONE
+    assert ledger.plan.metric is Metric.AVERAGE
+
+
+async def test_short_count_and_sum_questions_patch_the_last_query() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("GROCERIES",),
+        metric=Metric.AVERAGE,
+    )
+
+    counted = await asked(
+        "Cuantas compras hice?", planner, ledger, Conversation(last_plan=previous)
+    )
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.COUNT
+    assert ledger.plan.period == previous.period
+
+    await asked("Y cuanto gaste?", planner, ledger, counted.conversation)
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.SUM
+    assert ledger.plan.categories == ("GROCERIES",)
+
+
+async def test_a_comparison_reference_reuses_the_two_categories() -> None:
+    planner = GivesUp()
+    ledger = ComparisonLedger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.AVERAGE,
+    )
+
+    result = await asked(
+        "Cual de las dos es mayor?", planner, ledger, Conversation(last_plan=previous)
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan == replace(previous, across_accounts=True)
+    assert "medias por movimiento" in result.text.lower()
+
+
 async def test_account_selection_can_include_two_and_exclude_the_fund() -> None:
     planner = GivesUp()
     ledger = Ledger()
