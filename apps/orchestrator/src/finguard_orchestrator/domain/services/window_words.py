@@ -42,7 +42,9 @@ type Window = RelativePeriod | AbsoluteRange
 
 # Phrases that name a window on their own, longest first. Folded, so accents and case do not matter.
 _NAMED: Final[tuple[tuple[str, Period], ...]] = (
+    ("en lo que llevamos de ano", Period.THIS_YEAR),
     ("en lo que va de ano", Period.THIS_YEAR),
+    ("en lo que llevamos de mes", Period.THIS_MONTH),
     ("en lo que va de mes", Period.THIS_MONTH),
     ("la semana pasada", Period.LAST_WEEK),
     ("el mes pasado", Period.LAST_MONTH),

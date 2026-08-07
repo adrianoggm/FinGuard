@@ -60,6 +60,13 @@ def test_accents_are_not_required() -> None:
     assert account_words.named_in("lo de la nomina") == ("CURRENT",)
 
 
+@pytest.mark.parametrize(
+    "sentence", ["La principal", "mi cuenta principal", "la princpal", "la nomnia"]
+)
+def test_principal_is_a_natural_name_for_the_current_account(sentence: str) -> None:
+    assert account_words.named_in(sentence) == ("CURRENT",)
+
+
 def test_an_explicit_custom_account_reference_is_recognised_without_knowing_its_name() -> None:
     assert account_words.explicitly_names_a_custom_account("en mi cuenta Vacaciones")
     assert account_words.names_a_custom_destination("mueve 20 a la cuenta Vacaciones")

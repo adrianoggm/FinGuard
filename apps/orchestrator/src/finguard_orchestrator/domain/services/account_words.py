@@ -33,7 +33,13 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
         "la cuenta corriente",
         "cuenta corriente",
         "la corriente",
+        "la cuenta principal",
+        "cuenta principal",
+        "la principal",
+        "la princpal",
+        "cuenta princpal",
         "la nómina",
+        "la nomnia",
         "la cuenta nómina",
     ),
     "SAVINGS": (

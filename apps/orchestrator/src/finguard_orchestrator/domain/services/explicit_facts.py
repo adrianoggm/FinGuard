@@ -134,9 +134,12 @@ _ACCOUNT_BREAKDOWN: Final = re.compile(
 )
 _COMPARES: Final = re.compile(
     r"\bcompara|\bcomparacion\b|\bfrente\s+a\b|\bpor\s+separado\b|\buna\s+y\s+otra\b"
+    r"|\bentre\b|\bcual\b.{0,35}\b(?:mayor|menor|mas\s+alt[oa]|mas\s+baj[oa])\b"
+    r"|\bmas\b.{0,45}\b(?:o|que)\b"
 )
 _INCOME: Final = re.compile(
-    r"\bingres(?:o|os|e|ado|aron)\b|\bcobr(?:e|ado|aron|os?)\b|\brecibi(?:do)?\b"
+    r"\bingres(?:ar|amos|o|os|e|ado|aron)\b|\bcobr(?:ar|amos|e|ado|aron|os?)\b"
+    r"|\brecibi(?:do)?\b"
     r"|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
 )
 _EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
