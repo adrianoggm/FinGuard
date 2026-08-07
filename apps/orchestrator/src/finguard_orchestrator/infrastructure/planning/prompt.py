@@ -156,6 +156,8 @@ When one *is* asked for, these are the words that choose it:
 - MERCHANT — comercios, tiendas, establecimientos, sitios, "¿en qué comercio?". It \
 breaks the total down across **all** of them and cannot narrow to one, so a sentence \
 naming a shop is the clarification case above and not a grouping.
+- ACCOUNT — cuentas, cada cuenta, "desglose por cuenta". It breaks the same query down \
+across all accounts owned by the holder.
 
 "Semana a semana" and "mes a mes" are groupings, not windows: the window is still \
 whatever period the sentence names.

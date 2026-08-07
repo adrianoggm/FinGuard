@@ -187,6 +187,7 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         "month",
         "category",
         "merchant",
+        "account",
         "2026-01-01",
         "2026-01-31",
         "groceries/transport_fuel/restaurants",

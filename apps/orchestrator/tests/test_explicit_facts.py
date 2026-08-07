@@ -246,6 +246,25 @@ def test_a_sentence_that_names_no_window_states_nothing_about_one() -> None:
     assert explicit_facts.read("¿y en gasolina?", today=TODAY).window is None
 
 
+def test_the_reported_highest_category_is_a_category_ranking() -> None:
+    facts = explicit_facts.read(
+        "Vale en que categoria es la que he gastado mas a lo largo de este año?", today=TODAY
+    )
+
+    assert facts.asks_top_category
+    assert facts.group_by is GroupBy.CATEGORY
+    assert facts.window == RelativePeriod(Period.THIS_YEAR)
+
+
+def test_the_reported_account_breakdown_is_not_a_category_question() -> None:
+    facts = explicit_facts.read(
+        "Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?", today=TODAY
+    )
+
+    assert facts.asks_account_breakdown
+    assert facts.group_by is GroupBy.ACCOUNT
+
+
 def test_the_direction_is_left_to_the_verifier() -> None:
     """Refusing a spending question planned as ALL is a control with a test of its own. Rewriting
     it here would also be the pipeline quietly repairing a prompt injection instead of reporting

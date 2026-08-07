@@ -121,6 +121,17 @@ _TEMPORAL_GROUPS: Final[tuple[tuple[GroupBy, re.Pattern[str]], ...]] = (
         ),
     ),
 )
+_TOP_CATEGORY: Final = re.compile(
+    r"\b(?:en\s+)?qu[ée]\s+categor[íi]a\b.{0,55}\b(?:gast|pag|compr)\w*\b.{0,20}\bm[áa]s\b"
+    r"|\bqu[ée]\s+categor[íi]a\s+es\s+la\s+que\b.{0,45}\bm[áa]s\b"
+    r"|\bd[oó]nde\b.{0,35}\b(?:gast|pag|compr)\w*\b.{0,15}\bm[áa]s\b"
+)
+_ACCOUNT_BREAKDOWN: Final = re.compile(
+    r"\bdesglos\w*\s+por\s+(?:cada\s+)?cuentas?\b"
+    r"|\b(?:por|separad[oa]\s+por)\s+cada\s+cuenta\b"
+    r"|\bseparad[oa]\s+por\s+cuentas?\b"
+    r"|\bsepar\w*\s+por\s+cuentas?\b"
+)
 _COMPARES: Final = re.compile(
     r"\bcompara|\bcomparacion\b|\bfrente\s+a\b|\bpor\s+separado\b|\buna\s+y\s+otra\b"
 )
@@ -159,6 +170,8 @@ class ExplicitFacts:
     # Whether the question is about *when* rather than how much. It changes the answer rather than
     # the plan, so `enforce` does nothing with it and the writer reads it.
     asks_when: bool = False
+    asks_top_category: bool = False
+    asks_account_breakdown: bool = False
 
 
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
@@ -176,6 +189,8 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         (group for group, pattern in _TEMPORAL_GROUPS if pattern.search(folded)), None
     )
     asks_average = bool(_AVERAGE.search(folded))
+    asks_top_category = bool(_TOP_CATEGORY.search(folded))
+    asks_account_breakdown = bool(_ACCOUNT_BREAKDOWN.search(folded))
     per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     window = window_words.window_in(sentence, today=today)
     # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
@@ -188,7 +203,11 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         group_by=(
             _COUNTERPARTY
             if _ASKS_WHO.search(folded)
-            else (GroupBy.CATEGORY if comparison else temporal_group)
+            else (
+                GroupBy.ACCOUNT
+                if asks_account_breakdown
+                else (GroupBy.CATEGORY if comparison or asks_top_category else temporal_group)
+            )
         ),
         metric=(
             Metric.AVERAGE
@@ -201,6 +220,8 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),
         asks_when=asks_when(sentence),
+        asks_top_category=asks_top_category,
+        asks_account_breakdown=asks_account_breakdown,
     )
 
 

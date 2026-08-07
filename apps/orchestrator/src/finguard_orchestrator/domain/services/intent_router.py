@@ -292,7 +292,9 @@ _ABOUT_THE_ANSWER: Final = re.compile(
     r"|en\s+(?:qu[ée]|qeu)\s+te\s+basas"
     r"|c[óo]mo\s+has\s+llegado\s+a"
     r"|(por\s+qu[ée]|c[óo]mo)\s+(me\s+)?has\s+(mostrado|ense[ñn]ado|clasificado|puesto|contado)"
-    r"|en\s+qu[ée]\s+categor[íi]a|no\s+entiendo\s+(el|este|ese)?\s*desglose"
+    r"|en\s+qu[ée]\s+categor[íi]a\s+(?:lo\s+)?(?:has\s+)?"
+    r"(?:clasificado|puesto|metido|contado)\b"
+    r"|no\s+entiendo\s+(el|este|ese)?\s*desglose"
     r"|qu[ée]\s+has\s+entendido"
     # Asking whether two things are filed together. This is the shape the real question took —
     # "¿es que los restaurantes pertenecen a la misma categoría que el cine?" — and the first

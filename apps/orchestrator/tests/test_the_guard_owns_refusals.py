@@ -28,7 +28,12 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 )
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
-from finguard_orchestrator.domain.models.conversation import IDLE, Conversation, Slot
+from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
+    Conversation,
+    FinancialClarification,
+    Slot,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
@@ -104,6 +109,17 @@ class ListingLedger(Ledger):
             total_minor=1_500,
             movement_count=100,
             movements=available[:movements],
+        )
+
+
+class ComparisonLedger(Ledger):
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plan = plan
+        return QueryAnswer(
+            currency="EUR",
+            total_minor=7_000,
+            movement_count=5,
+            groups=(Group("GROCERIES", 6_000, 3), Group("RESTAURANTS", 1_000, 2)),
         )
 
 
@@ -232,6 +248,17 @@ async def test_excluding_a_category_is_never_reversed_into_only_that_category() 
     assert answer.conversation.last_plan == previous
 
 
+async def test_a_natural_category_comparison_asks_for_its_missing_period() -> None:
+    answer = await asked(
+        "¿Voy gastando más en el súper o comiendo fuera?", GivesUp(), ComparisonLedger()
+    )
+
+    assert answer.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert answer.conversation.awaiting is Slot.WINDOW
+    assert isinstance(answer.conversation.active, FinancialClarification)
+    assert answer.conversation.active.draft.categories == ("GROCERIES", "RESTAURANTS")
+
+
 async def test_latest_five_movements_means_five_rows_not_five_days() -> None:
     planner = GivesUp()
     ledger = ListingLedger()
@@ -325,6 +352,48 @@ async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement(
     assert answer.outcome == PlanningOutcome.PLANNED.value
     assert ledger.plan is not None
     assert ledger.plan.metric is Metric.AVERAGE
+
+
+async def test_the_reported_highest_category_is_planned_without_the_model() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+
+    result = await asked(
+        "Vale en que categoria es la que he gastado mas a lo largo de este año?",
+        planner,
+        ledger,
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.direction is Direction.EXPENSE
+    assert ledger.plan.group_by is GroupBy.CATEGORY
+    assert ledger.plan.metric is Metric.SUM
+    assert "categoría" in result.text.lower()
+
+
+async def test_the_reported_account_breakdown_preserves_the_previous_query() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.ALL,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=4),
+    )
+
+    result = await asked(
+        "Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.direction is Direction.ALL
+    assert ledger.plan.period == previous.period
+    assert ledger.plan.group_by is GroupBy.ACCOUNT
+    assert ledger.plan.across_accounts is True
+    assert result.conversation.last_plan is not None
 
 
 async def test_a_model_cannot_refuse_a_supported_category_comparison() -> None:

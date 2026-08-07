@@ -208,6 +208,20 @@ def test_a_breakdown_keeps_its_lines() -> None:
     assert said.splitlines()[0].startswith("80,00 € en supermercado")
 
 
+def test_a_single_account_breakdown_answers_whether_everything_came_from_it() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=713_320,
+        movement_count=112,
+        groups=(Group("Cuenta corriente", 713_320, 112),),
+    )
+
+    said = answer_writer.write(grouped, plan(group_by=GroupBy.ACCOUNT))
+
+    assert said.startswith("Todos los 112 movimientos encontrados")
+    assert "están en Cuenta corriente" in said
+
+
 def test_the_movements_behind_it_are_still_the_evidence() -> None:
     """Unrelated to the headline, and asserted here so a change to one is not read as licence to
     change the other."""

@@ -543,7 +543,15 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         return f"No he encontrado movimientos{about} {window}. Puedes {next_step}."
 
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
-    if counting:
+    if plan.group_by is GroupBy.ACCOUNT and len(answer.groups) == 1:
+        account = answer.groups[0]
+        return (
+            f"Todos los {answer.movement_count} {noun} encontrados {window} están en "
+            f"{account.key}: {_figure(account, answer, plan.metric)}."
+        )
+    if plan.group_by is GroupBy.ACCOUNT:
+        head = f"El desglose por cuenta {window} es:"
+    elif counting:
         head = f"{answer.movement_count} {noun}{about} {window}."
     elif averaging:
         average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
@@ -579,6 +587,22 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
+
+
+def top_category(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Name the leading category instead of making the user infer it from a breakdown."""
+    if answer.is_empty or not answer.groups:
+        return write(answer, plan)
+    leading = answer.groups[0]
+    category = _group_name(leading.key, plan)
+    amount = money(leading.total_minor, answer.currency)
+    movements = (
+        "1 movimiento" if leading.movement_count == 1 else f"{leading.movement_count} movimientos"
+    )
+    return (
+        f"La categoría en la que más gastaste {window_of(plan)} fue {category}: "
+        f"{amount}, en {movements}."
+    )
 
 
 def when(answer: QueryAnswer, plan: FinancialPlan) -> str:

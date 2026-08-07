@@ -625,6 +625,33 @@ class AskFinancialQuestionHandler:
                 yield await self._answer(query, shifted)
             return
 
+        deterministic = _deterministic_breakdown_plan(query)
+        if isinstance(deterministic, FinancialPlanDraft):
+            comparing = bool(
+                explicit_facts.read(query.sentence, today=query.today).compared_categories
+            )
+            question = (
+                "¿De qué periodo quieres que compare ambos gastos?"
+                if comparing
+                else "¿De qué periodo quieres que haga el desglose?"
+            )
+            conversation = was.with_active(
+                FinancialClarification(draft=deterministic, awaiting=Slot.WINDOW)
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=conversation,
+                suggestions=["Este mes", "Este año", "Los últimos 4 meses"],
+            )
+            return
+        if deterministic is not None:
+            yield Stage("planned", answer_writer.describe(deterministic))
+            yield Stage("querying")
+            yield await self._answer(query, deterministic)
+            return
+
         average = _average_plan(query)
         if isinstance(average, FinancialPlanDraft):
             conversation = (
@@ -1427,6 +1454,14 @@ class AskFinancialQuestionHandler:
         kinds retain the existing summary path, while widening needs no list at all.
         """
         named = account_words.named_in(query.sentence)
+        if plan.group_by is GroupBy.ACCOUNT:
+            return replace(
+                plan,
+                across_accounts=True,
+                only_account_id=None,
+                only_account_ids=(),
+            )
+
         explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
         if not named and not explicit_custom:
             return replace(plan, across_accounts=True)
@@ -1549,6 +1584,17 @@ class AskFinancialQuestionHandler:
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
         scoped = await self._scoped(plan, query)
+        # The ordinary all-accounts default is execution policy, not conversational data. An
+        # explicit account choice is different: losing it makes the very next ellipsis widen back
+        # to every account. Keep only scopes the user actually selected (plus ACCOUNT breakdown,
+        # whose meaning is intrinsically across accounts).
+        remembered = (
+            scoped
+            if scoped.only_account_id is not None
+            or scoped.only_account_ids
+            or plan.group_by is GroupBy.ACCOUNT
+            else plan
+        )
         for attempt in range(self._read_attempts):
             try:
                 answer = await self._queries.run(
@@ -1566,7 +1612,7 @@ class AskFinancialQuestionHandler:
                     text=(
                         "He entendido la pregunta, pero la consulta que he construido no es válida."
                     ),
-                    plan=answer_writer.describe(plan),
+                    plan=answer_writer.describe(remembered),
                     conversation=query.conversation,
                 )
             except BankingUnavailableError:
@@ -1578,8 +1624,8 @@ class AskFinancialQuestionHandler:
                         "El banco no ha respondido. He conservado esta consulta para que puedas "
                         "reintentarlo sin volver a escribirla."
                     ),
-                    plan=answer_writer.describe(plan),
-                    conversation=query.conversation.awaiting_retry(plan),
+                    plan=answer_writer.describe(remembered),
+                    conversation=query.conversation.awaiting_retry(remembered),
                     suggestions=query_recovery.retry_suggestions(),
                 )
 
@@ -1645,7 +1691,7 @@ class AskFinancialQuestionHandler:
                     # stays as the last answered one, which is what makes the reply — "Spotify" —
                     # an ordinary follow-up carrying this window instead of a bare word nobody can
                     # date.
-                    answered = _answered(plan, answer, query.conversation, query.sentence)
+                    answered = _answered(remembered, answer, query.conversation, query.sentence)
                     return replace(
                         answered,
                         text=(f"{answered.text}\n¿Querías solo {answer_writer.listed(nearly)}?"),
@@ -1694,7 +1740,7 @@ class AskFinancialQuestionHandler:
                     suggestions=list(did_you_mean),
                 )
 
-        return _answered(plan, answer, query.conversation, query.sentence)
+        return _answered(remembered, answer, query.conversation, query.sentence)
 
 
 # One sentence per missing capability, keyed by the guard's family name.
@@ -1795,6 +1841,89 @@ def _period_comparison_plans(
     return (
         replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
         replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
+    )
+
+
+def _deterministic_breakdown_plan(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """Build the two common breakdowns whose meaning is fully stated by the sentence."""
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if not (
+        facts.asks_top_category
+        or facts.asks_account_breakdown
+        or (facts.compared_categories and facts.metric is None)
+    ):
+        return None
+
+    previous = query.conversation.last_plan
+    previous_financial = previous if isinstance(previous, FinancialPlan) else None
+    window = facts.window or (
+        previous.period or previous.date_range if previous is not None else None
+    )
+    direction = (
+        Direction.EXPENSE
+        if facts.asks_top_category or facts.compared_categories
+        else (previous.direction if previous is not None else (facts.direction or Direction.ALL))
+    )
+    group_by = (
+        GroupBy.CATEGORY
+        if facts.asks_top_category or facts.compared_categories
+        else GroupBy.ACCOUNT
+    )
+    categories = (
+        facts.compared_categories
+        if facts.compared_categories
+        else (
+            () if facts.asks_top_category else (previous.categories if previous is not None else ())
+        )
+    )
+    merchants = (
+        () if facts.asks_top_category else (previous.merchants if previous is not None else ())
+    )
+    include_internal = previous_financial.include_internal if previous_financial else False
+    across_accounts = (
+        True
+        if facts.asks_account_breakdown
+        else (previous_financial.across_accounts if previous_financial else False)
+    )
+    only_account_id = (
+        None
+        if facts.asks_account_breakdown
+        else (previous_financial.only_account_id if previous_financial else None)
+    )
+    only_account_ids = (
+        ()
+        if facts.asks_account_breakdown
+        else (previous_financial.only_account_ids if previous_financial else ())
+    )
+    transaction_ids = previous_financial.transaction_ids if previous_financial else ()
+    if window is None:
+        return FinancialPlanDraft(
+            direction=direction,
+            categories=categories,
+            merchants=merchants,
+            group_by=group_by,
+            metric=Metric.SUM,
+            include_internal=include_internal,
+            across_accounts=across_accounts,
+            only_account_id=only_account_id,
+            only_account_ids=only_account_ids,
+            transaction_ids=transaction_ids,
+        )
+    return FinancialPlan(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=categories,
+        merchants=merchants,
+        group_by=group_by,
+        metric=Metric.SUM,
+        include_internal=include_internal,
+        across_accounts=across_accounts,
+        only_account_id=only_account_id,
+        only_account_ids=only_account_ids,
+        transaction_ids=transaction_ids,
     )
 
 
@@ -2278,13 +2407,16 @@ def _answered(
     # question decides which sentence the same figures become, so the reading happens here rather
     # than in the writer — a writer that inspected the question would be a writer with a parser
     # in it.
+    facts = explicit_facts.read(sentence)
+    if facts.asks_when:
+        text = answer_writer.when(answer, plan)
+    elif facts.asks_top_category:
+        text = answer_writer.top_category(answer, plan)
+    else:
+        text = answer_writer.write(answer, plan)
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
-        text=(
-            answer_writer.when(answer, plan)
-            if explicit_facts.asks_when(sentence)
-            else answer_writer.write(answer, plan)
-        ),
+        text=text,
         plan=answer_writer.describe(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
