@@ -361,6 +361,9 @@ _BETWEEN_ACCOUNTS: Final = re.compile(r"\bentre\s+(mis|tus|sus|las)?\s*cuentas\b
 
 _OWN_ACCOUNT_RELATION: Final = re.compile(
     r"\bde\s+una\s+(?:de\s+)?mis\s+cuentas\s+a\s+otra\b"
+    # Observed clipped ending: "mover dinero de una cuenta a otr". Safe as an internal transfer
+    # signal only together with `_MOVING`; this rail can never leave the holder's own accounts.
+    r"|\bde\s+una\s+cuenta\s+a\s+otr(?:a)?\b"
     r"|\bde\s+una\s+cuenta\s+mia\s+a\s+otra\s+cuenta\b"
     r"|\bde\s+una\s+cuenta\s+a\s+otra\s+cuenta\b.{0,35}"
     r"\b(?:es\s+mia|tambien\s+es\s+mia|tengo\s+yo)\b"

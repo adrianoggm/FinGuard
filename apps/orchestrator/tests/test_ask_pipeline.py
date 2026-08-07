@@ -144,6 +144,16 @@ class FakeLedger:
         return self._answer
 
 
+class RecordingLedger(FakeLedger):
+    def __init__(self, answer: QueryAnswer) -> None:
+        super().__init__(answer)
+        self.plans: list[FinancialPlan] = []
+
+    async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+        self.plans.append(plan)
+        return await super().run(plan, **kwargs)  # type: ignore[arg-type]
+
+
 class FakeAccounts:
     """The balance port. Present in every handler because it is a required dependency — a build
     that could be missing it is a build where "¿cuánto tengo?" silently reaches the planner."""
@@ -527,6 +537,27 @@ async def test_an_empty_answer_explains_the_filters_and_offers_supported_relaxat
     assert ledger.plan.categories == ()
     assert ledger.plan.merchants == ("Mercadonna",)
     assert ledger.plan.period == LAST_MONTH
+
+
+async def test_merchant_suggestions_drop_an_incompatible_period_average_metric() -> None:
+    empty = QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+    ledger = RecordingLedger(empty)
+    previous = plan(group_by=GroupBy.MONTH, metric=Metric.PERIOD_AVERAGE)
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="Acme",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert len(ledger.plans) == 2
+    assert ledger.plans[0].metric is Metric.PERIOD_AVERAGE
+    assert ledger.plans[1].group_by is GroupBy.MERCHANT
+    assert ledger.plans[1].metric is Metric.SUM
 
 
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
