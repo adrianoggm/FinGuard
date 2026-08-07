@@ -1750,7 +1750,15 @@ class AskFinancialQuestionHandler:
         """
         try:
             wider = await self._queries.run(
-                replace(plan, merchants=(), group_by=GroupBy.MERCHANT),
+                replace(
+                    plan,
+                    merchants=(),
+                    group_by=GroupBy.MERCHANT,
+                    # PERIOD_AVERAGE is valid only over calendar buckets. This auxiliary query is
+                    # discovering merchant names, so retaining the temporal divisor here turns a
+                    # harmless misspelling into a domain-level 422.
+                    metric=Metric.SUM,
+                ),
                 account_id=query.account_id,
                 today=query.today,
                 reporting_timezone=query.reporting_timezone,
