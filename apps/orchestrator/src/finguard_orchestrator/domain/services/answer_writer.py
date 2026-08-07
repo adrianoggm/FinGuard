@@ -449,6 +449,24 @@ def movement_example(movement: Movement | None, currency: str) -> str:
     )
 
 
+def movement_examples(movements: tuple[Movement, ...], currency: str) -> str:
+    """One or several concrete rows, respecting the number the user asked to see."""
+    if not movements:
+        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
+    if len(movements) == 1:
+        return movement_example(movements[0], currency)
+    lines = []
+    for movement in movements:
+        amount = abs(movement.amount_minor)
+        if movement.direction == Direction.EXPENSE.value:
+            amount = -amount
+        what = movement.merchant_name or movement.description
+        lines.append(
+            f"  · {what}: {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}"
+        )
+    return "Por ejemplo:\n" + "\n".join(lines)
+
+
 def movement_date(occurred_at: datetime | str) -> str:
     """The date of the ranked movement a pronoun points at."""
     if isinstance(occurred_at, str):

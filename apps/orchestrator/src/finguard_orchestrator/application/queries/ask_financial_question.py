@@ -95,15 +95,27 @@ _RECENT_MOVEMENTS: Final = re.compile(
     r"\b(?:ultim[oa]s?|utlim[oa]s?|recientes?)\s+"
     r"(?P<count>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
     r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
-    r"|\b(?P<count_first>\d{1,3})\s+"
+    r"|\blos?\s+(?P<count_before>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
+    r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\b.{0,40}\bda\s+igual\s+cuando\b"
+    r"|\b(?!los?\s+(?:ultim|utlim|recient))"
+    r"(?P<count_before_bare>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
+    r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\b.{0,40}\bda\s+igual\s+cuando\b"
+    r"|\b(?P<count_first>\d{1,3}|[a-z]+(?:\s+y\s+[a-z]+)?)\s+"
     r"(?:ultim[oa]s?|utlim[oa]s?|recientes?)\s+"
     r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
 )
+_RECENT_UNBOUNDED: Final = re.compile(
+    r"\b(?:ensename|muestrame|quiero\s+ver)\b.{0,30}"
+    r"\b(?:lo\s+ultimo|los\s+movimientos\s+recientes)\b"
+)
 _MOVEMENT_EXAMPLE: Final = re.compile(
     r"\b(?:dame|ponme|muestrame|ensename)\b.{0,45}\b(?:ejemplo|ejemlo)\b.{0,45}"
-    r"\b(?:esos?|estos?|los)?\s*(?:movimientos?|operaciones?|cargos?|compras?)\b"
+    r"\b(?:esos?|estos?|los)?\s*"
+    r"(?:movimientos?|operaciones?|cargos?|compras?|pagos?|gastos?|ingresos?)\b"
     r"|\b(?:ejemplo|ejemlo)\s+de\s+(?:esos?|estos?|los)\s+"
-    r"(?:movimientos?|operaciones?|cargos?|compras?)\b"
+    r"(?:movimientos?|operaciones?|cargos?|compras?|pagos?|gastos?|ingresos?)\b"
+    r"|\b(?:dame|ponme|muestrame|ensename)\b.{0,20}\b(?:un|dos|tres|par\s+de)?\s*"
+    r"(?:ejemplo|ejemplos|ejemlo)s?\b"
 )
 
 logger = logging.getLogger(__name__)
@@ -577,7 +589,9 @@ class AskFinancialQuestionHandler:
             and _MOVEMENT_EXAMPLE.search(spanish.folded(query.sentence))
         ):
             yield Stage("querying")
-            yield await self._movement_example(query, previous)
+            yield await self._movement_example(
+                query, previous, limit=_movement_example_count(query.sentence)
+            )
             return
 
         if isinstance(previous, TopMovements) and _RANKED_DATE.fullmatch(
@@ -1359,18 +1373,24 @@ class AskFinancialQuestionHandler:
             )
 
         movements = answer.movements[:limit]
+        selected_ids = tuple(
+            UUID(movement.transaction_id)
+            for movement in movements
+            if movement.transaction_id is not None
+        )
+        remembered = replace(plan, transaction_ids=selected_ids) if selected_ids else plan
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.recent_movements(len(movements)),
             plan=f"últimos {limit} movimientos, todas tus cuentas",
-            conversation=query.conversation.answered(plan),
+            conversation=query.conversation.answered(remembered),
             currency=answer.currency,
             movement_count=len(movements),
             movements=[_spoken_movement(movement) for movement in movements],
         )
 
     async def _movement_example(
-        self, query: AskFinancialQuestionQuery, plan: FinancialPlan
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan, *, limit: int = 1
     ) -> AskFinancialQuestionResult:
         """One concrete row from the last answer, without asking the model what «esos» means."""
         scoped = await self._scoped(plan, query)
@@ -1395,16 +1415,17 @@ class AskFinancialQuestionHandler:
                 conversation=query.conversation,
             )
 
-        movement = next(iter(answer.movements), None)
+        movements = answer.movements[:limit]
+        movement = next(iter(movements), None)
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
-            text=answer_writer.movement_example(movement, answer.currency),
+            text=answer_writer.movement_examples(movements, answer.currency),
             plan=answer_writer.describe(plan),
             conversation=query.conversation,
             currency=answer.currency,
             total_minor=movement.amount_minor if movement is not None else None,
-            movement_count=1 if movement is not None else 0,
-            movements=[_spoken_movement(movement)] if movement is not None else [],
+            movement_count=len(movements),
+            movements=[_spoken_movement(item) for item in movements],
         )
 
     async def _group_reference(
@@ -2775,12 +2796,28 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
 
 
 def _recent_movement_count(sentence: str) -> int | None:
+    if _RECENT_UNBOUNDED.search(spanish.folded(sentence)):
+        return 5
     found = _RECENT_MOVEMENTS.search(spanish.folded(sentence))
     if found is None:
         return None
-    written = found.group("count") or found.group("count_first")
+    written = (
+        found.group("count")
+        or found.group("count_before")
+        or found.group("count_before_bare")
+        or found.group("count_first")
+    )
     count = int(written) if written.isdigit() else spanish_numbers.integer(written)
     return count if count is not None and 1 <= count <= 50 else None
+
+
+def _movement_example_count(sentence: str) -> int:
+    folded = spanish.folded(sentence)
+    if re.search(r"\b(?:un\s+par(?:\s+de)?|dos)\s+ejempl", folded):
+        return 2
+    if re.search(r"\btres\s+ejempl", folded):
+        return 3
+    return 1
 
 
 def _spoken_movement(movement: Movement) -> SpokenMovement:

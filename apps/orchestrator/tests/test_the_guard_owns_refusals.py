@@ -114,6 +114,7 @@ class ListingLedger(Ledger):
                 amount_minor=day * 100,
                 direction="EXPENSE",
                 merchant_name=f"Comercio {day}",
+                transaction_id=str(uuid.UUID(int=day)),
             )
             for day in range(5, 0, -1)
         )
@@ -288,6 +289,45 @@ async def test_latest_five_movements_means_five_rows_not_five_days() -> None:
     assert "últimos 5 movimientos" in answer.text
 
 
+async def test_a_breakdown_by_account_keeps_exactly_the_five_rows_just_shown() -> None:
+    planner = GivesUp()
+    ledger = ListingLedger()
+    listed = await asked("Muéstrame los cinco últimos movimientos", planner, ledger)
+
+    assert isinstance(listed.conversation.last_plan, FinancialPlan)
+    selected = listed.conversation.last_plan.transaction_ids
+    assert selected == tuple(uuid.UUID(int=day) for day in range(5, 0, -1))
+
+    broken_down = await asked("Sepáralos por cuenta", planner, ledger, listed.conversation)
+
+    assert planner.asked == 0
+    assert broken_down.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plan is not None
+    assert ledger.plan.group_by is GroupBy.ACCOUNT
+    assert ledger.plan.transaction_ids == selected
+
+
+async def test_five_last_is_also_a_row_count_when_the_noun_is_elliptical() -> None:
+    ledger = ListingLedger()
+
+    answer = await asked("Los cinco últimos, da igual cuándo", GivesUp(), ledger)
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.requested_movements == 5
+    assert "últimos 5 movimientos" in answer.text
+
+
+async def test_show_me_a_few_recent_movements_defaults_to_a_short_list() -> None:
+    ledger = ListingLedger()
+
+    answer = await asked(
+        "Enséñame un poco lo último que se ha movido en mis cuentas", GivesUp(), ledger
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.requested_movements == 5
+
+
 @pytest.mark.parametrize(
     "sentence",
     ["Dame un ejemplo de esos movimientos", "Dame un ejemlo de esos movimientos"],
@@ -315,6 +355,24 @@ async def test_an_example_reuses_the_previous_query(sentence: str) -> None:
     assert answer.movement_count == 1
     assert answer.text.startswith("Por ejemplo: Comercio 5")
     assert answer.conversation.last_plan == previous
+
+
+async def test_a_natural_example_without_repeating_movements_reuses_the_query() -> None:
+    ledger = ListingLedger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES",),
+    )
+
+    answer = await asked(
+        "Ponme un par de ejemplos", GivesUp(), ledger, Conversation(last_plan=previous)
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.requested_movements == 2
+    assert answer.movement_count == 2
+    assert answer.text.startswith("Por ejemplo:")
 
 
 async def test_a_difference_question_reads_the_two_groups_already_on_screen() -> None:
@@ -712,6 +770,29 @@ async def test_account_selection_can_include_two_and_exclude_the_fund() -> None:
     assert ledger.plan is not None
     assert ledger.plan.only_account_id is None
     assert ledger.plan.only_account_ids == (ACCOUNT, uuid.UUID(int=2))
+
+
+async def test_an_example_can_refer_to_income_instead_of_saying_movements() -> None:
+    planner = GivesUp()
+    ledger = ListingLedger()
+    previous = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("SALARY",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    result = await asked(
+        "Ponme un ejemplo de esos ingresos",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert result.movement_count == 1
 
 
 async def test_per_movement_follow_up_clears_the_old_temporal_divisor() -> None:
