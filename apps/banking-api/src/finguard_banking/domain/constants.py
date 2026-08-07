@@ -32,6 +32,9 @@ MAX_MERCHANT_LENGTH = 140
 # Explicit account ids are a narrowing filter, not an alternate bulk-read endpoint.
 MAX_SELECTED_ACCOUNTS = 20
 
+# Transaction identifiers supplied to revisit an exact, previously displayed selection.
+MAX_SELECTED_TRANSACTIONS = 50
+
 # How far back a card screen may ask. A card is a thing somebody checks about now, and a
 # five-year window is a statement, not a screen.
 MAX_CARD_WINDOW_DAYS = 366

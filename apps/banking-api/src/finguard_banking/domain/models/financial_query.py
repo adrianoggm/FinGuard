@@ -17,6 +17,7 @@ from finguard_banking.domain.constants import (
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
     MAX_SELECTED_ACCOUNTS,
+    MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
 )
 from finguard_banking.domain.enums import Direction, GroupBy, Metric
@@ -77,6 +78,9 @@ class FinancialQuery:
     # the read view still applies holder isolation underneath, so this can narrow but
     # never widen the session's scope.
     only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    # Exact rows from a previously displayed selection. The holder-scoped view remains the
+    # authority, so foreign or invented identifiers simply match nothing.
+    transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
 
     @property
     def scoped_to(self) -> UUID:
@@ -90,6 +94,10 @@ class FinancialQuery:
             raise InvalidValueError("onlyAccountIds cannot contain duplicates")
         if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
             raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
+        if len(set(self.transaction_ids)) != len(self.transaction_ids):
+            raise InvalidValueError("transactionIds cannot contain duplicates")
+        if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
         if self.metric is Metric.PERIOD_AVERAGE and self.group_by not in {
             GroupBy.DAY,
             GroupBy.WEEK,

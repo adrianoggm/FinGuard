@@ -122,6 +122,10 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         # narrowing.
         conditions.append(f"t.account_id = {parameters.bind(query.scoped_to)}")
 
+    if query.transaction_ids:
+        selected_transactions = parameters.bind(list(query.transaction_ids))
+        conditions.append(f"t.transaction_id = ANY({selected_transactions})")
+
     if not query.include_internal:
         # Before the direction, because it is the wider cut and reads in the order somebody
         # would say it: money that left the household, then which way it went.

@@ -44,6 +44,7 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
     object.__setattr__(plan, "group_by", GroupBy.NONE)
     object.__setattr__(plan, "merchants", ())
     object.__setattr__(plan, "only_account_ids", ())
+    object.__setattr__(plan, "transaction_ids", ())
     object.__setattr__(plan, "supporting_limit", 20)
     object.__setattr__(plan, "explain", False)
 
@@ -175,6 +176,20 @@ def test_a_selected_account_subset_is_one_bound_array_filter() -> None:
     )
 
     assert "t.account_id = ANY($" in compiled.sql
+    assert [first, second] in compiled.parameters
+    assert str(first) not in compiled.sql
+    assert str(second) not in compiled.sql
+
+
+def test_an_exact_movement_selection_is_bound_and_stays_holder_scoped() -> None:
+    first = uuid.UUID(int=7)
+    second = uuid.UUID(int=8)
+
+    compiled = compile_aggregate(query(transaction_ids=(first, second)), "Europe/Madrid")
+
+    assert "assistant_read.transactions_v1" in compiled.sql
+    assert "t.account_id = $" in compiled.sql
+    assert "t.transaction_id = ANY($" in compiled.sql
     assert [first, second] in compiled.parameters
     assert str(first) not in compiled.sql
     assert str(second) not in compiled.sql
