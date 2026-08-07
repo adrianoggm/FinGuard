@@ -520,6 +520,11 @@ class AskFinancialQuestionHandler:
             # rather than the sentence: they are identical sentences and they mean different things.
             intent = Intent.ACCOUNT_BALANCE
 
+        early_refusal = capability_guard.unsupported_reason(query.sentence, self._policy)
+        if early_refusal == "CATEGORY_EXCLUSION":
+            yield self._declined(early_refusal, was)
+            return
+
         period_comparison = _period_comparison_plans(query)
         if period_comparison is not None:
             # Two complete, already validated questions are safer context than asking a model to
@@ -770,9 +775,16 @@ class AskFinancialQuestionHandler:
         sentence yet — and the capability plus the rank are enough for the follow-up. What the state
         buys is that "¿y el segundo?" no longer has to be recognised as a sentence at all.
         """
+        text = _MISSING_CAPABILITY.get(capability, _CANNOT_YET)
+        if capability == "CATEGORY_EXCLUSION":
+            text = (
+                "Todavia no puedo excluir una categoria de un calculo sin arriesgarme a darte "
+                "el resultado contrario. Puedo mostrarte el total por categorias para que veas "
+                "el alquiler por separado."
+            )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.UNSUPPORTED.value,
-            text=_MISSING_CAPABILITY.get(capability, _CANNOT_YET),
+            text=text,
             conversation=(
                 # A suspended payment survives a refusal, exactly as it survives an answer: it
                 # belongs to the conversation before this turn and stepped aside for it. Replacing
@@ -1695,6 +1707,11 @@ class AskFinancialQuestionHandler:
 # Each one says what is missing and what to ask instead, because the second half is the only part
 # the user can act on. Spanish, like every string a person reads.
 _MISSING_CAPABILITY: Final[dict[str, str]] = {
+    "CATEGORY_EXCLUSION": (
+        "TodavÃ­a no puedo excluir una categorÃ­a de un cÃ¡lculo sin arriesgarme a darte el "
+        "resultado contrario. Puedo darte el total por categorÃ­as para que veas el alquiler por "
+        "separado."
+    ),
     "INVESTING": (
         "Todavía no sé sumar lo que has invertido en un periodo: el dinero que entra en el fondo "
         "son traspasos entre tus cuentas y no puedo separarlos del resto. Pregúntame «¿cuánto "

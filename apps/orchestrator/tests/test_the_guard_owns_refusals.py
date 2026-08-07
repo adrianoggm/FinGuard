@@ -215,6 +215,23 @@ async def test_a_plain_average_is_planned_before_the_legacy_guard_or_model() -> 
     assert ledger.plan.metric is Metric.AVERAGE
 
 
+async def test_excluding_a_category_is_never_reversed_into_only_that_category() -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    answer = await asked(
+        "¿Y si no contamos el alquiler?", GivesUp(), Ledger(), Conversation(last_plan=previous)
+    )
+
+    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert "resultado contrario" in answer.text
+    assert answer.conversation.last_plan == previous
+
+
 async def test_latest_five_movements_means_five_rows_not_five_days() -> None:
     planner = GivesUp()
     ledger = ListingLedger()

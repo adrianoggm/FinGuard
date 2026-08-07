@@ -66,6 +66,8 @@ def test_a_count_question_is_caught_with_or_without_accents(sentence: str) -> No
         ("¿a este ritmo cuánto acabaré gastando?", "FORECAST"),
         ("envia 20 euros a Marta", "ACTION"),
         ("envía 20 euros a Marta", "ACTION"),
+        ("si no contamos el alquiler", "CATEGORY_EXCLUSION"),
+        ("quitando el alquiler", "CATEGORY_EXCLUSION"),
     ],
 )
 def test_every_family_is_caught_with_or_without_accents(sentence: str, family: str) -> None:
@@ -87,3 +89,7 @@ def test_every_family_is_caught_with_or_without_accents(sentence: str, family: s
 )
 def test_folding_does_not_widen_a_rule_into_a_false_refusal(sentence: str) -> None:
     assert capability_guard.unsupported_reason(sentence) is None
+
+
+def test_account_exclusion_is_not_mistaken_for_an_unsupported_category_exclusion() -> None:
+    assert capability_guard.unsupported_reason("todas menos la cuenta del fondo") is None
