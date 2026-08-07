@@ -92,6 +92,7 @@ def plan_from_dto(request: FinancialQueryRequest, today: date) -> FinancialQuery
         across_accounts=request.across_accounts,
         only_account_id=request.only_account_id,
         only_account_ids=request.only_account_ids,
+        transaction_ids=request.transaction_ids,
         explain=request.explain,
         reporting_timezone=zone,
     )
