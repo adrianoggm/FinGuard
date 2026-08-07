@@ -73,6 +73,7 @@ class GivesUp:
 class Ledger:
     def __init__(self) -> None:
         self.plan: FinancialPlan | None = None
+        self.ranking: TopMovements | None = None
 
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self.plan = plan
@@ -728,6 +729,27 @@ async def test_short_count_and_sum_questions_patch_the_last_query() -> None:
     assert ledger.plan is not None
     assert ledger.plan.metric is Metric.SUM
     assert ledger.plan.categories == ("GROCERIES",)
+
+
+async def test_a_superlative_inherits_the_average_window_and_filter() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("HOUSING_RENT",),
+        metric=Metric.AVERAGE,
+    )
+
+    result = await asked(
+        "Cual ha sido el gasto mas alto?", planner, ledger, Conversation(last_plan=previous)
+    )
+
+    assert planner.asked == 0
+    assert ledger.ranking is not None
+    assert ledger.ranking.period == previous.period
+    assert ledger.ranking.categories == previous.categories
+    assert result.outcome == PlanningOutcome.PLANNED.value
 
 
 async def test_the_ranked_income_can_be_classified_without_starting_a_payment() -> None:

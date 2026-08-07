@@ -738,6 +738,13 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, deterministic)
             return
 
+        ranking = _contextual_ranking_plan(query)
+        if ranking is not None:
+            yield Stage("planned", answer_writer.describe(ranking))
+            yield Stage("querying")
+            yield await self._ranked(query, ranking)
+            return
+
         average = _average_plan(query)
         if isinstance(average, FinancialPlanDraft):
             conversation = (
@@ -2012,6 +2019,11 @@ _TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
     r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"
     r"\b(?:gast|pag|compr)\w*\b.{0,18}\bmas\b"
 )
+_RANKING_REQUEST: Final = re.compile(
+    r"\b(?:cual|que)\b.{0,30}\b"
+    r"(?:gasto|ingreso|movimiento|compra|pago|cargo|cobro|nomina|sueldo|salario)\b.{0,30}"
+    r"\b(?:mas\s+(?:alto|alta|caro|cara|grande)|mayor)\b"
+)
 _COMPARISON_DIFFERENCE: Final = re.compile(
     r"^(?:y\s+)?(?:cuanta|que)\s+diferencia(?:\s+hay)?(?:\s+entre\s+(?:las|esas)\s+dos)?$"
 )
@@ -2150,6 +2162,37 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         )
         return replace(previous, direction=direction)
     return None
+
+
+def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements | None:
+    """Turn a superlative into a ranking while retaining the prior window and filters."""
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if facts.asks_top_category or not _RANKING_REQUEST.search(spanish.folded(query.sentence)):
+        return None
+    previous = query.conversation.last_plan
+    window = facts.window or (
+        previous.period or previous.date_range if previous is not None else None
+    )
+    if window is None:
+        return None
+    folded = spanish.folded(query.sentence)
+    if re.search(r"\bingres|\bcobr|\bnomina|\bsueldo|\bsalario", folded):
+        direction = Direction.INCOME
+    elif re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
+        direction = Direction.EXPENSE
+    elif previous is not None:
+        direction = previous.direction
+    else:
+        direction = Direction.ALL
+    named = category_words.precisely_named_in(query.sentence)
+    return TopMovements(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=named or (previous.categories if previous is not None else ()),
+        merchants=() if named else (previous.merchants if previous is not None else ()),
+        rank=1,
+    )
 
 
 def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
