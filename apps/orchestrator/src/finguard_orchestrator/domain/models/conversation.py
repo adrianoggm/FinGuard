@@ -194,6 +194,9 @@ class Conversation:
     # things a follow-up inherits from — "¿y en gasolina?" narrows either — so this is the union
     # rather than a field per kind, which would let both be set and neither mean anything.
     last_plan: PlannedQuery | None = None
+    # The answered plan immediately before `last_plan`. Two compatible plans with different
+    # windows are enough to answer "compáralos" without storing prose or financial results.
+    prior_plan: PlannedQuery | None = None
     # A validated read that could not reach banking. It is memory, not a workflow: a suspended
     # payment may coexist with it, and retrying must execute this exact plan instead of asking the
     # model to interpret "reintenta" as a new financial question.
@@ -260,6 +263,7 @@ class Conversation:
         return Conversation(
             active=active,
             last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
         )
 
@@ -268,6 +272,7 @@ class Conversation:
         return Conversation(
             active=self.active,
             last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             last_asked=slot,
         )
@@ -289,6 +294,7 @@ class Conversation:
         return Conversation(
             active=UnsupportedCapability(capability=capability),
             last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             answered_the_balance=self.answered_the_balance,
         )
@@ -302,6 +308,7 @@ class Conversation:
         return Conversation(
             active=self.active,
             last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             last_asked=self.last_asked,
             answered_the_balance=True,
@@ -312,6 +319,7 @@ class Conversation:
         return Conversation(
             active=self.active,
             last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
             retry_plan=plan,
             last_asked=self.last_asked,
         )
@@ -319,7 +327,10 @@ class Conversation:
     def without_retry(self) -> "Conversation":
         """Abandon a failed read while preserving the rest of the conversation."""
         return Conversation(
-            active=self.active, last_plan=self.last_plan, last_asked=self.last_asked
+            active=self.active,
+            last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
+            last_asked=self.last_asked,
         )
 
     def answered(self, plan: PlannedQuery) -> "Conversation":
@@ -334,7 +345,8 @@ class Conversation:
             if isinstance(self.active, PaymentInProgress) and self.active.suspended
             else None
         )
-        return Conversation(active=active, last_plan=plan)
+        prior = self.prior_plan if plan == self.last_plan else self.last_plan
+        return Conversation(active=active, last_plan=plan, prior_plan=prior)
 
     def suspend(self) -> "Conversation":
         """The active payment steps aside for a turn about something else.
@@ -347,6 +359,7 @@ class Conversation:
             return Conversation(
                 active=None,
                 last_plan=self.last_plan,
+                prior_plan=self.prior_plan,
                 retry_plan=self.retry_plan,
                 last_asked=self.last_asked,
                 answered_the_balance=self.answered_the_balance,
@@ -359,6 +372,7 @@ class Conversation:
                 suspended=True,
             ),
             last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             last_asked=self.last_asked,
             # Kept, like every other piece of memory here. Dropping it meant a payment under way

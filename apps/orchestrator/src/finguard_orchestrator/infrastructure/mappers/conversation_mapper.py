@@ -114,6 +114,9 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     if payload is None or payload.workflow is None:
         return Conversation(
             last_plan=query_to_domain(payload.last_plan) if payload and payload.last_plan else None,
+            prior_plan=(
+                query_to_domain(payload.prior_plan) if payload and payload.prior_plan else None
+            ),
             retry_plan=(
                 query_to_domain(payload.retry_plan) if payload and payload.retry_plan else None
             ),
@@ -125,11 +128,13 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
+    prior_plan = query_to_domain(payload.prior_plan) if payload.prior_plan else None
     retry_plan = query_to_domain(payload.retry_plan) if payload.retry_plan else None
     active = _active(payload)
     return Conversation(
         active=active,
         last_plan=last_plan,
+        prior_plan=prior_plan,
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
@@ -217,6 +222,9 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
+            "prior_plan": (
+                plan_payload(conversation.prior_plan) if conversation.prior_plan else None
+            ),
             "retry_plan": (
                 plan_payload(conversation.retry_plan) if conversation.retry_plan else None
             ),

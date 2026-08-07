@@ -200,6 +200,7 @@ class ConversationPayload(_Payload):
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
+    prior_plan: PlanPayload | None = None
     # The validated query banking could not execute. Kept separately from `last_plan`: a failed
     # read is retryable context, not an answer a later "y este mes" should inherit from.
     retry_plan: PlanPayload | None = None
