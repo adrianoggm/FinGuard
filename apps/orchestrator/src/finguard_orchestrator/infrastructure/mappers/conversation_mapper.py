@@ -33,6 +33,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     ConversationPayload,
@@ -130,6 +131,8 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             last_asked=payload.last_asked if payload else None,
             answered_the_balance=bool(payload and payload.answered_the_balance),
             referenced_category=payload.referenced_category if payload else None,
+            last_ratio=_ratio_plan(payload) if payload else None,
+            pending_ratio=_ratio_draft(payload) if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -144,6 +147,8 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
         referenced_category=payload.referenced_category,
+        last_ratio=_ratio_plan(payload),
+        pending_ratio=_ratio_draft(payload),
     )
 
 
@@ -235,8 +240,50 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "retry_plan": (
                 plan_payload(conversation.retry_plan) if conversation.retry_plan else None
             ),
+            "last_ratio_kind": (conversation.last_ratio.kind if conversation.last_ratio else None),
+            "last_ratio_part": (
+                plan_payload(conversation.last_ratio.part) if conversation.last_ratio else None
+            ),
+            "last_ratio_whole": (
+                plan_payload(conversation.last_ratio.whole) if conversation.last_ratio else None
+            ),
+            "pending_ratio_kind": (
+                conversation.pending_ratio.kind if conversation.pending_ratio else None
+            ),
+            "pending_ratio_part": (
+                plan_payload(conversation.pending_ratio.part)
+                if conversation.pending_ratio
+                else None
+            ),
+            "pending_ratio_whole": (
+                plan_payload(conversation.pending_ratio.whole)
+                if conversation.pending_ratio
+                else None
+            ),
             **_active_payload(conversation.active),
         }
+    )
+
+
+def _ratio_plan(payload: ConversationPayload) -> RatioPlan | None:
+    if payload.last_ratio_kind is None:
+        return None
+    assert payload.last_ratio_part is not None and payload.last_ratio_whole is not None
+    part = query_to_domain(payload.last_ratio_part)
+    whole = query_to_domain(payload.last_ratio_whole)
+    if not isinstance(part, FinancialPlan) or not isinstance(whole, FinancialPlan):
+        raise ValueError("ratio operands must be aggregate plans")
+    return RatioPlan(part=part, whole=whole, kind=payload.last_ratio_kind)
+
+
+def _ratio_draft(payload: ConversationPayload) -> RatioDraft | None:
+    if payload.pending_ratio_kind is None:
+        return None
+    assert payload.pending_ratio_part is not None and payload.pending_ratio_whole is not None
+    return RatioDraft(
+        part=draft_to_domain(payload.pending_ratio_part),
+        whole=draft_to_domain(payload.pending_ratio_whole),
+        kind=payload.pending_ratio_kind,
     )
 
 

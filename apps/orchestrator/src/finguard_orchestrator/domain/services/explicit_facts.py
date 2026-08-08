@@ -100,6 +100,12 @@ _ASKS_WHEN: Final = re.compile(
 )
 
 _AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
+_COUNT: Final = re.compile(
+    r"\bcuant[oa]s?\s+(?:veces|movimientos?|operaciones?|compras?|pagos?|cargos?|ingresos?)\b"
+    r"|\b(?:numero|cantidad)\s+de\s+"
+    r"(?:movimientos?|operaciones?|compras?|pagos?|cargos?|ingresos?)\b"
+    r"|\b(?:mas|menos)\s+(?:movimientos?|operaciones?|compras?|pagos?|cargos?)\b"
+)
 _TYPICAL_AMOUNT: Final = re.compile(
     r"\b(?:suelo|solemos)\s+(?:gast|pag|compr|cobr)\w*\b"
     r"|\b(?:gast|pag|compr|cobr)\w*\s+(?:normalmente|habitualmente)\b"
@@ -272,6 +278,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     asks_average = bool(_AVERAGE.search(folded)) or (
         temporal_group is not None and bool(_TYPICAL_AMOUNT.search(folded))
     )
+    asks_count = bool(_COUNT.search(folded))
     per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     window = window_words.window_in(sentence, today=today)
     # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
@@ -293,7 +300,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         metric=(
             Metric.AVERAGE
             if asks_average and (per_movement or temporal_group is None)
-            else (Metric.PERIOD_AVERAGE if asks_average else None)
+            else (Metric.PERIOD_AVERAGE if asks_average else (Metric.COUNT if asks_count else None))
         ),
         direction=Direction.INCOME if says_income and not says_expense else None,
         compared_categories=named if comparison else (),

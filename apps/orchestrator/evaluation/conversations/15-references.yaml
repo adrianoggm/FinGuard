@@ -138,3 +138,32 @@ episodes:
       - say: Compara mis ingresos de 2025 vs 2026
         route: QUERY
         no_model: true
+
+  - name: a_comparison_keeps_the_measure_the_user_named
+    why: >
+      Comparing two windows is not synonymous with comparing money. Counts, per-movement means
+      and calendar means use different divisors, and every result can look plausible if the
+      orchestrator silently falls back to SUM. Each complete question owns its metric and reaches
+      banking without a model changing the unit.
+    metrics: [wrong_tool, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto gasté este año?
+        route: QUERY
+      - say: ¿En qué mes hice más compras, julio o junio?
+        route: QUERY
+        no_model: true
+        says: movimientos
+      - say: ¿En qué mes fue mayor mi gasto medio por movimiento, julio o junio?
+        route: QUERY
+        no_model: true
+        says: importe medio por movimiento
+      - say: Compara mi gasto medio mensual de 2025 con 2026
+        route: QUERY
+        no_model: true
+        says: gasto medio mensual
+      - say: ¿Y en cuál hubo más?
+        route: QUERY
+        no_model: true
+        says: gasto medio mensual
+      - say: gracias
+        route: COURTESY

@@ -98,6 +98,12 @@ def test_an_average_rounds_half_away_from_zero_in_minor_units() -> None:
     assert "0,51 €" in said
 
 
+def test_an_empty_period_has_no_per_movement_average() -> None:
+    said = answer_writer.comparison_figure(answer(total=0, count=0), plan(metric=Metric.AVERAGE))
+
+    assert said == "sin movimientos"
+
+
 def test_a_monthly_average_includes_calendar_months_with_no_movements() -> None:
     answered = QueryAnswer(
         currency="EUR",

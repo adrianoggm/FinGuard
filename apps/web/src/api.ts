@@ -197,6 +197,12 @@ export type ConversationState = {
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
+  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | null;
+  last_ratio_part?: PlanContext | null;
+  last_ratio_whole?: PlanContext | null;
+  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | null;
+  pending_ratio_part?: PlanContext | null;
+  pending_ratio_whole?: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
   payment: PaymentDraft | null;

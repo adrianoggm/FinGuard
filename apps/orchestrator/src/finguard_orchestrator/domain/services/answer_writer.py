@@ -754,6 +754,67 @@ def _rounded_mean(total_minor: int, count: int) -> int:
     return -rounded if total_minor < 0 else rounded
 
 
+def comparison_value(answer: QueryAnswer, plan: FinancialPlan) -> int:
+    """The scalar a comparison must relate, in the unit the question requested.
+
+    Aggregate answers deliberately carry both money and movement count. Picking
+    `total_minor` unconditionally turns "where did I make more purchases?" into "where
+    did I spend more money?" while still returning a plausible number. Keep the choice
+    here beside the arithmetic used by the ordinary answer so both paths agree.
+    """
+    if plan.metric is Metric.COUNT:
+        return answer.movement_count
+    if plan.metric is Metric.AVERAGE:
+        return _rounded_mean(answer.total_minor, answer.movement_count)
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        return _rounded_mean(answer.total_minor, _period_count(answer, plan))
+    return answer.total_minor
+
+
+def comparison_figure(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """One side of a comparison, formatted in its real unit."""
+    if plan.metric is Metric.AVERAGE and answer.is_empty:
+        return "sin movimientos"
+    value = comparison_value(answer, plan)
+    if plan.metric is Metric.COUNT:
+        noun = "movimiento" if value == 1 else "movimientos"
+        return f"{value} {noun}"
+    return money(value, answer.currency)
+
+
+def comparison_difference(value: int, currency: str, metric: Metric) -> str:
+    """An absolute delta in the same unit as both comparison operands."""
+    if metric is Metric.COUNT:
+        noun = "movimiento" if value == 1 else "movimientos"
+        return f"{value} {noun}"
+    return money(value, currency)
+
+
+def comparison_concept(plan: FinancialPlan) -> str:
+    """The noun phrase whose value is being compared."""
+    if plan.metric is Metric.COUNT:
+        return "número de movimientos"
+    if plan.metric is Metric.AVERAGE:
+        return "importe medio por movimiento"
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        unit = {
+            GroupBy.DAY: "diario",
+            GroupBy.WEEK: "semanal",
+            GroupBy.MONTH: "mensual",
+        }[plan.group_by]
+        concept = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe",
+        }[plan.direction]
+        return f"{concept} medio {unit}"
+    return {
+        Direction.EXPENSE: "gasto",
+        Direction.INCOME: "ingreso",
+        Direction.ALL: "importe",
+    }[plan.direction]
+
+
 def _period_count(answer: QueryAnswer, plan: FinancialPlan) -> int:
     """Calendar buckets touched by the exact range banking executed, including empty ones."""
     group_by = plan.group_by
