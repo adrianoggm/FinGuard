@@ -852,6 +852,48 @@ async def test_check_it_against_previous_month_is_anchored_to_the_payroll_month_
     assert "julio de 2026" in answer.text
 
 
+async def test_this_payroll_can_be_compared_with_all_the_previous_ones() -> None:
+    class PayrollLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            if plan.group_by is GroupBy.MONTH:
+                return QueryAnswer(
+                    currency="EUR",
+                    total_minor=476_562,
+                    movement_count=2,
+                    groups=(Group("2026-06", 246_562, 1), Group("2026-05", 230_000, 1)),
+                )
+            return QueryAnswer(currency="EUR", total_minor=244_287, movement_count=1)
+
+    july = FinancialPlan(
+        direction=Direction.INCOME,
+        date_range=window_words.whole_month(2026, 7),
+        categories=("SALARY",),
+        group_by=GroupBy.ACCOUNT,
+        across_accounts=True,
+    )
+    conversation = Conversation(last_plan=july)
+    planner = GivesUp("COMPARISON")
+    ledger = PayrollLedger()
+
+    answer = await asked(
+        "He cobrado mas en esa nomina que en las anteriores?",
+        planner,
+        ledger,
+        conversation,
+    )
+
+    assert planner.asked == 0
+    assert [plan.group_by for plan in ledger.plans] == [GroupBy.NONE, GroupBy.MONTH]
+    assert "junio de 2026" in answer.text
+    assert "2.465,62" in answer.text
+    assert answer.conversation == conversation
+
+
 async def test_which_payroll_was_higher_compares_the_two_months_in_memory() -> None:
     class PeriodLedger(Ledger):
         def __init__(self) -> None:

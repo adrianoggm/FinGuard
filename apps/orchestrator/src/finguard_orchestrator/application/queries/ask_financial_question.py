@@ -147,6 +147,19 @@ _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
     r"|mayor|menor)\b"
 )
+_SELF_CONTAINED_FINANCIAL_QUESTION: Final = re.compile(
+    r"\b(?:cuanto|cuantos|cual|cuales|que)\b.{0,70}"
+    r"\b(?:gaste|gastado|pague|pagado|compre|comprado|ingrese|ingresado|cobre|cobrado"
+    r"|movimientos|operaciones|categoria)\b"
+    r"|\b(?:muestrame|ensename|quiero\s+ver)\b.{0,55}"
+    r"\b(?:movimientos|operaciones|gastos|ingresos)\b"
+)
+_SALARY_HISTORY_COMPARISON: Final = re.compile(
+    r"\b(?:cobr|recib|ingres)\w*\b.{0,55}\b(?:mas|menos)\b.{0,55}"
+    r"\b(?:anteriores?|otras?)\b"
+    r"|\b(?:esa|esta|ultima)\s+nomina\b.{0,55}\b(?:mas|menos)\b.{0,55}"
+    r"\b(?:anteriores?|otras?)\b"
+)
 _NUMBERED_MONTH_FALLBACK: Final = re.compile(
     r"\b(?:el\s+)?mes\s+(?P<first>0?[1-9]|1[0-2])\b.{0,24}"
     r"\b(?:y\s+)?si\s+no\b\s+(?:(?:el\s+)?mes\s+|el\s+)?"
@@ -593,6 +606,12 @@ class AskFinancialQuestionHandler:
         early_refusal = capability_guard.unsupported_reason(query.sentence, self._policy)
         if early_refusal == "CATEGORY_EXCLUSION":
             yield self._declined(early_refusal, was)
+            return
+
+        salary_history = _salary_history_plans(query)
+        if salary_history is not None:
+            yield Stage("querying")
+            yield await self._compare_salary_history(query, *salary_history)
             return
 
         period_comparison = _period_comparison_plans(query)
@@ -1761,6 +1780,137 @@ class AskFinancialQuestionHandler:
             movements=[_spoken_movement(movement) for movement in movements],
         )
 
+    async def _compare_salary_history(
+        self,
+        query: AskFinancialQuestionQuery,
+        current: FinancialPlan,
+        history: FinancialPlan,
+    ) -> AskFinancialQuestionResult:
+        """Say whether the payroll in view exceeds each of the preceding monthly payrolls."""
+        try:
+            current_answer = await self._queries.run(
+                await self._scoped(current, query),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+            history_answer = await self._queries.run(
+                await self._scoped(history, query),
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="El banco ha rechazado la comparaci\u00f3n de n\u00f3minas.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        if current_answer.currency != history_answer.currency:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="No puedo comparar n\u00f3minas expresadas en monedas distintas.",
+                conversation=query.conversation,
+            )
+        if current_answer.is_empty:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PLANNED.value,
+                text=(
+                    "No he encontrado la n\u00f3mina consultada, as\u00ed que no puedo compararla."
+                ),
+                plan=answer_writer.describe(current),
+                conversation=query.conversation,
+                currency=current_answer.currency,
+            )
+
+        previous_months = tuple(
+            group
+            for group in history_answer.groups
+            if group.movement_count > 0 and group.key != "total"
+        )
+        if not previous_months:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.PLANNED.value,
+                text=(
+                    "He encontrado esa n\u00f3mina, pero ninguna anterior en los doce meses "
+                    "precedentes con la que compararla."
+                ),
+                plan=answer_writer.describe(history),
+                conversation=query.conversation,
+                currency=current_answer.currency,
+                total_minor=current_answer.total_minor,
+                movement_count=current_answer.movement_count,
+                movements=[_spoken_movement(movement) for movement in current_answer.movements],
+            )
+
+        highest = max(previous_months, key=lambda group: group.total_minor)
+        current_amount = answer_writer.money(current_answer.total_minor, current_answer.currency)
+        previous_amount = answer_writer.money(highest.total_minor, history_answer.currency)
+        difference = abs(current_answer.total_minor - highest.total_minor)
+        difference_amount = answer_writer.money(difference, current_answer.currency)
+        previous_label = answer_writer.month_group_name(highest.key)
+        current_window = current.date_range
+        assert current_window is not None
+        current_label = answer_writer.month_name(
+            current_window.start.year, current_window.start.month
+        )
+        if current_answer.total_minor > highest.total_minor:
+            text = (
+                f"S\u00ed. La n\u00f3mina de {current_label} fue de {current_amount}, "
+                "la m\u00e1s alta de las "
+                f"\u00faltimas doce: {difference_amount} m\u00e1s que la anterior m\u00e1s alta, "
+                f"la de {previous_label} ({previous_amount})."
+            )
+        elif current_answer.total_minor == highest.total_minor:
+            text = (
+                f"La n\u00f3mina de {current_label} fue de {current_amount}. "
+                "No fue mayor: igual\u00f3 la "
+                f"de {previous_label}."
+            )
+        else:
+            text = (
+                f"No. La n\u00f3mina de {current_label} fue de {current_amount}; "
+                "la anterior m\u00e1s alta "
+                f"fue la de {previous_label}, con {previous_amount} "
+                f"({difference_amount} m\u00e1s)."
+            )
+
+        movements = (*current_answer.movements, *history_answer.movements)
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=text,
+            plan=f"{answer_writer.describe(current)} frente a las doce n\u00f3minas anteriores",
+            # This is an answer about the payroll already in view. Keep that plan in view so
+            # "compruebalo con el mes anterior" is anchored to its month, not to today's month.
+            conversation=query.conversation,
+            currency=current_answer.currency,
+            total_minor=current_answer.total_minor - highest.total_minor,
+            movement_count=current_answer.movement_count + history_answer.movement_count,
+            groups=[
+                SpokenGroup(
+                    current_label, current_answer.total_minor, current_answer.movement_count
+                ),
+                *[
+                    SpokenGroup(
+                        answer_writer.month_group_name(group.key),
+                        group.total_minor,
+                        group.movement_count,
+                    )
+                    for group in previous_months
+                ],
+            ],
+            movements=[_spoken_movement(movement) for movement in movements],
+        )
+
     async def _answer_with_month_fallback(
         self,
         query: AskFinancialQuestionQuery,
@@ -2338,6 +2488,42 @@ def _period_comparison_plans(
     )
 
 
+def _salary_history_plans(
+    query: AskFinancialQuestionQuery,
+) -> tuple[FinancialPlan, FinancialPlan] | None:
+    """The payroll in view and the twelve complete calendar months immediately before it."""
+    if _SALARY_HISTORY_COMPARISON.search(spanish.folded(query.sentence)) is None:
+        return None
+    latest = query.conversation.last_plan
+    if (
+        not isinstance(latest, FinancialPlan)
+        or latest.categories != ("SALARY",)
+        or latest.transaction_ids
+    ):
+        return None
+    current_window = _calendar_month_window(latest, query.today)
+    if current_window is None:
+        return None
+    history = replace(
+        latest,
+        period=None,
+        date_range=AbsoluteRange(
+            start=date(current_window.start.year - 1, current_window.start.month, 1),
+            end=current_window.start - timedelta(days=1),
+        ),
+        group_by=GroupBy.MONTH,
+        metric=Metric.SUM,
+    )
+    current = replace(
+        latest,
+        period=None,
+        date_range=current_window,
+        group_by=GroupBy.NONE,
+        metric=Metric.SUM,
+    )
+    return current, history
+
+
 def _same_window(left: FinancialPlan, right: FinancialPlan) -> bool:
     return (left.period, left.date_range) == (right.period, right.date_range)
 
@@ -2529,6 +2715,20 @@ def _previous_calendar_window(
             return window_words.whole_year(today.year - 1)
         if plan.date_range and _is_whole_year(plan.date_range):
             return window_words.whole_year(plan.date_range.start.year - 1)
+    return None
+
+
+def _calendar_month_window(plan: FinancialPlan, today: date) -> AbsoluteRange | None:
+    """Resolve only month-sized windows, for comparisons whose unit is one payroll."""
+    if plan.date_range is not None and _is_whole_month(plan.date_range):
+        return plan.date_range
+    if plan.period is None:
+        return None
+    if plan.period.period is Period.THIS_MONTH:
+        return window_words.whole_month(today.year, today.month)
+    if plan.period.period is Period.LAST_MONTH:
+        year, month = _month_before(today.year, today.month)
+        return window_words.whole_month(year, month)
     return None
 
 
