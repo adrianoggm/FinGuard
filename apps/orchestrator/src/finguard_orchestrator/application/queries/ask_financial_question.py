@@ -1084,12 +1084,6 @@ class AskFinancialQuestionHandler:
         buys is that "¿y el segundo?" no longer has to be recognised as a sentence at all.
         """
         text = _MISSING_CAPABILITY.get(capability, _CANNOT_YET)
-        if capability == "CATEGORY_EXCLUSION":
-            text = (
-                "Todavia no puedo excluir una categoria de un calculo sin arriesgarme a darte "
-                "el resultado contrario. Puedo mostrarte el total por categorias para que veas "
-                "el alquiler por separado."
-            )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.UNSUPPORTED.value,
             text=text,
@@ -2534,9 +2528,9 @@ class AskFinancialQuestionHandler:
 # the user can act on. Spanish, like every string a person reads.
 _MISSING_CAPABILITY: Final[dict[str, str]] = {
     "CATEGORY_EXCLUSION": (
-        "TodavÃ­a no puedo excluir una categorÃ­a de un cÃ¡lculo sin arriesgarme a darte el "
-        "resultado contrario. Puedo darte el total por categorÃ­as para que veas el alquiler por "
-        "separado."
+        "Puedo excluir categorías y comercios concretos, pero no he identificado con seguridad "
+        "qué quieres dejar fuera. Prueba, por ejemplo, con «sin contar el alquiler» o «sin "
+        "Mercadona»."
     ),
     "INVESTING": (
         "Todavía no sé sumar lo que has invertido en un periodo: el dinero que entra en el fondo "
@@ -2549,9 +2543,8 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "de movimientos los verás marcados uno a uno."
     ),
     "AVERAGE": (
-        "Puedo calcular el importe medio por movimiento, pero todavía no medias mensuales o "
-        "semanal que incluya periodos sin movimientos. Prueba con «importe medio de mis compras "
-        "este mes»."
+        "Puedo calcular medias por movimiento, día, semana o mes. Dime cuál de ellas quieres; "
+        "por ejemplo, «ticket medio por compra» o «gasto medio mensual este año»."
     ),
     "RATIO": (
         "Puedo calcular qué porcentaje de tus ingresos o gastos representa una categoría, "

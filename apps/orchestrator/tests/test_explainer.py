@@ -37,7 +37,7 @@ def test_the_identity_says_what_it_cannot_do_too() -> None:
     assert "bizum" in said
     assert "medias" in said
     assert "transferencias" in said
-    assert "Comparar dos meses o años" in said
+    assert "Comparar dos semanas, meses o años" in said
     assert "rangos parciales" in said
 
 
