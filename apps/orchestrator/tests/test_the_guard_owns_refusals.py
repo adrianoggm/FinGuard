@@ -36,6 +36,7 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
@@ -330,6 +331,57 @@ async def test_a_breakdown_by_account_keeps_exactly_the_five_rows_just_shown() -
     assert ledger.plan.transaction_ids == selected
 
 
+@pytest.mark.parametrize(
+    ("sentence", "excluded_categories", "excluded_merchants"),
+    [
+        ("Todos menos alquiler", ("HOUSING_RENT",), ()),
+        ("Lo mismo, pero sin Mercadona", (), ("mercadona",)),
+    ],
+)
+async def test_a_negative_filter_patches_the_query_without_the_model(
+    sentence: str,
+    excluded_categories: tuple[str, ...],
+    excluded_merchants: tuple[str, ...],
+) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+
+    answer = await asked(sentence, planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.excluded_categories == excluded_categories
+    assert ledger.plan.excluded_merchants == excluded_merchants
+    assert "sin" in answer.text.lower()
+
+
+@pytest.mark.parametrize("sentence", ["Vuelve a la consulta anterior", "Quita ese filtro"])
+async def test_a_user_can_restore_the_query_before_the_last_filter(sentence: str) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    original = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+    filtered = replace(original, excluded_categories=("HOUSING_RENT",))
+    conversation = Conversation(last_plan=filtered, prior_plan=original)
+
+    answer = await asked(sentence, planner, ledger, conversation)
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.excluded_categories == ()
+    assert ledger.plan.categories == original.categories
+    assert ledger.plan.period == original.period
+    assert answer.text.startswith("He vuelto a la consulta anterior.")
+    assert answer.conversation.last_plan == original
+    assert answer.conversation.prior_plan == filtered
+
+
 async def test_five_last_is_also_a_row_count_when_the_noun_is_elliptical() -> None:
     ledger = ListingLedger()
 
@@ -501,6 +553,121 @@ async def test_two_consecutive_period_queries_can_be_compared_naturally(sentence
     assert answer.conversation.prior_plan == earlier
 
 
+async def test_compare_it_with_the_previous_month_reuses_the_whole_query_scope() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            return QueryAnswer(currency="EUR", total_minor=10_000, movement_count=3)
+
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        excluded_merchants=("mercadona",),
+        only_account_id=ACCOUNT,
+        metric=Metric.AVERAGE,
+        group_by=GroupBy.MERCHANT,
+    )
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "Comp\u00e1ralo con el mes anterior",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert len(ledger.plans) == 2
+    earlier, latest = ledger.plans
+    assert earlier.period == RelativePeriod(Period.LAST_MONTH)
+    assert latest.period == RelativePeriod(Period.THIS_MONTH)
+    assert earlier.categories == latest.categories == ("GROCERIES",)
+    assert earlier.excluded_merchants == latest.excluded_merchants == ("mercadona",)
+    assert earlier.only_account_id == latest.only_account_id == ACCOUNT
+    assert all(plan.metric is Metric.SUM and plan.group_by is GroupBy.NONE for plan in ledger.plans)
+    assert answer.conversation.prior_plan is not None
+
+
+async def test_a_second_numbered_month_is_only_queried_when_the_first_has_no_payroll() -> None:
+    class FallbackLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.date_range is not None
+            if plan.date_range.start.month == 7:
+                return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=244_287,
+                movement_count=1,
+                groups=(Group("Cuenta corriente", 244_287, 1),),
+            )
+
+    planner = GivesUp()
+    first = await asked(
+        "Sabrias decirme si he cobrado mi nomina en que cuenta?",
+        planner,
+    )
+    ledger = FallbackLedger()
+
+    answer = await asked(
+        "Pues prueba el mes 7 y si no el 8",
+        planner,
+        ledger,
+        first.conversation,
+    )
+
+    assert [plan.date_range.start.month for plan in ledger.plans if plan.date_range] == [7, 8]
+    assert "julio de 2026" in answer.text
+    assert "agosto de 2026" in answer.text
+    assert answer.conversation.last_plan is not None
+    assert answer.conversation.last_plan.date_range == window_words.whole_month(2026, 8)
+
+
+async def test_check_it_against_previous_month_is_anchored_to_the_payroll_month_in_view() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            amount = 246_562 if plan.date_range and plan.date_range.start.month == 6 else 244_287
+            return QueryAnswer(currency="EUR", total_minor=amount, movement_count=1)
+
+    july = FinancialPlan(
+        direction=Direction.INCOME,
+        date_range=window_words.whole_month(2026, 7),
+        categories=("SALARY",),
+        group_by=GroupBy.ACCOUNT,
+        across_accounts=True,
+    )
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "Vale compruebalo con el mes anterior",
+        planner,
+        ledger,
+        Conversation(last_plan=july),
+    )
+
+    assert planner.asked == 0
+    assert [plan.date_range.start.month for plan in ledger.plans if plan.date_range] == [6, 7]
+    assert all(plan.categories == ("SALARY",) for plan in ledger.plans)
+    assert "junio de 2026" in answer.text
+    assert "julio de 2026" in answer.text
+
+
 async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement() -> None:
     ledger = Ledger()
 
@@ -625,6 +792,32 @@ async def test_the_reported_highest_category_is_planned_without_the_model() -> N
     assert ledger.plan.group_by is GroupBy.CATEGORY
     assert ledger.plan.metric is Metric.SUM
     assert "categoría" in result.text.lower()
+
+
+async def test_the_highlighted_category_can_be_reused_by_pronoun() -> None:
+    planner = GivesUp()
+    ledger = ComparisonLedger()
+
+    first = await asked(
+        "En qu\u00e9 categor\u00eda gast\u00e9 m\u00e1s este a\u00f1o?",
+        planner,
+        ledger,
+    )
+    assert first.conversation.referenced_category == "GROCERIES"
+
+    second = await asked(
+        "Y esa categor\u00eda el mes pasado?",
+        planner,
+        ledger,
+        first.conversation,
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.period == RelativePeriod(Period.LAST_MONTH)
+    assert ledger.plan.group_by is GroupBy.NONE
+    assert second.conversation.referenced_category == "GROCERIES"
 
 
 async def test_frustration_acknowledges_the_failure_without_opening_an_unrelated_slot() -> None:

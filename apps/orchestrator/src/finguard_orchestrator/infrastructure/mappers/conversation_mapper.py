@@ -59,7 +59,9 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
         start=plan.date_range.start if plan.date_range else None,
         end=plan.date_range.end if plan.date_range else None,
         categories=list(plan.categories),
+        excluded_categories=list(getattr(plan, "excluded_categories", ())),
         merchants=list(plan.merchants),
+        excluded_merchants=list(getattr(plan, "excluded_merchants", ())),
         include_internal=getattr(plan, "include_internal", False),
         across_accounts=getattr(plan, "across_accounts", False),
         only_account_id=getattr(plan, "only_account_id", None),
@@ -93,7 +95,9 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
             period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
             date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
             categories=tuple(payload.categories),
+            excluded_categories=tuple(payload.excluded_categories),
             merchants=tuple(payload.merchants),
+            excluded_merchants=tuple(payload.excluded_merchants),
             rank=payload.rank or 1,
         )
     return plan_to_domain(payload)
@@ -125,6 +129,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # let the same question be asked forever.
             last_asked=payload.last_asked if payload else None,
             answered_the_balance=bool(payload and payload.answered_the_balance),
+            referenced_category=payload.referenced_category if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -138,6 +143,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
+        referenced_category=payload.referenced_category,
     )
 
 
@@ -221,6 +227,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
+            "referenced_category": conversation.referenced_category,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
                 plan_payload(conversation.prior_plan) if conversation.prior_plan else None

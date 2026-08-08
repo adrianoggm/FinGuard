@@ -146,6 +146,13 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "INTEREST": ("intereses", "interes"),
 }
 
+_EXCLUSION_PREFIX: Final = re.compile(
+    r"(?:\bsin(?:\s+contar|\s+incluir)?|\bquitando|\bexcepto|\bsalvo|\bmenos"
+    r"|\bno\s+(?:contamos|cuentes|incluimos|incluyas|metas))"
+    r"(?:\s+(?:el|la|los|las|de|gastos?|movimientos?|categorias?|y|ni))*"
+    r"[a-z0-9\s,/-]{0,60}$"
+)
+
 
 def _matches(sentence: str, vocabulary: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     haystack = spanish.folded(sentence)
@@ -185,3 +192,27 @@ def precisely_named_in(sentence: str) -> tuple[str, ...]:
     that was right.
     """
     return _matches(sentence, _PRECISE)
+
+
+def precisely_excluded_in(sentence: str) -> tuple[str, ...]:
+    """Categories explicitly placed behind a negative filter, in sentence order.
+
+    The ordinary matcher intentionally cannot distinguish "alquiler" from "sin alquiler".
+    This one keeps the distinction structural: it only returns a precise category word when an
+    exclusion marker governs it. A model may still read every other phrase; this covers the cases
+    where executing the inclusive interpretation would return the exact opposite answer.
+    """
+    haystack = spanish.folded(sentence)
+    found: dict[str, int] = {}
+    for category, words in _PRECISE.items():
+        for word in sorted(words, key=len, reverse=True):
+            for match in re.finditer(
+                rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?![a-z0-9])", haystack
+            ):
+                prefix = haystack[max(0, match.start() - 100) : match.start()]
+                if _EXCLUSION_PREFIX.search(prefix):
+                    found.setdefault(category, match.start())
+                    break
+            if category in found:
+                break
+    return tuple(sorted(found, key=lambda category: found[category]))

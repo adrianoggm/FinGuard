@@ -315,6 +315,10 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
             continue
         if name == "CATEGORY_EXCLUSION" and not names_a_category:
             continue
+        if name == "CATEGORY_EXCLUSION" and category_words.precisely_excluded_in(sentence):
+            # This negative filter has a domain representation now. Keep the family for vague
+            # exclusions we still cannot ground, but do not refuse the precise safe subset.
+            continue
         if pattern.search(folded):
             return name
     return None

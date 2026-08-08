@@ -66,14 +66,17 @@ def test_a_count_question_is_caught_with_or_without_accents(sentence: str) -> No
         ("¿a este ritmo cuánto acabaré gastando?", "FORECAST"),
         ("envia 20 euros a Marta", "ACTION"),
         ("envía 20 euros a Marta", "ACTION"),
-        ("si no contamos el alquiler", "CATEGORY_EXCLUSION"),
-        ("quitando el alquiler", "CATEGORY_EXCLUSION"),
     ],
 )
 def test_every_family_is_caught_with_or_without_accents(sentence: str, family: str) -> None:
     """Written out per family rather than trusting the fold, because a family whose pattern still
     carries an accent would pass the folded case and fail the accented one — or the reverse."""
     assert capability_guard.unsupported_reason(sentence) == family
+
+
+@pytest.mark.parametrize("sentence", ["si no contamos el alquiler", "quitando el alquiler"])
+def test_a_precise_category_exclusion_is_no_longer_refused(sentence: str) -> None:
+    assert capability_guard.unsupported_reason(sentence) is None
 
 
 @pytest.mark.parametrize(

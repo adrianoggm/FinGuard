@@ -104,9 +104,30 @@ _A_BARE_MONTH: Final = re.compile(
     rf"(?<![a-z0-9])(?:en|de|del|durante)\s+(?P<month>{'|'.join(_MONTHS)})(?![a-z0-9])"
 )
 
+# A common short answer to "which period?": "el mes 7". Requiring the word `mes` keeps account
+# numbers, amounts and days out of this rule. When two alternatives follow ("mes 7 y si no el 8")
+# the first one is the requested first attempt, so this deliberately reads that one.
+_A_NUMBERED_MONTH: Final = re.compile(
+    r"\b(?:el\s+)?mes\s+(?:numero\s+)?(?P<month>0?[1-9]|1[0-2])\b"
+)
+
 # "el 15 de junio" is a day, not a month, and answering it with the whole of June is thirty times
 # the question. A range — "del 1 de junio al 15 de julio" — trips this too, which is the point.
 _A_DAY_OF_A_MONTH: Final = re.compile(rf"\d{{1,2}}\s+de\s+(?:{'|'.join(_MONTHS)})(?![a-z0-9])")
+
+# Two calendar labels joined as alternatives, used only by the direct-comparison path. Unlike the
+# ordinary one-window reader, this accepts bare month names because the connector between exactly
+# two of them ("julio con junio", "julio que en junio") supplies the missing structure.
+_COMPARISON_CONNECTOR: Final = re.compile(r"\b(?:que|con|contra|versus|vs|y|o|frente\s+a)\b")
+_MONTH_MENTION: Final = re.compile(
+    rf"\b(?P<month>{'|'.join(_MONTHS)})\b"
+    r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:(?:ano\s+)?(?P<year>20\d{2})"
+    r"|(?P<relative>este\s+ano|ano\s+(?:pasado|anterior))))?"
+)
+_YEAR_MENTION: Final = re.compile(
+    r"\b(?:(?:el\s+)?ano\s+(?P<relative>este|pasado|anterior)"
+    r"|(?:(?:el\s+)?ano\s+)?(?P<year>20\d{2}))\b"
+)
 
 # A year named outright: "en 2025", "durante 2025", "del 2025", "todo el año 2025". Either a
 # preposition or the word "año" has to be there — a bare four-digit number is an amount as often as
@@ -184,6 +205,60 @@ def _year_of(month: int, today: date) -> int:
     viene", and this vocabulary deliberately does not read the future.
     """
     return today.year if month <= today.month else today.year - 1
+
+
+def compared_calendar_months(
+    sentence: str, *, today: date
+) -> tuple[AbsoluteRange, AbsoluteRange] | None:
+    """Exactly two whole months explicitly contrasted in one sentence, in mention order."""
+    folded = spanish.folded(sentence)
+    if _A_DAY_OF_A_MONTH.search(folded):
+        return None
+    mentions = tuple(_MONTH_MENTION.finditer(folded))
+    if len(mentions) != 2:
+        return None
+    between = folded[mentions[0].end() : mentions[1].start()]
+    if _COMPARISON_CONNECTOR.search(between) is None:
+        return None
+
+    windows: list[AbsoluteRange] = []
+    for mention in mentions:
+        month = _MONTH_NUMBER[mention.group("month")]
+        written_year = mention.group("year")
+        relative = mention.group("relative")
+        if written_year is not None:
+            year = int(written_year)
+        elif relative is not None:
+            year = today.year if relative.startswith("este") else today.year - 1
+        else:
+            year = _year_of(month, today)
+        windows.append(whole_month(year, month))
+    if windows[0] == windows[1]:
+        return None
+    return windows[0], windows[1]
+
+
+def compared_calendar_years(
+    sentence: str, *, today: date
+) -> tuple[AbsoluteRange, AbsoluteRange] | None:
+    """Exactly two whole years explicitly contrasted in one sentence, in mention order."""
+    folded = spanish.folded(sentence)
+    mentions = tuple(_YEAR_MENTION.finditer(folded))
+    if len(mentions) != 2:
+        return None
+    between = folded[mentions[0].end() : mentions[1].start()]
+    if _COMPARISON_CONNECTOR.search(between) is None:
+        return None
+
+    years = tuple(
+        int(mention.group("year"))
+        if mention.group("year") is not None
+        else (today.year if mention.group("relative") == "este" else today.year - 1)
+        for mention in mentions
+    )
+    if years[0] == years[1]:
+        return None
+    return whole_year(years[0]), whole_year(years[1])
 
 
 def window_in(

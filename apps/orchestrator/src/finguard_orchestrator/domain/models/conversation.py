@@ -201,6 +201,11 @@ class Conversation:
     # payment may coexist with it, and retrying must execute this exact plan instead of asking the
     # model to interpret "reintenta" as a new financial question.
     retry_plan: PlannedQuery | None = None
+    # A category the last answer explicitly singled out (for example the largest group). The plan
+    # alone remembers that a category breakdown was run, but not which row the answer called
+    # "the one where you spent most". This small referent makes "esa categorÃ­a" resolvable without
+    # storing financial results or asking a model to guess a row.
+    referenced_category: str | None = None
     # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
     # a clarification records its slot on the workflow, and a question asked with nothing
     # half-built behind it leaves no workflow to record it on. Without this, that question can be
@@ -265,6 +270,7 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
         )
 
     def asking(self, slot: Slot) -> "Conversation":
@@ -274,6 +280,7 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
             last_asked=slot,
         )
 
@@ -296,6 +303,7 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
             answered_the_balance=self.answered_the_balance,
         )
 
@@ -310,6 +318,7 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
             last_asked=self.last_asked,
             answered_the_balance=True,
         )
@@ -321,6 +330,7 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             retry_plan=plan,
+            referenced_category=self.referenced_category,
             last_asked=self.last_asked,
         )
 
@@ -330,10 +340,13 @@ class Conversation:
             active=self.active,
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
+            referenced_category=self.referenced_category,
             last_asked=self.last_asked,
         )
 
-    def answered(self, plan: PlannedQuery) -> "Conversation":
+    def answered(
+        self, plan: PlannedQuery, *, referenced_category: str | None = None
+    ) -> "Conversation":
         """Remember a financial answer and close only the workflow that answer resolves.
 
         A suspended payment belongs to the conversation before this answer and deliberately stepped
@@ -346,7 +359,12 @@ class Conversation:
             else None
         )
         prior = self.prior_plan if plan == self.last_plan else self.last_plan
-        return Conversation(active=active, last_plan=plan, prior_plan=prior)
+        return Conversation(
+            active=active,
+            last_plan=plan,
+            prior_plan=prior,
+            referenced_category=referenced_category,
+        )
 
     def suspend(self) -> "Conversation":
         """The active payment steps aside for a turn about something else.
@@ -361,6 +379,7 @@ class Conversation:
                 last_plan=self.last_plan,
                 prior_plan=self.prior_plan,
                 retry_plan=self.retry_plan,
+                referenced_category=self.referenced_category,
                 last_asked=self.last_asked,
                 answered_the_balance=self.answered_the_balance,
             )
@@ -374,6 +393,7 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
             last_asked=self.last_asked,
             # Kept, like every other piece of memory here. Dropping it meant a payment under way
             # silently turned "¿y en la hucha?" back into a question about spending, so a balance

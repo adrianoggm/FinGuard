@@ -87,6 +87,13 @@ def test_asking_how_many_may_not_be_answered_with_how_much() -> None:
     assert disagreement("¿Cuántas veces fui al súper el mes pasado?", plan()) is not None
 
 
+def test_a_precise_exclusion_must_be_negative_not_positive() -> None:
+    sentence = "¿Cuánto gasté este año sin contar el alquiler?"
+
+    assert disagreement(sentence, plan(categories=("HOUSING_RENT",))) is not None
+    assert disagreement(sentence, plan(excluded_categories=("HOUSING_RENT",))) is None
+
+
 # --- against the dataset ------------------------------------------------------------
 
 

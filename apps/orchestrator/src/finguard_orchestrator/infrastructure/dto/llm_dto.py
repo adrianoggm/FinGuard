@@ -101,7 +101,9 @@ class PlanPayload(_Payload):
     start: date | None = None
     end: date | None = None
     categories: list[str] = []
+    excluded_categories: list[str] = []
     merchants: list[str] = []
+    excluded_merchants: list[str] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     include_internal: bool = False
@@ -197,6 +199,11 @@ class ConversationPayload(_Payload):
     # what makes "¿y en la hucha?" a balance question after a balance and a spending question after
     # a spending one — the same sentence, two meanings, decided by the turn before.
     answered_the_balance: bool = False
+    # The category explicitly highlighted by the last answer. It is an identifier from banking,
+    # not prose, and the client only echoes it so a later "esa categorÃ­a" can be grounded.
+    referenced_category: str | None = Field(
+        default=None, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$"
+    )
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None

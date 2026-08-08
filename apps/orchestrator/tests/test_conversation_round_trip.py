@@ -72,6 +72,14 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     assert back.last_plan == LAST_MONTH
 
 
+def test_a_highlighted_category_survives_the_client_round_trip() -> None:
+    out = IDLE.answered(LAST_MONTH, referenced_category="GROCERIES")
+
+    back = there_and_back(out)
+
+    assert back.referenced_category == "GROCERIES"
+
+
 def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
     earlier = LAST_MONTH
     latest = FinancialPlan(
@@ -85,6 +93,19 @@ def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
 
     assert back.last_plan == latest
     assert back.prior_plan == earlier
+
+
+def test_negative_filters_survive_the_client_round_trip() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        excluded_categories=("HOUSING_RENT",),
+        excluded_merchants=("Mercadona",),
+    )
+
+    back = there_and_back(IDLE.answered(plan))
+
+    assert back.last_plan == plan
 
 
 def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
