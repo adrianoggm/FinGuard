@@ -35,10 +35,12 @@ class FinancialQuery:
     # Every category validated itself on construction: the plan only has to bound how
     # many of them there are.
     categories: tuple[Category, ...] = field(default_factory=tuple)
+    excluded_categories: tuple[Category, ...] = field(default_factory=tuple)
     # The shops the question is about. The first field in this contract whose values are not
     # a closed set — a category is an enum and this is whatever somebody typed — so it is
     # bounded and checked here, and it reaches SQL only as a bound parameter.
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     # How many movements to return as evidence for the figure.
     supporting_limit: int = DEFAULT_SUPPORTING_MOVEMENTS
@@ -108,16 +110,27 @@ class FinancialQuery:
             raise InvalidValueError(
                 f"supportingLimit must be between 0 and {MAX_SUPPORTING_MOVEMENTS}"
             )
-        if len(self.categories) > MAX_CATEGORIES:
-            raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
-        if len(self.merchants) > MAX_MERCHANTS:
-            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
-        for merchant in self.merchants:
+        if len(self.categories) > MAX_CATEGORIES or len(self.excluded_categories) > MAX_CATEGORIES:
+            raise InvalidValueError(f"at most {MAX_CATEGORIES} categories per filter")
+        included_categories = {category.value for category in self.categories}
+        excluded_categories = {category.value for category in self.excluded_categories}
+        if included_categories & excluded_categories:
+            raise InvalidValueError("a category cannot be both included and excluded")
+        if len(self.merchants) > MAX_MERCHANTS or len(self.excluded_merchants) > MAX_MERCHANTS:
+            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants per filter")
+        for merchant in (*self.merchants, *self.excluded_merchants):
             if not merchant.strip():
                 raise InvalidValueError("a merchant name cannot be empty")
             if len(merchant) > MAX_MERCHANT_LENGTH:
                 raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
+        included_merchants = {merchant.strip().casefold() for merchant in self.merchants}
+        excluded_merchants = {merchant.strip().casefold() for merchant in self.excluded_merchants}
+        if included_merchants & excluded_merchants:
+            raise InvalidValueError("a merchant cannot be both included and excluded")
 
     def category_values(self) -> list[str]:
         """The plain strings, for the one place that needs them: a SQL parameter."""
         return [category.value for category in self.categories]
+
+    def excluded_category_values(self) -> list[str]:
+        return [category.value for category in self.excluded_categories]
