@@ -141,6 +141,12 @@ _COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
     r")\s+con\s+(?:el\s+|la\s+)?"
     r"(?P<unit>mes|semana|ano|periodo)\s+(?:anterior|pasad[oa])$"
 )
+_DIRECT_PERIOD_COMPARISON: Final = re.compile(
+    r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs"
+    r"|mas\b.{0,35}\bque|menos\b.{0,35}\bque"
+    r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
+    r"|mayor|menor)\b"
+)
 _NUMBERED_MONTH_FALLBACK: Final = re.compile(
     r"\b(?:el\s+)?mes\s+(?P<first>0?[1-9]|1[0-2])\b.{0,24}"
     r"\b(?:y\s+)?si\s+no\b\s+(?:(?:el\s+)?mes\s+|el\s+)?"
@@ -592,6 +598,8 @@ class AskFinancialQuestionHandler:
         period_comparison = _period_comparison_plans(query)
         if period_comparison is None:
             period_comparison = _comparison_with_previous_period(query)
+        if period_comparison is None:
+            period_comparison = _direct_period_comparison(query)
         if period_comparison is not None:
             # Two complete, already validated questions are safer context than asking a model to
             # reconstruct both from "compáralos". Run them again so the comparison uses current
@@ -2153,9 +2161,9 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "separado: lo que ingresas y lo que gastas en esa categoría."
     ),
     "COMPARISON": (
-        "Puedo comparar dos periodos que acabes de consultar: pregúntame por uno, luego por el "
-        "otro y dime «compáralos». Todavía no interpreto dos periodos nuevos dentro de una sola "
-        "frase."
+        "Entiendo que quieres comparar, pero no he podido delimitar dos periodos calendario "
+        "completos. Prueba, por ejemplo, con «compara mis gastos de julio con junio» o consulta "
+        "dos periodos por separado y dime «compáralos»."
     ),
     "FORECAST": "Solo consulto lo que ya ha pasado, así que no hago previsiones ni estimaciones.",
     "ADVICE": (
@@ -2234,12 +2242,14 @@ _RANKED_DATE: Final = re.compile(
     r"|^(?:y\s+)?cuando\s+(?:fue|ocurrio|entro|salio)$"
 )
 _PERIOD_COMPARISON_REFERENCE: Final = re.compile(
-    r"^(?:vale\s+|bueno\s+|y\s+)?(?:"
+    r"^(?:vale\s+|bueno\s+|entonces\s+|y\s+)?(?:"
     r"compara(?:los|las|melos|melas)?"
     r"(?:\s+(?:esos?|esas?|los|las)?\s*dos\s+(?:periodos?|meses?|semanas?))?"
     r"|hazme\s+una\s+comparacion(?:\s+de\s+(?:los|esos)\s+dos)?"
     r"|(?:en\s+)?(?:cual|que)\s+(?:de\s+los\s+dos\s+)?"
-    r"(?:gaste|he\s+gastado|ingrese|he\s+ingresado|hubo)\s+mas"
+    r"(?:gaste|he\s+gastado|ingrese|he\s+ingresado|cobre|he\s+cobrado|recibi|he\s+recibido|hubo)\s+mas"
+    r"|(?:cual|que)\s+(?:he\s+)?(?:cobrado|recibido|ingresado|gastado)\s+mas"
+    r"|(?:del|entre\s+el)\s+anterior\s+(?:a|y)\s+este"
     r")(?:\s+por\s+favor)?$"
 )
 
@@ -2378,6 +2388,116 @@ def _comparison_with_previous_period(
         metric=Metric.SUM,
     )
     return earlier, replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM)
+
+
+def _direct_period_comparison(
+    query: AskFinancialQuestionQuery,
+) -> tuple[FinancialPlan, FinancialPlan] | None:
+    """Build the common two-window comparison stated completely in one sentence.
+
+    Only closed, paired phrases are accepted. A sentence naming arbitrary dates still belongs to
+    the planner until the date-range grammar can represent both sides without guessing.
+    """
+    folded = spanish.folded(query.sentence)
+    if _DIRECT_PERIOD_COMPARISON.search(folded) is None:
+        return None
+    windows: tuple[window_words.Window, window_words.Window] | None = None
+    named_months = window_words.compared_calendar_months(query.sentence, today=query.today)
+    named_years = window_words.compared_calendar_years(query.sentence, today=query.today)
+    if named_months is not None:
+        # `_compare_periods` writes its `latest` argument first. Reverse mention order here so the
+        # answer follows the user's order: "julio con junio" reads July before June.
+        windows = (named_months[1], named_months[0])
+    elif named_years is not None:
+        windows = (named_years[1], named_years[0])
+    elif re.search(r"\beste\s+mes\b", folded) and re.search(
+        r"\b(?:el\s+)?mes\s+(?:pasado|anterior)\b", folded
+    ):
+        windows = (
+            RelativePeriod(Period.LAST_MONTH),
+            RelativePeriod(Period.THIS_MONTH),
+        )
+    elif re.search(r"\besta\s+semana\b", folded) and re.search(
+        r"\b(?:la\s+)?semana\s+(?:pasada|anterior)\b", folded
+    ):
+        windows = (
+            RelativePeriod(Period.LAST_WEEK),
+            RelativePeriod(Period.THIS_WEEK),
+        )
+    elif re.search(r"\beste\s+ano\b|\ben\s+lo\s+que\s+va\s+de\s+ano\b", folded) and re.search(
+        r"\b(?:el\s+)?ano\s+(?:pasado|anterior)\b", folded
+    ):
+        windows = (
+            window_words.whole_year(query.today.year - 1),
+            RelativePeriod(Period.THIS_YEAR),
+        )
+    if windows is None:
+        return None
+
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    named_categories = category_words.precisely_named_in(query.sentence)
+    if len(named_categories) > 1:
+        # Two categories and two windows describe four possible comparisons. Do not choose one.
+        return None
+    states_subject = re.search(
+        r"\bgast|\bingres|\bcobr|\brecib|\bcompr|\bpagu|\bcargo"
+        r"|\bnomina|\bsueldo|\bsalario|\bmovimientos?|\boperaciones?",
+        folded,
+    )
+    previous = (
+        query.conversation.last_plan
+        if states_subject is None and isinstance(query.conversation.last_plan, FinancialPlan)
+        else None
+    )
+    categories = named_categories or (previous.categories if previous is not None else ())
+    direction = facts.direction
+    if direction is None:
+        if re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
+            direction = Direction.EXPENSE
+        elif named_categories:
+            direction = _direction_of(named_categories)
+        elif previous is not None:
+            direction = previous.direction
+        else:
+            direction = Direction.ALL
+    base = explicit_facts.enforce_exclusions(
+        FinancialPlan(
+            direction=direction,
+            period=windows[1] if isinstance(windows[1], RelativePeriod) else None,
+            date_range=windows[1] if isinstance(windows[1], AbsoluteRange) else None,
+            categories=categories,
+            excluded_categories=(
+                tuple(
+                    category
+                    for category in previous.excluded_categories
+                    if category not in named_categories
+                )
+                if previous is not None
+                else ()
+            ),
+            merchants=(
+                () if named_categories else (previous.merchants if previous is not None else ())
+            ),
+            excluded_merchants=(
+                ()
+                if named_categories
+                else (previous.excluded_merchants if previous is not None else ())
+            ),
+            group_by=GroupBy.NONE,
+            metric=Metric.SUM,
+            include_internal=previous.include_internal if previous is not None else False,
+            across_accounts=previous.across_accounts if previous is not None else False,
+            only_account_id=previous.only_account_id if previous is not None else None,
+            only_account_ids=previous.only_account_ids if previous is not None else (),
+        ),
+        facts,
+    )
+    earlier = replace(
+        base,
+        period=windows[0] if isinstance(windows[0], RelativePeriod) else None,
+        date_range=windows[0] if isinstance(windows[0], AbsoluteRange) else None,
+    )
+    return earlier, base
 
 
 def _previous_calendar_window(

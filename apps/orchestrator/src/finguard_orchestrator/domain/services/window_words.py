@@ -118,9 +118,10 @@ _A_DAY_OF_A_MONTH: Final = re.compile(rf"\d{{1,2}}\s+de\s+(?:{'|'.join(_MONTHS)}
 # Two calendar labels joined as alternatives, used only by the direct-comparison path. Unlike the
 # ordinary one-window reader, this accepts bare month names because the connector between exactly
 # two of them ("julio con junio", "julio que en junio") supplies the missing structure.
-_COMPARISON_CONNECTOR: Final = re.compile(r"\b(?:que|con|contra|versus|vs|y|o|frente\s+a)\b")
+_COMPARISON_CONNECTOR: Final = re.compile(r"\b(?:que|con|contra|versus|vs|y|o|frente\s+a(?:l)?)\b")
 _MONTH_MENTION: Final = re.compile(
-    rf"\b(?P<month>{'|'.join(_MONTHS)})\b"
+    rf"\b(?:(?P<month>{'|'.join(_MONTHS)})|(?:el\s+)?mes\s+"
+    r"(?P<number>0?[1-9]|1[0-2]))\b"
     r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:(?:ano\s+)?(?P<year>20\d{2})"
     r"|(?P<relative>este\s+ano|ano\s+(?:pasado|anterior))))?"
 )
@@ -223,7 +224,11 @@ def compared_calendar_months(
 
     windows: list[AbsoluteRange] = []
     for mention in mentions:
-        month = _MONTH_NUMBER[mention.group("month")]
+        month = (
+            _MONTH_NUMBER[mention.group("month")]
+            if mention.group("month") is not None
+            else int(mention.group("number"))
+        )
         written_year = mention.group("year")
         relative = mention.group("relative")
         if written_year is not None:

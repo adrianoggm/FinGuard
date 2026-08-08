@@ -740,7 +740,10 @@ def test_an_average_never_reaches_the_model_even_mid_conversation() -> None:
     ("said", "family"),
     [
         ("¿qué porcentaje de mi gasto es el alquiler?", "RATIO"),
-        ("¿gasté más en julio que en junio?", "COMPARISON"),
+        (
+            "¿gasté más del 1 al 15 de julio que del 16 al 31 de julio?",
+            "COMPARISON",
+        ),
         ("a este ritmo, ¿cuánto voy a gastar este mes?", "FORECAST"),
         ("¿debería recortar en restaurantes?", "ADVICE"),
     ],
