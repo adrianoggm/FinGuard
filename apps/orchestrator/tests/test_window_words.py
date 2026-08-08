@@ -249,6 +249,16 @@ def test_a_month_with_no_year_is_the_last_time_it_happened(
     assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(start=start, end=end)
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    ["el mes 7", "prueba el mes 7", "el mes 7 y si no el 8"],
+)
+def test_a_numbered_month_answer_is_a_calendar_month(sentence: str) -> None:
+    assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(
+        start=date(2026, 7, 1), end=date(2026, 7, 31)
+    )
+
+
 def test_a_month_of_the_year_before_is_that_month_and_not_the_whole_year() -> None:
     """ "El año pasado" on its own is a calendar year and is read as one. Beside a month it is the
     year that month belongs to, and answering with twelve months instead of one is the same class
