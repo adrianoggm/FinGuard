@@ -2051,6 +2051,7 @@ _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
     r"|^volvamos?\s+a\b"
     r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
 )
+_CATEGORY_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+categoria\b")
 _COUNT_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuant[oa]s?\s+(?:veces|compras|movimientos|operaciones|pagos|cargos)\b"
 )
@@ -2139,6 +2140,27 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
     facts = explicit_facts.read(query.sentence, today=query.today)
+
+    if _CATEGORY_REFERENCE.search(folded):
+        referenced = query.conversation.referenced_category
+        if referenced is None and len(previous.categories) == 1:
+            referenced = previous.categories[0]
+        if referenced is None or category_words.words_for(referenced) is None:
+            return None
+        return explicit_facts.enforce(
+            replace(
+                previous,
+                categories=(referenced,),
+                excluded_categories=tuple(
+                    category for category in previous.excluded_categories if category != referenced
+                ),
+                merchants=(),
+                excluded_merchants=(),
+                group_by=facts.group_by or GroupBy.NONE,
+                metric=facts.metric or previous.metric,
+            ),
+            facts,
+        )
 
     if facts.excluded_categories or facts.excluded_merchants:
         # A negative filter patches the validated query in view. No model needs to re-emit the
@@ -3041,13 +3063,26 @@ def _answered(
         text = answer_writer.compare_averages(answer, plan)
     else:
         text = answer_writer.write(answer, plan)
+    referenced_category: str | None = None
+    if len(plan.categories) == 1 and category_words.words_for(plan.categories[0]) is not None:
+        referenced_category = plan.categories[0]
+    if facts.asks_top_category:
+        highlighted = next(
+            (
+                group.key
+                for group in answer.groups
+                if group.movement_count > 0 and category_words.words_for(group.key) is not None
+            ),
+            None,
+        )
+        referenced_category = highlighted
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
         text=text,
         plan=answer_writer.describe(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
-        conversation=was.answered(plan),
+        conversation=was.answered(plan, referenced_category=referenced_category),
         currency=answer.currency,
         total_minor=answer.total_minor,
         movement_count=answer.movement_count,

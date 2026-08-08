@@ -129,6 +129,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # let the same question be asked forever.
             last_asked=payload.last_asked if payload else None,
             answered_the_balance=bool(payload and payload.answered_the_balance),
+            referenced_category=payload.referenced_category if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -142,6 +143,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
+        referenced_category=payload.referenced_category,
     )
 
 
@@ -225,6 +227,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
+            "referenced_category": conversation.referenced_category,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
                 plan_payload(conversation.prior_plan) if conversation.prior_plan else None

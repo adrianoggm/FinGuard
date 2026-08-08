@@ -192,6 +192,8 @@ export type ConversationState = {
   // Whether the last turn said how much money there is. Round-tripped and never read here: it is
   // how the service knows that "¿y en la hucha?" is about the balance rather than about spending.
   answered_the_balance: boolean;
+  // Category explicitly highlighted by the previous answer; echoed without interpretation.
+  referenced_category?: string | null;
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;

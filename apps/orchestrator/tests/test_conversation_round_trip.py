@@ -72,6 +72,14 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     assert back.last_plan == LAST_MONTH
 
 
+def test_a_highlighted_category_survives_the_client_round_trip() -> None:
+    out = IDLE.answered(LAST_MONTH, referenced_category="GROCERIES")
+
+    back = there_and_back(out)
+
+    assert back.referenced_category == "GROCERIES"
+
+
 def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
     earlier = LAST_MONTH
     latest = FinancialPlan(

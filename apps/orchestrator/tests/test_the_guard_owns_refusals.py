@@ -655,6 +655,32 @@ async def test_the_reported_highest_category_is_planned_without_the_model() -> N
     assert "categoría" in result.text.lower()
 
 
+async def test_the_highlighted_category_can_be_reused_by_pronoun() -> None:
+    planner = GivesUp()
+    ledger = ComparisonLedger()
+
+    first = await asked(
+        "En qu\u00e9 categor\u00eda gast\u00e9 m\u00e1s este a\u00f1o?",
+        planner,
+        ledger,
+    )
+    assert first.conversation.referenced_category == "GROCERIES"
+
+    second = await asked(
+        "Y esa categor\u00eda el mes pasado?",
+        planner,
+        ledger,
+        first.conversation,
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.period == RelativePeriod(Period.LAST_MONTH)
+    assert ledger.plan.group_by is GroupBy.NONE
+    assert second.conversation.referenced_category == "GROCERIES"
+
+
 async def test_frustration_acknowledges_the_failure_without_opening_an_unrelated_slot() -> None:
     planner = GivesUp()
     previous = FinancialPlan(
