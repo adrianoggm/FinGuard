@@ -378,6 +378,22 @@ def listed(names: tuple[str, ...]) -> str:
     return f"{', '.join(names[:-1])} y {names[-1]}"
 
 
+def month_name(year: int, month: int) -> str:
+    """A calendar month in the language used by conversational comparisons."""
+    if not 1 <= month <= 12:
+        return f"{year}-{month:02d}"
+    return f"{_MONTHS[month - 1]} de {year}"
+
+
+def month_group_name(key: str) -> str:
+    """Turn banking's stable YYYY-MM group key into a month a person would say."""
+    try:
+        year, month = (int(part) for part in key.split("-", maxsplit=1))
+    except (TypeError, ValueError):
+        return key
+    return month_name(year, month)
+
+
 # Spanish months, for naming the day a movement happened. Written out rather than taken from the
 # locale: a service's locale is a deployment accident, and "14 de marzo" should not depend on it.
 _MONTHS: Final = (

@@ -131,6 +131,11 @@ _RETURN_TO_PREVIOUS: Final = re.compile(
     r")$"
 )
 _UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
+_NUMBERED_MONTH_FALLBACK: Final = re.compile(
+    r"\b(?:el\s+)?mes\s+(?P<first>0?[1-9]|1[0-2])\b.{0,24}"
+    r"\b(?:y\s+)?si\s+no\b\s+(?:(?:el\s+)?mes\s+|el\s+)?"
+    r"(?P<second>0?[1-9]|1[0-2])\b"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -837,6 +842,14 @@ class AskFinancialQuestionHandler:
             yield self._declined(refused, was)
             return
 
+        month_fallback = self._pending_month_fallback(query)
+        if month_fallback is not None:
+            first, second = month_fallback
+            yield Stage("planned", answer_writer.describe(first))
+            yield Stage("querying")
+            yield await self._answer_with_month_fallback(query, first, second)
+            return
+
         finished = self._finish_pending(query)
         if finished is not None:
             # No model. The question back was about a slot, the reply fills it, and both the window
@@ -1233,6 +1246,36 @@ class AskFinancialQuestionHandler:
             currency=wanted[0].currency,
             total_minor=amount,
         )
+
+    def _pending_month_fallback(
+        self, query: AskFinancialQuestionQuery
+    ) -> tuple[FinancialPlan, FinancialPlan] | None:
+        """Two numbered months supplied as an ordered fallback to a payroll clarification."""
+        active = query.conversation.active
+        if (
+            not isinstance(active, FinancialClarification)
+            or active.awaiting is not Slot.WINDOW
+            or active.draft.categories != ("SALARY",)
+        ):
+            return None
+        found = _NUMBERED_MONTH_FALLBACK.search(spanish.folded(query.sentence))
+        if found is None:
+            return None
+        first_window = _numbered_month_window(int(found.group("first")), query.today)
+        second_window = _numbered_month_window(int(found.group("second")), query.today)
+        try:
+            first = active.draft.with_window(first_window)
+            second = active.draft.with_window(second_window)
+        except InvalidValueError:
+            return None
+        if (
+            plan_verifier.disagreement(f"mes {found.group('first')}", first, self._policy)
+            is not None
+            or plan_verifier.disagreement(f"mes {found.group('second')}", second, self._policy)
+            is not None
+        ):
+            return None
+        return first, second
 
     def _finish_pending(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         """The plan a reply to "¿de qué periodo?" completes, or None if this is not that.
@@ -1662,6 +1705,36 @@ class AskFinancialQuestionHandler:
                 ),
             ],
             movements=[_spoken_movement(movement) for movement in movements],
+        )
+
+    async def _answer_with_month_fallback(
+        self,
+        query: AskFinancialQuestionQuery,
+        first: FinancialPlan,
+        second: FinancialPlan,
+    ) -> AskFinancialQuestionResult:
+        """Try the preferred month, and only query its fallback when the first is empty."""
+        first_result = await self._answer(query, first)
+        if first_result.movement_count:
+            return first_result
+
+        second_result = await self._answer(query, second)
+        first_window = first.date_range
+        second_window = second.date_range
+        assert first_window is not None and second_window is not None
+        first_label = answer_writer.month_name(first_window.start.year, first_window.start.month)
+        second_label = answer_writer.month_name(second_window.start.year, second_window.start.month)
+        if second_result.movement_count:
+            return replace(
+                second_result,
+                text=(
+                    f"No la he encontrado en {first_label}; "
+                    f"sí en {second_label}. {second_result.text}"
+                ),
+            )
+        return replace(
+            second_result,
+            text=f"No he encontrado la nómina ni en {first_label} ni en {second_label}.",
         )
 
     async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
@@ -2207,6 +2280,12 @@ def _period_comparison_plans(
         replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
         replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
     )
+
+
+def _numbered_month_window(month: int, today: date) -> AbsoluteRange:
+    """The most recent occurrence of a numbered month, like the named-month vocabulary."""
+    year = today.year if month <= today.month else today.year - 1
+    return window_words.whole_month(year, month)
 
 
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:

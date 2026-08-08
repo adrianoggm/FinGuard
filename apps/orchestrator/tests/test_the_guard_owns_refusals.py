@@ -36,6 +36,7 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
@@ -550,6 +551,45 @@ async def test_two_consecutive_period_queries_can_be_compared_naturally(sentence
     assert "35,00 € mayor" in answer.text
     assert answer.conversation.last_plan == latest
     assert answer.conversation.prior_plan == earlier
+
+
+async def test_a_second_numbered_month_is_only_queried_when_the_first_has_no_payroll() -> None:
+    class FallbackLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.date_range is not None
+            if plan.date_range.start.month == 7:
+                return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=244_287,
+                movement_count=1,
+                groups=(Group("Cuenta corriente", 244_287, 1),),
+            )
+
+    planner = GivesUp()
+    first = await asked(
+        "Sabrias decirme si he cobrado mi nomina en que cuenta?",
+        planner,
+    )
+    ledger = FallbackLedger()
+
+    answer = await asked(
+        "Pues prueba el mes 7 y si no el 8",
+        planner,
+        ledger,
+        first.conversation,
+    )
+
+    assert [plan.date_range.start.month for plan in ledger.plans if plan.date_range] == [7, 8]
+    assert "julio de 2026" in answer.text
+    assert "agosto de 2026" in answer.text
+    assert answer.conversation.last_plan is not None
+    assert answer.conversation.last_plan.date_range == window_words.whole_month(2026, 8)
 
 
 async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement() -> None:
