@@ -15,7 +15,7 @@ import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
-from typing import Final
+from typing import Final, Literal
 from uuid import UUID
 
 from finguard_orchestrator.application.bus.query_bus import Query
@@ -121,6 +121,16 @@ _MOVEMENT_CLASSIFICATION: Final = re.compile(
     r"\b(?:eso|esto|este|ese|el\s+movimiento|el\s+ingreso)\b.{0,25}"
     r"\b(?:es|era|fue)\b.{0,35}\b(?:bizum|nomina|transferencia)\b"
 )
+_RETURN_TO_PREVIOUS: Final = re.compile(
+    r"^(?:vale\s+|bueno\s+|y\s+)?(?:"
+    r"vuelve?\s+(?:a\s+)?(?:la\s+consulta\s+|lo\s+)?anterior"
+    r"|volvamos?\s+(?:a\s+)?(?:la\s+consulta\s+|lo\s+)?anterior"
+    r"|dejalo\s+como\s+estaba(?:\s+antes)?"
+    r"|como\s+estaba\s+antes"
+    r"|deshaz\s+(?:eso|el\s+ultimo\s+cambio)"
+    r")$"
+)
+_UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
 
 logger = logging.getLogger(__name__)
 
@@ -413,6 +423,27 @@ class AskFinancialQuestionHandler:
         previous = was.last_plan
         planning_previous = previous if isinstance(previous, FinancialPlan) else None
         force_follow_up = False
+
+        previous_request = _previous_plan_request(query.sentence, was)
+        if previous_request is not None:
+            if previous_request is False:
+                yield AskFinancialQuestionResult(
+                    outcome=Spoken.GUIDANCE.value,
+                    text="No tengo una consulta anterior compatible a la que volver.",
+                    conversation=was,
+                )
+                return
+            target = previous_request
+            yield Stage("planned", answer_writer.describe(target))
+            yield Stage("querying")
+            restored = (
+                await self._ranked(query, target)
+                if isinstance(target, TopMovements)
+                else await self._answer(query, target)
+            )
+            yield replace(restored, text=f"He vuelto a la consulta anterior. {restored.text}")
+            return
+
         intent = query.intent or await self._interpreter.interpret(query.sentence, conversation=was)
 
         if was.retry_plan is not None and intent not in _ASIDES:
@@ -2092,6 +2123,52 @@ _PERIOD_COMPARISON_REFERENCE: Final = re.compile(
     r"(?:gaste|he\s+gastado|ingrese|he\s+ingresado|hubo)\s+mas"
     r")(?:\s+por\s+favor)?$"
 )
+
+
+def _previous_plan_request(
+    sentence: str, conversation: Conversation
+) -> PlannedQuery | Literal[False] | None:
+    """The prior validated query, when this turn explicitly asks to restore it.
+
+    False means the wording was recognised but the requested history does not exist. That is a
+    useful distinction from None: the former gets an honest local answer; the latter remains an
+    ordinary turn. Active payments are deliberately excluded because "deshaz eso" there is about
+    money, not a query filter, and must stay on the confirmation/cancellation path.
+    """
+    if not conversation.at_rest:
+        return None
+    cleaned = _clean_turn(sentence)
+    back = _RETURN_TO_PREVIOUS.fullmatch(cleaned)
+    undo_filter = _UNDO_FILTER.fullmatch(cleaned)
+    if back is None and undo_filter is None:
+        return None
+    previous = conversation.prior_plan
+    current = conversation.last_plan
+    if previous is None:
+        return False
+    if undo_filter is not None and not _only_filters_changed(current, previous):
+        return False
+    return previous
+
+
+def _only_filters_changed(current: PlannedQuery | None, previous: PlannedQuery) -> bool:
+    if current is None or type(current) is not type(previous):
+        return False
+    without_current = replace(
+        current,
+        categories=(),
+        excluded_categories=(),
+        merchants=(),
+        excluded_merchants=(),
+    )
+    without_previous = replace(
+        previous,
+        categories=(),
+        excluded_categories=(),
+        merchants=(),
+        excluded_merchants=(),
+    )
+    return without_current == without_previous
 
 
 def _period_comparison_plans(

@@ -358,6 +358,29 @@ async def test_a_negative_filter_patches_the_query_without_the_model(
     assert "sin" in answer.text.lower()
 
 
+@pytest.mark.parametrize("sentence", ["Vuelve a la consulta anterior", "Quita ese filtro"])
+async def test_a_user_can_restore_the_query_before_the_last_filter(sentence: str) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    original = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+    filtered = replace(original, excluded_categories=("HOUSING_RENT",))
+    conversation = Conversation(last_plan=filtered, prior_plan=original)
+
+    answer = await asked(sentence, planner, ledger, conversation)
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.excluded_categories == ()
+    assert ledger.plan.categories == original.categories
+    assert ledger.plan.period == original.period
+    assert answer.text.startswith("He vuelto a la consulta anterior.")
+    assert answer.conversation.last_plan == original
+    assert answer.conversation.prior_plan == filtered
+
+
 async def test_five_last_is_also_a_row_count_when_the_noun_is_elliptical() -> None:
     ledger = ListingLedger()
 
