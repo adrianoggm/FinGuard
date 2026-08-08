@@ -135,8 +135,9 @@ _RETURN_TO_PREVIOUS: Final = re.compile(
 )
 _UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
 _COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
-    r"^(?:(?:vale|bueno|ok|perfecto)\s+)?(?:y\s+)?(?:"
-    r"compara(?:lo|la|melo|mela)?"
+    r"^(?:(?:vale|bueno|ok|perfecto)(?:\s+genial)?\s+|pues\s+)?(?:y\s+)?(?:"
+    r"(?:me\s+lo\s+)?podrias\s+comparar(?:lo|la)?"
+    r"|compara(?:lo|la|melo|mela)?"
     r"|comparame\s+(?:eso|esto|el\s+resultado|la\s+consulta)"
     r"|comprueba(?:lo|la)?"
     r"|revisa(?:lo|la)?"
@@ -1863,6 +1864,14 @@ class AskFinancialQuestionHandler:
             difference, latest_answer.currency, latest.metric
         )
         concept = answer_writer.comparison_concept(latest)
+        grouped_text = answer_writer.grouped_period_comparison(
+            earlier_answer,
+            latest_answer,
+            earlier,
+            latest,
+            earlier_window=earlier_window,
+            latest_window=latest_window,
+        )
         if latest.metric is Metric.AVERAGE and (earlier_answer.is_empty or latest_answer.is_empty):
             empty_window = earlier_window if earlier_answer.is_empty else latest_window
             conclusion = (
@@ -1910,8 +1919,11 @@ class AskFinancialQuestionHandler:
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=(
-                f"{latest_window.capitalize()}: {latest_figure}; "
-                f"{earlier_window}: {earlier_figure}. {conclusion}"
+                grouped_text
+                or (
+                    f"{latest_window.capitalize()}: {latest_figure}; "
+                    f"{earlier_window}: {earlier_figure}. {conclusion}"
+                )
             ),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
             # Keep the compared pair as validated query memory. This makes a direct comparison
@@ -1923,26 +1935,49 @@ class AskFinancialQuestionHandler:
             currency=latest_answer.currency,
             total_minor=(None if latest.metric is Metric.COUNT else latest_value - earlier_value),
             movement_count=latest_answer.movement_count + earlier_answer.movement_count,
-            groups=[
-                SpokenGroup(
-                    latest_window,
-                    (
-                        latest_value
-                        if latest.metric is Metric.PERIOD_AVERAGE
-                        else latest_answer.total_minor
+            groups=(
+                [
+                    *[
+                        SpokenGroup(
+                            f"{group.key} · {latest_window}",
+                            group.total_minor,
+                            group.movement_count,
+                        )
+                        for group in latest_answer.groups
+                        if group.key != "total"
+                    ],
+                    *[
+                        SpokenGroup(
+                            f"{group.key} · {earlier_window}",
+                            group.total_minor,
+                            group.movement_count,
+                        )
+                        for group in earlier_answer.groups
+                        if group.key != "total"
+                    ],
+                ]
+                if grouped_text is not None
+                else [
+                    SpokenGroup(
+                        latest_window,
+                        (
+                            latest_value
+                            if latest.metric is Metric.PERIOD_AVERAGE
+                            else latest_answer.total_minor
+                        ),
+                        latest_answer.movement_count,
                     ),
-                    latest_answer.movement_count,
-                ),
-                SpokenGroup(
-                    earlier_window,
-                    (
-                        earlier_value
-                        if earlier.metric is Metric.PERIOD_AVERAGE
-                        else earlier_answer.total_minor
+                    SpokenGroup(
+                        earlier_window,
+                        (
+                            earlier_value
+                            if earlier.metric is Metric.PERIOD_AVERAGE
+                            else earlier_answer.total_minor
+                        ),
+                        earlier_answer.movement_count,
                     ),
-                    earlier_answer.movement_count,
-                ),
-            ],
+                ]
+            ),
             movements=[_spoken_movement(movement) for movement in movements],
         )
 
@@ -3233,7 +3268,7 @@ def _direct_period_comparison(
         # Two categories and two windows describe four possible comparisons. Do not choose one.
         return None
     states_subject = re.search(
-        r"\bgast|\bingres|\bcobr|\brecib|\bcompr|\bpagu|\bcargo"
+        r"\bgast|\bingres|\bincome|\bcobr|\brecib|\bcompr|\bpagu|\bcargo"
         r"|\bnomina|\bsueldo|\bsalario|\bmovimientos?|\boperaciones?"
         r"|\bmedia|\bmedio|\bpromedio|\bticket",
         folded,
@@ -3246,12 +3281,16 @@ def _direct_period_comparison(
     categories = named_categories or (previous.categories if previous is not None else ())
     metric = facts.metric or (previous.metric if previous is not None else Metric.SUM)
     group_by = (
-        facts.group_by
-        if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
+        GroupBy.ACCOUNT
+        if facts.asks_account_breakdown
         else (
-            previous.group_by
-            if metric is Metric.PERIOD_AVERAGE and previous is not None
-            else GroupBy.NONE
+            facts.group_by
+            if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
+            else (
+                previous.group_by
+                if metric is Metric.PERIOD_AVERAGE and previous is not None
+                else GroupBy.NONE
+            )
         )
     )
     if metric is Metric.PERIOD_AVERAGE and group_by not in {
@@ -3316,6 +3355,9 @@ def _comparison_plan(plan: FinancialPlan) -> FinancialPlan | None:
     if plan.metric is Metric.PERIOD_AVERAGE:
         if plan.group_by not in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
             return None
+        return plan
+    if plan.group_by is GroupBy.ACCOUNT:
+        # Here the account dimension is what the user asked to compare, not presentation noise.
         return plan
     return replace(plan, group_by=GroupBy.NONE)
 
