@@ -62,7 +62,9 @@ def merge(
         date_range=source.date_range,
         direction=emitted.direction if Field.DIRECTION in changed else previous.direction,
         categories=emitted.categories if Field.CATEGORIES in changed else previous.categories,
+        excluded_categories=(() if Field.CATEGORIES in changed else previous.excluded_categories),
         merchants=emitted.merchants if Field.MERCHANTS in changed else previous.merchants,
+        excluded_merchants=(() if Field.MERCHANTS in changed else previous.excluded_merchants),
         group_by=emitted.group_by if Field.GROUP_BY in changed else previous.group_by,
         metric=emitted.metric if Field.METRIC in changed else previous.metric,
     )
@@ -86,7 +88,9 @@ def merge_draft(
         date_range=source.date_range,
         direction=emitted.direction if Field.DIRECTION in changed else previous.direction,
         categories=emitted.categories if Field.CATEGORIES in changed else previous.categories,
+        excluded_categories=(() if Field.CATEGORIES in changed else previous.excluded_categories),
         merchants=emitted.merchants if Field.MERCHANTS in changed else previous.merchants,
+        excluded_merchants=(() if Field.MERCHANTS in changed else previous.excluded_merchants),
         group_by=emitted.group_by if Field.GROUP_BY in changed else previous.group_by,
         metric=emitted.metric if Field.METRIC in changed else previous.metric,
     )

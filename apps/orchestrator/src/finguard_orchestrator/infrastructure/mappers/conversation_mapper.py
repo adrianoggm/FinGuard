@@ -59,7 +59,9 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
         start=plan.date_range.start if plan.date_range else None,
         end=plan.date_range.end if plan.date_range else None,
         categories=list(plan.categories),
+        excluded_categories=list(getattr(plan, "excluded_categories", ())),
         merchants=list(plan.merchants),
+        excluded_merchants=list(getattr(plan, "excluded_merchants", ())),
         include_internal=getattr(plan, "include_internal", False),
         across_accounts=getattr(plan, "across_accounts", False),
         only_account_id=getattr(plan, "only_account_id", None),
@@ -93,7 +95,9 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
             period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
             date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
             categories=tuple(payload.categories),
+            excluded_categories=tuple(payload.excluded_categories),
             merchants=tuple(payload.merchants),
+            excluded_merchants=tuple(payload.excluded_merchants),
             rank=payload.rank or 1,
         )
     return plan_to_domain(payload)

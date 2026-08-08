@@ -87,6 +87,19 @@ def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
     assert back.prior_plan == earlier
 
 
+def test_negative_filters_survive_the_client_round_trip() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        excluded_categories=("HOUSING_RENT",),
+        excluded_merchants=("Mercadona",),
+    )
+
+    back = there_and_back(IDLE.answered(plan))
+
+    assert back.last_plan == plan
+
+
 def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
     scoped = FinancialPlan(
         direction=Direction.ALL,

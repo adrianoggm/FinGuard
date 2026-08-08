@@ -114,7 +114,9 @@ export type PlanContext = {
   start: string | null;
   end: string | null;
   categories: string[];
+  excluded_categories?: string[];
   merchants: string[];
+  excluded_merchants?: string[];
   group_by: string;
   metric: string;
   include_internal?: boolean;

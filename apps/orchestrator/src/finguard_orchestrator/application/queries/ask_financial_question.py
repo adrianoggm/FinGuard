@@ -152,7 +152,9 @@ class SpokenPlan:
     start: str | None = None
     end: str | None = None
     categories: list[str] = field(default_factory=list)
+    excluded_categories: list[str] = field(default_factory=list)
     merchants: list[str] = field(default_factory=list)
+    excluded_merchants: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
     include_internal: bool = False
@@ -2871,7 +2873,9 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         start=plan.date_range.start.isoformat() if plan.date_range else None,
         end=plan.date_range.end.isoformat() if plan.date_range else None,
         categories=list(plan.categories),
+        excluded_categories=list(plan.excluded_categories),
         merchants=list(plan.merchants),
+        excluded_merchants=list(plan.excluded_merchants),
         group_by=plan.group_by.value,
         metric=plan.metric.value,
         include_internal=plan.include_internal,

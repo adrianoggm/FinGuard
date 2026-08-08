@@ -81,9 +81,13 @@ class FinancialPlan:
     period: RelativePeriod | None = None
     date_range: AbsoluteRange | None = None
     categories: tuple[str, ...] = field(default_factory=tuple)
+    # Negative filters are first-class. Treating "sin alquiler" as the inclusive
+    # HOUSING_RENT filter returns exactly the opposite figure, so absence cannot encode it.
+    excluded_categories: tuple[str, ...] = field(default_factory=tuple)
     # The shops the question is about. Free text, unlike a category — the first field here
     # whose values the schema cannot enumerate, because the ledger's merchant names are data.
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     # Money the holder moved between their own accounts. Excluded by default, which is what makes
@@ -126,7 +130,12 @@ class FinancialPlan:
             GroupBy.MONTH,
         }:
             raise InvalidValueError("PERIOD_AVERAGE requires DAY, WEEK or MONTH grouping")
-        check_filters(self.categories, self.merchants)
+        check_filters(
+            self.categories,
+            self.merchants,
+            self.excluded_categories,
+            self.excluded_merchants,
+        )
 
 
 @dataclass(frozen=True)
@@ -153,7 +162,9 @@ class FinancialPlanDraft:
     period: RelativePeriod | None = None
     date_range: AbsoluteRange | None = None
     categories: tuple[str, ...] = field(default_factory=tuple)
+    excluded_categories: tuple[str, ...] = field(default_factory=tuple)
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     include_internal: bool = False
@@ -182,7 +193,12 @@ class FinancialPlanDraft:
         # the plan checks it, because a draft crosses the wire and comes back: leaving the
         # filters until `with_window` meant a bad category was accepted at the edge and only
         # noticed a layer deeper, where the honest answer is no longer a 422.
-        check_filters(self.categories, self.merchants)
+        check_filters(
+            self.categories,
+            self.merchants,
+            self.excluded_categories,
+            self.excluded_merchants,
+        )
 
     @property
     def needs_a_window(self) -> bool:
@@ -206,7 +222,9 @@ class FinancialPlanDraft:
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=self.categories,
+            excluded_categories=self.excluded_categories,
             merchants=self.merchants,
+            excluded_merchants=self.excluded_merchants,
             group_by=self.group_by,
             metric=self.metric,
             include_internal=self.include_internal,
@@ -225,7 +243,9 @@ class FinancialPlanDraft:
             period=self.period,
             date_range=self.date_range,
             categories=self.categories,
+            excluded_categories=self.excluded_categories,
             merchants=self.merchants,
+            excluded_merchants=self.excluded_merchants,
             group_by=self.group_by,
             metric=self.metric,
             include_internal=self.include_internal,
@@ -243,7 +263,9 @@ class FinancialPlanDraft:
             period=plan.period,
             date_range=plan.date_range,
             categories=plan.categories,
+            excluded_categories=plan.excluded_categories,
             merchants=plan.merchants,
+            excluded_merchants=plan.excluded_merchants,
             group_by=plan.group_by,
             metric=plan.metric,
             include_internal=plan.include_internal,
@@ -254,19 +276,26 @@ class FinancialPlanDraft:
         )
 
 
-def check_filters(categories: tuple[str, ...], merchants: tuple[str, ...]) -> None:
+def check_filters(
+    categories: tuple[str, ...],
+    merchants: tuple[str, ...],
+    excluded_categories: tuple[str, ...] = (),
+    excluded_merchants: tuple[str, ...] = (),
+) -> None:
     """What a plan, a draft and a ranking check identically.
 
     Shared rather than copied: a type that checked less would be a way to smuggle a value past the
     plan's invariants and reach them a layer later, where the honest answer is no longer a 422.
     """
-    if len(categories) > MAX_CATEGORIES:
-        raise InvalidValueError(f"at most {MAX_CATEGORIES} categories")
-    for category in categories:
+    if len(categories) > MAX_CATEGORIES or len(excluded_categories) > MAX_CATEGORIES:
+        raise InvalidValueError(f"at most {MAX_CATEGORIES} categories per filter")
+    for category in (*categories, *excluded_categories):
         _check_category(category)
-    if len(merchants) > MAX_MERCHANTS:
-        raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants")
-    for merchant in merchants:
+    if set(categories) & set(excluded_categories):
+        raise InvalidValueError("a category cannot be both included and excluded")
+    if len(merchants) > MAX_MERCHANTS or len(excluded_merchants) > MAX_MERCHANTS:
+        raise InvalidValueError(f"at most {MAX_MERCHANTS} merchants per filter")
+    for merchant in (*merchants, *excluded_merchants):
         # Shape only: a name is free text and its content is banking's to match. What is
         # checked is that it is a name at all, and bounded — an empty one filters nothing
         # and would silently widen the query, which is the failure this file exists for.
@@ -274,6 +303,10 @@ def check_filters(categories: tuple[str, ...], merchants: tuple[str, ...]) -> No
             raise InvalidValueError("a merchant name cannot be empty")
         if len(merchant) > MAX_MERCHANT_LENGTH:
             raise InvalidValueError(f"merchant name too long: {merchant[:20]!r}...")
+    included_names = {merchant.strip().casefold() for merchant in merchants}
+    excluded_names = {merchant.strip().casefold() for merchant in excluded_merchants}
+    if included_names & excluded_names:
+        raise InvalidValueError("a merchant cannot be both included and excluded")
 
 
 def _check_category(value: str) -> None:

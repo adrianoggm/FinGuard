@@ -326,3 +326,17 @@ def test_a_query_body_carries_an_exact_movement_selection() -> None:
     )
 
     assert body["transactionIds"] == [str(transaction_id) for transaction_id in selected]
+
+
+def test_a_query_body_carries_negative_filters() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            excluded_categories=("HOUSING_RENT",),
+            excluded_merchants=("Mercadona",),
+        )
+    )
+
+    assert body["excludedCategories"] == ["HOUSING_RENT"]
+    assert body["excludedMerchants"] == ["Mercadona"]
