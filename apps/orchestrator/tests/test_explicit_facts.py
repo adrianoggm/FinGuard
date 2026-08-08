@@ -126,6 +126,23 @@ async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: 
 # --- the window the user wrote down ---------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("sentence", "categories", "merchants"),
+    [
+        ("Todos mis gastos excepto alquiler", ("HOUSING_RENT",), ()),
+        ("Si no contamos el supermercado", ("GROCERIES",), ()),
+        ("Lo mismo, pero sin Mercadona", (), ("mercadona",)),
+    ],
+)
+def test_negative_filters_are_explicit_facts(
+    sentence: str, categories: tuple[str, ...], merchants: tuple[str, ...]
+) -> None:
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.excluded_categories == categories
+    assert facts.excluded_merchants == merchants
+
+
 async def test_an_explicit_window_is_not_inherited_from_the_previous_turn() -> None:
     """The reported failure, exactly. The model kept the previous window; the sentence says three
     months, and three months is not a judgement call."""

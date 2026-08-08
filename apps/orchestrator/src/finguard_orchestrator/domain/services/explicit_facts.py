@@ -51,6 +51,7 @@ from finguard_orchestrator.domain.services.window_words import Window
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -162,6 +163,57 @@ _INCOME: Final = re.compile(
     r"|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
 )
 _EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
+_EXCLUSION_TAIL: Final = re.compile(
+    r"\b(?:sin(?:\s+contar|\s+incluir)?|quitando|excepto|salvo|menos"
+    r"|no\s+(?:contamos|cuentes|incluimos|incluyas|metas))\s+(?P<tail>.+)$"
+)
+_TRAILING_WINDOW: Final = re.compile(
+    r"\s+(?:durante\s+|en\s+)?(?:este|esta|el|la|los|las)\s+"
+    r"(?:mes|ano|semana|dia|ultim\w+).*$"
+)
+_NOT_A_MERCHANT: Final = frozenset(
+    {
+        "categoria",
+        "categorias",
+        "gasto",
+        "gastos",
+        "ingreso",
+        "ingresos",
+        "movimiento",
+        "movimientos",
+        "todo",
+        "todos",
+        "nada",
+    }
+)
+
+
+def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> tuple[str, ...]:
+    """Read a short free-text name after an exclusion marker.
+
+    Merchant names are data, so there is no catalogue to match. This therefore accepts only a
+    compact tail and leaves longer clauses to the planner. Category exclusions win when present;
+    otherwise "sin Mercadona" is the unambiguous free-text case this path exists for.
+    """
+    if excluded_categories:
+        return ()
+    folded = spanish.folded(sentence)
+    found = _EXCLUSION_TAIL.search(folded)
+    if found is None:
+        return ()
+    tail = _TRAILING_WINDOW.sub("", found.group("tail"))
+    tail = re.sub(
+        r"^(?:(?:los?|las?)\s+)?(?:movimientos?\s+(?:de|en)|gastos?\s+(?:de|en)"
+        r"|compras?\s+en|comercios?|tiendas?)\s+",
+        "",
+        tail,
+    )
+    tail = re.sub(r"\s+por\s+favor$", "", tail).strip(" ¿?¡!.,;:")
+    if not tail or len(tail) > 140 or len(tail.split()) > 5:
+        return ()
+    if set(tail.split()) <= _NOT_A_MERCHANT:
+        return ()
+    return (tail,)
 
 
 def asks_when(sentence: str) -> bool:
@@ -183,6 +235,8 @@ class ExplicitFacts:
     metric: Metric | None = None
     direction: Direction | None = None
     compared_categories: tuple[str, ...] = ()
+    excluded_categories: tuple[str, ...] = ()
+    excluded_merchants: tuple[str, ...] = ()
     # Whether the sentence named a category at all. Not *which* — that is the verifier's business.
     # What this answers is "did the user touch the filter", which is what decides whether a
     # correction about the period is allowed to drop it.
@@ -205,6 +259,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     """
     folded = spanish.folded(sentence)
     named = category_words.precisely_named_in(sentence)
+    excluded_categories = category_words.precisely_excluded_in(sentence)
     comparison = bool(_COMPARES.search(folded)) and len(named) >= 2
     says_income = bool(_INCOME.search(folded)) or "SALARY" in named
     says_expense = bool(_EXPENSE.search(folded))
@@ -241,6 +296,8 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         ),
         direction=Direction.INCOME if says_income and not says_expense else None,
         compared_categories=named if comparison else (),
+        excluded_categories=excluded_categories,
+        excluded_merchants=_excluded_merchants(sentence, excluded_categories),
         names_a_category=bool(named),
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),
@@ -251,7 +308,9 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     )
 
 
-def enforce[T: FinancialPlan | TopMovements](plan: T, facts: ExplicitFacts) -> T:
+def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
+    plan: T, facts: ExplicitFacts
+) -> T:
     """The plan, agreeing with what the sentence stated.
 
     Applied after the merge and before the verifier, so a field the user wrote down survives both
@@ -269,15 +328,52 @@ def enforce[T: FinancialPlan | TopMovements](plan: T, facts: ExplicitFacts) -> T
             period=facts.window if isinstance(facts.window, RelativePeriod) else None,
             date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
         )
-    if facts.group_by is not None and isinstance(plan, FinancialPlan):
+    plan = enforce_exclusions(plan, facts)
+    if facts.group_by is not None and isinstance(plan, FinancialPlan | FinancialPlanDraft):
         plan = replace(plan, group_by=facts.group_by)
-    if isinstance(plan, FinancialPlan):
+    if isinstance(plan, FinancialPlan | FinancialPlanDraft):
         if facts.metric is not None:
             plan = replace(plan, metric=facts.metric)
         if facts.direction is not None:
             plan = replace(plan, direction=facts.direction)
         if facts.compared_categories:
-            plan = replace(plan, categories=facts.compared_categories)
+            plan = replace(
+                plan,
+                categories=tuple(
+                    category
+                    for category in facts.compared_categories
+                    if category not in plan.excluded_categories
+                ),
+            )
+    return plan
+
+
+def enforce_exclusions[T: FinancialPlan | FinancialPlanDraft | TopMovements](
+    plan: T, facts: ExplicitFacts
+) -> T:
+    """Apply only negative-filter facts to a plan already built deterministically."""
+    if facts.widens:
+        plan = replace(plan, excluded_categories=(), excluded_merchants=())
+    if facts.excluded_categories:
+        excluded = tuple(dict.fromkeys((*plan.excluded_categories, *facts.excluded_categories)))
+        plan = replace(
+            plan,
+            categories=tuple(category for category in plan.categories if category not in excluded),
+            excluded_categories=excluded,
+        )
+    if facts.excluded_merchants:
+        folded_excluded = {merchant.casefold() for merchant in facts.excluded_merchants}
+        plan = replace(
+            plan,
+            merchants=tuple(
+                merchant
+                for merchant in plan.merchants
+                if merchant.casefold() not in folded_excluded
+            ),
+            excluded_merchants=tuple(
+                dict.fromkeys((*plan.excluded_merchants, *facts.excluded_merchants))
+            ),
+        )
     return plan
 
 
@@ -332,5 +428,7 @@ def restored_filters(
     return replace(
         plan,
         categories=plan.categories or previous.categories,
+        excluded_categories=plan.excluded_categories or previous.excluded_categories,
         merchants=plan.merchants or previous.merchants,
+        excluded_merchants=plan.excluded_merchants or previous.excluded_merchants,
     )

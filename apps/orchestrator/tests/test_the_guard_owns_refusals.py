@@ -330,6 +330,34 @@ async def test_a_breakdown_by_account_keeps_exactly_the_five_rows_just_shown() -
     assert ledger.plan.transaction_ids == selected
 
 
+@pytest.mark.parametrize(
+    ("sentence", "excluded_categories", "excluded_merchants"),
+    [
+        ("Todos menos alquiler", ("HOUSING_RENT",), ()),
+        ("Lo mismo, pero sin Mercadona", (), ("mercadona",)),
+    ],
+)
+async def test_a_negative_filter_patches_the_query_without_the_model(
+    sentence: str,
+    excluded_categories: tuple[str, ...],
+    excluded_merchants: tuple[str, ...],
+) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+
+    answer = await asked(sentence, planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.excluded_categories == excluded_categories
+    assert ledger.plan.excluded_merchants == excluded_merchants
+    assert "sin" in answer.text.lower()
+
+
 async def test_five_last_is_also_a_row_count_when_the_noun_is_elliptical() -> None:
     ledger = ListingLedger()
 

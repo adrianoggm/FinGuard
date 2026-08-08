@@ -67,8 +67,12 @@ def _category_misread(sentence: str, plan: FinancialPlan | TopMovements) -> bool
     caught here, because from this side a surplus category cannot be told apart from a word this
     vocabulary does not know.
     """
-    named = category_words.precisely_named_in(sentence)
-    return bool(named) and not set(named).issubset(plan.categories)
+    named = set(category_words.precisely_named_in(sentence))
+    excluded = set(category_words.precisely_excluded_in(sentence))
+    included = named - excluded
+    return bool(named) and (
+        not included.issubset(plan.categories) or not excluded.issubset(plan.excluded_categories)
+    )
 
 
 # Same shape as the guard's registry, for the same reasons: named so it can be switched

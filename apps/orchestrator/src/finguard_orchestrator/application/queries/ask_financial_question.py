@@ -572,7 +572,18 @@ class AskFinancialQuestionHandler:
             # No model and no bank call to decide it: the previous plan carries the window and this
             # replaces one field. A name that matches nothing is not a problem either — the empty
             # answer then offers the shops that do exist, which is the same repair one turn later.
-            yield await self._answer(query, replace(previous, merchants=(shop,)))
+            yield await self._answer(
+                query,
+                replace(
+                    previous,
+                    merchants=(shop,),
+                    excluded_merchants=tuple(
+                        merchant
+                        for merchant in previous.excluded_merchants
+                        if merchant.casefold() != shop.casefold()
+                    ),
+                ),
+            )
             return
 
         if intent is Intent.ACCOUNT_BALANCE:
@@ -1218,7 +1229,13 @@ class AskFinancialQuestionHandler:
             named = category_words.precisely_named_in(query.sentence)
             if not named or draft.needs_a_window:
                 return None
-            finished = replace(draft, categories=named).into_plan()
+            finished = replace(
+                draft,
+                categories=named,
+                excluded_categories=tuple(
+                    category for category in draft.excluded_categories if category not in named
+                ),
+            ).into_plan()
             if finished is None:
                 return None
             if plan_verifier.disagreement(query.sentence, finished, self._policy) is not None:
@@ -1897,7 +1914,16 @@ class AskFinancialQuestionHandler:
                         suggestions=list(nearly),
                     )
             if shop is not None:
-                tighter = replace(plan, categories=(), merchants=(shop,))
+                tighter = replace(
+                    plan,
+                    categories=(),
+                    merchants=(shop,),
+                    excluded_merchants=tuple(
+                        merchant
+                        for merchant in plan.excluded_merchants
+                        if merchant.casefold() != shop.casefold()
+                    ),
+                )
                 again = await self._answer(query, tighter, narrowed=True)
                 if again.outcome == PlanningOutcome.PLANNED.value and again.movement_count:
                     named = " y ".join(category_words.name_of(c) for c in plan.categories)
@@ -2083,7 +2109,9 @@ def _period_comparison_plans(
     scope = (
         "direction",
         "categories",
+        "excluded_categories",
         "merchants",
+        "excluded_merchants",
         "include_internal",
         "across_accounts",
         "only_account_id",
@@ -2111,6 +2139,11 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
     facts = explicit_facts.read(query.sentence, today=query.today)
+
+    if facts.excluded_categories or facts.excluded_merchants:
+        # A negative filter patches the validated query in view. No model needs to re-emit the
+        # window, direction and calculation merely to understand "sin alquiler".
+        return explicit_facts.enforce(previous, facts)
 
     # A turn containing only a new window patches the query already on screen. Replanning
     # "en lo que llevamos de aÃ±o" from scratch discarded both categories in a comparison.
@@ -2157,7 +2190,14 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
             else previous.group_by
         )
         return explicit_facts.enforce(
-            replace(previous, categories=named, merchants=(), group_by=group_by), facts
+            replace(
+                previous,
+                categories=named,
+                excluded_categories=(),
+                merchants=(),
+                group_by=group_by,
+            ),
+            facts,
         )
 
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
@@ -2212,7 +2252,13 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
         period=window if isinstance(window, RelativePeriod) else None,
         date_range=window if isinstance(window, AbsoluteRange) else None,
         categories=named or (previous.categories if previous is not None else ()),
+        excluded_categories=(
+            tuple(category for category in previous.excluded_categories if category not in named)
+            if previous is not None
+            else ()
+        ),
         merchants=() if named else (previous.merchants if previous is not None else ()),
+        excluded_merchants=(previous.excluded_merchants if previous is not None else ()),
         rank=1,
     )
 
@@ -2246,6 +2292,7 @@ def _deterministic_breakdown_plan(
 ) -> FinancialPlan | FinancialPlanDraft | None:
     """Build the two common breakdowns whose meaning is fully stated by the sentence."""
     facts = explicit_facts.read(query.sentence, today=query.today)
+    named_categories = category_words.precisely_named_in(query.sentence)
     if not (
         facts.asks_top_category
         or facts.asks_account_breakdown
@@ -2272,11 +2319,27 @@ def _deterministic_breakdown_plan(
         facts.compared_categories
         if facts.compared_categories
         else (
-            () if facts.asks_top_category else (previous.categories if previous is not None else ())
+            ()
+            if facts.asks_top_category
+            else (named_categories or (previous.categories if previous is not None else ()))
         )
     )
     merchants = (
-        () if facts.asks_top_category else (previous.merchants if previous is not None else ())
+        ()
+        if facts.asks_top_category or named_categories
+        else (previous.merchants if previous is not None else ())
+    )
+    excluded_categories = (
+        tuple(
+            category
+            for category in previous.excluded_categories
+            if category not in named_categories
+        )
+        if previous is not None
+        else ()
+    )
+    excluded_merchants = (
+        () if named_categories else (previous.excluded_merchants if previous is not None else ())
     )
     include_internal = previous_financial.include_internal if previous_financial else False
     across_accounts = (
@@ -2296,10 +2359,32 @@ def _deterministic_breakdown_plan(
     )
     transaction_ids = previous_financial.transaction_ids if previous_financial else ()
     if window is None:
-        return FinancialPlanDraft(
+        return explicit_facts.enforce_exclusions(
+            FinancialPlanDraft(
+                direction=direction,
+                categories=categories,
+                excluded_categories=excluded_categories,
+                merchants=merchants,
+                excluded_merchants=excluded_merchants,
+                group_by=group_by,
+                metric=Metric.SUM,
+                include_internal=include_internal,
+                across_accounts=across_accounts,
+                only_account_id=only_account_id,
+                only_account_ids=only_account_ids,
+                transaction_ids=transaction_ids,
+            ),
+            facts,
+        )
+    return explicit_facts.enforce_exclusions(
+        FinancialPlan(
             direction=direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=categories,
+            excluded_categories=excluded_categories,
             merchants=merchants,
+            excluded_merchants=excluded_merchants,
             group_by=group_by,
             metric=Metric.SUM,
             include_internal=include_internal,
@@ -2307,20 +2392,8 @@ def _deterministic_breakdown_plan(
             only_account_id=only_account_id,
             only_account_ids=only_account_ids,
             transaction_ids=transaction_ids,
-        )
-    return FinancialPlan(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=categories,
-        merchants=merchants,
-        group_by=group_by,
-        metric=Metric.SUM,
-        include_internal=include_internal,
-        across_accounts=across_accounts,
-        only_account_id=only_account_id,
-        only_account_ids=only_account_ids,
-        transaction_ids=transaction_ids,
+        ),
+        facts,
     )
 
 
@@ -2351,7 +2424,9 @@ def _average_plan(
 
     named = category_words.precisely_named_in(query.sentence)
     previous_categories = previous.categories if previous is not None else ()
+    previous_excluded_categories = previous.excluded_categories if previous is not None else ()
     previous_merchants = previous.merchants if previous is not None else ()
+    previous_excluded_merchants = previous.excluded_merchants if previous is not None else ()
     asks_to_spend = re.search(
         r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr", spanish.folded(query.sentence)
     )
@@ -2363,6 +2438,11 @@ def _average_plan(
     )
     categories = named or (() if changes_direction else previous_categories)
     merchants = () if named or changes_direction else previous_merchants
+    if named:
+        previous_excluded_categories = tuple(
+            category for category in previous_excluded_categories if category not in named
+        )
+        previous_excluded_merchants = ()
     direction = explicit_direction
     direction = direction or (previous.direction if previous is not None else None)
     if direction is None:
@@ -2399,10 +2479,39 @@ def _average_plan(
         window = previous.period or previous.date_range
 
     if window is None:
-        return FinancialPlanDraft(
+        return explicit_facts.enforce(
+            FinancialPlanDraft(
+                direction=direction,
+                categories=categories,
+                excluded_categories=previous_excluded_categories,
+                merchants=merchants,
+                excluded_merchants=previous_excluded_merchants,
+                group_by=group_by,
+                metric=facts.metric,
+                include_internal=(
+                    previous.include_internal if isinstance(previous, FinancialPlan) else False
+                ),
+                across_accounts=(
+                    previous.across_accounts if isinstance(previous, FinancialPlan) else False
+                ),
+                only_account_id=(
+                    previous.only_account_id if isinstance(previous, FinancialPlan) else None
+                ),
+                only_account_ids=(
+                    previous.only_account_ids if isinstance(previous, FinancialPlan) else ()
+                ),
+            ),
+            facts,
+        )
+    return explicit_facts.enforce(
+        FinancialPlan(
             direction=direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=categories,
+            excluded_categories=previous_excluded_categories,
             merchants=merchants,
+            excluded_merchants=previous_excluded_merchants,
             group_by=group_by,
             metric=facts.metric,
             include_internal=(
@@ -2417,23 +2526,8 @@ def _average_plan(
             only_account_ids=(
                 previous.only_account_ids if isinstance(previous, FinancialPlan) else ()
             ),
-        )
-    return FinancialPlan(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=categories,
-        merchants=merchants,
-        group_by=group_by,
-        metric=facts.metric,
-        include_internal=(
-            previous.include_internal if isinstance(previous, FinancialPlan) else False
         ),
-        across_accounts=(
-            previous.across_accounts if isinstance(previous, FinancialPlan) else False
-        ),
-        only_account_id=(previous.only_account_id if isinstance(previous, FinancialPlan) else None),
-        only_account_ids=(previous.only_account_ids if isinstance(previous, FinancialPlan) else ()),
+        facts,
     )
 
 
@@ -2478,18 +2572,25 @@ def _average_follow_up_plan(
     direction = facts.direction
     if direction is None:
         direction = _direction_of(named) if named else previous.direction
-    return FinancialPlan(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=categories,
-        merchants=() if named else previous.merchants,
-        group_by=group_by,
-        metric=metric,
-        include_internal=previous.include_internal,
-        across_accounts=previous.across_accounts,
-        only_account_id=previous.only_account_id,
-        only_account_ids=previous.only_account_ids,
+    return explicit_facts.enforce(
+        FinancialPlan(
+            direction=direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            categories=categories,
+            excluded_categories=tuple(
+                category for category in previous.excluded_categories if category not in named
+            ),
+            merchants=() if named else previous.merchants,
+            excluded_merchants=() if named else previous.excluded_merchants,
+            group_by=group_by,
+            metric=metric,
+            include_internal=previous.include_internal,
+            across_accounts=previous.across_accounts,
+            only_account_id=previous.only_account_id,
+            only_account_ids=previous.only_account_ids,
+        ),
+        facts,
     )
 
 

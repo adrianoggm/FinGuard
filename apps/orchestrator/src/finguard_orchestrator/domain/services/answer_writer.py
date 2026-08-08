@@ -348,10 +348,22 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     identifier — worse than a name, much better than an invented one.
     """
     if plan.merchants:
-        return f" en {listed(plan.merchants)}"
-    if plan.categories:
-        return f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
-    return ""
+        included = f" en {listed(plan.merchants)}"
+    elif plan.categories:
+        included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
+    else:
+        included = ""
+    excluded_names = (
+        *tuple(category_words.name_of(category) for category in plan.excluded_categories),
+        *plan.excluded_merchants,
+    )
+    if not excluded_names:
+        return included
+    return (
+        f"{included}, sin {listed(excluded_names)}"
+        if included
+        else f" sin {listed(excluded_names)}"
+    )
 
 
 def listed(names: tuple[str, ...]) -> str:
@@ -520,11 +532,18 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         parts.append(f"nº {plan.rank} por importe")
     if plan.categories:
         parts.append("/".join(plan.categories).lower())
+    if plan.excluded_categories:
+        parts.append(
+            "sin "
+            + "/".join(category_words.name_of(category) for category in plan.excluded_categories)
+        )
     if plan.merchants:
         # Shown because a typo is the failure mode here: "Mercadonna" returns an empty answer,
         # and a reader who sees the name that was searched for can tell that from "you spent
         # nothing there".
         parts.append("/".join(plan.merchants))
+    if plan.excluded_merchants:
+        parts.append("sin " + "/".join(plan.excluded_merchants))
     if isinstance(plan, FinancialPlan):
         # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
         # appended above — where the reader is looking for what makes the two lines different.
