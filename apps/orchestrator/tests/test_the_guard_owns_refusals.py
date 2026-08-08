@@ -255,13 +255,18 @@ async def test_excluding_a_category_is_never_reversed_into_only_that_category() 
         metric=Metric.PERIOD_AVERAGE,
     )
 
+    planner = GivesUp()
+    ledger = Ledger()
     answer = await asked(
-        "¿Y si no contamos el alquiler?", GivesUp(), Ledger(), Conversation(last_plan=previous)
+        "¿Y si no contamos el alquiler?", planner, ledger, Conversation(last_plan=previous)
     )
 
-    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
-    assert "resultado contrario" in answer.text
-    assert answer.conversation.last_plan == previous
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ()
+    assert ledger.plan.excluded_categories == ("HOUSING_RENT",)
+    assert answer.conversation.last_plan == replace(previous, excluded_categories=("HOUSING_RENT",))
 
 
 async def test_a_natural_category_comparison_asks_for_its_missing_period() -> None:
