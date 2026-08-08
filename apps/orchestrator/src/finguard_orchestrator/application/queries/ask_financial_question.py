@@ -131,6 +131,16 @@ _RETURN_TO_PREVIOUS: Final = re.compile(
     r")$"
 )
 _UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
+_COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
+    r"^(?:(?:vale|bueno|ok|perfecto)\s+)?(?:y\s+)?(?:"
+    r"compara(?:lo|la|melo|mela)?"
+    r"|comparame\s+(?:eso|esto|el\s+resultado|la\s+consulta)"
+    r"|comprueba(?:lo|la)?"
+    r"|revisa(?:lo|la)?"
+    r"|hazme\s+una\s+comparacion"
+    r")\s+con\s+(?:el\s+|la\s+)?"
+    r"(?P<unit>mes|semana|ano|periodo)\s+(?:anterior|pasad[oa])$"
+)
 _NUMBERED_MONTH_FALLBACK: Final = re.compile(
     r"\b(?:el\s+)?mes\s+(?P<first>0?[1-9]|1[0-2])\b.{0,24}"
     r"\b(?:y\s+)?si\s+no\b\s+(?:(?:el\s+)?mes\s+|el\s+)?"
@@ -580,6 +590,8 @@ class AskFinancialQuestionHandler:
             return
 
         period_comparison = _period_comparison_plans(query)
+        if period_comparison is None:
+            period_comparison = _comparison_with_previous_period(query)
         if period_comparison is not None:
             # Two complete, already validated questions are safer context than asking a model to
             # reconstruct both from "compáralos". Run them again so the comparison uses current
@@ -1635,15 +1647,17 @@ class AskFinancialQuestionHandler:
     ) -> AskFinancialQuestionResult:
         """Compare the two compatible financial questions immediately behind this turn."""
         try:
+            scoped_earlier = await self._scoped(earlier, query)
+            scoped_latest = await self._scoped(latest, query)
             earlier_answer = await self._queries.run(
-                await self._scoped(earlier, query),
+                scoped_earlier,
                 account_id=query.account_id,
                 today=query.today,
                 reporting_timezone=query.reporting_timezone,
                 movements=5,
             )
             latest_answer = await self._queries.run(
-                await self._scoped(latest, query),
+                scoped_latest,
                 account_id=query.account_id,
                 today=query.today,
                 reporting_timezone=query.reporting_timezone,
@@ -1669,13 +1683,17 @@ class AskFinancialQuestionHandler:
                 conversation=query.conversation,
             )
 
-        earlier_window = answer_writer.window_of(earlier)
-        latest_window = answer_writer.window_of(latest)
+        earlier_window = _comparison_window_label(earlier)
+        latest_window = _comparison_window_label(latest)
         earlier_money = answer_writer.money(earlier_answer.total_minor, earlier_answer.currency)
         latest_money = answer_writer.money(latest_answer.total_minor, latest_answer.currency)
         difference = abs(latest_answer.total_minor - earlier_answer.total_minor)
         difference_money = answer_writer.money(difference, latest_answer.currency)
-        noun = "gasto" if latest.direction is Direction.EXPENSE else "importe"
+        noun = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe",
+        }[latest.direction]
         if latest_answer.total_minor == earlier_answer.total_minor:
             conclusion = f"El {noun} fue el mismo en ambos periodos."
         else:
@@ -1687,6 +1705,29 @@ class AskFinancialQuestionHandler:
             conclusion = f"El {noun} fue {difference_money} mayor {higher_window}."
 
         movements = (*latest_answer.movements, *earlier_answer.movements)
+        remembered_earlier = scoped_earlier
+        remembered_latest = scoped_latest
+        stored_latest = query.conversation.last_plan
+        stored_earlier = query.conversation.prior_plan
+        if isinstance(stored_latest, FinancialPlan) and _same_window(stored_latest, latest):
+            remembered_latest = _with_execution_scope(stored_latest, scoped_latest)
+            if isinstance(stored_earlier, FinancialPlan) and _same_window(stored_earlier, earlier):
+                remembered_earlier = _with_execution_scope(stored_earlier, scoped_earlier)
+            else:
+                remembered_earlier = _with_execution_scope(
+                    replace(
+                        stored_latest,
+                        period=earlier.period,
+                        date_range=earlier.date_range,
+                    ),
+                    scoped_earlier,
+                )
+        referenced_category = (
+            remembered_latest.categories[0]
+            if len(remembered_latest.categories) == 1
+            and category_words.words_for(remembered_latest.categories[0]) is not None
+            else None
+        )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=(
@@ -1694,7 +1735,12 @@ class AskFinancialQuestionHandler:
                 f"{earlier_window}: {earlier_money}. {conclusion}"
             ),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
-            conversation=query.conversation.with_active(None),
+            # Keep the compared pair as validated query memory. This makes a direct comparison
+            # behave like two consecutive questions: a later "compÃ¡ralos otra vez" or a repair can
+            # still point at the same two windows without reconstructing either from prose.
+            conversation=query.conversation.answered(remembered_earlier).answered(
+                remembered_latest, referenced_category=referenced_category
+            ),
             currency=latest_answer.currency,
             total_minor=latest_answer.total_minor - earlier_answer.total_minor,
             movement_count=latest_answer.movement_count + earlier_answer.movement_count,
@@ -2282,10 +2328,134 @@ def _period_comparison_plans(
     )
 
 
+def _same_window(left: FinancialPlan, right: FinancialPlan) -> bool:
+    return (left.period, left.date_range) == (right.period, right.date_range)
+
+
+def _with_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> FinancialPlan:
+    """Keep a plan's conversational shape together with the account scope that actually ran."""
+    if (
+        scoped.only_account_id is None
+        and not scoped.only_account_ids
+        and plan.only_account_id is None
+        and not plan.only_account_ids
+    ):
+        # Banking executes an otherwise unscoped aggregate across the holder's accounts. That is
+        # an adapter default, not a conversational choice, so it must not turn the remembered plan
+        # into an explicit "all accounts" selection.
+        return plan
+    return replace(
+        plan,
+        include_internal=scoped.include_internal,
+        across_accounts=scoped.across_accounts,
+        only_account_id=scoped.only_account_id,
+        only_account_ids=scoped.only_account_ids,
+    )
+
+
+def _comparison_with_previous_period(
+    query: AskFinancialQuestionQuery,
+) -> tuple[FinancialPlan, FinancialPlan] | None:
+    """Compare the plan in view with the immediately preceding calendar period.
+
+    The pronoun supplies the query scope and the sentence supplies only the other window. This is
+    deliberately narrower than inventing a generic date shift: months, weeks and years have
+    calendar boundaries the product already exposes; rolling N-day windows do not have one obvious
+    meaning for "the previous period".
+    """
+    found = _COMPARE_WITH_PREVIOUS_PERIOD.fullmatch(_clean_turn(query.sentence))
+    latest = query.conversation.last_plan
+    if found is None or not isinstance(latest, FinancialPlan) or latest.transaction_ids:
+        return None
+    earlier_window = _previous_calendar_window(latest, found.group("unit"), query.today)
+    if earlier_window is None:
+        return None
+    earlier = replace(
+        latest,
+        period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
+        date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
+        group_by=GroupBy.NONE,
+        metric=Metric.SUM,
+    )
+    return earlier, replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM)
+
+
+def _previous_calendar_window(
+    plan: FinancialPlan, unit: str, today: date
+) -> window_words.Window | None:
+    """The calendar window directly before a compatible plan window."""
+    if unit == "periodo":
+        unit = _calendar_unit_of(plan) or ""
+    if unit == "mes":
+        if plan.period and plan.period.period is Period.THIS_MONTH:
+            return RelativePeriod(Period.LAST_MONTH)
+        if plan.period and plan.period.period is Period.LAST_MONTH:
+            year, month = _month_before(today.year, today.month)
+            year, month = _month_before(year, month)
+            return window_words.whole_month(year, month)
+        if plan.date_range and _is_whole_month(plan.date_range):
+            year, month = _month_before(plan.date_range.start.year, plan.date_range.start.month)
+            return window_words.whole_month(year, month)
+    if unit == "semana":
+        if plan.period and plan.period.period is Period.THIS_WEEK:
+            return RelativePeriod(Period.LAST_WEEK)
+        if plan.date_range and (plan.date_range.end - plan.date_range.start).days == 6:
+            return AbsoluteRange(
+                start=plan.date_range.start - timedelta(days=7),
+                end=plan.date_range.end - timedelta(days=7),
+            )
+    if unit == "ano":
+        if plan.period and plan.period.period is Period.THIS_YEAR:
+            return window_words.whole_year(today.year - 1)
+        if plan.date_range and _is_whole_year(plan.date_range):
+            return window_words.whole_year(plan.date_range.start.year - 1)
+    return None
+
+
+def _comparison_window_label(plan: FinancialPlan) -> str:
+    """A compact natural label for the two sides of a comparison."""
+    if plan.date_range is not None and _is_whole_month(plan.date_range):
+        start = plan.date_range.start
+        return f"en {answer_writer.month_name(start.year, start.month)}"
+    if plan.date_range is not None and _is_whole_year(plan.date_range):
+        return f"en {plan.date_range.start.year}"
+    return answer_writer.window_of(plan)
+
+
+def _calendar_unit_of(plan: FinancialPlan) -> str | None:
+    if plan.period is not None:
+        return {
+            Period.THIS_MONTH: "mes",
+            Period.LAST_MONTH: "mes",
+            Period.THIS_WEEK: "semana",
+            Period.THIS_YEAR: "ano",
+        }.get(plan.period.period)
+    if plan.date_range is not None:
+        if _is_whole_month(plan.date_range):
+            return "mes"
+        if _is_whole_year(plan.date_range):
+            return "ano"
+        if (plan.date_range.end - plan.date_range.start).days == 6:
+            return "semana"
+    return None
+
+
+def _month_before(year: int, month: int) -> tuple[int, int]:
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+
 def _numbered_month_window(month: int, today: date) -> AbsoluteRange:
     """The most recent occurrence of a numbered month, like the named-month vocabulary."""
     year = today.year if month <= today.month else today.year - 1
     return window_words.whole_month(year, month)
+
+
+def _is_whole_month(window: AbsoluteRange) -> bool:
+    return window == window_words.whole_month(window.start.year, window.start.month)
+
+
+def _is_whole_year(window: AbsoluteRange) -> bool:
+    return window == window_words.whole_year(window.start.year)
 
 
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:

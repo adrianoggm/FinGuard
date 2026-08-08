@@ -553,6 +553,47 @@ async def test_two_consecutive_period_queries_can_be_compared_naturally(sentence
     assert answer.conversation.prior_plan == earlier
 
 
+async def test_compare_it_with_the_previous_month_reuses_the_whole_query_scope() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            return QueryAnswer(currency="EUR", total_minor=10_000, movement_count=3)
+
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        excluded_merchants=("mercadona",),
+        only_account_id=ACCOUNT,
+        metric=Metric.AVERAGE,
+        group_by=GroupBy.MERCHANT,
+    )
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "Comp\u00e1ralo con el mes anterior",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert len(ledger.plans) == 2
+    earlier, latest = ledger.plans
+    assert earlier.period == RelativePeriod(Period.LAST_MONTH)
+    assert latest.period == RelativePeriod(Period.THIS_MONTH)
+    assert earlier.categories == latest.categories == ("GROCERIES",)
+    assert earlier.excluded_merchants == latest.excluded_merchants == ("mercadona",)
+    assert earlier.only_account_id == latest.only_account_id == ACCOUNT
+    assert all(plan.metric is Metric.SUM and plan.group_by is GroupBy.NONE for plan in ledger.plans)
+    assert answer.conversation.prior_plan is not None
+
+
 async def test_a_second_numbered_month_is_only_queried_when_the_first_has_no_payroll() -> None:
     class FallbackLedger(Ledger):
         def __init__(self) -> None:
@@ -590,6 +631,41 @@ async def test_a_second_numbered_month_is_only_queried_when_the_first_has_no_pay
     assert "agosto de 2026" in answer.text
     assert answer.conversation.last_plan is not None
     assert answer.conversation.last_plan.date_range == window_words.whole_month(2026, 8)
+
+
+async def test_check_it_against_previous_month_is_anchored_to_the_payroll_month_in_view() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            amount = 246_562 if plan.date_range and plan.date_range.start.month == 6 else 244_287
+            return QueryAnswer(currency="EUR", total_minor=amount, movement_count=1)
+
+    july = FinancialPlan(
+        direction=Direction.INCOME,
+        date_range=window_words.whole_month(2026, 7),
+        categories=("SALARY",),
+        group_by=GroupBy.ACCOUNT,
+        across_accounts=True,
+    )
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "Vale compruebalo con el mes anterior",
+        planner,
+        ledger,
+        Conversation(last_plan=july),
+    )
+
+    assert planner.asked == 0
+    assert [plan.date_range.start.month for plan in ledger.plans if plan.date_range] == [6, 7]
+    assert all(plan.categories == ("SALARY",) for plan in ledger.plans)
+    assert "junio de 2026" in answer.text
+    assert "julio de 2026" in answer.text
 
 
 async def test_a_model_cannot_refuse_an_explicit_supported_average_per_movement() -> None:
