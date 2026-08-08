@@ -62,6 +62,9 @@ class FinancialQuery:
     # is worth asking and is not a question about spending. The balance is unaffected either
     # way — the money did leave *this* account.
     include_internal: bool = False
+    # Unlike `include_internal`, this narrows the result to movements between the holder's own
+    # accounts. It powers explicit transfer history and contributions to an asset account.
+    internal_only: bool = False
     # Every account this session can see, rather than the one named by `account_id`. The view
     # decides which those are, so there is no list to pass and nothing here can widen past the
     # holder — dropping the compiler's filter leaves the scope rule in exactly one place.
@@ -90,6 +93,8 @@ class FinancialQuery:
         return self.only_account_id or next(iter(self.only_account_ids), self.account_id)
 
     def __post_init__(self) -> None:
+        if self.internal_only and not self.include_internal:
+            raise InvalidValueError("internalOnly requires includeInternal")
         if self.only_account_id is not None and self.only_account_ids:
             raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
         if len(set(self.only_account_ids)) != len(self.only_account_ids):

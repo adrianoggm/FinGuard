@@ -142,6 +142,29 @@ def test_average_and_a_selected_account_subset_reach_the_domain() -> None:
     assert repository.received.only_account_ids == tuple(selected)
 
 
+def test_internal_only_reaches_the_domain_only_with_its_explicit_opt_in() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "includeInternal": True, "internalOnly": True},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.include_internal is True
+    assert repository.received.internal_only is True
+
+
+def test_internal_only_without_internal_opt_in_is_rejected() -> None:
+    response = _with_repository(RESULT).post(
+        "/v1/financial-queries", json={**BODY, "internalOnly": True}
+    )
+
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

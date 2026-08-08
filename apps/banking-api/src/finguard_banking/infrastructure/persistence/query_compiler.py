@@ -126,7 +126,9 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         selected_transactions = parameters.bind(list(query.transaction_ids))
         conditions.append(f"t.transaction_id = ANY({selected_transactions})")
 
-    if not query.include_internal:
+    if query.internal_only:
+        conditions.append("t.is_internal")
+    elif not query.include_internal:
         # Before the direction, because it is the wider cut and reads in the order somebody
         # would say it: money that left the household, then which way it went.
         conditions.append("NOT t.is_internal")
