@@ -64,6 +64,7 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
         merchants=list(plan.merchants),
         excluded_merchants=list(getattr(plan, "excluded_merchants", ())),
         include_internal=getattr(plan, "include_internal", False),
+        internal_only=getattr(plan, "internal_only", False),
         across_accounts=getattr(plan, "across_accounts", False),
         only_account_id=getattr(plan, "only_account_id", None),
         only_account_ids=list(getattr(plan, "only_account_ids", ())),

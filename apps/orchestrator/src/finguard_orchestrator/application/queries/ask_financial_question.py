@@ -237,6 +237,7 @@ class SpokenPlan:
     group_by: str = "NONE"
     metric: str = "SUM"
     include_internal: bool = False
+    internal_only: bool = False
     across_accounts: bool = False
     only_account_id: str | None = None
     only_account_ids: list[str] = field(default_factory=list)
@@ -4085,6 +4086,7 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         group_by=plan.group_by.value,
         metric=plan.metric.value,
         include_internal=plan.include_internal,
+        internal_only=plan.internal_only,
         across_accounts=plan.across_accounts,
         only_account_id=str(plan.only_account_id) if plan.only_account_id else None,
         only_account_ids=[str(account_id) for account_id in plan.only_account_ids],

@@ -120,6 +120,7 @@ export type PlanContext = {
   group_by: string;
   metric: string;
   include_internal?: boolean;
+  internal_only?: boolean;
   across_accounts?: boolean;
   only_account_id?: string | null;
   only_account_ids?: string[];

@@ -108,6 +108,7 @@ class PlanPayload(_Payload):
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     include_internal: bool = False
+    internal_only: bool = False
     across_accounts: bool = False
     only_account_id: UUID | None = None
     only_account_ids: list[UUID] = []
