@@ -168,8 +168,8 @@ episodes:
 
   - name: the_guard_runs_before_the_model_every_time
     why: >
-      Six refused sentences in a row, and the planner is never asked once. Refusing after the model
-      would be a control that moves with whichever one is installed.
+      Supported deterministic comparisons and genuine refusals are both decided before the model;
+      the boundary must not move with whichever model is installed.
     metrics: [unnecessary_clarification]
     turns:
       - say: ¿cuál es mi gasto medio?
@@ -179,7 +179,7 @@ episodes:
         route: REFUSED
         no_model: true
       - say: compárame julio y junio
-        route: REFUSED
+        route: QUERY
         no_model: true
       - say: ¿cuánto voy a gastar?
         route: REFUSED
