@@ -40,9 +40,11 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
     object.__setattr__(plan, "account_id", ACCOUNT)
     object.__setattr__(plan, "date_range", RANGE)
     object.__setattr__(plan, "categories", (smuggled,))
+    object.__setattr__(plan, "excluded_categories", ())
     object.__setattr__(plan, "direction", Direction.EXPENSE)
     object.__setattr__(plan, "group_by", GroupBy.NONE)
     object.__setattr__(plan, "merchants", ())
+    object.__setattr__(plan, "excluded_merchants", ())
     object.__setattr__(plan, "only_account_ids", ())
     object.__setattr__(plan, "transaction_ids", ())
     object.__setattr__(plan, "supporting_limit", 20)
@@ -193,6 +195,23 @@ def test_an_exact_movement_selection_is_bound_and_stays_holder_scoped() -> None:
     assert [first, second] in compiled.parameters
     assert str(first) not in compiled.sql
     assert str(second) not in compiled.sql
+
+
+def test_negative_filters_are_bound_and_keep_uncategorised_rows() -> None:
+    compiled = compile_aggregate(
+        query(
+            excluded_categories=(Category("HOUSING_RENT"),),
+            excluded_merchants=("Mercadona",),
+        ),
+        "Europe/Madrid",
+    )
+
+    assert "t.category IS NULL OR NOT (t.category = ANY($" in compiled.sql
+    assert "t.merchant_name IS NULL OR NOT (lower(t.merchant_name) = ANY($" in compiled.sql
+    assert ["HOUSING_RENT"] in compiled.parameters
+    assert ["mercadona"] in compiled.parameters
+    assert "HOUSING_RENT" not in compiled.sql
+    assert "Mercadona" not in compiled.sql
 
 
 @pytest.mark.parametrize("group_by", [GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH])

@@ -92,9 +92,11 @@ class FinancialQueryRequest(_Body):
     metric: Metric = Metric.SUM
     direction: Direction = Direction.ALL
     categories: tuple[str, ...] = ()
+    excluded_categories: tuple[str, ...] = ()
     # Shops, matched case-insensitively. Free text on purpose: the ledger's merchant names
     # are data, not vocabulary.
     merchants: tuple[str, ...] = ()
+    excluded_merchants: tuple[str, ...] = ()
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     group_by: GroupBy = GroupBy.NONE
@@ -169,7 +171,9 @@ class RankedMovementRequest(_Body):
     account_id: UUID
     direction: Direction = Direction.ALL
     categories: tuple[str, ...] = ()
+    excluded_categories: tuple[str, ...] = ()
     merchants: tuple[str, ...] = ()
+    excluded_merchants: tuple[str, ...] = ()
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     reporting_timezone: str | None = None

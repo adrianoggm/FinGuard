@@ -137,6 +137,12 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
     if query.categories:
         conditions.append(f"t.category = ANY({parameters.bind(query.category_values())})")
 
+    if query.excluded_categories:
+        excluded = parameters.bind(query.excluded_category_values())
+        # NULL means uncategorised, not one of the excluded categories. SQL's `NOT IN`-style
+        # semantics would otherwise turn it into UNKNOWN and silently discard the row.
+        conditions.append(f"(t.category IS NULL OR NOT (t.category = ANY({excluded})))")
+
     if query.merchants:
         # Lowered on both sides rather than ILIKE: this is equality, not a pattern, and a
         # name the user typed must not be read as one — "100%" is a legitimate shop name and
@@ -145,6 +151,12 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         # nothing there".
         names = parameters.bind([merchant.strip().lower() for merchant in query.merchants])
         conditions.append(f"lower(t.merchant_name) = ANY({names})")
+
+    if query.excluded_merchants:
+        names = parameters.bind([merchant.strip().lower() for merchant in query.excluded_merchants])
+        conditions.append(
+            f"(t.merchant_name IS NULL OR NOT (lower(t.merchant_name) = ANY({names})))"
+        )
 
     return conditions
 
