@@ -1321,6 +1321,52 @@ async def test_account_selection_can_include_two_and_exclude_the_fund() -> None:
     assert ledger.plan.only_account_ids == (ACCOUNT, uuid.UUID(int=2))
 
 
+async def test_other_accounts_are_the_complement_of_the_previous_selection() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.ALL,
+        period=RelativePeriod(Period.THIS_MONTH),
+        only_account_id=ACCOUNT,
+    )
+
+    result = await asked(
+        "Y las dem\u00e1s cuentas?",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.only_account_id == uuid.UUID(int=2)
+    assert ledger.plan.only_account_ids == ()
+    assert ledger.plan.include_internal is True
+    assert result.conversation.last_plan is not None
+
+
+async def test_other_accounts_do_not_widen_a_query_that_already_included_all() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_MONTH),
+        across_accounts=True,
+    )
+
+    result = await asked(
+        "Ahora las otras cuentas",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is None
+    assert result.outcome == "GUIDANCE"
+    assert "ya inclu\u00eda todas" in result.text
+
+
 async def test_an_example_can_refer_to_income_instead_of_saying_movements() -> None:
     planner = GivesUp()
     ledger = ListingLedger()

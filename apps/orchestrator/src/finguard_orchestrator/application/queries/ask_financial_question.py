@@ -627,6 +627,13 @@ class AskFinancialQuestionHandler:
             yield await self._compare_periods(query, *period_comparison)
             return
 
+        if intent is Intent.FINANCIAL_QUERY and account_words.asks_for_other_accounts(
+            query.sentence
+        ):
+            yield Stage("querying")
+            yield await self._other_accounts(query)
+            return
+
         account_follow_up = (
             _account_follow_up_plan(query) if intent is Intent.FINANCIAL_QUERY else None
         )
@@ -1940,6 +1947,65 @@ class AskFinancialQuestionHandler:
             second_result,
             text=f"No he encontrado la nómina ni en {first_label} ni en {second_label}.",
         )
+
+    async def _other_accounts(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
+        """Run the previous query over every holder account it did not select.
+
+        A complement cannot be represented by an account kind: it depends on the actual accounts
+        the authenticated holder has. Resolve it here and remember concrete identifiers, which is
+        also what prevents a later ellipsis from widening back to every account.
+        """
+        previous = query.conversation.last_plan
+        if not isinstance(previous, FinancialPlan):
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    "No tengo una consulta anterior con cuentas seleccionadas. "
+                    "Primero consulta una cuenta y después puedo enseñarte las demás."
+                ),
+                conversation=query.conversation,
+            )
+        selected = (
+            frozenset({previous.only_account_id})
+            if previous.only_account_id is not None
+            else frozenset(previous.only_account_ids)
+        )
+        if not selected:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text="La consulta anterior ya incluía todas tus cuentas; no quedan otras fuera.",
+                conversation=query.conversation,
+            )
+        try:
+            summary = await self._accounts.of(
+                query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido y no puedo identificar las otras cuentas.",
+                conversation=query.conversation,
+            )
+        others = tuple(
+            holding.account_id for holding in summary.holdings if holding.account_id not in selected
+        )
+        if not others:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text="No tienes otras cuentas fuera de las que acabamos de consultar.",
+                conversation=query.conversation,
+            )
+        plan = replace(
+            previous,
+            group_by=GroupBy.NONE,
+            across_accounts=False,
+            only_account_id=others[0] if len(others) == 1 else None,
+            only_account_ids=others if len(others) > 1 else (),
+            include_internal=previous.include_internal or previous.direction is Direction.ALL,
+        )
+        return await self._answer(query, plan)
 
     async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
         """Which of the holder's accounts the question is about.
