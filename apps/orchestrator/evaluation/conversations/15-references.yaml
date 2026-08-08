@@ -28,3 +28,113 @@ episodes:
       - say: Sepáralos por cuenta
         route: QUERY
         no_model: true
+
+  - name: negative_filters_can_be_added_and_undone
+    why: >
+      Exclusions are patches over a validated query, not a reason to rebuild it or return the
+      inclusive opposite. The previous plan remains available so natural repair language can
+      restore it without asking which period or calculation the user meant.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto gasté durante este año?
+        route: QUERY
+      - say: ¿Y sin contar el alquiler?
+        route: QUERY
+        no_model: true
+        says: sin alquiler
+      - say: Quita ese filtro
+        route: QUERY
+        no_model: true
+        says: vuelto a la consulta anterior
+      - say: Ahora sin Mercadona
+        route: QUERY
+        no_model: true
+        says: sin mercadona
+      - say: Déjalo como estaba antes
+        route: QUERY
+        no_model: true
+        says: vuelto a la consulta anterior
+      - say: Todos menos supermercados
+        route: QUERY
+        no_model: true
+        says: sin supermercado
+
+  - name: direct_comparisons_and_referents_keep_the_query_in_view
+    why: >
+      A user should not need to issue two artificial standalone queries before comparing a result,
+      nor repeat a category or account scope that the immediately preceding answer identified.
+      These turns are patches over validated state and must not depend on the model.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Cuanto gaste en supermercados este mes?
+        route: QUERY
+      - say: Comparalo con el mes anterior
+        route: QUERY
+        no_model: true
+      - say: Y esa categoria el mes pasado?
+        route: QUERY
+        no_model: true
+      - say: No, me referia a restaurantes
+        route: QUERY
+        no_model: true
+      - say: En que categoria gaste mas este ano?
+        route: QUERY
+        no_model: true
+      - say: Cuanto gaste en la cuenta principal este mes?
+        route: QUERY
+      - say: Y en las demas cuentas?
+        route: QUERY
+        no_model: true
+
+  - name: payroll_account_and_month_comparisons_stay_anchored
+    why: >
+      Asking where payroll landed is an account breakdown even when its period is missing. A
+      numbered-month reply completes that same question, and later comparisons are relative to
+      the payroll month on screen rather than to the wall clock. Natural verbs such as
+      "compruebalo" and "cual he cobrado mas" must resolve the two validated months directly.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Sabrias decirme si he cobrado mi nomina en que cuenta?
+        route: CLARIFY
+        no_model: true
+      - say: Pues prueba el mes 7 y si no el 8
+        route: QUERY
+        no_model: true
+      - say: He cobrado mas en esa nomina que en las anteriores?
+        route: QUERY
+        no_model: true
+      - say: Vale compruebalo con el mes anterior
+        route: QUERY
+        no_model: true
+      - say: De junio me refiero
+        route: QUERY
+        no_model: true
+      - say: Entonces cual he cobrado mas?
+        route: QUERY
+        no_model: true
+
+  - name: two_new_periods_can_be_compared_in_one_sentence
+    why: >
+      Two complete calendar months or years are closed data, not an unsupported capability. The
+      comparison keeps an explicit financial subject, or reuses the validated filters when the
+      turn only names the two periods. Every pair is executed directly without asking the model to
+      reconstruct either side.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: Cuanto gaste en supermercados este ano?
+        route: QUERY
+      - say: Comparame julio y junio
+        route: QUERY
+        no_model: true
+      - say: Y en cual gaste mas?
+        route: QUERY
+        no_model: true
+      - say: Compara mi nomina de julio con junio
+        route: QUERY
+        no_model: true
+      - say: Entonces cual cobre mas?
+        route: QUERY
+        no_model: true
+      - say: Compara mis ingresos de 2025 vs 2026
+        route: QUERY
+        no_model: true
