@@ -99,6 +99,14 @@ def test_a_custom_name_resolves_without_turning_a_generic_label_into_a_choice() 
     ) == ("Hucha viajes",)
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    ["Y las otras cuentas?", "Ahora las dem\u00e1s cuentas", "Las cuentas restantes"],
+)
+def test_other_accounts_are_recognised_as_a_contextual_complement(sentence: str) -> None:
+    assert account_words.asks_for_other_accounts(sentence)
+
+
 def test_a_short_custom_name_can_answer_an_open_account_slot() -> None:
     assert account_words.looks_like_account_choice("Vacaciones")
     assert not account_words.looks_like_account_choice("¿cuánto gasté este mes?")

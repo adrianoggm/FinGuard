@@ -319,3 +319,62 @@ def test_both_spellings_of_september_are_september() -> None:
     assert window_words.window_in("en setiembre de 2025", today=TODAY) == window_words.window_in(
         "en septiembre de 2025", today=TODAY
     )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "first", "second"),
+    [
+        (
+            "\u00bfGast\u00e9 m\u00e1s en julio que en junio?",
+            window_words.whole_month(2026, 7),
+            window_words.whole_month(2026, 6),
+        ),
+        (
+            "\u00bfEn qu\u00e9 mes gast\u00e9 m\u00e1s, julio o junio?",
+            window_words.whole_month(2026, 7),
+            window_words.whole_month(2026, 6),
+        ),
+        (
+            "Compara julio de 2025 con junio de 2026",
+            window_words.whole_month(2025, 7),
+            window_words.whole_month(2026, 6),
+        ),
+        (
+            "Compara enero y diciembre",
+            window_words.whole_month(2026, 1),
+            window_words.whole_month(2025, 12),
+        ),
+        (
+            "Compara el mes 7 frente al mes 6",
+            window_words.whole_month(2026, 7),
+            window_words.whole_month(2026, 6),
+        ),
+    ],
+)
+def test_two_compared_months_are_read_in_mention_order(
+    sentence: str, first: AbsoluteRange, second: AbsoluteRange
+) -> None:
+    assert window_words.compared_calendar_months(sentence, today=TODAY) == (first, second)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "compara los movimientos del 1 de junio con el 15 de julio",
+        "compara mis gastos de junio a septiembre",
+        "compara julio, junio y mayo",
+    ],
+)
+def test_ambiguous_month_ranges_are_not_rewritten_as_two_whole_months(sentence: str) -> None:
+    assert window_words.compared_calendar_months(sentence, today=TODAY) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["Compara mis ingresos de 2025 con 2026", "Ingresos de 2025 vs 2026"],
+)
+def test_two_calendar_years_can_be_read_from_one_comparison(sentence: str) -> None:
+    assert window_words.compared_calendar_years(sentence, today=TODAY) == (
+        window_words.whole_year(2025),
+        window_words.whole_year(2026),
+    )

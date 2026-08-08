@@ -1,15 +1,14 @@
 # Being told no, and what happens next.
 #
-# Five families are declined before the model is asked, and that ordering is the whole control:
-# refusing afterwards is whatever disposition the configured model happens to have, and two models
-# were measured sixty points apart on it.
+# Unsupported shapes are declined before the model is asked, while supported deterministic shapes
+# such as two whole calendar months are answered on that same side of the boundary.
 #
 # What every episode here checks is the turn *after* the refusal. A refusal that colours the rest of
 # the conversation teaches somebody to start over, and a user who starts over stops asking.
 
 episodes:
   - name: each_family_refused_and_the_conversation_continues
-    why: Five different things to tell somebody, and one sentence for all of them would say nothing.
+    why: Different capability decisions must not damage the financial context around them.
     metrics: [wrong_tool]
     turns:
       - say: ¿cuál es mi gasto medio en gasolina?
@@ -19,7 +18,7 @@ episodes:
         route: REFUSED
         no_model: true
       - say: ¿gasté más en julio que en junio?
-        route: REFUSED
+        route: QUERY
         no_model: true
       - say: a este ritmo, ¿cuánto voy a gastar?
         route: REFUSED

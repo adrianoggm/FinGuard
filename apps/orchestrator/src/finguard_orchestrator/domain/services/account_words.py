@@ -91,6 +91,10 @@ _NOT_A_CHOICE: Final = re.compile(
     r"\b(cuanto|que|como|cuando|donde|gaste|ingrese|movimientos|compras|saldo|"
     r"bizum|pago|transferencia|no|cancel|gracias|vale)\b"
 )
+_OTHER_ACCOUNTS: Final = re.compile(
+    r"\b(?:las?|los?)\s+(?:otras?|demas)\s+cuentas?\b"
+    r"|\bcuentas?\s+(?:restantes?|que\s+faltan)\b"
+)
 
 
 def _pattern(word: str) -> str:
@@ -169,6 +173,16 @@ def excluded_in(sentence: str) -> tuple[str, ...]:
                 excluded.setdefault(kind, match.start())
                 break
     return tuple(sorted(excluded, key=lambda kind: excluded[kind]))
+
+
+def asks_for_other_accounts(sentence: str) -> bool:
+    """Whether a follow-up asks for the complement of the account scope already in view.
+
+    This says only that the complement was requested. Resolving it needs the holder's actual
+    account directory and the selected identifiers in the previous validated plan, so it remains
+    the application layer's job.
+    """
+    return _OTHER_ACCOUNTS.search(spanish.folded(sentence)) is not None
 
 
 def destination_in(sentence: str) -> tuple[str, ...]:
