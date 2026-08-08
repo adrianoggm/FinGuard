@@ -651,7 +651,9 @@ class AskFinancialQuestionHandler:
             return
 
         account_follow_up = (
-            _account_follow_up_plan(query) if intent is Intent.FINANCIAL_QUERY else None
+            _account_follow_up_plan(query)
+            if intent in {Intent.FINANCIAL_QUERY, Intent.CORRECTION}
+            else None
         )
         if account_follow_up is not None:
             yield Stage("planned", answer_writer.describe(account_follow_up))
@@ -2456,11 +2458,13 @@ _SALARY_ACCOUNT_FOLLOW_UP: Final = re.compile(
 _ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
     r"^(?:ahora\s+)?(?:solo|solamente)\b|\b(?:no|menos|excepto|salvo)\s+"
     r"(?:el|la|los|las|mi|mis)?\s*(?:fondo|hucha|cuenta)\b"
+    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
 )
 _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
     r"^(?:(?:y|ahora)\s+)?(?:solo\s+)?en\s+"
     r"|^(?:ahora\s+)?(?:solo|solamente)\b"
     r"|^perdona\b.{0,35}\b(?:queria|refiero|referia)\b"
+    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
     r"|^volvamos?\s+a\b"
     r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
 )
@@ -2475,7 +2479,9 @@ _SUM_INCOME_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:ingrese|ingresado|cobre|cobrado|recibi|recibido)\b"
 )
 _DIRECTION_ONLY_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:ahora\s+)?solo\s+(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
+    r"^(?:y\s+)?(?:ahora\s+)?(?:no[\s,]+)?"
+    r"(?:(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\s+)?"
+    r"(?:solo\s+)?(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
 )
 _TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
     r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"
