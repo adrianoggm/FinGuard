@@ -542,6 +542,8 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
     oracle.
     """
     parts = [window_of(plan), plan.direction.value.lower()]
+    if isinstance(plan, FinancialPlan) and plan.internal_only:
+        parts.append("solo traspasos entre cuentas")
     if isinstance(plan, TopMovements):
         # The rank is the whole point of a ranking, so a description without it would show the same
         # line for "el más caro" and "el segundo más caro".
@@ -657,6 +659,42 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
+
+
+def internal_transfers(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Describe money that moved inside the holder's accounts without calling it spending."""
+    window = window_of(plan)
+    if answer.is_empty:
+        return f"No he encontrado traspasos entre tus cuentas {window}."
+    noun = "traspaso" if answer.movement_count == 1 else "traspasos"
+    if plan.metric is Metric.COUNT:
+        return f"Hiciste {answer.movement_count} {noun} {window}."
+    if plan.metric is Metric.AVERAGE:
+        average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
+        return f"El importe medio de tus {noun} {window} fue de {average}."
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        average = money(
+            _rounded_mean(answer.total_minor, _period_count(answer, plan)), answer.currency
+        )
+        unit = {
+            GroupBy.DAY: "diario",
+            GroupBy.WEEK: "semanal",
+            GroupBy.MONTH: "mensual",
+        }[plan.group_by]
+        return f"El importe medio {unit} de tus traspasos {window} fue de {average}."
+    amount = money(answer.total_minor, answer.currency)
+    selected = plan.only_account_id is not None or bool(plan.only_account_ids)
+    if plan.direction is Direction.INCOME and selected:
+        return (
+            f"Moviste {amount} hacia la cuenta consultada {window}, "
+            f"en {answer.movement_count} {noun}."
+        )
+    if selected:
+        return (
+            f"Moviste {amount} desde la cuenta consultada {window}, "
+            f"en {answer.movement_count} {noun}."
+        )
+    return f"Moviste {amount} entre tus cuentas {window}, en {answer.movement_count} {noun}."
 
 
 def compare_averages(answer: QueryAnswer, plan: FinancialPlan) -> str:

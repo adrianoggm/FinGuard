@@ -19,12 +19,9 @@ The figures are the demo dataset's, so the amounts here are the amounts on scree
 makes this a transcript rather than an illustration: 7.755,92 € is what the holder has where the
 answer says "entre tus cuentas", and 2.700,00 € is a cost basis and says so.
 
-**One turn is answered by refusing, and that is the fix rather than a gap left open.** "Movimientos
-entre mis cuentas" means the internal transfers, and no plan can express only those: banking books
-an internal movement with no category, and `include_internal` widens a query rather than narrowing
-one. Saying so is the answer until the contract changes. What it may not do is what it did — answer
-14.019,05 € over 194 movements, every movement the holder made, to a question about the ones between
-two of their own accounts.
+"Movimientos entre mis cuentas" now has its own narrow contract. It asks for the missing period and
+then sends `internal_only`, rather than widening an ordinary query to every movement. That
+distinction prevents 14.019,05 € over 194 unrelated movements from returning as the answer.
 """
 
 import uuid
@@ -500,25 +497,20 @@ def test_the_transcript_from_the_third_turn_on() -> None:
 
 
 def test_movements_between_my_own_accounts_is_not_answered_with_all_of_them() -> None:
-    """Turns one and two, and the worst answer in the transcript.
-
-    "Entre mis cuentas" means the internal transfers, and no plan can express only those: banking
-    books an internal movement with no category to filter on, and `include_internal` widens a query
-    rather than narrowing one. Answering it needs a contract change and belongs in its own branch.
-
-    Until then the answer is to say so. What it did instead was ask for a period and then produce
-    14.019,05 € over 194 movements — every movement the holder made that year, presented as the
-    answer to a question about transfers between two of their own accounts. A real figure about a
-    different question is the one failure this service is built to make impossible.
-    """
+    """Turns one and two use the dedicated internal-only contract without the model."""
     client, planner, ledger = wired()
+    chat = Chat(client)
 
-    refused = Chat(client).say("Perdona que movimientos he tenido entre mis cuentas ?")
+    asks_when = chat.say("Perdona que movimeintos he tenido entre mis cuentas ?")
+    answered = chat.say("En este año")
 
-    assert refused["outcome"] == PlanningOutcome.UNSUPPORTED.value
-    assert ledger.plans == [], "it ran a query it could not narrow to what was asked"
-    assert planner.asked == [], "the guard is a control and runs before the model"
-    assert "traspasos entre tus cuentas" in refused["text"], "it does not say what it cannot do"
+    assert asks_when["outcome"] == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert answered["outcome"] == PlanningOutcome.PLANNED.value
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].include_internal is True
+    assert ledger.plans[0].internal_only is True
+    assert planner.asked == []
+    assert "entre tus cuentas" in answered["text"]
 
 
 def test_the_same_words_about_a_balance_are_still_a_balance() -> None:
@@ -634,21 +626,17 @@ def test_a_real_instruction_still_interrupts_an_open_question() -> None:
 
 
 def test_how_much_have_i_invested_is_not_answered_with_everything_that_came_in() -> None:
-    """The worst answer of the second conversation. "¿Cuánto he invertido en el último año?" came
-    back 30.279,48 € over 35 movements, and the movements listed were the salary — every euro that
-    arrived, labelled as what the holder had put away.
-
-    Money reaching the fund arrives as an internal transfer, so this is the same contract gap as the
-    first turn of the first conversation, wearing a different word. The refusal says where the
-    figure actually is, and that question works.
-    """
+    """A misspelt contribution question selects incoming internal movements into the fund."""
     client, planner, ledger = wired()
 
-    refused = Chat(client).say("Caunto he invertido en el ultimo año ?")
+    answered = Chat(client).say("Caunto he invertido en el ultimo año ?")
 
-    assert refused["outcome"] == PlanningOutcome.UNSUPPORTED.value
-    assert ledger.plans == [] and planner.asked == []
-    assert "cuánto tengo en el fondo" in refused["text"]
+    assert answered["outcome"] == PlanningOutcome.PLANNED.value
+    assert len(ledger.plans) == 1 and planner.asked == []
+    assert ledger.plans[0].direction is Direction.INCOME
+    assert ledger.plans[0].only_account_id == FUND
+    assert ledger.plans[0].internal_only is True
+    assert "hacia la cuenta consultada" in answered["text"]
 
 
 def test_and_the_question_it_points_at_answers() -> None:

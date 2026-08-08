@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import (
+    AccountScopeNotFoundError,
     BankingUnavailableError,
     InvalidValueError,
     QueryRejectedError,
@@ -183,6 +184,29 @@ _RATIO_WINDOW_REPLY: Final = re.compile(
     r"|la\s+semana\s+(?:pasada|anterior)|los\s+ultimos\s+\w+\s+(?:dias|meses|anos)"
     r"|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre"
     r"|noviembre|diciembre|desde\s+.+|entre\s+.+)\s*$"
+)
+_INTERNAL_HISTORY_WORDS: Final = re.compile(
+    r"\b(?:movimientos?|movimeintos?|traspasos?|transferencias?|movid[oa]s?|traspasad[oa]s?|"
+    r"pasad[oa]s?|metid[oa]s?|aportad[oa]s?)\b"
+)
+_INTERNAL_BETWEEN_ACCOUNTS: Final = re.compile(
+    r"\b(?:entre|de\s+una\s+(?:de\s+)?mis)\s+(?:mis|tus|sus|las)?\s*cuentas\b"
+    r"|\bde\s+una\s+cuenta\s+a\s+otra\b"
+)
+_INVESTMENT_HISTORY: Final = re.compile(
+    r"\b(?:cuanto|caunto|cuantos|que|cual|dime|dame|muestrame|ensename)\b.{0,55}"
+    r"\b(?:(?:invertid|aportad|metid|traspasad)\w*|gast\w*\s+en\s+inversion(?:es)?)\b"
+    r"|\b(?:mis\s+)?(?:aportaciones?|inversiones?)\b.{0,40}\b(?:hech|realiz|este|ultimo)\w*\b"
+)
+_ACCOUNT_ACTIVITY: Final = re.compile(
+    r"\b(?:movimientos?|operaciones?|ingresos?|income|gast\w*|cargos?|compr\w*|pag\w*)\b"
+)
+_ASKS_ACCOUNT_ACTIVITY: Final = re.compile(
+    r"\b(?:cuanto|cuantos|dime|dame|lista|muestrame|ensename|quiero\s+ver)\b"
+    r"|^(?:[¿¡]\s*)?(?:que|cual)\b"
+)
+_ACCOUNT_YIELD_AMOUNT: Final = re.compile(
+    r"\bcuantos?\s+ingresos?\b.{0,45}\b(?:me\s+da|genera|produce|renta)\w*\b"
 )
 
 logger = logging.getLogger(__name__)
@@ -664,6 +688,54 @@ class AskFinancialQuestionHandler:
             # that half-built calculation exactly as an ordinary clarification does.
             was = was.without_pending_ratio()
             query = replace(query, conversation=was)
+
+        internal = _internal_movement_request(query)
+        if isinstance(internal, FinancialPlanDraft):
+            try:
+                internal_scoped = await self._scoped_internal_draft(internal, query)
+            except AccountScopeNotFoundError:
+                yield AskFinancialQuestionResult(
+                    outcome=Spoken.GUIDANCE.value,
+                    text="No tienes una cuenta de ese tipo en la que buscar traspasos.",
+                    conversation=was,
+                )
+                return
+            question = "¿De qué periodo quieres consultar esos traspasos?"
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(draft=internal_scoped, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        if isinstance(internal, FinancialPlan):
+            yield Stage("querying")
+            yield await self._answer(query, internal)
+            return
+
+        account_activity = (
+            _account_activity_request(query) if intent is Intent.FINANCIAL_QUERY else None
+        )
+        if isinstance(account_activity, FinancialPlanDraft):
+            account_activity = await self._scoped_financial_draft(account_activity, query)
+            question = "¿De qué periodo quieres consultar esa cuenta?"
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(draft=account_activity, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Este año", "Los últimos 12 meses"],
+            )
+            return
+        if isinstance(account_activity, FinancialPlan):
+            yield Stage("querying")
+            yield await self._answer(query, account_activity)
+            return
 
         salary_history = _salary_history_plans(query)
         if salary_history is not None:
@@ -1887,6 +1959,20 @@ class AskFinancialQuestionHandler:
             kind=draft.kind,
         )
 
+    async def _scoped_internal_draft(
+        self, draft: FinancialPlanDraft, query: AskFinancialQuestionQuery
+    ) -> FinancialPlanDraft:
+        """Resolve a named destination before the short period reply loses its words."""
+        return await self._scoped_financial_draft(draft, query)
+
+    async def _scoped_financial_draft(
+        self, draft: FinancialPlanDraft, query: AskFinancialQuestionQuery
+    ) -> FinancialPlanDraft:
+        """Resolve an account while its name is present, before a short slot reply loses it."""
+        placeholder = RelativePeriod(Period.THIS_YEAR)
+        scoped = await self._scoped(draft.with_window(placeholder), query)
+        return replace(FinancialPlanDraft.of(scoped), period=None, date_range=None)
+
     async def _answer_ratio(
         self, query: AskFinancialQuestionQuery, ratio: RatioPlan
     ) -> AskFinancialQuestionResult:
@@ -2198,6 +2284,10 @@ class AskFinancialQuestionHandler:
             # CURRENT account, but applying that alias here silently hides payroll paid elsewhere.
             # "Cuenta nómina" and "cuenta principal" remain explicit account selections.
             named = tuple(kind for kind in named if kind != "CURRENT")
+        if plan.internal_only and _INVESTMENT_HISTORY.search(spanish.folded(query.sentence)):
+            # "Cuánto he invertido" names the purpose rather than saying "fondo". It still has one
+            # exact destination: the holder's asset account(s), resolved from banking below.
+            named = ("ASSET",)
         explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
         asks_account_breakdown = explicit_facts.read(
             query.sentence, today=query.today
@@ -2270,6 +2360,8 @@ class AskFinancialQuestionHandler:
         )
         if not wanted:
             # None of that kind. Narrowing to nothing would look like a genuinely empty period.
+            if plan.internal_only and named:
+                raise AccountScopeNotFoundError(named)
             return replace(plan, across_accounts=True)
         if len(wanted) > 1:
             return replace(
@@ -2349,7 +2441,14 @@ class AskFinancialQuestionHandler:
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
-        scoped = await self._scoped(plan, query)
+        try:
+            scoped = await self._scoped(plan, query)
+        except AccountScopeNotFoundError:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text="No tienes una cuenta de ese tipo en la que buscar traspasos.",
+                conversation=query.conversation,
+            )
         # The ordinary all-accounts default is execution policy, not conversational data. An
         # explicit account choice is different: losing it makes the very next ellipsis widen back
         # to every account. Keep only scopes the user actually selected (plus ACCOUNT breakdown,
@@ -2359,6 +2458,7 @@ class AskFinancialQuestionHandler:
             if scoped.only_account_id is not None
             or scoped.only_account_ids
             or plan.group_by is GroupBy.ACCOUNT
+            or plan.internal_only
             else plan
         )
         for attempt in range(self._read_attempts):
@@ -2534,14 +2634,14 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "Mercadona»."
     ),
     "INVESTING": (
-        "Todavía no sé sumar lo que has invertido en un periodo: el dinero que entra en el fondo "
-        "son traspasos entre tus cuentas y no puedo separarlos del resto. Pregúntame «¿cuánto "
-        "tengo en el fondo?» y te digo lo que llevas puesto."
+        "Puedo sumar las aportaciones que llegaron a tu fondo mediante traspasos, pero no he "
+        "distinguido si preguntas por aportaciones, saldo, valoración o rentabilidad. Prueba con "
+        "«¿cuánto he invertido este año?» o «¿cuánto tengo en el fondo?»."
     ),
     "INTERNAL_ONLY": (
-        "Todavía no sé separar los traspasos entre tus cuentas del resto de movimientos. "
-        "Puedo darte el total de un periodo o lo que has gastado por categoría, y en la pantalla "
-        "de movimientos los verás marcados uno a uno."
+        "Puedo consultar sólo los traspasos entre tus cuentas, pero no he identificado qué "
+        "historial quieres ver. Prueba con «movimientos entre mis cuentas este año» o «cuánto he "
+        "movido a la hucha este mes»."
     ),
     "AVERAGE": (
         "Puedo calcular medias por movimiento, día, semana o mes. Dime cuál de ellas quieres; "
@@ -2717,6 +2817,7 @@ def _period_comparison_plans(
         "merchants",
         "excluded_merchants",
         "include_internal",
+        "internal_only",
         "across_accounts",
         "only_account_id",
         "only_account_ids",
@@ -2820,6 +2921,110 @@ def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft |
     return draft.with_window(window) if window is not None else draft
 
 
+def _account_activity_request(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """A typed activity query for an account explicitly named in the same sentence."""
+    folded = spanish.folded(query.sentence)
+    named_accounts = account_words.named_in(query.sentence)
+    if "nomina" in folded and "cuenta" not in folded:
+        # The payroll category shares a legacy alias with the current account. Only "cuenta
+        # nómina" selects the account; "mi nómina" remains income paid wherever it arrived.
+        named_accounts = tuple(kind for kind in named_accounts if kind != "CURRENT")
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if (
+        not named_accounts
+        or _ACCOUNT_ACTIVITY.search(folded) is None
+        or _ASKS_ACCOUNT_ACTIVITY.search(folded) is None
+        or facts.asks_account_breakdown
+        # Spending and generic movement queries already have a mature planner/scoping path. This
+        # typed branch fixes the narrower gap observed here: income produced by one named account.
+        or not (
+            facts.direction is Direction.INCOME or re.search(r"\b(?:ingresos?|income)\b", folded)
+        )
+    ):
+        return None
+
+    metric = Metric.SUM if _ACCOUNT_YIELD_AMOUNT.search(folded) else (facts.metric or Metric.SUM)
+    group_by = (
+        facts.group_by
+        if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
+        else GroupBy.NONE
+    )
+    window = facts.window
+    if window is not None:
+        return FinancialPlan(
+            direction=Direction.INCOME,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            group_by=group_by,
+            metric=metric,
+        )
+    return FinancialPlanDraft(direction=Direction.INCOME, group_by=group_by, metric=metric)
+
+
+def _internal_movement_request(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """A read of transfers that stayed inside the holder's own account set."""
+    folded = spanish.folded(query.sentence)
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    between_accounts = _INTERNAL_BETWEEN_ACCOUNTS.search(folded) is not None
+    investment = _INVESTMENT_HISTORY.search(folded) is not None
+    named_accounts = account_words.named_in(query.sentence)
+    asks = (
+        re.search(
+            r"\b(?:cuanto|caunto|cuantos|que|cual|cuales|dime|dame|lista|muestrame|ensename)\b",
+            folded,
+        )
+        is not None
+    )
+    names_transfer_history = (
+        re.search(
+            # Singular "traspaso" is also the present-tense verb in "cuánto traspaso al fondo".
+            # Plural nouns and completed forms are history; the ambiguous verb stays on the
+            # established habitual-query path instead of inventing an internal-only request.
+            r"\b(?:traspasos|transferencias?|movid|traspasad|metid|aportad)\w*\b",
+            folded,
+        )
+        is not None
+        # "Pasado" on its own is usually the calendar adjective in "el mes pasado". Only its
+        # completed verb form means money moved to the named account.
+        or re.search(r"\b(?:he|has|ha|hemos|han)\s+pasad\w*\b", folded) is not None
+    )
+    if not investment and not (
+        (between_accounts and _INTERNAL_HISTORY_WORDS.search(folded))
+        or (named_accounts and asks and names_transfer_history)
+    ):
+        return None
+
+    destination = account_words.destination_in(query.sentence)
+    direction = Direction.INCOME if investment or destination else Direction.EXPENSE
+    metric = facts.metric or Metric.SUM
+    group_by = (
+        facts.group_by
+        if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
+        else GroupBy.NONE
+    )
+    if window := facts.window:
+        return FinancialPlan(
+            direction=direction,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            group_by=group_by,
+            metric=metric,
+            include_internal=True,
+            internal_only=True,
+        )
+    return FinancialPlanDraft(
+        direction=direction,
+        group_by=group_by,
+        metric=metric,
+        include_internal=True,
+        internal_only=True,
+    )
+
+
 def _stored_percentage_pair(
     query: AskFinancialQuestionQuery,
 ) -> tuple[FinancialPlan, FinancialPlan] | None:
@@ -2838,6 +3043,7 @@ def _stored_percentage_pair(
         "excluded_merchants",
         "include_internal",
         "internal_only",
+        "across_accounts",
         "only_account_id",
         "only_account_ids",
         "transaction_ids",
@@ -2928,6 +3134,7 @@ def _with_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> Financi
     return replace(
         plan,
         include_internal=scoped.include_internal,
+        internal_only=scoped.internal_only,
         across_accounts=scoped.across_accounts,
         only_account_id=scoped.only_account_id,
         only_account_ids=scoped.only_account_ids,
@@ -2939,6 +3146,7 @@ def _with_ratio_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> F
     return replace(
         plan,
         include_internal=scoped.include_internal,
+        internal_only=scoped.internal_only,
         across_accounts=scoped.across_accounts,
         only_account_id=scoped.only_account_id,
         only_account_ids=scoped.only_account_ids,
@@ -3088,6 +3296,7 @@ def _direct_period_comparison(
             group_by=group_by,
             metric=metric,
             include_internal=previous.include_internal if previous is not None else False,
+            internal_only=previous.internal_only if previous is not None else False,
             across_accounts=previous.across_accounts if previous is not None else False,
             only_account_id=previous.only_account_id if previous is not None else None,
             only_account_ids=previous.only_account_ids if previous is not None else (),
@@ -3448,6 +3657,7 @@ def _deterministic_breakdown_plan(
         () if named_categories else (previous.excluded_merchants if previous is not None else ())
     )
     include_internal = previous_financial.include_internal if previous_financial else False
+    internal_only = previous_financial.internal_only if previous_financial else False
     across_accounts = (
         True
         if facts.asks_account_breakdown
@@ -3475,6 +3685,7 @@ def _deterministic_breakdown_plan(
                 group_by=group_by,
                 metric=Metric.SUM,
                 include_internal=include_internal,
+                internal_only=internal_only,
                 across_accounts=across_accounts,
                 only_account_id=only_account_id,
                 only_account_ids=only_account_ids,
@@ -3494,6 +3705,7 @@ def _deterministic_breakdown_plan(
             group_by=group_by,
             metric=Metric.SUM,
             include_internal=include_internal,
+            internal_only=internal_only,
             across_accounts=across_accounts,
             only_account_id=only_account_id,
             only_account_ids=only_account_ids,
@@ -3597,6 +3809,9 @@ def _average_plan(
                 include_internal=(
                     previous.include_internal if isinstance(previous, FinancialPlan) else False
                 ),
+                internal_only=(
+                    previous.internal_only if isinstance(previous, FinancialPlan) else False
+                ),
                 across_accounts=(
                     previous.across_accounts if isinstance(previous, FinancialPlan) else False
                 ),
@@ -3622,6 +3837,9 @@ def _average_plan(
             metric=facts.metric,
             include_internal=(
                 previous.include_internal if isinstance(previous, FinancialPlan) else False
+            ),
+            internal_only=(
+                previous.internal_only if isinstance(previous, FinancialPlan) else False
             ),
             across_accounts=(
                 previous.across_accounts if isinstance(previous, FinancialPlan) else False
@@ -3692,6 +3910,7 @@ def _average_follow_up_plan(
             group_by=group_by,
             metric=metric,
             include_internal=previous.include_internal,
+            internal_only=previous.internal_only,
             across_accounts=previous.across_accounts,
             only_account_id=previous.only_account_id,
             only_account_ids=previous.only_account_ids,
@@ -3706,7 +3925,8 @@ def _from_what_the_sentence_said(
     """A plan built from the sentence alone, when the model gave up on one it could have made.
 
     **The guard owns refusals; the model does not get to invent one.** `capability_guard` is what
-    decides which questions this product declines — ratios and multi-period comparisons — and
+    decides which questions this product declines — ratios and arbitrary partial-range
+    comparisons — and
     it runs *before* the model. So an `UNSUPPORTED` naming a family the guard does not have is not a
     refusal this service makes; it is the model failing, dressed as a product limit. Handing it to
     the user is the worst kind of wrong answer: "no puedo" about something that can be, said with
@@ -4140,6 +4360,8 @@ def _answered(
     facts = explicit_facts.read(sentence)
     if facts.asks_when:
         text = answer_writer.when(answer, plan)
+    elif plan.internal_only:
+        text = answer_writer.internal_transfers(answer, plan)
     elif facts.asks_top_category:
         text = answer_writer.top_category(answer, plan)
     elif (
