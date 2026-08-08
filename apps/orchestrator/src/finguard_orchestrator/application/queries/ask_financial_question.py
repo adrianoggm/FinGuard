@@ -174,6 +174,22 @@ def _clean_turn(sentence: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", spanish.folded(sentence)).strip()
 
 
+def _starts_new_financial_scope(sentence: str, *, today: date) -> bool:
+    """Whether this turn states a complete new question rather than an ellipsis.
+
+    A concrete window plus a financial question is enough to stand on its own. Inheriting an old
+    category there is how "cuÃ¡nto gastÃ© en la cuenta principal este mes" remained filtered by
+    restaurants. Short turns without a window ("y cuÃ¡nto gastÃ©?") remain follow-ups.
+    """
+    folded = spanish.folded(sentence)
+    if re.search(r"\b(?:esa|ese|esas|esos)\b|\blo\s+mismo\b", folded):
+        return False
+    return (
+        window_words.window_in(sentence, today=today) is not None
+        and _SELF_CONTAINED_FINANCIAL_QUESTION.search(folded) is not None
+    )
+
+
 @dataclass(frozen=True)
 class SpokenGroup:
     key: str
@@ -910,6 +926,9 @@ class AskFinancialQuestionHandler:
             planning_previous = pending_base
             force_follow_up = True
 
+        if not force_follow_up and _starts_new_financial_scope(query.sentence, today=query.today):
+            planning_previous = None
+
         yield Stage("planning")
         if force_follow_up:
             planned = await self._planner.plan(
@@ -960,7 +979,9 @@ class AskFinancialQuestionHandler:
                 extra={
                     "explicit": _window_of(checked),
                     "planned": _window_of(planned.plan),
-                    "inherited": _window_of(planning_previous),
+                    # What was available to inherit, even when a self-contained question correctly
+                    # starts a fresh scope and therefore sends no previous plan to the planner.
+                    "inherited": _window_of(previous),
                 },
             )
         correcting = force_follow_up or facts.corrects
@@ -2887,6 +2908,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         and facts.metric is None
         and facts.direction is None
         and len(folded.split()) <= 8
+        and not _starts_new_financial_scope(query.sentence, today=query.today)
         and not re.search(r"\bano\s+(?:anterior|pasado)\b", folded)
         and capability_guard.unsupported_reason(query.sentence) is None
     ):
@@ -2965,7 +2987,11 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
     facts = explicit_facts.read(query.sentence, today=query.today)
     if facts.asks_top_category or not _RANKING_REQUEST.search(spanish.folded(query.sentence)):
         return None
-    previous = query.conversation.last_plan
+    previous = (
+        None
+        if _starts_new_financial_scope(query.sentence, today=query.today)
+        else query.conversation.last_plan
+    )
     window = facts.window or (
         previous.period or previous.date_range if previous is not None else None
     )
@@ -2999,7 +3025,11 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
 
 def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Focus the previous query on an account named as a short conversational reply."""
-    previous = query.conversation.last_plan
+    previous = (
+        None
+        if _starts_new_financial_scope(query.sentence, today=query.today)
+        else query.conversation.last_plan
+    )
     if not isinstance(previous, FinancialPlan) or not account_words.named_in(query.sentence):
         return None
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
@@ -3034,7 +3064,11 @@ def _deterministic_breakdown_plan(
     ):
         return None
 
-    previous = query.conversation.last_plan
+    previous = (
+        None
+        if _starts_new_financial_scope(query.sentence, today=query.today)
+        else query.conversation.last_plan
+    )
     previous_financial = previous if isinstance(previous, FinancialPlan) else None
     window = facts.window or (
         previous.period or previous.date_range if previous is not None else None

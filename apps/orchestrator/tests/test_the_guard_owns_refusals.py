@@ -1157,6 +1157,44 @@ async def test_principal_and_salary_account_replies_focus_the_previous_query() -
     assert salary_account.outcome == PlanningOutcome.PLANNED.value
 
 
+async def test_a_complete_account_question_does_not_inherit_an_old_category() -> None:
+    class FreshPlanner(GivesUp):
+        async def plan(self, *_: object, **kwargs: object) -> PlanningResult:
+            self.asked += 1
+            assert kwargs.get("previous") is None
+            return PlanningResult(
+                outcome=PlanningOutcome.PLANNED,
+                plan=FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                    # A model may confuse the noun "cuenta" with a request to group by account.
+                    # The explicit singular account in the sentence must still win.
+                    group_by=GroupBy.ACCOUNT,
+                ),
+            )
+
+    planner = FreshPlanner()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("RESTAURANTS",),
+    )
+
+    await asked(
+        "Cuanto gaste en la cuenta principal este mes?",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 1
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ()
+    assert ledger.plan.only_account_id == ACCOUNT
+    assert ledger.plan.group_by is GroupBy.NONE
+
+
 async def test_a_category_follow_up_keeps_the_year_instead_of_defaulting_to_last_month() -> None:
     planner = GivesUp()
     ledger = Ledger()
