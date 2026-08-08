@@ -60,14 +60,14 @@ _FAMILIES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         re.compile(r"\b(medio|media|promedio)\b", re.IGNORECASE),
     ),
     (
+        # Closed, grounded proportions (category / income or spending, savings rate, and a change
+        # between two whole periods) are intercepted before this residual guard. What remains here
+        # is a percentage whose two operands the typed ratio parser could not identify safely.
         "RATIO",
         re.compile(r"(\bporcentaje\b|\bque parte de\b|\bque proporcion\b|%)", re.IGNORECASE),
     ),
     (
         # "más" alone is not a comparison: "¿dónde gasto más?" asks which group is
-        # largest inside one window, which groupBy expresses. What the domain cannot do
-        # is relate two windows, and in Spanish that needs the second term — "más X *que*
-        # Y". Comparing without "que" is possible but it is phrased with these words.
         #
         # `_A_SUPERLATIVE_NOUN` below is the exception, and it used to be a family of its
         # own: "el pago más grande *que* he hecho este año" carries "más … que" with a

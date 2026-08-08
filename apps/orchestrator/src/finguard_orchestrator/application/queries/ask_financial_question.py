@@ -66,6 +66,7 @@ from finguard_orchestrator.domain.services import (
     payment_words,
     plan_verifier,
     query_recovery,
+    ratio_writer,
     spanish,
     spanish_numbers,
     window_words,
@@ -79,6 +80,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.observability import account_ref
 
@@ -164,6 +166,23 @@ _NUMBERED_MONTH_FALLBACK: Final = re.compile(
     r"\b(?:el\s+)?mes\s+(?P<first>0?[1-9]|1[0-2])\b.{0,24}"
     r"\b(?:y\s+)?si\s+no\b\s+(?:(?:el\s+)?mes\s+|el\s+)?"
     r"(?P<second>0?[1-9]|1[0-2])\b"
+)
+_RATIO_WORDS: Final = re.compile(r"\bporcentaje\b|\bque\s+parte\s+de\b|\bque\s+proporcion\s+de\b|%")
+_SAVINGS_RATE: Final = re.compile(
+    r"\btasa\s+de\s+ahorro\b"
+    r"|\b(?:porcentaje|parte|proporcion)\b.{0,45}\b"
+    r"(?:ahorr|no\s+(?:me\s+)?(?:he\s+)?gast|me\s+queda)\w*\b"
+)
+_PERCENT_FOLLOW_UP: Final = re.compile(
+    r"^(?:y\s+)?(?:cuanto\s+(?:es|fue|supone)\s+eso\s+)?(?:en\s+)?porcentaje$"
+    r"|^(?:y\s+)?(?:cual|cuanto)\s+fue\s+(?:la\s+)?(?:diferencia|variacion)\s+porcentual$"
+)
+_RATIO_WINDOW_REPLY: Final = re.compile(
+    r"^(?:(?:vale|bueno|perfecto|pues)\s+)?(?:en\s+|durante\s+)?(?:"
+    r"este\s+(?:mes|ano)|esta\s+semana|el\s+(?:mes|ano)\s+(?:pasado|anterior)"
+    r"|la\s+semana\s+(?:pasada|anterior)|los\s+ultimos\s+\w+\s+(?:dias|meses|anos)"
+    r"|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre"
+    r"|noviembre|diciembre|desde\s+.+|entre\s+.+)\s*$"
 )
 
 logger = logging.getLogger(__name__)
@@ -623,6 +642,27 @@ class AskFinancialQuestionHandler:
         if early_refusal == "CATEGORY_EXCLUSION":
             yield self._declined(early_refusal, was)
             return
+
+        ratio = _ratio_request(query)
+        if isinstance(ratio, RatioDraft):
+            scoped = await self._scoped_ratio_draft(ratio, query)
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text="¿De qué periodo quieres calcularlo?",
+                question="¿De qué periodo quieres calcularlo?",
+                conversation=was.waiting_for_ratio(scoped),
+                suggestions=["Este mes", "El mes pasado", "Este año"],
+            )
+            return
+        if isinstance(ratio, RatioPlan):
+            yield Stage("querying")
+            yield await self._answer_ratio(query, ratio)
+            return
+        if was.pending_ratio is not None and intent not in _ASIDES:
+            # The pending pair asked only for a period. A different financial question abandons
+            # that half-built calculation exactly as an ordinary clarification does.
+            was = was.without_pending_ratio()
+            query = replace(query, conversation=was)
 
         salary_history = _salary_history_plans(query)
         if salary_history is not None:
@@ -1839,6 +1879,82 @@ class AskFinancialQuestionHandler:
             movements=[_spoken_movement(movement) for movement in movements],
         )
 
+    async def _scoped_ratio_draft(
+        self, draft: RatioDraft, query: AskFinancialQuestionQuery
+    ) -> RatioDraft:
+        """Resolve account words once and put the same scope on both pending operands."""
+        placeholder = RelativePeriod(Period.THIS_YEAR)
+        scoped_whole = await self._scoped(draft.whole.with_window(placeholder), query)
+        scoped_part = _with_ratio_execution_scope(draft.part.with_window(placeholder), scoped_whole)
+        return RatioDraft(
+            part=replace(FinancialPlanDraft.of(scoped_part), period=None, date_range=None),
+            whole=replace(FinancialPlanDraft.of(scoped_whole), period=None, date_range=None),
+            kind=draft.kind,
+        )
+
+    async def _answer_ratio(
+        self, query: AskFinancialQuestionQuery, ratio: RatioPlan
+    ) -> AskFinancialQuestionResult:
+        """Run both operands and perform the requested percentage in deterministic code."""
+        try:
+            scoped_whole = await self._scoped(ratio.whole, query)
+            scoped_part = _with_ratio_execution_scope(ratio.part, scoped_whole)
+            part_answer = await self._queries.run(
+                scoped_part,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+            whole_answer = await self._queries.run(
+                scoped_whole,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=5,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="He entendido el porcentaje, pero el banco ha rechazado una de las cifras.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+
+        if scoped_part.metric is not Metric.COUNT and part_answer.currency != whole_answer.currency:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="No puedo calcular un porcentaje entre importes de monedas distintas.",
+                conversation=query.conversation,
+            )
+
+        executed = RatioPlan(part=scoped_part, whole=scoped_whole, kind=ratio.kind)
+        if ratio.kind is RatioKind.SHARE:
+            # The denominator contains the numerator when it is total spending. Showing both would
+            # duplicate the category's rows and make the unified movement count meaningless.
+            movements = part_answer.movements
+            movement_count = part_answer.movement_count
+        else:
+            movements = _distinct_movements((*part_answer.movements, *whole_answer.movements))
+            movement_count = part_answer.movement_count + whole_answer.movement_count
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=ratio_writer.write(part_answer, whole_answer, executed),
+            plan=(
+                f"{answer_writer.describe(scoped_part)} respecto a "
+                f"{answer_writer.describe(scoped_whole)}"
+            ),
+            conversation=query.conversation.answered_ratio(executed),
+            currency=part_answer.currency,
+            movement_count=movement_count,
+            movements=[_spoken_movement(movement) for movement in movements],
+        )
+
     async def _compare_salary_history(
         self,
         query: AskFinancialQuestionQuery,
@@ -2438,8 +2554,10 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
         "este mes»."
     ),
     "RATIO": (
-        "Todavía no calculo porcentajes de una cifra sobre otra. Puedo darte las dos por "
-        "separado: lo que ingresas y lo que gastas en esa categoría."
+        "Puedo calcular qué porcentaje de tus ingresos o gastos representa una categoría, "
+        "tu tasa de ahorro y la variación entre dos periodos. No he identificado con seguridad "
+        "las dos cifras de este porcentaje; prueba, por ejemplo, con «qué porcentaje de mi "
+        "nómina se va en alquiler este año»."
     ),
     "COMPARISON": (
         "Entiendo que quieres comparar, pero no he podido delimitar dos periodos calendario "
@@ -2630,6 +2748,137 @@ def _period_comparison_plans(
     return normalised_earlier, normalised_latest
 
 
+def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft | None:
+    """A proportion stated completely, or the exact pair waiting for one shared window."""
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    folded = spanish.folded(query.sentence)
+    cleaned = _clean_turn(query.sentence)
+
+    pending = query.conversation.pending_ratio
+    if (
+        pending is not None
+        and facts.window is not None
+        and len(cleaned.split()) <= 10
+        and _RATIO_WINDOW_REPLY.fullmatch(cleaned) is not None
+    ):
+        return pending.with_window(facts.window)
+
+    previous_ratio = query.conversation.last_ratio
+    if (
+        previous_ratio is not None
+        and previous_ratio.kind is not RatioKind.PERCENT_CHANGE
+        and facts.window is not None
+        and len(cleaned.split()) <= 6
+        and re.search(r"\b(?:cuanto|cual|que|gast|ingres|cobr|movimientos?)\b", cleaned) is None
+    ):
+        return previous_ratio.with_window(facts.window)
+
+    if _PERCENT_FOLLOW_UP.fullmatch(cleaned):
+        pair = _stored_percentage_pair(query)
+        if pair is not None:
+            earlier, latest = pair
+            return RatioPlan(part=latest, whole=earlier, kind=RatioKind.PERCENT_CHANGE)
+        return None
+
+    asks_ratio = _RATIO_WORDS.search(folded) is not None
+    asks_savings = _SAVINGS_RATE.search(folded) is not None
+    if not asks_ratio and not asks_savings:
+        return None
+
+    if asks_ratio and _DIRECT_PERIOD_COMPARISON.search(folded):
+        pair = _direct_period_comparison(query)
+        if pair is not None:
+            earlier, latest = pair
+            return RatioPlan(part=latest, whole=earlier, kind=RatioKind.PERCENT_CHANGE)
+
+    window = facts.window
+    if asks_savings:
+        draft = RatioDraft(
+            part=FinancialPlanDraft(direction=Direction.EXPENSE),
+            whole=FinancialPlanDraft(direction=Direction.INCOME),
+            kind=RatioKind.SAVINGS_RATE,
+        )
+        return draft.with_window(window) if window is not None else draft
+
+    named = category_words.precisely_named_in(query.sentence)
+    part_categories = tuple(category for category in named if category != "SALARY")
+    names_salary = bool(re.search(r"\b(?:nomina|sueldo|salario)\b", folded))
+    names_income = names_salary or bool(re.search(r"\bingresos?\b", folded))
+    names_expenses = bool(re.search(r"\b(?:mis|los|tus)\s+gastos\b|\bgasto\s+total\b", folded))
+    if not names_income and not names_expenses:
+        return None
+    if not part_categories:
+        # Without the numerator this would silently divide all expenses by themselves and answer
+        # 100 %. An open merchant name also belongs to the semantic path until it can be verified
+        # against actual ledger merchants.
+        return None
+    draft = RatioDraft(
+        part=FinancialPlanDraft(
+            direction=Direction.EXPENSE,
+            categories=part_categories,
+        ),
+        whole=FinancialPlanDraft(
+            direction=Direction.INCOME if names_income else Direction.EXPENSE,
+            categories=("SALARY",) if names_salary else (),
+        ),
+        kind=RatioKind.SHARE,
+    )
+    return draft.with_window(window) if window is not None else draft
+
+
+def _stored_percentage_pair(
+    query: AskFinancialQuestionQuery,
+) -> tuple[FinancialPlan, FinancialPlan] | None:
+    """The two compatible windows behind a bare "en porcentaje"."""
+    latest = query.conversation.last_plan
+    earlier = query.conversation.prior_plan
+    if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
+        return None
+    if _same_window(latest, earlier) or latest.metric is not earlier.metric:
+        return None
+    scope = (
+        "direction",
+        "categories",
+        "excluded_categories",
+        "merchants",
+        "excluded_merchants",
+        "include_internal",
+        "internal_only",
+        "only_account_id",
+        "only_account_ids",
+        "transaction_ids",
+    )
+    if any(getattr(latest, field) != getattr(earlier, field) for field in scope):
+        return None
+    normalised_earlier = _comparison_plan(earlier)
+    normalised_latest = _comparison_plan(latest)
+    if normalised_earlier is None or normalised_latest is None:
+        return None
+    return normalised_earlier, normalised_latest
+
+
+def _distinct_movements(movements: tuple[Movement, ...]) -> tuple[Movement, ...]:
+    """Keep evidence from both operands without repeating subset rows in the denominator."""
+    found: list[Movement] = []
+    seen: set[tuple[object, ...]] = set()
+    for movement in movements:
+        identity: tuple[object, ...] = (
+            ("id", movement.transaction_id)
+            if movement.transaction_id is not None
+            else (
+                "fallback",
+                movement.occurred_at,
+                movement.description,
+                movement.amount_minor,
+                movement.merchant_name,
+            )
+        )
+        if identity not in seen:
+            seen.add(identity)
+            found.append(movement)
+    return tuple(found)
+
+
 def _salary_history_plans(
     query: AskFinancialQuestionQuery,
 ) -> tuple[FinancialPlan, FinancialPlan] | None:
@@ -2682,6 +2931,17 @@ def _with_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> Financi
         # an adapter default, not a conversational choice, so it must not turn the remembered plan
         # into an explicit "all accounts" selection.
         return plan
+    return replace(
+        plan,
+        include_internal=scoped.include_internal,
+        across_accounts=scoped.across_accounts,
+        only_account_id=scoped.only_account_id,
+        only_account_ids=scoped.only_account_ids,
+    )
+
+
+def _with_ratio_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> FinancialPlan:
+    """Force both operands through the exact same set of accounts."""
     return replace(
         plan,
         include_internal=scoped.include_internal,

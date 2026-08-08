@@ -208,10 +208,8 @@ async def ask(result: PlanningResult, ledger: FakeLedger | None = None, **kwargs
 # --- the guard runs before the model ------------------------------------------------
 
 
-async def test_a_question_we_cannot_express_never_reaches_the_model() -> None:
-    """Cheapest possible refusal, and the only one that is a control rather than a
-    disposition. The model is not consulted, so it cannot produce a confident plan for a
-    question about a ratio."""
+async def test_a_supported_percentage_waits_for_its_only_missing_fact_without_the_model() -> None:
+    """Both operands are deterministic; only the shared period is missing."""
     planner = FakePlanner(PlanningResult.planned(plan()))
     ledger = FakeLedger(ANSWER)
     handler = chat(planner, ledger)
@@ -224,9 +222,11 @@ async def test_a_question_we_cannot_express_never_reaches_the_model() -> None:
         )
     )
 
-    assert planner.asked is None, "the model was asked about something we cannot express"
+    assert planner.asked is None
     assert ledger.account_id is None
-    assert result.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert result.conversation.pending_ratio is not None
+    assert result.conversation.last_asked is Slot.WINDOW
 
 
 async def test_a_plan_that_contradicts_the_question_never_reaches_the_ledger() -> None:
