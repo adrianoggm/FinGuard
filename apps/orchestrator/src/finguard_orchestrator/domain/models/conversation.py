@@ -38,6 +38,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlanDraft,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 # What a sentence can turn into and a follow-up can inherit from. Declared here as well as on
@@ -221,6 +222,11 @@ class Conversation:
     # A flag rather than the whole answer: nothing else needs remembering, and a field that holds
     # more than one thing is a field the next branch reads wrongly.
     answered_the_balance: bool = False
+    # A two-query calculation cannot fit in `last_plan`. The answered pair and the half-built pair
+    # are memory rather than parallel workflows: one lets "¿y el mes pasado?" patch both sides;
+    # the other lets a two-word period complete the proportion that asked for it.
+    last_ratio: RatioPlan | None = None
+    pending_ratio: RatioDraft | None = None
 
     @property
     def awaiting(self) -> Slot | None:
@@ -271,6 +277,8 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
     def asking(self, slot: Slot) -> "Conversation":
@@ -282,6 +290,8 @@ class Conversation:
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
             last_asked=slot,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
     def refused(self, capability: str) -> "Conversation":
@@ -305,6 +315,8 @@ class Conversation:
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
             answered_the_balance=self.answered_the_balance,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
     def answering_the_balance(self) -> "Conversation":
@@ -321,6 +333,8 @@ class Conversation:
             referenced_category=self.referenced_category,
             last_asked=self.last_asked,
             answered_the_balance=True,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
@@ -332,6 +346,8 @@ class Conversation:
             retry_plan=plan,
             referenced_category=self.referenced_category,
             last_asked=self.last_asked,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
     def without_retry(self) -> "Conversation":
@@ -342,6 +358,8 @@ class Conversation:
             prior_plan=self.prior_plan,
             referenced_category=self.referenced_category,
             last_asked=self.last_asked,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
     def answered(
@@ -366,6 +384,49 @@ class Conversation:
             referenced_category=referenced_category,
         )
 
+    def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
+        """Remember both operands while asking for their shared period."""
+        return Conversation(
+            active=self.active,
+            last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
+            retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
+            last_asked=Slot.WINDOW,
+            answered_the_balance=self.answered_the_balance,
+            last_ratio=self.last_ratio,
+            pending_ratio=draft,
+        )
+
+    def answered_ratio(self, plan: RatioPlan) -> "Conversation":
+        """Put the exact pair in view and close the period question it answered."""
+        active = (
+            self.active
+            if isinstance(self.active, PaymentInProgress) and self.active.suspended
+            else None
+        )
+        return Conversation(
+            active=active,
+            last_plan=plan.part,
+            prior_plan=plan.whole,
+            referenced_category=(
+                plan.part.categories[0] if len(plan.part.categories) == 1 else None
+            ),
+            last_ratio=plan,
+        )
+
+    def without_pending_ratio(self) -> "Conversation":
+        """Abandon an unanswered proportion when the user starts another financial subject."""
+        return Conversation(
+            active=self.active,
+            last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
+            retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
+            answered_the_balance=self.answered_the_balance,
+            last_ratio=self.last_ratio,
+        )
+
     def suspend(self) -> "Conversation":
         """The active payment steps aside for a turn about something else.
 
@@ -382,6 +443,8 @@ class Conversation:
                 referenced_category=self.referenced_category,
                 last_asked=self.last_asked,
                 answered_the_balance=self.answered_the_balance,
+                last_ratio=self.last_ratio,
+                pending_ratio=self.pending_ratio,
             )
         return Conversation(
             active=PaymentInProgress(
@@ -399,6 +462,8 @@ class Conversation:
             # silently turned "¿y en la hucha?" back into a question about spending, so a balance
             # follow-up worked or not depending on whether a Bizum happened to be half-built.
             answered_the_balance=self.answered_the_balance,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
         )
 
 

@@ -33,6 +33,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
@@ -93,6 +94,53 @@ def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
 
     assert back.last_plan == latest
     assert back.prior_plan == earlier
+
+
+def test_an_answered_percentage_survives_with_both_operands() -> None:
+    whole = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("SALARY",),
+    )
+    part = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("HOUSING_RENT",),
+    )
+    ratio = RatioPlan(part=part, whole=whole, kind=RatioKind.SHARE)
+
+    back = there_and_back(IDLE.answered_ratio(ratio))
+
+    assert back.last_ratio == ratio
+    assert back.last_plan == part
+    assert back.prior_plan == whole
+
+
+def test_a_percentage_waiting_only_for_its_window_survives() -> None:
+    ratio = RatioDraft(
+        part=FinancialPlanDraft(direction=Direction.EXPENSE, categories=("GROCERIES",)),
+        whole=FinancialPlanDraft(direction=Direction.EXPENSE),
+        kind=RatioKind.SHARE,
+    )
+
+    back = there_and_back(IDLE.waiting_for_ratio(ratio))
+
+    assert back.pending_ratio == ratio
+    assert back.last_asked is Slot.WINDOW
+
+
+@pytest.mark.parametrize("missing", ["kind", "part", "whole"])
+def test_a_partial_percentage_pair_is_not_valid_conversation_state(missing: str) -> None:
+    plan = mapper.plan_payload(LAST_MONTH)
+    fields: dict[str, object] = {
+        "last_ratio_kind": RatioKind.SHARE,
+        "last_ratio_part": plan,
+        "last_ratio_whole": plan,
+    }
+    fields[f"last_ratio_{missing}"] = None
+
+    with pytest.raises(ValidationError):
+        ConversationPayload(**fields)
 
 
 def test_negative_filters_survive_the_client_round_trip() -> None:

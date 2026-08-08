@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
 )
 from finguard_orchestrator.domain.models.conversation import Slot, Workflow
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
 class _Payload(BaseModel):
@@ -211,6 +212,14 @@ class ConversationPayload(_Payload):
     # The validated query banking could not execute. Kept separately from `last_plan`: a failed
     # read is retryable context, not an answer a later "y este mes" should inherit from.
     retry_plan: PlanPayload | None = None
+    # A proportion relates two plans. These triples are memory rather than an active workflow and
+    # are all-or-nothing: one missing operand is not a calculation this service emitted.
+    last_ratio_kind: RatioKind | None = None
+    last_ratio_part: PlanPayload | None = None
+    last_ratio_whole: PlanPayload | None = None
+    pending_ratio_kind: RatioKind | None = None
+    pending_ratio_part: PlanPayload | None = None
+    pending_ratio_whole: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
     # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
@@ -299,6 +308,16 @@ class ConversationPayload(_Payload):
 
         if self.awaiting is not None and self.awaiting not in _SLOTS_OF[self.workflow]:
             raise ValueError(f"{self.workflow or 'an idle state'} never asks for {self.awaiting}")
+        for prefix in ("last_ratio", "pending_ratio"):
+            values = (
+                getattr(self, f"{prefix}_kind"),
+                getattr(self, f"{prefix}_part"),
+                getattr(self, f"{prefix}_whole"),
+            )
+            if any(value is not None for value in values) and any(
+                value is None for value in values
+            ):
+                raise ValueError(f"{prefix} needs its kind and both operands")
         return self
 
 
