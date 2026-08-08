@@ -651,7 +651,9 @@ class AskFinancialQuestionHandler:
             return
 
         account_follow_up = (
-            _account_follow_up_plan(query) if intent is Intent.FINANCIAL_QUERY else None
+            _account_follow_up_plan(query)
+            if intent in {Intent.FINANCIAL_QUERY, Intent.CORRECTION}
+            else None
         )
         if account_follow_up is not None:
             yield Stage("planned", answer_writer.describe(account_follow_up))
@@ -842,7 +844,12 @@ class AskFinancialQuestionHandler:
             question = (
                 "¿De qué periodo quieres que compare ambos gastos?"
                 if comparing
-                else "¿De qué periodo quieres que haga el desglose?"
+                else (
+                    "¿De qué periodo quieres que busque la nómina y la cuenta en la que entró?"
+                    if deterministic.group_by is GroupBy.ACCOUNT
+                    and deterministic.categories == ("SALARY",)
+                    else "¿De qué periodo quieres que haga el desglose?"
+                )
             )
             conversation = was.with_active(
                 FinancialClarification(draft=deterministic, awaiting=Slot.WINDOW)
@@ -2047,19 +2054,28 @@ class AskFinancialQuestionHandler:
         The holder's account directory is fetched only for an explicit custom-name form. Fixed
         kinds retain the existing summary path, while widening needs no list at all.
         """
-        if plan.group_by is GroupBy.ACCOUNT:
+        excluded = frozenset(account_words.excluded_in(query.sentence))
+        named = tuple(
+            kind for kind in account_words.named_in(query.sentence) if kind not in excluded
+        )
+        if "SALARY" in plan.categories and "cuenta" not in spanish.folded(query.sentence):
+            # "Mi nómina" names the income category. The same noun is also a legacy alias for a
+            # CURRENT account, but applying that alias here silently hides payroll paid elsewhere.
+            # "Cuenta nómina" and "cuenta principal" remain explicit account selections.
+            named = tuple(kind for kind in named if kind != "CURRENT")
+        explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
+        asks_account_breakdown = explicit_facts.read(
+            query.sentence, today=query.today
+        ).asks_account_breakdown
+        if plan.group_by is GroupBy.ACCOUNT and (
+            asks_account_breakdown or (not named and not excluded and not explicit_custom)
+        ):
             return replace(
                 plan,
                 across_accounts=True,
                 only_account_id=None,
                 only_account_ids=(),
             )
-
-        excluded = frozenset(account_words.excluded_in(query.sentence))
-        named = tuple(
-            kind for kind in account_words.named_in(query.sentence) if kind not in excluded
-        )
-        explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
         if not named and not excluded and not explicit_custom:
             if plan.only_account_id is not None or plan.only_account_ids:
                 return plan
@@ -2079,6 +2095,7 @@ class AskFinancialQuestionHandler:
             if len(wanted_custom) == 1:
                 return replace(
                     plan,
+                    group_by=GroupBy.NONE,
                     across_accounts=False,
                     only_account_id=wanted_custom[0].account_id,
                     only_account_ids=(),
@@ -2087,6 +2104,7 @@ class AskFinancialQuestionHandler:
             if wanted_custom:
                 return replace(
                     plan,
+                    group_by=GroupBy.NONE,
                     across_accounts=False,
                     only_account_id=None,
                     only_account_ids=tuple(holding.account_id for holding in wanted_custom),
@@ -2121,12 +2139,14 @@ class AskFinancialQuestionHandler:
         if len(wanted) > 1:
             return replace(
                 plan,
+                group_by=GroupBy.NONE,
                 across_accounts=False,
                 only_account_id=None,
                 only_account_ids=tuple(holding.account_id for holding in wanted),
             )
         return replace(
             plan,
+            group_by=GroupBy.NONE,
             across_accounts=False,
             only_account_id=wanted[0].account_id,
             only_account_ids=(),
@@ -2438,11 +2458,13 @@ _SALARY_ACCOUNT_FOLLOW_UP: Final = re.compile(
 _ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
     r"^(?:ahora\s+)?(?:solo|solamente)\b|\b(?:no|menos|excepto|salvo)\s+"
     r"(?:el|la|los|las|mi|mis)?\s*(?:fondo|hucha|cuenta)\b"
+    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
 )
 _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
     r"^(?:(?:y|ahora)\s+)?(?:solo\s+)?en\s+"
     r"|^(?:ahora\s+)?(?:solo|solamente)\b"
     r"|^perdona\b.{0,35}\b(?:queria|refiero|referia)\b"
+    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
     r"|^volvamos?\s+a\b"
     r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
 )
@@ -2457,7 +2479,9 @@ _SUM_INCOME_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:ingrese|ingresado|cobre|cobrado|recibi|recibido)\b"
 )
 _DIRECTION_ONLY_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:ahora\s+)?solo\s+(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
+    r"^(?:y\s+)?(?:ahora\s+)?(?:no[\s,]+)?"
+    r"(?:(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\s+)?"
+    r"(?:solo\s+)?(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
 )
 _TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
     r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"

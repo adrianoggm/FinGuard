@@ -146,6 +146,7 @@ _ACCOUNT_BREAKDOWN: Final = re.compile(
     r"|\b(?:por|separad[oa]\s+por)\s+cada\s+cuenta\b"
     r"|\bseparad[oa]\s+por\s+cuentas?\b"
     r"|\bsepar\w*\s+por\s+cuentas?\b"
+    r"|\b(?:en|a)\s+(?:que|cual)\s+cuenta\b"
 )
 _COMPARISON_REFERENCE: Final = re.compile(
     r"\bcu[áa]l\s+de\s+(?:las|estas|esas)\s+dos\b.{0,30}"

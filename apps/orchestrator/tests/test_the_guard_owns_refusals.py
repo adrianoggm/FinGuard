@@ -255,13 +255,18 @@ async def test_excluding_a_category_is_never_reversed_into_only_that_category() 
         metric=Metric.PERIOD_AVERAGE,
     )
 
+    planner = GivesUp()
+    ledger = Ledger()
     answer = await asked(
-        "¿Y si no contamos el alquiler?", GivesUp(), Ledger(), Conversation(last_plan=previous)
+        "¿Y si no contamos el alquiler?", planner, ledger, Conversation(last_plan=previous)
     )
 
-    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
-    assert "resultado contrario" in answer.text
-    assert answer.conversation.last_plan == previous
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ()
+    assert ledger.plan.excluded_categories == ("HOUSING_RENT",)
+    assert answer.conversation.last_plan == replace(previous, excluded_categories=("HOUSING_RENT",))
 
 
 async def test_a_natural_category_comparison_asks_for_its_missing_period() -> None:
@@ -778,6 +783,43 @@ async def test_compare_it_with_the_previous_month_reuses_the_whole_query_scope()
     assert answer.conversation.prior_plan is not None
 
 
+async def test_where_payroll_landed_keeps_the_account_question_through_period_clarification() -> (
+    None
+):
+    planner = GivesUp()
+
+    first = await asked(
+        "Sabrias decirme si he cobrado mi nomina en que cuenta?",
+        planner,
+    )
+
+    assert planner.asked == 0
+    assert isinstance(first.conversation.active, FinancialClarification)
+    assert "n\u00f3mina" in first.text
+    assert "cuenta" in first.text
+    draft = first.conversation.active.draft
+    assert draft.categories == ("SALARY",)
+    assert draft.direction is Direction.INCOME
+    assert draft.group_by is GroupBy.ACCOUNT
+
+    ledger = Ledger()
+    second = await asked(
+        "Pues prueba el mes 7 y si no el 8",
+        planner,
+        ledger,
+        first.conversation,
+    )
+
+    assert second.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.date_range is not None
+    assert ledger.plan.date_range.start == date(2026, 7, 1)
+    assert ledger.plan.date_range.end == date(2026, 7, 31)
+    assert ledger.plan.group_by is GroupBy.ACCOUNT
+    assert ledger.plan.categories == ("SALARY",)
+
+
 async def test_a_second_numbered_month_is_only_queried_when_the_first_has_no_payroll() -> None:
     class FallbackLedger(Ledger):
         def __init__(self) -> None:
@@ -1157,6 +1199,30 @@ async def test_principal_and_salary_account_replies_focus_the_previous_query() -
     assert salary_account.outcome == PlanningOutcome.PLANNED.value
 
 
+async def test_a_natural_account_correction_keeps_the_financial_question() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("GROCERIES",),
+        only_account_id=uuid.UUID(int=2),
+    )
+
+    await asked(
+        "No, quer\u00eda decir la cuenta principal",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.only_account_id == ACCOUNT
+    assert ledger.plan.period == previous.period
+    assert ledger.plan.categories == previous.categories
+
+
 async def test_a_complete_account_question_does_not_inherit_an_old_category() -> None:
     class FreshPlanner(GivesUp):
         async def plan(self, *_: object, **kwargs: object) -> PlanningResult:
@@ -1231,6 +1297,54 @@ async def test_a_category_correction_replaces_only_the_category() -> None:
     assert ledger.plan is not None
     assert ledger.plan.period == previous.period
     assert ledger.plan.categories == ("RESTAURANTS",)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "No, me refer\u00eda a supermercados",
+        "Quer\u00eda decir supermercados",
+        "Mejor solo supermercados",
+    ],
+)
+async def test_more_natural_category_corrections_are_deterministic(sentence: str) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("RESTAURANTS",),
+    )
+
+    await asked(sentence, planner, ledger, Conversation(last_plan=previous))
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.period == previous.period
+
+
+async def test_a_natural_direction_correction_keeps_the_rest_of_the_query() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        merchants=("FinGuard",),
+    )
+
+    await asked(
+        "No, quer\u00eda decir solo ingresos",
+        planner,
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.direction is Direction.INCOME
+    assert ledger.plan.period == previous.period
+    assert ledger.plan.merchants == previous.merchants
 
 
 async def test_only_one_of_two_compared_categories_becomes_a_single_filter() -> None:
