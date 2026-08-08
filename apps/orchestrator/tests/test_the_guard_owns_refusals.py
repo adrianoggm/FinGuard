@@ -778,6 +778,43 @@ async def test_compare_it_with_the_previous_month_reuses_the_whole_query_scope()
     assert answer.conversation.prior_plan is not None
 
 
+async def test_where_payroll_landed_keeps_the_account_question_through_period_clarification() -> (
+    None
+):
+    planner = GivesUp()
+
+    first = await asked(
+        "Sabrias decirme si he cobrado mi nomina en que cuenta?",
+        planner,
+    )
+
+    assert planner.asked == 0
+    assert isinstance(first.conversation.active, FinancialClarification)
+    assert "n\u00f3mina" in first.text
+    assert "cuenta" in first.text
+    draft = first.conversation.active.draft
+    assert draft.categories == ("SALARY",)
+    assert draft.direction is Direction.INCOME
+    assert draft.group_by is GroupBy.ACCOUNT
+
+    ledger = Ledger()
+    second = await asked(
+        "Pues prueba el mes 7 y si no el 8",
+        planner,
+        ledger,
+        first.conversation,
+    )
+
+    assert second.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.date_range is not None
+    assert ledger.plan.date_range.start == date(2026, 7, 1)
+    assert ledger.plan.date_range.end == date(2026, 7, 31)
+    assert ledger.plan.group_by is GroupBy.ACCOUNT
+    assert ledger.plan.categories == ("SALARY",)
+
+
 async def test_a_second_numbered_month_is_only_queried_when_the_first_has_no_payroll() -> None:
     class FallbackLedger(Ledger):
         def __init__(self) -> None:

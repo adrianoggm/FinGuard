@@ -605,6 +605,11 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
     if plan.group_by is GroupBy.ACCOUNT and len(answer.groups) == 1:
         account = answer.groups[0]
+        if answer.movement_count == 1:
+            return (
+                f"El movimiento encontrado {window} está en "
+                f"{account.key}: {_figure(account, answer, plan.metric)}."
+            )
         return (
             f"Todos los {answer.movement_count} {noun} encontrados {window} están en "
             f"{account.key}: {_figure(account, answer, plan.metric)}."

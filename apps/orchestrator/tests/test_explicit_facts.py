@@ -299,6 +299,16 @@ def test_the_reported_account_breakdown_is_not_a_category_question() -> None:
     assert facts.group_by is GroupBy.ACCOUNT
 
 
+def test_asking_where_payroll_landed_is_an_account_breakdown() -> None:
+    facts = explicit_facts.read(
+        "Sabrias decirme si he cobrado mi nomina en que cuenta?", today=TODAY
+    )
+
+    assert facts.asks_account_breakdown
+    assert facts.group_by is GroupBy.ACCOUNT
+    assert facts.direction is Direction.INCOME
+
+
 def test_the_direction_is_left_to_the_verifier() -> None:
     """Refusing a spending question planned as ALL is a control with a test of its own. Rewriting
     it here would also be the pipeline quietly repairing a prompt injection instead of reporting

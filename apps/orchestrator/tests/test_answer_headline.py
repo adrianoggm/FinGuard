@@ -265,6 +265,20 @@ def test_a_single_account_breakdown_answers_whether_everything_came_from_it() ->
     assert "están en Cuenta corriente" in said
 
 
+def test_one_movement_in_one_account_is_singular() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=244_287,
+        movement_count=1,
+        groups=(Group("Cuenta corriente", 244_287, 1),),
+    )
+
+    said = answer_writer.write(grouped, plan(group_by=GroupBy.ACCOUNT))
+
+    assert said.startswith("El movimiento encontrado")
+    assert "Todos los 1" not in said
+
+
 def test_the_movements_behind_it_are_still_the_evidence() -> None:
     """Unrelated to the headline, and asserted here so a change to one is not read as licence to
     change the other."""

@@ -842,7 +842,12 @@ class AskFinancialQuestionHandler:
             question = (
                 "¿De qué periodo quieres que compare ambos gastos?"
                 if comparing
-                else "¿De qué periodo quieres que haga el desglose?"
+                else (
+                    "¿De qué periodo quieres que busque la nómina y la cuenta en la que entró?"
+                    if deterministic.group_by is GroupBy.ACCOUNT
+                    and deterministic.categories == ("SALARY",)
+                    else "¿De qué periodo quieres que haga el desglose?"
+                )
             )
             conversation = was.with_active(
                 FinancialClarification(draft=deterministic, awaiting=Slot.WINDOW)
@@ -2047,19 +2052,28 @@ class AskFinancialQuestionHandler:
         The holder's account directory is fetched only for an explicit custom-name form. Fixed
         kinds retain the existing summary path, while widening needs no list at all.
         """
-        if plan.group_by is GroupBy.ACCOUNT:
+        excluded = frozenset(account_words.excluded_in(query.sentence))
+        named = tuple(
+            kind for kind in account_words.named_in(query.sentence) if kind not in excluded
+        )
+        if "SALARY" in plan.categories and "cuenta" not in spanish.folded(query.sentence):
+            # "Mi nómina" names the income category. The same noun is also a legacy alias for a
+            # CURRENT account, but applying that alias here silently hides payroll paid elsewhere.
+            # "Cuenta nómina" and "cuenta principal" remain explicit account selections.
+            named = tuple(kind for kind in named if kind != "CURRENT")
+        explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
+        asks_account_breakdown = explicit_facts.read(
+            query.sentence, today=query.today
+        ).asks_account_breakdown
+        if plan.group_by is GroupBy.ACCOUNT and (
+            asks_account_breakdown or (not named and not excluded and not explicit_custom)
+        ):
             return replace(
                 plan,
                 across_accounts=True,
                 only_account_id=None,
                 only_account_ids=(),
             )
-
-        excluded = frozenset(account_words.excluded_in(query.sentence))
-        named = tuple(
-            kind for kind in account_words.named_in(query.sentence) if kind not in excluded
-        )
-        explicit_custom = account_words.explicitly_names_a_custom_account(query.sentence)
         if not named and not excluded and not explicit_custom:
             if plan.only_account_id is not None or plan.only_account_ids:
                 return plan
@@ -2079,6 +2093,7 @@ class AskFinancialQuestionHandler:
             if len(wanted_custom) == 1:
                 return replace(
                     plan,
+                    group_by=GroupBy.NONE,
                     across_accounts=False,
                     only_account_id=wanted_custom[0].account_id,
                     only_account_ids=(),
@@ -2087,6 +2102,7 @@ class AskFinancialQuestionHandler:
             if wanted_custom:
                 return replace(
                     plan,
+                    group_by=GroupBy.NONE,
                     across_accounts=False,
                     only_account_id=None,
                     only_account_ids=tuple(holding.account_id for holding in wanted_custom),
@@ -2121,12 +2137,14 @@ class AskFinancialQuestionHandler:
         if len(wanted) > 1:
             return replace(
                 plan,
+                group_by=GroupBy.NONE,
                 across_accounts=False,
                 only_account_id=None,
                 only_account_ids=tuple(holding.account_id for holding in wanted),
             )
         return replace(
             plan,
+            group_by=GroupBy.NONE,
             across_accounts=False,
             only_account_id=wanted[0].account_id,
             only_account_ids=(),
