@@ -68,8 +68,9 @@ nobody asked, which is worse than a question.
 
 "awaiting" matters as much as the question. The reply is often two words — "de este", "el \
 pasado" — and it can only be read against the field it answers.
-UNSUPPORTED — the query cannot be expressed at all. There is no comparison between two \
-periods and no forecast: only what already happened. Averages are supported.
+UNSUPPORTED — the query cannot be expressed at all. Comparisons between two complete calendar \
+weeks, months or years are handled before this planner; two arbitrary partial ranges are not. \
+There is no forecast: only what already happened. Averages are supported.
 AVERAGE is the mean amount per matching movement. PERIOD_AVERAGE is the mean spend per \
 calendar period and must use groupBy DAY, WEEK or MONTH for its divisor.
 

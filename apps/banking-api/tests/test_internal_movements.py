@@ -103,6 +103,22 @@ async def test_asking_about_them_on_purpose_is_a_real_question(
     assert await spent(connection, current, include_internal=True) == 25_000
 
 
+async def test_internal_only_excludes_real_spending_and_keeps_one_outgoing_leg(
+    connection: asyncpg.Connection,
+) -> None:
+    current, _ = await a_current_and_a_piggy_bank(connection)
+
+    assert (
+        await spent(
+            connection,
+            current,
+            include_internal=True,
+            internal_only=True,
+        )
+        == 20_000
+    )
+
+
 async def test_the_balance_still_counts_it(connection: asyncpg.Connection) -> None:
     """Not an inconsistency: the money really did leave the current account. What changes is the
     question "how much did I spend", not the arithmetic of what is in the account."""
@@ -128,6 +144,22 @@ def test_the_exclusion_is_in_the_sql_and_not_in_a_caller() -> None:
 
     assert "NOT t.is_internal" in excluded.sql
     assert "is_internal" not in included.sql
+
+
+def test_internal_only_compiles_as_a_positive_filter() -> None:
+    compiled = compile_aggregate(
+        plan(uuid.uuid4(), include_internal=True, internal_only=True), "Europe/Madrid"
+    )
+
+    assert "t.is_internal" in compiled.sql
+    assert "NOT t.is_internal" not in compiled.sql
+
+
+def test_internal_only_cannot_be_constructed_as_a_hidden_widening() -> None:
+    from finguard_banking.domain.errors import InvalidValueError
+
+    with pytest.raises(InvalidValueError, match="includeInternal"):
+        plan(uuid.uuid4(), internal_only=True)
 
 
 def test_the_dataset_has_a_holder_with_more_than_one_account() -> None:

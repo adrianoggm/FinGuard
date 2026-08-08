@@ -103,6 +103,8 @@ class FinancialQueryRequest(_Body):
     # Money the holder moved between their own accounts. Absent means excluded, which is what
     # makes "¿cuánto gasté?" mean money that left rather than money that moved.
     include_internal: bool = False
+    # Narrow to internal movements rather than merely adding them to ordinary movements.
+    internal_only: bool = False
     # Every account this session can see rather than the one in `accountId`. It cannot widen past
     # the holder: it drops the compiler's filter and leaves the view's, which is the scope rule.
     across_accounts: bool = False
@@ -123,6 +125,8 @@ class FinancialQueryRequest(_Body):
             raise ValueError("provide exactly one of dateRange or period")
         if self.only_account_id is not None and self.only_account_ids:
             raise ValueError("use onlyAccountId or onlyAccountIds, not both")
+        if self.internal_only and not self.include_internal:
+            raise ValueError("internalOnly requires includeInternal")
         return self
 
 

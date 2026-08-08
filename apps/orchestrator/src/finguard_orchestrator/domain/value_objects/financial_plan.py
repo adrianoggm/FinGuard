@@ -95,6 +95,9 @@ class FinancialPlan:
     # explicitly by a list, where hiding a 200 € transfer means the movements do not reconcile with
     # the balance and the person looking for it cannot find it.
     include_internal: bool = False
+    # Narrow to transfers between the holder's own accounts. `include_internal` alone only widens
+    # an ordinary query and therefore cannot safely answer "only my transfers".
+    internal_only: bool = False
     # Every account the holder has rather than the one the credential names. It cannot widen past
     # them: banking drops its own account filter and leaves the view's, which is the scope rule.
     across_accounts: bool = False
@@ -114,6 +117,8 @@ class FinancialPlan:
     def __post_init__(self) -> None:
         if (self.period is None) == (self.date_range is None):
             raise InvalidValueError("a plan needs exactly one of period and dateRange")
+        if self.internal_only and not self.include_internal:
+            raise InvalidValueError("internalOnly requires includeInternal")
         if self.only_account_id is not None and self.only_account_ids:
             raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
         if len(set(self.only_account_ids)) != len(self.only_account_ids):
