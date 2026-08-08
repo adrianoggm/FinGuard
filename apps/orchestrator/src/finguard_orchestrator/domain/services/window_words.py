@@ -296,6 +296,13 @@ def window_in(
         said = month.group("relative")
         return whole_month(today.year if said.startswith("este") else today.year - 1, number)
 
+    numbered_month = _A_NUMBERED_MONTH.search(folded)
+    if numbered_month is not None:
+        if today is None:
+            return None
+        number = int(numbered_month.group("month"))
+        return whole_month(_year_of(number, today), number)
+
     named_year = _A_NAMED_YEAR.search(folded)
     if named_year:
         # "En 2025" is the least ambiguous thing anybody can say about a window, so a sentence
