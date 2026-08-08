@@ -347,6 +347,18 @@ def test_a_monthly_breakdown_of_average_movements_keeps_the_movement_divisor() -
 
 
 @pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿En qué mes hice más compras, julio o junio?",
+        "¿Tuve más movimientos en julio o junio?",
+        "Compara el número de operaciones de julio y junio",
+    ],
+)
+def test_an_explicit_movement_quantity_is_a_count(sentence: str) -> None:
+    assert explicit_facts.read(sentence).metric is Metric.COUNT
+
+
+@pytest.mark.parametrize(
     ("sentence", "group_by"),
     [
         ("¿Cuánto suelo gastar al mes en supermercados?", GroupBy.MONTH),

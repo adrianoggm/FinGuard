@@ -60,7 +60,8 @@ episodes:
       - say: ¿y el segundo?
         route: QUERY
       - say: ¿gasté más este mes que el pasado?
-        route: REFUSED
+        route: QUERY
+        no_model: true
       - say: ¿cuánto gasté este mes?
         route: QUERY
       - say: ¿y el mes pasado?

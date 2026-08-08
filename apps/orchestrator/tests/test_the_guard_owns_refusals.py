@@ -678,7 +678,9 @@ async def test_an_elliptical_two_month_comparison_reuses_the_validated_query_sco
     assert all(plan.categories == ("GROCERIES",) for plan in ledger.plans)
     assert all(plan.excluded_merchants == ("mercadona",) for plan in ledger.plans)
     assert all(plan.only_account_id == ACCOUNT for plan in ledger.plans)
-    assert all(plan.group_by is GroupBy.NONE and plan.metric is Metric.SUM for plan in ledger.plans)
+    assert all(
+        plan.group_by is GroupBy.NONE and plan.metric is Metric.AVERAGE for plan in ledger.plans
+    )
 
 
 async def test_an_explicit_salary_comparison_does_not_inherit_an_old_expense_filter() -> None:
@@ -779,8 +781,107 @@ async def test_compare_it_with_the_previous_month_reuses_the_whole_query_scope()
     assert earlier.categories == latest.categories == ("GROCERIES",)
     assert earlier.excluded_merchants == latest.excluded_merchants == ("mercadona",)
     assert earlier.only_account_id == latest.only_account_id == ACCOUNT
-    assert all(plan.metric is Metric.SUM and plan.group_by is GroupBy.NONE for plan in ledger.plans)
+    assert all(
+        plan.metric is Metric.AVERAGE and plan.group_by is GroupBy.NONE for plan in ledger.plans
+    )
     assert answer.conversation.prior_plan is not None
+
+
+async def test_a_direct_period_comparison_counts_movements_instead_of_money() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.date_range is not None
+            if plan.date_range.start.month == 6:
+                return QueryAnswer(currency="EUR", total_minor=90_000, movement_count=9)
+            return QueryAnswer(currency="EUR", total_minor=10_000, movement_count=12)
+
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "¿En qué mes hice más compras, julio o junio?",
+        planner,
+        ledger,
+    )
+
+    assert planner.asked == 0
+    assert len(ledger.plans) == 2
+    assert all(plan.metric is Metric.COUNT for plan in ledger.plans)
+    assert "En julio de 2026: 12 movimientos" in answer.text
+    assert "junio de 2026: 9 movimientos" in answer.text
+    assert "3 movimientos más en julio de 2026" in answer.text
+    assert answer.total_minor is None
+    assert isinstance(answer.conversation.last_plan, FinancialPlan)
+    assert answer.conversation.last_plan.metric is Metric.COUNT
+
+
+async def test_a_direct_period_comparison_uses_the_mean_not_the_total() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.date_range is not None
+            if plan.date_range.start.month == 6:
+                return QueryAnswer(currency="EUR", total_minor=12_000, movement_count=6)
+            return QueryAnswer(currency="EUR", total_minor=9_000, movement_count=3)
+
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "¿En qué mes fue mayor mi gasto medio por movimiento, julio o junio?",
+        planner,
+        ledger,
+    )
+
+    assert planner.asked == 0
+    assert all(plan.metric is Metric.AVERAGE for plan in ledger.plans)
+    assert "En julio de 2026: 30,00 €" in answer.text
+    assert "junio de 2026: 20,00 €" in answer.text
+    assert "importe medio por movimiento fue 10,00 € mayor" in answer.text
+
+
+async def test_a_direct_period_comparison_preserves_the_calendar_average() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.date_range is not None
+            total = 1_200_000 if plan.date_range.start.year == 2025 else 600_000
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=total,
+                movement_count=24,
+                period_start=plan.date_range.start,
+                period_end=plan.date_range.end,
+            )
+
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "Compara mi gasto medio mensual de 2025 con 2026",
+        planner,
+        ledger,
+    )
+
+    assert planner.asked == 0
+    assert all(plan.metric is Metric.PERIOD_AVERAGE for plan in ledger.plans)
+    assert all(plan.group_by is GroupBy.MONTH for plan in ledger.plans)
+    assert "En 2025: 1.000,00 €" in answer.text
+    assert "en 2026: 500,00 €" in answer.text
+    assert "gasto medio mensual fue 500,00 € mayor en 2025" in answer.text
 
 
 async def test_where_payroll_landed_keeps_the_account_question_through_period_clarification() -> (

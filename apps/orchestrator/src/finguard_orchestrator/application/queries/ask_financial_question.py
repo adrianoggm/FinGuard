@@ -143,7 +143,7 @@ _COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
 )
 _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs"
-    r"|mas\b.{0,35}\bque|menos\b.{0,35}\bque"
+    r"|mas\b.{0,55}\b(?:que|o)|menos\b.{0,55}\b(?:que|o)"
     r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
     r"|mayor|menor)\b"
 )
@@ -1738,7 +1738,7 @@ class AskFinancialQuestionHandler:
                 conversation=query.conversation,
             )
 
-        if earlier_answer.currency != latest_answer.currency:
+        if latest.metric is not Metric.COUNT and earlier_answer.currency != latest_answer.currency:
             return AskFinancialQuestionResult(
                 outcome=PlanningOutcome.INVALID_DOMAIN.value,
                 text="No puedo comparar importes expresados en monedas distintas.",
@@ -1747,24 +1747,34 @@ class AskFinancialQuestionHandler:
 
         earlier_window = _comparison_window_label(earlier)
         latest_window = _comparison_window_label(latest)
-        earlier_money = answer_writer.money(earlier_answer.total_minor, earlier_answer.currency)
-        latest_money = answer_writer.money(latest_answer.total_minor, latest_answer.currency)
-        difference = abs(latest_answer.total_minor - earlier_answer.total_minor)
-        difference_money = answer_writer.money(difference, latest_answer.currency)
-        noun = {
-            Direction.EXPENSE: "gasto",
-            Direction.INCOME: "ingreso",
-            Direction.ALL: "importe",
-        }[latest.direction]
-        if latest_answer.total_minor == earlier_answer.total_minor:
-            conclusion = f"El {noun} fue el mismo en ambos periodos."
-        else:
-            higher_window = (
-                latest_window
-                if latest_answer.total_minor > earlier_answer.total_minor
-                else earlier_window
+        earlier_value = answer_writer.comparison_value(earlier_answer, earlier)
+        latest_value = answer_writer.comparison_value(latest_answer, latest)
+        earlier_figure = answer_writer.comparison_figure(earlier_answer, earlier)
+        latest_figure = answer_writer.comparison_figure(latest_answer, latest)
+        difference = abs(latest_value - earlier_value)
+        difference_figure = answer_writer.comparison_difference(
+            difference, latest_answer.currency, latest.metric
+        )
+        concept = answer_writer.comparison_concept(latest)
+        if latest.metric is Metric.AVERAGE and (earlier_answer.is_empty or latest_answer.is_empty):
+            empty_window = earlier_window if earlier_answer.is_empty else latest_window
+            conclusion = (
+                f"No hubo movimientos {empty_window}, así que la media de ese periodo "
+                "no está definida."
             )
-            conclusion = f"El {noun} fue {difference_money} mayor {higher_window}."
+        elif latest_value == earlier_value:
+            conclusion = (
+                "Hubo el mismo número de movimientos en ambos periodos."
+                if latest.metric is Metric.COUNT
+                else f"El {concept} fue el mismo en ambos periodos."
+            )
+        else:
+            higher_window = latest_window if latest_value > earlier_value else earlier_window
+            conclusion = (
+                f"Hubo {difference_figure} más {higher_window}."
+                if latest.metric is Metric.COUNT
+                else f"El {concept} fue {difference_figure} mayor {higher_window}."
+            )
 
         movements = (*latest_answer.movements, *earlier_answer.movements)
         remembered_earlier = scoped_earlier
@@ -1793,8 +1803,8 @@ class AskFinancialQuestionHandler:
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=(
-                f"{latest_window.capitalize()}: {latest_money}; "
-                f"{earlier_window}: {earlier_money}. {conclusion}"
+                f"{latest_window.capitalize()}: {latest_figure}; "
+                f"{earlier_window}: {earlier_figure}. {conclusion}"
             ),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
             # Keep the compared pair as validated query memory. This makes a direct comparison
@@ -1804,12 +1814,26 @@ class AskFinancialQuestionHandler:
                 remembered_latest, referenced_category=referenced_category
             ),
             currency=latest_answer.currency,
-            total_minor=latest_answer.total_minor - earlier_answer.total_minor,
+            total_minor=(None if latest.metric is Metric.COUNT else latest_value - earlier_value),
             movement_count=latest_answer.movement_count + earlier_answer.movement_count,
             groups=[
-                SpokenGroup(latest_window, latest_answer.total_minor, latest_answer.movement_count),
                 SpokenGroup(
-                    earlier_window, earlier_answer.total_minor, earlier_answer.movement_count
+                    latest_window,
+                    (
+                        latest_value
+                        if latest.metric is Metric.PERIOD_AVERAGE
+                        else latest_answer.total_minor
+                    ),
+                    latest_answer.movement_count,
+                ),
+                SpokenGroup(
+                    earlier_window,
+                    (
+                        earlier_value
+                        if earlier.metric is Metric.PERIOD_AVERAGE
+                        else earlier_answer.total_minor
+                    ),
+                    earlier_answer.movement_count,
                 ),
             ],
             movements=[_spoken_movement(movement) for movement in movements],
@@ -2591,12 +2615,19 @@ def _period_comparison_plans(
     if latest.transaction_ids:
         return None
 
-    # A previous answer may have been grouped or averaged. The comparison asks which period had
-    # more money, so both sides become total queries without changing their filters or windows.
-    return (
-        replace(earlier, group_by=GroupBy.NONE, metric=Metric.SUM),
-        replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM),
-    )
+    # A metric is part of the question, not presentation. Turning both sides into SUM made
+    # "¿en cuál hice más compras?" compare euros and made "¿qué ticket medio fue mayor?" compare
+    # totals. Different metrics are two incompatible questions, so they stay on the ordinary
+    # interpretation path rather than undergoing a conversion nobody requested.
+    if latest.metric is not earlier.metric:
+        return None
+    if latest.metric is Metric.PERIOD_AVERAGE and latest.group_by is not earlier.group_by:
+        return None
+    normalised_earlier = _comparison_plan(earlier)
+    normalised_latest = _comparison_plan(latest)
+    if normalised_earlier is None or normalised_latest is None:
+        return None
+    return normalised_earlier, normalised_latest
 
 
 def _salary_history_plans(
@@ -2681,10 +2712,12 @@ def _comparison_with_previous_period(
         latest,
         period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
         date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
-        group_by=GroupBy.NONE,
-        metric=Metric.SUM,
     )
-    return earlier, replace(latest, group_by=GroupBy.NONE, metric=Metric.SUM)
+    normalised_earlier = _comparison_plan(earlier)
+    normalised_latest = _comparison_plan(latest)
+    if normalised_earlier is None or normalised_latest is None:
+        return None
+    return normalised_earlier, normalised_latest
 
 
 def _direct_period_comparison(
@@ -2708,7 +2741,8 @@ def _direct_period_comparison(
     elif named_years is not None:
         windows = (named_years[1], named_years[0])
     elif re.search(r"\beste\s+mes\b", folded) and re.search(
-        r"\b(?:el\s+)?mes\s+(?:pasado|anterior)\b", folded
+        r"\b(?:(?:el\s+)?mes\s+(?:pasado|anterior)|el\s+(?:pasado|anterior))\b",
+        folded,
     ):
         windows = (
             RelativePeriod(Period.LAST_MONTH),
@@ -2738,7 +2772,8 @@ def _direct_period_comparison(
         return None
     states_subject = re.search(
         r"\bgast|\bingres|\bcobr|\brecib|\bcompr|\bpagu|\bcargo"
-        r"|\bnomina|\bsueldo|\bsalario|\bmovimientos?|\boperaciones?",
+        r"|\bnomina|\bsueldo|\bsalario|\bmovimientos?|\boperaciones?"
+        r"|\bmedia|\bmedio|\bpromedio|\bticket",
         folded,
     )
     previous = (
@@ -2747,6 +2782,22 @@ def _direct_period_comparison(
         else None
     )
     categories = named_categories or (previous.categories if previous is not None else ())
+    metric = facts.metric or (previous.metric if previous is not None else Metric.SUM)
+    group_by = (
+        facts.group_by
+        if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
+        else (
+            previous.group_by
+            if metric is Metric.PERIOD_AVERAGE and previous is not None
+            else GroupBy.NONE
+        )
+    )
+    if metric is Metric.PERIOD_AVERAGE and group_by not in {
+        GroupBy.DAY,
+        GroupBy.WEEK,
+        GroupBy.MONTH,
+    }:
+        return None
     direction = facts.direction
     if direction is None:
         if re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
@@ -2780,8 +2831,8 @@ def _direct_period_comparison(
                 if named_categories
                 else (previous.excluded_merchants if previous is not None else ())
             ),
-            group_by=GroupBy.NONE,
-            metric=Metric.SUM,
+            group_by=group_by,
+            metric=metric,
             include_internal=previous.include_internal if previous is not None else False,
             across_accounts=previous.across_accounts if previous is not None else False,
             only_account_id=previous.only_account_id if previous is not None else None,
@@ -2795,6 +2846,15 @@ def _direct_period_comparison(
         date_range=windows[0] if isinstance(windows[0], AbsoluteRange) else None,
     )
     return earlier, base
+
+
+def _comparison_plan(plan: FinancialPlan) -> FinancialPlan | None:
+    """Remove presentation groupings while preserving the scalar the user asked to compare."""
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        if plan.group_by not in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
+            return None
+        return plan
+    return replace(plan, group_by=GroupBy.NONE)
 
 
 def _previous_calendar_window(
