@@ -275,7 +275,6 @@ def test_a_month_of_the_year_before_is_that_month_and_not_the_whole_year() -> No
         "¿cuánto gasté el 15 de junio?",
         # Two months is a range, and answering with either is a fraction of what was asked.
         "¿cuánto gasté de junio a septiembre?",
-        "¿cuánto gasté del 1 de junio al 15 de julio?",
     ],
 )
 def test_a_sentence_this_is_not_sure_about_goes_to_the_model(sentence: str) -> None:
@@ -288,6 +287,61 @@ def test_a_month_with_no_year_needs_to_know_what_year_it_is() -> None:
     """No clock is read here. Without `today` the phrase is unresolvable rather than resolved
     against a date this service invented — the rule that lets the evaluation replay a turn."""
     assert window_words.window_in("¿cuánto gasté en junio?") is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        (
+            "¿Cuánto gasté del 1 de junio al 15 de julio?",
+            AbsoluteRange(date(2026, 6, 1), date(2026, 7, 15)),
+        ),
+        (
+            "desde el 15 de diciembre hasta el 15 de enero",
+            AbsoluteRange(date(2025, 12, 15), date(2026, 1, 15)),
+        ),
+        (
+            "del 1 de marzo al 15 de abril de 2025",
+            AbsoluteRange(date(2025, 3, 1), date(2025, 4, 15)),
+        ),
+    ],
+)
+def test_an_explicit_range_is_resolved_without_a_model(
+    sentence: str, expected: AbsoluteRange
+) -> None:
+    assert window_words.date_range_in(sentence, today=TODAY) == expected
+    assert window_words.window_in(sentence, today=TODAY) == expected
+
+
+def test_a_future_or_impossible_explicit_range_is_not_executed() -> None:
+    assert (
+        window_words.date_range_in("del 1 de septiembre al 15 de octubre de 2026", today=TODAY)
+        is None
+    )
+    assert (
+        window_words.date_range_in("del 31 de febrero al 15 de marzo de 2026", today=TODAY) is None
+    )
+
+
+def test_two_arbitrary_ranges_are_read_in_mention_order() -> None:
+    sentence = (
+        "compara del 1 de marzo al 15 de abril de 2026 "
+        "con el periodo del 1 de mayo al 15 de junio de 2026"
+    )
+
+    assert window_words.compared_date_ranges(sentence, today=TODAY) == (
+        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
+        AbsoluteRange(date(2026, 5, 1), date(2026, 6, 15)),
+    )
+
+
+def test_the_same_explicit_period_last_year_is_derived_exactly() -> None:
+    sentence = "compara del 1 de marzo al 15 de abril de 2026 con el mismo periodo del año pasado"
+
+    assert window_words.compared_date_ranges(sentence, today=TODAY) == (
+        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
+        AbsoluteRange(date(2025, 3, 1), date(2025, 4, 15)),
+    )
 
 
 @pytest.mark.parametrize("name", list(range(1, 13)))

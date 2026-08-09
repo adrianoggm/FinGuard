@@ -37,7 +37,11 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import window_words
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
@@ -326,6 +330,7 @@ async def test_a_breakdown_by_account_keeps_exactly_the_five_rows_just_shown() -
     assert isinstance(listed.conversation.last_plan, FinancialPlan)
     selected = listed.conversation.last_plan.transaction_ids
     assert selected == tuple(uuid.UUID(int=day) for day in range(5, 0, -1))
+    assert listed.conversation.referenced_transaction_ids == selected
 
     broken_down = await asked("Sepáralos por cuenta", planner, ledger, listed.conversation)
 
@@ -334,6 +339,68 @@ async def test_a_breakdown_by_account_keeps_exactly_the_five_rows_just_shown() -
     assert ledger.plan is not None
     assert ledger.plan.group_by is GroupBy.ACCOUNT
     assert ledger.plan.transaction_ids == selected
+
+
+async def test_those_movements_select_the_exact_rows_that_were_shown() -> None:
+    planner = GivesUp()
+    ledger = ListingLedger()
+    listed = await asked("Muéstrame los cinco últimos movimientos", planner, ledger)
+    selected = listed.conversation.referenced_transaction_ids
+
+    answer = await asked("¿Cuánto suman esos movimientos?", planner, ledger, listed.conversation)
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.transaction_ids == selected
+    assert ledger.plan.group_by is GroupBy.NONE
+
+
+async def test_that_merchant_reuses_the_highlighted_breakdown_row() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+    )
+    conversation = Conversation(
+        last_plan=previous,
+        referenced_group_by=GroupBy.MERCHANT,
+        referenced_group_key="Mercadona",
+    )
+
+    await asked("¿Cuánto gasté en ese comercio?", planner, ledger, conversation)
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.merchants == ("Mercadona",)
+    assert ledger.plan.group_by is GroupBy.NONE
+
+
+async def test_that_account_reuses_the_highlighted_breakdown_row() -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.ACCOUNT,
+        across_accounts=True,
+    )
+    conversation = Conversation(
+        last_plan=previous,
+        referenced_group_by=GroupBy.ACCOUNT,
+        referenced_group_key="Hucha",
+    )
+
+    await asked("¿Cuántos ingresos tuvo esa cuenta?", planner, ledger, conversation)
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.only_account_id == uuid.UUID(int=2)
+    assert ledger.plan.across_accounts is False
+    assert ledger.plan.group_by is GroupBy.NONE
+    assert ledger.plan.metric is Metric.COUNT
 
 
 @pytest.mark.parametrize(
@@ -505,6 +572,8 @@ async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> 
     )
 
     assert answer.text.startswith("El siguiente es restaurantes: 10,00 €")
+    assert answer.conversation.referenced_group_by is GroupBy.CATEGORY
+    assert answer.conversation.referenced_group_key == "RESTAURANTS"
 
 
 async def test_a_pronoun_can_ask_for_the_ranked_movements_date() -> None:
@@ -520,6 +589,23 @@ async def test_a_pronoun_can_ask_for_the_ranked_movements_date() -> None:
     )
 
     assert answer.text == "Fue el 2 de julio."
+
+
+async def test_a_ranked_movement_can_be_reused_as_an_exact_ledger_row() -> None:
+    class IdentifiedRankingLedger(Ledger):
+        async def ranked(self, ranking: TopMovements, **kwargs: object) -> Movement:
+            found = await super().ranked(ranking, **kwargs)
+            return replace(found, transaction_id=str(uuid.UUID(int=81)))
+
+    planner = GivesUp()
+    ledger = IdentifiedRankingLedger()
+    ranked = await asked("¿Cuál fue mi gasto más alto este año?", planner, ledger)
+
+    await asked("¿Cuánto fue ese movimiento?", planner, ledger, ranked.conversation)
+
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.transaction_ids == (uuid.UUID(int=81),)
 
 
 @pytest.mark.parametrize("sentence", ["Compáralos", "¿En cuál gasté más?"])
@@ -681,6 +767,81 @@ async def test_an_elliptical_two_month_comparison_reuses_the_validated_query_sco
     assert all(
         plan.group_by is GroupBy.NONE and plan.metric is Metric.AVERAGE for plan in ledger.plans
     )
+
+
+async def test_an_arbitrary_range_can_be_compared_with_the_same_period_last_year() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            assert plan.date_range is not None
+            total = 15_000 if plan.date_range.start.year == 2026 else 12_000
+            return QueryAnswer(currency="EUR", total_minor=total, movement_count=4)
+
+    planner = GivesUp("COMPARISON")
+    ledger = PeriodLedger()
+
+    answer = await asked(
+        "Compara mis gastos del 1 de marzo al 15 de abril de 2026 "
+        "con el mismo periodo del año pasado",
+        planner,
+        ledger,
+    )
+
+    assert planner.asked == 0
+    assert [plan.date_range for plan in ledger.plans] == [
+        AbsoluteRange(date(2025, 3, 1), date(2025, 4, 15)),
+        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
+    ]
+    assert "30,00 € mayor" in answer.text
+    assert answer.conversation.last_comparison is not None
+
+
+async def test_changing_amount_to_count_only_changes_the_range_comparison_metric() -> None:
+    class PeriodLedger(Ledger):
+        def __init__(self) -> None:
+            super().__init__()
+            self.plans: list[FinancialPlan] = []
+
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plans.append(plan)
+            return QueryAnswer(currency="EUR", total_minor=10_000, movement_count=3)
+
+    ranges = (
+        "del 1 de marzo al 15 de abril de 2026 con el periodo del 1 de mayo al 15 de junio de 2026"
+    )
+    amount_ledger = PeriodLedger()
+    count_ledger = PeriodLedger()
+
+    await asked(f"Compara mis gastos {ranges}", GivesUp("COMPARISON"), amount_ledger)
+    count_answer = await asked(
+        f"Compara cuántos movimientos de gasto tuve {ranges}",
+        GivesUp("COMPARISON"),
+        count_ledger,
+    )
+
+    assert [plan.date_range for plan in amount_ledger.plans] == [
+        plan.date_range for plan in count_ledger.plans
+    ]
+    assert all(plan.metric is Metric.SUM for plan in amount_ledger.plans)
+    assert all(plan.metric is Metric.COUNT for plan in count_ledger.plans)
+    assert all(
+        replace(plan, metric=Metric.SUM) == amount
+        for plan, amount in zip(count_ledger.plans, amount_ledger.plans, strict=True)
+    )
+
+    repeated = PeriodLedger()
+    await asked(
+        "Compáralos otra vez",
+        GivesUp("COMPARISON"),
+        repeated,
+        count_answer.conversation,
+    )
+
+    assert all(plan.metric is Metric.COUNT for plan in repeated.plans)
 
 
 async def test_an_explicit_salary_comparison_does_not_inherit_an_old_expense_filter() -> None:
@@ -1182,7 +1343,7 @@ async def test_weekly_income_average_keeps_its_account_scope_and_valid_grouping(
 
 async def test_the_reported_highest_category_is_planned_without_the_model() -> None:
     planner = GivesUp()
-    ledger = Ledger()
+    ledger = ComparisonLedger()
 
     result = await asked(
         "Vale en que categoria es la que he gastado mas a lo largo de este año?",
@@ -1196,6 +1357,8 @@ async def test_the_reported_highest_category_is_planned_without_the_model() -> N
     assert ledger.plan.group_by is GroupBy.CATEGORY
     assert ledger.plan.metric is Metric.SUM
     assert "categoría" in result.text.lower()
+    assert result.conversation.referenced_group_by is GroupBy.CATEGORY
+    assert result.conversation.referenced_group_key == "GROCERIES"
 
 
 async def test_the_highlighted_category_can_be_reused_by_pronoun() -> None:

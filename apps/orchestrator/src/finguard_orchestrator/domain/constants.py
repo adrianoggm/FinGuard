@@ -69,6 +69,16 @@ MAX_SELECTED_ACCOUNTS = 20
 # the largest conversational list the assistant will remember.
 MAX_SELECTED_TRANSACTIONS = 50
 
+# Complete bounded evidence for temporal-frequency calculations. When a window contains more rows
+# the answer reports incomplete evidence rather than extrapolating from the first page.
+MAX_SUPPORTING_MOVEMENTS = 100
+
+# The conservative catalogue used when somebody asks for recurring expenses without naming a
+# category. These categories are periodic commitments by meaning. Narrowing the evidence also
+# keeps it complete under banking's bounded movement page and avoids calling ordinary repeat
+# shopping a subscription.
+RECURRING_EXPENSE_CATEGORIES = ("SUBSCRIPTIONS", "HOUSING_RENT")
+
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
 

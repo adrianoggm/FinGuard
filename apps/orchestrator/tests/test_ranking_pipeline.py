@@ -153,6 +153,59 @@ async def test_the_largest_expense_is_answered_with_the_movement() -> None:
     assert [r.rank for r in ledger.rankings] == [1]
 
 
+async def test_three_largest_expenses_are_read_as_concrete_ranked_movements() -> None:
+    planner = FakePlanner()
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    result = await ask("Muéstrame mis tres mayores gastos de este año", planner, ledger)
+
+    assert planner.asked is None
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3]
+    assert result.movement_count == 3
+    assert [movement.merchant_name for movement in result.movements] == [
+        "Cepsa",
+        "Repsol",
+        "Broadway",
+    ]
+    assert "Tus 3 mayores gastos" in result.text
+    assert "1. Cepsa" in result.text
+    assert "3. Broadway" in result.text
+    assert result.currency is None
+    assert result.total_minor is None, "amounts in EUR and USD cannot be added"
+    remembered = result.conversation.last_plan
+    assert isinstance(remembered, TopMovements)
+    assert remembered.rank == 3
+    assert remembered.categories == ()
+    assert remembered.period == THIS_YEAR
+
+
+async def test_an_incomplete_top_list_remembers_the_last_real_position() -> None:
+    planner = FakePlanner()
+    ledger = FakeLedger(CEPSA, REPSOL)
+
+    first = await ask("Dime mis tres mayores gastos de este año", planner, ledger)
+    second = await ask(
+        "¿Y el siguiente?",
+        planner,
+        ledger,
+        conversation=first.conversation,
+    )
+
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3, 3]
+    assert "He encontrado 2 gastos" in first.text
+    assert "no hay 3" in first.text
+    assert "no hay" in second.text.lower()
+
+
+async def test_top_three_expenses_is_an_equivalent_natural_form() -> None:
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    result = await ask("Top 3 gastos de este año", FakePlanner(), ledger)
+
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3]
+    assert result.movement_count == 3
+
+
 async def test_the_ranking_becomes_the_memory_of_the_conversation() -> None:
     """Which is what makes the follow-up possible at all: the next turn inherits the ranking rather
     than a refusal or a plan."""

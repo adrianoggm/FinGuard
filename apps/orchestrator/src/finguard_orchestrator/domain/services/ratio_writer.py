@@ -1,4 +1,4 @@
-"""Exact percentage arithmetic and its Spanish presentation."""
+"""Exact arithmetic for relationships between two ledger reads, presented in Spanish."""
 
 from finguard_orchestrator.domain.enums import Direction
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
@@ -13,6 +13,8 @@ def write(part: QueryAnswer, whole: QueryAnswer, plan: RatioPlan) -> str:
         return _share(part, whole, plan)
     if plan.kind is RatioKind.SAVINGS_RATE:
         return _savings_rate(part, whole, plan)
+    if plan.kind is RatioKind.NET_CASH_FLOW:
+        return _net_cash_flow(part, whole, plan)
     return _percent_change(part, whole, plan)
 
 
@@ -59,6 +61,23 @@ def _savings_rate(expenses: QueryAnswer, income: QueryAnswer, plan: RatioPlan) -
         f"Tu tasa de ahorro {window} fue de {percentage(ratio)}: ingresaste "
         f"{answer_writer.money(income.total_minor, income.currency)} y gastaste "
         f"{answer_writer.money(expenses.total_minor, expenses.currency)}."
+    )
+
+
+def _net_cash_flow(expenses: QueryAnswer, income: QueryAnswer, plan: RatioPlan) -> str:
+    net = income.total_minor - expenses.total_minor
+    window = answer_writer.window_of(plan.part)
+    figure = answer_writer.money(abs(net), income.currency)
+    if net > 0:
+        conclusion = f"te quedaron {figure} más de lo que gastaste"
+    elif net < 0:
+        conclusion = f"gastaste {figure} más de lo que ingresaste"
+    else:
+        conclusion = "ingresaste exactamente lo mismo que gastaste"
+    return (
+        f"Tu flujo neto {window} fue de {answer_writer.money(net, income.currency)}: "
+        f"ingresaste {answer_writer.money(income.total_minor, income.currency)} y gastaste "
+        f"{answer_writer.money(expenses.total_minor, expenses.currency)}; {conclusion}."
     )
 
 

@@ -164,6 +164,17 @@ class Metric(StrEnum):
     # temporal GroupBy says whether the divisor is days, weeks or months. This is
     # deliberately distinct from AVERAGE, whose divisor is movements.
     PERIOD_AVERAGE = "PERIOD_AVERAGE"
+    # Running total across ordered calendar buckets. Banking supplies exact bucket sums and the
+    # orchestrator accumulates them, preserving zero-activity periods as the previous total.
+    CUMULATIVE = "CUMULATIVE"
+    # Cadence of matching movements. Banking returns the complete bounded evidence and the
+    # orchestrator derives intervals from ledger dates; keeping this in the plan preserves the
+    # question through follow-ups such as "¿y el año pasado?".
+    FREQUENCY = "FREQUENCY"
+    # Discovery of periodic charges. Unlike FREQUENCY, which describes one already-grounded
+    # stream, RECURRENCE finds stable patterns among several counterparties and retains that
+    # intent through conversational follow-ups.
+    RECURRENCE = "RECURRENCE"
 
 
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum

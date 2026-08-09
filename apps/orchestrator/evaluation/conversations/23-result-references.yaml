@@ -1,0 +1,35 @@
+# Result rows and displayed movements remain grounded across natural pronoun follow-ups.
+
+episodes:
+  - name: highlighted_groups_and_evidence_can_be_reused_without_replanning
+    why: >
+      A pronoun must point to the concrete row or movement identifiers the user just saw, not to
+      a merchant guessed by the model or to the broader query that originally produced the list.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿En qué categoría he gastado más este año?
+        route: QUERY
+        no_model: true
+      - say: ¿Y cuánto gasté en esa categoría el mes pasado?
+        route: QUERY
+        no_model: true
+      - say: Sepáralo por comercio
+        route: QUERY
+        no_model: true
+      - say: ¿Cuánto gasté en ese comercio?
+        route: QUERY
+        no_model: true
+      - say: Desglósalo por cuenta
+        route: QUERY
+        no_model: true
+      - say: ¿Cuántos movimientos tuvo esa cuenta?
+        route: QUERY
+        no_model: true
+      - say: Muéstrame los últimos 5 movimientos de mis cuentas
+        route: QUERY
+        no_model: true
+      - say: ¿Cuánto suman esos movimientos?
+        route: QUERY
+        no_model: true
+      - say: gracias
+        route: COURTESY

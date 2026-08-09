@@ -516,7 +516,7 @@ def test_a_pattern_is_only_claimed_when_the_evidence_is_complete() -> None:
 
     said = answer_writer.when(sampled, groceries)
 
-    assert "patrón" in said
+    assert "sin extrapolar" in said
     assert "una al mes" not in said
 
 
@@ -538,7 +538,7 @@ def test_movements_that_are_not_monthly_are_not_called_monthly() -> None:
     said = answer_writer.when(twice_in_july, plan)
 
     assert "una al mes" not in said
-    assert "fechas debajo" in said
+    assert "separadas por 16 días" in said
 
 
 @pytest.mark.parametrize(

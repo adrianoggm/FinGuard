@@ -1,0 +1,31 @@
+# Recurrence is a discovery metric, retained while the user narrows categories or changes period.
+
+episodes:
+  - name: recurring_expenses_survive_natural_filters_and_periods
+    why: >
+      A broad request uses the conservative recurring catalogue, then category and period
+      follow-ups patch the typed plan without a model or a clarification loop.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Cuáles son mis gastos recurrentes?
+        route: QUERY
+        no_model: true
+        says: gastos recurrentes
+      - say: Solo las suscripciones
+        route: QUERY
+        no_model: true
+        says: gastos recurrentes
+      - say: ¿Y este año?
+        route: QUERY
+        no_model: true
+        says: gastos recurrentes
+      - say: Mejor solo el alquiler
+        route: QUERY
+        no_model: true
+        says: gastos recurrentes
+      - say: ¿Y el año pasado?
+        route: QUERY
+        no_model: true
+        says: gastos recurrentes
+      - say: gracias
+        route: COURTESY

@@ -76,6 +76,11 @@ _ASKS_WHO: Final = re.compile(
     r"|\bde\s+que\s+empresa\b"
     r"|\bque\s+empresas?\b"
 )
+_MERCHANT_BREAKDOWN: Final = re.compile(
+    r"\b(?:desglos\w*|separ\w*|agrup\w*)\s+(?:lo\s+)?por\s+"
+    r"(?:comercios?|tiendas?|establecimientos?|negocios?)\b"
+    r"|\bpor\s+(?:cada\s+)?(?:comercio|tienda|establecimiento|negocio)\b"
+)
 
 # A correction that widens rather than narrows. "¿Y en general?" is a real thing to say, and it is
 # the one case where a filter disappearing is what the user asked for.
@@ -105,12 +110,32 @@ _ASKS_WHEN: Final = re.compile(
     r"|\bcada\s+cuantos\s+dias\b|\bsuelo\s+ir\b|\ben\s+que\s+fechas?\b"
 )
 
+_RECURRENCE: Final = re.compile(
+    r"\b(?:gastos?|pagos?|cargos?|recibos?|cobros?|cuotas?)\s+"
+    r"(?:fijos?|recurrentes?|periodicos?)\b"
+    r"|\b(?:que|cuales)\b.{0,35}\b(?:gastos?|pagos?|cargos?|recibos?)\b.{0,25}"
+    r"\b(?:se\s+repiten|son\s+recurrentes?|son\s+periodicos?)\b"
+    r"|\b(?:suscripciones?|alquiler(?:es)?|recibos?)\b.{0,35}"
+    r"\b(?:cada|todos?)\s+(?:los\s+)?mes(?:es)?\b"
+    r"|\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b"
+    r"|\b(?:que|cuales|muestra(?:me)?|ensena(?:me)?)\b.{0,25}"
+    r"\b(?:mis\s+)?(?:recibos?|adeudos?)\b"
+    r"|\b(?:que|cuales)\s+suscripciones?\s+(?:pago|tengo|mantengo)\b"
+    r"|\b(?:que|cuales)\b.{0,25}\b(?:pagos?|cargos?)\b.{0,25}"
+    r"\btodos?\s+los\s+meses\b"
+)
 _DIRECT_DEBIT_QUERY: Final = re.compile(
     r"\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b"
     r"|\b(?:mis|los|estos|esos)\s+recibos?\b"
 )
 
 _AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
+_CUMULATIVE: Final = re.compile(
+    r"\b(?:gasto|ingreso|importe|total)\s+acumulad[oa]\b"
+    r"|\bacumulad[oa]\s+(?:por|a\s+lo\s+largo\s+de|mes\s+a\s+mes|semana\s+a\s+semana)\b"
+    r"|\bcuanto\s+llevaba\s+(?:gastado|ingresado|acumulado)\b"
+    r"|\bcomo\s+(?:iba|fue|ha\s+ido)\s+(?:mi\s+)?(?:gasto|ingreso)\b"
+)
 _COUNT: Final = re.compile(
     r"\bcuant[oa]s?\s+(?:veces|movimientos?|operaciones?|compras?|pagos?|cargos?|ingresos?)\b"
     r"|\b(?:numero|cantidad)\s+de\s+"
@@ -245,6 +270,21 @@ def asks_when(sentence: str) -> bool:
     return bool(_ASKS_WHEN.search(spanish.folded(sentence)))
 
 
+def asks_recurrence(sentence: str) -> bool:
+    """Whether this asks to discover periodic commitments rather than total a category."""
+    folded = spanish.folded(sentence)
+    if _RECURRENCE.search(folded) is None:
+        return False
+    # "Cuánto pago en recibos domiciliados" names the same banking rail but asks for a sum, not
+    # pattern discovery. The direct-debit fact is retained separately and applied to that plan.
+    asks_for_aggregate = bool(
+        _AVERAGE.search(folded)
+        or _COUNT.search(folded)
+        or re.search(r"\b(?:cuanto|importe|total|suma)\b", folded)
+    )
+    return not asks_for_aggregate
+
+
 def asks_direct_debits(sentence: str) -> bool:
     """Whether the user named bank direct debits, not merely periodic card charges."""
     return bool(_DIRECT_DEBIT_QUERY.search(spanish.folded(sentence)))
@@ -293,10 +333,12 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     )
     asks_top_category = bool(_TOP_CATEGORY.search(folded))
     asks_account_breakdown = bool(_ACCOUNT_BREAKDOWN.search(folded))
+    asks_merchant_breakdown = bool(_MERCHANT_BREAKDOWN.search(folded))
     asks_average = bool(_AVERAGE.search(folded)) or (
         temporal_group is not None and bool(_TYPICAL_AMOUNT.search(folded))
     )
     asks_count = bool(_COUNT.search(folded))
+    asks_cumulative = bool(_CUMULATIVE.search(folded))
     per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     window = window_words.window_in(sentence, today=today)
     # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
@@ -308,17 +350,37 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         window=window,
         group_by=(
             _COUNTERPARTY
-            if _ASKS_WHO.search(folded)
+            if _ASKS_WHO.search(folded) or asks_merchant_breakdown
             else (
                 GroupBy.ACCOUNT
                 if asks_account_breakdown
-                else (GroupBy.CATEGORY if comparison or asks_top_category else temporal_group)
+                else (
+                    GroupBy.CATEGORY
+                    if comparison or asks_top_category
+                    else (temporal_group or (GroupBy.MONTH if asks_cumulative else None))
+                )
             )
         ),
         metric=(
-            Metric.AVERAGE
-            if asks_average and (per_movement or temporal_group is None)
-            else (Metric.PERIOD_AVERAGE if asks_average else (Metric.COUNT if asks_count else None))
+            Metric.CUMULATIVE
+            if asks_cumulative
+            else (
+                Metric.RECURRENCE
+                if asks_recurrence(sentence)
+                else (
+                    Metric.FREQUENCY
+                    if asks_when(sentence)
+                    else (
+                        Metric.AVERAGE
+                        if asks_average and (per_movement or temporal_group is None)
+                        else (
+                            Metric.PERIOD_AVERAGE
+                            if asks_average
+                            else (Metric.COUNT if asks_count else None)
+                        )
+                    )
+                )
+            )
         ),
         direction=Direction.INCOME if says_income and not says_expense else None,
         compared_categories=named if comparison else (),

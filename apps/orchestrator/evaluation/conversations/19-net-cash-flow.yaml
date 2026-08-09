@@ -1,0 +1,31 @@
+# Net cash flow is two grounded reads and subtraction in deterministic code. Income and expenses
+# stay visible, and a short period follow-up must patch both reads rather than inherit only one.
+
+episodes:
+  - name: net_cash_flow_survives_clarification_and_short_follow_up
+    why: >
+      The user can ask naturally for income minus expenses, supply a missing period, and move the
+      same compound question to another period without restating either side or invoking a model.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Dime mis ingresos menos gastos
+        route: CLARIFY
+        no_model: true
+      - say: Este año
+        route: QUERY
+        no_model: true
+        says: flujo neto
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+        says: ingresaste
+      - say: ¿Cuál fue el balance entre ingresos y gastos este mes?
+        route: QUERY
+        no_model: true
+        says: gastaste
+      - say: ¿Y cuál fue mi tasa de ahorro este año?
+        route: QUERY
+        no_model: true
+        says: tasa de ahorro
+      - say: gracias
+        route: COURTESY

@@ -141,6 +141,11 @@ _MAY_BE_A_SHORTCUT: Final = re.compile(
 _QUERY_SPECIFIC_SHORTCUT: Final = re.compile(
     r"\b(tarj|agenda|contact|asistent|finguard|categor)", re.IGNORECASE
 )
+_GROUNDED_RESULT_REFERENCE: Final = re.compile(
+    r"\b(?:ese|esa|este|esta|aquel|aquella|esos|esas|estos|estas|aquellos|aquellas)\s+"
+    r"(?:categoria|comercio|tienda|establecimiento|cuenta|movimiento|movimientos|"
+    r"operacion|operaciones|cargo|cargos|pago|pagos|compra|compras|ingreso|ingresos)\b"
+)
 
 
 def _worth_a_second_read(sentence: str, conversation: Conversation) -> bool:
@@ -153,6 +158,13 @@ def _worth_a_second_read(sentence: str, conversation: Conversation) -> bool:
     is no context for a model to recover.
     """
     folded = spanish.folded(sentence)
+    if _GROUNDED_RESULT_REFERENCE.search(folded) is not None and (
+        conversation.referenced_group_by is not None
+        or bool(conversation.referenced_transaction_ids)
+    ):
+        # The previous answer already supplies the missing noun. A model cannot improve on a typed
+        # category/merchant/account row or an exact UUID set; it can only redirect the intent.
+        return False
     if _MAY_BE_A_SHORTCUT.search(folded) is None:
         return False
     if intent_router.asks_for_something_else(sentence) and (

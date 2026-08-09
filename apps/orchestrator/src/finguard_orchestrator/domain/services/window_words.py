@@ -115,6 +115,22 @@ _A_NUMBERED_MONTH: Final = re.compile(
 # the question. A range — "del 1 de junio al 15 de julio" — trips this too, which is the point.
 _A_DAY_OF_A_MONTH: Final = re.compile(rf"\d{{1,2}}\s+de\s+(?:{'|'.join(_MONTHS)})(?![a-z0-9])")
 
+# A bounded explicit range: "del 1 de marzo al 15 de abril de 2026" or "desde el 1 de
+# marzo hasta el 15 de abril". Each endpoint has its own named groups because two captures with
+# the same name cannot coexist in Python's regular-expression engine.
+_DATE_RANGE: Final = re.compile(
+    rf"\b(?:del|desde(?:\s+el)?)\s+"
+    rf"(?P<start_day>\d{{1,2}})\s+de\s+(?P<start_month>{'|'.join(_MONTHS)})"
+    r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:ano\s+)?(?P<start_year>20\d{2}))?"
+    r"\s+(?:al|hasta(?:\s+el)?)\s+"
+    rf"(?P<end_day>\d{{1,2}})\s+de\s+(?P<end_month>{'|'.join(_MONTHS)})"
+    r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:ano\s+)?(?P<end_year>20\d{2}))?\b"
+)
+_SAME_RANGE_LAST_YEAR: Final = re.compile(
+    r"\b(?:con|contra|frente\s+a(?:l)?|versus|vs)\s+"
+    r"(?:el\s+)?mismo\s+periodo\s+(?:del|el)\s+ano\s+(?:pasado|anterior)\b"
+)
+
 # Two calendar labels joined as alternatives, used only by the direct-comparison path. Unlike the
 # ordinary one-window reader, this accepts bare month names because the connector between exactly
 # two of them ("julio con junio", "julio que en junio") supplies the missing structure.
@@ -266,6 +282,79 @@ def compared_calendar_years(
     return whole_year(years[0]), whole_year(years[1])
 
 
+def date_range_in(sentence: str, *, today: date) -> AbsoluteRange | None:
+    """One exact, past range, only when the sentence contains exactly one."""
+    matches = tuple(_DATE_RANGE.finditer(spanish.folded(sentence)))
+    if len(matches) != 1:
+        return None
+    return _range_from(matches[0], today)
+
+
+def compared_date_ranges(
+    sentence: str, *, today: date
+) -> tuple[AbsoluteRange, AbsoluteRange] | None:
+    """Two complete explicit ranges, or one followed by the same dates a year earlier."""
+    folded = spanish.folded(sentence)
+    matches = tuple(_DATE_RANGE.finditer(folded))
+    if len(matches) == 1 and _SAME_RANGE_LAST_YEAR.search(folded[matches[0].end() :]):
+        current = _range_from(matches[0], today)
+        if current is None:
+            return None
+        return current, AbsoluteRange(
+            start=_a_year_before(current.start), end=_a_year_before(current.end)
+        )
+    if len(matches) != 2:
+        return None
+    between = folded[matches[0].end() : matches[1].start()]
+    if _COMPARISON_CONNECTOR.search(between) is None:
+        return None
+    first = _range_from(matches[0], today)
+    second = _range_from(matches[1], today)
+    if first is None or second is None or first == second:
+        return None
+    return first, second
+
+
+def _range_from(match: re.Match[str], today: date) -> AbsoluteRange | None:
+    start_month = _MONTH_NUMBER[match.group("start_month")]
+    end_month = _MONTH_NUMBER[match.group("end_month")]
+    written_start_year = match.group("start_year")
+    written_end_year = match.group("end_year")
+
+    if written_start_year is not None:
+        start_year = int(written_start_year)
+    elif written_end_year is not None:
+        end_year = int(written_end_year)
+        start_year = end_year - int(start_month > end_month)
+    else:
+        end_this_year = _safe_date(today.year, end_month, int(match.group("end_day")))
+        if end_this_year is None:
+            return None
+        end_year = today.year if end_this_year <= today else today.year - 1
+        start_year = end_year - int(start_month > end_month)
+
+    if written_end_year is not None:
+        end_year = int(written_end_year)
+    elif written_start_year is not None:
+        end_year = start_year + int(end_month < start_month)
+
+    start = _safe_date(start_year, start_month, int(match.group("start_day")))
+    end = _safe_date(end_year, end_month, int(match.group("end_day")))
+    if start is None or end is None or end < start or end > today:
+        return None
+    try:
+        return AbsoluteRange(start=start, end=end)
+    except InvalidValueError:
+        return None
+
+
+def _safe_date(year: int, month: int, day: int) -> date | None:
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 def window_in(
     sentence: str, *, asked_for: Slot = Slot.WINDOW, today: date | None = None
 ) -> Window | None:
@@ -284,6 +373,10 @@ def window_in(
     whole pipeline follows, and the reason the evaluation can replay it.
     """
     folded = spanish.folded(sentence)
+
+    explicit_range = date_range_in(sentence, today=today) if today is not None else None
+    if explicit_range is not None:
+        return explicit_range
 
     if asked_for is Slot.YEAR and _THIS_ONE.fullmatch(folded.strip(" ?¿.!¡,")):
         return RelativePeriod(period=Period.THIS_YEAR)
