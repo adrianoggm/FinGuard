@@ -236,3 +236,20 @@ def test_a_breakdown_over_time_stays_chronological(group_by: GroupBy) -> None:
 
     assert "ORDER BY key" in compiled.sql
     assert "DESC" not in compiled.sql.split("ORDER BY key")[1]
+
+
+def test_cumulative_buckets_are_exact_sums_in_chronological_order() -> None:
+    compiled = compile_aggregate(
+        query(group_by=GroupBy.MONTH, metric=Metric.CUMULATIVE, direction=Direction.EXPENSE),
+        "Europe/Madrid",
+        group_limit=2,
+    )
+
+    assert "SUM(t.amount_minor)" in compiled.sql
+    assert "ORDER BY key" in compiled.sql
+    assert "LIMIT 500" in compiled.sql
+
+
+def test_cumulative_without_a_calendar_group_is_invalid() -> None:
+    with pytest.raises(InvalidValueError, match="CUMULATIVE requires"):
+        query(metric=Metric.CUMULATIVE)

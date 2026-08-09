@@ -179,6 +179,11 @@ def compile_aggregate(
         if query.group_by is GroupBy.ACCOUNT
         else ""
     )
+    # A running total is incorrect when a deployment's presentation limit drops calendar buckets.
+    # The period itself is bounded, so returning every bucket remains bounded by MAX_GROUPS.
+    effective_limit = (
+        MAX_GROUPS if query.metric is Metric.CUMULATIVE else min(group_limit, MAX_GROUPS)
+    )
 
     sql = f"""
         SELECT
@@ -190,7 +195,7 @@ def compile_aggregate(
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
         ORDER BY {_group_ordering(query.group_by, query.metric, query.direction)}
-        LIMIT {min(group_limit, MAX_GROUPS)}
+        LIMIT {effective_limit}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
 

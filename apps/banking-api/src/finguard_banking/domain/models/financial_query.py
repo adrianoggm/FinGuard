@@ -115,6 +115,12 @@ class FinancialQuery:
             GroupBy.MONTH,
         }:
             raise InvalidValueError("PERIOD_AVERAGE requires DAY, WEEK or MONTH grouping")
+        if self.metric is Metric.CUMULATIVE and self.group_by not in {
+            GroupBy.DAY,
+            GroupBy.WEEK,
+            GroupBy.MONTH,
+        }:
+            raise InvalidValueError("CUMULATIVE requires DAY, WEEK or MONTH grouping")
         if not 0 <= self.supporting_limit <= MAX_SUPPORTING_MOVEMENTS:
             raise InvalidValueError(
                 f"supportingLimit must be between 0 and {MAX_SUPPORTING_MOVEMENTS}"

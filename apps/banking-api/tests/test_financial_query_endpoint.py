@@ -15,6 +15,8 @@ from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
 from finguard_banking.domain.enums import (
     CounterpartyType,
+    GroupBy,
+    Metric,
     ReceiptCategory,
     TransactionType,
 )
@@ -153,6 +155,65 @@ def test_average_and_a_selected_account_subset_reach_the_domain() -> None:
     assert repository.received is not None
     assert repository.received.metric.value == "AVERAGE"
     assert repository.received.only_account_ids == tuple(selected)
+
+
+def test_frequency_reaches_the_domain_as_a_metric_with_complete_evidence_requested() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "metric": "FREQUENCY", "groupBy": "NONE", "supportingLimit": 100},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric.value == "FREQUENCY"
+    assert repository.received.supporting_limit == 100
+
+
+def test_recurrence_reaches_the_domain_as_a_metric_with_complete_evidence_requested() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "metric": "RECURRENCE", "groupBy": "NONE", "supportingLimit": 100},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric.value == "RECURRENCE"
+    assert repository.received.supporting_limit == 100
+
+
+def test_cumulative_reaches_the_domain_with_its_calendar_group() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "metric": "CUMULATIVE", "groupBy": "MONTH"},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric is Metric.CUMULATIVE
+    assert repository.received.group_by is GroupBy.MONTH
+
+
+def test_direct_debit_filter_reaches_the_domain() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "transactionTypes": ["DIRECT_DEBIT"]},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.transaction_types == (TransactionType.DIRECT_DEBIT,)
 
 
 def test_internal_only_reaches_the_domain_only_with_its_explicit_opt_in() -> None:

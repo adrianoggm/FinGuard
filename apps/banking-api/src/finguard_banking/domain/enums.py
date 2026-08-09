@@ -105,6 +105,12 @@ class Metric(StrEnum):
     # The aggregate still returns exact sums per temporal bucket. The caller uses
     # the resolved date range to include empty buckets in the divisor.
     PERIOD_AVERAGE = "PERIOD_AVERAGE"
+    # Exact per-period sums used by the assistant to produce a running total.
+    CUMULATIVE = "CUMULATIVE"
+    # The aggregate and evidence shape is unchanged; the caller derives cadence from the complete
+    # bounded movement dates. Keeping it in the contract preserves the requested semantics.
+    FREQUENCY = "FREQUENCY"
+    RECURRENCE = "RECURRENCE"
 
 
 class Direction(StrEnum):
