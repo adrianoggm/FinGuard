@@ -10,7 +10,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnRelation,
 )
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
-from finguard_orchestrator.domain.services import intent_router, spanish
+from finguard_orchestrator.domain.services import financial_relationships, intent_router, spanish
 from finguard_orchestrator.domain.services.intent_router import Intent
 
 # Deliberately conservative. A conjunction is only accepted as a request boundary after each side
@@ -37,6 +37,9 @@ def _substantive(clause: str, intent: Intent) -> bool:
 
 
 def _compound_clauses(sentence: str, conversation: Conversation) -> tuple[str, ...]:
+    # "Ingresos y gastos" names the operands of one grounded calculation, not two requests.
+    if financial_relationships.asks_net_cash_flow(sentence):
+        return ()
     pieces = tuple(piece.strip(" \t\r\n,¿?¡!") for piece in _BOUNDARY.split(sentence))
     pieces = tuple(piece for piece in pieces if piece)
     if len(pieces) < 2:

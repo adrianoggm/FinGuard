@@ -21,7 +21,14 @@ from datetime import date, datetime
 import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    PlanningOutcome,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
@@ -141,6 +148,29 @@ def test_negative_filters_are_explicit_facts(
 
     assert facts.excluded_categories == categories
     assert facts.excluded_merchants == merchants
+
+
+async def test_a_direct_debit_amount_keeps_sum_and_adds_the_banking_rail() -> None:
+    planned = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        metric=Metric.SUM,
+    )
+    ledger = FakeLedger()
+
+    await ask(
+        "¿Cuánto he pagado de recibos domiciliados este año?",
+        FakePlanner(PlanningResult.planned(planned)),
+        ledger,
+    )
+
+    assert ledger.plans[0].metric is Metric.SUM
+    assert ledger.plans[0].transaction_types == (TransactionType.DIRECT_DEBIT,)
+
+
+def test_showing_receipts_is_recurrence_but_asking_their_total_is_not() -> None:
+    assert explicit_facts.asks_recurrence("Muéstrame mis recibos")
+    assert not explicit_facts.asks_recurrence("¿Cuánto he pagado de recibos domiciliados este año?")
 
 
 async def test_an_explicit_window_is_not_inherited_from_the_previous_turn() -> None:
@@ -486,7 +516,7 @@ def test_a_pattern_is_only_claimed_when_the_evidence_is_complete() -> None:
 
     said = answer_writer.when(sampled, groceries)
 
-    assert "patrón" in said
+    assert "sin extrapolar" in said
     assert "una al mes" not in said
 
 
@@ -508,7 +538,7 @@ def test_movements_that_are_not_monthly_are_not_called_monthly() -> None:
     said = answer_writer.when(twice_in_july, plan)
 
     assert "una al mes" not in said
-    assert "fechas debajo" in said
+    assert "separadas por 16 días" in said
 
 
 @pytest.mark.parametrize(

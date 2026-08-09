@@ -1,0 +1,35 @@
+# Running totals and aggregate rankings keep their unit while the conversation changes shape.
+
+episodes:
+  - name: cumulative_and_ranked_groups_are_natural_follow_ups
+    why: >
+      Calendar accumulation, top-N limits and ranking criteria are typed plan fields. Changing
+      week/month, SUM/COUNT/AVERAGE or merchant/category must alter only the named dimension.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Muéstrame mi gasto acumulado por mes este año
+        route: QUERY
+        no_model: true
+        says: acumulado
+      - say: ¿Y por semana?
+        route: QUERY
+        no_model: true
+        says: acumulado
+      - say: Los tres comercios donde más gasté este año
+        route: QUERY
+        no_model: true
+        says: mayor importe total
+      - say: ¿Y por número de operaciones?
+        route: QUERY
+        no_model: true
+        says: más operaciones
+      - say: Ahora top 2 categorías por ticket medio
+        route: QUERY
+        no_model: true
+        says: mayor importe medio
+      - say: Muéstrame mis tres mayores gastos de este año
+        route: QUERY
+        no_model: true
+        says: 3 mayores gastos
+      - say: gracias
+        route: COURTESY

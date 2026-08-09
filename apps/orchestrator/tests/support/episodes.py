@@ -262,11 +262,37 @@ class Ledger:
 
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self.plans.append(plan)
+        group_key = {
+            GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
+            GroupBy.MERCHANT: "Mercadona",
+            GroupBy.ACCOUNT: "Cuenta corriente",
+        }.get(plan.group_by, "total")
+        is_recent_list = (
+            plan.direction is Direction.ALL
+            and plan.period == RelativePeriod(Period.LAST_N_MONTHS, n=24)
+            and plan.include_internal
+        )
         return QueryAnswer(
             currency="EUR",
             total_minor=46_556,
             movement_count=3,
-            groups=(Group("total", 46_556, 3),),
+            groups=(Group(group_key, 46_556, 3),),
+            movements=(
+                tuple(
+                    Movement(
+                        occurred_at=datetime(2026, 7, day, 10, 0, tzinfo=UTC),
+                        description=f"Compra {day}",
+                        amount_minor=10_000 + day,
+                        direction=plan.direction.value,
+                        merchant_name="Mercadona",
+                        category="GROCERIES",
+                        transaction_id=str(uuid.UUID(int=day)),
+                    )
+                    for day in range(1, 4)
+                )
+                if is_recent_list
+                else ()
+            ),
         )
 
     async def ranked(self, ranking: object, **_: object) -> Movement:

@@ -31,8 +31,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
-from finguard_orchestrator.domain.enums import Rail
+from finguard_orchestrator.domain.constants import MAX_MERCHANT_LENGTH, MAX_SELECTED_TRANSACTIONS
+from finguard_orchestrator.domain.enums import GroupBy, Rail
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -207,6 +210,14 @@ class Conversation:
     # "the one where you spent most". This small referent makes "esa categorÃ­a" resolvable without
     # storing financial results or asking a model to guess a row.
     referenced_category: str | None = None
+    # The concrete row the last answer put in focus. Unlike `referenced_category`, this also
+    # covers merchant and account breakdowns, while keeping only an identifier/name and never the
+    # amount shown beside it. Both fields are one optional value and therefore travel together.
+    referenced_group_by: GroupBy | None = None
+    referenced_group_key: str | None = None
+    # Exact ledger rows displayed as evidence by the last aggregate answer. This lets a later
+    # "esos movimientos" select what was actually on screen instead of rerunning the broad query.
+    referenced_transaction_ids: tuple[UUID, ...] = ()
     # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
     # a clarification records its slot on the workflow, and a question asked with nothing
     # half-built behind it leaves no workflow to record it on. Without this, that question can be
@@ -227,6 +238,30 @@ class Conversation:
     # the other lets a two-word period complete the proportion that asked for it.
     last_ratio: RatioPlan | None = None
     pending_ratio: RatioDraft | None = None
+    # The last comparison as one validated value. ``last_plan`` and ``prior_plan`` remain for
+    # backwards-compatible single-query follow-ups; this field prevents later comparison turns
+    # from having to infer whether those two happen to form a compatible pair.
+    last_comparison: ComparisonPlan | None = None
+
+    def __post_init__(self) -> None:
+        if (self.referenced_group_by is None) != (self.referenced_group_key is None):
+            raise InvalidValueError("a referenced group needs both its dimension and key")
+        if self.referenced_group_by not in {
+            None,
+            GroupBy.CATEGORY,
+            GroupBy.MERCHANT,
+            GroupBy.ACCOUNT,
+        }:
+            raise InvalidValueError("only category, merchant and account rows can be referenced")
+        if self.referenced_group_key is not None:
+            if not self.referenced_group_key.strip():
+                raise InvalidValueError("a referenced group key cannot be blank")
+            if len(self.referenced_group_key) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError("referenced group key is too long")
+        if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
+            raise InvalidValueError("referenced transaction ids must be unique")
+        if len(self.referenced_transaction_ids) > MAX_SELECTED_TRANSACTIONS:
+            raise InvalidValueError("too many referenced transaction ids")
 
     @property
     def awaiting(self) -> Slot | None:
@@ -277,8 +312,12 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def asking(self, slot: Slot) -> "Conversation":
@@ -289,9 +328,13 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_asked=slot,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def refused(self, capability: str) -> "Conversation":
@@ -314,9 +357,13 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             answered_the_balance=self.answered_the_balance,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def answering_the_balance(self) -> "Conversation":
@@ -331,10 +378,14 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_asked=self.last_asked,
             answered_the_balance=True,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
@@ -345,9 +396,13 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_asked=self.last_asked,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def without_retry(self) -> "Conversation":
@@ -357,13 +412,23 @@ class Conversation:
             last_plan=self.last_plan,
             prior_plan=self.prior_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_asked=self.last_asked,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def answered(
-        self, plan: PlannedQuery, *, referenced_category: str | None = None
+        self,
+        plan: PlannedQuery,
+        *,
+        referenced_category: str | None = None,
+        referenced_group_by: GroupBy | None = None,
+        referenced_group_key: str | None = None,
+        referenced_transaction_ids: tuple[UUID, ...] = (),
     ) -> "Conversation":
         """Remember a financial answer and close only the workflow that answer resolves.
 
@@ -382,6 +447,37 @@ class Conversation:
             last_plan=plan,
             prior_plan=prior,
             referenced_category=referenced_category,
+            referenced_group_by=referenced_group_by,
+            referenced_group_key=referenced_group_key,
+            referenced_transaction_ids=referenced_transaction_ids,
+        )
+
+    def with_references(
+        self,
+        *,
+        group_by: GroupBy | None = None,
+        group_key: str | None = None,
+        transaction_ids: tuple[UUID, ...] | None = None,
+    ) -> "Conversation":
+        """Focus an already answered result without changing the query behind it."""
+        return Conversation(
+            active=self.active,
+            last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
+            retry_plan=self.retry_plan,
+            referenced_category=(
+                group_key if group_by is GroupBy.CATEGORY else self.referenced_category
+            ),
+            referenced_group_by=group_by,
+            referenced_group_key=group_key,
+            referenced_transaction_ids=(
+                self.referenced_transaction_ids if transaction_ids is None else transaction_ids
+            ),
+            last_asked=self.last_asked,
+            answered_the_balance=self.answered_the_balance,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
@@ -392,10 +488,31 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_asked=Slot.WINDOW,
             answered_the_balance=self.answered_the_balance,
             last_ratio=self.last_ratio,
             pending_ratio=draft,
+            last_comparison=self.last_comparison,
+        )
+
+    def answered_comparison(
+        self, plan: ComparisonPlan, *, referenced_category: str | None = None
+    ) -> "Conversation":
+        """Keep the compatible pair as one value while exposing both legacy plan slots."""
+        active = (
+            self.active
+            if isinstance(self.active, PaymentInProgress) and self.active.suspended
+            else None
+        )
+        return Conversation(
+            active=active,
+            last_plan=plan.latest,
+            prior_plan=plan.earlier,
+            referenced_category=referenced_category,
+            last_comparison=plan,
         )
 
     def answered_ratio(self, plan: RatioPlan) -> "Conversation":
@@ -423,8 +540,12 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             answered_the_balance=self.answered_the_balance,
             last_ratio=self.last_ratio,
+            last_comparison=self.last_comparison,
         )
 
     def suspend(self) -> "Conversation":
@@ -441,10 +562,14 @@ class Conversation:
                 prior_plan=self.prior_plan,
                 retry_plan=self.retry_plan,
                 referenced_category=self.referenced_category,
+                referenced_group_by=self.referenced_group_by,
+                referenced_group_key=self.referenced_group_key,
+                referenced_transaction_ids=self.referenced_transaction_ids,
                 last_asked=self.last_asked,
                 answered_the_balance=self.answered_the_balance,
                 last_ratio=self.last_ratio,
                 pending_ratio=self.pending_ratio,
+                last_comparison=self.last_comparison,
             )
         return Conversation(
             active=PaymentInProgress(
@@ -457,6 +582,9 @@ class Conversation:
             prior_plan=self.prior_plan,
             retry_plan=self.retry_plan,
             referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
             last_asked=self.last_asked,
             # Kept, like every other piece of memory here. Dropping it meant a payment under way
             # silently turned "¿y en la hucha?" back into a question about spending, so a balance
@@ -464,6 +592,7 @@ class Conversation:
             answered_the_balance=self.answered_the_balance,
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
         )
 
 

@@ -1,0 +1,31 @@
+# Two explicit bounded ranges become one ComparisonPlan and remain available for percentage turns.
+
+episodes:
+  - name: arbitrary_ranges_and_same_period_last_year_are_conversational
+    why: >
+      Exact past intervals are parsed without a model, retain the requested metric, and the typed
+      pair remains available when the user asks for the percentage change or repeats the comparison.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Compara mis gastos del 1 de marzo al 15 de abril de 2026 con el mismo periodo del año pasado
+        route: QUERY
+        no_model: true
+        says: mismo
+      - say: ¿Y en porcentaje?
+        route: QUERY
+        no_model: true
+        says: no cambió
+      - say: Compara cuántos movimientos de gasto tuve del 1 de marzo al 15 de abril de 2026 con el periodo del 1 de mayo al 15 de junio de 2026
+        route: QUERY
+        no_model: true
+        says: mismo número
+      - say: Compáralos otra vez
+        route: QUERY
+        no_model: true
+        says: mismo número
+      - say: ¿Y en porcentaje?
+        route: QUERY
+        no_model: true
+        says: no cambió
+      - say: gracias
+        route: COURTESY

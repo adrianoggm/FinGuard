@@ -17,6 +17,7 @@ from uuid import UUID
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
     MAX_CATEGORY_LENGTH,
+    MAX_GROUP_RANK,
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
     MAX_PERIOD_DAYS,
@@ -30,6 +31,7 @@ from finguard_orchestrator.domain.enums import (
     GroupBy,
     Metric,
     Period,
+    TransactionType,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
 
@@ -90,6 +92,8 @@ class FinancialPlan:
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    # Present only for rankings of aggregate groups, never individual movement rankings.
+    group_limit: int | None = None
     # Money the holder moved between their own accounts. Excluded by default, which is what makes
     # "¿cuánto gasté?" mean money that left rather than money that moved (ADR-009 §2). Asked for
     # explicitly by a list, where hiding a 200 € transfer means the movements do not reconcile with
@@ -112,6 +116,7 @@ class FinancialPlan:
     # Exact movements a conversational pronoun refers to ("esos cinco"). Banking still applies
     # holder isolation, so identifiers can narrow a query but never widen its scope.
     transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    transaction_types: tuple[TransactionType, ...] = field(default_factory=tuple)
     explain: bool = False
 
     def __post_init__(self) -> None:
@@ -129,12 +134,25 @@ class FinancialPlan:
             raise InvalidValueError("transactionIds cannot contain duplicates")
         if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
             raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
+        if len(set(self.transaction_types)) != len(self.transaction_types):
+            raise InvalidValueError("transactionTypes cannot contain duplicates")
         if self.metric is Metric.PERIOD_AVERAGE and self.group_by not in {
             GroupBy.DAY,
             GroupBy.WEEK,
             GroupBy.MONTH,
         }:
             raise InvalidValueError("PERIOD_AVERAGE requires DAY, WEEK or MONTH grouping")
+        if self.metric is Metric.CUMULATIVE and self.group_by not in {
+            GroupBy.DAY,
+            GroupBy.WEEK,
+            GroupBy.MONTH,
+        }:
+            raise InvalidValueError("CUMULATIVE requires DAY, WEEK or MONTH grouping")
+        if self.group_limit is not None:
+            if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
+                raise InvalidValueError("groupLimit requires a non-temporal grouping")
+            if not 1 <= self.group_limit <= MAX_GROUP_RANK:
+                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_RANK}")
         check_filters(
             self.categories,
             self.merchants,
@@ -172,12 +190,14 @@ class FinancialPlanDraft:
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    group_limit: int | None = None
     include_internal: bool = False
     internal_only: bool = False
     across_accounts: bool = False
     only_account_id: UUID | None = None
     only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
     transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    transaction_types: tuple[TransactionType, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         # Neither window is allowed — that is what a draft is for — but not both, for the same
@@ -197,6 +217,19 @@ class FinancialPlanDraft:
             raise InvalidValueError("transactionIds cannot contain duplicates")
         if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
             raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
+        if len(set(self.transaction_types)) != len(self.transaction_types):
+            raise InvalidValueError("transactionTypes cannot contain duplicates")
+        if self.metric is Metric.CUMULATIVE and self.group_by not in {
+            GroupBy.DAY,
+            GroupBy.WEEK,
+            GroupBy.MONTH,
+        }:
+            raise InvalidValueError("CUMULATIVE requires DAY, WEEK or MONTH grouping")
+        if self.group_limit is not None:
+            if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
+                raise InvalidValueError("groupLimit requires a non-temporal grouping")
+            if not 1 <= self.group_limit <= MAX_GROUP_RANK:
+                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_RANK}")
         # The window is the one invariant a draft relaxes. Everything else is checked exactly as
         # the plan checks it, because a draft crosses the wire and comes back: leaving the
         # filters until `with_window` meant a bad category was accepted at the edge and only
@@ -235,12 +268,14 @@ class FinancialPlanDraft:
             excluded_merchants=self.excluded_merchants,
             group_by=self.group_by,
             metric=self.metric,
+            group_limit=self.group_limit,
             include_internal=self.include_internal,
             internal_only=self.internal_only,
             across_accounts=self.across_accounts,
             only_account_id=self.only_account_id,
             only_account_ids=self.only_account_ids,
             transaction_ids=self.transaction_ids,
+            transaction_types=self.transaction_types,
         )
 
     def into_plan(self) -> FinancialPlan | None:
@@ -257,12 +292,14 @@ class FinancialPlanDraft:
             excluded_merchants=self.excluded_merchants,
             group_by=self.group_by,
             metric=self.metric,
+            group_limit=self.group_limit,
             include_internal=self.include_internal,
             internal_only=self.internal_only,
             across_accounts=self.across_accounts,
             only_account_id=self.only_account_id,
             only_account_ids=self.only_account_ids,
             transaction_ids=self.transaction_ids,
+            transaction_types=self.transaction_types,
         )
 
     @classmethod
@@ -278,12 +315,14 @@ class FinancialPlanDraft:
             excluded_merchants=plan.excluded_merchants,
             group_by=plan.group_by,
             metric=plan.metric,
+            group_limit=plan.group_limit,
             include_internal=plan.include_internal,
             internal_only=plan.internal_only,
             across_accounts=plan.across_accounts,
             only_account_id=plan.only_account_id,
             only_account_ids=plan.only_account_ids,
             transaction_ids=plan.transaction_ids,
+            transaction_types=plan.transaction_types,
         )
 
 

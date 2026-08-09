@@ -11,7 +11,15 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    ReceiptCategory,
+    TransactionType,
+)
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -120,6 +128,33 @@ def test_an_internal_only_plan_reaches_banking_without_becoming_an_ordinary_quer
     assert body["internalOnly"] is True
 
 
+def test_a_direct_debit_filter_reaches_banking() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            transaction_types=(TransactionType.DIRECT_DEBIT,),
+        )
+    )
+
+    assert body["transactionTypes"] == ["DIRECT_DEBIT"]
+
+
+def test_a_cumulative_plan_reaches_banking_as_calendar_bucket_sums() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            group_by=GroupBy.MONTH,
+            metric=Metric.CUMULATIVE,
+        )
+    )
+
+    assert body["metric"] == "CUMULATIVE"
+    assert body["groupBy"] == "MONTH"
+    assert "groupLimit" not in body
+
+
 # --- response to model -------------------------------------------------------------
 
 
@@ -140,6 +175,10 @@ def test_a_response_becomes_the_assistants_own_model() -> None:
                     "category": "GROCERIES",
                     "amountMinor": -4210,
                     "direction": "EXPENSE",
+                    "transactionType": "DIRECT_DEBIT",
+                    "counterpartyName": "Mercadona Energía",
+                    "counterpartyType": "BILLER",
+                    "receiptCategory": "UTILITIES",
                 }
             ],
         }
@@ -149,6 +188,10 @@ def test_a_response_becomes_the_assistants_own_model() -> None:
     assert answer.total_minor == 142580
     assert answer.groups[0].key == "GROCERIES"
     assert answer.movements[0].merchant_name == "Mercadona"
+    assert answer.movements[0].transaction_type is TransactionType.DIRECT_DEBIT
+    assert answer.movements[0].counterparty_name == "Mercadona Energía"
+    assert answer.movements[0].counterparty_type is CounterpartyType.BILLER
+    assert answer.movements[0].receipt_category is ReceiptCategory.UTILITIES
     # Z parsed as UTC rather than dropped on the floor.
     assert answer.movements[0].occurred_at == datetime(2026, 7, 3, 10, 12, tzinfo=UTC)
     assert not answer.is_empty
@@ -354,3 +397,29 @@ def test_a_query_body_carries_negative_filters() -> None:
 
     assert body["excludedCategories"] == ["HOUSING_RENT"]
     assert body["excludedMerchants"] == ["Mercadona"]
+
+
+def test_a_frequency_query_crosses_the_wire_without_becoming_a_sum() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            categories=("TRANSPORT_FUEL",),
+            metric=Metric.FREQUENCY,
+        )
+    )
+
+    assert body["metric"] == "FREQUENCY"
+
+
+def test_a_recurrence_query_crosses_the_wire_without_becoming_a_sum() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            categories=("SUBSCRIPTIONS", "HOUSING_RENT"),
+            metric=Metric.RECURRENCE,
+        )
+    )
+
+    assert body["metric"] == "RECURRENCE"

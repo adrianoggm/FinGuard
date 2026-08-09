@@ -4,6 +4,8 @@ import uuid
 from collections.abc import Callable
 from datetime import date, datetime
 
+import pytest
+
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.domain.enums import Direction, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
@@ -169,6 +171,103 @@ async def test_the_savings_rate_uses_total_income_and_total_expenses() -> None:
     assert "20,00 %" in result.text
     assert "3.000,00 €" in result.text
     assert "2.400,00 €" in result.text
+    assert planner.calls == 0
+
+
+async def test_net_cash_flow_keeps_income_expenses_and_result_visible() -> None:
+    ledger = Ledger(
+        lambda plan: (
+            answer(180_000, 12) if plan.direction is Direction.EXPENSE else answer(250_000, 3)
+        )
+    )
+
+    result, planner = await ask("¿Cuál fue mi flujo neto este año?", ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert "flujo neto" in result.text.lower()
+    assert "700,00 €" in result.text
+    assert "2.500,00 €" in result.text
+    assert "1.800,00 €" in result.text
+    assert result.total_minor == 70_000
+    assert [(group.key, group.total_minor) for group in result.groups] == [
+        ("Ingresos", 250_000),
+        ("Gastos", 180_000),
+    ]
+    assert [plan.direction for plan in ledger.plans] == [Direction.EXPENSE, Direction.INCOME]
+    assert planner.calls == 0
+    assert result.conversation.last_ratio is not None
+    assert result.conversation.last_ratio.kind is RatioKind.NET_CASH_FLOW
+
+
+async def test_negative_net_cash_flow_is_explained_without_hiding_either_side() -> None:
+    ledger = Ledger(
+        lambda plan: answer(300_000) if plan.direction is Direction.EXPENSE else answer(250_000)
+    )
+
+    result, _ = await ask("Diferencia entre mis ingresos y mis gastos este mes", ledger)
+
+    assert result.total_minor == -50_000
+    assert "gastaste 500,00 € más de lo que ingresaste" in result.text
+    assert "2.500,00 €" in result.text
+    assert "3.000,00 €" in result.text
+
+
+async def test_net_cash_flow_asks_for_its_window_once() -> None:
+    ledger = Ledger(
+        lambda plan: answer(100_000) if plan.direction is Direction.EXPENSE else answer(150_000)
+    )
+
+    first, planner = await ask("Dime mis ingresos menos gastos", ledger)
+
+    assert first.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert first.conversation.pending_ratio is not None
+    assert first.conversation.pending_ratio.kind is RatioKind.NET_CASH_FLOW
+    assert ledger.plans == []
+    assert planner.calls == 0
+
+    second, _ = await ask("El mes pasado", ledger, conversation=first.conversation)
+
+    assert second.outcome == PlanningOutcome.PLANNED.value
+    assert second.total_minor == 50_000
+    assert all(plan.period == RelativePeriod(Period.LAST_MONTH) for plan in ledger.plans)
+
+
+async def test_a_short_window_follow_up_keeps_net_cash_flow_as_a_pair() -> None:
+    ledger = Ledger(
+        lambda plan: answer(80_000) if plan.direction is Direction.EXPENSE else answer(120_000)
+    )
+    first, _ = await ask("¿Cuál fue mi flujo neto este año?", ledger)
+
+    second, planner = await ask("¿Y el mes pasado?", ledger, conversation=first.conversation)
+
+    assert second.total_minor == 40_000
+    assert len(ledger.plans) == 4
+    assert all(plan.period == RelativePeriod(Period.LAST_MONTH) for plan in ledger.plans[-2:])
+    assert planner.calls == 0
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuál fue mi flujo neto este año?",
+        "¿Cuál fue mi flujo de caja neto este año?",
+        "¿Cuál fue el balance entre mis ingresos y mis gastos este año?",
+        "¿Qué diferencia hubo entre ingresos y gastos este año?",
+        "¿Cuánto me quedó después de mis gastos este año?",
+    ],
+)
+async def test_net_cash_flow_paraphrases_preserve_the_complete_semantics(sentence: str) -> None:
+    ledger = Ledger(
+        lambda plan: answer(80_000) if plan.direction is Direction.EXPENSE else answer(120_000)
+    )
+
+    result, planner = await ask(sentence, ledger)
+
+    assert result.total_minor == 40_000
+    assert [plan.direction for plan in ledger.plans] == [Direction.EXPENSE, Direction.INCOME]
+    assert all(plan.period == RelativePeriod(Period.THIS_YEAR) for plan in ledger.plans)
+    assert all(plan.metric is Metric.SUM for plan in ledger.plans)
+    assert all(plan.categories == () and plan.merchants == () for plan in ledger.plans)
     assert planner.calls == 0
 
 

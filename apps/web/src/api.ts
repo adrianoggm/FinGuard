@@ -49,6 +49,10 @@ export type Movement = {
   direction?: string;
   merchant_name: string | null;
   category: string | null;
+  transaction_type?: string | null;
+  counterparty_name?: string | null;
+  counterparty_type?: string;
+  receipt_category?: string | null;
   /** Present on the movement list, which is the only screen that can refile one. */
   transaction_id?: string | null;
   /** Whether the category is the holder's own rather than the bank's guess. */
@@ -119,12 +123,14 @@ export type PlanContext = {
   excluded_merchants?: string[];
   group_by: string;
   metric: string;
+  group_limit?: number | null;
   include_internal?: boolean;
   internal_only?: boolean;
   across_accounts?: boolean;
   only_account_id?: string | null;
   only_account_ids?: string[];
   transaction_ids?: string[];
+  transaction_types?: string[];
 };
 
 /** A payment being built. Part of the conversation state, never held on its own. */
@@ -195,15 +201,22 @@ export type ConversationState = {
   answered_the_balance: boolean;
   // Category explicitly highlighted by the previous answer; echoed without interpretation.
   referenced_category?: string | null;
+  // Typed result row and exact movement evidence shown by the previous answer. The UI only
+  // round-trips these; the orchestrator alone decides what a later pronoun means.
+  referenced_group_by?: "CATEGORY" | "MERCHANT" | "ACCOUNT" | null;
+  referenced_group_key?: string | null;
+  referenced_transaction_ids?: string[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
-  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | null;
+  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
   last_ratio_part?: PlanContext | null;
   last_ratio_whole?: PlanContext | null;
-  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | null;
+  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
   pending_ratio_part?: PlanContext | null;
   pending_ratio_whole?: PlanContext | null;
+  last_comparison_earlier?: PlanContext | null;
+  last_comparison_latest?: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
   payment: PaymentDraft | null;

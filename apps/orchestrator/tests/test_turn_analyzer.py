@@ -42,6 +42,17 @@ async def test_two_financial_questions_are_two_requests_even_with_the_same_inten
     assert analysis.clauses == ("Cuánto gasté este mes", "cuánto ingresé este año")
 
 
+async def test_income_and_expenses_are_one_net_cash_flow_request() -> None:
+    analysis = await turn_analyzer.analyze(
+        "¿Cuál fue el balance entre ingresos y gastos este mes?",
+        conversation=Conversation(),
+        interpreter=turn_interpreters.Deterministic(),
+    )
+
+    assert not analysis.is_compound
+    assert analysis.intent is Intent.FINANCIAL_QUERY
+
+
 async def test_manners_plus_a_request_are_not_two_requests() -> None:
     analysis = await turn_analyzer.analyze(
         "Hola y dime cuánto tengo",

@@ -17,6 +17,7 @@ from uuid import UUID
 
 import httpx2 as httpx
 
+from finguard_orchestrator.domain.enums import CounterpartyType, ReceiptCategory, TransactionType
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
@@ -229,6 +230,7 @@ def to_body(
         "excludedCategories": list(plan.excluded_categories),
         "merchants": list(plan.merchants),
         "excludedMerchants": list(plan.excluded_merchants),
+        "transactionTypes": [item.value for item in plan.transaction_types],
         "supportingLimit": supporting_movements,
         "includeInternal": plan.include_internal,
         "internalOnly": plan.internal_only,
@@ -318,6 +320,9 @@ def movement_from_body(movement: Any, *, currency: str | None = None) -> Movemen
     amount is denominated in. A supporting movement leaves it absent, because the aggregate beside
     it already says so once.
     """
+    transaction_type = movement.get("transactionType")
+    counterparty_type = movement.get("counterpartyType") or "UNKNOWN"
+    receipt_category = movement.get("receiptCategory")
     return Movement(
         occurred_at=_moment(movement["occurredAt"]),
         description=movement["description"],
@@ -330,6 +335,10 @@ def movement_from_body(movement: Any, *, currency: str | None = None) -> Movemen
         is_internal=bool(movement.get("isInternal", False)),
         category=movement.get("category"),
         currency=currency,
+        transaction_type=TransactionType(transaction_type) if transaction_type else None,
+        counterparty_name=movement.get("counterpartyName"),
+        counterparty_type=CounterpartyType(counterparty_type),
+        receipt_category=ReceiptCategory(receipt_category) if receipt_category else None,
     )
 
 

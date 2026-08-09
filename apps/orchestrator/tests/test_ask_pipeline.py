@@ -349,6 +349,21 @@ async def test_a_merchant_breakdown_keeps_the_name_the_ledger_gave_it() -> None:
     assert "GROCERIES" in result.text or "HEALTH" in result.text
 
 
+async def test_an_answer_remembers_its_highlighted_merchant_and_evidence_rows() -> None:
+    transaction_id = uuid.UUID(int=41)
+    movement = replace(ANSWER.movements[0], transaction_id=str(transaction_id))
+    ledger = FakeLedger(replace(ANSWER, movements=(movement,)))
+
+    result = await ask(
+        PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.MERCHANT)),
+        ledger,
+    )
+
+    assert result.conversation.referenced_group_by is GroupBy.MERCHANT
+    assert result.conversation.referenced_group_key == "GROCERIES"
+    assert result.conversation.referenced_transaction_ids == (transaction_id,)
+
+
 # --- every outcome reaches the user as something different --------------------------
 
 
