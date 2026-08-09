@@ -281,7 +281,7 @@ async def test_asking_who_produces_groups_and_not_a_total() -> None:
         ledger,
     )
 
-    assert ledger.plans[0].group_by is GroupBy.MERCHANT
+    assert ledger.plans[0].group_by is GroupBy.COUNTERPARTY
     assert [group.key for group in result.groups] == ["Elena", "Sergio"]
 
 

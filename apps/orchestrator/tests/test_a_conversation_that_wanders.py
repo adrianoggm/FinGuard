@@ -502,7 +502,7 @@ def test_asking_who_regroups_the_same_window_rather_than_starting_over() -> None
     chat.say("¿cuánto he mandado por bizum el mes pasado?")
     who = chat.say("¿y a qué personas?")
 
-    assert ledger.plans[1].group_by is GroupBy.MERCHANT
+    assert ledger.plans[1].group_by is GroupBy.COUNTERPARTY
     assert [group["key"] for group in who["groups"]] == ["Elena", "Sergio"]
 
 

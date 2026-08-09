@@ -26,6 +26,7 @@ from finguard_orchestrator.domain.constants import (
     RECURRING_EXPENSE_CATEGORIES,
 )
 from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
@@ -42,8 +43,10 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
+    AccountAlias,
     ActiveWorkflow,
     Conversation,
+    CounterpartyAlias,
     FinancialClarification,
     PaymentInProgress,
     PlannedQuery,
@@ -68,6 +71,7 @@ from finguard_orchestrator.domain.services import (
     category_words,
     courtesy,
     cumulative_calculator,
+    entity_alias_words,
     explainer,
     explicit_facts,
     financial_relationships,
@@ -94,6 +98,16 @@ from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, 
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.observability import account_ref
+
+_COUNTERPARTY_LABELS: Final[dict[CounterpartyType, str]] = {
+    CounterpartyType.MERCHANT: "comercio",
+    CounterpartyType.PERSON: "persona",
+    CounterpartyType.EMPLOYER: "empresa pagadora",
+    CounterpartyType.BILLER: "emisor de recibos",
+    CounterpartyType.ACCOUNT: "cuenta contraparte",
+    CounterpartyType.BANK: "banco",
+    CounterpartyType.UNKNOWN: "contraparte",
+}
 
 # The default when a handler is built without one, which is every test that does not care. The
 # deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
@@ -270,6 +284,9 @@ class SpokenPlan:
     excluded_categories: list[str] = field(default_factory=list)
     merchants: list[str] = field(default_factory=list)
     excluded_merchants: list[str] = field(default_factory=list)
+    counterparties: list[str] = field(default_factory=list)
+    excluded_counterparties: list[str] = field(default_factory=list)
+    counterparty_types: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
     group_limit: int | None = None
@@ -535,6 +552,13 @@ class AskFinancialQuestionHandler:
         previous = was.last_plan
         planning_previous = previous if isinstance(previous, FinancialPlan) else None
         force_follow_up = False
+
+        learned_alias = await self._learn_counterparty_alias(query)
+        if learned_alias is None:
+            learned_alias = await self._learn_account_alias(query)
+        if learned_alias is not None:
+            yield learned_alias
+            return
 
         previous_request = _previous_plan_request(query.sentence, was)
         if previous_request is not None:
@@ -897,7 +921,8 @@ class AskFinancialQuestionHandler:
 
         if (
             isinstance(previous, FinancialPlan)
-            and previous.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}
+            and previous.group_by
+            in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
             and _NEXT_GROUP.fullmatch(_clean_turn(query.sentence))
         ):
             yield Stage("querying")
@@ -1321,6 +1346,150 @@ class AskFinancialQuestionHandler:
             ],
         )
 
+    async def _learn_account_alias(
+        self, query: AskFinancialQuestionQuery
+    ) -> AskFinancialQuestionResult | None:
+        definition = account_words.alias_definition_in(query.sentence)
+        if definition is None:
+            return None
+        alias, target = definition
+        entity_aliases = {
+            known.alias.casefold().strip() for known in query.conversation.counterparty_aliases
+        }
+        if alias.casefold().strip() in entity_aliases:
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    f"No puedo usar «{alias}» para esa cuenta porque ya identifica una "
+                    "contraparte. Elige otro nombre para no mezclar ambos filtros."
+                ),
+                conversation=query.conversation,
+            )
+        if account_words.named_in(alias):
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    f"No puedo redefinir «{alias}» porque ya es un nombre general de cuenta. "
+                    "Elige un alias más personal, como «viajes» o «recibos»."
+                ),
+                conversation=query.conversation,
+            )
+        try:
+            if self._account_directory is not None:
+                holdings = await self._account_directory.all_of(query.account_id)
+            else:
+                summary = await self._accounts.of(
+                    query.account_id,
+                    today=query.today,
+                    reporting_timezone=query.reporting_timezone,
+                )
+                holdings = summary.holdings
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No he podido comprobar esa cuenta, así que no he guardado el alias.",
+                conversation=query.conversation,
+            )
+
+        display_names = tuple(holding.display_name for holding in holdings if holding.display_name)
+        chosen = account_words.chosen_among(target, display_names)
+        wanted = [holding for holding in holdings if holding.display_name in chosen]
+        if not wanted:
+            kinds = account_words.named_in(target)
+            wanted = [holding for holding in holdings if holding.kind in kinds]
+        if len(wanted) != 1:
+            available = ", ".join(holding.display_name for holding in holdings)
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    f"No he podido asociar ese alias a una sola cuenta. "
+                    f"Tus cuentas son: {available}."
+                ),
+                conversation=query.conversation,
+            )
+        holding = wanted[0]
+        remembered = query.conversation.with_account_alias(
+            AccountAlias(
+                alias=alias,
+                account_id=holding.account_id,
+                display_name=holding.display_name,
+            )
+        )
+        return AskFinancialQuestionResult(
+            outcome=Spoken.GUIDANCE.value,
+            text=f"Entendido: cuando digas «{alias}», usaré {holding.display_name}.",
+            conversation=remembered,
+        )
+
+    async def _learn_counterparty_alias(
+        self, query: AskFinancialQuestionQuery
+    ) -> AskFinancialQuestionResult | None:
+        definition = entity_alias_words.alias_definition_in(query.sentence)
+        if definition is None:
+            return None
+        alias, target, counterparty_type = definition
+        account_aliases = {
+            known.alias.casefold().strip() for known in query.conversation.account_aliases
+        }
+        if alias.casefold().strip() in account_aliases or account_words.named_in(alias):
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    f"No puedo usar «{alias}» para esa contraparte porque ya identifica "
+                    "una cuenta. "
+                    "Elige otro nombre para evitar mezclar saldos y movimientos."
+                ),
+                conversation=query.conversation,
+            )
+
+        # Learning is grounded in the authenticated ledger. Storing arbitrary prose here would
+        # turn every future use into a valid-looking empty query and would let a PERSON drift back
+        # into the historical merchant field.
+        probe = FinancialPlan(
+            direction=Direction.ALL,
+            period=RelativePeriod(Period.LAST_N_MONTHS, 24),
+            counterparties=(target,),
+            counterparty_types=(counterparty_type,),
+            metric=Metric.COUNT,
+            include_internal=True,
+            across_accounts=True,
+        )
+        try:
+            found = await self._queries.run(
+                probe,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+                movements=0,
+            )
+        except (BankingUnavailableError, QueryRejectedError):
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No he podido comprobar esa contraparte, así que no he guardado el alias.",
+                conversation=query.conversation,
+            )
+        if found.movement_count < 1:
+            label = _COUNTERPARTY_LABELS[counterparty_type]
+            return AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=(
+                    f"No encuentro a {target} como {label} en tus movimientos recientes, "
+                    "así que no he guardado el alias."
+                ),
+                conversation=query.conversation,
+            )
+        remembered = query.conversation.with_counterparty_alias(
+            CounterpartyAlias(alias, target, counterparty_type)
+        )
+        return AskFinancialQuestionResult(
+            outcome=Spoken.GUIDANCE.value,
+            text=(
+                f"Entendido: cuando digas «{alias}», filtraré por {target} "
+                f"como {_COUNTERPARTY_LABELS[counterparty_type]}."
+            ),
+            conversation=remembered,
+        )
+
     async def _balance(
         self, query: AskFinancialQuestionQuery, was: Conversation
     ) -> AskFinancialQuestionResult:
@@ -1352,10 +1521,23 @@ class AskFinancialQuestionHandler:
         named = account_words.named_in(query.sentence)
         names = tuple(holding.display_name for holding in summary.holdings if holding.display_name)
         custom = account_words.custom_chosen_among(query.sentence, names)
+        alias_names = account_words.learned_aliases_in(
+            query.sentence,
+            tuple(alias.alias for alias in was.account_aliases),
+        )
+        alias_ids = {
+            alias.account_id for alias in was.account_aliases if alias.alias in alias_names
+        }
         selected = (
-            tuple(holding for holding in summary.holdings if holding.display_name in custom)
-            if custom
-            else (() if account_words.explicitly_names_a_custom_account(query.sentence) else None)
+            tuple(holding for holding in summary.holdings if holding.account_id in alias_ids)
+            if alias_ids
+            else (
+                tuple(holding for holding in summary.holdings if holding.display_name in custom)
+                if custom
+                else (
+                    () if account_words.explicitly_names_a_custom_account(query.sentence) else None
+                )
+            )
         )
 
         return AskFinancialQuestionResult(
@@ -1947,6 +2129,24 @@ class AskFinancialQuestionHandler:
                         merchant
                         for merchant in previous.excluded_merchants
                         if merchant.casefold() != key.casefold()
+                    ),
+                    transaction_ids=(),
+                    group_by=facts.group_by or GroupBy.NONE,
+                    metric=facts.metric or previous.metric,
+                ),
+                facts,
+            )
+        if dimension is GroupBy.COUNTERPARTY and (
+            _COUNTERPARTY_REFERENCE.search(folded) or _MERCHANT_REFERENCE.search(folded)
+        ):
+            return explicit_facts.enforce(
+                replace(
+                    previous,
+                    counterparties=(key,),
+                    excluded_counterparties=tuple(
+                        counterparty
+                        for counterparty in previous.excluded_counterparties
+                        if counterparty.casefold() != key.casefold()
                     ),
                     transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
@@ -2600,6 +2800,62 @@ class AskFinancialQuestionHandler:
         The holder's account directory is fetched only for an explicit custom-name form. Fixed
         kinds retain the existing summary path, while widening needs no list at all.
         """
+        entity_alias_names = entity_alias_words.learned_aliases_in(
+            query.sentence,
+            tuple(alias.alias for alias in query.conversation.counterparty_aliases),
+        )
+        entity_aliases = tuple(
+            alias
+            for alias in query.conversation.counterparty_aliases
+            if alias.alias in entity_alias_names
+        )
+        if entity_aliases:
+            plan = replace(
+                plan,
+                counterparties=tuple(
+                    dict.fromkeys(alias.counterparty_name for alias in entity_aliases)
+                ),
+                counterparty_types=tuple(
+                    dict.fromkeys(alias.counterparty_type for alias in entity_aliases)
+                ),
+            )
+
+        alias_names = account_words.learned_aliases_in(
+            query.sentence,
+            tuple(alias.alias for alias in query.conversation.account_aliases),
+        )
+        aliased = tuple(
+            alias for alias in query.conversation.account_aliases if alias.alias in alias_names
+        )
+        if aliased:
+            wanted_ids = tuple(dict.fromkeys(alias.account_id for alias in aliased))
+            try:
+                if self._account_directory is not None:
+                    holdings = await self._account_directory.all_of(query.account_id)
+                else:
+                    summary = await self._accounts.of(
+                        query.account_id,
+                        today=query.today,
+                        reporting_timezone=query.reporting_timezone,
+                    )
+                    holdings = summary.holdings
+            except BankingUnavailableError:
+                # Banking remains the final authority for the account id. Keeping the explicit
+                # scope is safer than silently widening an alias to every account.
+                holdings = ()
+            if holdings:
+                real_ids = {holding.account_id for holding in holdings}
+                if any(account_id not in real_ids for account_id in wanted_ids):
+                    raise AccountScopeNotFoundError(alias_names)
+            return replace(
+                plan,
+                group_by=GroupBy.NONE,
+                across_accounts=False,
+                only_account_id=wanted_ids[0] if len(wanted_ids) == 1 else None,
+                only_account_ids=wanted_ids if len(wanted_ids) > 1 else (),
+                include_internal=plan.include_internal or plan.direction is Direction.ALL,
+            )
+
         excluded = frozenset(account_words.excluded_in(query.sentence))
         named = tuple(
             kind for kind in account_words.named_in(query.sentence) if kind not in excluded
@@ -3055,6 +3311,11 @@ _MERCHANT_REFERENCE: Final = re.compile(
     r"\b(?:ese|este|aquel|el\s+mismo)\s+"
     r"(?:comercio|establecimiento|negocio|supermercado|sitio)\b"
     r"|\b(?:esa|esta|aquella|la\s+misma)\s+tienda\b"
+)
+_COUNTERPARTY_REFERENCE: Final = re.compile(
+    r"\b(?:esa|esta|aquella|la\s+misma)\s+"
+    r"(?:persona|empresa|contraparte|entidad)\b"
+    r"|\b(?:ese|este|aquel|el\s+mismo)\s+(?:emisor|empleador|banco|contacto)\b"
 )
 _ACCOUNT_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+cuenta\b")
 _MOVEMENT_SET_REFERENCE: Final = re.compile(
@@ -4068,7 +4329,8 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         )
 
     if (
-        facts.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}
+        facts.group_by
+        in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
         and len(folded.split()) <= 7
         and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
     ):
@@ -5111,6 +5373,9 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         excluded_categories=list(plan.excluded_categories),
         merchants=list(plan.merchants),
         excluded_merchants=list(plan.excluded_merchants),
+        counterparties=list(plan.counterparties),
+        excluded_counterparties=list(plan.excluded_counterparties),
+        counterparty_types=[item.value for item in plan.counterparty_types],
         group_by=plan.group_by.value,
         metric=plan.metric.value,
         group_limit=plan.group_limit,
@@ -5220,7 +5485,15 @@ def _answered(
     if len(plan.merchants) == 1:
         referenced_group_by = GroupBy.MERCHANT
         referenced_group_key = plan.merchants[0]
-    if plan.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}:
+    if len(plan.counterparties) == 1:
+        referenced_group_by = GroupBy.COUNTERPARTY
+        referenced_group_key = plan.counterparties[0]
+    if plan.group_by in {
+        GroupBy.CATEGORY,
+        GroupBy.MERCHANT,
+        GroupBy.COUNTERPARTY,
+        GroupBy.ACCOUNT,
+    }:
         highlighted_group = next(
             (group for group in answer.groups if group.movement_count > 0),
             None,

@@ -27,12 +27,17 @@ about a year. With `awaiting` on the state, "de este" becomes answerable — the
 the sentence is filling, so the reply no longer has to be a self-contained phrase.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from uuid import UUID
 
-from finguard_orchestrator.domain.constants import MAX_MERCHANT_LENGTH, MAX_SELECTED_TRANSACTIONS
-from finguard_orchestrator.domain.enums import GroupBy, Rail
+from finguard_orchestrator.domain.constants import (
+    MAX_ENTITY_ALIAS_LENGTH,
+    MAX_ENTITY_ALIASES,
+    MAX_MERCHANT_LENGTH,
+    MAX_SELECTED_TRANSACTIONS,
+)
+from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -52,6 +57,36 @@ type PlannedQuery = FinancialPlan | TopMovements
 # MAX_RANK was declared here as well as in `top_movements`, at 100 in both, with the DTO importing
 # this one and the value object enforcing the other. It lives in `domain/constants` now, with every
 # other limit the wire has to agree with banking about.
+
+
+@dataclass(frozen=True)
+class AccountAlias:
+    """A user-chosen phrase grounded to one real account identifier."""
+
+    alias: str
+    account_id: UUID
+    display_name: str
+
+    def __post_init__(self) -> None:
+        if not self.alias.strip() or len(self.alias) > MAX_ENTITY_ALIAS_LENGTH:
+            raise InvalidValueError("account alias has an invalid length")
+        if not self.display_name.strip() or len(self.display_name) > MAX_MERCHANT_LENGTH:
+            raise InvalidValueError("aliased account name has an invalid length")
+
+
+@dataclass(frozen=True)
+class CounterpartyAlias:
+    """A user phrase grounded to a real, typed other side of a ledger movement."""
+
+    alias: str
+    counterparty_name: str
+    counterparty_type: CounterpartyType
+
+    def __post_init__(self) -> None:
+        if not self.alias.strip() or len(self.alias) > MAX_ENTITY_ALIAS_LENGTH:
+            raise InvalidValueError("counterparty alias has an invalid length")
+        if not self.counterparty_name.strip() or len(self.counterparty_name) > MAX_MERCHANT_LENGTH:
+            raise InvalidValueError("aliased counterparty name has an invalid length")
 
 
 class Workflow(StrEnum):
@@ -242,6 +277,10 @@ class Conversation:
     # backwards-compatible single-query follow-ups; this field prevents later comparison turns
     # from having to infer whether those two happen to form a compatible pair.
     last_comparison: ComparisonPlan | None = None
+    # User-defined names are memory, not a workflow. They survive every turn and are re-grounded
+    # against the authenticated holder's account directory whenever they are used.
+    account_aliases: tuple[AccountAlias, ...] = ()
+    counterparty_aliases: tuple[CounterpartyAlias, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.referenced_group_by is None) != (self.referenced_group_key is None):
@@ -250,9 +289,12 @@ class Conversation:
             None,
             GroupBy.CATEGORY,
             GroupBy.MERCHANT,
+            GroupBy.COUNTERPARTY,
             GroupBy.ACCOUNT,
         }:
-            raise InvalidValueError("only category, merchant and account rows can be referenced")
+            raise InvalidValueError(
+                "only category, merchant, counterparty and account rows can be referenced"
+            )
         if self.referenced_group_key is not None:
             if not self.referenced_group_key.strip():
                 raise InvalidValueError("a referenced group key cannot be blank")
@@ -262,6 +304,34 @@ class Conversation:
             raise InvalidValueError("referenced transaction ids must be unique")
         if len(self.referenced_transaction_ids) > MAX_SELECTED_TRANSACTIONS:
             raise InvalidValueError("too many referenced transaction ids")
+        folded_aliases = tuple(alias.alias.casefold().strip() for alias in self.account_aliases)
+        if len(self.account_aliases) > MAX_ENTITY_ALIASES:
+            raise InvalidValueError("too many account aliases")
+        if len(set(folded_aliases)) != len(folded_aliases):
+            raise InvalidValueError("account aliases must be unique")
+        folded_counterparties = tuple(
+            alias.alias.casefold().strip() for alias in self.counterparty_aliases
+        )
+        if len(self.counterparty_aliases) > MAX_ENTITY_ALIASES:
+            raise InvalidValueError("too many counterparty aliases")
+        if len(set(folded_counterparties)) != len(folded_counterparties):
+            raise InvalidValueError("counterparty aliases must be unique")
+
+    def with_account_alias(self, alias: AccountAlias) -> "Conversation":
+        """Learn or replace one alias without disturbing the active conversation."""
+        key = alias.alias.casefold().strip()
+        kept = tuple(
+            known for known in self.account_aliases if known.alias.casefold().strip() != key
+        )
+        return replace(self, account_aliases=(*kept, alias)[-MAX_ENTITY_ALIASES:])
+
+    def with_counterparty_alias(self, alias: CounterpartyAlias) -> "Conversation":
+        """Learn or replace a typed entity alias without disturbing the active workflow."""
+        key = alias.alias.casefold().strip()
+        kept = tuple(
+            known for known in self.counterparty_aliases if known.alias.casefold().strip() != key
+        )
+        return replace(self, counterparty_aliases=(*kept, alias)[-MAX_ENTITY_ALIASES:])
 
     @property
     def awaiting(self) -> Slot | None:
@@ -318,6 +388,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def asking(self, slot: Slot) -> "Conversation":
@@ -335,6 +407,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def refused(self, capability: str) -> "Conversation":
@@ -364,6 +438,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def answering_the_balance(self) -> "Conversation":
@@ -386,6 +462,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
@@ -403,6 +481,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def without_retry(self) -> "Conversation":
@@ -419,6 +499,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def answered(
@@ -450,6 +532,8 @@ class Conversation:
             referenced_group_by=referenced_group_by,
             referenced_group_key=referenced_group_key,
             referenced_transaction_ids=referenced_transaction_ids,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def with_references(
@@ -478,6 +562,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
@@ -496,6 +582,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=draft,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def answered_comparison(
@@ -513,6 +601,8 @@ class Conversation:
             prior_plan=plan.earlier,
             referenced_category=referenced_category,
             last_comparison=plan,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def answered_ratio(self, plan: RatioPlan) -> "Conversation":
@@ -530,6 +620,8 @@ class Conversation:
                 plan.part.categories[0] if len(plan.part.categories) == 1 else None
             ),
             last_ratio=plan,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def without_pending_ratio(self) -> "Conversation":
@@ -546,6 +638,8 @@ class Conversation:
             answered_the_balance=self.answered_the_balance,
             last_ratio=self.last_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
     def suspend(self) -> "Conversation":
@@ -570,6 +664,8 @@ class Conversation:
                 last_ratio=self.last_ratio,
                 pending_ratio=self.pending_ratio,
                 last_comparison=self.last_comparison,
+                account_aliases=self.account_aliases,
+                counterparty_aliases=self.counterparty_aliases,
             )
         return Conversation(
             active=PaymentInProgress(
@@ -593,6 +689,8 @@ class Conversation:
             last_ratio=self.last_ratio,
             pending_ratio=self.pending_ratio,
             last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
         )
 
 
@@ -627,6 +725,8 @@ IDLE = Conversation()
 
 __all__ = [
     "IDLE",
+    "AccountAlias",
+    "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",
     "FinancialClarification",

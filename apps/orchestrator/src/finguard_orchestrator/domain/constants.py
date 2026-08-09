@@ -91,6 +91,8 @@ MAX_RANK = 100
 # A spoken ranking of grouped results. Banking returns at least this many groups in metric order;
 # keeping the conversational ceiling small prevents a "top 200" request from becoming a list dump.
 MAX_GROUP_RANK = 10
+MAX_ENTITY_ALIASES = 12
+MAX_ENTITY_ALIAS_LENGTH = 48
 
 # --- what a payment may say -------------------------------------------------------------
 

@@ -121,6 +121,9 @@ export type PlanContext = {
   excluded_categories?: string[];
   merchants: string[];
   excluded_merchants?: string[];
+  counterparties?: string[];
+  excluded_counterparties?: string[];
+  counterparty_types?: ("MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN")[];
   group_by: string;
   metric: string;
   group_limit?: number | null;
@@ -203,9 +206,17 @@ export type ConversationState = {
   referenced_category?: string | null;
   // Typed result row and exact movement evidence shown by the previous answer. The UI only
   // round-trips these; the orchestrator alone decides what a later pronoun means.
-  referenced_group_by?: "CATEGORY" | "MERCHANT" | "ACCOUNT" | null;
+  referenced_group_by?: "CATEGORY" | "MERCHANT" | "COUNTERPARTY" | "ACCOUNT" | null;
   referenced_group_key?: string | null;
   referenced_transaction_ids?: string[];
+  // User-taught account names. Opaque conversational memory: the server revalidates each account
+  // identifier against the authenticated holder before applying it.
+  account_aliases?: { alias: string; account_id: string; display_name: string }[];
+  counterparty_aliases?: {
+    alias: string;
+    counterparty_name: string;
+    counterparty_type: "MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN";
+  }[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
