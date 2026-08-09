@@ -95,6 +95,21 @@ _OTHER_ACCOUNTS: Final = re.compile(
     r"\b(?:las?|los?)\s+(?:otras?|demas)\s+cuentas?\b"
     r"|\bcuentas?\s+(?:restantes?|que\s+faltan)\b"
 )
+_ALIAS_DEFINITION: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(
+        r"\bcuando\s+diga\s+(?P<alias>[a-z0-9][a-z0-9 -]{0,47}?)\s*,?\s*"
+        r"(?:me\s+refiero\s+a|quiero\s+decir)\s+(?P<target>[a-z0-9][a-z0-9 -]{0,80})$"
+    ),
+    re.compile(
+        r"\b(?:llama|quiero\s+llamar)\s+(?P<alias>[a-z0-9][a-z0-9 -]{0,47}?)\s+"
+        r"a\s+(?P<target>[a-z0-9][a-z0-9 -]{0,80})$"
+    ),
+)
+_ALIAS_NOISE: Final = re.compile(r"^(?:(?:la|el|mi)\s+)?(?:cuenta\s+)?")
+_TARGET_NOISE: Final = re.compile(r"^(?:(?:la|el|mi)\s+)?")
+_UNSAFE_ALIAS: Final = re.compile(
+    r"\b(?:cuanto|saldo|gasto|ingreso|movimiento|bizum|transferencia|pago|cancelar|confirma)\b"
+)
 
 
 def _pattern(word: str) -> str:
@@ -298,3 +313,30 @@ def looks_like_account_choice(sentence: str) -> bool:
     """
     folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
     return bool(folded) and len(folded.split()) <= 6 and _NOT_A_CHOICE.search(folded) is None
+
+
+def alias_definition_in(sentence: str) -> tuple[str, str] | None:
+    """A deliberately explicit request to teach one account name."""
+    folded = spanish.folded(sentence).strip(" ¿?¡!.,;:'\"")
+    for pattern in _ALIAS_DEFINITION:
+        found = pattern.search(folded)
+        if found is None:
+            continue
+        alias = _ALIAS_NOISE.sub("", found.group("alias")).strip(" -'\"")
+        target = _TARGET_NOISE.sub("", found.group("target")).strip(" -'\"")
+        if not alias or not target or len(alias.split()) > 5 or _UNSAFE_ALIAS.search(alias):
+            return None
+        return alias, target
+    return None
+
+
+def learned_aliases_in(sentence: str, aliases: tuple[str, ...]) -> tuple[str, ...]:
+    """User-defined account phrases present in this sentence, longest first."""
+    folded = spanish.folded(sentence)
+    found: list[tuple[int, str]] = []
+    for alias in sorted(aliases, key=len, reverse=True):
+        key = spanish.folded(alias)
+        match = re.search(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])", folded)
+        if match is not None:
+            found.append((match.start(), alias))
+    return tuple(alias for _, alias in sorted(found))

@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORY_LENGTH,
+    MAX_ENTITY_ALIAS_LENGTH,
+    MAX_ENTITY_ALIASES,
     MAX_GROUP_RANK,
     MAX_MERCHANT_LENGTH,
     MAX_PAYMENT_MINOR,
@@ -177,6 +179,18 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
 }
 
 
+class AccountAliasPayload(_Payload):
+    alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
+    account_id: UUID
+    display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+
+
+class CounterpartyAliasPayload(_Payload):
+    alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
+    counterparty_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+    counterparty_type: CounterpartyType
+
+
 class ConversationPayload(_Payload):
     """Where the conversation is, in one object.
 
@@ -224,6 +238,10 @@ class ConversationPayload(_Payload):
     # Exact evidence rows shown by the preceding answer. UUIDs are harmless selectors: banking
     # still scopes every query to the authenticated holder.
     referenced_transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
+    account_aliases: list["AccountAliasPayload"] = Field(default=[], max_length=MAX_ENTITY_ALIASES)
+    counterparty_aliases: list["CounterpartyAliasPayload"] = Field(
+        default=[], max_length=MAX_ENTITY_ALIASES
+    )
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None

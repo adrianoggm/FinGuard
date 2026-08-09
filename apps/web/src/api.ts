@@ -209,6 +209,14 @@ export type ConversationState = {
   referenced_group_by?: "CATEGORY" | "MERCHANT" | "COUNTERPARTY" | "ACCOUNT" | null;
   referenced_group_key?: string | null;
   referenced_transaction_ids?: string[];
+  // User-taught account names. Opaque conversational memory: the server revalidates each account
+  // identifier against the authenticated holder before applying it.
+  account_aliases?: { alias: string; account_id: string; display_name: string }[];
+  counterparty_aliases?: {
+    alias: string;
+    counterparty_name: string;
+    counterparty_type: "MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN";
+  }[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;

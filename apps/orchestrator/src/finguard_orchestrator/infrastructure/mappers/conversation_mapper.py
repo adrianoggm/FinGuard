@@ -15,8 +15,10 @@ from typing import Any
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
+    AccountAlias,
     ActiveWorkflow,
     Conversation,
+    CounterpartyAlias,
     FinancialClarification,
     PaymentConfirmation,
     PaymentInProgress,
@@ -154,6 +156,8 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             last_ratio=_ratio_plan(payload) if payload else None,
             pending_ratio=_ratio_draft(payload) if payload else None,
             last_comparison=_comparison_plan(payload) if payload else None,
+            account_aliases=_account_aliases(payload) if payload else (),
+            counterparty_aliases=_counterparty_aliases(payload) if payload else (),
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -178,6 +182,21 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_ratio=_ratio_plan(payload),
         pending_ratio=_ratio_draft(payload),
         last_comparison=_comparison_plan(payload),
+        account_aliases=_account_aliases(payload),
+        counterparty_aliases=_counterparty_aliases(payload),
+    )
+
+
+def _account_aliases(payload: ConversationPayload) -> tuple[AccountAlias, ...]:
+    return tuple(
+        AccountAlias(row.alias, row.account_id, row.display_name) for row in payload.account_aliases
+    )
+
+
+def _counterparty_aliases(payload: ConversationPayload) -> tuple[CounterpartyAlias, ...]:
+    return tuple(
+        CounterpartyAlias(row.alias, row.counterparty_name, row.counterparty_type)
+        for row in payload.counterparty_aliases
     )
 
 
@@ -265,6 +284,22 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "referenced_group_by": conversation.referenced_group_by,
             "referenced_group_key": conversation.referenced_group_key,
             "referenced_transaction_ids": list(conversation.referenced_transaction_ids),
+            "account_aliases": [
+                {
+                    "alias": alias.alias,
+                    "account_id": alias.account_id,
+                    "display_name": alias.display_name,
+                }
+                for alias in conversation.account_aliases
+            ],
+            "counterparty_aliases": [
+                {
+                    "alias": alias.alias,
+                    "counterparty_name": alias.counterparty_name,
+                    "counterparty_type": alias.counterparty_type,
+                }
+                for alias in conversation.counterparty_aliases
+            ],
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
                 plan_payload(conversation.prior_plan) if conversation.prior_plan else None
