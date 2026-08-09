@@ -160,6 +160,10 @@ def _movement_to_dto(movement: SummaryMovement) -> MovementResponse:
         category_is_custom=movement.category_is_custom,
         category_source=movement.category_source,
         is_internal=movement.is_internal,
+        transaction_type=movement.transaction_type,
+        counterparty_name=movement.counterparty_name,
+        counterparty_type=movement.counterparty_type,
+        receipt_category=movement.receipt_category,
         amount_minor=movement.amount_minor,
         direction=movement.direction,
     )

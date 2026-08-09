@@ -13,6 +13,11 @@ from finguard_banking.application.queries.movement_summary import (
 )
 from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
+from finguard_banking.domain.enums import (
+    CounterpartyType,
+    ReceiptCategory,
+    TransactionType,
+)
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.financial_query_result import (
@@ -48,6 +53,10 @@ RESULT = FinancialQueryResult(
             category="TRANSPORT_FUEL",
             amount=Money(3_420, "EUR"),
             direction="EXPENSE",
+            transaction_type=TransactionType.DIRECT_DEBIT,
+            counterparty_name="Repsol",
+            counterparty_type=CounterpartyType.BILLER,
+            receipt_category=ReceiptCategory.OTHER,
         )
     ],
 )
@@ -108,6 +117,10 @@ def test_it_answers_with_the_contract_names() -> None:
                 # caller sees, which is the same answer it saw before these existed.
                 "categorySource": "NONE",
                 "isInternal": False,
+                "transactionType": "DIRECT_DEBIT",
+                "counterpartyName": "Repsol",
+                "counterpartyType": "BILLER",
+                "receiptCategory": "OTHER",
                 "amountMinor": 3_420,
                 "direction": "EXPENSE",
             }

@@ -25,7 +25,17 @@ from finguard_banking.domain.constants import (
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
 )
-from finguard_banking.domain.enums import AccountKind, Direction, GroupBy, Metric, Period, Rail
+from finguard_banking.domain.enums import (
+    AccountKind,
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    Rail,
+    ReceiptCategory,
+    TransactionType,
+)
 
 
 class _Payload(BaseModel):
@@ -156,6 +166,10 @@ class MovementResponse(_Payload):
     # inside the household. Both are facts a screen needs to label a figure honestly.
     category_source: str = "NONE"
     is_internal: bool = False
+    transaction_type: TransactionType | None = None
+    counterparty_name: str | None = None
+    counterparty_type: CounterpartyType = CounterpartyType.UNKNOWN
+    receipt_category: ReceiptCategory | None = None
     amount_minor: int
     direction: str
 

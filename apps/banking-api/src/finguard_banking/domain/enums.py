@@ -66,6 +66,30 @@ class TransactionType(StrEnum):
     INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
 
 
+class CounterpartyType(StrEnum):
+    """What role the other side plays, derived from the ledger transaction type."""
+
+    MERCHANT = "MERCHANT"
+    PERSON = "PERSON"
+    EMPLOYER = "EMPLOYER"
+    BILLER = "BILLER"
+    ACCOUNT = "ACCOUNT"
+    BANK = "BANK"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReceiptCategory(StrEnum):
+    """A direct debit's purpose when the ledger category supports that claim."""
+
+    RENT = "RENT"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    UTILITIES = "UTILITIES"
+    INSURANCE = "INSURANCE"
+    LOAN = "LOAN"
+    TAX = "TAX"
+    OTHER = "OTHER"
+
+
 class Metric(StrEnum):
     """What is being asked for.
 
