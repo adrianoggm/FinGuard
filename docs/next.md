@@ -1,5 +1,10 @@
 # What comes next, and why in this order
 
+> **Actualización (2026-08):** el roadmap funcional y su matriz de verdad están en
+> [conversational-capabilities.md](conversational-capabilities.md). Este documento conserva el
+> orden histórico de endurecimiento de las fases 3 y 4; no debe utilizarse como lista actual de
+> capacidades conversacionales pendientes.
+
 Phase 3 is implemented and measured, and **not signed off**: two known risks let it
 answer confidently and wrongly, so `/v1/questions` ships disabled by default. This is the
 ordered list of what is still open, written down so the order survives the conversation
