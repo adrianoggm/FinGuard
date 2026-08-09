@@ -201,15 +201,22 @@ export type ConversationState = {
   answered_the_balance: boolean;
   // Category explicitly highlighted by the previous answer; echoed without interpretation.
   referenced_category?: string | null;
+  // Typed result row and exact movement evidence shown by the previous answer. The UI only
+  // round-trips these; the orchestrator alone decides what a later pronoun means.
+  referenced_group_by?: "CATEGORY" | "MERCHANT" | "ACCOUNT" | null;
+  referenced_group_key?: string | null;
+  referenced_transaction_ids?: string[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
-  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | null;
+  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
   last_ratio_part?: PlanContext | null;
   last_ratio_whole?: PlanContext | null;
-  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | null;
+  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
   pending_ratio_part?: PlanContext | null;
   pending_ratio_whole?: PlanContext | null;
+  last_comparison_earlier?: PlanContext | null;
+  last_comparison_latest?: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
   payment: PaymentDraft | null;

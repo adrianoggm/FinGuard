@@ -15,7 +15,14 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, Rail
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    Rail,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -27,6 +34,7 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     Workflow,
 )
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -73,12 +81,64 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     assert back.last_plan == LAST_MONTH
 
 
+def test_a_direct_debit_scope_survives_the_client_round_trip() -> None:
+    receipts = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        metric=Metric.RECURRENCE,
+        transaction_types=(TransactionType.DIRECT_DEBIT,),
+    )
+
+    assert there_and_back(IDLE.answered(receipts)).last_plan == receipts
+
+
+def test_a_group_ranking_limit_survives_the_client_round_trip() -> None:
+    ranking = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.AVERAGE,
+        group_limit=3,
+    )
+
+    assert there_and_back(IDLE.answered(ranking)).last_plan == ranking
+
+
 def test_a_highlighted_category_survives_the_client_round_trip() -> None:
     out = IDLE.answered(LAST_MONTH, referenced_category="GROCERIES")
 
     back = there_and_back(out)
 
     assert back.referenced_category == "GROCERIES"
+
+
+def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
+    evidence = (uuid.UUID(int=21), uuid.UUID(int=22))
+    out = IDLE.answered(
+        LAST_MONTH,
+        referenced_group_by=GroupBy.MERCHANT,
+        referenced_group_key="Mercadona",
+        referenced_transaction_ids=evidence,
+    )
+
+    back = there_and_back(out)
+
+    assert back.referenced_group_by is GroupBy.MERCHANT
+    assert back.referenced_group_key == "Mercadona"
+    assert back.referenced_transaction_ids == evidence
+
+
+def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate({"referenced_group_by": "MERCHANT"})
+
+
+def test_duplicate_referenced_movements_are_not_valid_conversation_state() -> None:
+    movement_id = str(uuid.UUID(int=21))
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(
+            {"referenced_transaction_ids": [movement_id, movement_id]}
+        )
 
 
 def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
@@ -94,6 +154,45 @@ def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
 
     assert back.last_plan == latest
     assert back.prior_plan == earlier
+
+
+def test_an_answered_comparison_survives_as_one_validated_pair() -> None:
+    earlier = LAST_MONTH
+    latest = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.COUNT,
+    )
+    comparison = ComparisonPlan.between(earlier, latest)
+    assert comparison is not None
+
+    back = there_and_back(IDLE.answered_comparison(comparison))
+
+    assert back.last_comparison == comparison
+    assert back.prior_plan == comparison.earlier
+    assert back.last_plan == comparison.latest
+
+
+@pytest.mark.parametrize("missing", ["earlier", "latest"])
+def test_a_partial_comparison_is_not_valid_conversation_state(missing: str) -> None:
+    fields: dict[str, object] = {
+        "last_comparison_earlier": mapper.plan_payload(LAST_MONTH),
+        "last_comparison_latest": mapper.plan_payload(
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.THIS_MONTH),
+                categories=("GROCERIES",),
+                group_by=GroupBy.CATEGORY,
+                metric=Metric.COUNT,
+            )
+        ),
+    }
+    fields[f"last_comparison_{missing}"] = None
+
+    with pytest.raises(ValidationError, match="both ordered operands"):
+        ConversationPayload(**fields)
 
 
 def test_an_answered_percentage_survives_with_both_operands() -> None:

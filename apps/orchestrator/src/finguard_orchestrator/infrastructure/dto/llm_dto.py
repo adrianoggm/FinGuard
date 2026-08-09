@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORY_LENGTH,
     MAX_GROUP_RANK,
+    MAX_MERCHANT_LENGTH,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
     MAX_RANK,
@@ -210,6 +211,15 @@ class ConversationPayload(_Payload):
     referenced_category: str | None = Field(
         default=None, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$"
     )
+    # A typed row reference emitted by a category, merchant or account breakdown. The key is bank
+    # data, never free prose inferred by the client, and both halves are validated as one value.
+    referenced_group_by: GroupBy | None = None
+    referenced_group_key: str | None = Field(
+        default=None, min_length=1, max_length=MAX_MERCHANT_LENGTH
+    )
+    # Exact evidence rows shown by the preceding answer. UUIDs are harmless selectors: banking
+    # still scopes every query to the authenticated holder.
+    referenced_transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
@@ -217,7 +227,7 @@ class ConversationPayload(_Payload):
     # The validated query banking could not execute. Kept separately from `last_plan`: a failed
     # read is retryable context, not an answer a later "y este mes" should inherit from.
     retry_plan: PlanPayload | None = None
-    # A proportion relates two plans. These triples are memory rather than an active workflow and
+    # A derived relationship connects two plans. These triples are memory, not an active workflow,
     # are all-or-nothing: one missing operand is not a calculation this service emitted.
     last_ratio_kind: RatioKind | None = None
     last_ratio_part: PlanPayload | None = None
@@ -225,6 +235,10 @@ class ConversationPayload(_Payload):
     pending_ratio_kind: RatioKind | None = None
     pending_ratio_part: PlanPayload | None = None
     pending_ratio_whole: PlanPayload | None = None
+    # A comparison has two ordered operands and no independently selectable metric: both plans
+    # carry the same one. The pair is all-or-nothing for the same reason as ratio memory.
+    last_comparison_earlier: PlanPayload | None = None
+    last_comparison_latest: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
     # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
@@ -323,6 +337,25 @@ class ConversationPayload(_Payload):
                 value is None for value in values
             ):
                 raise ValueError(f"{prefix} needs its kind and both operands")
+        comparison = (self.last_comparison_earlier, self.last_comparison_latest)
+        if any(value is not None for value in comparison) and any(
+            value is None for value in comparison
+        ):
+            raise ValueError("last_comparison needs both ordered operands")
+        group_reference = (self.referenced_group_by, self.referenced_group_key)
+        if any(value is not None for value in group_reference) and any(
+            value is None for value in group_reference
+        ):
+            raise ValueError("a referenced group needs both its dimension and key")
+        if self.referenced_group_by not in {
+            None,
+            GroupBy.CATEGORY,
+            GroupBy.MERCHANT,
+            GroupBy.ACCOUNT,
+        }:
+            raise ValueError("only category, merchant and account rows can be referenced")
+        if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
+            raise ValueError("referenced transaction ids must be unique")
         return self
 
 

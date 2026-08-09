@@ -12,7 +12,7 @@ layers in with an apology.
 
 from typing import Any
 
-from finguard_orchestrator.domain.enums import Action, Rail
+from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     ActiveWorkflow,
@@ -26,6 +26,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Workflow,
     workflow_of,
 )
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -134,8 +135,22 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             last_asked=payload.last_asked if payload else None,
             answered_the_balance=bool(payload and payload.answered_the_balance),
             referenced_category=payload.referenced_category if payload else None,
+            referenced_group_by=(
+                payload.referenced_group_by
+                if payload and payload.referenced_group_by is not None
+                else (GroupBy.CATEGORY if payload and payload.referenced_category else None)
+            ),
+            referenced_group_key=(
+                payload.referenced_group_key
+                if payload and payload.referenced_group_key is not None
+                else (payload.referenced_category if payload else None)
+            ),
+            referenced_transaction_ids=(
+                tuple(payload.referenced_transaction_ids) if payload else ()
+            ),
             last_ratio=_ratio_plan(payload) if payload else None,
             pending_ratio=_ratio_draft(payload) if payload else None,
+            last_comparison=_comparison_plan(payload) if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -150,8 +165,16 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
         referenced_category=payload.referenced_category,
+        referenced_group_by=(
+            payload.referenced_group_by
+            if payload.referenced_group_by is not None
+            else (GroupBy.CATEGORY if payload.referenced_category else None)
+        ),
+        referenced_group_key=payload.referenced_group_key or payload.referenced_category,
+        referenced_transaction_ids=tuple(payload.referenced_transaction_ids),
         last_ratio=_ratio_plan(payload),
         pending_ratio=_ratio_draft(payload),
+        last_comparison=_comparison_plan(payload),
     )
 
 
@@ -236,6 +259,9 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
             "referenced_category": conversation.referenced_category,
+            "referenced_group_by": conversation.referenced_group_by,
+            "referenced_group_key": conversation.referenced_group_key,
+            "referenced_transaction_ids": list(conversation.referenced_transaction_ids),
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
                 plan_payload(conversation.prior_plan) if conversation.prior_plan else None
@@ -263,6 +289,16 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 if conversation.pending_ratio
                 else None
             ),
+            "last_comparison_earlier": (
+                plan_payload(conversation.last_comparison.earlier)
+                if conversation.last_comparison
+                else None
+            ),
+            "last_comparison_latest": (
+                plan_payload(conversation.last_comparison.latest)
+                if conversation.last_comparison
+                else None
+            ),
             **_active_payload(conversation.active),
         }
     )
@@ -277,6 +313,17 @@ def _ratio_plan(payload: ConversationPayload) -> RatioPlan | None:
     if not isinstance(part, FinancialPlan) or not isinstance(whole, FinancialPlan):
         raise ValueError("ratio operands must be aggregate plans")
     return RatioPlan(part=part, whole=whole, kind=payload.last_ratio_kind)
+
+
+def _comparison_plan(payload: ConversationPayload) -> ComparisonPlan | None:
+    if payload.last_comparison_earlier is None:
+        return None
+    assert payload.last_comparison_latest is not None
+    earlier = query_to_domain(payload.last_comparison_earlier)
+    latest = query_to_domain(payload.last_comparison_latest)
+    if not isinstance(earlier, FinancialPlan) or not isinstance(latest, FinancialPlan):
+        raise ValueError("comparison operands must be aggregate plans")
+    return ComparisonPlan(earlier=earlier, latest=latest)
 
 
 def _ratio_draft(payload: ConversationPayload) -> RatioDraft | None:
