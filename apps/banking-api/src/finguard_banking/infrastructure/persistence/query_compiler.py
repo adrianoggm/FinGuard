@@ -22,6 +22,7 @@ VIEW = "assistant_read.transactions_v1"
 
 # The ceiling from the domain is the default; a deployment may only narrow it.
 DEFAULT_GROUP_LIMIT = MAX_GROUPS
+UNKNOWN_COUNTERPARTY = "UNKNOWN_COUNTERPARTY"
 
 
 @dataclass(frozen=True)
@@ -59,8 +60,29 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
             return f"COALESCE(t.category, '{UNCATEGORISED}')"
         case GroupBy.MERCHANT:
             return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
+        case GroupBy.COUNTERPARTY:
+            return f"COALESCE({_counterparty_name_expression()}, '{UNKNOWN_COUNTERPARTY}')"
         case GroupBy.ACCOUNT:
             return "COALESCE(a.display_name, t.account_id::text)"
+
+
+def _counterparty_name_expression() -> str:
+    """The same transparent fallback used by the result mapper, expressed in SQL."""
+    return "COALESCE(NULLIF(BTRIM(t.merchant_name), ''), NULLIF(BTRIM(t.description), ''))"
+
+
+def _counterparty_type_expression() -> str:
+    """Classify from the ledger-native transaction type, never from a person's name."""
+    return """CASE t.transaction_type
+        WHEN 'CARD_PAYMENT' THEN 'MERCHANT'
+        WHEN 'BIZUM' THEN 'PERSON'
+        WHEN 'SALARY' THEN 'EMPLOYER'
+        WHEN 'DIRECT_DEBIT' THEN 'BILLER'
+        WHEN 'TRANSFER' THEN 'ACCOUNT'
+        WHEN 'INTERNAL_TRANSFER' THEN 'ACCOUNT'
+        WHEN 'ACCOUNT_OPENING' THEN 'BANK'
+        ELSE 'UNKNOWN'
+    END"""
 
 
 def _group_ordering(group_by: GroupBy, metric: Metric, direction: Direction) -> str:
@@ -162,6 +184,19 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         conditions.append(
             f"(t.merchant_name IS NULL OR NOT (lower(t.merchant_name) = ANY({names})))"
         )
+
+    if query.counterparties:
+        names = parameters.bind([value.strip().lower() for value in query.counterparties])
+        conditions.append(f"lower({_counterparty_name_expression()}) = ANY({names})")
+
+    if query.excluded_counterparties:
+        names = parameters.bind([value.strip().lower() for value in query.excluded_counterparties])
+        expression = _counterparty_name_expression()
+        conditions.append(f"({expression} IS NULL OR NOT (lower({expression}) = ANY({names})))")
+
+    if query.counterparty_types:
+        types = parameters.bind([item.value for item in query.counterparty_types])
+        conditions.append(f"({_counterparty_type_expression()}) = ANY({types})")
 
     return conditions
 

@@ -20,7 +20,13 @@ from finguard_banking.domain.constants import (
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
 )
-from finguard_banking.domain.enums import Direction, GroupBy, Metric, TransactionType
+from finguard_banking.domain.enums import (
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Metric,
+    TransactionType,
+)
 from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
@@ -41,6 +47,11 @@ class FinancialQuery:
     # bounded and checked here, and it reaches SQL only as a bound parameter.
     merchants: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
+    # The other side of any ledger movement. Unlike ``merchants``, this also represents people,
+    # employers, billers and accounts, and can therefore be narrowed by its ledger-native type.
+    counterparties: tuple[str, ...] = field(default_factory=tuple)
+    excluded_counterparties: tuple[str, ...] = field(default_factory=tuple)
+    counterparty_types: tuple[CounterpartyType, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     # How many movements to return as evidence for the figure.
     supporting_limit: int = DEFAULT_SUPPORTING_MOVEMENTS
@@ -142,6 +153,24 @@ class FinancialQuery:
         excluded_merchants = {merchant.strip().casefold() for merchant in self.excluded_merchants}
         if included_merchants & excluded_merchants:
             raise InvalidValueError("a merchant cannot be both included and excluded")
+        if (
+            len(self.counterparties) > MAX_MERCHANTS
+            or len(self.excluded_counterparties) > MAX_MERCHANTS
+        ):
+            raise InvalidValueError(f"at most {MAX_MERCHANTS} counterparties per filter")
+        for counterparty in (*self.counterparties, *self.excluded_counterparties):
+            if not counterparty.strip():
+                raise InvalidValueError("a counterparty name cannot be empty")
+            if len(counterparty) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError("counterparty name is too long")
+        included_counterparties = {value.strip().casefold() for value in self.counterparties}
+        excluded_counterparties = {
+            value.strip().casefold() for value in self.excluded_counterparties
+        }
+        if included_counterparties & excluded_counterparties:
+            raise InvalidValueError("a counterparty cannot be both included and excluded")
+        if len(set(self.counterparty_types)) != len(self.counterparty_types):
+            raise InvalidValueError("counterpartyTypes cannot contain duplicates")
 
     def category_values(self) -> list[str]:
         """The plain strings, for the one place that needs them: a SQL parameter."""
