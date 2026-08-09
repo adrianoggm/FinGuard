@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from finguard_banking.domain.enums import Direction, GroupBy, Metric
+from finguard_banking.domain.enums import Direction, GroupBy, Metric, TransactionType
 from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.value_objects.category import Category
@@ -47,6 +47,7 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
     object.__setattr__(plan, "excluded_merchants", ())
     object.__setattr__(plan, "only_account_ids", ())
     object.__setattr__(plan, "transaction_ids", ())
+    object.__setattr__(plan, "transaction_types", ())
     object.__setattr__(plan, "supporting_limit", 20)
     object.__setattr__(plan, "explain", False)
 
@@ -197,6 +198,17 @@ def test_an_exact_movement_selection_is_bound_and_stays_holder_scoped() -> None:
     assert str(second) not in compiled.sql
 
 
+def test_transaction_types_are_bound_instead_of_interpolated() -> None:
+    compiled = compile_movements(
+        query(transaction_types=(TransactionType.DIRECT_DEBIT,)), "Europe/Madrid"
+    )
+
+    assert "t.transaction_type = ANY($" in compiled.sql
+    assert ["DIRECT_DEBIT"] in compiled.parameters
+    assert "'DIRECT_DEBIT'" not in compiled.sql
+    assert "t.transaction_type" in compiled.sql
+
+
 def test_negative_filters_are_bound_and_keep_uncategorised_rows() -> None:
     compiled = compile_aggregate(
         query(
@@ -224,3 +236,20 @@ def test_a_breakdown_over_time_stays_chronological(group_by: GroupBy) -> None:
 
     assert "ORDER BY key" in compiled.sql
     assert "DESC" not in compiled.sql.split("ORDER BY key")[1]
+
+
+def test_cumulative_buckets_are_exact_sums_in_chronological_order() -> None:
+    compiled = compile_aggregate(
+        query(group_by=GroupBy.MONTH, metric=Metric.CUMULATIVE, direction=Direction.EXPENSE),
+        "Europe/Madrid",
+        group_limit=2,
+    )
+
+    assert "SUM(t.amount_minor)" in compiled.sql
+    assert "ORDER BY key" in compiled.sql
+    assert "LIMIT 500" in compiled.sql
+
+
+def test_cumulative_without_a_calendar_group_is_invalid() -> None:
+    with pytest.raises(InvalidValueError, match="CUMULATIVE requires"):
+        query(metric=Metric.CUMULATIVE)

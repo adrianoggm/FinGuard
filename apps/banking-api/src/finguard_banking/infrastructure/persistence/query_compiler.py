@@ -125,6 +125,9 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
     if query.transaction_ids:
         selected_transactions = parameters.bind(list(query.transaction_ids))
         conditions.append(f"t.transaction_id = ANY({selected_transactions})")
+    if query.transaction_types:
+        transaction_types = parameters.bind([item.value for item in query.transaction_types])
+        conditions.append(f"t.transaction_type = ANY({transaction_types})")
 
     if query.internal_only:
         conditions.append("t.is_internal")
@@ -176,6 +179,11 @@ def compile_aggregate(
         if query.group_by is GroupBy.ACCOUNT
         else ""
     )
+    # A running total is incorrect when a deployment's presentation limit drops calendar buckets.
+    # The period itself is bounded, so returning every bucket remains bounded by MAX_GROUPS.
+    effective_limit = (
+        MAX_GROUPS if query.metric is Metric.CUMULATIVE else min(group_limit, MAX_GROUPS)
+    )
 
     sql = f"""
         SELECT
@@ -187,7 +195,7 @@ def compile_aggregate(
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
         ORDER BY {_group_ordering(query.group_by, query.metric, query.direction)}
-        LIMIT {min(group_limit, MAX_GROUPS)}
+        LIMIT {effective_limit}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
 
@@ -203,6 +211,7 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
             t.transaction_id,
             t.occurred_at,
             COALESCE(t.description, '') AS description,
+            t.transaction_type,
             t.merchant_name,
             t.category,
             t.category_is_custom,
@@ -243,6 +252,7 @@ def compile_ranked(query: FinancialQuery, reporting_timezone: str, *, rank: int)
             t.transaction_id,
             t.occurred_at,
             COALESCE(t.description, '') AS description,
+            t.transaction_type,
             t.merchant_name,
             t.category,
             t.category_is_custom,

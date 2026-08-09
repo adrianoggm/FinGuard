@@ -66,6 +66,30 @@ class TransactionType(StrEnum):
     INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
 
 
+class CounterpartyType(StrEnum):
+    """What role the other side plays, derived from the ledger transaction type."""
+
+    MERCHANT = "MERCHANT"
+    PERSON = "PERSON"
+    EMPLOYER = "EMPLOYER"
+    BILLER = "BILLER"
+    ACCOUNT = "ACCOUNT"
+    BANK = "BANK"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReceiptCategory(StrEnum):
+    """A direct debit's purpose when the ledger category supports that claim."""
+
+    RENT = "RENT"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    UTILITIES = "UTILITIES"
+    INSURANCE = "INSURANCE"
+    LOAN = "LOAN"
+    TAX = "TAX"
+    OTHER = "OTHER"
+
+
 class Metric(StrEnum):
     """What is being asked for.
 
@@ -81,6 +105,12 @@ class Metric(StrEnum):
     # The aggregate still returns exact sums per temporal bucket. The caller uses
     # the resolved date range to include empty buckets in the divisor.
     PERIOD_AVERAGE = "PERIOD_AVERAGE"
+    # Exact per-period sums used by the assistant to produce a running total.
+    CUMULATIVE = "CUMULATIVE"
+    # The aggregate and evidence shape is unchanged; the caller derives cadence from the complete
+    # bounded movement dates. Keeping it in the contract preserves the requested semantics.
+    FREQUENCY = "FREQUENCY"
+    RECURRENCE = "RECURRENCE"
 
 
 class Direction(StrEnum):
