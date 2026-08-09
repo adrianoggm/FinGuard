@@ -23,9 +23,9 @@ conversacional. Los textos de producto no deben prometer una fila que siga en **
 | Frecuencia real y día habitual | Activa | `Metric.FREQUENCY` + evidencia completa | `test_frequency.py`, corpus 20 |
 | Acumulados por periodo | Activa | `Metric.CUMULATIVE` + grupos calendario completos | `test_cumulative_and_group_rankings.py`, corpus 24 |
 | Rankings configurables por ticket medio/operaciones | Activa | `FinancialPlan.group_limit` + SUM/COUNT/AVERAGE agrupados | `test_cumulative_and_group_rankings.py`, corpus 24 |
-| Contrapartes separadas de comercios | Parcial | el contrato distingue persona, empleador, emisor, cuenta y comercio; falta filtrar/agrupar por contraparte | pruebas de contrato y recurrencia |
-| Trimestre, semestre, quincena y fin de semana | Siguiente | falta ampliar ventanas naturales | pendiente |
-| Alias aprendidos de entidades | Parcial | hay alias deterministas; no memoria de alias del usuario | pendiente |
+| Contrapartes separadas de comercios | Activa | filtros y `GroupBy.COUNTERPARTY` conservan nombre y tipo de contraparte | `test_query_compiler.py`, `test_explicit_facts.py` |
+| Trimestre, semestre, quincena y fin de semana | Activa | periodos relativos tipados + rangos calendario numerados | `test_natural_periods.py`, corpus 25 |
+| Alias aprendidos de entidades | Activa para cuentas, comercios y contrapartes | cuenta alias→UUID; contraparte alias→(nombre, tipo), comprobados contra banca | `test_account_aliases.py`, `test_counterparty_aliases.py`, corpus 26 y 27 |
 | Consultas compuestas generales | Parcial | existen relaciones cerradas de dos lecturas | pendiente |
 
 ## Evaluación obligatoria por capacidad
@@ -48,7 +48,5 @@ operandos.
 
 ## Orden de implementación restante
 
-1. Completar filtros y agrupaciones por contraparte.
-2. Ampliar periodos naturales y alias persistentes del usuario.
-3. Avanzar consultas compuestas generales sobre las relaciones ya tipadas.
-4. Añadir evaluación metamórfica automática de métricas, ventanas y exclusiones.
+1. Avanzar consultas compuestas generales sobre las relaciones ya tipadas.
+2. Añadir evaluación metamórfica automática de métricas, ventanas y exclusiones.
