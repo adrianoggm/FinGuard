@@ -47,6 +47,14 @@ _WINDOWS = {
     "LAST_WEEK": "la semana pasada",
     "THIS_MONTH": "en lo que va de mes",
     "LAST_MONTH": "el mes pasado",
+    "THIS_QUARTER": "en lo que va de trimestre",
+    "LAST_QUARTER": "el trimestre pasado",
+    "THIS_SEMESTER": "en lo que va de semestre",
+    "LAST_SEMESTER": "el semestre pasado",
+    "THIS_FORTNIGHT": "en lo que va de quincena",
+    "LAST_FORTNIGHT": "la quincena pasada",
+    "THIS_WEEKEND": "este fin de semana",
+    "LAST_WEEKEND": "el fin de semana pasado",
     "THIS_YEAR": "en lo que va de año",
 }
 

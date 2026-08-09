@@ -28,6 +28,7 @@ Whichever phrase is longer is the one the person actually said.
 
 import re
 from calendar import monthrange
+from collections.abc import Callable
 from datetime import date
 from typing import Final
 
@@ -146,6 +147,64 @@ _YEAR_MENTION: Final = re.compile(
     r"|(?:(?:el\s+)?ano\s+)?(?P<year>20\d{2}))\b"
 )
 
+_QUARTER_MENTION: Final = re.compile(
+    r"\b(?:el\s+)?(?P<position>primer(?:o)?|segundo|tercer(?:o)?|cuarto|[1-4](?:er|o)?)\s+"
+    r"trimestre(?:\s+(?:de|del)\s+(?:el\s+)?(?:(?:ano\s+)?(?P<year>20\d{2})"
+    r"|(?P<relative>este\s+ano|ano\s+(?:pasado|anterior))))?\b"
+)
+_SEMESTER_MENTION: Final = re.compile(
+    r"\b(?:el\s+)?(?P<position>primer(?:o)?|segundo|[12](?:er|o)?)\s+"
+    r"semestre(?:\s+(?:de|del)\s+(?:el\s+)?(?:(?:ano\s+)?(?P<year>20\d{2})"
+    r"|(?P<relative>este\s+ano|ano\s+(?:pasado|anterior))))?\b"
+)
+_FORTNIGHT_MENTION: Final = re.compile(
+    rf"\b(?:la\s+)?(?P<position>primera|segunda|[12]a?)\s+quincena\s+(?:de|del)\s+"
+    rf"(?P<month>{'|'.join(_MONTHS)})"
+    r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:(?:ano\s+)?(?P<year>20\d{2})"
+    r"|(?P<relative>este\s+ano|ano\s+(?:pasado|anterior))))?\b"
+)
+
+_THIS_QUARTER: Final = re.compile(
+    r"\b(?:este\s+trimestre|trimestre\s+actual|en\s+lo\s+que\s+va\s+de\s+trimestre)\b"
+)
+_PREVIOUS_QUARTER: Final = re.compile(r"\b(?:el\s+)?trimestre\s+(?:pasado|anterior)\b")
+_LAST_QUARTER: Final = re.compile(r"\b(?:el\s+)?ultimo\s+trimestre\b")
+_THIS_SEMESTER: Final = re.compile(
+    r"\b(?:este\s+semestre|semestre\s+actual|en\s+lo\s+que\s+va\s+de\s+semestre)\b"
+)
+_PREVIOUS_SEMESTER: Final = re.compile(r"\b(?:el\s+)?semestre\s+(?:pasado|anterior)\b")
+_LAST_SEMESTER: Final = re.compile(r"\b(?:el\s+)?ultimo\s+semestre\b")
+_THIS_FORTNIGHT: Final = re.compile(r"\b(?:esta\s+quincena|quincena\s+actual)\b")
+_PREVIOUS_FORTNIGHT: Final = re.compile(r"\b(?:la\s+)?quincena\s+(?:pasada|anterior)\b")
+_THIS_WEEKEND: Final = re.compile(r"\b(?:este\s+fin\s+de\s+semana|fin\s+de\s+semana\s+actual)\b")
+_PREVIOUS_WEEKEND: Final = re.compile(
+    r"\b(?:(?:el\s+)?fin\s+de\s+semana\s+(?:pasado|anterior)"
+    r"|(?:el\s+)?ultimo\s+fin\s+de\s+semana)\b"
+)
+
+_BLOCK_POSITION: Final[dict[str, int]] = {
+    "primer": 1,
+    "primero": 1,
+    "primera": 1,
+    "1": 1,
+    "1a": 1,
+    "1er": 1,
+    "1o": 1,
+    "segundo": 2,
+    "segunda": 2,
+    "2": 2,
+    "2a": 2,
+    "2o": 2,
+    "tercer": 3,
+    "tercero": 3,
+    "3": 3,
+    "3er": 3,
+    "3o": 3,
+    "cuarto": 4,
+    "4": 4,
+    "4o": 4,
+}
+
 # A year named outright: "en 2025", "durante 2025", "del 2025", "todo el año 2025". Either a
 # preposition or the word "año" has to be there — a bare four-digit number is an amount as often as
 # it is a year, and "gasté 2025 euros" must not become a window.
@@ -190,6 +249,216 @@ def whole_month(year: int, month: int) -> AbsoluteRange:
     is the one that moves and a hand-written table is how it stops moving."""
     return AbsoluteRange(
         start=date(year, month, 1), end=date(year, month, monthrange(year, month)[1])
+    )
+
+
+def whole_quarter(year: int, quarter: int) -> AbsoluteRange:
+    """One complete calendar quarter."""
+    start_month = (quarter - 1) * 3 + 1
+    end_month = start_month + 2
+    return AbsoluteRange(
+        start=date(year, start_month, 1),
+        end=date(year, end_month, monthrange(year, end_month)[1]),
+    )
+
+
+def whole_semester(year: int, semester: int) -> AbsoluteRange:
+    """January-June or July-December."""
+    start_month = 1 if semester == 1 else 7
+    end_month = start_month + 5
+    return AbsoluteRange(
+        start=date(year, start_month, 1),
+        end=date(year, end_month, monthrange(year, end_month)[1]),
+    )
+
+
+def whole_fortnight(year: int, month: int, fortnight: int) -> AbsoluteRange:
+    """The first (1-15) or second (16-end) half of a calendar month."""
+    return AbsoluteRange(
+        start=date(year, month, 1 if fortnight == 1 else 16),
+        end=date(year, month, 15 if fortnight == 1 else monthrange(year, month)[1]),
+    )
+
+
+def _block_year(
+    match: re.Match[str], *, position: int, current_position: int, today: date | None
+) -> int | None:
+    written = match.group("year")
+    relative = match.group("relative")
+    if written is not None:
+        return int(written)
+    if today is None:
+        return None
+    if relative is not None:
+        return today.year if relative.startswith("este") else today.year - 1
+    return today.year if position <= current_position else today.year - 1
+
+
+def _quarter_from(match: re.Match[str], today: date | None) -> AbsoluteRange | None:
+    position = _BLOCK_POSITION[match.group("position")]
+    year = _block_year(
+        match,
+        position=position,
+        current_position=((today.month - 1) // 3 + 1) if today is not None else position,
+        today=today,
+    )
+    return whole_quarter(year, position) if year is not None else None
+
+
+def _semester_from(match: re.Match[str], today: date | None) -> AbsoluteRange | None:
+    position = _BLOCK_POSITION[match.group("position")]
+    year = _block_year(
+        match,
+        position=position,
+        current_position=(1 if today is None or today.month <= 6 else 2),
+        today=today,
+    )
+    return whole_semester(year, position) if year is not None else None
+
+
+def _fortnight_from(match: re.Match[str], today: date | None) -> AbsoluteRange | None:
+    position = _BLOCK_POSITION[match.group("position")]
+    month = _MONTH_NUMBER[match.group("month")]
+    current_position = 1 if today is None or today.day <= 15 else 2
+    written = match.group("year")
+    relative = match.group("relative")
+    if written is not None:
+        year = int(written)
+    elif relative is not None and today is not None:
+        year = today.year if relative.startswith("este") else today.year - 1
+    elif today is not None:
+        happened = (month, position) <= (today.month, current_position)
+        year = today.year if happened else today.year - 1
+    else:
+        return None
+    return whole_fortnight(year, month, position)
+
+
+def natural_period_in(sentence: str, *, today: date | None) -> Window | None:
+    """Calendar blocks that are richer than the original day/week/month vocabulary."""
+    folded = spanish.folded(sentence)
+    quarter = _QUARTER_MENTION.search(folded)
+    if quarter is not None:
+        return _quarter_from(quarter, today)
+    semester = _SEMESTER_MENTION.search(folded)
+    if semester is not None:
+        return _semester_from(semester, today)
+    fortnight = _FORTNIGHT_MENTION.search(folded)
+    if fortnight is not None:
+        return _fortnight_from(fortnight, today)
+
+    if _LAST_QUARTER.search(folded):
+        return RelativePeriod(Period.LAST_N_MONTHS, n=3)
+    if _PREVIOUS_QUARTER.search(folded):
+        return RelativePeriod(Period.LAST_QUARTER)
+    if _THIS_QUARTER.search(folded):
+        return RelativePeriod(Period.THIS_QUARTER)
+    if _LAST_SEMESTER.search(folded):
+        return RelativePeriod(Period.LAST_N_MONTHS, n=6)
+    if _PREVIOUS_SEMESTER.search(folded):
+        return RelativePeriod(Period.LAST_SEMESTER)
+    if _THIS_SEMESTER.search(folded):
+        return RelativePeriod(Period.THIS_SEMESTER)
+    if _PREVIOUS_FORTNIGHT.search(folded):
+        return RelativePeriod(Period.LAST_FORTNIGHT)
+    if _THIS_FORTNIGHT.search(folded):
+        return RelativePeriod(Period.THIS_FORTNIGHT)
+    if _PREVIOUS_WEEKEND.search(folded):
+        return RelativePeriod(Period.LAST_WEEKEND)
+    if _THIS_WEEKEND.search(folded):
+        if today is None or today.weekday() < 5:
+            return None
+        return RelativePeriod(Period.THIS_WEEKEND)
+    return None
+
+
+def _compared_explicit_blocks(
+    folded: str,
+    pattern: re.Pattern[str],
+    reader: Callable[[re.Match[str], date | None], AbsoluteRange | None],
+    today: date,
+) -> tuple[AbsoluteRange, AbsoluteRange] | None:
+    matches = tuple(pattern.finditer(folded))
+    if (
+        len(matches) != 2
+        or _COMPARISON_CONNECTOR.search(folded[matches[0].end() : matches[1].start()]) is None
+    ):
+        return None
+    first = reader(matches[0], today)
+    second = reader(matches[1], today)
+    if first is None or second is None or first == second:
+        return None
+    return first, second
+
+
+def _relative_pair(
+    folded: str,
+    current_pattern: re.Pattern[str],
+    previous_pattern: re.Pattern[str],
+    current: Period,
+    previous: Period,
+) -> tuple[Window, Window] | None:
+    current_match = current_pattern.search(folded)
+    previous_match = previous_pattern.search(folded)
+    if current_match is None or previous_match is None:
+        return None
+    pair = (RelativePeriod(current), RelativePeriod(previous))
+    return pair if current_match.start() < previous_match.start() else (pair[1], pair[0])
+
+
+def compared_natural_periods(sentence: str, *, today: date) -> tuple[Window, Window] | None:
+    """Two quarters, semesters, fortnights or weekends contrasted in mention order."""
+    folded = spanish.folded(sentence)
+    for pattern, reader in (
+        (_QUARTER_MENTION, _quarter_from),
+        (_SEMESTER_MENTION, _semester_from),
+        (_FORTNIGHT_MENTION, _fortnight_from),
+    ):
+        explicit = _compared_explicit_blocks(folded, pattern, reader, today)
+        if explicit is not None:
+            return explicit
+
+    previous_quarter = re.compile(
+        r"\b(?:(?:el\s+)?trimestre\s+(?:pasado|anterior)|el\s+anterior)\b"
+    )
+    previous_semester = re.compile(
+        r"\b(?:(?:el\s+)?semestre\s+(?:pasado|anterior)|el\s+anterior)\b"
+    )
+    previous_fortnight = re.compile(
+        r"\b(?:(?:la\s+)?quincena\s+(?:pasada|anterior)|la\s+anterior)\b"
+    )
+    previous_weekend = re.compile(
+        r"\b(?:(?:el\s+)?fin\s+de\s+semana\s+(?:pasado|anterior)|el\s+anterior)\b"
+    )
+    return (
+        _relative_pair(
+            folded,
+            _THIS_QUARTER,
+            previous_quarter,
+            Period.THIS_QUARTER,
+            Period.LAST_QUARTER,
+        )
+        or _relative_pair(
+            folded,
+            _THIS_SEMESTER,
+            previous_semester,
+            Period.THIS_SEMESTER,
+            Period.LAST_SEMESTER,
+        )
+        or _relative_pair(
+            folded,
+            _THIS_FORTNIGHT,
+            previous_fortnight,
+            Period.THIS_FORTNIGHT,
+            Period.LAST_FORTNIGHT,
+        )
+        or _relative_pair(
+            folded,
+            _THIS_WEEKEND,
+            previous_weekend,
+            Period.THIS_WEEKEND,
+            Period.LAST_WEEKEND,
+        )
     )
 
 
@@ -377,6 +646,10 @@ def window_in(
     explicit_range = date_range_in(sentence, today=today) if today is not None else None
     if explicit_range is not None:
         return explicit_range
+
+    natural = natural_period_in(sentence, today=today)
+    if natural is not None:
+        return natural
 
     if asked_for is Slot.YEAR and _THIS_ONE.fullmatch(folded.strip(" ?¿.!¡,")):
         return RelativePeriod(period=Period.THIS_YEAR)

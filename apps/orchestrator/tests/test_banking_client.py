@@ -67,6 +67,26 @@ def test_a_named_period_travels_as_a_period() -> None:
     assert "dateRange" not in body
 
 
+@pytest.mark.parametrize(
+    "period",
+    [
+        Period.THIS_QUARTER,
+        Period.LAST_QUARTER,
+        Period.THIS_SEMESTER,
+        Period.LAST_SEMESTER,
+        Period.THIS_FORTNIGHT,
+        Period.LAST_FORTNIGHT,
+        Period.THIS_WEEKEND,
+        Period.LAST_WEEKEND,
+    ],
+)
+def test_natural_period_names_cross_the_hand_written_contract(period: Period) -> None:
+    body = body_for(FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period)))
+
+    assert body["period"]["period"] == period.value
+    assert "n" not in body["period"]
+
+
 def test_a_counted_period_carries_its_count() -> None:
     body = body_for(
         FinancialPlan(

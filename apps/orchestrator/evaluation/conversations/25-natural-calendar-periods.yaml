@@ -1,0 +1,31 @@
+# Calendar units remain typed while the user changes or compares the window.
+
+episodes:
+  - name: natural_calendar_periods_survive_follow_ups
+    why: >
+      A quarter, semester, fortnight or weekend is not a synonym for an arbitrary number of days.
+      The unit must survive short follow-ups and direct comparisons without reaching the model.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto he gastado este trimestre?
+        route: QUERY
+        no_model: true
+        says: trimestre
+      - say: Compáralo con el periodo anterior
+        route: QUERY
+        no_model: true
+        says: trimestre pasado
+      - say: Ahora en la segunda quincena de julio
+        route: QUERY
+        no_model: true
+        says: "2026-07-16"
+      - say: ¿Y el fin de semana pasado?
+        route: QUERY
+        no_model: true
+        says: fin de semana pasado
+      - say: Compara mis gastos de este semestre con el anterior
+        route: QUERY
+        no_model: true
+        says: semestre
+      - say: gracias
+        route: COURTESY

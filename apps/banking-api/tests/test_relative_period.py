@@ -27,6 +27,16 @@ def relative(period: Period, **kwargs: object) -> RelativePeriod:
         (Period.LAST_WEEK, {}, WEDNESDAY, ("2026-07-06", "2026-07-12")),
         (Period.THIS_MONTH, {}, WEDNESDAY, ("2026-07-01", "2026-07-15")),
         (Period.LAST_MONTH, {}, WEDNESDAY, ("2026-06-01", "2026-06-30")),
+        (Period.THIS_QUARTER, {}, WEDNESDAY, ("2026-07-01", "2026-07-15")),
+        (Period.LAST_QUARTER, {}, WEDNESDAY, ("2026-04-01", "2026-06-30")),
+        (Period.THIS_SEMESTER, {}, WEDNESDAY, ("2026-07-01", "2026-07-15")),
+        (Period.LAST_SEMESTER, {}, WEDNESDAY, ("2026-01-01", "2026-06-30")),
+        (Period.THIS_FORTNIGHT, {}, WEDNESDAY, ("2026-07-01", "2026-07-15")),
+        (Period.LAST_FORTNIGHT, {}, WEDNESDAY, ("2026-06-16", "2026-06-30")),
+        (Period.LAST_WEEKEND, {}, WEDNESDAY, ("2026-07-11", "2026-07-12")),
+        (Period.THIS_WEEKEND, {}, date(2026, 8, 9), ("2026-08-08", "2026-08-09")),
+        (Period.LAST_WEEKEND, {}, date(2026, 8, 9), ("2026-08-01", "2026-08-02")),
+        (Period.LAST_WEEKEND, {}, date(2026, 8, 10), ("2026-08-08", "2026-08-09")),
         (Period.THIS_YEAR, {}, WEDNESDAY, ("2026-01-01", "2026-07-15")),
         # Today counts: it is today and the six days before it.
         (Period.LAST_N_DAYS, {"n": 7}, WEDNESDAY, ("2026-07-09", "2026-07-15")),
@@ -81,6 +91,11 @@ def test_a_period_without_a_count_does_not_accept_one() -> None:
         relative(Period.LAST_MONTH, n=3)
 
 
+def test_this_weekend_is_not_silently_moved_into_the_future() -> None:
+    with pytest.raises(InvalidValueError, match="has not started"):
+        resolve(relative(Period.THIS_WEEKEND), today=WEDNESDAY)
+
+
 @pytest.mark.parametrize("months", [0, 25])
 def test_months_are_bounded(months: int) -> None:
     with pytest.raises(InvalidValueError):
@@ -100,6 +115,8 @@ def test_a_resolved_range_is_never_backwards() -> None:
     for period in Period:
         extra = {"n": 3} if period in (Period.LAST_N_DAYS, Period.LAST_N_MONTHS) else {}
         for day in (date(2026, 1, 1), date(2026, 2, 28), date(2024, 2, 29), date(2026, 12, 31)):
+            if period is Period.THIS_WEEKEND and day.weekday() < 5:
+                continue
             date_range = resolve(relative(period, reference=day, **extra), today=day)
             assert date_range.start <= date_range.end
 
