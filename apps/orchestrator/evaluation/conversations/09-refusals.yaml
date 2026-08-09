@@ -69,22 +69,23 @@ episodes:
       - say: gracias
         route: COURTESY
 
-  - name: investing_is_refused_and_the_refusal_names_a_question_that_works
+  - name: contribution_history_is_distinct_from_the_fund_balance
     why: >
-      "¿Cuánto he invertido en el último año?" came back with every euro that arrived, labelled as
-      what the holder had put away. A refusal that names no alternative is a second dead end.
+      Contribution history is the incoming internal leg of transfers into the fund; its balance is
+      still a separate cost-basis question and neither may be answered with ordinary income.
     metrics: [wrong_tool]
     turns:
       - say: ¿cuánto he invertido en el último año?
-        route: REFUSED
-        says: cuánto tengo en el fondo
+        route: QUERY
+        no_model: true
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"
       - say: ¿y en la hucha?
         route: BALANCE
       - say: ¿cuánto he gastado en inversiones?
-        route: REFUSED
+        route: CLARIFY
+        no_model: true
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: gracias
@@ -92,19 +93,20 @@ episodes:
 
   - name: movements_between_my_own_accounts
     why: >
-      No plan can express only the internal transfers, so the answer is to say so. It came back with
-      every movement of the year, which is a real figure about a different question.
+      Internal transfers have their own narrow query. They ask for a missing period and never widen
+      to every movement merely because both accounts belong to the holder.
     metrics: [wrong_tool]
     turns:
       - say: ¿qué movimientos he tenido entre mis cuentas?
-        route: REFUSED
+        route: CLARIFY
         no_model: true
       - say: ¿cuánto tengo entre mis cuentas?
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: ¿y los traspasos entre cuentas?
-        route: REFUSED
+        route: CLARIFY
+        no_model: true
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: gracias
@@ -189,7 +191,7 @@ episodes:
         route: REFUSED
         no_model: true
       - say: ¿cuánto he invertido?
-        route: REFUSED
+        route: CLARIFY
         no_model: true
 
   - name: a_refusal_in_the_middle_of_a_payment

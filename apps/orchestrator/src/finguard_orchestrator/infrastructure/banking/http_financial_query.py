@@ -231,6 +231,7 @@ def to_body(
         "excludedMerchants": list(plan.excluded_merchants),
         "supportingLimit": supporting_movements,
         "includeInternal": plan.include_internal,
+        "internalOnly": plan.internal_only,
         "acrossAccounts": plan.across_accounts,
         **({"onlyAccountId": str(plan.only_account_id)} if plan.only_account_id else {}),
         **(

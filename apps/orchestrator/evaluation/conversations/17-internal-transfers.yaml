@@ -1,0 +1,62 @@
+# Reading transfers between the holder's own accounts.
+#
+# These queries used to be either refused or widened to every ledger movement. The conversation
+# exercises the typed internal-only scope, destination accounts, fund contributions, ellipsis and
+# common transposition typos without involving a model.
+
+episodes:
+  - name: own_account_transfers_are_a_conversation
+    why: >
+      Asking for internal movements without a period should need only that period. Once supplied,
+      account destinations and investment contributions remain narrow across natural follow-ups.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: Perdona, ¿qué movimeintos he tenido entre mis cuentas?
+        route: CLARIFY
+        no_model: true
+      - say: En los últimos 3 meses
+        route: QUERY
+        no_model: true
+        says: entre tus cuentas
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+      - say: ¿Cuánto he movido a la hucha este año?
+        route: QUERY
+        no_model: true
+        says: hacia la cuenta consultada
+      - say: Caunto he invertido en el ultimo año?
+        route: QUERY
+        no_model: true
+        says: hacia la cuenta consultada
+      - say: ¿Y este mes?
+        route: QUERY
+        no_model: true
+      - say: gracias
+        route: COURTESY
+
+  - name: contributions_are_not_salary_or_ordinary_spending
+    why: >
+      Different natural phrasings for money put into an investment all select incoming internal
+      movements into the asset account, then allow an ordinary spending question to change topic.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto he gastado en inversiones este mes?
+        route: QUERY
+        no_model: true
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+      - say: ¿Qué aportaciones hice al fondo este año?
+        route: QUERY
+        no_model: true
+      - say: ¿Cuál fue el importe medio mensual?
+        route: QUERY
+        no_model: true
+        says: importe medio mensual
+      - say: Vale, ¿cuánto gasté en supermercados este mes?
+        route: QUERY
+      - say: ¿Y en restaurantes?
+        route: QUERY
+      - say: gracias
+        route: COURTESY

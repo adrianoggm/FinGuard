@@ -542,6 +542,8 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
     oracle.
     """
     parts = [window_of(plan), plan.direction.value.lower()]
+    if isinstance(plan, FinancialPlan) and plan.internal_only:
+        parts.append("solo traspasos entre cuentas")
     if isinstance(plan, TopMovements):
         # The rank is the whole point of a ranking, so a description without it would show the same
         # line for "el más caro" and "el segundo más caro".
@@ -657,6 +659,108 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     rest = len(answer.groups) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
+
+
+def internal_transfers(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Describe money that moved inside the holder's accounts without calling it spending."""
+    window = window_of(plan)
+    if answer.is_empty:
+        return f"No he encontrado traspasos entre tus cuentas {window}."
+    noun = "traspaso" if answer.movement_count == 1 else "traspasos"
+    if plan.metric is Metric.COUNT:
+        return f"Hiciste {answer.movement_count} {noun} {window}."
+    if plan.metric is Metric.AVERAGE:
+        average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
+        return f"El importe medio de tus {noun} {window} fue de {average}."
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        average = money(
+            _rounded_mean(answer.total_minor, _period_count(answer, plan)), answer.currency
+        )
+        unit = {
+            GroupBy.DAY: "diario",
+            GroupBy.WEEK: "semanal",
+            GroupBy.MONTH: "mensual",
+        }[plan.group_by]
+        return f"El importe medio {unit} de tus traspasos {window} fue de {average}."
+    amount = money(answer.total_minor, answer.currency)
+    selected = plan.only_account_id is not None or bool(plan.only_account_ids)
+    if plan.direction is Direction.INCOME and selected:
+        return (
+            f"Moviste {amount} hacia la cuenta consultada {window}, "
+            f"en {answer.movement_count} {noun}."
+        )
+    if selected:
+        return (
+            f"Moviste {amount} desde la cuenta consultada {window}, "
+            f"en {answer.movement_count} {noun}."
+        )
+    return f"Moviste {amount} entre tus cuentas {window}, en {answer.movement_count} {noun}."
+
+
+def grouped_period_comparison(
+    earlier_answer: QueryAnswer,
+    latest_answer: QueryAnswer,
+    earlier_plan: FinancialPlan,
+    latest_plan: FinancialPlan,
+    *,
+    earlier_window: str,
+    latest_window: str,
+) -> str | None:
+    """Compare the same account rows across two windows instead of collapsing their totals."""
+    if latest_plan.group_by is not GroupBy.ACCOUNT or earlier_plan.group_by is not GroupBy.ACCOUNT:
+        return None
+    earlier = {group.key: group for group in earlier_answer.groups if group.key != "total"}
+    latest = {group.key: group for group in latest_answer.groups if group.key != "total"}
+    keys = tuple(dict.fromkeys((*latest, *earlier)))
+    if not keys:
+        return None
+
+    lines: list[str] = []
+    for key in keys:
+        earlier_group = earlier.get(key, Group(key, 0, 0))
+        latest_group = latest.get(key, Group(key, 0, 0))
+        earlier_value = _group_comparison_value(earlier_group, earlier_plan.metric)
+        latest_value = _group_comparison_value(latest_group, latest_plan.metric)
+        earlier_figure = _group_comparison_figure(
+            earlier_group, earlier_plan.metric, earlier_answer.currency
+        )
+        latest_figure = _group_comparison_figure(
+            latest_group, latest_plan.metric, latest_answer.currency
+        )
+        difference = abs(latest_value - earlier_value)
+        if difference == 0:
+            change = "sin cambios"
+        else:
+            sign = "+" if latest_value > earlier_value else "−"
+            difference_figure = comparison_difference(
+                difference, latest_answer.currency, latest_plan.metric
+            )
+            change = f"{sign}{difference_figure}"
+        lines.append(
+            f"  · {key}: {latest_window}, {latest_figure}; "
+            f"{earlier_window}, {earlier_figure}; {change}."
+        )
+
+    concept = comparison_concept(latest_plan)
+    return f"Comparación del {concept} por cuenta:\n" + "\n".join(lines)
+
+
+def _group_comparison_value(group: Group, metric: Metric) -> int:
+    if metric is Metric.COUNT:
+        return group.movement_count
+    if metric is Metric.AVERAGE:
+        return _rounded_mean(group.total_minor, group.movement_count)
+    return group.total_minor
+
+
+def _group_comparison_figure(group: Group, metric: Metric, currency: str) -> str:
+    value = _group_comparison_value(group, metric)
+    if metric is Metric.COUNT:
+        noun = "movimiento" if value == 1 else "movimientos"
+        return f"{value} {noun}"
+    if metric is Metric.AVERAGE and group.movement_count == 0:
+        return "sin movimientos"
+    return money(value, currency)
 
 
 def compare_averages(answer: QueryAnswer, plan: FinancialPlan) -> str:

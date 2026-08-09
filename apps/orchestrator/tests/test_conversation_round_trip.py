@@ -156,6 +156,20 @@ def test_negative_filters_survive_the_client_round_trip() -> None:
     assert back.last_plan == plan
 
 
+def test_an_internal_only_query_survives_the_client_round_trip() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        include_internal=True,
+        internal_only=True,
+        across_accounts=True,
+    )
+
+    back = there_and_back(IDLE.answered(plan))
+
+    assert back.last_plan == plan
+
+
 def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
     scoped = FinancialPlan(
         direction=Direction.ALL,

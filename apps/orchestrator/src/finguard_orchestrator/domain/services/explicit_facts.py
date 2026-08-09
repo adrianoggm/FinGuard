@@ -150,6 +150,7 @@ _TOP_CATEGORY: Final = re.compile(
 _ACCOUNT_BREAKDOWN: Final = re.compile(
     r"\bdesglos\w*\s+por\s+(?:cada\s+)?cuentas?\b"
     r"|\b(?:por|separad[oa]\s+por)\s+cada\s+cuenta\b"
+    r"|\b(?:ingresos?|income|gastos?|movimientos?)\s+de\s+cada\s+cuenta\b"
     r"|\bseparad[oa]\s+por\s+cuentas?\b"
     r"|\bsepar\w*\s+por\s+cuentas?\b"
     r"|\b(?:en|a)\s+(?:que|cual)\s+cuenta\b"
@@ -167,7 +168,7 @@ _COMPARES: Final = re.compile(
 _INCOME: Final = re.compile(
     r"\bingres(?:ar|amos|o|os|e|ado|aron)\b|\bcobr(?:ar|amos|e|ado|aron|os?)\b"
     r"|\brecibi(?:do)?\b"
-    r"|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
+    r"|\bincome\b|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
 )
 _EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
 _EXCLUSION_TAIL: Final = re.compile(

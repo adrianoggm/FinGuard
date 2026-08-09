@@ -173,6 +173,7 @@ class FinancialPlanDraft:
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     include_internal: bool = False
+    internal_only: bool = False
     across_accounts: bool = False
     only_account_id: UUID | None = None
     only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
@@ -184,6 +185,8 @@ class FinancialPlanDraft:
         # depend on the reader.
         if self.period is not None and self.date_range is not None:
             raise InvalidValueError("a draft cannot carry two windows")
+        if self.internal_only and not self.include_internal:
+            raise InvalidValueError("internalOnly requires includeInternal")
         if self.only_account_id is not None and self.only_account_ids:
             raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
         if len(set(self.only_account_ids)) != len(self.only_account_ids):
@@ -233,6 +236,7 @@ class FinancialPlanDraft:
             group_by=self.group_by,
             metric=self.metric,
             include_internal=self.include_internal,
+            internal_only=self.internal_only,
             across_accounts=self.across_accounts,
             only_account_id=self.only_account_id,
             only_account_ids=self.only_account_ids,
@@ -254,6 +258,7 @@ class FinancialPlanDraft:
             group_by=self.group_by,
             metric=self.metric,
             include_internal=self.include_internal,
+            internal_only=self.internal_only,
             across_accounts=self.across_accounts,
             only_account_id=self.only_account_id,
             only_account_ids=self.only_account_ids,
@@ -274,6 +279,7 @@ class FinancialPlanDraft:
             group_by=plan.group_by,
             metric=plan.metric,
             include_internal=plan.include_internal,
+            internal_only=plan.internal_only,
             across_accounts=plan.across_accounts,
             only_account_id=plan.only_account_id,
             only_account_ids=plan.only_account_ids,

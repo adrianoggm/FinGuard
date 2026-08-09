@@ -15,7 +15,8 @@ episodes:
     metrics: [wrong_tool, context_retention]
     turns:
       - say: Perdona que movimeintos he tenido entre mis cuentas ?
-        route: REFUSED
+        route: CLARIFY
+        no_model: true
       - say: Que cuentas tengo ?
         route: BALANCE
         says: Fondo indexado
@@ -50,10 +51,11 @@ episodes:
     metrics: [wrong_tool, unsafe_action]
     turns:
       - say: Cuanto he gastado en inversiones este mes ?
-        route: REFUSED
+        route: QUERY
+        no_model: true
       - say: Caunto he invertido en el ultimo año ?
-        route: REFUSED
-        says: cuánto tengo en el fondo
+        route: QUERY
+        no_model: true
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"
@@ -314,7 +316,8 @@ episodes:
       - say: ¿puedes hacer transferencias?
         route: IDENTITY
       - say: ¿cuánto he invertido?
-        route: REFUSED
+        route: CLARIFY
+        no_model: true
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"

@@ -106,6 +106,20 @@ def test_the_body_is_camel_case() -> None:
     assert body["categories"] == ["GROCERIES"]
 
 
+def test_an_internal_only_plan_reaches_banking_without_becoming_an_ordinary_query() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.INCOME,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            include_internal=True,
+            internal_only=True,
+        )
+    )
+
+    assert body["includeInternal"] is True
+    assert body["internalOnly"] is True
+
+
 # --- response to model -------------------------------------------------------------
 
 

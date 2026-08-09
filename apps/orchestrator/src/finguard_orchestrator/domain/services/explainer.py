@@ -23,6 +23,7 @@ IDENTITY = (
     "· Enseñarte en qué te gastas el dinero, agrupado por categoría, comercio, periodo o cuenta.\n"
     "· Comparar dos semanas, meses o años en una sola frase, o dos consultas consecutivas.\n"
     "· Calcular proporciones de gastos, la tasa de ahorro y cambios porcentuales.\n"
+    "· Consultar los traspasos entre tus cuentas y cuánto has aportado a tu fondo.\n"
     "· Preparar un bizum a uno de tus contactos, que tú tienes que confirmar antes de que salga.\n"
     "Lo que todavía no hago: transferencias a terceros, comparaciones entre rangos parciales "
     "arbitrarios, previsiones ni consejos de inversión.\n"

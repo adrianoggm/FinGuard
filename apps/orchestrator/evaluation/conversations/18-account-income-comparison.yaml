@@ -1,0 +1,29 @@
+# Income generated in one account, followed by an account-by-account year comparison.
+
+episodes:
+  - name: the_piggy_bank_survives_the_period_clarification
+    why: >
+      The account name appears before the assistant asks for a period. Completing that slot must
+      preserve the Hucha, and a later breakdown and polite comparison must preserve income and the
+      account dimension across both calendar years.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: ¿Cuántos ingresos me da la hucha?
+        route: CLARIFY
+        no_model: true
+      - say: Este año
+        route: QUERY
+        no_model: true
+      - say: Pero no me lo has desglosado por cuenta
+        route: QUERY
+        no_model: true
+      - say: Vale genial, ¿me lo podrías comparar con el año anterior?
+        route: QUERY
+        no_model: true
+      - say: Compara este año income de cada cuenta con el año anterior
+        route: QUERY
+        no_model: true
+      - say: Ahora, ¿cuánto gasté en la hucha este mes?
+        route: QUERY
+      - say: gracias
+        route: COURTESY
