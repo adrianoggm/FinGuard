@@ -153,7 +153,8 @@ _COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
     r"|revisa(?:lo|la)?"
     r"|hazme\s+una\s+comparacion"
     r")\s+con\s+(?:el\s+|la\s+)?"
-    r"(?P<unit>mes|semana|ano|periodo)\s+(?:anterior|pasad[oa])$"
+    r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|ano|periodo)\s+"
+    r"(?:anterior|pasad[oa])$"
 )
 _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs"
@@ -996,6 +997,13 @@ class AskFinancialQuestionHandler:
             yield Stage("planned", answer_writer.describe(group_ranking))
             yield Stage("querying")
             yield await self._answer(query, group_ranking)
+            return
+
+        natural_period = _natural_period_aggregate_plan(query)
+        if natural_period is not None:
+            yield Stage("planned", answer_writer.describe(natural_period))
+            yield Stage("querying")
+            yield await self._answer(query, natural_period)
             return
 
         deterministic = _deterministic_breakdown_plan(query)
@@ -3699,6 +3707,7 @@ def _direct_period_comparison(
     named_ranges = window_words.compared_date_ranges(query.sentence, today=query.today)
     named_months = window_words.compared_calendar_months(query.sentence, today=query.today)
     named_years = window_words.compared_calendar_years(query.sentence, today=query.today)
+    natural_periods = window_words.compared_natural_periods(query.sentence, today=query.today)
     if named_ranges is not None:
         windows = (named_ranges[1], named_ranges[0])
     elif named_months is not None:
@@ -3707,6 +3716,8 @@ def _direct_period_comparison(
         windows = (named_months[1], named_months[0])
     elif named_years is not None:
         windows = (named_years[1], named_years[0])
+    elif natural_periods is not None:
+        windows = (natural_periods[1], natural_periods[0])
     elif re.search(r"\beste\s+mes\b", folded) and re.search(
         r"\b(?:(?:el\s+)?mes\s+(?:pasado|anterior)|el\s+(?:pasado|anterior))\b",
         folded,
@@ -3849,6 +3860,64 @@ def _previous_calendar_window(
             return window_words.whole_year(today.year - 1)
         if plan.date_range and _is_whole_year(plan.date_range):
             return window_words.whole_year(plan.date_range.start.year - 1)
+    if unit == "trimestre":
+        if plan.period and plan.period.period is Period.THIS_QUARTER:
+            return RelativePeriod(Period.LAST_QUARTER)
+        if plan.period and plan.period.period is Period.LAST_QUARTER:
+            current = window_words.whole_quarter(today.year, (today.month - 1) // 3 + 1)
+            last_end = current.start - timedelta(days=1)
+            last = window_words.whole_quarter(last_end.year, (last_end.month - 1) // 3 + 1)
+            before = last.start - timedelta(days=1)
+            return window_words.whole_quarter(before.year, (before.month - 1) // 3 + 1)
+        if plan.date_range and _is_whole_quarter(plan.date_range):
+            before = plan.date_range.start - timedelta(days=1)
+            return window_words.whole_quarter(before.year, (before.month - 1) // 3 + 1)
+    if unit == "semestre":
+        if plan.period and plan.period.period is Period.THIS_SEMESTER:
+            return RelativePeriod(Period.LAST_SEMESTER)
+        if plan.period and plan.period.period is Period.LAST_SEMESTER:
+            current = window_words.whole_semester(today.year, 1 if today.month <= 6 else 2)
+            last_end = current.start - timedelta(days=1)
+            last = window_words.whole_semester(last_end.year, 1 if last_end.month <= 6 else 2)
+            before = last.start - timedelta(days=1)
+            return window_words.whole_semester(before.year, 1 if before.month <= 6 else 2)
+        if plan.date_range and _is_whole_semester(plan.date_range):
+            before = plan.date_range.start - timedelta(days=1)
+            return window_words.whole_semester(before.year, 1 if before.month <= 6 else 2)
+    if unit == "quincena":
+        if plan.period and plan.period.period is Period.THIS_FORTNIGHT:
+            return RelativePeriod(Period.LAST_FORTNIGHT)
+        if plan.period and plan.period.period is Period.LAST_FORTNIGHT:
+            current = window_words.whole_fortnight(
+                today.year, today.month, 1 if today.day <= 15 else 2
+            )
+            last_end = current.start - timedelta(days=1)
+            last = window_words.whole_fortnight(
+                last_end.year, last_end.month, 1 if last_end.day <= 15 else 2
+            )
+            before = last.start - timedelta(days=1)
+            return window_words.whole_fortnight(
+                before.year, before.month, 1 if before.day <= 15 else 2
+            )
+        if plan.date_range and _is_whole_fortnight(plan.date_range):
+            before = plan.date_range.start - timedelta(days=1)
+            return window_words.whole_fortnight(
+                before.year, before.month, 1 if before.day <= 15 else 2
+            )
+    if unit == "fin de semana":
+        if plan.period and plan.period.period is Period.THIS_WEEKEND:
+            return RelativePeriod(Period.LAST_WEEKEND)
+        if plan.period and plan.period.period is Period.LAST_WEEKEND:
+            last = _last_completed_weekend(today)
+            return AbsoluteRange(
+                start=last.start - timedelta(days=7),
+                end=last.end - timedelta(days=7),
+            )
+        if plan.date_range and _is_weekend(plan.date_range):
+            return AbsoluteRange(
+                start=plan.date_range.start - timedelta(days=7),
+                end=plan.date_range.end - timedelta(days=7),
+            )
     return None
 
 
@@ -3883,12 +3952,28 @@ def _calendar_unit_of(plan: FinancialPlan) -> str | None:
             Period.LAST_MONTH: "mes",
             Period.THIS_WEEK: "semana",
             Period.THIS_YEAR: "ano",
+            Period.THIS_QUARTER: "trimestre",
+            Period.LAST_QUARTER: "trimestre",
+            Period.THIS_SEMESTER: "semestre",
+            Period.LAST_SEMESTER: "semestre",
+            Period.THIS_FORTNIGHT: "quincena",
+            Period.LAST_FORTNIGHT: "quincena",
+            Period.THIS_WEEKEND: "fin de semana",
+            Period.LAST_WEEKEND: "fin de semana",
         }.get(plan.period.period)
     if plan.date_range is not None:
         if _is_whole_month(plan.date_range):
             return "mes"
         if _is_whole_year(plan.date_range):
             return "ano"
+        if _is_whole_quarter(plan.date_range):
+            return "trimestre"
+        if _is_whole_semester(plan.date_range):
+            return "semestre"
+        if _is_whole_fortnight(plan.date_range):
+            return "quincena"
+        if _is_weekend(plan.date_range):
+            return "fin de semana"
         if (plan.date_range.end - plan.date_range.start).days == 6:
             return "semana"
     return None
@@ -3910,6 +3995,38 @@ def _is_whole_month(window: AbsoluteRange) -> bool:
 
 def _is_whole_year(window: AbsoluteRange) -> bool:
     return window == window_words.whole_year(window.start.year)
+
+
+def _is_whole_quarter(window: AbsoluteRange) -> bool:
+    quarter = (window.start.month - 1) // 3 + 1
+    return window == window_words.whole_quarter(window.start.year, quarter)
+
+
+def _is_whole_semester(window: AbsoluteRange) -> bool:
+    semester = 1 if window.start.month <= 6 else 2
+    return window == window_words.whole_semester(window.start.year, semester)
+
+
+def _is_whole_fortnight(window: AbsoluteRange) -> bool:
+    fortnight = 1 if window.start.day <= 15 else 2
+    return window == window_words.whole_fortnight(window.start.year, window.start.month, fortnight)
+
+
+def _is_weekend(window: AbsoluteRange) -> bool:
+    return (
+        window.start.weekday() == 5
+        and window.end.weekday() == 6
+        and (window.end - window.start).days == 1
+    )
+
+
+def _last_completed_weekend(today: date) -> AbsoluteRange:
+    if today.weekday() <= 4:
+        sunday = today - timedelta(days=today.weekday() + 1)
+    else:
+        current_saturday = today - timedelta(days=today.weekday() - 5)
+        sunday = current_saturday - timedelta(days=6)
+    return AbsoluteRange(start=sunday - timedelta(days=1), end=sunday)
 
 
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
@@ -4248,6 +4365,42 @@ def _multiple_movement_ranking(
         ),
         count,
     )
+
+
+def _natural_period_aggregate_plan(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | None:
+    """A simple aggregate whose new calendar window and direction are both explicit."""
+    window = window_words.natural_period_in(query.sentence, today=query.today)
+    if window is None:
+        return None
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    named = category_words.precisely_named_in(query.sentence)
+    direction = facts.direction
+    if direction is None and re.search(
+        r"\bgast|\bpagu|\bcompr|\bcargos?\b|\bme\s+cobr", spanish.folded(query.sentence)
+    ):
+        direction = Direction.EXPENSE
+    if direction is None and named:
+        direction = _direction_of(named)
+    if direction is None or facts.metric in {
+        Metric.AVERAGE,
+        Metric.PERIOD_AVERAGE,
+        Metric.CUMULATIVE,
+        Metric.FREQUENCY,
+        Metric.RECURRENCE,
+    }:
+        return None
+    plan = FinancialPlan(
+        direction=direction,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=named,
+        group_by=facts.group_by or GroupBy.NONE,
+        metric=facts.metric or Metric.SUM,
+        transaction_types=(TransactionType.DIRECT_DEBIT,) if facts.asks_direct_debits else (),
+    )
+    return explicit_facts.enforce_exclusions(plan, facts)
 
 
 def _deterministic_breakdown_plan(

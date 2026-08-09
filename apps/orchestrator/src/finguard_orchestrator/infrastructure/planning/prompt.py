@@ -105,6 +105,10 @@ These four distinctions each cost a wrong number when missed:
 today those two share only about half their days.
 - LAST_N_DAYS includes today: "the last 7 days" is today plus the 6 before it.
 - THIS_WEEK is Monday to today. LAST_WEEK is a full Monday to Sunday.
+- THIS_QUARTER, THIS_SEMESTER and THIS_FORTNIGHT run from the start of the current \
+calendar block to TODAY. Their LAST_* forms are the previous complete block.
+- THIS_WEEKEND is Saturday to TODAY and is valid only on Saturday or Sunday. \
+LAST_WEEKEND is the preceding complete Saturday-Sunday block.
 
 A named month or year ("durante enero", "en 2025") is not a window name: use \
 "{absolute}" with an explicit range.

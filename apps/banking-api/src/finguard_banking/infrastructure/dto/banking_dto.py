@@ -107,6 +107,9 @@ class FinancialQueryRequest(_Body):
     # are data, not vocabulary.
     merchants: tuple[str, ...] = ()
     excluded_merchants: tuple[str, ...] = ()
+    counterparties: tuple[str, ...] = ()
+    excluded_counterparties: tuple[str, ...] = ()
+    counterparty_types: tuple[CounterpartyType, ...] = ()
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     group_by: GroupBy = GroupBy.NONE

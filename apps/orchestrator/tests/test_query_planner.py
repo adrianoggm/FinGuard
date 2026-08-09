@@ -245,7 +245,7 @@ async def test_a_second_invalid_structure_is_returned_without_a_loop() -> None:
 
 
 async def test_a_domain_rejection_is_not_retried() -> None:
-    provider = SequenceProvider([json.dumps({**FULL, "period": "LAST_FORTNIGHT"})])
+    provider = SequenceProvider([json.dumps({**FULL, "period": "LAST_DECADE"})])
 
     result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
 
@@ -266,7 +266,7 @@ async def test_an_unknown_outcome_is_structural() -> None:
 
 
 async def test_a_period_outside_the_enum_is_a_domain_failure() -> None:
-    result = await plan_from({**FULL, "period": "LAST_FORTNIGHT"})
+    result = await plan_from({**FULL, "period": "LAST_DECADE"})
 
     assert result.outcome is PlanningOutcome.INVALID_DOMAIN
 
