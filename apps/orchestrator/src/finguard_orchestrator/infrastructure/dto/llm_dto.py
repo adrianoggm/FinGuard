@@ -22,6 +22,7 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.enums import (
     Action,
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
@@ -108,6 +109,9 @@ class PlanPayload(_Payload):
     excluded_categories: list[str] = []
     merchants: list[str] = []
     excluded_merchants: list[str] = []
+    counterparties: list[str] = []
+    excluded_counterparties: list[str] = []
+    counterparty_types: list[CounterpartyType] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_RANK)
@@ -351,9 +355,12 @@ class ConversationPayload(_Payload):
             None,
             GroupBy.CATEGORY,
             GroupBy.MERCHANT,
+            GroupBy.COUNTERPARTY,
             GroupBy.ACCOUNT,
         }:
-            raise ValueError("only category, merchant and account rows can be referenced")
+            raise ValueError(
+                "only category, merchant, counterparty and account rows can be referenced"
+            )
         if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
             raise ValueError("referenced transaction ids must be unique")
         return self

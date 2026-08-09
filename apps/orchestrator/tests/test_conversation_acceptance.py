@@ -425,7 +425,7 @@ def test_asking_who_is_answered_with_people_rather_than_a_total() -> None:
 
     answer = Chat(client).say("¿a qué personas les he hecho bizum en los últimos 5 meses?")
 
-    assert ledger.plans[0].group_by.value == "MERCHANT"
+    assert ledger.plans[0].group_by.value == "COUNTERPARTY"
     assert [group["key"] for group in answer["groups"]] == ["Elena", "Sergio"]
 
 

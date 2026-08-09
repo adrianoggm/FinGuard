@@ -250,9 +250,12 @@ class Conversation:
             None,
             GroupBy.CATEGORY,
             GroupBy.MERCHANT,
+            GroupBy.COUNTERPARTY,
             GroupBy.ACCOUNT,
         }:
-            raise InvalidValueError("only category, merchant and account rows can be referenced")
+            raise InvalidValueError(
+                "only category, merchant, counterparty and account rows can be referenced"
+            )
         if self.referenced_group_key is not None:
             if not self.referenced_group_key.strip():
                 raise InvalidValueError("a referenced group key cannot be blank")

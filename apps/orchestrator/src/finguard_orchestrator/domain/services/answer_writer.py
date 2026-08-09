@@ -378,7 +378,11 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     """
     transaction_types = getattr(plan, "transaction_types", ())
     direct_debits_only = transaction_types == (TransactionType.DIRECT_DEBIT,)
-    if plan.merchants:
+    counterparties = getattr(plan, "counterparties", ())
+    excluded_counterparties = getattr(plan, "excluded_counterparties", ())
+    if counterparties:
+        included = f" con {listed(counterparties)}"
+    elif plan.merchants:
         included = f" en {listed(plan.merchants)}"
     elif plan.categories:
         included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
@@ -389,6 +393,7 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     excluded_names = (
         *tuple(category_words.name_of(category) for category in plan.excluded_categories),
         *plan.excluded_merchants,
+        *excluded_counterparties,
     )
     if not excluded_names:
         return included
@@ -621,6 +626,12 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
     if plan.excluded_merchants:
         parts.append("sin " + "/".join(plan.excluded_merchants))
     if isinstance(plan, FinancialPlan):
+        if plan.counterparties:
+            parts.append("/".join(plan.counterparties))
+        if plan.excluded_counterparties:
+            parts.append("sin " + "/".join(plan.excluded_counterparties))
+        if plan.counterparty_types:
+            parts.append("tipo " + "/".join(item.value.lower() for item in plan.counterparty_types))
         # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
         # appended above — where the reader is looking for what makes the two lines different.
         if plan.group_by.value != "NONE":
@@ -661,11 +672,11 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
         # The second is usually a plan that was wrong, and saying so lets the user
         # correct it instead of believing a zero.
-        if plan.categories and plan.merchants:
+        if plan.categories and (plan.merchants or plan.counterparties):
             next_step = "buscar sin categoría, buscar sin comercio o ampliar el periodo"
         elif plan.categories:
             next_step = "buscar sin categoría o ampliar el periodo"
-        elif plan.merchants:
+        elif plan.merchants or plan.counterparties:
             next_step = "buscar sin comercio o ampliar el periodo"
         else:
             next_step = "ampliar el periodo o consultar las categorías disponibles"
@@ -678,6 +689,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         dimension = {
             GroupBy.CATEGORY: "categoría" if count == 1 else "categorías",
             GroupBy.MERCHANT: "comercio" if count == 1 else "comercios",
+            GroupBy.COUNTERPARTY: "contraparte" if count == 1 else "contrapartes",
             GroupBy.ACCOUNT: "cuenta" if count == 1 else "cuentas",
         }[plan.group_by]
         criterion = {

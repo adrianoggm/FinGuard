@@ -27,6 +27,7 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.enums import (
     PERIODS_NEEDING_COUNT,
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
@@ -90,6 +91,9 @@ class FinancialPlan:
     # whose values the schema cannot enumerate, because the ledger's merchant names are data.
     merchants: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
+    counterparties: tuple[str, ...] = field(default_factory=tuple)
+    excluded_counterparties: tuple[str, ...] = field(default_factory=tuple)
+    counterparty_types: tuple[CounterpartyType, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     # Present only for rankings of aggregate groups, never individual movement rankings.
@@ -158,7 +162,11 @@ class FinancialPlan:
             self.merchants,
             self.excluded_categories,
             self.excluded_merchants,
+            self.counterparties,
+            self.excluded_counterparties,
         )
+        if len(set(self.counterparty_types)) != len(self.counterparty_types):
+            raise InvalidValueError("counterpartyTypes cannot contain duplicates")
 
 
 @dataclass(frozen=True)
@@ -188,6 +196,9 @@ class FinancialPlanDraft:
     excluded_categories: tuple[str, ...] = field(default_factory=tuple)
     merchants: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
+    counterparties: tuple[str, ...] = field(default_factory=tuple)
+    excluded_counterparties: tuple[str, ...] = field(default_factory=tuple)
+    counterparty_types: tuple[CounterpartyType, ...] = field(default_factory=tuple)
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
     group_limit: int | None = None
@@ -239,7 +250,11 @@ class FinancialPlanDraft:
             self.merchants,
             self.excluded_categories,
             self.excluded_merchants,
+            self.counterparties,
+            self.excluded_counterparties,
         )
+        if len(set(self.counterparty_types)) != len(self.counterparty_types):
+            raise InvalidValueError("counterpartyTypes cannot contain duplicates")
 
     @property
     def needs_a_window(self) -> bool:
@@ -266,6 +281,9 @@ class FinancialPlanDraft:
             excluded_categories=self.excluded_categories,
             merchants=self.merchants,
             excluded_merchants=self.excluded_merchants,
+            counterparties=self.counterparties,
+            excluded_counterparties=self.excluded_counterparties,
+            counterparty_types=self.counterparty_types,
             group_by=self.group_by,
             metric=self.metric,
             group_limit=self.group_limit,
@@ -313,6 +331,9 @@ class FinancialPlanDraft:
             excluded_categories=plan.excluded_categories,
             merchants=plan.merchants,
             excluded_merchants=plan.excluded_merchants,
+            counterparties=plan.counterparties,
+            excluded_counterparties=plan.excluded_counterparties,
+            counterparty_types=plan.counterparty_types,
             group_by=plan.group_by,
             metric=plan.metric,
             group_limit=plan.group_limit,
@@ -331,6 +352,8 @@ def check_filters(
     merchants: tuple[str, ...],
     excluded_categories: tuple[str, ...] = (),
     excluded_merchants: tuple[str, ...] = (),
+    counterparties: tuple[str, ...] = (),
+    excluded_counterparties: tuple[str, ...] = (),
 ) -> None:
     """What a plan, a draft and a ranking check identically.
 
@@ -357,6 +380,17 @@ def check_filters(
     excluded_names = {merchant.strip().casefold() for merchant in excluded_merchants}
     if included_names & excluded_names:
         raise InvalidValueError("a merchant cannot be both included and excluded")
+    if len(counterparties) > MAX_MERCHANTS or len(excluded_counterparties) > MAX_MERCHANTS:
+        raise InvalidValueError(f"at most {MAX_MERCHANTS} counterparties per filter")
+    for counterparty in (*counterparties, *excluded_counterparties):
+        if not counterparty.strip():
+            raise InvalidValueError("a counterparty name cannot be empty")
+        if len(counterparty) > MAX_MERCHANT_LENGTH:
+            raise InvalidValueError("counterparty name is too long")
+    included_counterparties = {value.strip().casefold() for value in counterparties}
+    excluded_counterparty_names = {value.strip().casefold() for value in excluded_counterparties}
+    if included_counterparties & excluded_counterparty_names:
+        raise InvalidValueError("a counterparty cannot be both included and excluded")
 
 
 def _check_category(value: str) -> None:

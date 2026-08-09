@@ -62,15 +62,10 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
-# "¿A qué personas les he hecho Bizum?" does not ask for a total. It asks who, and the answer shape
-# is a list of counterparties — which the domain reaches through MERCHANT, because that is the
-# column the ledger's counterparty names are in today.
-#
-# ponytail: MERCHANT is the counterparty column under another name. It is right today because a
-# Bizum to Elena stores "Elena" there, and wrong as vocabulary — a person is not a shop. Upgrade
-# path is `counterparty_name` and `counterparty_type` in banking plus `GroupBy.COUNTERPARTY` here,
-# at which point this constant changes and nothing else does.
-_COUNTERPARTY: Final = GroupBy.MERCHANT
+# "¿A qué personas les he hecho Bizum?" does not ask for a total. It asks who, so its answer shape
+# is a list of ledger counterparties. Keeping this named separately prevents PERSON from falling
+# back to the compatibility-only merchant dimension.
+_COUNTERPARTY: Final = GroupBy.COUNTERPARTY
 _ASKS_WHO: Final = re.compile(
     r"\ba\s+(?:que\s+(?:personas?|gente|contactos?)|quien(?:es)?)\b"
     r"|\bde\s+que\s+empresa\b"

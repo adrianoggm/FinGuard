@@ -26,6 +26,7 @@ from finguard_orchestrator.domain.constants import (
     RECURRING_EXPENSE_CATEGORIES,
 )
 from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
@@ -94,6 +95,16 @@ from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, 
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.observability import account_ref
+
+_COUNTERPARTY_LABELS: Final[dict[CounterpartyType, str]] = {
+    CounterpartyType.MERCHANT: "comercio",
+    CounterpartyType.PERSON: "persona",
+    CounterpartyType.EMPLOYER: "empresa pagadora",
+    CounterpartyType.BILLER: "emisor de recibos",
+    CounterpartyType.ACCOUNT: "cuenta contraparte",
+    CounterpartyType.BANK: "banco",
+    CounterpartyType.UNKNOWN: "contraparte",
+}
 
 # The default when a handler is built without one, which is every test that does not care. The
 # deployment's number is `banking_read_attempts` in configuration — this is operational policy, and
@@ -270,6 +281,9 @@ class SpokenPlan:
     excluded_categories: list[str] = field(default_factory=list)
     merchants: list[str] = field(default_factory=list)
     excluded_merchants: list[str] = field(default_factory=list)
+    counterparties: list[str] = field(default_factory=list)
+    excluded_counterparties: list[str] = field(default_factory=list)
+    counterparty_types: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
     group_limit: int | None = None
@@ -897,7 +911,8 @@ class AskFinancialQuestionHandler:
 
         if (
             isinstance(previous, FinancialPlan)
-            and previous.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}
+            and previous.group_by
+            in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
             and _NEXT_GROUP.fullmatch(_clean_turn(query.sentence))
         ):
             yield Stage("querying")
@@ -1947,6 +1962,24 @@ class AskFinancialQuestionHandler:
                         merchant
                         for merchant in previous.excluded_merchants
                         if merchant.casefold() != key.casefold()
+                    ),
+                    transaction_ids=(),
+                    group_by=facts.group_by or GroupBy.NONE,
+                    metric=facts.metric or previous.metric,
+                ),
+                facts,
+            )
+        if dimension is GroupBy.COUNTERPARTY and (
+            _COUNTERPARTY_REFERENCE.search(folded) or _MERCHANT_REFERENCE.search(folded)
+        ):
+            return explicit_facts.enforce(
+                replace(
+                    previous,
+                    counterparties=(key,),
+                    excluded_counterparties=tuple(
+                        counterparty
+                        for counterparty in previous.excluded_counterparties
+                        if counterparty.casefold() != key.casefold()
                     ),
                     transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
@@ -3056,6 +3089,11 @@ _MERCHANT_REFERENCE: Final = re.compile(
     r"(?:comercio|establecimiento|negocio|supermercado|sitio)\b"
     r"|\b(?:esa|esta|aquella|la\s+misma)\s+tienda\b"
 )
+_COUNTERPARTY_REFERENCE: Final = re.compile(
+    r"\b(?:esa|esta|aquella|la\s+misma)\s+"
+    r"(?:persona|empresa|contraparte|entidad)\b"
+    r"|\b(?:ese|este|aquel|el\s+mismo)\s+(?:emisor|empleador|banco|contacto)\b"
+)
 _ACCOUNT_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+cuenta\b")
 _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"\b(?:ese|este|aquel|el\s+mismo)\s+(?:movimiento|cargo|pago|ingreso)\b"
@@ -4068,7 +4106,8 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         )
 
     if (
-        facts.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}
+        facts.group_by
+        in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
         and len(folded.split()) <= 7
         and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
     ):
@@ -5111,6 +5150,9 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         excluded_categories=list(plan.excluded_categories),
         merchants=list(plan.merchants),
         excluded_merchants=list(plan.excluded_merchants),
+        counterparties=list(plan.counterparties),
+        excluded_counterparties=list(plan.excluded_counterparties),
+        counterparty_types=[item.value for item in plan.counterparty_types],
         group_by=plan.group_by.value,
         metric=plan.metric.value,
         group_limit=plan.group_limit,
@@ -5220,7 +5262,15 @@ def _answered(
     if len(plan.merchants) == 1:
         referenced_group_by = GroupBy.MERCHANT
         referenced_group_key = plan.merchants[0]
-    if plan.group_by in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.ACCOUNT}:
+    if len(plan.counterparties) == 1:
+        referenced_group_by = GroupBy.COUNTERPARTY
+        referenced_group_key = plan.counterparties[0]
+    if plan.group_by in {
+        GroupBy.CATEGORY,
+        GroupBy.MERCHANT,
+        GroupBy.COUNTERPARTY,
+        GroupBy.ACCOUNT,
+    }:
         highlighted_group = next(
             (group for group in answer.groups if group.movement_count > 0),
             None,

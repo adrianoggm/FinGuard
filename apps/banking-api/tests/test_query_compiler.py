@@ -5,7 +5,13 @@ from datetime import date
 
 import pytest
 
-from finguard_banking.domain.enums import Direction, GroupBy, Metric, TransactionType
+from finguard_banking.domain.enums import (
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Metric,
+    TransactionType,
+)
 from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.value_objects.category import Category
@@ -87,6 +93,7 @@ def test_the_direction_is_a_parameter_too() -> None:
         (GroupBy.MONTH, "'YYYY-MM'"),
         (GroupBy.CATEGORY, "COALESCE(t.category"),
         (GroupBy.MERCHANT, "COALESCE(t.merchant_name"),
+        (GroupBy.COUNTERPARTY, "NULLIF(BTRIM(t.description)"),
         (GroupBy.ACCOUNT, "assistant_read.my_accounts_v1"),
     ],
 )
@@ -207,6 +214,22 @@ def test_transaction_types_are_bound_instead_of_interpolated() -> None:
     assert ["DIRECT_DEBIT"] in compiled.parameters
     assert "'DIRECT_DEBIT'" not in compiled.sql
     assert "t.transaction_type" in compiled.sql
+
+
+def test_counterparty_name_and_type_are_separate_bound_filters() -> None:
+    compiled = compile_movements(
+        query(
+            counterparties=("Elena",),
+            counterparty_types=(CounterpartyType.PERSON,),
+        ),
+        "Europe/Madrid",
+    )
+
+    assert ["elena"] in compiled.parameters
+    assert ["PERSON"] in compiled.parameters
+    assert "CASE t.transaction_type" in compiled.sql
+    assert "lower(COALESCE(NULLIF(BTRIM(t.merchant_name)" in compiled.sql
+    assert "Elena" not in compiled.sql
 
 
 def test_negative_filters_are_bound_and_keep_uncategorised_rows() -> None:

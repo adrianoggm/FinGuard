@@ -265,6 +265,7 @@ class Ledger:
         group_key = {
             GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
             GroupBy.MERCHANT: "Mercadona",
+            GroupBy.COUNTERPARTY: "Mercadona",
             GroupBy.ACCOUNT: "Cuenta corriente",
         }.get(plan.group_by, "total")
         is_recent_list = (
