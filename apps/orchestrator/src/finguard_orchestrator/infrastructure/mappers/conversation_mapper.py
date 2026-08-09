@@ -69,6 +69,8 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
         only_account_id=getattr(plan, "only_account_id", None),
         only_account_ids=list(getattr(plan, "only_account_ids", ())),
         transaction_ids=list(getattr(plan, "transaction_ids", ())),
+        transaction_types=list(getattr(plan, "transaction_types", ())),
+        group_limit=getattr(plan, "group_limit", None),
     )
     if isinstance(plan, TopMovements):
         # No grouping and no metric: the payload keeps their defaults rather than inventing values a

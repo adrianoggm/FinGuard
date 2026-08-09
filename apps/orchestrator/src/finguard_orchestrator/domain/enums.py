@@ -93,6 +93,36 @@ class Direction(StrEnum):
     ALL = "ALL"
 
 
+class TransactionType(StrEnum):
+    ACCOUNT_OPENING = "ACCOUNT_OPENING"
+    SALARY = "SALARY"
+    DIRECT_DEBIT = "DIRECT_DEBIT"
+    CARD_PAYMENT = "CARD_PAYMENT"
+    BIZUM = "BIZUM"
+    TRANSFER = "TRANSFER"
+    INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
+
+
+class CounterpartyType(StrEnum):
+    MERCHANT = "MERCHANT"
+    PERSON = "PERSON"
+    EMPLOYER = "EMPLOYER"
+    BILLER = "BILLER"
+    ACCOUNT = "ACCOUNT"
+    BANK = "BANK"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReceiptCategory(StrEnum):
+    RENT = "RENT"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    UTILITIES = "UTILITIES"
+    INSURANCE = "INSURANCE"
+    LOAN = "LOAN"
+    TAX = "TAX"
+    OTHER = "OTHER"
+
+
 class GroupBy(StrEnum):
     NONE = "NONE"
     DAY = "DAY"

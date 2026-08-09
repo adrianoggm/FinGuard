@@ -107,12 +107,14 @@ def plan_to_domain(payload: PlanPayload) -> FinancialPlan:
         excluded_merchants=tuple(payload.excluded_merchants),
         group_by=payload.group_by,
         metric=payload.metric,
+        group_limit=payload.group_limit,
         include_internal=payload.include_internal,
         internal_only=payload.internal_only,
         across_accounts=payload.across_accounts,
         only_account_id=payload.only_account_id,
         only_account_ids=tuple(payload.only_account_ids),
         transaction_ids=tuple(payload.transaction_ids),
+        transaction_types=tuple(payload.transaction_types),
     )
 
 
@@ -135,12 +137,14 @@ def draft_to_domain(payload: PlanPayload) -> FinancialPlanDraft:
         excluded_merchants=tuple(payload.excluded_merchants),
         group_by=payload.group_by,
         metric=payload.metric,
+        group_limit=payload.group_limit,
         include_internal=payload.include_internal,
         internal_only=payload.internal_only,
         across_accounts=payload.across_accounts,
         only_account_id=payload.only_account_id,
         only_account_ids=tuple(payload.only_account_ids),
         transaction_ids=tuple(payload.transaction_ids),
+        transaction_types=tuple(payload.transaction_types),
     )
 
 
@@ -158,12 +162,14 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
             "excluded_merchants": plan.excluded_merchants,
             "group_by": plan.group_by,
             "metric": plan.metric,
+            "group_limit": plan.group_limit,
             "include_internal": plan.include_internal,
             "internal_only": plan.internal_only,
             "across_accounts": plan.across_accounts,
             "only_account_id": plan.only_account_id,
             "only_account_ids": plan.only_account_ids,
             "transaction_ids": plan.transaction_ids,
+            "transaction_types": plan.transaction_types,
         }
     )
 
@@ -202,6 +208,10 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
                 direction=movement.direction,
                 merchant_name=movement.merchant_name,
                 category=movement.category,
+                transaction_type=movement.transaction_type,
+                counterparty_name=movement.counterparty_name,
+                counterparty_type=movement.counterparty_type,
+                receipt_category=movement.receipt_category,
             )
             for movement in result.movements
         ],

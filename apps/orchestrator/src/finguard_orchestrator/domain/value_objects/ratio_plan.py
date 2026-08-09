@@ -114,10 +114,12 @@ def _with_window(plan: FinancialPlan, window: Window) -> FinancialPlan:
         excluded_merchants=plan.excluded_merchants,
         group_by=plan.group_by,
         metric=plan.metric,
+        group_limit=plan.group_limit,
         include_internal=plan.include_internal,
         internal_only=plan.internal_only,
         across_accounts=plan.across_accounts,
         only_account_id=plan.only_account_id,
         only_account_ids=plan.only_account_ids,
         transaction_ids=plan.transaction_ids,
+        transaction_types=plan.transaction_types,
     )

@@ -261,12 +261,14 @@ class SpokenPlan:
     excluded_merchants: list[str] = field(default_factory=list)
     group_by: str = "NONE"
     metric: str = "SUM"
+    group_limit: int | None = None
     include_internal: bool = False
     internal_only: bool = False
     across_accounts: bool = False
     only_account_id: str | None = None
     only_account_ids: list[str] = field(default_factory=list)
     transaction_ids: list[str] = field(default_factory=list)
+    transaction_types: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -293,6 +295,10 @@ class SpokenMovement:
     direction: str
     merchant_name: str | None = None
     category: str | None = None
+    transaction_type: str | None = None
+    counterparty_name: str | None = None
+    counterparty_type: str = "UNKNOWN"
+    receipt_category: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3716,6 +3722,7 @@ def _deterministic_breakdown_plan(
         else (previous_financial.only_account_ids if previous_financial else ())
     )
     transaction_ids = previous_financial.transaction_ids if previous_financial else ()
+    transaction_types = previous_financial.transaction_types if previous_financial else ()
     if window is None:
         return explicit_facts.enforce_exclusions(
             FinancialPlanDraft(
@@ -3732,6 +3739,7 @@ def _deterministic_breakdown_plan(
                 only_account_id=only_account_id,
                 only_account_ids=only_account_ids,
                 transaction_ids=transaction_ids,
+                transaction_types=transaction_types,
             ),
             facts,
         )
@@ -3752,6 +3760,7 @@ def _deterministic_breakdown_plan(
             only_account_id=only_account_id,
             only_account_ids=only_account_ids,
             transaction_ids=transaction_ids,
+            transaction_types=transaction_types,
         ),
         facts,
     )
@@ -4347,12 +4356,14 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         excluded_merchants=list(plan.excluded_merchants),
         group_by=plan.group_by.value,
         metric=plan.metric.value,
+        group_limit=plan.group_limit,
         include_internal=plan.include_internal,
         internal_only=plan.internal_only,
         across_accounts=plan.across_accounts,
         only_account_id=str(plan.only_account_id) if plan.only_account_id else None,
         only_account_ids=[str(account_id) for account_id in plan.only_account_ids],
         transaction_ids=[str(transaction_id) for transaction_id in plan.transaction_ids],
+        transaction_types=[item.value for item in plan.transaction_types],
     )
 
 
@@ -4389,6 +4400,10 @@ def _spoken_movement(movement: Movement) -> SpokenMovement:
         direction=movement.direction,
         merchant_name=movement.merchant_name,
         category=movement.category,
+        transaction_type=movement.transaction_type.value if movement.transaction_type else None,
+        counterparty_name=movement.counterparty_name,
+        counterparty_type=movement.counterparty_type.value,
+        receipt_category=movement.receipt_category.value if movement.receipt_category else None,
     )
 
 

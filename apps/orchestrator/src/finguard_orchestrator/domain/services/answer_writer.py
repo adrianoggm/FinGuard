@@ -16,7 +16,13 @@ makes.
 from datetime import datetime, timedelta
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.contact import Contact
@@ -347,10 +353,14 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     "supermercado" is what the user said. A category nobody wrote words for falls back to its
     identifier — worse than a name, much better than an invented one.
     """
+    transaction_types = getattr(plan, "transaction_types", ())
+    direct_debits_only = transaction_types == (TransactionType.DIRECT_DEBIT,)
     if plan.merchants:
         included = f" en {listed(plan.merchants)}"
     elif plan.categories:
         included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
+    elif direct_debits_only:
+        included = " entre tus recibos domiciliados"
     else:
         included = ""
     excluded_names = (
@@ -544,6 +554,10 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
     parts = [window_of(plan), plan.direction.value.lower()]
     if isinstance(plan, FinancialPlan) and plan.internal_only:
         parts.append("solo traspasos entre cuentas")
+    if isinstance(plan, FinancialPlan) and plan.transaction_types == (
+        TransactionType.DIRECT_DEBIT,
+    ):
+        parts.append("solo recibos domiciliados")
     if isinstance(plan, TopMovements):
         # The rank is the whole point of a ranking, so a description without it would show the same
         # line for "el más caro" and "el segundo más caro".

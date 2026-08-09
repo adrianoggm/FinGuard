@@ -49,6 +49,10 @@ export type Movement = {
   direction?: string;
   merchant_name: string | null;
   category: string | null;
+  transaction_type?: string | null;
+  counterparty_name?: string | null;
+  counterparty_type?: string;
+  receipt_category?: string | null;
   /** Present on the movement list, which is the only screen that can refile one. */
   transaction_id?: string | null;
   /** Whether the category is the holder's own rather than the bank's guess. */
@@ -119,12 +123,14 @@ export type PlanContext = {
   excluded_merchants?: string[];
   group_by: string;
   metric: string;
+  group_limit?: number | null;
   include_internal?: boolean;
   internal_only?: boolean;
   across_accounts?: boolean;
   only_account_id?: string | null;
   only_account_ids?: string[];
   transaction_ids?: string[];
+  transaction_types?: string[];
 };
 
 /** A payment being built. Part of the conversation state, never held on its own. */

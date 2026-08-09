@@ -78,6 +78,10 @@ MAX_PERIOD_DAYS = 366
 # that one rejects.
 MAX_RANK = 100
 
+# A spoken ranking of grouped results. Banking returns at least this many groups in metric order;
+# keeping the conversational ceiling small prevents a "top 200" request from becoming a list dump.
+MAX_GROUP_RANK = 10
+
 # --- what a payment may say -------------------------------------------------------------
 
 CURRENCY_LENGTH = 3

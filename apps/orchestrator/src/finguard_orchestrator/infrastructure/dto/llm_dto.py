@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORY_LENGTH,
+    MAX_GROUP_RANK,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
     MAX_RANK,
@@ -25,6 +26,7 @@ from finguard_orchestrator.domain.enums import (
     Metric,
     Period,
     Rail,
+    TransactionType,
 )
 from finguard_orchestrator.domain.models.conversation import Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
@@ -107,12 +109,14 @@ class PlanPayload(_Payload):
     excluded_merchants: list[str] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_RANK)
     include_internal: bool = False
     internal_only: bool = False
     across_accounts: bool = False
     only_account_id: UUID | None = None
     only_account_ids: list[UUID] = []
     transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
+    transaction_types: list[TransactionType] = []
     # Which kind of query this is. AGGREGATE totals or counts movements; RANK_MOVEMENTS picks one
     # out by size, and then `rank` says which position while the grouping and the metric mean
     # nothing. The tag decides, not the fields: a payload carrying both a rank and a grouping is a
@@ -358,6 +362,10 @@ class SpokenMovementResponse(_Payload):
     direction: str
     merchant_name: str | None = None
     category: str | None = None
+    transaction_type: str | None = None
+    counterparty_name: str | None = None
+    counterparty_type: str = "UNKNOWN"
+    receipt_category: str | None = None
 
 
 class QuestionResponse(_Payload):

@@ -45,7 +45,13 @@ from dataclasses import dataclass, replace
 from datetime import date
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    TransactionType,
+)
 from finguard_orchestrator.domain.services import category_words, spanish, window_words
 from finguard_orchestrator.domain.services.window_words import Window
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -97,6 +103,11 @@ _REJECTS: Final = re.compile(r"^(no|mejor|en realidad|que va)\b.+|\bsino\b|\bmas
 _ASKS_WHEN: Final = re.compile(
     r"\bcuando\b|\bcada\s+cuanto\b|\bque\s+dias?\b|\bcon\s+que\s+frecuencia\b"
     r"|\bcada\s+cuantos\s+dias\b|\bsuelo\s+ir\b|\ben\s+que\s+fechas?\b"
+)
+
+_DIRECT_DEBIT_QUERY: Final = re.compile(
+    r"\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b"
+    r"|\b(?:mis|los|estos|esos)\s+recibos?\b"
 )
 
 _AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
@@ -234,6 +245,11 @@ def asks_when(sentence: str) -> bool:
     return bool(_ASKS_WHEN.search(spanish.folded(sentence)))
 
 
+def asks_direct_debits(sentence: str) -> bool:
+    """Whether the user named bank direct debits, not merely periodic card charges."""
+    return bool(_DIRECT_DEBIT_QUERY.search(spanish.folded(sentence)))
+
+
 @dataclass(frozen=True)
 class ExplicitFacts:
     """What this turn states for certain. Every field is None when the sentence did not say."""
@@ -257,6 +273,7 @@ class ExplicitFacts:
     asks_top_category: bool = False
     asks_account_breakdown: bool = False
     asks_comparison_reference: bool = False
+    asks_direct_debits: bool = False
 
 
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
@@ -314,6 +331,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         asks_top_category=asks_top_category,
         asks_account_breakdown=asks_account_breakdown,
         asks_comparison_reference=bool(_COMPARISON_REFERENCE.search(folded)),
+        asks_direct_debits=asks_direct_debits(sentence),
     )
 
 
@@ -338,6 +356,11 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
             date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
         )
     plan = enforce_exclusions(plan, facts)
+    if facts.asks_direct_debits:
+        if isinstance(plan, FinancialPlan):
+            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
+        elif isinstance(plan, FinancialPlanDraft):
+            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
     if facts.group_by is not None and isinstance(plan, FinancialPlan | FinancialPlanDraft):
         plan = replace(plan, group_by=facts.group_by)
     if isinstance(plan, FinancialPlan | FinancialPlanDraft):
