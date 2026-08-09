@@ -125,6 +125,9 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
     if query.transaction_ids:
         selected_transactions = parameters.bind(list(query.transaction_ids))
         conditions.append(f"t.transaction_id = ANY({selected_transactions})")
+    if query.transaction_types:
+        transaction_types = parameters.bind([item.value for item in query.transaction_types])
+        conditions.append(f"t.transaction_type = ANY({transaction_types})")
 
     if query.internal_only:
         conditions.append("t.is_internal")

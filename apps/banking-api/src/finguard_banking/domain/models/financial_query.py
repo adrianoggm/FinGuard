@@ -20,7 +20,7 @@ from finguard_banking.domain.constants import (
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
 )
-from finguard_banking.domain.enums import Direction, GroupBy, Metric
+from finguard_banking.domain.enums import Direction, GroupBy, Metric, TransactionType
 from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.value_objects.category import Category
 from finguard_banking.domain.value_objects.date_range import DateRange
@@ -86,6 +86,8 @@ class FinancialQuery:
     # Exact rows from a previously displayed selection. The holder-scoped view remains the
     # authority, so foreign or invented identifiers simply match nothing.
     transaction_ids: tuple[UUID, ...] = field(default_factory=tuple)
+    # Ledger-native types, used by deterministic questions such as "recibos domiciliados".
+    transaction_types: tuple[TransactionType, ...] = field(default_factory=tuple)
 
     @property
     def scoped_to(self) -> UUID:
@@ -105,6 +107,8 @@ class FinancialQuery:
             raise InvalidValueError("transactionIds cannot contain duplicates")
         if len(self.transaction_ids) > MAX_SELECTED_TRANSACTIONS:
             raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
+        if len(set(self.transaction_types)) != len(self.transaction_types):
+            raise InvalidValueError("transactionTypes cannot contain duplicates")
         if self.metric is Metric.PERIOD_AVERAGE and self.group_by not in {
             GroupBy.DAY,
             GroupBy.WEEK,

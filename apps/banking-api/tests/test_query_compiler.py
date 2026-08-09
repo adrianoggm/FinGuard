@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from finguard_banking.domain.enums import Direction, GroupBy, Metric
+from finguard_banking.domain.enums import Direction, GroupBy, Metric, TransactionType
 from finguard_banking.domain.errors import InvalidValueError
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.value_objects.category import Category
@@ -47,6 +47,7 @@ def test_even_bypassing_validation_the_category_travels_as_a_parameter() -> None
     object.__setattr__(plan, "excluded_merchants", ())
     object.__setattr__(plan, "only_account_ids", ())
     object.__setattr__(plan, "transaction_ids", ())
+    object.__setattr__(plan, "transaction_types", ())
     object.__setattr__(plan, "supporting_limit", 20)
     object.__setattr__(plan, "explain", False)
 
@@ -195,6 +196,17 @@ def test_an_exact_movement_selection_is_bound_and_stays_holder_scoped() -> None:
     assert [first, second] in compiled.parameters
     assert str(first) not in compiled.sql
     assert str(second) not in compiled.sql
+
+
+def test_transaction_types_are_bound_instead_of_interpolated() -> None:
+    compiled = compile_movements(
+        query(transaction_types=(TransactionType.DIRECT_DEBIT,)), "Europe/Madrid"
+    )
+
+    assert "t.transaction_type = ANY($" in compiled.sql
+    assert ["DIRECT_DEBIT"] in compiled.parameters
+    assert "'DIRECT_DEBIT'" not in compiled.sql
+    assert "t.transaction_type" in compiled.sql
 
 
 def test_negative_filters_are_bound_and_keep_uncategorised_rows() -> None:

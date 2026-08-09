@@ -124,6 +124,7 @@ class FinancialQueryRequest(_Body):
     # Several explicitly selected accounts, still within the holder opened by accountId.
     only_account_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_ACCOUNTS)
     transaction_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_TRANSACTIONS)
+    transaction_types: tuple[TransactionType, ...] = ()
     supporting_limit: int = Field(
         default=DEFAULT_SUPPORTING_MOVEMENTS, ge=0, le=MAX_SUPPORTING_MOVEMENTS
     )
@@ -137,6 +138,8 @@ class FinancialQueryRequest(_Body):
             raise ValueError("use onlyAccountId or onlyAccountIds, not both")
         if self.internal_only and not self.include_internal:
             raise ValueError("internalOnly requires includeInternal")
+        if len(set(self.transaction_types)) != len(self.transaction_types):
+            raise ValueError("transactionTypes cannot contain duplicates")
         return self
 
 
