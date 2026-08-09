@@ -185,17 +185,20 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
             f"(t.merchant_name IS NULL OR NOT (lower(t.merchant_name) = ANY({names})))"
         )
 
-    if query.counterparties:
-        names = parameters.bind([value.strip().lower() for value in query.counterparties])
+    counterparties = getattr(query, "counterparties", ())
+    excluded_counterparties = getattr(query, "excluded_counterparties", ())
+    counterparty_types = getattr(query, "counterparty_types", ())
+    if counterparties:
+        names = parameters.bind([value.strip().lower() for value in counterparties])
         conditions.append(f"lower({_counterparty_name_expression()}) = ANY({names})")
 
-    if query.excluded_counterparties:
-        names = parameters.bind([value.strip().lower() for value in query.excluded_counterparties])
+    if excluded_counterparties:
+        names = parameters.bind([value.strip().lower() for value in excluded_counterparties])
         expression = _counterparty_name_expression()
         conditions.append(f"({expression} IS NULL OR NOT (lower({expression}) = ANY({names})))")
 
-    if query.counterparty_types:
-        types = parameters.bind([item.value for item in query.counterparty_types])
+    if counterparty_types:
+        types = parameters.bind([item.value for item in counterparty_types])
         conditions.append(f"({_counterparty_type_expression()}) = ANY({types})")
 
     return conditions
