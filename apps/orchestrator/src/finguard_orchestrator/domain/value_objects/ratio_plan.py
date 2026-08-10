@@ -97,6 +97,7 @@ def _with_window(plan: FinancialPlan, window: Window) -> FinancialPlan:
         categories=plan.categories,
         excluded_categories=plan.excluded_categories,
         merchants=plan.merchants,
+        merchant_terms=plan.merchant_terms,
         excluded_merchants=plan.excluded_merchants,
         counterparties=plan.counterparties,
         excluded_counterparties=plan.excluded_counterparties,

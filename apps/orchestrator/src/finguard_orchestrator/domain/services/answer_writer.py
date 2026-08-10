@@ -384,6 +384,8 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
         included = f" con {listed(counterparties)}"
     elif plan.merchants:
         included = f" en {listed(plan.merchants)}"
+    elif isinstance(plan, FinancialPlan) and plan.merchant_terms:
+        included = f" en comercios cuyo nombre contiene {listed(plan.merchant_terms)}"
     elif plan.categories:
         included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
     elif direct_debits_only:
@@ -623,6 +625,8 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
         # and a reader who sees the name that was searched for can tell that from "you spent
         # nothing there".
         parts.append("/".join(plan.merchants))
+    if isinstance(plan, FinancialPlan) and plan.merchant_terms:
+        parts.append("comercio contiene " + "/".join(plan.merchant_terms))
     if plan.excluded_merchants:
         parts.append("sin " + "/".join(plan.excluded_merchants))
     if isinstance(plan, FinancialPlan):
@@ -672,11 +676,11 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
         # The second is usually a plan that was wrong, and saying so lets the user
         # correct it instead of believing a zero.
-        if plan.categories and (plan.merchants or plan.counterparties):
+        if plan.categories and (plan.merchants or plan.merchant_terms or plan.counterparties):
             next_step = "buscar sin categoría, buscar sin comercio o ampliar el periodo"
         elif plan.categories:
             next_step = "buscar sin categoría o ampliar el periodo"
-        elif plan.merchants or plan.counterparties:
+        elif plan.merchants or plan.merchant_terms or plan.counterparties:
             next_step = "buscar sin comercio o ampliar el periodo"
         else:
             next_step = "ampliar el periodo o consultar las categorías disponibles"

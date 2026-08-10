@@ -75,6 +75,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     explicit_facts,
     financial_relationships,
+    incoming_payment_words,
     intent_router,
     merchant_words,
     payment_words,
@@ -229,6 +230,7 @@ _ASKS_ACCOUNT_ACTIVITY: Final = re.compile(
 _ACCOUNT_YIELD_AMOUNT: Final = re.compile(
     r"\bcuantos?\s+ingresos?\b.{0,45}\b(?:me\s+da|genera|produce|renta)\w*\b"
 )
+_GAMBLING: Final = re.compile(r"\b(?:apuest\w*|bet(?:365|fair)?|casino\w*|codere|bwin|sportium)\b")
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +280,7 @@ class SpokenPlan:
     categories: list[str] = field(default_factory=list)
     excluded_categories: list[str] = field(default_factory=list)
     merchants: list[str] = field(default_factory=list)
+    merchant_terms: list[str] = field(default_factory=list)
     excluded_merchants: list[str] = field(default_factory=list)
     counterparties: list[str] = field(default_factory=list)
     excluded_counterparties: list[str] = field(default_factory=list)
@@ -735,6 +738,48 @@ class AskFinancialQuestionHandler:
             # that half-built calculation exactly as an ordinary clarification does.
             was = was.without_pending_ratio()
             query = replace(query, conversation=was)
+
+        incoming_payment = await self._incoming_person_payment_plan(query)
+        if isinstance(incoming_payment, FinancialPlanDraft):
+            person = incoming_payment.counterparties[0]
+            question = f"¿De qué periodo quieres comprobar los Bizums recibidos de {person}?"
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(draft=incoming_payment, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        if isinstance(incoming_payment, FinancialPlan):
+            yield Stage("planned", answer_writer.describe(incoming_payment))
+            yield Stage("querying")
+            yield await self._answer(query, incoming_payment)
+            return
+
+        gambling = _gambling_plan(query)
+        if isinstance(gambling, FinancialPlanDraft):
+            question = (
+                "¿De qué periodo quieres que lo compruebe? Buscaré en ocio y en comercios "
+                "cuyo nombre contenga apuesta o bet."
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question="¿De qué periodo quieres que lo compruebe?",
+                conversation=was.with_active(
+                    FinancialClarification(draft=gambling, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        if isinstance(gambling, FinancialPlan):
+            yield Stage("planned", answer_writer.describe(gambling))
+            yield Stage("querying")
+            yield await self._answer(query, gambling)
+            return
 
         internal = _internal_movement_request(query)
         if isinstance(internal, FinancialPlanDraft):
@@ -1267,6 +1312,48 @@ class AskFinancialQuestionHandler:
                 if isinstance(was.active, PaymentInProgress) and was.active.suspended
                 else was.refused(capability)
             ),
+        )
+
+    async def _incoming_person_payment_plan(
+        self, query: AskFinancialQuestionQuery
+    ) -> FinancialPlan | FinancialPlanDraft | None:
+        """Read an incoming person-to-person payment without inheriting the previous subject."""
+        if not incoming_payment_words.is_incoming(query.sentence):
+            return None
+        try:
+            directory = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            directory = ()
+        person = incoming_payment_words.counterparty_in(query.sentence, directory)
+        if person is None:
+            return None
+        window = window_words.window_in(query.sentence, today=query.today)
+        if (
+            window is None
+            and query.conversation.active is None
+            and query.conversation.last_plan is not None
+        ):
+            previous = query.conversation.last_plan
+            window = previous.period or previous.date_range
+        is_bizum = "bizum" in spanish.folded(query.sentence)
+        categories = ("TRANSFER_BIZUM",) if is_bizum else ()
+        transaction_types = (TransactionType.BIZUM,) if is_bizum else (TransactionType.TRANSFER,)
+        if window is None:
+            return FinancialPlanDraft(
+                direction=Direction.INCOME,
+                categories=categories,
+                counterparties=(person,),
+                counterparty_types=(CounterpartyType.PERSON,),
+                transaction_types=transaction_types,
+            )
+        return FinancialPlan(
+            direction=Direction.INCOME,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            categories=categories,
+            counterparties=(person,),
+            counterparty_types=(CounterpartyType.PERSON,),
+            transaction_types=transaction_types,
         )
 
     async def _card_list(
@@ -2073,6 +2160,7 @@ class AskFinancialQuestionHandler:
                     categories=previous.categories,
                     excluded_categories=previous.excluded_categories,
                     merchants=previous.merchants,
+                    merchant_terms=previous.merchant_terms,
                     excluded_merchants=previous.excluded_merchants,
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or Metric.SUM,
@@ -3472,7 +3560,11 @@ def _period_comparison_plans(
         "categories",
         "excluded_categories",
         "merchants",
+        "merchant_terms",
         "excluded_merchants",
+        "counterparties",
+        "excluded_counterparties",
+        "counterparty_types",
         "include_internal",
         "internal_only",
         "across_accounts",
@@ -3656,6 +3748,7 @@ def _cumulative_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         categories=named or (previous_financial.categories if previous_financial else ()),
         excluded_categories=(previous_financial.excluded_categories if previous_financial else ()),
         merchants=previous_financial.merchants if previous_financial else (),
+        merchant_terms=previous_financial.merchant_terms if previous_financial else (),
         excluded_merchants=previous_financial.excluded_merchants if previous_financial else (),
         group_by=facts.group_by or GroupBy.MONTH,
         metric=Metric.CUMULATIVE,
@@ -3812,7 +3905,11 @@ def _stored_percentage_pair(
         "categories",
         "excluded_categories",
         "merchants",
+        "merchant_terms",
         "excluded_merchants",
+        "counterparties",
+        "excluded_counterparties",
+        "counterparty_types",
         "include_internal",
         "internal_only",
         "across_accounts",
@@ -4382,6 +4479,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
                 previous,
                 direction=Direction.EXPENSE,
                 merchants=(),
+                merchant_terms=(),
                 group_by=GroupBy.MERCHANT,
                 metric=Metric.SUM,
             ),
@@ -4401,6 +4499,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
                 categories=named,
                 excluded_categories=(),
                 merchants=(),
+                merchant_terms=(),
                 group_by=group_by,
             ),
             facts,
@@ -4468,6 +4567,7 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
             else ()
         ),
         merchants=() if named else (previous.merchants if previous is not None else ()),
+        merchant_terms=(() if named else (previous.merchant_terms if previous is not None else ())),
         excluded_merchants=(previous.excluded_merchants if previous is not None else ()),
         rank=1,
     )
@@ -4575,6 +4675,9 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         categories=named or (base.categories if base is not None else ()),
         excluded_categories=base.excluded_categories if base is not None else (),
         merchants=base.merchants if base is not None and group_by is not GroupBy.MERCHANT else (),
+        merchant_terms=(
+            base.merchant_terms if base is not None and group_by is not GroupBy.MERCHANT else ()
+        ),
         excluded_merchants=base.excluded_merchants if base is not None else (),
         group_by=group_by,
         metric=metric,
@@ -4589,6 +4692,39 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         if group_by is GroupBy.ACCOUNT
         else (base.only_account_ids if base else ()),
         transaction_types=base.transaction_types if base is not None else (),
+    )
+
+
+def _gambling_plan(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """Expenses at betting merchants, with explicit substring rather than exact-name semantics."""
+    folded = spanish.folded(query.sentence)
+    if _GAMBLING.search(folded) is None:
+        return None
+    if not re.search(r"\b(?:gast|pag|movim|operacion|dinero|comercio|casa|ocio)\w*\b", folded):
+        return None
+
+    terms: list[str] = []
+    if re.search(r"\bapuest\w*\b", folded):
+        # The product family, not two exact shops: this covers Casa de Apuestas and Bet365.
+        terms.extend(("apuest", "bet"))
+    for term in ("bet", "casino", "codere", "bwin", "sportium"):
+        if re.search(rf"\b{re.escape(term)}\w*\b", folded) and term not in terms:
+            terms.append(term)
+    window = window_words.window_in(query.sentence, today=query.today)
+    if window is None:
+        return FinancialPlanDraft(
+            direction=Direction.EXPENSE,
+            categories=("LEISURE",),
+            merchant_terms=tuple(terms),
+        )
+    return FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=("LEISURE",),
+        merchant_terms=tuple(terms),
     )
 
 
@@ -4706,6 +4842,11 @@ def _deterministic_breakdown_plan(
         if facts.asks_top_category or named_categories
         else (previous.merchants if previous is not None else ())
     )
+    merchant_terms = (
+        ()
+        if facts.asks_top_category or named_categories
+        else (previous.merchant_terms if previous is not None else ())
+    )
     excluded_categories = (
         tuple(
             category
@@ -4744,6 +4885,7 @@ def _deterministic_breakdown_plan(
                 categories=categories,
                 excluded_categories=excluded_categories,
                 merchants=merchants,
+                merchant_terms=merchant_terms,
                 excluded_merchants=excluded_merchants,
                 group_by=group_by,
                 metric=Metric.SUM,
@@ -4765,6 +4907,7 @@ def _deterministic_breakdown_plan(
             categories=categories,
             excluded_categories=excluded_categories,
             merchants=merchants,
+            merchant_terms=merchant_terms,
             excluded_merchants=excluded_merchants,
             group_by=group_by,
             metric=Metric.SUM,
@@ -4809,6 +4952,7 @@ def _average_plan(
     previous_categories = previous.categories if previous is not None else ()
     previous_excluded_categories = previous.excluded_categories if previous is not None else ()
     previous_merchants = previous.merchants if previous is not None else ()
+    previous_merchant_terms = previous.merchant_terms if previous is not None else ()
     previous_excluded_merchants = previous.excluded_merchants if previous is not None else ()
     asks_to_spend = re.search(
         r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr", spanish.folded(query.sentence)
@@ -4821,6 +4965,7 @@ def _average_plan(
     )
     categories = named or (() if changes_direction else previous_categories)
     merchants = () if named or changes_direction else previous_merchants
+    merchant_terms = () if named or changes_direction else previous_merchant_terms
     if named:
         previous_excluded_categories = tuple(
             category for category in previous_excluded_categories if category not in named
@@ -4868,6 +5013,7 @@ def _average_plan(
                 categories=categories,
                 excluded_categories=previous_excluded_categories,
                 merchants=merchants,
+                merchant_terms=merchant_terms,
                 excluded_merchants=previous_excluded_merchants,
                 group_by=group_by,
                 metric=facts.metric,
@@ -4897,6 +5043,7 @@ def _average_plan(
             categories=categories,
             excluded_categories=previous_excluded_categories,
             merchants=merchants,
+            merchant_terms=merchant_terms,
             excluded_merchants=previous_excluded_merchants,
             group_by=group_by,
             metric=facts.metric,
@@ -4971,6 +5118,7 @@ def _average_follow_up_plan(
                 category for category in previous.excluded_categories if category not in named
             ),
             merchants=() if named else previous.merchants,
+            merchant_terms=() if named else previous.merchant_terms,
             excluded_merchants=() if named else previous.excluded_merchants,
             group_by=group_by,
             metric=metric,
@@ -5376,6 +5524,7 @@ def _spoken(plan: FinancialPlan) -> SpokenPlan:
         categories=list(plan.categories),
         excluded_categories=list(plan.excluded_categories),
         merchants=list(plan.merchants),
+        merchant_terms=list(plan.merchant_terms),
         excluded_merchants=list(plan.excluded_merchants),
         counterparties=list(plan.counterparties),
         excluded_counterparties=list(plan.excluded_counterparties),

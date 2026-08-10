@@ -159,6 +159,8 @@ def _the_question_behind_this_one(plan: PlannedQuery | None) -> str:
         said.append(f"filtered to {', '.join(plan.categories)}")
     if plan.merchants:
         said.append(f"at {', '.join(plan.merchants)}")
+    if plan.merchant_terms:
+        said.append(f"at merchants containing {', '.join(plan.merchant_terms)}")
     if plan.group_by is not GroupBy.NONE:
         said.append(f"grouped by {plan.group_by.value}")
     return (

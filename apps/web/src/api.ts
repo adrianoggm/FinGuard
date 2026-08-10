@@ -120,6 +120,8 @@ export type PlanContext = {
   categories: string[];
   excluded_categories?: string[];
   merchants: string[];
+  /** Explicit substring matching; exact merchant names remain in `merchants`. */
+  merchant_terms?: string[];
   excluded_merchants?: string[];
   counterparties?: string[];
   excluded_counterparties?: string[];

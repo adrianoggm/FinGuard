@@ -44,7 +44,14 @@ from finguard_orchestrator.bootstrap.dependencies import (
     reporting_today,
 )
 from finguard_orchestrator.bootstrap.main import app
-from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome, Spoken
+from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
+    Direction,
+    Period,
+    PlanningOutcome,
+    Spoken,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
@@ -554,6 +561,44 @@ def test_a_question_about_money_arriving_is_not_an_order_to_send_any() -> None:
     assert answer["outcome"] == PlanningOutcome.PLANNED.value
     assert ledger.plans, "a question about received money never reached the ledger"
     assert ledger.plans[0].direction is Direction.INCOME
+
+
+def test_an_incoming_bizum_replaces_an_unfinished_betting_search() -> None:
+    """A period reply completes Marta's Bizum query, never the merchant filters from before it."""
+    client, planner, ledger = wired()
+    chat = Chat(client)
+
+    betting = chat.say("Disculpa, ¿he gastado dinero en casas de apuestas?")
+    incoming = chat.say("¿Sabrias decirme si Marta me hizo un bizum recientemente?")
+    answered = chat.say("En los ultimos 3 meses")
+
+    assert betting["outcome"] == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert incoming["outcome"] == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert answered["outcome"] == PlanningOutcome.PLANNED.value
+    assert planner.asked == []
+    plan = ledger.plans[-1]
+    assert plan.period == RelativePeriod(Period.LAST_N_MONTHS, n=3)
+    assert plan.direction is Direction.INCOME
+    assert plan.categories == ("TRANSFER_BIZUM",)
+    assert plan.merchants == () and plan.merchant_terms == ()
+    assert plan.counterparties == ("marta",)
+    assert plan.counterparty_types == (CounterpartyType.PERSON,)
+    assert plan.transaction_types == (TransactionType.BIZUM,)
+
+
+def test_betting_names_are_partial_merchant_terms_not_fake_exact_shops() -> None:
+    client, planner, ledger = wired()
+
+    answer = Chat(client).say(
+        "En los últimos 3 meses, busca gastos de ocio en casas de apuestas o bet"
+    )
+
+    assert answer["outcome"] == PlanningOutcome.PLANNED.value
+    assert planner.asked == []
+    plan = ledger.plans[-1]
+    assert plan.categories == ("LEISURE",)
+    assert plan.merchants == ()
+    assert plan.merchant_terms == ("apuest", "bet")
 
 
 @pytest.mark.parametrize(

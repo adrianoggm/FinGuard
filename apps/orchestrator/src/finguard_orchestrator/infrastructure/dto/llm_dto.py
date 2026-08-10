@@ -110,6 +110,7 @@ class PlanPayload(_Payload):
     categories: list[str] = []
     excluded_categories: list[str] = []
     merchants: list[str] = []
+    merchant_terms: list[str] = []
     excluded_merchants: list[str] = []
     counterparties: list[str] = []
     excluded_counterparties: list[str] = []
