@@ -46,6 +46,9 @@ class FinancialQuery:
     # a closed set — a category is an enum and this is whatever somebody typed — so it is
     # bounded and checked here, and it reaches SQL only as a bound parameter.
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    # Substrings are an explicit, separate operation. Exact merchant filters keep equality
+    # semantics; these terms power questions such as "un comercio cuyo nombre contenga bet".
+    merchant_terms: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     # The other side of any ledger movement. Unlike ``merchants``, this also represents people,
     # employers, billers and accounts, and can therefore be narrowed by its ledger-native type.
@@ -153,6 +156,13 @@ class FinancialQuery:
         excluded_merchants = {merchant.strip().casefold() for merchant in self.excluded_merchants}
         if included_merchants & excluded_merchants:
             raise InvalidValueError("a merchant cannot be both included and excluded")
+        if len(self.merchant_terms) > MAX_MERCHANTS:
+            raise InvalidValueError(f"at most {MAX_MERCHANTS} merchant terms per filter")
+        for term in self.merchant_terms:
+            if len(term.strip()) < 2:
+                raise InvalidValueError("a merchant term must contain at least two characters")
+            if len(term) > MAX_MERCHANT_LENGTH:
+                raise InvalidValueError(f"merchant term too long: {term[:20]!r}...")
         if (
             len(self.counterparties) > MAX_MERCHANTS
             or len(self.excluded_counterparties) > MAX_MERCHANTS

@@ -65,6 +65,7 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
         categories=list(plan.categories),
         excluded_categories=list(getattr(plan, "excluded_categories", ())),
         merchants=list(plan.merchants),
+        merchant_terms=list(getattr(plan, "merchant_terms", ())),
         excluded_merchants=list(getattr(plan, "excluded_merchants", ())),
         counterparties=list(getattr(plan, "counterparties", ())),
         excluded_counterparties=list(getattr(plan, "excluded_counterparties", ())),
@@ -107,6 +108,7 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
             categories=tuple(payload.categories),
             excluded_categories=tuple(payload.excluded_categories),
             merchants=tuple(payload.merchants),
+            merchant_terms=tuple(payload.merchant_terms),
             excluded_merchants=tuple(payload.excluded_merchants),
             rank=payload.rank or 1,
         )

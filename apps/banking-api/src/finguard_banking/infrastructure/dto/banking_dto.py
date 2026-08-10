@@ -106,6 +106,7 @@ class FinancialQueryRequest(_Body):
     # Shops, matched case-insensitively. Free text on purpose: the ledger's merchant names
     # are data, not vocabulary.
     merchants: tuple[str, ...] = ()
+    merchant_terms: tuple[str, ...] = ()
     excluded_merchants: tuple[str, ...] = ()
     counterparties: tuple[str, ...] = ()
     excluded_counterparties: tuple[str, ...] = ()
@@ -197,6 +198,7 @@ class RankedMovementRequest(_Body):
     categories: tuple[str, ...] = ()
     excluded_categories: tuple[str, ...] = ()
     merchants: tuple[str, ...] = ()
+    merchant_terms: tuple[str, ...] = ()
     excluded_merchants: tuple[str, ...] = ()
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None

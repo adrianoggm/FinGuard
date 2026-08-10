@@ -81,6 +81,17 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     assert back.last_plan == LAST_MONTH
 
 
+def test_partial_merchant_terms_survive_the_client_round_trip() -> None:
+    betting = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3),
+        categories=("LEISURE",),
+        merchant_terms=("apuest", "bet"),
+    )
+
+    assert there_and_back(IDLE.answered(betting)).last_plan == betting
+
+
 def test_a_direct_debit_scope_survives_the_client_round_trip() -> None:
     receipts = FinancialPlan(
         direction=Direction.EXPENSE,

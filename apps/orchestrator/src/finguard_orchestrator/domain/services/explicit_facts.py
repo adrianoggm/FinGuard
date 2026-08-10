@@ -529,5 +529,6 @@ def restored_filters(
         categories=plan.categories or previous.categories,
         excluded_categories=plan.excluded_categories or previous.excluded_categories,
         merchants=plan.merchants or previous.merchants,
+        merchant_terms=plan.merchant_terms or previous.merchant_terms,
         excluded_merchants=plan.excluded_merchants or previous.excluded_merchants,
     )

@@ -179,6 +179,17 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         names = parameters.bind([merchant.strip().lower() for merchant in query.merchants])
         conditions.append(f"lower(t.merchant_name) = ANY({names})")
 
+    merchant_terms = getattr(query, "merchant_terms", ())
+    if merchant_terms:
+        # Each fragment is a bound value, never a LIKE pattern: '%' remains a literal percent and
+        # cannot widen the search. Terms are OR alternatives, so apuesta/bet finds either family.
+        contains = [
+            "strpos(lower(COALESCE(t.merchant_name, '')), "
+            f"{parameters.bind(term.strip().lower())}) > 0"
+            for term in merchant_terms
+        ]
+        conditions.append(f"({' OR '.join(contains)})")
+
     if query.excluded_merchants:
         names = parameters.bind([merchant.strip().lower() for merchant in query.excluded_merchants])
         conditions.append(

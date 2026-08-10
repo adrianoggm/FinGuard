@@ -419,6 +419,19 @@ def test_a_query_body_carries_negative_filters() -> None:
     assert body["excludedMerchants"] == ["Mercadona"]
 
 
+def test_a_query_body_keeps_partial_merchant_terms_distinct_from_exact_names() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            merchant_terms=("apuest", "bet"),
+        )
+    )
+
+    assert body["merchantTerms"] == ["apuest", "bet"]
+    assert body["merchants"] == []
+
+
 def test_a_frequency_query_crosses_the_wire_without_becoming_a_sum() -> None:
     body = body_for(
         FinancialPlan(

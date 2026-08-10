@@ -90,6 +90,11 @@ class FinancialPlan:
     # The shops the question is about. Free text, unlike a category — the first field here
     # whose values the schema cannot enumerate, because the ledger's merchant names are data.
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    # Case-insensitive fragments of a merchant name. Kept separate from ``merchants`` because
+    # "Mercadona" means one exact ledger entity while "un nombre que contenga bet" deliberately
+    # describes a family such as Bet365 or Betfair. Conflating both silently changes every exact
+    # merchant query into fuzzy matching.
+    merchant_terms: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     counterparties: tuple[str, ...] = field(default_factory=tuple)
     excluded_counterparties: tuple[str, ...] = field(default_factory=tuple)
@@ -164,6 +169,7 @@ class FinancialPlan:
             self.excluded_merchants,
             self.counterparties,
             self.excluded_counterparties,
+            self.merchant_terms,
         )
         if len(set(self.counterparty_types)) != len(self.counterparty_types):
             raise InvalidValueError("counterpartyTypes cannot contain duplicates")
@@ -195,6 +201,7 @@ class FinancialPlanDraft:
     categories: tuple[str, ...] = field(default_factory=tuple)
     excluded_categories: tuple[str, ...] = field(default_factory=tuple)
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    merchant_terms: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     counterparties: tuple[str, ...] = field(default_factory=tuple)
     excluded_counterparties: tuple[str, ...] = field(default_factory=tuple)
@@ -252,6 +259,7 @@ class FinancialPlanDraft:
             self.excluded_merchants,
             self.counterparties,
             self.excluded_counterparties,
+            self.merchant_terms,
         )
         if len(set(self.counterparty_types)) != len(self.counterparty_types):
             raise InvalidValueError("counterpartyTypes cannot contain duplicates")
@@ -280,6 +288,7 @@ class FinancialPlanDraft:
             categories=self.categories,
             excluded_categories=self.excluded_categories,
             merchants=self.merchants,
+            merchant_terms=self.merchant_terms,
             excluded_merchants=self.excluded_merchants,
             counterparties=self.counterparties,
             excluded_counterparties=self.excluded_counterparties,
@@ -307,7 +316,11 @@ class FinancialPlanDraft:
             categories=self.categories,
             excluded_categories=self.excluded_categories,
             merchants=self.merchants,
+            merchant_terms=self.merchant_terms,
             excluded_merchants=self.excluded_merchants,
+            counterparties=self.counterparties,
+            excluded_counterparties=self.excluded_counterparties,
+            counterparty_types=self.counterparty_types,
             group_by=self.group_by,
             metric=self.metric,
             group_limit=self.group_limit,
@@ -330,6 +343,7 @@ class FinancialPlanDraft:
             categories=plan.categories,
             excluded_categories=plan.excluded_categories,
             merchants=plan.merchants,
+            merchant_terms=plan.merchant_terms,
             excluded_merchants=plan.excluded_merchants,
             counterparties=plan.counterparties,
             excluded_counterparties=plan.excluded_counterparties,
@@ -354,6 +368,7 @@ def check_filters(
     excluded_merchants: tuple[str, ...] = (),
     counterparties: tuple[str, ...] = (),
     excluded_counterparties: tuple[str, ...] = (),
+    merchant_terms: tuple[str, ...] = (),
 ) -> None:
     """What a plan, a draft and a ranking check identically.
 
@@ -380,6 +395,13 @@ def check_filters(
     excluded_names = {merchant.strip().casefold() for merchant in excluded_merchants}
     if included_names & excluded_names:
         raise InvalidValueError("a merchant cannot be both included and excluded")
+    if len(merchant_terms) > MAX_MERCHANTS:
+        raise InvalidValueError(f"at most {MAX_MERCHANTS} merchant terms per filter")
+    for term in merchant_terms:
+        if len(term.strip()) < 2:
+            raise InvalidValueError("a merchant term must contain at least two characters")
+        if len(term) > MAX_MERCHANT_LENGTH:
+            raise InvalidValueError(f"merchant term too long: {term[:20]!r}...")
     if len(counterparties) > MAX_MERCHANTS or len(excluded_counterparties) > MAX_MERCHANTS:
         raise InvalidValueError(f"at most {MAX_MERCHANTS} counterparties per filter")
     for counterparty in (*counterparties, *excluded_counterparties):

@@ -37,6 +37,7 @@ class TopMovements:
     categories: tuple[str, ...] = field(default_factory=tuple)
     excluded_categories: tuple[str, ...] = field(default_factory=tuple)
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    merchant_terms: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     # 1 is the largest. Not zero-based: "el primero" is what a person says, and an off-by-one here
     # would answer "the largest" with the second largest.
@@ -54,6 +55,7 @@ class TopMovements:
             self.merchants,
             self.excluded_categories,
             self.excluded_merchants,
+            merchant_terms=self.merchant_terms,
         )
 
     def next_rank(self) -> "TopMovements":
