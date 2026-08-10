@@ -4994,7 +4994,8 @@ def _from_what_the_sentence_said(
 ) -> PlanningResult | None:
     """A plan built from the sentence alone, when the model gave up on one it could have made.
 
-    **The guard owns refusals; the model does not get to invent one.** `capability_guard` is what
+    **The guard owns refusals; the model does not get to invent one.** Nor may it ask for a field
+    the sentence already states precisely. `capability_guard` is what
     decides which questions this product declines — ratios and arbitrary partial-range
     comparisons — and
     it runs *before* the model. So an `UNSUPPORTED` naming a family the guard does not have is not a
@@ -5005,19 +5006,27 @@ def _from_what_the_sentence_said(
     Ollama returned exactly that for "¿qué intereses me ha dado la hucha?" — a question whose
     every part is in a closed vocabulary this service reads itself.
 
-    So the sentence is re-read deterministically, and a plan is built only when it states enough on
-    its own: a window, and a category named precisely enough for the gate to be sure of it. Both,
+    So a refusal or clarification is re-read deterministically, and a plan is built only when the
+    sentence states enough on its own: a window, and a category named precisely enough for the
+    gate to be sure of it. Both,
     never one — a category with no window would answer about a period nobody chose, and a window
     with no category would total everything under a question about one thing. `None` when it does
     not, and then the decline stands: this rescues a plan the sentence contains, and never guesses
     at one it does not.
     """
-    if planned.outcome is not PlanningOutcome.UNSUPPORTED:
+    if planned.outcome not in {
+        PlanningOutcome.UNSUPPORTED,
+        PlanningOutcome.NEEDS_CLARIFICATION,
+    }:
         return None
     facts = explicit_facts.read(query.sentence, today=query.today)
     supported_average = planned.reason == "AVERAGE" and facts.metric is Metric.AVERAGE
     supported_comparison = planned.reason == "COMPARISON" and bool(facts.compared_categories)
-    if planned.reason in _MISSING_CAPABILITY and not (supported_average or supported_comparison):
+    if (
+        planned.outcome is PlanningOutcome.UNSUPPORTED
+        and planned.reason in _MISSING_CAPABILITY
+        and not (supported_average or supported_comparison)
+    ):
         # A family the guard owns. The refusal is this product's and it is correct.
         return None
 
