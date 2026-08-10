@@ -75,6 +75,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     explicit_facts,
     financial_relationships,
+    incoming_payment_words,
     intent_router,
     merchant_words,
     payment_words,
@@ -738,6 +739,26 @@ class AskFinancialQuestionHandler:
             was = was.without_pending_ratio()
             query = replace(query, conversation=was)
 
+        incoming_payment = await self._incoming_person_payment_plan(query)
+        if isinstance(incoming_payment, FinancialPlanDraft):
+            person = incoming_payment.counterparties[0]
+            question = f"¿De qué periodo quieres comprobar los Bizums recibidos de {person}?"
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(draft=incoming_payment, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        if isinstance(incoming_payment, FinancialPlan):
+            yield Stage("planned", answer_writer.describe(incoming_payment))
+            yield Stage("querying")
+            yield await self._answer(query, incoming_payment)
+            return
+
         gambling = _gambling_plan(query)
         if isinstance(gambling, FinancialPlanDraft):
             question = (
@@ -1291,6 +1312,48 @@ class AskFinancialQuestionHandler:
                 if isinstance(was.active, PaymentInProgress) and was.active.suspended
                 else was.refused(capability)
             ),
+        )
+
+    async def _incoming_person_payment_plan(
+        self, query: AskFinancialQuestionQuery
+    ) -> FinancialPlan | FinancialPlanDraft | None:
+        """Read an incoming person-to-person payment without inheriting the previous subject."""
+        if not incoming_payment_words.is_incoming(query.sentence):
+            return None
+        try:
+            directory = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            directory = ()
+        person = incoming_payment_words.counterparty_in(query.sentence, directory)
+        if person is None:
+            return None
+        window = window_words.window_in(query.sentence, today=query.today)
+        if (
+            window is None
+            and query.conversation.active is None
+            and query.conversation.last_plan is not None
+        ):
+            previous = query.conversation.last_plan
+            window = previous.period or previous.date_range
+        is_bizum = "bizum" in spanish.folded(query.sentence)
+        categories = ("TRANSFER_BIZUM",) if is_bizum else ()
+        transaction_types = (TransactionType.BIZUM,) if is_bizum else (TransactionType.TRANSFER,)
+        if window is None:
+            return FinancialPlanDraft(
+                direction=Direction.INCOME,
+                categories=categories,
+                counterparties=(person,),
+                counterparty_types=(CounterpartyType.PERSON,),
+                transaction_types=transaction_types,
+            )
+        return FinancialPlan(
+            direction=Direction.INCOME,
+            period=window if isinstance(window, RelativePeriod) else None,
+            date_range=window if isinstance(window, AbsoluteRange) else None,
+            categories=categories,
+            counterparties=(person,),
+            counterparty_types=(CounterpartyType.PERSON,),
+            transaction_types=transaction_types,
         )
 
     async def _card_list(

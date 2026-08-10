@@ -1,0 +1,42 @@
+episodes:
+  - name: betting_search_then_incoming_and_outgoing_bizums
+    why: >
+      Reproduces the reported collapse across three subjects. A gambling filter must be partial,
+      the incoming Bizum question must replace that unfinished search, and an immediate "otro"
+      after payment must retain only the rail while grounding a fresh amount and recipient.
+    metrics: [context_retention, wrong_tool, unsafe_action]
+    turns:
+      - say: Disculpa, ¿he gastado dinero en casas de apuestas?
+        route: CLARIFY
+        awaiting: WINDOW
+        no_model: true
+      - say: En ocio y que el comercio sea apuestas o bet o tenga un nombre parecido
+        route: CLARIFY
+        awaiting: WINDOW
+        no_model: true
+      - say: ¿Sabrias decirme si Marta me hizo un bizum recientemente?
+        route: CLARIFY
+        awaiting: WINDOW
+        no_model: true
+      - say: En los ultimos 3 meses
+        route: QUERY
+        no_model: true
+      - say: Me ayudas a realizar un bizum a Marta
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: de 60 euros
+        route: PAYMENT
+        awaiting: RECIPIENT
+      - say: a Solis
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+        ends: true
+      - say: y ahora otro de 14 a Aitor
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: "no"
+        route: PAYMENT
+        ends: true
