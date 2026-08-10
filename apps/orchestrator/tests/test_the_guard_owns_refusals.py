@@ -75,6 +75,17 @@ class GivesUp:
         return PlanningResult(outcome=PlanningOutcome.UNSUPPORTED, reason=self.reason)
 
 
+class AsksAnyway(GivesUp):
+    """A model asking for detail the sentence already states."""
+
+    async def plan(self, *_: object, **__: object) -> PlanningResult:
+        self.asked += 1
+        return PlanningResult.needs_clarification(
+            "¿Te refieres a supermercados en general o a un tipo específico de gasto?",
+            awaiting=Slot.CATEGORY,
+        )
+
+
 class Ledger:
     def __init__(self) -> None:
         self.plan: FinancialPlan | None = None
@@ -214,6 +225,23 @@ async def test_the_window_the_sentence_named_is_the_window_it_runs_over() -> Non
     assert ledger.plan.period is not None
     assert ledger.plan.period.period is Period.LAST_MONTH
     assert ledger.plan.direction is Direction.EXPENSE
+
+
+async def test_a_redundant_model_clarification_is_rescued_from_the_complete_sentence() -> None:
+    planner = AsksAnyway()
+    ledger = Ledger()
+
+    answer = await asked(
+        "¿Cuánto gasté en supermercados el mes pasado sin Mercadona?",
+        planner,
+        ledger,
+    )
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 1
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("GROCERIES",)
+    assert ledger.plan.excluded_merchants == ("mercadona",)
 
 
 async def test_a_category_with_no_period_is_asked_about_rather_than_refused() -> None:

@@ -201,8 +201,11 @@ def _answer_in(body: Any, provider: str) -> str:
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ProviderFailedError(provider, "no choices in the answer")
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    choice = choices[0]
+    message = choice.get("message") if isinstance(choice, dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
+        if isinstance(choice, dict) and choice.get("finish_reason") == "length":
+            raise ProviderFailedError(provider, "output budget exhausted before final answer")
         raise ProviderFailedError(provider, "empty answer")
     return content

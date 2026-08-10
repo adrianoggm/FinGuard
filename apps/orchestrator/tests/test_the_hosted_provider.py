@@ -245,6 +245,20 @@ def test_a_good_body_returns_its_content() -> None:
     assert openai_compatible_provider._answer_in(AN_ANSWER, "xai") == '{"intent":"COURTESY"}'
 
 
+def test_an_empty_answer_caused_by_the_token_ceiling_names_the_real_failure() -> None:
+    body = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": None, "reasoning_content": "hidden reasoning"},
+            }
+        ]
+    }
+
+    with pytest.raises(ProviderFailedError, match="output budget exhausted"):
+        openai_compatible_provider._answer_in(body, "cloudflare")
+
+
 async def test_an_http_error_does_not_carry_the_body(sent: Endpoint) -> None:
     """The body of a 400 quotes the request, and the request contains the user's sentence. The
     rule that nothing a person typed reaches a log file does not stop at our own logger."""
