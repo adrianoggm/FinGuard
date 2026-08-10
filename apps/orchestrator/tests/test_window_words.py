@@ -432,3 +432,15 @@ def test_two_calendar_years_can_be_read_from_one_comparison(sentence: str) -> No
         window_words.whole_year(2025),
         window_words.whole_year(2026),
     )
+
+
+def test_a_single_window_is_complete_but_not_a_comparison_pair() -> None:
+    assert window_words.has_complete_window("este mes", today=TODAY)
+    assert not window_words.has_compared_windows("este mes", today=TODAY)
+
+
+def test_two_compared_windows_are_complete_without_becoming_one_shareable_window() -> None:
+    sentence = "compara junio y julio"
+
+    assert window_words.has_complete_window(sentence, today=TODAY)
+    assert window_words.has_compared_windows(sentence, today=TODAY)

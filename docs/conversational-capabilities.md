@@ -1,6 +1,6 @@
 # Matriz de capacidades conversacionales
 
-Estado vivo del orquestador a 9 de agosto de 2026. Esta es la referencia para evitar que la ayuda,
+Estado vivo del orquestador a 10 de agosto de 2026. Esta es la referencia para evitar que la ayuda,
 el `capability_guard`, el planificador y el corpus se contradigan. Una capacidad sólo puede
 considerarse **activa** cuando tiene representación de dominio, ejecución determinista y una prueba
 conversacional. Los textos de producto no deben prometer una fila que siga en **siguiente**.
@@ -26,7 +26,7 @@ conversacional. Los textos de producto no deben prometer una fila que siga en **
 | Contrapartes separadas de comercios | Activa | filtros y `GroupBy.COUNTERPARTY` conservan nombre y tipo de contraparte | `test_query_compiler.py`, `test_explicit_facts.py` |
 | Trimestre, semestre, quincena y fin de semana | Activa | periodos relativos tipados + rangos calendario numerados | `test_natural_periods.py`, corpus 25 |
 | Alias aprendidos de entidades | Activa para cuentas, comercios y contrapartes | cuenta alias→UUID; contraparte alias→(nombre, tipo), comprobados contra banca | `test_account_aliases.py`, `test_counterparty_aliases.py`, corpus 26 y 27 |
-| Consultas compuestas generales | Parcial | existen relaciones cerradas de dos lecturas | pendiente |
+| Consultas compuestas generales | Activa para 2-3 lecturas seguras, incluidas relaciones tipadas | cada parte conserva `FinancialPlan`, `RatioPlan` o `ComparisonPlan`, evidencia y contexto; las operaciones o mezclas ambiguas piden elección | `test_a_conversation_that_wanders.py`, corpus 28 |
 
 ## Evaluación obligatoria por capacidad
 

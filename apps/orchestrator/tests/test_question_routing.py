@@ -127,30 +127,34 @@ def test_a_payment_typed_into_the_chat_reaches_the_payment_path() -> None:
     assert preparing.sentences == [PAYMENT]
 
 
-def test_two_requests_are_returned_as_choices_before_either_one_runs() -> None:
+def test_a_payment_mixed_with_a_read_is_returned_as_choices_before_either_runs() -> None:
     client, preparing = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
 
     response = client.post(
-        "/v1/questions", json={"question": "¿Cuánto tengo y cuánto gasté este mes?"}
+        "/v1/questions", json={"question": "Haz un bizum a Marta y cuanto gaste este mes"}
     )
 
     assert response.status_code == 200
     assert response.json()["outcome"] == "NEEDS_CLARIFICATION"
-    assert response.json()["suggestions"] == ["Cuánto tengo", "cuánto gasté este mes"]
+    assert response.json()["suggestions"] == [
+        "Haz un bizum a Marta",
+        "cuanto gaste este mes",
+    ]
     assert preparing.sentences == []
 
 
-def test_two_requests_have_the_same_choice_on_the_streaming_endpoint() -> None:
+def test_an_unsafe_compound_has_the_same_choice_on_the_streaming_endpoint() -> None:
     client, _ = client_for(Scope.QUESTIONS_READ)
 
     response = client.post(
-        "/v1/questions/stream", json={"question": "¿Cuánto tengo y cuánto gasté este mes?"}
+        "/v1/questions/stream",
+        json={"question": "Haz un bizum a Marta y cuanto gaste este mes"},
     )
     events = events_of(response)
 
     assert [event["type"] for event in events] == ["answer"]
     assert events[0]["outcome"] == "NEEDS_CLARIFICATION"
-    assert events[0]["suggestions"] == ["Cuánto tengo", "cuánto gasté este mes"]
+    assert events[0]["suggestions"] == ["Haz un bizum a Marta", "cuanto gaste este mes"]
 
 
 def test_starting_a_payment_discards_an_older_failed_query_retry() -> None:

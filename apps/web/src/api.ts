@@ -271,6 +271,8 @@ export type Answer = {
   groups: { key: string; total_minor: number; movement_count: number }[];
   movements: Movement[];
   suggestions: string[];
+  /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
+  parts?: Answer[];
 };
 
 export type Stage = { name: string };

@@ -455,6 +455,9 @@ class QuestionResponse(_Payload):
     # Filled only by a question about who can be paid. The identifier is what lets a client offer
     # a choice and send back *which* contact instead of a name to be interpreted a second time.
     contacts: list[SpokenContactResponse] = []
+    # Independent read-only requests asked in one turn. Each part keeps its own plan and evidence;
+    # only the parent carries the conversation left behind after all parts have run.
+    parts: list["QuestionResponse"] = []
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

@@ -361,10 +361,33 @@ function Bubble({ turn }: { turn: Turn }) {
   if (turn.who === "error") return <p className="bubble failed">{turn.text}</p>;
 
   const { answer } = turn;
+  const parts = answer.parts ?? [];
   return (
     <div className={answer.outcome === AWAITING ? "bubble theirs preview" : "bubble theirs"}>
-      <p>{answer.text}</p>
+      {parts.length > 0 ? (
+        <>
+          <p>He resuelto {parts.length === 2 ? "las dos consultas" : `${parts.length} consultas`}:</p>
+          {parts.map((part, index) => (
+            <section className="compound-part" key={index}>
+              <p>{part.text}</p>
+              <AnswerEvidence answer={part} />
+            </section>
+          ))}
+        </>
+      ) : (
+        <>
+          <p>{answer.text}</p>
+          <AnswerEvidence answer={answer} />
+        </>
+      )}
       <PaymentPanel state={answer.conversation} />
+    </div>
+  );
+}
+
+function AnswerEvidence({ answer }: { answer: Answer }) {
+  return (
+    <>
       {answer.plan && (
         <details>
           <summary>Ver la consulta</summary>
@@ -416,7 +439,7 @@ function Bubble({ turn }: { turn: Turn }) {
           ))}
         </ul>
       )}
-    </div>
+    </>
   );
 }
 
