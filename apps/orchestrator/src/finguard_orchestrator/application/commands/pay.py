@@ -237,10 +237,21 @@ async def _previewed(
             ],
         )
     except RecipientNotFoundError as nobody:
+        # The name is the only invalid field. Keep what the holder already said so choosing one of
+        # their contacts is a continuation, not a fresh sentence that can fall into the financial
+        # planner. The rejected name itself is deliberately cleared: retaining it would let a bare
+        # amount retry the same invalid recipient forever.
+        draft = PaymentDraft(
+            amount_minor=request.amount_minor,
+            currency=request.currency,
+            concept=request.concept,
+            rail=request.rail,
+        )
         return PaymentAnswer(
-            outcome=PaymentOutcome.REFUSED.value,
-            text=payment_writer.not_a_contact(nobody.name),
+            outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+            text=payment_writer.not_a_contact(nobody.name, draft),
             reason=nobody.code,
+            draft=_drafted(draft),
         )
     except RecipientHasNoAccountError as unreachable:
         # Not a refusal and not a not-found. The person exists, the holder chose them, and what

@@ -95,6 +95,39 @@ episodes:
       - say: gracias
         route: COURTESY
 
+  - name: an_unknown_contact_then_a_short_contact_choice
+    why: >
+      The reported regression. Rejecting Custo must clear only that name: the amount survives a
+      contact-list aside, "a Aitor" finishes the draft, and a later shorthand correction must not
+      retain Aitor or fall into the financial planner.
+    metrics: [unsafe_action, context_retention, wrong_tool]
+    turns:
+      - say: hazle un bizum a Custo
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 2500 euros
+        route: PAYMENT
+        awaiting: RECIPIENT
+        says: otro contacto
+      - say: dame los contactos que tengo
+        route: CONTACTS
+        keeps: PAYMENT_IN_PROGRESS
+      - say: a Aitor
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: A Marta 500 euros concepto pa la rule
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+      - say: Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+        says: 500,00
+      - say: "no"
+        route: PAYMENT
+        ends: true
+      - say: gracias
+        route: COURTESY
+
   - name: the_concept_arrives_with_the_amount
     why: >
       "Pues 15 euros con concepto de cena" answers the amount question and carries the note in the
