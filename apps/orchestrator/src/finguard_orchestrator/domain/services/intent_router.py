@@ -482,7 +482,10 @@ def asks_for_something_else(sentence: str) -> bool:
     for one question: a second list of nouns over there would drift from this one, which is
     precisely how the model's prompt drifted from these rules.
     """
-    return _NOT_THE_BALANCE.search(sentence) is not None
+    # Public callers should not have to know that every pattern in this module is evaluated over
+    # folded Spanish. Keeping the normalisation here also makes clause analysis behave exactly
+    # like ``route`` for accents, casing and harmless Unicode variants.
+    return _NOT_THE_BALANCE.search(spanish.folded(sentence)) is not None
 
 
 def is_bare_correction(sentence: str) -> bool:

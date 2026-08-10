@@ -200,14 +200,13 @@ episodes:
   - name: two_questions_in_one_sentence
     why: >
       "¿Cuánto tengo y cuánto gasté?" asks two things. Silently choosing one produced a valid
-      figure for only half the request, so the service now exposes both clauses and asks which to
-      handle first; the turn after it remains unaffected.
+      figure for only half the request. Safe read-only clauses now both run and remain separately
+      auditable; operations or ambiguous mixtures still ask which one to handle first.
     metrics: [wrong_tool]
     turns:
-      # Neither half runs until the holder chooses. This is an intentional clarification, not the
-      # planner failing to understand a single request.
+      # Both halves are safe reads and run in one bounded compound answer.
       - say: ¿cuánto tengo y cuánto gasté el mes pasado?
-        route: CLARIFY
+        route: QUERY
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: ¿y cuánto tengo?

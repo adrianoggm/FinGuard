@@ -195,11 +195,6 @@ _NUMBERED_MONTH_FALLBACK: Final = re.compile(
     r"(?P<second>0?[1-9]|1[0-2])\b"
 )
 _RATIO_WORDS: Final = re.compile(r"\bporcentaje\b|\bque\s+parte\s+de\b|\bque\s+proporcion\s+de\b|%")
-_SAVINGS_RATE: Final = re.compile(
-    r"\btasa\s+de\s+ahorro\b"
-    r"|\b(?:porcentaje|parte|proporcion)\b.{0,45}\b"
-    r"(?:ahorr|no\s+(?:me\s+)?(?:he\s+)?gast|me\s+queda)\w*\b"
-)
 _PERCENT_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?(?:cuanto\s+(?:es|fue|supone)\s+eso\s+)?(?:en\s+)?porcentaje$"
     r"|^(?:y\s+)?(?:cual|cuanto)\s+fue\s+(?:la\s+)?(?:diferencia|variacion)\s+porcentual$"
@@ -3539,7 +3534,7 @@ def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft |
         return None
 
     asks_ratio = _RATIO_WORDS.search(folded) is not None
-    asks_savings = _SAVINGS_RATE.search(folded) is not None
+    asks_savings = financial_relationships.asks_savings_rate(query.sentence)
     asks_net_cash_flow = financial_relationships.asks_net_cash_flow(query.sentence)
     if not asks_ratio and not asks_savings and not asks_net_cash_flow:
         return None

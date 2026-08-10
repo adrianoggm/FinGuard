@@ -84,6 +84,7 @@ function answer(fields: Partial<Answer> = {}): Answer {
     groups: [],
     movements: [],
     suggestions: [],
+    parts: [],
     ...fields,
   };
 }
@@ -156,6 +157,36 @@ describe("the state the service sent", () => {
 });
 
 describe("what the client still works out for itself", () => {
+  it("renders every compound part with its own query", () => {
+    const compound = thread({
+      turns: [
+        {
+          who: "assistant",
+          answer: answer({
+            outcome: "COMPOUND",
+            parts: [
+              answer({ text: "Tienes 100,00 €.", plan: "saldo" }),
+              answer({ text: "Gastaste 25,00 €.", plan: "este mes, expense" }),
+            ],
+          }),
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: compound,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Tienes 100,00 €.");
+    expect(markup).toContain("Gastaste 25,00 €.");
+    expect(markup.match(/Ver la consulta/g)).toHaveLength(2);
+  });
+
   it("renders only the latest answer's structured recovery actions", () => {
     const retrying = thread({
       turns: [

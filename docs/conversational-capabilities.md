@@ -1,6 +1,6 @@
 # Matriz de capacidades conversacionales
 
-Estado vivo del orquestador a 9 de agosto de 2026. Esta es la referencia para evitar que la ayuda,
+Estado vivo del orquestador a 10 de agosto de 2026. Esta es la referencia para evitar que la ayuda,
 el `capability_guard`, el planificador y el corpus se contradigan. Una capacidad sólo puede
 considerarse **activa** cuando tiene representación de dominio, ejecución determinista y una prueba
 conversacional. Los textos de producto no deben prometer una fila que siga en **siguiente**.
@@ -26,7 +26,7 @@ conversacional. Los textos de producto no deben prometer una fila que siga en **
 | Contrapartes separadas de comercios | Activa | filtros y `GroupBy.COUNTERPARTY` conservan nombre y tipo de contraparte | `test_query_compiler.py`, `test_explicit_facts.py` |
 | Trimestre, semestre, quincena y fin de semana | Activa | periodos relativos tipados + rangos calendario numerados | `test_natural_periods.py`, corpus 25 |
 | Alias aprendidos de entidades | Activa para cuentas, comercios y contrapartes | cuenta alias→UUID; contraparte alias→(nombre, tipo), comprobados contra banca | `test_account_aliases.py`, `test_counterparty_aliases.py`, corpus 26 y 27 |
-| Consultas compuestas generales | Parcial | existen relaciones cerradas de dos lecturas | pendiente |
+| Consultas compuestas generales | Activa para 2-3 lecturas seguras, incluidas relaciones tipadas | cada parte conserva `FinancialPlan`, `RatioPlan` o `ComparisonPlan`, evidencia y contexto; las operaciones o mezclas ambiguas piden elección | `test_a_conversation_that_wanders.py`, corpus 28 |
 
 ## Evaluación obligatoria por capacidad
 
@@ -46,7 +46,15 @@ por `cantidad` cambia la métrica; `sin alquiler` añade una exclusión; `julio`
 la ventana. Las relaciones de dos lecturas deben aplicar el mismo cambio compatible a ambos
 operandos.
 
-## Orden de implementación restante
+Esta comprobación ya está automatizada en `evaluation/planning/metamorphic.yaml`. Cada variante
+declara `metamorph_of` y `changes`; el evaluador compara los planes completos y falla tanto si no
+cambia la dimensión declarada como si se modifica otra adicional. `just evaluate-metamorphic`
+ejecuta el corpus contra el modelo local, mientras que la suite valida siempre la coherencia del
+propio corpus sin necesitar un modelo.
 
-1. Avanzar consultas compuestas generales sobre las relaciones ya tipadas.
-2. Añadir evaluación metamórfica automática de métricas, ventanas y exclusiones.
+## Estado del bloque
+
+El bloque funcional previsto está completo. Las consultas compuestas admiten relaciones derivadas
+cuando sus operandos y ventanas tienen representación tipada. Las operaciones siguen fuera de la
+ejecución múltiple automática: mezclar una lectura con un Bizum o una transferencia siempre exige
+elegir primero.

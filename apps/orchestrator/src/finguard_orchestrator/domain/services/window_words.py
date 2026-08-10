@@ -584,6 +584,26 @@ def compared_date_ranges(
     return first, second
 
 
+def has_compared_windows(sentence: str, *, today: date) -> bool:
+    """Whether a clause states a complete supported pair of comparison windows."""
+    return any(
+        pair is not None
+        for pair in (
+            compared_date_ranges(sentence, today=today),
+            compared_calendar_months(sentence, today=today),
+            compared_calendar_years(sentence, today=today),
+            compared_natural_periods(sentence, today=today),
+        )
+    )
+
+
+def has_complete_window(sentence: str, *, today: date) -> bool:
+    """Whether a clause states its one window or a complete pair of comparison windows."""
+    return window_in(sentence, today=today) is not None or has_compared_windows(
+        sentence, today=today
+    )
+
+
 def _range_from(match: re.Match[str], today: date) -> AbsoluteRange | None:
     start_month = _MONTH_NUMBER[match.group("start_month")]
     end_month = _MONTH_NUMBER[match.group("end_month")]

@@ -25,6 +25,7 @@ value. A deterministic turn that quietly reached the model shows up as a failure
 a slightly different answer on a machine with a different model installed.
 """
 
+import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -258,6 +259,219 @@ class Chat:
         answer = response.json()
         self.conversation = answer["conversation"]
         return answer
+
+
+def test_two_safe_reads_in_one_turn_are_both_answered_and_auditable() -> None:
+    client, planner, ledger, accounts = wired(
+        {
+            "gaste": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                )
+            )
+        }
+    )
+
+    # Keep this boundary test ASCII: the currently pinned TestClient transport corrupts Unicode
+    # JSON on Windows. Unicode clause recognition is covered directly in test_turn_analyzer.py.
+    answer = Chat(client).say("Cuanto tengo y cuanto gaste este mes?")
+
+    assert answer["outcome"] == "COMPOUND"
+    assert [part["outcome"] for part in answer["parts"]] == [
+        Spoken.BALANCE.value,
+        PlanningOutcome.PLANNED.value,
+    ]
+    assert all(part["conversation"] is None for part in answer["parts"])
+    assert answer["parts"][1]["plan"] is not None
+    assert answer["conversation"]["last_plan"]["period"] == Period.THIS_MONTH.value
+    assert planner.asked == ["cuanto gaste este mes"]
+    assert accounts.asked == 1
+    assert len(ledger.plans) == 1
+
+
+def test_a_shared_trailing_window_seeds_the_other_financial_clause() -> None:
+    client, planner, ledger, _ = wired(
+        {
+            "gaste": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                )
+            ),
+            "ingrese": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.INCOME,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                )
+            ),
+        }
+    )
+
+    answer = Chat(client).say("Cuanto gaste y cuanto ingrese este mes?")
+
+    assert answer["outcome"] == "COMPOUND"
+    assert len(answer["parts"]) == 2
+    assert planner.asked[0] == "cuanto ingrese este mes"
+    assert [plan.direction for plan in ledger.plans] == [Direction.INCOME, Direction.EXPENSE]
+
+
+def test_compound_clauses_do_not_leak_filters_into_each_other() -> None:
+    client, _, ledger, _ = wired(
+        {
+            "supermercado": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                    categories=("GROCERIES",),
+                )
+            ),
+            "ingrese": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.INCOME,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                )
+            ),
+        }
+    )
+
+    answer = Chat(client).say("Cuanto gaste en supermercado este mes y cuanto ingrese este mes?")
+
+    assert answer["outcome"] == "COMPOUND"
+    assert [plan.categories for plan in ledger.plans] == [("GROCERIES",), ()]
+
+
+def test_a_trailing_window_is_shared_without_sharing_its_category() -> None:
+    client, _, ledger, _ = wired(
+        {
+            "supermercado": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                    categories=("GROCERIES",),
+                )
+            ),
+            "ingrese": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.INCOME,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                )
+            ),
+        }
+    )
+
+    answer = Chat(client).say("Cuanto ingrese y cuanto gaste en supermercado este mes?")
+
+    assert answer["outcome"] == "COMPOUND"
+    assert [plan.categories for plan in ledger.plans] == [("GROCERIES",), ()]
+    assert answer["conversation"]["last_plan"]["direction"] == Direction.EXPENSE.value
+
+
+def test_safe_compound_reads_have_the_same_shape_when_streamed() -> None:
+    client, _, _, _ = wired(
+        {
+            "gaste": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                )
+            )
+        }
+    )
+
+    response = client.post(
+        "/v1/questions/stream", json={"question": "Cuanto tengo y cuanto gaste este mes?"}
+    )
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert len(events) == 1
+    assert events[0]["type"] == "answer"
+    assert events[0]["outcome"] == "COMPOUND"
+    assert len(events[0]["parts"]) == 2
+
+
+def test_a_compound_containing_a_payment_still_asks_the_user_to_choose() -> None:
+    client, _, ledger, _ = wired({})
+
+    answer = Chat(client).say("Haz un bizum a Marta y cuanto gaste este mes")
+
+    assert answer["outcome"] == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert answer["parts"] == []
+    assert len(answer["suggestions"]) == 2
+    assert ledger.plans == []
+
+
+def test_a_typed_net_cash_flow_can_share_a_turn_with_the_balance() -> None:
+    client, planner, ledger, accounts = wired({})
+
+    answer = Chat(client).say("Cual fue mi flujo neto este mes y cuanto tengo?")
+
+    assert answer["outcome"] == "COMPOUND"
+    assert [part["outcome"] for part in answer["parts"]] == [
+        PlanningOutcome.PLANNED.value,
+        Spoken.BALANCE.value,
+    ]
+    assert [plan.direction for plan in ledger.plans] == [Direction.EXPENSE, Direction.INCOME]
+    assert answer["conversation"]["last_ratio_kind"] == "NET_CASH_FLOW"
+    assert answer["conversation"]["answered_the_balance"] is True
+    assert planner.asked == []
+    assert accounts.asked == 1
+
+
+def test_a_comparison_with_and_inside_it_remains_one_compound_part() -> None:
+    client, planner, ledger, _ = wired({})
+
+    answer = Chat(client).say("Compara mis gastos de junio y julio y dime cuanto tengo")
+
+    assert answer["outcome"] == "COMPOUND"
+    assert len(answer["parts"]) == 2
+    assert len(ledger.plans) == 2
+    assert answer["conversation"]["last_comparison_earlier"] is not None
+    assert answer["conversation"]["answered_the_balance"] is True
+    assert planner.asked == []
+
+
+def test_a_comparison_does_not_lend_one_of_its_two_windows_to_an_abbreviation() -> None:
+    client, planner, ledger, _ = wired({})
+
+    answer = Chat(client).say("Compara mis gastos de junio y julio y cuanto gaste en supermercados")
+
+    assert answer["outcome"] == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert len(answer["suggestions"]) == 2
+    assert ledger.plans == []
+    assert planner.asked == []
+
+
+def test_a_savings_rate_shares_only_its_single_window_with_the_next_read() -> None:
+    client, _, ledger, _ = wired(
+        {
+            "supermercado": PlanningResult.planned(
+                FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(Period.THIS_MONTH),
+                    categories=("GROCERIES",),
+                )
+            )
+        }
+    )
+
+    answer = Chat(client).say(
+        "Cual fue mi tasa de ahorro este mes y cuanto gaste en supermercados?"
+    )
+
+    assert answer["outcome"] == "COMPOUND"
+    assert len(answer["parts"]) == 2
+    assert [plan.direction for plan in ledger.plans] == [
+        Direction.EXPENSE,
+        Direction.INCOME,
+        Direction.EXPENSE,
+    ]
+    assert ledger.plans[-1].period == RelativePeriod(Period.THIS_MONTH)
+    assert ledger.plans[-1].categories == ("GROCERIES",)
 
 
 # =========================================================================================

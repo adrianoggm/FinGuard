@@ -54,7 +54,14 @@ from finguard_orchestrator.bootstrap.dependencies import (
     requires,
     turn_interpreter,
 )
-from finguard_orchestrator.domain.enums import GroupBy, PaymentOutcome, PlanningOutcome, Rail
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    PaymentOutcome,
+    PlanningOutcome,
+    Rail,
+    Spoken,
+)
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
@@ -69,13 +76,16 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
+    intent_router,
     payment_router,
     payment_words,
     payment_writer,
     turn_analyzer,
+    window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
@@ -573,6 +583,152 @@ def _compound_reply(clauses: tuple[str, ...], was: Conversation) -> QuestionResp
     )
 
 
+_SAFE_COMPOUND_READS = frozenset({Intent.FINANCIAL_QUERY, Intent.ACCOUNT_BALANCE})
+_COMPOUND_SUCCESS = frozenset({PlanningOutcome.PLANNED.value, Spoken.BALANCE.value})
+
+
+def _compound_read_order(
+    clauses: tuple[str, ...], was: Conversation, today: date
+) -> tuple[tuple[int, Intent], ...] | None:
+    """Safe read-only clauses, with one explicit financial window executed first when needed."""
+    if not 2 <= len(clauses) <= 3:
+        return None
+    intents = tuple(
+        intent_router.route(
+            clause,
+            has_previous=was.last_plan is not None,
+            at_rest=was.at_rest,
+        )
+        for clause in clauses
+    )
+    if any(intent not in _SAFE_COMPOUND_READS for intent in intents):
+        return None
+
+    financial = tuple(
+        index for index, intent in enumerate(intents) if intent is Intent.FINANCIAL_QUERY
+    )
+    explicit = tuple(
+        index
+        for index in financial
+        if window_words.has_complete_window(clauses[index], today=today)
+    )
+    shareable = tuple(
+        index
+        for index in financial
+        if not window_words.has_compared_windows(clauses[index], today=today)
+        and window_words.window_in(clauses[index], today=today) is not None
+    )
+    if financial and was.last_plan is None and not explicit:
+        return None
+    if (
+        was.last_plan is None
+        and any(index not in explicit for index in financial)
+        and not shareable
+    ):
+        # A comparison owns two windows; choosing either as the period of an adjacent abbreviated
+        # query would be an invented interpretation.
+        return None
+
+    order = list(range(len(clauses)))
+    if was.last_plan is None and financial and financial[0] not in explicit:
+        seed = shareable[0]
+        order.remove(seed)
+        order.insert(0, seed)
+    return tuple((index, intents[index]) for index in order)
+
+
+def _window_only_context(answered: Conversation) -> Conversation | None:
+    """The shared modifier from a seed clause, without any of that clause's filters."""
+    plan = answered.last_plan
+    if plan is None:
+        return None
+    return Conversation(
+        last_plan=FinancialPlan(
+            direction=Direction.ALL,
+            period=plan.period,
+            date_range=plan.date_range,
+        ),
+        account_aliases=answered.account_aliases,
+        counterparty_aliases=answered.counterparty_aliases,
+    )
+
+
+async def _compound_read_reply(
+    clauses: tuple[str, ...],
+    was: Conversation,
+    *,
+    who: Caller,
+    today: date,
+    queries: QueryBus,
+) -> QuestionResponse | None:
+    """Execute bounded read-only clauses and retain a separately auditable answer for each."""
+    ordered = _compound_read_order(clauses, was, today)
+    if ordered is None:
+        return None
+
+    current = was
+    shared_window: Conversation | None = None
+    parts: list[QuestionResponse | None] = [None] * len(clauses)
+    conversations: list[Conversation | None] = [None] * len(clauses)
+    final_outcome = "COMPOUND"
+    final_question: str | None = None
+    final_suggestions: list[str] = []
+    for index, intent in ordered:
+        has_explicit_window = intent is Intent.FINANCIAL_QUERY and window_words.has_complete_window(
+            clauses[index], today=today
+        )
+        if intent is Intent.ACCOUNT_BALANCE:
+            # A balance is an aside. It uses the accumulated conversation so a relationship
+            # answered immediately before it remains available to the next follow-up.
+            clause_context = current
+        else:
+            clause_context = was if has_explicit_window or shared_window is None else shared_window
+        result = await queries.ask(
+            AskFinancialQuestionQuery(
+                sentence=clauses[index],
+                account_id=who.account_id,
+                today=today,
+                reporting_timezone=who.reporting_timezone,
+                conversation=clause_context,
+                intent=intent,
+            )
+        )
+        current = result.conversation
+        conversations[index] = current
+        rendered = llm_mapper.question_to_dto(result)
+        parts[index] = rendered.model_copy(update={"conversation": None, "parts": []})
+        if rendered.outcome not in _COMPOUND_SUCCESS:
+            final_outcome = rendered.outcome
+            final_question = rendered.question
+            final_suggestions = rendered.suggestions
+            break
+        if has_explicit_window and shared_window is None:
+            shared_window = _window_only_context(current)
+
+    completed_with_indexes = tuple(
+        (index, part) for index, part in enumerate(parts, start=1) if part is not None
+    )
+    completed = [part for _, part in completed_with_indexes]
+    completed_conversations = tuple(
+        (index, conversation)
+        for index, conversation in enumerate(conversations)
+        if conversation is not None
+    )
+    if completed_conversations:
+        # Conversation follows the clause the user mentioned last, not the internal execution
+        # order (which may have moved a trailing shared window to the front).
+        current = completed_conversations[-1][1]
+    text = "\n".join(f"{index}. {part.text}" for index, part in completed_with_indexes)
+    return QuestionResponse(
+        outcome=final_outcome,
+        text=text,
+        question=final_question,
+        conversation=conversation_mapper.to_payload(current),
+        suggestions=final_suggestions,
+        parts=completed,
+    )
+
+
 def _sse(payload: Mapping[str, object]) -> str:
     """One JSON object per `data:` line, blank line between.
 
@@ -890,9 +1046,18 @@ async def ask(
     # One reading, before any of the three decisions that need one. It is asked after the
     # confirmation and open-payment branches above on purpose: those turns belong to a state
     # machine whatever the words mean, and paying to classify them would be paying for nothing.
-    analysis = await turn_analyzer.analyze(request.question, conversation=was, interpreter=reads)
+    analysis = await turn_analyzer.analyze(
+        request.question, conversation=was, interpreter=reads, today=today
+    )
     if analysis.is_compound:
-        return _compound_reply(analysis.clauses, was)
+        compound = await _compound_read_reply(
+            analysis.clauses,
+            was,
+            who=who,
+            today=today,
+            queries=queries,
+        )
+        return compound or _compound_reply(analysis.clauses, was)
     read_as = analysis.intent
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
@@ -974,9 +1139,18 @@ async def ask_streaming(
         if immediate is not None:
             return _open_payment_events(immediate)
 
-    analysis = await turn_analyzer.analyze(request.question, conversation=was, interpreter=reads)
+    analysis = await turn_analyzer.analyze(
+        request.question, conversation=was, interpreter=reads, today=today
+    )
     if analysis.is_compound:
-        return _open_payment_events(_compound_reply(analysis.clauses, was))
+        compound = await _compound_read_reply(
+            analysis.clauses,
+            was,
+            who=who,
+            today=today,
+            queries=queries,
+        )
+        return _open_payment_events(compound or _compound_reply(analysis.clauses, was))
     read_as = analysis.intent
 
     continuing = await _continues_a_payment(read_as, was, request.question, who, queries)

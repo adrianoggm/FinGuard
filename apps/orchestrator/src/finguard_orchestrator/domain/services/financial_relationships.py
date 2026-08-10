@@ -16,7 +16,18 @@ _NET_CASH_FLOW: Final = re.compile(
     r"despues\s+de\s+(?:pagar|gastar))\b"
 )
 
+_SAVINGS_RATE: Final = re.compile(
+    r"\btasa\s+de\s+ahorro\b"
+    r"|\b(?:porcentaje|parte|proporcion)\b.{0,45}\b"
+    r"(?:ahorr|no\s+(?:me\s+)?(?:he\s+)?gast|me\s+queda)\w*\b"
+)
+
 
 def asks_net_cash_flow(sentence: str) -> bool:
     """Whether income and expenses are the two operands of one requested net figure."""
     return _NET_CASH_FLOW.search(spanish.folded(sentence)) is not None
+
+
+def asks_savings_rate(sentence: str) -> bool:
+    """Whether expenses and income form the product's typed savings relationship."""
+    return _SAVINGS_RATE.search(spanish.folded(sentence)) is not None
