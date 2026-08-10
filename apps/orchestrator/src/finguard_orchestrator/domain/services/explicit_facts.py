@@ -255,6 +255,16 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     return (tail,)
 
 
+def excluded_merchants_in(sentence: str) -> tuple[str, ...]:
+    """Grounded free-text merchant exclusions, for guards as well as plan enrichment.
+
+    The capability guard runs before a plan exists. Exposing the same narrow reader used by
+    :func:`read` lets it distinguish ``excepto Carrefour`` from an exclusion too vague to execute,
+    without maintaining a second regex that will drift from the value eventually applied.
+    """
+    return _excluded_merchants(sentence, category_words.precisely_excluded_in(sentence))
+
+
 def asks_when(sentence: str) -> bool:
     """Whether the sentence asks *when* something happens rather than how much of it there was.
 
@@ -380,7 +390,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
         direction=Direction.INCOME if says_income and not says_expense else None,
         compared_categories=named if comparison else (),
         excluded_categories=excluded_categories,
-        excluded_merchants=_excluded_merchants(sentence, excluded_categories),
+        excluded_merchants=excluded_merchants_in(sentence),
         names_a_category=bool(named),
         widens=bool(_WIDENS.search(folded)),
         corrects=bool(_REJECTS.search(folded.strip(" ¿?¡!.,"))),

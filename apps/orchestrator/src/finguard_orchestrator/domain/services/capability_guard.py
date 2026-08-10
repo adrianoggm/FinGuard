@@ -35,7 +35,7 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from finguard_orchestrator.domain.services import category_words, spanish
+from finguard_orchestrator.domain.services import category_words, explicit_facts, spanish
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 
 # Each entry is a capability the domain has no representation for. The name travels with
@@ -308,6 +308,11 @@ def unsupported_reason(sentence: str, policy: GuardPolicy = EVERY_RULE) -> str |
         if name == "CATEGORY_EXCLUSION" and category_words.precisely_excluded_in(sentence):
             # This negative filter has a domain representation now. Keep the family for vague
             # exclusions we still cannot ground, but do not refuse the precise safe subset.
+            continue
+        if name == "CATEGORY_EXCLUSION" and explicit_facts.excluded_merchants_in(sentence):
+            # Merchant names are free text rather than category vocabulary. The exclusion reader
+            # accepts only a compact, grounded tail, so ``excepto Carrefour`` is expressible while
+            # a vague ``excepto algunas cosas`` still belongs to this guard.
             continue
         if pattern.search(folded):
             return name
