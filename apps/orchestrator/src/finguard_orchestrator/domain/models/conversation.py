@@ -379,41 +379,11 @@ class Conversation:
         turn that asked something says so by calling `asking` — so the memory lasts one turn and a
         slot from three questions ago cannot make an unrelated one look like a repeat.
         """
-        return Conversation(
-            active=active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-            recent_payment_rail=self.recent_payment_rail,
-        )
+        return replace(self, active=active, last_asked=None)
 
     def paid(self, rail: Rail) -> "Conversation":
-        """Close a successful preview and remember only what an immediate ``otro`` refers to."""
-        return Conversation(
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            answered_the_balance=self.answered_the_balance,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-            recent_payment_rail=rail,
-        )
+        """Close a successful preview and remember what an immediate ``otro`` refers to."""
+        return replace(self, active=None, last_asked=None, recent_payment_rail=rail)
 
     def without_recent_payment(self) -> "Conversation":
         """Consume the short-lived payment referent without disturbing financial memory."""
@@ -421,22 +391,7 @@ class Conversation:
 
     def asking(self, slot: Slot) -> "Conversation":
         """Remember the question this turn asked, whether or not it left a workflow behind."""
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_asked=slot,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+        return replace(self, last_asked=slot)
 
     def refused(self, capability: str) -> "Conversation":
         """A capability this service does not have, recorded — and nothing else disturbed.
@@ -452,22 +407,7 @@ class Conversation:
         `last_asked` still goes, and that is not the same thing: the refusal genuinely asked
         nothing, so there is no open question for the next turn to be answering.
         """
-        return Conversation(
-            active=UnsupportedCapability(capability=capability),
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            answered_the_balance=self.answered_the_balance,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+        return replace(self, active=UnsupportedCapability(capability=capability), last_asked=None)
 
     def answering_the_balance(self) -> "Conversation":
         """This turn said how much money there is, so a bare account name is about that.
@@ -475,59 +415,52 @@ class Conversation:
         Everything else about the conversation survives: a balance is a turn and not a reset, and
         asking it in the middle of an analysis of last month must not cost the window.
         """
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_asked=self.last_asked,
-            answered_the_balance=True,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+        return replace(self, answered_the_balance=True)
 
     def awaiting_retry(self, plan: PlannedQuery) -> "Conversation":
         """Remember the exact validated read that banking could not execute."""
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_asked=self.last_asked,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+        return replace(self, retry_plan=plan)
 
     def without_retry(self) -> "Conversation":
         """Abandon a failed read while preserving the rest of the conversation."""
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_asked=self.last_asked,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
+        return replace(self, retry_plan=None)
+
+    def _answering(self) -> "Conversation":
+        """What answering a financial question resets, whichever of the three kinds it was.
+
+        One place rather than three. `answered`, `answered_comparison` and `answered_ratio` each
+        enumerated this separately and disagreed about it — a comparison forgot the rows a plain
+        answer remembered — and nothing in the code said whether the difference was a decision.
+        """
+        return replace(
+            self,
+            # A suspended payment belongs to the conversation before this answer and deliberately
+            # stepped aside for it. Anything else open is superseded by the answer.
+            active=(
+                self.active
+                if isinstance(self.active, PaymentInProgress) and self.active.suspended
+                else None
+            ),
+            # This read succeeded, so there is nothing left to retry, and the question the turn
+            # was answering is closed.
+            retry_plan=None,
+            last_asked=None,
+            # A figure over a period, not a balance.
+            answered_the_balance=False,
+            # A half-built proportion is abandoned by an answer to something else.
+            pending_ratio=None,
+            # These three describe the same fact — what the last answer was — so the kind that just
+            # ran sets its own and the other two go. Leaving a stale one behind is how a plain
+            # question inherited the operands of a comparison two turns earlier.
+            last_plan=None,
+            last_ratio=None,
+            last_comparison=None,
+            # Replaced by whatever this answer put in focus, never inherited: a referent from the
+            # previous result points at rows this answer never showed.
+            referenced_category=None,
+            referenced_group_by=None,
+            referenced_group_key=None,
+            referenced_transaction_ids=(),
         )
 
     def answered(
@@ -545,22 +478,15 @@ class Conversation:
         aside for it. It survives; a financial clarification or refusal does not, because the new
         answer supersedes it.
         """
-        active = (
-            self.active
-            if isinstance(self.active, PaymentInProgress) and self.active.suspended
-            else None
-        )
-        prior = self.prior_plan if plan == self.last_plan else self.last_plan
-        return Conversation(
-            active=active,
+        return replace(
+            self._answering(),
             last_plan=plan,
-            prior_plan=prior,
+            # Asking the same question twice must not push the plan behind it out of memory.
+            prior_plan=self.prior_plan if plan == self.last_plan else self.last_plan,
             referenced_category=referenced_category,
             referenced_group_by=referenced_group_by,
             referenced_group_key=referenced_group_key,
             referenced_transaction_ids=referenced_transaction_ids,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
         )
 
     def with_references(
@@ -571,11 +497,8 @@ class Conversation:
         transaction_ids: tuple[UUID, ...] | None = None,
     ) -> "Conversation":
         """Focus an already answered result without changing the query behind it."""
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
+        return replace(
+            self,
             referenced_category=(
                 group_key if group_by is GroupBy.CATEGORY else self.referenced_category
             ),
@@ -584,90 +507,39 @@ class Conversation:
             referenced_transaction_ids=(
                 self.referenced_transaction_ids if transaction_ids is None else transaction_ids
             ),
-            last_asked=self.last_asked,
-            answered_the_balance=self.answered_the_balance,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
         )
 
     def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
         """Remember both operands while asking for their shared period."""
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_asked=Slot.WINDOW,
-            answered_the_balance=self.answered_the_balance,
-            last_ratio=self.last_ratio,
-            pending_ratio=draft,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+        return replace(self, last_asked=Slot.WINDOW, pending_ratio=draft)
 
     def answered_comparison(
         self, plan: ComparisonPlan, *, referenced_category: str | None = None
     ) -> "Conversation":
         """Keep the compatible pair as one value while exposing both legacy plan slots."""
-        active = (
-            self.active
-            if isinstance(self.active, PaymentInProgress) and self.active.suspended
-            else None
-        )
-        return Conversation(
-            active=active,
+        return replace(
+            self._answering(),
             last_plan=plan.latest,
             prior_plan=plan.earlier,
             referenced_category=referenced_category,
             last_comparison=plan,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
         )
 
     def answered_ratio(self, plan: RatioPlan) -> "Conversation":
         """Put the exact pair in view and close the period question it answered."""
-        active = (
-            self.active
-            if isinstance(self.active, PaymentInProgress) and self.active.suspended
-            else None
-        )
-        return Conversation(
-            active=active,
+        return replace(
+            self._answering(),
             last_plan=plan.part,
             prior_plan=plan.whole,
             referenced_category=(
                 plan.part.categories[0] if len(plan.part.categories) == 1 else None
             ),
             last_ratio=plan,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
         )
 
     def without_pending_ratio(self) -> "Conversation":
         """Abandon an unanswered proportion when the user starts another financial subject."""
-        return Conversation(
-            active=self.active,
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            answered_the_balance=self.answered_the_balance,
-            last_ratio=self.last_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+        return replace(self, pending_ratio=None)
 
     def suspend(self) -> "Conversation":
         """The active payment steps aside for a turn about something else.
@@ -675,50 +547,15 @@ class Conversation:
         Only payments suspend. A clarification does not: the question it asked is either answered or
         it is not, and keeping one alive across a change of subject is how "este año" completed a
         plan the user had moved on from.
+
+        Every piece of memory is kept, which is now the default rather than a list. Dropping
+        `answered_the_balance` here meant a payment under way silently turned "¿y en la hucha?" back
+        into a question about spending, so a balance follow-up worked or not depending on whether a
+        Bizum happened to be half-built.
         """
         if not isinstance(self.active, PaymentInProgress):
-            return Conversation(
-                active=None,
-                last_plan=self.last_plan,
-                prior_plan=self.prior_plan,
-                retry_plan=self.retry_plan,
-                referenced_category=self.referenced_category,
-                referenced_group_by=self.referenced_group_by,
-                referenced_group_key=self.referenced_group_key,
-                referenced_transaction_ids=self.referenced_transaction_ids,
-                last_asked=self.last_asked,
-                answered_the_balance=self.answered_the_balance,
-                last_ratio=self.last_ratio,
-                pending_ratio=self.pending_ratio,
-                last_comparison=self.last_comparison,
-                account_aliases=self.account_aliases,
-                counterparty_aliases=self.counterparty_aliases,
-            )
-        return Conversation(
-            active=PaymentInProgress(
-                draft=self.active.draft,
-                awaiting=self.active.awaiting,
-                candidates=self.active.candidates,
-                suspended=True,
-            ),
-            last_plan=self.last_plan,
-            prior_plan=self.prior_plan,
-            retry_plan=self.retry_plan,
-            referenced_category=self.referenced_category,
-            referenced_group_by=self.referenced_group_by,
-            referenced_group_key=self.referenced_group_key,
-            referenced_transaction_ids=self.referenced_transaction_ids,
-            last_asked=self.last_asked,
-            # Kept, like every other piece of memory here. Dropping it meant a payment under way
-            # silently turned "¿y en la hucha?" back into a question about spending, so a balance
-            # follow-up worked or not depending on whether a Bizum happened to be half-built.
-            answered_the_balance=self.answered_the_balance,
-            last_ratio=self.last_ratio,
-            pending_ratio=self.pending_ratio,
-            last_comparison=self.last_comparison,
-            account_aliases=self.account_aliases,
-            counterparty_aliases=self.counterparty_aliases,
-        )
+            return replace(self, active=None)
+        return replace(self, active=replace(self.active, suspended=True))
 
 
 def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
