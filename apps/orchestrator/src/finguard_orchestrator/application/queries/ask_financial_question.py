@@ -229,6 +229,7 @@ _ASKS_ACCOUNT_ACTIVITY: Final = re.compile(
 _ACCOUNT_YIELD_AMOUNT: Final = re.compile(
     r"\bcuantos?\s+ingresos?\b.{0,45}\b(?:me\s+da|genera|produce|renta)\w*\b"
 )
+_GAMBLING: Final = re.compile(r"\b(?:apuest\w*|bet(?:365|fair)?|casino\w*|codere|bwin|sportium)\b")
 
 logger = logging.getLogger(__name__)
 
@@ -736,6 +737,28 @@ class AskFinancialQuestionHandler:
             # that half-built calculation exactly as an ordinary clarification does.
             was = was.without_pending_ratio()
             query = replace(query, conversation=was)
+
+        gambling = _gambling_plan(query)
+        if isinstance(gambling, FinancialPlanDraft):
+            question = (
+                "¿De qué periodo quieres que lo compruebe? Buscaré en ocio y en comercios "
+                "cuyo nombre contenga apuesta o bet."
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question="¿De qué periodo quieres que lo compruebe?",
+                conversation=was.with_active(
+                    FinancialClarification(draft=gambling, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        if isinstance(gambling, FinancialPlan):
+            yield Stage("planned", answer_writer.describe(gambling))
+            yield Stage("querying")
+            yield await self._answer(query, gambling)
+            return
 
         internal = _internal_movement_request(query)
         if isinstance(internal, FinancialPlanDraft):
@@ -4481,6 +4504,7 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
             else ()
         ),
         merchants=() if named else (previous.merchants if previous is not None else ()),
+        merchant_terms=(() if named else (previous.merchant_terms if previous is not None else ())),
         excluded_merchants=(previous.excluded_merchants if previous is not None else ()),
         rank=1,
     )
@@ -4588,6 +4612,9 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         categories=named or (base.categories if base is not None else ()),
         excluded_categories=base.excluded_categories if base is not None else (),
         merchants=base.merchants if base is not None and group_by is not GroupBy.MERCHANT else (),
+        merchant_terms=(
+            base.merchant_terms if base is not None and group_by is not GroupBy.MERCHANT else ()
+        ),
         excluded_merchants=base.excluded_merchants if base is not None else (),
         group_by=group_by,
         metric=metric,
@@ -4602,6 +4629,39 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         if group_by is GroupBy.ACCOUNT
         else (base.only_account_ids if base else ()),
         transaction_types=base.transaction_types if base is not None else (),
+    )
+
+
+def _gambling_plan(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """Expenses at betting merchants, with explicit substring rather than exact-name semantics."""
+    folded = spanish.folded(query.sentence)
+    if _GAMBLING.search(folded) is None:
+        return None
+    if not re.search(r"\b(?:gast|pag|movim|operacion|dinero|comercio|casa|ocio)\w*\b", folded):
+        return None
+
+    terms: list[str] = []
+    if re.search(r"\bapuest\w*\b", folded):
+        # The product family, not two exact shops: this covers Casa de Apuestas and Bet365.
+        terms.extend(("apuest", "bet"))
+    for term in ("bet", "casino", "codere", "bwin", "sportium"):
+        if re.search(rf"\b{re.escape(term)}\w*\b", folded) and term not in terms:
+            terms.append(term)
+    window = window_words.window_in(query.sentence, today=query.today)
+    if window is None:
+        return FinancialPlanDraft(
+            direction=Direction.EXPENSE,
+            categories=("LEISURE",),
+            merchant_terms=tuple(terms),
+        )
+    return FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=("LEISURE",),
+        merchant_terms=tuple(terms),
     )
 
 
