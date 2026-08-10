@@ -78,6 +78,11 @@ _RECIPIENT_CORRECTION: Final = re.compile(
     re.IGNORECASE,
 )
 
+# Natural replacement after a preview: "A Marta 500 euros". It is deliberately paired with an
+# explicit amount in `changes_recipient`; without that condition, the conversational filler
+# "a ver" would be mistaken for a recipient correction and discard a valid preview.
+_BARE_RECIPIENT_CORRECTION: Final = re.compile(r"^\s*a\s+\S", re.IGNORECASE)
+
 _CLEAR_CONCEPT: Final = re.compile(
     r"\b(?:quita|quitar|elimina|eliminar|borra|borrar)\s+(?:el\s+)?concepto\b"
     r"|\b(?:sin|ningun)\s+concepto\b",
@@ -159,7 +164,10 @@ def clears_concept(sentence: str) -> bool:
 
 def changes_recipient(sentence: str) -> bool:
     """Whether a reply to a preview explicitly replaces who receives the payment."""
-    return _RECIPIENT_CORRECTION.search(spanish.folded(sentence)) is not None
+    folded = spanish.folded(sentence)
+    return _RECIPIENT_CORRECTION.search(folded) is not None or (
+        _BARE_RECIPIENT_CORRECTION.search(folded) is not None and amount_in(sentence) is not None
+    )
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:

@@ -20,7 +20,7 @@ from finguard_orchestrator.application.commands.pay import (
     PreparePaymentCommand,
     PreparePaymentHandler,
 )
-from finguard_orchestrator.domain.enums import PaymentOutcome
+from finguard_orchestrator.domain.enums import PaymentOutcome, Rail
 from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
     BankingUnavailableError,
@@ -215,8 +215,34 @@ async def test_somebody_who_is_not_a_contact_is_said_to_not_be_one() -> None:
 
     answer = await handler.handle(prepare())
 
-    assert answer.outcome == PaymentOutcome.REFUSED.value
+    assert answer.outcome == PaymentOutcome.NEEDS_CLARIFICATION.value
     assert "Pepe" in answer.text
+    assert answer.draft is not None
+    assert answer.draft.recipient_name is None
+    assert answer.draft.amount_minor == 2_000
+
+
+async def test_an_unknown_recipient_discards_only_the_name() -> None:
+    request = PaymentRequest(
+        recipient_name="Custo",
+        amount_minor=250_000,
+        currency="EUR",
+        concept="pa la rule",
+        rail=Rail.TRANSFER,
+    )
+    handler, _ = preparing(
+        PaymentReading.read(request), FakeGateway(RecipientNotFoundError("Custo"))
+    )
+
+    answer = await handler.handle(prepare("transfiere 2500 euros a Custo concepto pa la rule"))
+
+    assert answer.outcome == PaymentOutcome.NEEDS_CLARIFICATION.value
+    assert answer.draft is not None
+    assert answer.draft.recipient_name is None
+    assert answer.draft.amount_minor == 250_000
+    assert answer.draft.concept == "pa la rule"
+    assert answer.draft.rail == Rail.TRANSFER.value
+    assert "2.500,00" in answer.text
 
 
 async def test_the_bank_being_down_is_said_plainly() -> None:

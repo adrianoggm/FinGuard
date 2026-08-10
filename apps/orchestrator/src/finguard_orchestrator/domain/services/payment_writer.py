@@ -150,8 +150,18 @@ def several_candidates(candidates: tuple[str, ...]) -> str:
     return f"Tienes varios contactos con ese nombre: {', '.join(candidates)}. ¿A quién se lo envío?"
 
 
-def not_a_contact(name: str) -> str:
-    return f"No tengo a {name} en tus contactos, así que no puedo enviarle nada."
+def not_a_contact(name: str, draft: PaymentDraft | None = None) -> str:
+    """Reject only the unknown name, while making a recoverable payment actionable.
+
+    A complete request can fail contact resolution after the user already supplied the amount and
+    concept. Ending the whole workflow there made a subsequent contact choice look like a financial
+    query. When a draft is supplied, the question names the retained amount and asks only for a
+    replacement recipient; the no-draft form remains the terminal sentence used elsewhere.
+    """
+    refused = f"No tengo a {name} en tus contactos, así que no puedo enviarle nada."
+    if draft is None:
+        return refused
+    return f"{refused} Puedes elegir otro contacto. {still_missing(draft)}"
 
 
 def no_account_for(name: str) -> str:

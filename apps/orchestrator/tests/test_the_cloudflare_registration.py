@@ -316,6 +316,10 @@ async def test_the_provider_exists_only_when_both_halves_are_configured(
     from finguard_orchestrator.bootstrap.config import get_settings
     from finguard_orchestrator.bootstrap.main import create_app
 
+    # This test varies Cloudflare registration, not which provider plans. Pin the planner to one
+    # that is always registered so a developer's gitignored `.env` selecting Cloudflare cannot
+    # make the deliberately unconfigured cases fail before their catalogue can be inspected.
+    monkeypatch.setenv("ORCHESTRATOR_PLANNER_PROVIDER", "ollama")
     for field in ("cloudflare_api_token", "cloudflare_account_id"):
         # Set to empty rather than deleted, which is the difference between a test that states the
         # deployment and one that inherits the machine's. `delenv` removes the *process* variable
