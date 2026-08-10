@@ -1,0 +1,136 @@
+# Metamorphic evaluation: the relation between two plans is the expectation.
+#
+# Every derived case names its base and the only fields allowed to change. The evaluator compares
+# the complete canonical plans, including defaults, so preserving a requested change while silently
+# dropping a category, merchant, direction or period still fails.
+
+reference: 2026-07-15
+account: ES-0001
+
+cases:
+
+  # Changing importe/cantidad/media changes the metric and nothing else.
+  - id: metric_amount_groceries
+    group: metamorphic_metric
+    question: ¿Cuál es el importe total gastado en supermercados este mes?
+    expect: plan
+    plan:
+      {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES], metric: SUM}
+
+  - id: metric_count_groceries
+    group: metamorphic_metric
+    question: ¿Qué cantidad de movimientos de supermercado tengo este mes?
+    expect: plan
+    metamorph_of: metric_amount_groceries
+    changes: [metric]
+    plan:
+      {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES], metric: COUNT}
+
+  - id: metric_average_groceries
+    group: metamorphic_metric
+    question: ¿Cuál es el importe medio por movimiento en supermercados este mes?
+    expect: plan
+    metamorph_of: metric_amount_groceries
+    changes: [metric]
+    plan:
+      {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE}
+
+  # Replacing the calendar wording changes only the resolved window.
+  - id: window_groceries_this_month
+    group: metamorphic_window
+    question: ¿Cuánto gasté en supermercados este mes?
+    expect: plan
+    plan: {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
+
+  - id: window_groceries_last_month
+    group: metamorphic_window
+    question: ¿Cuánto gasté en supermercados el mes pasado?
+    expect: plan
+    metamorph_of: window_groceries_this_month
+    changes: [window]
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
+
+  - id: window_groceries_last_30_days
+    group: metamorphic_window
+    question: ¿Cuánto gasté en supermercados en los últimos 30 días?
+    expect: plan
+    metamorph_of: window_groceries_this_month
+    changes: [window]
+    plan:
+      {period: {period: LAST_N_DAYS, n: 30}, direction: EXPENSE, categories: [GROCERIES]}
+
+  # Adding "sin X" adds exactly one negative category filter.
+  - id: exclusion_all_expenses
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE}
+
+  - id: exclusion_without_rent
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté el mes pasado sin contar el alquiler?
+    expect: plan
+    metamorph_of: exclusion_all_expenses
+    changes: [excludedCategories]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, excludedCategories: [HOUSING_RENT]}
+
+  - id: exclusion_without_groceries
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté el mes pasado sin supermercados?
+    expect: plan
+    metamorph_of: exclusion_all_expenses
+    changes: [excludedCategories]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, excludedCategories: [GROCERIES]}
+
+  # Merchant exclusions must not be mistaken for an inclusive merchant or category filter.
+  - id: merchant_exclusion_all_groceries
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté en supermercados el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES]}
+
+  - id: merchant_exclusion_without_mercadona
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté en supermercados el mes pasado sin Mercadona?
+    expect: plan
+    metamorph_of: merchant_exclusion_all_groceries
+    changes: [excludedMerchants]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES], excludedMerchants: [Mercadona]}
+
+  - id: merchant_exclusion_without_carrefour
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté en supermercados el mes pasado excepto Carrefour?
+    expect: plan
+    metamorph_of: merchant_exclusion_all_groceries
+    changes: [excludedMerchants]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES], excludedMerchants: [Carrefour]}
+
+  # The same mutations over COUNT ensure preservation is not tied to the default SUM metric.
+  - id: stable_count_groceries
+    group: metamorphic_composed
+    question: ¿Cuántas compras de supermercado hice este mes?
+    expect: plan
+    plan:
+      {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES], metric: COUNT}
+
+  - id: stable_count_groceries_last_month
+    group: metamorphic_composed
+    question: ¿Cuántas compras de supermercado hice el mes pasado?
+    expect: plan
+    metamorph_of: stable_count_groceries
+    changes: [window]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES], metric: COUNT}
+
+  - id: stable_count_without_rent
+    group: metamorphic_composed
+    question: ¿Cuántas compras de supermercado hice este mes sin contar el alquiler?
+    expect: plan
+    metamorph_of: stable_count_groceries
+    changes: [excludedCategories]
+    plan:
+      {period: {period: THIS_MONTH}, direction: EXPENSE, categories: [GROCERIES], excludedCategories: [HOUSING_RENT], metric: COUNT}

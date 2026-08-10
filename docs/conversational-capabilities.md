@@ -46,7 +46,15 @@ por `cantidad` cambia la métrica; `sin alquiler` añade una exclusión; `julio`
 la ventana. Las relaciones de dos lecturas deben aplicar el mismo cambio compatible a ambos
 operandos.
 
-## Orden de implementación restante
+Esta comprobación ya está automatizada en `evaluation/planning/metamorphic.yaml`. Cada variante
+declara `metamorph_of` y `changes`; el evaluador compara los planes completos y falla tanto si no
+cambia la dimensión declarada como si se modifica otra adicional. `just evaluate-metamorphic`
+ejecuta el corpus contra el modelo local, mientras que la suite valida siempre la coherencia del
+propio corpus sin necesitar un modelo.
 
-1. Avanzar consultas compuestas generales sobre las relaciones ya tipadas.
-2. Añadir evaluación metamórfica automática de métricas, ventanas y exclusiones.
+## Estado del bloque
+
+El bloque funcional previsto está completo. Las consultas compuestas admiten relaciones derivadas
+cuando sus operandos y ventanas tienen representación tipada. Las operaciones siguen fuera de la
+ejecución múltiple automática: mezclar una lectura con un Bizum o una transferencia siempre exige
+elegir primero.
