@@ -56,10 +56,10 @@ puts it under `json_schema.schema` beside `name` and `strict`. This sends the Op
 probe above proves that shape is honoured, which retires the question rather than answering it in
 principle.
 
-`@cf/qwen/qwen3-30b-a3b-fp8` is a reasoning model, so the headroom floor Groq needed applies
-unchanged. It is the same mechanism deliberately and not a second one: the measurement behind
-the number is `openai/gpt-oss-120b`'s, borrowed rather than repeated, and it is a ceiling you
-only pay for when a model actually rambles.
+`@cf/qwen/qwen3-30b-a3b-fp8` is a reasoning model, but it needs more headroom than Groq's model.
+Measured on the planning prompt, one exclusion case consumed all 2048 completion tokens in
+reasoning and returned null content with `finish_reason: length`; at 4096 it completed the same
+constrained plan. The setting remains a ceiling paid only when the model actually generates it.
 """
 
 from typing import Final

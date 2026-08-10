@@ -190,12 +190,7 @@ async def test_a_schema_is_sent_as_strict_constrained_decoding(sent: Endpoint) -
 
 
 async def test_a_reasoning_model_gets_room_to_think(sent: Endpoint) -> None:
-    """`@cf/qwen/qwen3-30b-a3b-fp8` is a reasoning model, so the floor Groq needed applies here
-    — reused rather than reinvented, which is the point of asserting it through this builder.
-
-    The measurement behind the number is gpt-oss-120b's and is borrowed, not repeated: a budget
-    sized for the answer is a budget the hidden reasoning eats first.
-    """
+    """The registration passes its configured reasoning floor to the shared adapter."""
     await a_provider(reasoning_headroom=2048).complete(
         "hola", model=MODEL, temperature=0.0, max_output_tokens=32
     )
@@ -361,9 +356,10 @@ def test_the_account_id_has_no_default_and_the_endpoint_does() -> None:
     assert defaults["cloudflare_api_base"].default == "https://api.cloudflare.com/client/v4"
     assert defaults["cloudflare_account_id"].default is None
     assert defaults["cloudflare_api_token"].default is None
-    # Borrowed from the Groq measurement rather than measured here, and equal to it so that the
-    # day somebody re-measures the floor, the two are seen to have drifted.
+    # Measured on a planning exclusion: 2048 produced reasoning only and finish_reason `length`;
+    # 4096 completed the constrained JSON plan. This is deliberately not Groq's smaller floor.
+    assert defaults["cloudflare_reasoning_headroom"].default == 4096
     assert (
         defaults["cloudflare_reasoning_headroom"].default
-        == defaults["groq_reasoning_headroom"].default
+        > defaults["groq_reasoning_headroom"].default
     )

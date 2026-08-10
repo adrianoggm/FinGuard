@@ -152,12 +152,12 @@ class Settings(BaseSettings):
     cloudflare_api_base: str = "https://api.cloudflare.com/client/v4"
     cloudflare_timeout_seconds: float = 60.0
 
-    # The same floor as Groq's, for the same reason, on a different endpoint.
+    # A larger floor than Groq's, for the same reason, on a different endpoint.
     # `@cf/qwen/qwen3-30b-a3b-fp8` is a reasoning model, so a budget sized for the answer is a
-    # budget the thinking eats. The number is borrowed from the measurement above and is not a
-    # measurement of Cloudflare — it costs nothing to be generous, because a ceiling is only
-    # billed when a model reaches it.
-    cloudflare_reasoning_headroom: int = 2048
+    # budget the thinking eats. Measured on the planning prompt: one exclusion case consumed all
+    # 2048 completion tokens as reasoning and returned null content with finish_reason `length`;
+    # 4096 completed the same constrained plan. A higher ceiling is billed only when generated.
+    cloudflare_reasoning_headroom: int = 4096
 
     # Which provider turns a sentence into a plan, and reads a turn.
     #
