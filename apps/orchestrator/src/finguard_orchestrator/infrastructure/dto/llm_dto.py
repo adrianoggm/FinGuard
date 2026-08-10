@@ -153,6 +153,7 @@ class PaymentDraftPayload(_Payload):
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
+    rail: Rail = Rail.BIZUM
 
 
 class SpokenContactResponse(_Payload):
@@ -243,6 +244,9 @@ class ConversationPayload(_Payload):
     counterparty_aliases: list["CounterpartyAliasPayload"] = Field(
         default=[], max_length=MAX_ENTITY_ALIASES
     )
+    # The rail of the payment that just completed. It is deliberately tiny and short-lived: it
+    # only grounds an immediate "y ahora otro de 14 a Aitor", never a recipient or an amount.
+    recent_payment_rail: Rail | None = None
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None

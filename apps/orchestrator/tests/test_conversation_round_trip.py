@@ -349,6 +349,27 @@ def test_a_half_built_payment_survives_with_everything_on_it() -> None:
     assert back == out
 
 
+def test_a_half_built_transfer_keeps_its_rail_and_chosen_contact() -> None:
+    """Both values cross the client boundary; losing either changes where or how money leaves."""
+    out = IDLE.with_active(
+        PaymentInProgress(
+            draft=PaymentDraft(
+                recipient_contact_id=MARTA.contact_id,
+                amount_minor=1_500,
+                rail=Rail.TRANSFER,
+            ),
+            awaiting=Slot.AMOUNT,
+        )
+    )
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert isinstance(back.active, PaymentInProgress)
+    assert back.active.draft.recipient_contact_id == MARTA.contact_id
+    assert back.active.draft.rail is Rail.TRANSFER
+
+
 def test_a_confirmation_survives() -> None:
     out = IDLE.with_active(
         PaymentConfirmation(
@@ -502,3 +523,13 @@ def test_a_bizum_confirmation_carries_no_account() -> None:
     assert isinstance(back.active, PaymentConfirmation)
     assert back.active.rail is Rail.BIZUM
     assert back.active.recipient_iban is None
+
+
+def test_a_completed_payment_keeps_a_one_turn_rail_referent() -> None:
+    out = IDLE.paid(Rail.BIZUM)
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert back.active is None
+    assert back.recent_payment_rail is Rail.BIZUM

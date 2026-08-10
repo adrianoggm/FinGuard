@@ -160,6 +160,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             last_comparison=_comparison_plan(payload) if payload else None,
             account_aliases=_account_aliases(payload) if payload else (),
             counterparty_aliases=_counterparty_aliases(payload) if payload else (),
+            recent_payment_rail=payload.recent_payment_rail if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -186,6 +187,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_comparison=_comparison_plan(payload),
         account_aliases=_account_aliases(payload),
         counterparty_aliases=_counterparty_aliases(payload),
+        recent_payment_rail=payload.recent_payment_rail,
     )
 
 
@@ -263,6 +265,7 @@ def _payment_to_domain(payload: PaymentDraftPayload) -> PaymentDraft:
         amount_minor=payload.amount_minor,
         currency=payload.currency,
         concept=payload.concept,
+        rail=payload.rail,
     )
 
 
@@ -302,6 +305,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 }
                 for alias in conversation.counterparty_aliases
             ],
+            "recent_payment_rail": conversation.recent_payment_rail,
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
                 plan_payload(conversation.prior_plan) if conversation.prior_plan else None
@@ -391,6 +395,7 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
                 amount_minor=active.draft.amount_minor,
                 currency=active.draft.currency,
                 concept=active.draft.concept,
+                rail=active.draft.rail,
             ),
             "suspended": active.suspended,
             "candidates": [

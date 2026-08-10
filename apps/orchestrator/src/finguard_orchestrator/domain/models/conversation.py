@@ -281,6 +281,9 @@ class Conversation:
     # against the authenticated holder's account directory whenever they are used.
     account_aliases: tuple[AccountAlias, ...] = ()
     counterparty_aliases: tuple[CounterpartyAlias, ...] = ()
+    # A one-turn anaphora after a completed payment. Keeping only the rail means "otro" can reuse
+    # the operation while the new amount and recipient still have to be explicit and grounded.
+    recent_payment_rail: Rail | None = None
 
     def __post_init__(self) -> None:
         if (self.referenced_group_by is None) != (self.referenced_group_key is None):
@@ -390,7 +393,31 @@ class Conversation:
             last_comparison=self.last_comparison,
             account_aliases=self.account_aliases,
             counterparty_aliases=self.counterparty_aliases,
+            recent_payment_rail=self.recent_payment_rail,
         )
+
+    def paid(self, rail: Rail) -> "Conversation":
+        """Close a successful preview and remember only what an immediate ``otro`` refers to."""
+        return Conversation(
+            last_plan=self.last_plan,
+            prior_plan=self.prior_plan,
+            retry_plan=self.retry_plan,
+            referenced_category=self.referenced_category,
+            referenced_group_by=self.referenced_group_by,
+            referenced_group_key=self.referenced_group_key,
+            referenced_transaction_ids=self.referenced_transaction_ids,
+            answered_the_balance=self.answered_the_balance,
+            last_ratio=self.last_ratio,
+            pending_ratio=self.pending_ratio,
+            last_comparison=self.last_comparison,
+            account_aliases=self.account_aliases,
+            counterparty_aliases=self.counterparty_aliases,
+            recent_payment_rail=rail,
+        )
+
+    def without_recent_payment(self) -> "Conversation":
+        """Consume the short-lived payment referent without disturbing financial memory."""
+        return replace(self, recent_payment_rail=None)
 
     def asking(self, slot: Slot) -> "Conversation":
         """Remember the question this turn asked, whether or not it left a workflow behind."""

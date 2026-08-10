@@ -137,6 +137,7 @@ CONTACTS = (
     Contact(MARTA, "Marta Solis Vega", "+34600333444"),
     Contact(OTHER_MARTA, "Marta Ruiz Gomez", "+34600111222"),
     Contact(uuid.UUID(int=7), "Javi Nuñez", "+34600555666"),
+    Contact(uuid.UUID(int=8), "Aitor Beltran Diaz", "+34600777888"),
 )
 
 

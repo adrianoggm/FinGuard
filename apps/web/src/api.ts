@@ -219,6 +219,8 @@ export type ConversationState = {
     counterparty_name: string;
     counterparty_type: "MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN";
   }[];
+  // One-turn reference used only to understand an immediate "otro" after a completed payment.
+  recent_payment_rail?: "BIZUM" | "TRANSFER" | null;
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;

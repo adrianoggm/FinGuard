@@ -340,9 +340,15 @@ def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
 
     drafted = PaymentDraft(
         recipient_name=answer.draft.recipient_name,
+        recipient_contact_id=(
+            uuid.UUID(answer.draft.recipient_contact_id)
+            if answer.draft.recipient_contact_id
+            else None
+        ),
         amount_minor=answer.draft.amount_minor,
         currency=answer.draft.currency,
         concept=answer.draft.concept,
+        rail=Rail(answer.draft.rail),
     )
     candidates = tuple(
         Contact(uuid.UUID(row.contact_id), row.display_name, row.phone) for row in answer.candidates
@@ -470,7 +476,15 @@ async def _as_confirmation(
         PaymentOutcome.AWAITING_CONFIRMATION.value,
         PaymentOutcome.BANKING_UNAVAILABLE.value,
     }
-    conversation = was if still_waiting else was.with_active(None)
+    conversation = (
+        was
+        if still_waiting
+        else (
+            was.paid(active.rail)
+            if answer.outcome == PaymentOutcome.PAID.value
+            else was.with_active(None)
+        )
+    )
     return QuestionResponse(
         outcome=answer.outcome,
         # The chat state retains the material facts even though the standalone confirmation
@@ -798,6 +812,22 @@ async def _continues_a_payment(
     return None
 
 
+async def _repeats_a_recent_payment(
+    was: Conversation, question: str, who: Caller, queries: QueryBus
+) -> PaymentDraft | None:
+    """Build the empty draft an immediate ``otro`` fills, after grounding its contact."""
+    if was.recent_payment_rail is None:
+        return None
+    directory = await queries.ask(ListContactsQuery(account_id=who.account_id))
+    contacts = tuple(
+        Contact(uuid.UUID(row.contact_id), row.display_name, row.phone)
+        for row in directory.contacts
+    )
+    if not payment_router.repeats(question, contacts):
+        return None
+    return PaymentDraft(rail=was.recent_payment_rail)
+
+
 @assistant_router.get(
     "/v1/account/summary",
     summary="The account as a screen needs it",
@@ -1043,6 +1073,22 @@ async def ask(
         if immediate is not None:
             return immediate
 
+    repeated = await _repeats_a_recent_payment(was, request.question, who, queries)
+    if repeated is not None:
+        return await _as_payment(
+            request.question,
+            who,
+            commands,
+            payments_on,
+            was.without_recent_payment(),
+            repeated,
+            key=key,
+        )
+    if was.recent_payment_rail is not None:
+        # The referent is intentionally one turn wide. An unrelated sentence cannot revive a
+        # payment several questions later merely because it contains the word "otro".
+        was = was.without_recent_payment()
+
     # One reading, before any of the three decisions that need one. It is asked after the
     # confirmation and open-payment branches above on purpose: those turns belong to a state
     # machine whatever the words mean, and paying to classify them would be paying for nothing.
@@ -1138,6 +1184,20 @@ async def ask_streaming(
         immediate = _open_payment_reply(request.question, was, was.active)
         if immediate is not None:
             return _open_payment_events(immediate)
+
+    repeated = await _repeats_a_recent_payment(was, request.question, who, queries)
+    if repeated is not None:
+        return _payment_events(
+            request.question,
+            who,
+            commands,
+            payments_on,
+            was.without_recent_payment(),
+            repeated,
+            key=key,
+        )
+    if was.recent_payment_rail is not None:
+        was = was.without_recent_payment()
 
     analysis = await turn_analyzer.analyze(
         request.question, conversation=was, interpreter=reads, today=today
