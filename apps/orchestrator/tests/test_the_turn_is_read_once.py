@@ -234,18 +234,44 @@ def test_the_installed_interpreter_decides_whether_this_is_a_payment():
     assert handler.queries == []
 
 
-def test_an_order_to_pay_the_interpreter_does_not_see_is_not_paid():
-    """The other direction, and the one that matters more. Words that look like an instruction do
-    not reach the payment path on their own: the reading is what routes, so a payment nobody read
-    as one is a question — the safe way round.
+def test_an_unambiguous_order_outranks_the_catch_all_reading():
+    """This asserted the opposite until a test subject spent seven turns unable to send 25 €.
+
+    The rule was "the reading is what routes, so a payment nobody read as one is a question — the
+    safe way round", and the safety argument is weaker than it looks: routing to the payment path
+    moves no money, it produces a preview that needs an explicit yes. Reading an order as a question
+    cost the holder the whole conversation, and they ended up shouting at the assistant.
+
+    So FINANCIAL_QUERY does not settle it. That intent is the catch-all — the prompt tells the model
+    to answer it whenever unsure — and `payment_router.is_payment` is the *narrower* reader: it
+    needs a payment verb and money, and it refuses questions, the past tense and money arriving. A
+    closed vocabulary saying "this is an order" beats a model saying "I am not sure", which is the
+    doctrine `explicit_facts` already rests on.
     """
     reads = CountingInterpreter(Intent.FINANCIAL_QUERY)
     client, handler, payments = a_client(reads)
 
     client.post("/v1/questions", json={"question": "hazle un bizum de 20 € a Marta"})
 
+    assert [command.sentence for command in payments.commands] == ["hazle un bizum de 20 € a Marta"]
+    assert handler.queries == []
+
+
+def test_a_positive_reading_that_is_not_a_payment_is_still_respected():
+    """The half of the old invariant that survives, and the reason the override is not general.
+
+    LIST_CONTACTS is what "¿a quién puedo hacerle un bizum?" is, and `is_payment` says True for it —
+    the narrower reader is narrower about questions, not omniscient. Every reading other than the
+    catch-all is a positive choice about what the sentence *is*, and overriding one would bring back
+    the defect `_is_an_order_to_pay` was written to fix: the assistant asking who to pay, to
+    somebody asking who they could pay.
+    """
+    reads = CountingInterpreter(Intent.LIST_CONTACTS)
+    client, handler, payments = a_client(reads)
+
+    client.post("/v1/questions", json={"question": "¿a quién puedo hacerle un bizum?"})
+
     assert payments.commands == []
-    assert handler.queries[0].sentence == "hazle un bizum de 20 € a Marta"
 
 
 def test_a_previewed_payment_is_not_classified_at_all():

@@ -258,3 +258,61 @@ def test_a_place_before_a_real_recipient_stays_in_the_concept() -> None:
 def test_a_concept_longer_than_the_field_is_refused() -> None:
     """None rather than a truncation. A note cut in half is a note the user did not write."""
     assert payment_words.concept_in("con concepto de " + "x" * 300) is None
+
+
+# --- a name is not the word after it ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("read", "name"),
+    [
+        ("aitor anda", "aitor"),
+        ("aitor anda por favor", "aitor"),
+        ("Aitor, venga", "Aitor"),
+        ("Javi ya", "Javi"),
+        ("Marta Solis Vega", "Marta Solis Vega"),
+        ("Carmen Nieto Lara", "Carmen Nieto Lara"),
+        # Every word is filler, so no name was read. Returning it unchanged lets the layer above
+        # refuse it as the non-name it is rather than crash on an empty string.
+        ("anda", "anda"),
+        ("Vale", "Vale"),
+    ],
+)
+def test_a_conversational_tail_is_not_part_of_the_name(read: str, name: str) -> None:
+    """Reported. "Hazle un bixum a aitor anda" was read as a payment to *"aitor anda"*, the question
+    came back "¿de cuánto quieres hacerle el bixum a aitor anda?", and the contact lookup then found
+    nobody — two turns lost to a word that means "go on".
+
+    Stripped rather than tolerated in the lookup, because the name is echoed back at the holder. A
+    question naming somebody who does not exist reads as the assistant having misheard.
+    """
+    assert payment_words.without_trailing_filler(read) == name
+
+
+# --- which turn belongs to the open question --------------------------------------------------
+
+
+@pytest.mark.parametrize("sentence", ["pues bizum", "bizum", "un bizum", "vale, bizum", "y bisum"])
+def test_a_turn_that_is_only_a_rail_word_belongs_to_the_open_question(sentence: str) -> None:
+    """ "Pues bizum", offered as the answer to "¿de qué comercio o categoría?", is a word given to a
+    question and not an order — reading it as one asked who to send money to, about a payment nobody
+    had ordered."""
+    assert payment_words.is_only_a_rail_word(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum a Carmen",
+        "que le hagas el bizum",
+        "hagamos un bisum",
+        "bizum de 20 euros",
+        "bizum a Marta",
+    ],
+)
+def test_anything_more_than_the_word_is_an_order(sentence: str) -> None:
+    """The inversion, and why it is the right way round. The set of Spanish ways to say "do it" is
+    unbounded and the previous rule enumerated it — so every form nobody thought of fell on the side
+    of being swallowed by a question. Enumerating the replies instead is a closed, tiny set, and a
+    form nobody thought of now falls on the side where the holder gets a preview to decline."""
+    assert payment_words.is_only_a_rail_word(sentence) is False
