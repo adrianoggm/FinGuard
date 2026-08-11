@@ -38,6 +38,17 @@ from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRa
         ("últimos 7 dias", Period.LAST_N_DAYS, 7),
         ("los últimos 3 meses", Period.LAST_N_MONTHS, 3),
         ("en los últimos 6 meses", Period.LAST_N_MONTHS, 6),
+        # The count on the other side of the word, which Spanish puts there just as often. These
+        # did not fail before — they fell through to the default and became *one*, so "los 10
+        # últimos días" answered about yesterday with a real figure on it. Found by asserting the
+        # query a corpus turn ran rather than only which tool answered it.
+        ("los 2 últimos meses", Period.LAST_N_MONTHS, 2),
+        ("en los 3 últimos meses", Period.LAST_N_MONTHS, 3),
+        ("los 10 últimos días", Period.LAST_N_DAYS, 10),
+        # Written out, either side, because that was the same silent one.
+        ("los dos últimos meses", Period.LAST_N_MONTHS, 2),
+        ("los últimos dos meses", Period.LAST_N_MONTHS, 2),
+        ("los cinco últimos meses", Period.LAST_N_MONTHS, 5),
         # Inside a longer sentence, because a reply to "¿de qué periodo?" is often a small sentence
         # rather than a bare phrase.
         ("pues el mes pasado", Period.LAST_MONTH, None),
@@ -97,6 +108,19 @@ def test_the_singular_forms_are_read_too() -> None:
     """Somebody answering "el último mes" means one month, and "en el último día" means one day.
     Both are counted periods with n=1 rather than a separate name."""
     assert window_words.window_in("el último mes") == window_words.window_in("los últimos 1 meses")
+
+
+def test_a_word_beside_the_last_that_is_not_a_number_still_means_one() -> None:
+    """The article and the preposition sit exactly where a count would, and neither is one.
+
+    This is what makes reading the count on both sides safe: "el último mes" and "de los últimos
+    días" put a word there and mean one, and an amount that happens to end up adjacent — "gasté 500
+    euros el último mes" — is separated from the word by the article it needs."""
+    assert window_words.window_in("el último mes") == RelativePeriod(Period.LAST_N_MONTHS, n=1)
+    assert window_words.window_in("de los últimos días") == RelativePeriod(Period.LAST_N_DAYS, n=1)
+    assert window_words.window_in("gasté 500 euros el último mes") == RelativePeriod(
+        Period.LAST_N_MONTHS, n=1
+    )
 
 
 # --- the phrasings the loop was made of ----------------------------------------------

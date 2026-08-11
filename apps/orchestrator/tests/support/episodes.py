@@ -512,6 +512,11 @@ class Turn:
     #
     # Worth most on `no_model: true` turns: there the plan came from this service's own inheritance
     # rather than from the stub planner, so the expectation is about the code under measurement.
+    #
+    # On a turn that *does* reach the planner, only some fields still mean anything. `AnyPlan` reads
+    # the window, the categories and the grouping out of the sentence through the same services a
+    # deployment uses, so those are ours; `direction` it hardcodes to EXPENSE. Asserting the
+    # direction of a model-answered turn measures the stub and passes or fails for no reason.
     ran: dict[str, Any] = field(default_factory=dict)
 
 
