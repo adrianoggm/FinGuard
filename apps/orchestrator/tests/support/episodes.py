@@ -58,6 +58,9 @@ from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentHandler,
     PreparePaymentHandler,
 )
+from finguard_orchestrator.application.queries import (
+    ask_financial_question as handler,
+)
 from finguard_orchestrator.application.queries.list_contacts import ContactRow
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
@@ -94,11 +97,19 @@ from finguard_orchestrator.domain.services import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 
 class NoCards:
@@ -590,6 +601,117 @@ def _window(query: FinancialPlan | TopMovements) -> str:
         return "NONE"
     named = query.period.period.value
     return f"{named}:{query.period.n}" if query.period.n else named
+
+
+# --- who claims a turn ---------------------------------------------------------------------
+#
+# `_steps` reads a sentence by asking nineteen deterministic recognisers in a fixed order and taking
+# the first that answers. The order is the design, and it is also invisible: the first one to fire
+# returns, so nothing can observe that a second one would have fired too, with a different query.
+#
+# That is what makes the cascade hard to change. Fixing one turn by moving a branch can silently
+# change another, and there is no measurement that says which turns are sitting on a tie. These
+# nineteen have the same signature — a query in, a reading or None out, no I/O — so asking all of
+# them is a thing a test can just do.
+#
+# Test-only on purpose. Production still short-circuits: evaluating a recogniser that today is
+# unreachable could raise, and a measurement is the right place to find that out.
+
+_RECOGNISERS: tuple[tuple[str, Any], ...] = (
+    ("ratio", handler._ratio_request),
+    ("gambling", handler._gambling_plan),
+    ("internal_movement", handler._internal_movement_request),
+    ("account_activity", handler._account_activity_request),
+    ("salary_history", handler._salary_history_plans),
+    ("period_comparison", handler._period_comparison_plans),
+    ("previous_period_comparison", handler._comparison_with_previous_period),
+    ("direct_period_comparison", handler._direct_period_comparison),
+    ("account_follow_up", handler._account_follow_up_plan),
+    ("contextual_follow_up", handler._contextual_follow_up_plan),
+    ("multiple_movement_ranking", handler._multiple_movement_ranking),
+    ("group_ranking", handler._group_ranking_plan),
+    ("natural_period", handler._natural_period_aggregate_plan),
+    ("deterministic_breakdown", handler._deterministic_breakdown_plan),
+    ("contextual_ranking", handler._contextual_ranking_plan),
+    ("cumulative", handler._cumulative_plan),
+    ("recurrence", handler._recurrence_plan),
+    ("frequency", handler._frequency_plan),
+    ("average", handler._average_plan),
+)
+
+
+def _reading(value: Any) -> str:
+    """One reading as a line that is both comparable and readable.
+
+    Comparable, because two recognisers producing the same query are not a conflict. Readable,
+    because the pairs are the deliverable of this measurement and a page of dataclass reprs is not
+    something anybody reads before deciding what to do about them.
+    """
+    if isinstance(value, FinancialPlan | TopMovements | FinancialPlanDraft):
+        # A draft carries the same fields, minus a window, so the same summary reads it. Named by
+        # its type so a clarification is never mistaken for a query in the report.
+        ran = executed(value)  # type: ignore[arg-type]
+        parts = [str(ran.pop("window")), str(ran.pop("direction"))]
+        parts += [f"{key}={ran[key]}" for key in sorted(ran) if ran[key] not in ((), [], "NONE", 0)]
+        kind = {FinancialPlan: "plan", TopMovements: "ranking"}.get(type(value), "draft")
+        return f"{kind} {' '.join(parts)}"
+    if isinstance(value, ComparisonPlan):
+        return f"comparison {_window(value.earlier)} vs {_window(value.latest)}"
+    if isinstance(value, RatioPlan):
+        return f"ratio {value.kind.value} {_reading(value.part)} of {_reading(value.whole)}"
+    if isinstance(value, RatioDraft):
+        return f"ratio-draft {value.kind.value}"
+    if isinstance(value, tuple):
+        return " + ".join(_reading(item) for item in value)
+    return f"{type(value).__name__} {value!r}"
+
+
+def claimants(
+    sentence: str, state: dict[str, Any] | None, *, today: date = TODAY
+) -> dict[str, str]:
+    """Every recogniser that would answer this turn, and what each would run.
+
+    Called with the conversation as it was *before* the turn, which is the only state the cascade
+    sees. A recogniser that raises is recorded as raising rather than ending the run: on this path
+    it is unreachable, so an exception is a finding about the tie and not a failure of the turn.
+    """
+    conversation = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(state) if state else None
+    )
+    query = AskFinancialQuestionQuery(
+        sentence=sentence, account_id=ACCOUNT, today=today, conversation=conversation
+    )
+    claims: dict[str, str] = {}
+    for name, recognise in _RECOGNISERS:
+        try:
+            reading = recognise(query)
+        except Exception as raised:  # noqa: BLE001 - the point is to report it, not to handle it
+            claims[name] = f"raised {type(raised).__name__}"
+            continue
+        if reading is not None:
+            claims[name] = _reading(reading)
+    return claims
+
+
+def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
+    """The turns of one episode where two recognisers want to run different queries.
+
+    Two firing with the *same* reading is not a conflict: whichever wins, the same question is
+    asked. Precedence is only load-bearing where the readings differ, and those are the turns a
+    reordering would silently change the answer to.
+    """
+    stack = a_stack()
+    state: dict[str, Any] | None = None
+    for number, turn in enumerate(episode.turns, start=1):
+        claims = claimants(turn.say, state)
+        if len(set(claims.values())) > 1:
+            yield number, turn.say, claims
+        response = stack.client.post(
+            "/v1/questions", json={"question": turn.say, "conversation": state}
+        )
+        if response.status_code != 200:
+            return
+        state = response.json()["conversation"]
 
 
 def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failure]:
