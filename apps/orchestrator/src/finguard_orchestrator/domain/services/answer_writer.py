@@ -655,6 +655,43 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
     return ", ".join(parts)
 
 
+def _listed(names: tuple[str, ...]) -> str:
+    """Names joined the way Spanish joins them: commas, and "y" before the last."""
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} y {names[-1]}"
+
+
+def how_many_payees(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """How many distinct payees, and who they are.
+
+    The number of groups rather than the number of movements, which is the whole point: thirty-six
+    charges from four shops is four subscriptions, and answering "36" to "¿cuántas suscripciones
+    tengo?" is a true figure for a question nobody asked.
+
+    It says "te han cobrado" and never "activas", however the question was phrased. What the ledger
+    knows is who charged this holder inside a window; whether a subscription is still live is not in
+    it, and a sentence claiming otherwise would be inventing the one fact the holder is asking for.
+    """
+    kind = category_words.name_of(plan.categories[0]) if plan.categories else "gastos"
+    window = window_of(plan)
+    payees = tuple(group.key for group in answer.groups if group.key)
+    if not payees:
+        return f"No te han cobrado nada en {kind} {window}."
+    count = len(payees)
+    noun = kind if count > 1 else _singular(kind)
+    # No adjective. "Distintas" would need to agree with a noun whose gender varies by category, and
+    # a gender table is more code than the names that follow already make unambiguous.
+    return f"Te han cobrado {count} {noun} {window}: {_listed(payees)}."
+
+
+def _singular(kind: str) -> str:
+    """Enough Spanish to not write "1 suscripciones". Only the plural this vocabulary produces."""
+    if kind.endswith("ones"):
+        return kind[:-4] + "ón"
+    return kind[:-1] if kind.endswith("s") else kind
+
+
 def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     """Takes the plan, not just the window, because the metric decides what the answer
     *is*.

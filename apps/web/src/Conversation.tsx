@@ -319,9 +319,13 @@ export function PaymentPanel({ state }: { state: ConversationState | null | unde
 
   if (state.workflow === "PAYMENT_CONFIRMATION" && state.amount_minor !== null) {
     const transfer = state.rail === "TRANSFER";
+    // Three rails, three labels. The chat gained the ability to confirm a move between the holder's
+    // own accounts, and this said "Bizum a Fondo indexado" over it — the sentence above the panel
+    // was right and the panel called it a payment to somebody else. Reported.
+    const label = transfer ? "Transferencia a" : state.rail === "INTERNAL" ? "Traspaso a" : "Bizum a";
     return (
       <dl className="preview-detail">
-        <dt>{transfer ? "Transferencia a" : "Bizum a"}</dt>
+        <dt>{label}</dt>
         <dd>{state.recipient ?? "—"}</dd>
         {transfer && state.recipient_iban && (
           <>
