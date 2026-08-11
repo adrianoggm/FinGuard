@@ -24,11 +24,12 @@ CORPUS = episodes.load()
 # A conflict is two recognisers wanting to run *different* queries on the same turn. Two agreeing is
 # not one: whichever wins, the same question is asked.
 #
-# Thirteen of 1106 turns, and the order resolves every one of them correctly today. That is the
-# answer to "is a scoring resolver worth building": not yet. A resolver's only job would be to
-# reproduce an ordering that already works, and thirteen ties is a list somebody can read rather
-# than a distribution needing a mechanism. What the measurement is *for* is that the list can no
-# longer grow in silence.
+# Twelve of 1106 turns, and the order resolves every one of them correctly. That is the answer to
+# "is a scoring resolver worth building": not yet. A resolver's only job would be to reproduce an
+# ordering that already works, and twelve ties is a list somebody can read rather than a
+# distribution needing a mechanism. What the measurement is *for* is that the list can no longer
+# grow in silence — and that each entry has to be looked at once, which is how the thirteenth
+# stopped being one.
 #
 # The four classes, because a count is not a work item:
 #
@@ -47,18 +48,27 @@ CORPUS = episodes.load()
 #       "¿Cuánto he movido a la hucha este año?" — EXPENSE against INCOME, so the two readings
 #       differ by the sign of the answer.
 #
-#   account_follow_up vs contextual_follow_up, group_ranking vs average (2)
-#       A direction and a grouping, decided by position.
+#   account_follow_up vs contextual_follow_up (1)
+#       "En la que ingreso la nomina vaya —", naming the account where the salary lands. The thread
+#       is about spending, so EXPENSE is right and the INCOME reading is the wrong one: the sentence
+#       describes *which account*, not which direction.
 #
-# Three of the losing readings look like misreadings that only the order is hiding, and they are
-# worth fixing at the source rather than out-prioritising:
+# Every losing reading here was checked against what its episode asks for, which is the work each
+# entry is meant to cause. Two that looked like misreadings are not:
 #
-#   average reads "top 2 categorías por ticket medio" as groupBy MERCHANT
-#   internal_movement claims "¿cuánto he gastado en inversiones?" as internal INCOME
-#   account_follow_up reads "en la que ingreso la nómina" as EXPENSE
+#   internal_movement claiming "¿cuánto he gastado en inversiones?" as internal INCOME is correct —
+#   money put *into* the fund is the incoming internal leg, which is the episode's whole point, and
+#   the EXPENSE reading beside it is the mistaken one.
+#
+#   account_follow_up reading "en la que ingreso la nómina" as EXPENSE is correct, for the reason
+#   above.
+#
+# One was: `average` read "top 2 categorías por ticket medio" as groupBy MERCHANT, inheriting the
+# dimension of the two turns before instead of the one the sentence names. Fixed at the source, and
+# it is why this number is twelve rather than thirteen.
 #
 # A ratchet, not a target. Lower it by removing a tie; raise it only with the new pair written down.
-CONTESTED = 13
+CONTESTED = 12
 
 
 def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixture[str]) -> None:

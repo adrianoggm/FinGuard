@@ -3452,6 +3452,31 @@ _RANKING_REQUEST: Final = re.compile(
 _GROUP_RANKING_DIMENSION: Final = re.compile(
     r"\b(?P<dimension>categorias?|comercios?|tiendas?|establecimientos?|cuentas?)\b"
 )
+
+
+def _named_group_dimension(folded: str) -> GroupBy | None:
+    """Which breakdown the sentence names outright, if it names one.
+
+    Shared by the two recognisers that need it, because they disagreed. `_group_ranking_plan` read
+    "top 2 categorías por ticket medio" as a category ranking and `_average_plan` read the same
+    sentence as a merchant one — it inherited the grouping of the two turns before, which were about
+    comercios, since `explicit_facts` does not treat "top N categorías" as a breakdown request. Only
+    the order of the cascade decided which of the two ran, and a corpus episode whose whole point is
+    that "merchant/category must alter only the named dimension" was passing on that.
+    """
+    match = _GROUP_RANKING_DIMENSION.search(folded)
+    if match is None:
+        return None
+    word = match.group("dimension")
+    if word.startswith("categor"):
+        return GroupBy.CATEGORY
+    if word.startswith(("comerc", "tienda", "establec")):
+        return GroupBy.MERCHANT
+    if word.startswith("cuenta"):
+        return GroupBy.ACCOUNT
+    return None
+
+
 _GROUP_RANKING_SIGNAL: Final = re.compile(
     r"\b(?:top|ranking|mas\s+(?:gasto|importe|operaciones|movimientos|compras|pagos)|"
     r"mas\s+(?:gast|pag|compr)\w*|"
@@ -4639,13 +4664,9 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
     if not ranking_follow_up and _GROUP_RANKING_SIGNAL.search(folded) is None:
         return None
 
-    dimension_word = dimension_match.group("dimension") if dimension_match else ""
-    if dimension_word.startswith("categor"):
-        group_by = GroupBy.CATEGORY
-    elif dimension_word.startswith(("comerc", "tienda", "establec")):
-        group_by = GroupBy.MERCHANT
-    elif dimension_word.startswith("cuenta"):
-        group_by = GroupBy.ACCOUNT
+    named_dimension = _named_group_dimension(folded) if dimension_match else None
+    if named_dimension is not None:
+        group_by = named_dimension
     else:
         assert previous_ranking is not None
         group_by = previous_ranking.group_by
@@ -4996,6 +5017,12 @@ def _average_plan(
 
     if facts.group_by is not None:
         group_by = facts.group_by
+    elif (named_dimension := _named_group_dimension(spanish.folded(query.sentence))) is not None:
+        # A dimension the sentence states outright beats anything inherited. "Top 2 categorías por
+        # ticket medio" came in after two turns about comercios and was read as a merchant average,
+        # because `explicit_facts` does not treat that phrasing as a breakdown request and the
+        # grouping was therefore inherited. Only the order of the cascade kept it off the wire.
+        group_by = named_dimension
     elif (
         facts.metric is Metric.AVERAGE
         and isinstance(previous, FinancialPlan)
