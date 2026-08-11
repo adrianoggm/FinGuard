@@ -219,6 +219,13 @@ export type ConversationState = {
     counterparty_name: string;
     counterparty_type: "MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN";
   }[];
+  // One-turn reference used only to understand an immediate "otro" after a completed payment.
+  recent_payment_rail?: "BIZUM" | "TRANSFER" | null;
+  // What has been said, oldest first and bounded by the service. Every other field here describes
+  // the turn immediately before; this is the thread, and it is what lets an ellipsis several turns
+  // deep still resolve. Round-tripped like the rest and never read here — rendering the chat uses
+  // the messages this client already holds, not the service's copy of them.
+  turns?: { sentence: string; outcome: string; plan?: string | null; question?: string | null }[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;

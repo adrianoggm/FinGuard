@@ -143,6 +143,10 @@ _CLASSIFYING_A_MOVEMENT: Final = re.compile(
     r"\b(?:eso|esto|este|ese|el\s+movimiento|el\s+ingreso)\b.{0,25}"
     r"\b(?:es|era|fue)\b.{0,35}\b(?:bizum|nomina|transferencia)\b"
 )
+_ANOTHER_PAYMENT: Final = re.compile(
+    r"^\s*(?:y\s+)?(?:ahora\s+)?(?:haz|manda|envia)?\s*(?:un\s+)?otr[oa]\b",
+    re.IGNORECASE,
+)
 
 
 def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]) -> bool:
@@ -173,6 +177,20 @@ def is_uncertain(sentence: str) -> bool:
 def resumes(sentence: str) -> bool:
     """Whether the user explicitly brings a suspended payment back into focus."""
     return _RESUMING.search(spanish.folded(sentence)) is not None
+
+
+def repeats(sentence: str, directory: tuple[Contact, ...]) -> bool:
+    """Whether an immediate ellipsis fully states the new amount and grounded recipient.
+
+    ``otro`` alone never starts a payment. The previous successful rail must be present in the
+    conversation, and this predicate additionally requires a fresh valid amount and a contact from
+    the authenticated holder's directory.
+    """
+    return bool(
+        _ANOTHER_PAYMENT.search(spanish.folded(sentence))
+        and payment_words.amount_in(sentence) is not None
+        and payment_words.contacts_in(sentence, directory)
+    )
 
 
 def is_payment(sentence: str) -> bool:

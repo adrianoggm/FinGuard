@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentInProgress,
     Slot,
     TransferInProgress,
+    Turn,
     UnsupportedCapability,
     Workflow,
     workflow_of,
@@ -160,6 +161,8 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             last_comparison=_comparison_plan(payload) if payload else None,
             account_aliases=_account_aliases(payload) if payload else (),
             counterparty_aliases=_counterparty_aliases(payload) if payload else (),
+            recent_payment_rail=payload.recent_payment_rail if payload else None,
+            turns=_turns(payload) if payload else (),
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -186,6 +189,21 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_comparison=_comparison_plan(payload),
         account_aliases=_account_aliases(payload),
         counterparty_aliases=_counterparty_aliases(payload),
+        recent_payment_rail=payload.recent_payment_rail,
+        turns=_turns(payload),
+    )
+
+
+def _turns(payload: ConversationPayload) -> tuple[Turn, ...]:
+    """The conversation's own record of itself, rebuilt through the domain like everything else.
+
+    `Turn` truncates an over-long sentence rather than refusing it, and the payload bounds the same
+    length — so a caller sending more gets a 422 at the edge and a caller sending exactly the
+    ceiling round-trips unchanged.
+    """
+    return tuple(
+        Turn(sentence=row.sentence, outcome=row.outcome, plan=row.plan, question=row.question)
+        for row in payload.turns
     )
 
 
@@ -263,6 +281,7 @@ def _payment_to_domain(payload: PaymentDraftPayload) -> PaymentDraft:
         amount_minor=payload.amount_minor,
         currency=payload.currency,
         concept=payload.concept,
+        rail=payload.rail,
     )
 
 
@@ -301,6 +320,16 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                     "counterparty_type": alias.counterparty_type,
                 }
                 for alias in conversation.counterparty_aliases
+            ],
+            "recent_payment_rail": conversation.recent_payment_rail,
+            "turns": [
+                {
+                    "sentence": turn.sentence,
+                    "outcome": turn.outcome,
+                    "plan": turn.plan,
+                    "question": turn.question,
+                }
+                for turn in conversation.turns
             ],
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
@@ -391,6 +420,7 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
                 amount_minor=active.draft.amount_minor,
                 currency=active.draft.currency,
                 concept=active.draft.concept,
+                rail=active.draft.rail,
             ),
             "suspended": active.suspended,
             "candidates": [

@@ -64,6 +64,9 @@ class SpokenPaymentDraft:
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
+    # The draft crosses the chat boundary between turns. Without the rail here, a transfer that
+    # needed another recipient or amount came back as the default Bizum on the next turn.
+    rail: str = Rail.BIZUM.value
 
 
 @dataclass(frozen=True)
@@ -183,6 +186,7 @@ def _drafted(draft: PaymentDraft) -> SpokenPaymentDraft:
         amount_minor=draft.amount_minor,
         currency=draft.currency,
         concept=draft.concept,
+        rail=draft.rail.value,
     )
 
 

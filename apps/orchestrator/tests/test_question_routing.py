@@ -268,6 +268,7 @@ def test_changing_the_amount_cancels_the_old_intent_and_prepares_a_new_preview()
     ("correction", "recipient", "concept"),
     [
         ("era para María", None, "tapas"),
+        ("A Marta 500 euros concepto pa la rule", None, "tapas"),
         ("cambia el concepto a cena", "Marta Solis Vega", "tapas"),
         ("quita el concepto", "Marta Solis Vega", None),
     ],
@@ -321,6 +322,8 @@ def test_the_stream_returns_the_state_after_a_payment_confirmation(
     assert answer["outcome"] == outcome
     assert answer["conversation"]["workflow"] == workflow
     assert payments.confirmations == [reply]
+    if outcome == PaymentOutcome.PAID.value:
+        assert answer["conversation"]["recent_payment_rail"] == "BIZUM"
     if outcome == PaymentOutcome.AWAITING_CONFIRMATION.value:
         assert "Marta Solis Vega" in answer["text"]
         assert "20,00" in answer["text"]

@@ -1223,7 +1223,10 @@ async def test_this_payroll_can_be_compared_with_all_the_previous_ones() -> None
     assert [plan.group_by for plan in ledger.plans] == [GroupBy.NONE, GroupBy.MONTH]
     assert "junio de 2026" in answer.text
     assert "2.465,62" in answer.text
-    assert answer.conversation == conversation
+    # Everything the next turn branches on is untouched. The log is not: every turn appends to it,
+    # including this one, which is the one part of a conversation that is never left alone.
+    assert replace(answer.conversation, turns=()) == conversation
+    assert len(answer.conversation.turns) == 1
 
 
 async def test_which_payroll_was_higher_compares_the_two_months_in_memory() -> None:
