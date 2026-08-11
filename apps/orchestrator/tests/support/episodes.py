@@ -260,9 +260,14 @@ class AnyPlan:
 class Ledger:
     def __init__(self) -> None:
         self.plans: list[FinancialPlan] = []
+        # Both kinds, in the order they ran, because "which query did this turn actually execute"
+        # has to be one answer. An aggregate and a ranking are both queries a follow-up inherits
+        # from, and keeping them in separate lists means the corpus cannot ask about the turn.
+        self.ran: list[FinancialPlan | TopMovements] = []
 
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self.plans.append(plan)
+        self.ran.append(plan)
         group_key = {
             GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
             GroupBy.MERCHANT: "Mercadona",
@@ -298,6 +303,8 @@ class Ledger:
         )
 
     async def ranked(self, ranking: object, **_: object) -> Movement:
+        if isinstance(ranking, TopMovements):
+            self.ran.append(ranking)
         return Movement(
             occurred_at=datetime(2026, 3, 14, 10, 0, tzinfo=UTC),
             description="Repostaje",
@@ -484,6 +491,17 @@ class Turn:
     awaiting: str | None = None
     no_model: bool = False
     total: int | None = None
+    # Which query this turn executed, by whichever of its fields the episode cares about.
+    #
+    # The gap this closes is the one the corpus was built to find and could not see. `route` says a
+    # financial question answered the turn; `says` and `total` compare a figure the stub ledger
+    # returns for every plan alike. So a follow-up that inherited the wrong window, dropped the
+    # category or flipped the direction scored as correct — and the metric named `lost_context`
+    # counted only the turns where a *workflow* failed to survive, never a lost window.
+    #
+    # Worth most on `no_model: true` turns: there the plan came from this service's own inheritance
+    # rather than from the stub planner, so the expectation is about the code under measurement.
+    ran: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -546,6 +564,34 @@ def load() -> list[Episode]:
     return episodes
 
 
+def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
+    """The query that ran, in the vocabulary an episode writes.
+
+    Named fields rather than a repr, so an expectation states the one thing it is about and a plan
+    growing a field does not rewrite every episode. `window` folds the named period and the explicit
+    range together because a plan carries exactly one of them — the same reason `plan_merger` treats
+    them as one field.
+    """
+    ran: dict[str, Any] = {
+        "window": _window(query),
+        "direction": query.direction.value,
+        "categories": sorted(query.categories),
+        "merchants": sorted(query.merchants),
+    }
+    if isinstance(query, TopMovements):
+        return {**ran, "rank": query.rank}
+    return {**ran, "group_by": query.group_by.value, "metric": query.metric.value}
+
+
+def _window(query: FinancialPlan | TopMovements) -> str:
+    if query.date_range is not None:
+        return f"{query.date_range.start.isoformat()}..{query.date_range.end.isoformat()}"
+    if query.period is None:
+        return "NONE"
+    named = query.period.period.value
+    return f"{named}:{query.period.n}" if query.period.n else named
+
+
 def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failure]:
     """One episode, turn by turn, exactly as a browser would have it.
 
@@ -565,6 +611,7 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
 
     for number, turn in enumerate(episode.turns, start=1):
         before = len(stack.planner.asked)
+        ran_before = len(stack.ledger.ran)
         response = stack.client.post(
             "/v1/questions", json={"question": turn.say, "conversation": conversation}
         )
@@ -574,11 +621,24 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
         answer = response.json()
         conversation = answer["conversation"]
 
-        for complaint in _complaints(turn, answer, reached_model=len(stack.planner.asked) > before):
+        for complaint in _complaints(
+            turn,
+            answer,
+            reached_model=len(stack.planner.asked) > before,
+            # This turn's queries only. A turn asserting `ran` is asking about itself, and the
+            # ledger holds the whole conversation.
+            ran=tuple(stack.ledger.ran[ran_before:]),
+        ):
             yield Failure(episode.name, number, turn.say, complaint)
 
 
-def _complaints(turn: Turn, answer: dict[str, Any], *, reached_model: bool) -> Iterator[str]:
+def _complaints(
+    turn: Turn,
+    answer: dict[str, Any],
+    *,
+    reached_model: bool,
+    ran: tuple[FinancialPlan | TopMovements, ...] = (),
+) -> Iterator[str]:
     tool = tool_of(answer)
     workflow = (answer.get("conversation") or {}).get("workflow")
     text = answer["text"]
@@ -600,6 +660,30 @@ def _complaints(turn: Turn, answer: dict[str, Any], *, reached_model: bool) -> I
         yield f"it should be waiting for {turn.awaiting} and waits for {got or 'nothing'}"
     if turn.total is not None and answer.get("total_minor") != turn.total:
         yield f"the figure should be {turn.total} and is {answer.get('total_minor')}"
+    yield from _query_complaints(turn, ran)
+
+
+def _query_complaints(turn: Turn, ran: tuple[FinancialPlan | TopMovements, ...]) -> Iterator[str]:
+    """What the turn asked the ledger, against what the episode says it should have.
+
+    The last query of the turn, because a derived answer runs two — a ratio, a comparison — and the
+    one an episode means by "this question" is the narrow side. An episode needing both operands
+    would say so with two expectations, and none does yet.
+    """
+    if not turn.ran:
+        return
+    if not ran:
+        yield f"the query ran nothing, and the turn expects {turn.ran}"
+        return
+    actual = executed(ran[-1])
+    for field_name, expected in turn.ran.items():
+        if field_name not in actual:
+            yield f"the query ran no field called {field_name!r}"
+            continue
+        seen = actual[field_name]
+        wanted = sorted(expected) if isinstance(seen, list) else expected
+        if seen != wanted:
+            yield f"the query ran {field_name}={seen!r}, and the turn expects {wanted!r}"
 
 
 def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
@@ -617,7 +701,10 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
             report.failures.append(failure)
             if "answered" in failure.complaint:
                 report.wrong_tool += 1
-            if "had to survive" in failure.complaint:
+            # Both halves of losing context, and the second one is why this metric read 0.0 % on a
+            # corpus full of ellipsis: a workflow that failed to survive was counted, and a window,
+            # category or direction that failed to survive was invisible.
+            if "had to survive" in failure.complaint or "the query ran" in failure.complaint:
                 report.lost_context += 1
             if "reached the model" in failure.complaint:
                 report.unnecessary_clarifications += 1
