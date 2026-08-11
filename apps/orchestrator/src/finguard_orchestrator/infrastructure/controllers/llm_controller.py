@@ -242,17 +242,32 @@ def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bo
     payment" is how the first one came to be incomplete — and because it costs a model call once
     the interpreter is a model.
 
-    An open question takes precedence over a payment word, unless the sentence carries an amount.
-    "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and asked who to send
-    it to — a word offered as the answer to a question, read as an order. A real instruction is not
-    lost to this: "hazle un bizum de 20 € a Marta" names a figure, and that is what tells a change
-    of subject from a one-word reply. This stays here rather than moving into the interpreter: it
-    is not about what the sentence means, it is about which of two open subjects owns the turn.
+    An open question takes precedence over a payment word, unless the sentence carries an amount
+    **or instructs**. "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and
+    asked who to send it to — a word offered as the answer to a question, read as an order. But the
+    amount alone was too narrow an escape: reported, a holder wrote "que le hagas el puto bizum" and
+    then "quiero que hagas un bizum" with a clarification open, and both reached the planner and
+    came back "¿de qué periodo?". A bare noun has no verb; those two are instructions. This stays
+    here rather than moving into the interpreter: it is not about what the sentence means, it is
+    about which of two open subjects owns the turn.
+
+    **A reading of FINANCIAL_QUERY does not settle it.** That intent is the catch-all — the prompt
+    tells the model to answer it whenever unsure — so a deterministic reader requiring a payment
+    verb *and* money is the better authority there, and this is the doctrine `explicit_facts` rests
+    on: the model decides what is ambiguous, and an order to move money is not. Every other reading
+    is a positive choice and is left alone. LIST_CONTACTS for "¿a quién puedo hacerle un bizum?" is
+    the case this function was written to protect, and overriding that would undo it.
     """
-    if read_as is not Intent.PAYMENT:
+    if read_as is not Intent.PAYMENT and not (
+        read_as is Intent.FINANCIAL_QUERY and payment_router.is_payment(sentence)
+    ):
         return False
     asked = was.awaiting or was.last_asked
-    return asked not in _FINANCIAL_SLOTS or payment_words.amount_in(sentence) is not None
+    return (
+        asked not in _FINANCIAL_SLOTS
+        or payment_words.amount_in(sentence) is not None
+        or payment_router.is_explicit_order(sentence)
+    )
 
 
 # The slots a financial question leaves open. A reply while one of these is waiting belongs to it.

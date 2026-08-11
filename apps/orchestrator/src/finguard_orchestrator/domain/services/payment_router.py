@@ -94,6 +94,10 @@ _PAYING: Final = re.compile(
     r"\b(bi[xz]um|transferencia|tra[nm]sferir|transfiere|transfi[eé]rele"
     r"|enviar|env[ií]a|env[ií]ale|mandar|mandrle|manda|m[áa]ndale"
     r"|pagar|paga|p[áa]gale|ingresa|ingr[ée]sale"
+    # The second-person subjunctive, which is the form the order above is given in: "que le mandes
+    # 20 euros". These are payment verbs and nothing else — unlike "hagas", which is deliberately
+    # absent because "que hagas el desglose" is not a payment.
+    r"|mandes|env[ií]es|pagues|transfieras"
     r"|devuelve|devu[eé]lvele)\b",
     re.IGNORECASE,
 )
@@ -102,9 +106,28 @@ _PAYING: Final = re.compile(
 # ``¿verdad?``. The volitional prefix is required; without it, ``¿cómo puedo enviar dinero?`` is a
 # capability question and must not start a payment.
 _EXPLICIT_ORDER: Final = re.compile(
-    r"\b(?:quiero|necesito|voy\s+a|tengo\s+que)\s+"
-    r"(?:hacer\s+(?:una?\s+)?)?"
+    r"\b(?:quiero|necesito|voy\s+a|vamos\s+a|tengo\s+que)\s+"
+    r"(?:hacer\s+(?:una?\s+)?|dar(?:le|les|me)?\s+(?:el\s+|un\s+|una\s+)?)?"
     r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar)\b",
+    re.IGNORECASE,
+)
+
+# The same instruction in the subjunctive, which is how Spanish actually gives one: "que le hagas el
+# bizum", "quiero que hagas un bizum". Reported, four turns in a row and then three more — every one
+# of them read as a question, because they start with "que" and `_ASKING` cannot tell that "que"
+# from an interrogative. The user ended up shouting.
+#
+# **The second person is what makes this safe.** "Hagas" is addressed to the assistant and nobody
+# asks a capability question with it — "¿cómo hago un bizum?" is first person, "¿puedes hacer un
+# bizum?" is an infinitive. So this needs no volitional prefix, unlike the rule above, and it still
+# cannot fire without `_PAYING` and `_MONEY` agreeing further down.
+#
+# `que\s*h?\s*agas` tolerates one transposed space, for the same reason `bi[xz]um` tolerates one
+# transposed letter: "QUe quiero queh agas un bizum" was a real turn, and it was the third attempt.
+_SUBJUNCTIVE_ORDER: Final = re.compile(
+    r"\bque\s*h?\s*(?:agas|agais)\b|\bque\s+(?:me|le|les|nos)\s*h?\s*(?:agas|agais)\b"
+    r"|\bque\s+(?:me|le|les|nos)\s+(?:mandes|envies|pagues|transfieras|des)\b"
+    r"|\bque\s+(?:mandes|envies|pagues|transfieras)\b",
     re.IGNORECASE,
 )
 
@@ -193,6 +216,34 @@ def repeats(sentence: str, directory: tuple[Contact, ...]) -> bool:
     )
 
 
+# The imperative, which is the third way to give the order: "hazle un bizum a Carmen".
+_IMPERATIVE_ORDER: Final = re.compile(
+    r"\b(?:haz(?:le|les|me)?|manda(?:le|les|me)?|env[ií]a(?:le|les|me)?"
+    r"|p[áa]ga(?:le|les)?|transfi[eé]re(?:le)?|ingr[ée]sa(?:le)?)\b",
+    re.IGNORECASE,
+)
+
+
+def is_explicit_order(sentence: str) -> bool:
+    """Whether the words *instruct*, rather than merely naming a payment.
+
+    The distinction a bare noun cannot survive. "Pues bizum", offered as the answer to "¿de qué
+    comercio o categoría?", contains a payment word and no instruction — and reading it as an order
+    asked the user who to send money to, about a payment nobody had ordered. "Que le hagas el bizum"
+    and "hazle un bizum a Carmen" are instructions in every sense, and an open question about a
+    period has no claim on them.
+
+    Three forms because Spanish has three: volitional ("quiero hacer un bizum"), subjunctive ("que
+    le hagas un bizum") and imperative ("hazle un bizum"). Missing two of them is what let an open
+    clarification swallow seven consecutive attempts to send somebody twenty-five euros.
+    """
+    return bool(
+        _EXPLICIT_ORDER.search(sentence)
+        or _SUBJUNCTIVE_ORDER.search(sentence)
+        or _IMPERATIVE_ORDER.search(sentence)
+    )
+
+
 def is_payment(sentence: str) -> bool:
     """Whether the payment path should handle this sentence.
 
@@ -207,6 +258,10 @@ def is_payment(sentence: str) -> bool:
         return False
     if _ALREADY.search(sentence) or _RECEIVED.search(sentence):
         return False
-    if _ASKING.search(sentence) and _EXPLICIT_ORDER.search(sentence) is None:
+    if (
+        _ASKING.search(sentence)
+        and _EXPLICIT_ORDER.search(sentence) is None
+        and _SUBJUNCTIVE_ORDER.search(sentence) is None
+    ):
         return False
     return bool(_PAYING.search(sentence)) and bool(_MONEY.search(sentence))

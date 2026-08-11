@@ -115,3 +115,58 @@ def test_resuming_a_paused_payment_has_to_be_explicit(sentence: str) -> None:
 )
 def test_a_slot_value_or_an_unrelated_sentence_does_not_resume_a_payment(sentence: str) -> None:
     assert payment_router.resumes(sentence) is False
+
+
+# --- the three ways Spanish gives an order -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Reported, seven turns of it. Every one read as a question, because they start with "que"
+        # and the interrogative test cannot tell that "que" from "¿qué?". The holder ended up
+        # shouting at the assistant.
+        "de hoy imbecil que le hagas el puto bizum",
+        "QUe quiero queh agas un bizum",
+        "quiero que hagas un bizum",
+        "quiero que le hagas un bizum de 20 euros a Marta",
+        "que le mandes 20 euros a Marta",
+        # The first of that chain, which is the volitional form in the first person plural.
+        "Oye y aitor vamos a darle el bixum que le debo del desayuno que son 25 euros",
+    ],
+)
+def test_an_order_in_the_subjunctive_is_an_order(sentence: str) -> None:
+    """The second person is what makes reading these safe. "Hagas" is addressed to the assistant,
+    and nobody asks a capability question with it — "¿cómo hago un bizum?" is first person and
+    "¿puedes hacer un bizum?" is an infinitive."""
+    assert payment_router.is_payment(sentence) is True
+    assert payment_router.is_explicit_order(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cómo hago un bizum?",
+        "¿puedes hacer transferencias?",
+        "¿cuánto le he mandado a Marta este año?",
+        "¿qué bizums he recibido este mes?",
+        "quiero saber cuánto he pagado en bizums",
+        "que hagas el desglose por categorías",
+        "quiero traspasar dinero entre mis cuentas",
+    ],
+)
+def test_a_question_about_payments_is_still_a_question(sentence: str) -> None:
+    """The wider order vocabulary must not widen what counts as an instruction. "Que hagas el
+    desglose" is the subjunctive too and names no payment; the rest ask about the past, about a
+    capability, or about the holder's own accounts."""
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize("sentence", ["pues bizum", "bizum", "un bizum"])
+def test_a_bare_payment_word_is_not_an_instruction(sentence: str) -> None:
+    """The distinction the precedence rule rests on. A bare noun offered as the answer to "¿de qué
+    comercio o categoría?" belongs to that question; an instruction does not, and only the verb
+    tells them apart. `is_payment` is true for both — it is the narrower question — so the route
+    asks this
+    one before letting a payment interrupt an open clarification."""
+    assert payment_router.is_explicit_order(sentence) is False

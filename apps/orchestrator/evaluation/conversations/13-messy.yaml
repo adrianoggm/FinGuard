@@ -378,3 +378,38 @@ episodes:
         says: "5.485,50"
       - say: vale, me fío
         route: QUERY
+
+  - name: the_fourth_reported_conversation_shouting_at_a_clarification
+    why: >
+      Reported from a test subject, and the whole chain is one defect. A clarification was open, and
+      "vamos a darle el bixum que le debo del desayuno que son 25 euros" was answered "¿de qué
+      periodo te refieres?" — and from there every attempt to order the Bizum landed on the same
+      question, because the only escape from an open clarification was an amount. The holder wrote
+      "de hoy imbecil que le hagas el puto bizum", then "QUe quiero queh agas un bizum", then
+      "PEDAZO DE SUBNORMAL". It recovered only because asking for contacts is an aside that clears
+      the pending question.
+
+      Three forms of the same order, and the assertion is that none of them is answered with a
+      period. Which tool takes them depends on what the payment reader makes of a messy sentence —
+      that is a model in a deployment and a double here — but "¿de qué periodo?" is the defect
+      whichever way that goes.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: cuanto dinero tengo
+        route: BALANCE
+      - say: ¿cuál es mi gasto medio?
+        route: CLARIFY
+        awaiting: WINDOW
+      # A clarification is open and none of the next three names a figure. Each one instructs, and a
+      # bare "bizum" offered as the answer to a question still would not.
+      - say: Oye y aitor vamos a darle el bixum que le debo del desayuno
+        not_says: periodo
+      - say: de hoy que le hagas el bizum
+        not_says: periodo
+      - say: QUe quiero queh agas un bizum
+        not_says: periodo
+      - say: hazle un bixum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: gracias
+        route: COURTESY
