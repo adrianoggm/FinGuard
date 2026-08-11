@@ -35,7 +35,7 @@ from typing import Final
 from finguard_orchestrator.domain.enums import Period
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import Slot
-from finguard_orchestrator.domain.services import spanish
+from finguard_orchestrator.domain.services import spanish, spanish_numbers
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, RelativePeriod
 
 # A window this vocabulary is sure about, whichever of the two shapes it takes.
@@ -221,10 +221,39 @@ _THIS_ONE: Final = re.compile(r"(de\s+)?(este|esta|el\s+actual|la\s+actual|actua
 # which is n=1. Years are counted in months, because that is the unit the contract has: "el último
 # año" is twelve months back, and leaving it out is what sent the phrase to the model and started
 # the loop.
+#
+# **The count may sit on either side of the word.** Spanish puts it in both places — "los últimos 2
+# meses" and "los 2 últimos meses" — and only the first was read. The second did not fail: it fell
+# through to the default and became *one* month, so "los 10 últimos días" answered about yesterday
+# with a real figure. Found by asserting the query a corpus turn ran rather than only which tool
+# answered it.
+#
+# Either position accepts digits or a written cardinal, because "los dos últimos meses" was the same
+# silent one, and half of a fix to a wrong number is not one.
 _COUNTED: Final = re.compile(
-    r"ultim[oa]s?\s+(?:(\d{1,3})\s+)?(dias?|meses|mes|anos|ano)\b",
+    r"(?:(?P<before>\d{1,3}|[a-z]+)\s+)?ultim[oa]s?\s+"
+    r"(?:(?P<after>\d{1,3}|[a-z]+)\s+)?(?P<unit>dias?|meses|mes|anos|ano)\b",
     re.IGNORECASE,
 )
+
+
+def _how_many(counted: re.Match[str]) -> int:
+    """The count either side of "último", or one when neither side names a number.
+
+    A word that is not a number — the article in "el último mes", the preposition in "de los últimos
+    días" — reads as no count and therefore as one, which is what those phrases mean.
+    """
+    for group in ("before", "after"):
+        written = counted.group(group)
+        if written is None:
+            continue
+        if written.isdigit():
+            return int(written)
+        value = spanish_numbers.integer(written)
+        if value is not None and value > 0:
+            return value
+    return 1
+
 
 _UNIT: Final[dict[str, Period]] = {
     "dia": Period.LAST_N_DAYS,
@@ -719,8 +748,8 @@ def window_in(
     counted = _COUNTED.search(folded)
     if counted:
         # No number means one: "el último mes" is a month back, not an unbounded period.
-        count = int(counted.group(1)) if counted.group(1) else 1
-        unit = counted.group(2)
+        count = _how_many(counted)
+        unit = counted.group("unit")
         try:
             return RelativePeriod(period=_UNIT[unit], n=count * _MONTHS_PER.get(unit, 1))
         except InvalidValueError:

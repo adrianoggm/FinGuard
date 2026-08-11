@@ -89,8 +89,8 @@ episodes:
       - say: ¿y en el fondo?
         route: BALANCE
       - say: mueve 200 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo ahora en la hucha?
         route: BALANCE
       - say: ¿cuánto gasté este mes?
@@ -189,8 +189,8 @@ episodes:
       - say: 1000
         not_says: Hucha
       - say: mueve 1000 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: gracias
         route: COURTESY
 

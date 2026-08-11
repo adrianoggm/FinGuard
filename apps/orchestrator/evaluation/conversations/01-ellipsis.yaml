@@ -25,9 +25,9 @@ episodes:
         route: TRANSFER
         awaiting: AMOUNT
       - say: 1000 pavos
-        route: TRANSFER
+        route: PAYMENT
         says: "1.000,00"
-        ends: true
+        keeps: PAYMENT_CONFIRMATION
         no_model: true
       - say: ¿y cuánto me queda en el fondo?
         route: BALANCE
@@ -66,15 +66,18 @@ episodes:
         route: BALANCE
         total: 775592
       - say: quiero mover 200 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿y cuánto me queda?
         route: BALANCE
       - say: pásame 50 al fondo
-        route: TRANSFER
+        route: PAYMENT
         says: Fondo indexado
+      # A yes, not manners, and the corpus's own rule for COURTESY says which: a bare "perfecto" is
+      # politeness only when nothing is waiting for a reply. A preview is waiting.
       - say: perfecto
-        route: COURTESY
+        route: PAYMENT
+        says: Hecho
       - say: ¿cuánto tengo en total?
         route: BALANCE
 

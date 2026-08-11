@@ -37,8 +37,8 @@ episodes:
         route: TRANSFER
         not_says: más de una cuenta
       - say: 2700 €
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo ahora?
         route: BALANCE
       - say: gracias
@@ -65,8 +65,16 @@ episodes:
       - say: He recibido algún bizum de Marta Solis Vega este mes ?
         route: QUERY
         ran: {window: THIS_MONTH, direction: INCOME}
+      # The count on the side of "últimos" Spanish also puts it on. This read as *one* month before
+      # — not as a failure, as a default — so the turn asked about four weeks and was answered about
+      # one, with a real figure on it.
+      #
+      # No direction here on purpose: no deterministic recogniser claims this turn, so it reaches the
+      # planner, and the corpus stubs that with a fixed EXPENSE. The window is still ours — the stub
+      # reads it from the sentence through the same vocabulary the service does.
       - say: ¿y de algún otro en los 2 últimos meses?
         route: QUERY
+        ran: {window: LAST_N_MONTHS:2}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
@@ -97,9 +105,9 @@ episodes:
         route: TRANSFER
         awaiting: AMOUNT
       - say: 1000 pavos
-        route: TRANSFER
+        route: PAYMENT
         says: "1.000,00"
-        ends: true
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
@@ -242,8 +250,8 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
       - say: mueve 500 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: gracias
@@ -290,8 +298,8 @@ episodes:
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: mueve 100 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: dime las categorías
         route: CATEGORIES
       - say: ¿cuánto gasté en el supermercado?
@@ -330,8 +338,8 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: mueve 100 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo ahora?
         route: BALANCE
       - say: ¿puedes hacer transferencias?
