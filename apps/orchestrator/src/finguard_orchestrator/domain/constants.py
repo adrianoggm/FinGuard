@@ -94,6 +94,25 @@ MAX_GROUP_RANK = 10
 MAX_ENTITY_ALIASES = 12
 MAX_ENTITY_ALIAS_LENGTH = 48
 
+# --- what the conversation remembers happening -----------------------------------------
+
+# How many turns of history travel with a conversation. There are no sessions here, so the log
+# rides the wire, and every number in it is paid for on every request — which is the honest reason
+# it is small rather than an arbitrary one. Six covers the ellipsis chains the corpus actually
+# contains ("¿y en gasolina?" → "¿y el mes pasado?" → "¿y el segundo?") with room to spare.
+MAX_REMEMBERED_TURNS = 6
+
+# One turn's sentence, as the holder wrote it. Bounded well under MAX_PROMPT_LENGTH because six of
+# them plus the rules have to fit in one prompt, and a sentence longer than this is not an ellipsis
+# needing context — it is a question that says what it wants.
+MAX_TURN_SENTENCE = 200
+
+# What we said the turn was about: the query in words, or the question asked back. Ours rather than
+# the holder's, and bounded anyway — the log is echoed by the caller, so every field in it is one
+# somebody could rewrite before sending it back into a prompt. Six turns times sentence plus note
+# is the whole transcript, and it has to stay small enough to be evidence rather than the prompt.
+MAX_TURN_NOTE = 400
+
 # --- what a payment may say -------------------------------------------------------------
 
 CURRENCY_LENGTH = 3

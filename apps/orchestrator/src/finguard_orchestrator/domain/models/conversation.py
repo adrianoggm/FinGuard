@@ -35,7 +35,10 @@ from finguard_orchestrator.domain.constants import (
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
     MAX_MERCHANT_LENGTH,
+    MAX_REMEMBERED_TURNS,
     MAX_SELECTED_TRANSACTIONS,
+    MAX_TURN_NOTE,
+    MAX_TURN_SENTENCE,
 )
 from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
@@ -57,6 +60,53 @@ type PlannedQuery = FinancialPlan | TopMovements
 # MAX_RANK was declared here as well as in `top_movements`, at 100 in both, with the DTO importing
 # this one and the value object enforcing the other. It lives in `domain/constants` now, with every
 # other limit the wire has to agree with banking about.
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One exchange that already happened, as the two facts a later turn can lean on.
+
+    The fields below are memory of *what the conversation was*; this is the record of *what it
+    did*, and the difference matters. Every one of those fields describes the turn immediately
+    before, and each is a projection taken by whichever branch happened to run — so a chain of
+    them is lossy at every hop, which is exactly why an ellipsis three turns deep stops resolving.
+    A log loses nothing, because nobody decides what it keeps.
+
+    Deliberately not the state. Nothing branches on this: the code still reads `last_plan` and
+    `awaiting`, which are validated values a decision can safely rest on, and a sentence is neither.
+    This exists so the *model* has the antecedent, and denying it one was measurably the largest
+    thing wrong with the classification prompt.
+
+    ponytail: two representations of the same history, and the log is the one with no reader in
+    the control flow. If a branch ever needs it, derive that field from this instead of adding a
+    seventeenth one beside it.
+    """
+
+    # As the holder wrote it, truncated rather than refused: a long sentence is still evidence of
+    # what the conversation is about, and this is the one field here a person authored.
+    sentence: str
+    # What this service decided, by the name the result already carries. A closed vocabulary.
+    outcome: str
+    # The query behind the answer, in the same words the answer showed the user. Absent when the
+    # turn ran no query — a greeting, a refusal, a question asked back.
+    plan: str | None = None
+    # The question this turn asked back, when it asked one.
+    question: str | None = None
+
+    def __post_init__(self) -> None:
+        """Truncate rather than refuse, because a record is not a query.
+
+        Every other value object here rejects what it cannot hold, and that is right: a plan is
+        going to be executed. A turn is only ever read as evidence, and refusing one would mean a
+        long sentence six turns ago could make the *next* turn fail. Cut it and keep going.
+        """
+        if not self.outcome.strip():
+            raise InvalidValueError("a recorded turn needs its outcome")
+        object.__setattr__(self, "sentence", self.sentence[:MAX_TURN_SENTENCE])
+        for note in ("plan", "question"):
+            written = getattr(self, note)
+            if written is not None:
+                object.__setattr__(self, note, written[:MAX_TURN_NOTE])
 
 
 @dataclass(frozen=True)
@@ -284,6 +334,10 @@ class Conversation:
     # A one-turn anaphora after a completed payment. Keeping only the rail means "otro" can reuse
     # the operation while the new amount and recipient still have to be explicit and grounded.
     recent_payment_rail: Rail | None = None
+    # What actually happened, oldest first, bounded. Appended to once per turn and never edited,
+    # so unlike every field above it there is no branch deciding what survives — which is what the
+    # fields above it kept getting wrong.
+    turns: tuple[Turn, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.referenced_group_by is None) != (self.referenced_group_key is None):
@@ -319,6 +373,16 @@ class Conversation:
             raise InvalidValueError("too many counterparty aliases")
         if len(set(folded_counterparties)) != len(folded_counterparties):
             raise InvalidValueError("counterparty aliases must be unique")
+        if len(self.turns) > MAX_REMEMBERED_TURNS:
+            raise InvalidValueError("too many remembered turns")
+
+    def with_turn(self, turn: Turn) -> "Conversation":
+        """Record what this turn did, dropping the oldest once the log is full.
+
+        Truncating rather than refusing: a long conversation is the normal case, and the far end of
+        it is what an ellipsis never reaches back to anyway.
+        """
+        return replace(self, turns=(*self.turns, turn)[-MAX_REMEMBERED_TURNS:])
 
     def with_account_alias(self, alias: AccountAlias) -> "Conversation":
         """Learn or replace one alias without disturbing the active conversation."""
@@ -598,6 +662,7 @@ __all__ = [
     "PaymentInProgress",
     "TransferInProgress",
     "Slot",
+    "Turn",
     "UnsupportedCapability",
     "Workflow",
     "slot_for",

@@ -52,6 +52,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PlannedQuery,
     Slot,
     TransferInProgress,
+    Turn,
     UnsupportedCapability,
     workflow_of,
 )
@@ -475,7 +476,13 @@ class AskFinancialQuestionHandler:
         interesting fact is the same one every time — what this turn decided and how long it took.
         `handle` drains this, so both routes are covered by writing it once.
 
-        Nothing the holder wrote is in the record. See `observability` for the list and why.
+        The conversation's own record of the turn is appended here for exactly that reason. Forty
+        branches build a result and every one of them would have had to remember; the turn is the
+        same fact in all of them, and it is already on the result by the time it passes through.
+
+        Nothing the holder wrote is in the *observability* record. See `observability` for the list
+        and why — the conversational log below is a different thing, held by the caller and never
+        written anywhere this service owns.
         """
         started = time.perf_counter()
         outcome = "INCOMPLETE"
@@ -483,6 +490,17 @@ class AskFinancialQuestionHandler:
             async for step in self._steps(query):
                 if isinstance(step, AskFinancialQuestionResult):
                     outcome = step.outcome
+                    step = replace(
+                        step,
+                        conversation=step.conversation.with_turn(
+                            Turn(
+                                sentence=query.sentence,
+                                outcome=step.outcome,
+                                plan=step.plan,
+                                question=step.question,
+                            )
+                        ),
+                    )
                 yield step
         finally:
             logger.info(

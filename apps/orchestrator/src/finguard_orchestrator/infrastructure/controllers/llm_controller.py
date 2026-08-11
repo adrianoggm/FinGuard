@@ -664,6 +664,9 @@ def _window_only_context(answered: Conversation) -> Conversation | None:
         ),
         account_aliases=answered.account_aliases,
         counterparty_aliases=answered.counterparty_aliases,
+        # Filters are what this strips. The thread is not a filter, and a clause read without it is
+        # the blindness the log exists to end.
+        turns=answered.turns,
     )
 
 

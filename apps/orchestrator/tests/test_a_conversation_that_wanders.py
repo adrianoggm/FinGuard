@@ -1275,3 +1275,63 @@ def test_a_transfer_to_an_account_the_holder_does_not_have_says_so_plainly() -> 
     answer = Chat(client).say("mueve 200 € a la hucha")
 
     assert "No tienes ninguna cuenta de ese tipo" in answer["text"]
+
+
+# --- what the conversation remembers happening -------------------------------------------------
+
+
+def test_the_thread_accumulates_across_turns_and_rides_the_wire() -> None:
+    """The log, end to end, through the surface a browser actually uses.
+
+    Every field beside it describes the turn immediately before, taken by whichever branch ran — so
+    a chain of them is lossy at each hop and an ellipsis three deep stops resolving. This is the one
+    piece of the conversation nobody decides the contents of: one turn in, one entry out, in order,
+    and the client round-trips it like everything else because there are no sessions here.
+
+    Deliberately a mixture: an aside, a question answered from a plan, and a pleasantry. All three
+    are turns that happened, and the two the state fields treat as "nothing to remember" are exactly
+    the ones a later "¿y eso?" needs to see.
+    """
+    client, _, _, _ = wired(
+        {
+            "gaste": PlanningResult.planned(
+                FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+            )
+        }
+    )
+    chat = Chat(client)
+
+    chat.say("Quien eres?")
+    chat.say("Cuanto gaste este mes?")
+    answer = chat.say("Gracias")
+
+    assert [turn["sentence"] for turn in answer["conversation"]["turns"]] == [
+        "Quien eres?",
+        "Cuanto gaste este mes?",
+        "Gracias",
+    ]
+    assert [turn["outcome"] for turn in answer["conversation"]["turns"]] == [
+        Spoken.IDENTITY.value,
+        PlanningOutcome.PLANNED.value,
+        Spoken.COURTESY.value,
+    ]
+    assert answer["conversation"]["turns"][1]["plan"] is not None, (
+        "the query behind an answer is what a later ellipsis leans on"
+    )
+
+
+def test_one_turn_records_one_entry_however_many_answers_it_produced() -> None:
+    """A compound turn answers twice and is still one thing the user said. Recording per result
+    would double it, and a log that counts turns differently from the person having them is worse
+    than no log."""
+    client, _, _, _ = wired(
+        {
+            "gaste": PlanningResult.planned(
+                FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+            )
+        }
+    )
+
+    answer = Chat(client).say("Cuanto tengo y cuanto gaste este mes?")
+
+    assert len(answer["conversation"]["turns"]) == 1

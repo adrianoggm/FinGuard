@@ -15,6 +15,11 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
+from finguard_orchestrator.domain.constants import (
+    MAX_REMEMBERED_TURNS,
+    MAX_TURN_NOTE,
+    MAX_TURN_SENTENCE,
+)
 from finguard_orchestrator.domain.enums import (
     Direction,
     GroupBy,
@@ -31,6 +36,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentConfirmation,
     PaymentInProgress,
     Slot,
+    Turn,
     UnsupportedCapability,
     Workflow,
 )
@@ -533,3 +539,62 @@ def test_a_completed_payment_keeps_a_one_turn_rail_referent() -> None:
     assert back == out
     assert back.active is None
     assert back.recent_payment_rail is Rail.BIZUM
+
+
+# --- the log of what happened --------------------------------------------------------
+
+
+def test_the_thread_survives_the_wire() -> None:
+    """The whole point of putting it on the payload. There are no sessions here, so a log the
+    mapper drops is a thread the next turn does not have — and the next turn is where it is read."""
+    out = IDLE.with_turn(
+        Turn(
+            sentence="¿cuánto gasté?",
+            outcome="NEEDS_CLARIFICATION",
+            question="¿De qué periodo?",
+        )
+    ).with_turn(Turn(sentence="el mes pasado", outcome="PLANNED", plan="del mes pasado, gasto"))
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert [turn.sentence for turn in back.turns] == ["¿cuánto gasté?", "el mes pasado"]
+
+
+def test_the_log_keeps_the_newest_turns() -> None:
+    """Bounded because it rides every request. Truncating rather than refusing: a long conversation
+    is the normal case, and the far end of one is what an ellipsis never reaches back to."""
+    conversation = IDLE
+    for index in range(MAX_REMEMBERED_TURNS + 3):
+        conversation = conversation.with_turn(Turn(sentence=f"turno {index}", outcome="PLANNED"))
+
+    assert len(conversation.turns) == MAX_REMEMBERED_TURNS
+    assert conversation.turns[-1].sentence == f"turno {MAX_REMEMBERED_TURNS + 2}"
+    assert there_and_back(conversation) == conversation
+
+
+def test_a_caller_cannot_send_back_more_turns_than_travel() -> None:
+    """The payload bounds what the domain bounds. Without this the ceiling is only enforced on the
+    way out, and a caller echoing a hand-written log decides how long our prompts are."""
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(
+            {"turns": [{"sentence": "x", "outcome": "PLANNED"}] * (MAX_REMEMBERED_TURNS + 1)}
+        )
+
+
+def test_a_turn_too_long_to_remember_is_cut_rather_than_lost() -> None:
+    """A record is not a query. Every other value object here refuses what it cannot hold, because
+    it is about to be executed; a turn is only ever read as evidence, and refusing one would let a
+    long sentence six turns ago fail the turn happening now. Cut at the length the payload allows,
+    so what the domain keeps is exactly what survives a round trip."""
+    out = IDLE.with_turn(
+        Turn(
+            sentence="a" * (MAX_TURN_SENTENCE + 50),
+            outcome="PLANNED",
+            plan="b" * (MAX_TURN_NOTE + 50),
+        )
+    )
+
+    assert len(out.turns[0].sentence) == MAX_TURN_SENTENCE
+    assert out.turns[0].plan is not None and len(out.turns[0].plan) == MAX_TURN_NOTE
+    assert there_and_back(out) == out

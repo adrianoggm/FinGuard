@@ -20,7 +20,10 @@ from finguard_orchestrator.domain.constants import (
     MAX_PROMPT_LENGTH,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
+    MAX_REMEMBERED_TURNS,
     MAX_SELECTED_TRANSACTIONS,
+    MAX_TURN_NOTE,
+    MAX_TURN_SENTENCE,
 )
 from finguard_orchestrator.domain.enums import (
     Action,
@@ -193,6 +196,22 @@ class CounterpartyAliasPayload(_Payload):
     counterparty_type: CounterpartyType
 
 
+class TurnPayload(_Payload):
+    """One past exchange, round-tripped so the next turn has a thread to read against.
+
+    Bounded on both axes — how many travel and how long each may be — because there are no sessions
+    here and the log rides every request. `sentence` is the one field a holder authored; it is
+    fenced as data before it reaches any prompt and nothing branches on it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(default="", max_length=MAX_TURN_SENTENCE)
+    outcome: str = Field(min_length=1, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$")
+    plan: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
+    question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
+
+
 class ConversationPayload(_Payload):
     """Where the conversation is, in one object.
 
@@ -247,6 +266,10 @@ class ConversationPayload(_Payload):
     # The rail of the payment that just completed. It is deliberately tiny and short-lived: it
     # only grounds an immediate "y ahora otro de 14 a Aitor", never a recipient or an amount.
     recent_payment_rail: Rail | None = None
+    # What happened, oldest first. Every field above it is a projection of the turn immediately
+    # before, taken by whichever branch ran; this is the turn itself, and it is what lets an
+    # ellipsis three deep still resolve. Bounded, because it travels on every request.
+    turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
