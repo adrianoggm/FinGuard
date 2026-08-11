@@ -7,32 +7,63 @@ episodes:
       A person starts with a per-movement average and then asks for the monthly equivalent, changes
       category, returns to a per-movement ticket and narrows the period. Each turn must retain every
       field it did not replace and must say which divisor it actually used.
+
+      "Must retain every field it did not replace" is a claim about the query, so every turn states
+      it. Five of the six are two or three words, so each field asserted below is one the sentence
+      could not have supplied — and `says` cannot tell a right divisor over the wrong window from a
+      right one over the right window, because the stub ledger answers both with the same figure.
     metrics: [context_retention, unnecessary_clarification]
     turns:
       - say: ¿Cuál es mi gasto medio por movimiento en supermercados en los últimos 12 meses?
         route: QUERY
         no_model: true
         says: por movimiento
+        ran: {window: LAST_N_MONTHS:12, direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE}
+      # The divisor changes and nothing else does. A period average needs its calendar bucket, so the
+      # grouping arrives with the metric rather than being asked for.
       - say: ¿Y al mes?
         route: QUERY
         no_model: true
         says: medio por mes
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [GROCERIES]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
       - say: ¿Y en alquiler?
         route: QUERY
         no_model: true
         says: alquiler
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [HOUSING_RENT]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
+      # Back to movements as the divisor, which also has to drop the calendar bucket: a per-movement
+      # mean grouped by month is a different question with the same words on it.
       - say: ¿Y por movimiento?
         route: QUERY
         no_model: true
         says: por movimiento
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [HOUSING_RENT]
+          metric: AVERAGE
+          group_by: NONE
       - say: ¿Y este mes?
         route: QUERY
         no_model: true
         says: lo que va de mes
+        ran: {window: THIS_MONTH, categories: [HOUSING_RENT], metric: AVERAGE, group_by: NONE}
       - say: ¿Y por semana?
         route: QUERY
         no_model: true
         says: medio por semana
+        ran:
+          window: THIS_MONTH
+          categories: [HOUSING_RENT]
+          metric: PERIOD_AVERAGE
+          group_by: WEEK
 
   - name: natural_word_orders_for_period_averages
     why: >
@@ -44,34 +75,66 @@ episodes:
         route: QUERY
         no_model: true
         says: medio por mes
+        ran:
+          window: LAST_N_MONTHS:12
+          direction: EXPENSE
+          categories: [GROCERIES]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
       - say: ¿Y cuál es mi gasto mensual medio en alquiler?
         route: QUERY
         no_model: true
         says: alquiler
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [HOUSING_RENT]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
       - say: ¿Y el coste semanal medio en restaurantes?
         route: QUERY
         no_model: true
         says: medio por semana
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [RESTAURANTS]
+          metric: PERIOD_AVERAGE
+          group_by: WEEK
       - say: ¿Y por movimiento?
         route: QUERY
         no_model: true
         says: por movimiento
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [RESTAURANTS]
+          metric: AVERAGE
+          group_by: NONE
       - say: ¿Y en supermercados?
         route: QUERY
         no_model: true
         says: supermercado
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [GROCERIES]
+          metric: AVERAGE
+          group_by: NONE
       - say: ¿Y los últimos 3 meses?
         route: QUERY
         no_model: true
         says: últimos 3 meses
+        ran: {window: LAST_N_MONTHS:3, categories: [GROCERIES], metric: AVERAGE}
+      # The direction flips, and the arithmetic is what this episode is about, so that is what is
+      # asserted. What a change of direction does to the category filter is a separate question and
+      # deliberately not claimed here.
       - say: ¿Y cuánto suelo cobrar al mes durante este año?
         route: QUERY
         no_model: true
         says: ingreso medio por mes
+        ran: {window: THIS_YEAR, direction: INCOME, metric: PERIOD_AVERAGE, group_by: MONTH}
       - say: ¿Y cuánto suelo gastar al mes?
         route: QUERY
         no_model: true
         says: gasto medio por mes
+        ran: {window: THIS_YEAR, direction: EXPENSE, metric: PERIOD_AVERAGE, group_by: MONTH}
 
   - name: the_reported_conversation_keeps_its_mean_ranking_and_account_context
     why: >
@@ -152,21 +215,29 @@ episodes:
       - say: Compara mi gasto medio en supermercados y restaurantes este año
         route: QUERY
         no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE}
       - say: Cual de las dos es mayor?
         route: QUERY
         no_model: true
+      # The window moves and the pair of filters does not, which is the patch this episode claims.
       - say: Y el mes pasado?
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE}
       - say: Ahora solo supermercados
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: AVERAGE}
+      # Three turns switching the metric and nothing else. Only the metric distinguishes them, and
+      # the answer text cannot: the stub ledger returns the same figure whichever one ran.
       - say: Cuantas compras hice?
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: COUNT}
       - say: Y cuanto gaste?
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: SUM}
       - say: En que comercio compre mas?
         route: QUERY
         no_model: true

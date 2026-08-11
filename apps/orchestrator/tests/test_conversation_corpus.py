@@ -41,10 +41,16 @@ def test_every_episode_is_long_enough_to_be_a_conversation() -> None:
 def test_the_corpus_asserts_the_queries_it_runs() -> None:
     """A floor on `ran`, for the same reason `FLOOR` exists: a check nothing uses passes by finding
     no work. Every expectation could be deleted and the corpus would still be green, so the number
-    of turns that state which query ran is itself measured. Raise it as episodes gain them."""
-    stated = sum(1 for episode in CORPUS for turn in episode.turns if turn.ran)
+    of turns that state which query ran is itself measured. Raise it as episodes gain them.
 
-    assert stated >= 34, f"only {stated} turns say which query they ran"
+    Fields as well as turns. A turn asserting one field and a turn asserting five both count once,
+    and the second is four times the check — counting only turns would let coverage be diluted
+    while the number went up.
+    """
+    stated = [turn.ran for episode in CORPUS for turn in episode.turns if turn.ran]
+
+    assert len(stated) >= 56, f"only {len(stated)} turns say which query they ran"
+    assert sum(len(ran) for ran in stated) >= 164, "the assertions got thinner"
 
 
 def test_every_episode_says_why_it_exists() -> None:
