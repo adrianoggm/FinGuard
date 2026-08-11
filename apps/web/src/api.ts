@@ -258,7 +258,10 @@ export type ConversationState = {
   // person and the phone is already on `payment`, a transfer names the account. The IBAN arrives
   // whole and unmasked on purpose — approving a transfer means recognising twenty-four characters,
   // and four of them with dots between is not something anybody can check against a note.
-  rail: "BIZUM" | "TRANSFER" | null;
+  // INTERNAL is a move between the holder's own accounts, which the chat can now stage and confirm.
+  // It was missing here, so the preview panel fell through to the Bizum label and drew "Bizum a
+  // Fondo indexado" over a transfer.
+  rail: "BIZUM" | "TRANSFER" | "INTERNAL" | null;
   recipient_iban: string | null;
   // `rank` used to be here and left with the refusal it served. The service rejects fields it does
   // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
