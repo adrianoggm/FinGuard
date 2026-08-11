@@ -30,8 +30,8 @@ episodes:
       - say: Me gustaria tranferir dinero a mi cuenta corriente
         route: TRANSFER
       - say: 200 euros
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: gracais
         route: QUERY
 
@@ -69,7 +69,7 @@ episodes:
       - say: QUIEN ERES
         route: IDENTITY
       - say: MUEVE 200 EUROS A LA HUCHA
-        route: TRANSFER
+        route: PAYMENT
       - say: GRACIAS
         route: COURTESY
 
@@ -111,7 +111,7 @@ episodes:
       - say: "quién eres!!!"
         route: IDENTITY
       - say: "mueve 200 € a la hucha."
-        route: TRANSFER
+        route: PAYMENT
       - say: "gracias!!"
         route: COURTESY
 
@@ -171,13 +171,16 @@ episodes:
       - say: quiero traspasar del fondo a hucha
         route: TRANSFER
         awaiting: AMOUNT
+      # The figure, in the preview's own words. `total` was the transfer-ready answer's leading
+      # figure and a preview has no such field — what it has is the amount it is asking about, which
+      # is the thing worth pinning: the cardinal grammar read exactly two hundred.
       - say: doscientos euros
-        route: TRANSFER
-        total: 20000
-        ends: true
+        route: PAYMENT
+        says: "200,00"
+        keeps: PAYMENT_CONFIRMATION
       - say: mueve 200 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto me queda en el fondo?
         route: BALANCE
       - say: gracias
@@ -190,17 +193,17 @@ episodes:
     metrics: [wrong_tool]
     turns:
       - say: mueve 20 euros a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: mueve 20€ a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: mueve 20 pavos a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: mueve 20,50 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias

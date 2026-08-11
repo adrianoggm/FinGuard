@@ -88,8 +88,8 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: mueve 1000 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: gracias
         route: COURTESY
 
@@ -165,8 +165,8 @@ episodes:
       - say: hazle un bizum a Marta Solis Vega
         route: PAYMENT
       - say: mueve 200 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: 20 euros
         not_says: Confirmas
       - say: ¿cuánto tengo?
@@ -192,8 +192,8 @@ episodes:
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
       - say: vale, mueve 500 € a la hucha
-        route: TRANSFER
-        ends: true
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
       - say: ¿cuánto me queda en el fondo?
         route: BALANCE
       - say: gracias

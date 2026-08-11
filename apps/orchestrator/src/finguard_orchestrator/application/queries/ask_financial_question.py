@@ -354,6 +354,14 @@ class AskFinancialQuestionResult:
     currency: str | None = None
     total_minor: int | None = None
     movement_count: int | None = None
+    # Which of the holder's accounts a fully-read transfer is going to, once one is settled.
+    #
+    # This handler reads and never writes: resolving the account is reading, and staging money is a
+    # `payments:prepare` scope the questions route does not have. So the read comes out here and the
+    # route above decides whether it may be turned into a preview. Before this, the account was
+    # resolved, the amount was resolved, and the answer was a sentence telling the holder to go and
+    # do it again on a screen — with everything needed to offer it already in hand.
+    transfer_to: str | None = None
     groups: list[SpokenGroup] = field(default_factory=list)
     movements: list[SpokenMovement] = field(default_factory=list)
     # Filled only by a question about who can be paid. Data as well as prose, so a client
@@ -1780,12 +1788,16 @@ class AskFinancialQuestionHandler:
 
         return AskFinancialQuestionResult(
             outcome=Spoken.TRANSFER_READY.value,
+            # The fallback wording, for a deployment whose caller may not stage money. The route
+            # replaces both the text and the state when it can offer a preview instead — which is
+            # what a holder who just said how much and where is asking for.
             text=answer_writer.ready_to_move(wanted[0], amount),
-            # Read in full, so nothing is left open. What is left is the confirmation, and that is
-            # a screen with a `payments:prepare` scope behind it rather than a turn of this chat.
+            # Read in full, so nothing is left open here. Whether a preview follows is the route's
+            # decision, because staging it needs a scope this read path does not have.
             conversation=was.with_active(None),
             currency=wanted[0].currency,
             total_minor=amount,
+            transfer_to=str(wanted[0].account_id),
         )
 
     def _pending_month_fallback(

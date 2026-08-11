@@ -56,6 +56,8 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentCommand,
     ConfirmPaymentHandler,
+    PrepareOwnTransferCommand,
+    PrepareOwnTransferHandler,
     PreparePaymentHandler,
 )
 from finguard_orchestrator.application.queries import (
@@ -77,6 +79,7 @@ from finguard_orchestrator.domain.enums import (
     PaymentOutcome,
     Period,
     PlanningOutcome,
+    Rail,
 )
 from finguard_orchestrator.domain.errors import (
     AmbiguousRecipientError,
@@ -370,6 +373,25 @@ class Bank:
 
     async def prepare(self, request: PaymentRequest, *, account_id: uuid.UUID, key: str):  # type: ignore[no-untyped-def]
         self.prepared.append(request)
+        if request.rail is Rail.INTERNAL:
+            # An internal transfer names an account and nobody at all, so there is no recipient to
+            # resolve. Banking snapshots the holder's own label for it onto the intent, which is why
+            # the double reads it off the same holdings the chat listed rather than inventing one:
+            # a preview that named the wrong account would be the one mistake a confirmation exists
+            # to catch.
+            assert request.to_account_id is not None  # the rail's own invariant
+            named = next(h for h in HOLDINGS if h.account_id == request.to_account_id)
+            return PaymentPreview(
+                intent_id=INTENT,
+                recipient=named.display_name,
+                recipient_phone=None,
+                amount_minor=request.amount_minor,
+                currency=request.currency,
+                balance_before_minor=227_042,
+                balance_after_minor=227_042 - request.amount_minor,
+                expires_at=datetime(2026, 8, 5, 10, 5, tzinfo=UTC),
+                rail=Rail.INTERNAL,
+            )
         wanted = request.recipient_name.lower()
         exact = [c for c in CONTACTS if c.display_name.lower() == wanted]
         partial = exact or [c for c in CONTACTS if wanted in c.display_name.lower()]
@@ -473,6 +495,13 @@ def a_stack() -> Stack:
         PreparePaymentHandler(Reader(), bank, contacts=Contacts()),  # type: ignore[arg-type]
     )
     commands.register(ConfirmPaymentCommand, ConfirmPaymentHandler(bank))  # type: ignore[arg-type]
+    # A transfer between the holder's own accounts, staged from the chat like a Bizum. Registered
+    # here because the corpus drives the real route: without it every episode that finishes a
+    # transfer asks the bus for a handler nobody wired and the turn is a 500.
+    commands.register(
+        PrepareOwnTransferCommand,
+        PrepareOwnTransferHandler(bank),  # type: ignore[arg-type]
+    )
 
     app.dependency_overrides[get_query_bus] = lambda: queries
     app.dependency_overrides[get_ask_handler] = lambda: handler

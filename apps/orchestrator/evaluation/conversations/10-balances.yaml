@@ -185,7 +185,7 @@ episodes:
         route: BALANCE
         says: "5.485,50"
       - say: mueve 200 € a la hucha
-        route: TRANSFER
+        route: PAYMENT
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"

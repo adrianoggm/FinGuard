@@ -24,6 +24,7 @@ from finguard_orchestrator.application import (
     AnswerMessageQuery,
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
     CategoriseMovementCommand,
     CommandBus,
     ConfirmPaymentCommand,
@@ -35,6 +36,7 @@ from finguard_orchestrator.application import (
     ListCardsQuery,
     ListContactsQuery,
     PaymentAnswer,
+    PrepareOwnTransferCommand,
     PreparePaymentCommand,
     QueryBus,
     ReplaceLlmPolicyCommand,
@@ -301,6 +303,96 @@ async def _as_payment(
         # failed-query retry through it and let a later bare "reintenta" revive stale context.
         conversation=conversation_mapper.to_payload(
             was.without_retry().with_active(_payment_state(answer))
+        ),
+    )
+
+
+def _answers_a_transfer_preview(reply: str) -> bool:
+    """Whether this sentence answers a transfer preview: yes or no, and nothing else.
+
+    Deliberately narrower than what a Bizum preview accepts. A Bizum has a revision path because
+    re-stating a recipient is tedious and getting one wrong is expensive; a transfer has two fields
+    and saying the whole thing again — "mueve 1000 a la hucha" — is one short sentence that already
+    produces a new preview. So there is no third case to get wrong here.
+
+    Reusing the Bizum rule was tried and is what the first version did. It read "gracias" and
+    "perfecto" as answers, because a concept reader finds a concept in almost any words and the yes
+    vocabulary contains the polite ones — so a pleasantry moved money. And it read "pasa 100 € del
+    fondo a la hucha" as *changing the recipient* of the preview, which came back "no tengo a Fondo
+    indexado en tus contactos": a transfer instruction answered as a failed payment to a person who
+    is an account.
+    """
+    return confirmation.is_confirmation(reply) or confirmation.is_refusal(reply)
+
+
+async def _abandons_a_transfer_preview(
+    reply: str,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    active: PaymentConfirmation,
+) -> bool:
+    """Give up an internal-transfer preview the turn is not about, and say whether it was given up.
+
+    The intent is cancelled at the bank rather than merely forgotten here. A held intent nobody
+    answered is a thing that expires on its own, and leaving one behind while telling the user about
+    their balance would mean the next `sí` — to some later question entirely — could still find it.
+
+    Only when this caller could have confirmed it. Otherwise the preview is left alone and the
+    ordinary confirmation path answers "no puedo hacer pagos", which is honest and does not
+    quietly discard something staged.
+    """
+    if active.rail is not Rail.INTERNAL or _answers_a_transfer_preview(reply):
+        return False
+    if not payments_on or not who.may(Scope.PAYMENTS_CONFIRM):
+        return False
+    await commands.dispatch(
+        ConfirmPaymentCommand(reply="no", account_id=who.account_id, intent_id=active.intent_id)
+    )
+    return True
+
+
+async def _as_own_transfer(
+    result: AskFinancialQuestionResult,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    *,
+    key: str,
+) -> QuestionResponse:
+    """Turn a fully-read transfer between the holder's own accounts into a preview to confirm.
+
+    The read path resolved which account and how much, and then told the holder to go and say it
+    again on a screen. A Bizum asked in the same box comes back as a preview and a yes, and there
+    is no reason for a transfer to be the one operation that cannot be finished where it was
+    started — the confirmation is what protects it, and the confirmation is right here.
+
+    It keeps the preview and the explicit yes even though the money never leaves the household,
+    exactly like the form route: that step guards against a mistake rather than against a
+    misreading, and 150 € in the wrong direction between two of your own accounts is a mistake worth
+    being asked about.
+
+    The scope is checked here and not on the route, for the reason `_as_payment` checks it here:
+    a 403 is a fact about our configuration that the holder can do nothing with. Without it they get
+    the sentence naming the screen, which is what they got before this existed.
+    """
+    if not payments_on or not who.may(Scope.PAYMENTS_PREPARE) or result.transfer_to is None:
+        return llm_mapper.question_to_dto(result)
+    answer = await commands.dispatch(
+        PrepareOwnTransferCommand(
+            account_id=who.account_id,
+            to_account_id=uuid.UUID(result.transfer_to),
+            amount_minor=result.total_minor or 0,
+            currency=result.currency or "EUR",
+            idempotency_key=key,
+        )
+    )
+    return QuestionResponse(
+        outcome=answer.outcome,
+        text=answer.text,
+        intent_id=str(answer.intent_id) if answer.intent_id else None,
+        conversation=conversation_mapper.to_payload(
+            result.conversation.with_active(_payment_state(answer))
         ),
     )
 
@@ -1064,9 +1156,19 @@ async def ask(
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
         # not a new instruction: the deterministic confirmation reader leaves the preview open.
-        return await _as_confirmation(
-            request.question, who, commands, payments_on, was, was.active, key=key
-        )
+        #
+        # A transfer between the holder's own accounts is the exception, and it is the ordinary case
+        # that made it one: move money, then look at the balance. Stubbornness there answered
+        # "¿cuánto tengo en la hucha?" with the pending transfer, and every turn after it too.
+        previewed = was.active
+        if await _abandons_a_transfer_preview(
+            request.question, who, commands, payments_on, previewed
+        ):
+            was = was.with_active(None)
+        else:
+            return await _as_confirmation(
+                request.question, who, commands, payments_on, was, previewed, key=key
+            )
 
     if isinstance(was.active, PaymentInProgress):
         paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
@@ -1139,6 +1241,8 @@ async def ask(
             intent=read_as,
         )
     )
+    if result.outcome == Spoken.TRANSFER_READY.value:
+        return await _as_own_transfer(result, who, commands, payments_on, key=key)
     return llm_mapper.question_to_dto(result)
 
 
@@ -1176,9 +1280,18 @@ async def ask_streaming(
     was = _conversation_of(request)
 
     if isinstance(was.active, PaymentConfirmation):
-        return _confirmation_events(
-            request.question, who, commands, payments_on, was, was.active, key=key
-        )
+        # Here too, and for the reason every payment branch is duplicated: the browser types into
+        # this endpoint, so a rule that only held on the other one is a rule the conversation never
+        # got.
+        previewed = was.active
+        if await _abandons_a_transfer_preview(
+            request.question, who, commands, payments_on, previewed
+        ):
+            was = was.with_active(None)
+        else:
+            return _confirmation_events(
+                request.question, who, commands, payments_on, was, previewed, key=key
+            )
 
     if isinstance(was.active, PaymentInProgress):
         paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
@@ -1249,6 +1362,12 @@ async def ask_streaming(
         async for step in asking.stream(question):
             if isinstance(step, Stage):
                 payload = {"type": "stage", "name": step.name, "detail": step.detail}
+            elif step.outcome == Spoken.TRANSFER_READY.value:
+                # Staged here as well as on the other route, for the reason the payment branches
+                # above are: the browser types into *this* endpoint, so a transfer that could only
+                # be confirmed on the other one could not be confirmed at all.
+                staged = await _as_own_transfer(step, who, commands, payments_on, key=key)
+                payload = {"type": "answer", **staged.model_dump()}
             else:
                 payload = {"type": "answer", **llm_mapper.question_to_dto(step).model_dump()}
             yield _sse(payload)
