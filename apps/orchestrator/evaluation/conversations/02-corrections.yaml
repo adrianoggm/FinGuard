@@ -12,19 +12,25 @@ episodes:
   - name: a_bare_rejection_then_the_replacement
     why: >
       "No es eso" holds the validated plan so the next turn names one replacement instead of
-      restating every good field.
+      restating every good field. Which is a claim about the query that runs, so the query is what
+      the turns state: the replacement must land and everything unnamed must survive.
     metrics: [correction_recovery]
     turns:
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES]}
       - say: no es eso
         route: CLARIFY
         awaiting: CORRECTION
         no_model: true
       - say: en gasolina
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL]}
+      # The discriminating one. A sentence naming only a year determines no category at all, so
+      # TRANSPORT_FUEL here can only have come from the plan behind the correction.
       - say: ¿y este año?
         route: QUERY
+        ran: {window: THIS_YEAR, categories: [TRANSPORT_FUEL]}
       - say: vale gracias
         route: COURTESY
       - say: ¿cuánto tengo?
@@ -37,15 +43,26 @@ episodes:
     turns:
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [GROCERIES]}
       - say: me refería a gasolina
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL]}
       - say: ¿y en restaurantes?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [RESTAURANTS]}
       - say: no me has entendido
         route: CLARIFY
         awaiting: CORRECTION
+      # A sentence naming only a year, so the category can only be the one that survived the
+      # rejection — and a correction that started over would show up here as an empty filter.
+      #
+      # The window is the explicit range rather than the name LAST_YEAR, because a complete calendar
+      # year is resolved to its dates: the same rule that makes "en 2025" a range. Written out here
+      # rather than smoothed over, since which of the two representations runs is exactly the kind
+      # of thing an episode asserting only `route` could never have told anybody.
       - say: quería decir el año pasado
         route: QUERY
+        ran: {window: "2025-01-01..2025-12-31", categories: [RESTAURANTS]}
       - say: ahora sí
         route: QUERY
 
@@ -61,14 +78,19 @@ episodes:
         route: CLARIFY
       - say: el mes pasado
         route: QUERY
+        ran: {window: LAST_MONTH}
       - say: no era eso
         route: CLARIFY
       - say: en gasolina
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL]}
       - say: te has equivocado
         route: CLARIFY
+      # Replaced, not added. A third correction that accumulated filters would run both categories
+      # here and answer about neither of the two things the user asked for.
       - say: en restaurantes
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [RESTAURANTS]}
       - say: eso es
         route: COURTESY
 

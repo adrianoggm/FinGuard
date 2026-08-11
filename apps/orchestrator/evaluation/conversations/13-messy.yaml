@@ -59,8 +59,12 @@ episodes:
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"
+      # The direction is the episode. A question about money arriving became an order to send some,
+      # and `route: QUERY` only says it stopped being a payment — INCOME is what says it was read as
+      # money received rather than as spending on Marta.
       - say: He recibido algún bizum de Marta Solis Vega este mes ?
         route: QUERY
+        ran: {window: THIS_MONTH, direction: INCOME}
       - say: ¿y de algún otro en los 2 últimos meses?
         route: QUERY
       - say: ¿cuánto tengo?
@@ -111,13 +115,17 @@ episodes:
         route: COURTESY
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES]}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: hazle un bizum a Marta Solis Vega
         route: PAYMENT
         awaiting: AMOUNT
+      # Asked with a half-built Bizum open, so what must not happen is the mean being computed over
+      # something the payment dragged in. The divisor is the assertion.
       - say: ¿cuál es mi gasto medio?
         route: QUERY
+        ran: {metric: AVERAGE, direction: EXPENSE}
       - say: continuar con el bizum
         route: PAYMENT
         awaiting: AMOUNT
@@ -139,10 +147,14 @@ episodes:
         route: CATEGORIES
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
       - say: no es eso
         route: CLARIFY
+      # Turn sixteen, and it names two words. The window has to come from turn fourteen through a
+      # rejection, which is the recovery this episode exists for.
       - say: en restaurantes
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS]}
 
   - name: a_user_who_never_finishes_a_sentence
     why: >
@@ -190,10 +202,15 @@ episodes:
         route: CLARIFY
       - say: pues no sé
         route: QUERY
+      # The recovery, and the property the episode is named for. After a refusal, a typo, a rejection
+      # and an unanswerable clarification, these two turns have to be a clean exchange — which means
+      # the second inherits a window from the first and nothing from the four before them.
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: []}
       - say: ¿y en gasolina?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -250,12 +267,16 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: []}
       - say: ¿y en gasolina?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
       - say: ¿cuál es mi gasto medio?
         route: QUERY
+        ran: {metric: AVERAGE, direction: EXPENSE}
       - say: ¿y en restaurantes?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [RESTAURANTS]}
       - say: ¿a quién puedo pagar?
         route: CONTACTS
       - say: hazle un bizum de 20 € a Javi Nuñez

@@ -9,11 +9,15 @@
 
 episodes:
   - name: spending_identity_spending
-    why: An aside in the middle, and the follow-up four turns later still has its window.
+    why: >
+      An aside in the middle, and the follow-up four turns later still has its window. Which is a
+      claim about the query, so the query is what the last two turns state: neither sentence names a
+      period, so a LAST_MONTH that survived two asides is the only place it can have come from.
     metrics: [context_retention, wrong_tool]
     turns:
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES]}
       - say: ¿quién eres?
         route: IDENTITY
         no_model: true
@@ -22,8 +26,10 @@ episodes:
         no_model: true
       - say: ¿y en gasolina?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
       - say: ¿y en restaurantes?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS]}
       - say: gracias
         route: COURTESY
 
@@ -106,11 +112,15 @@ episodes:
     turns:
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
       - say: ¿qué tarjetas tengo?
         route: CARDS
         no_model: true
+      # The wallet is a screen of its own, so the thread it interrupted has to be intact underneath:
+      # this sentence names a category and no period.
       - say: ¿y en restaurantes?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS]}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -129,12 +139,17 @@ episodes:
         route: QUERY
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
+      # The turn the episode is named after. A clarification the user walked away from must not be
+      # completed by this, so what runs is a plain year with no filter carried into it — and only the
+      # query says which of the two happened.
       - say: este año
         route: QUERY
+        ran: {window: THIS_YEAR, categories: []}
       - say: ¿quién eres?
         route: IDENTITY
       - say: ¿cuánto gasté este año?
         route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: []}
       - say: vale
         route: COURTESY
 

@@ -10,6 +10,14 @@ cd apps/orchestrator && uv run python scripts/evaluate_interpreting.py --model q
 rules are the reference and score 100 % by definition, so this measures **where a model
 differs from them**, not whether it is right.
 
+Whether the rules are right is a different measurement, and it is `test_conversation_corpus`
+over the same files: every turn may state the route that had to answer it and, with `ran`, the
+query it had to execute. That second one is what makes `lost_context` an observation rather
+than a tautology — before it existed the metric counted only a workflow failing to survive, so
+an abbreviated turn inheriting the wrong window or dropping its category scored as correct.
+Do not read "100 % by definition" below as "the rules are correct": it means this table is
+about the model.
+
 **818 of the 879 turns are scored.** The other 61 are inside an open payment: a preview owns
 the next turn whatever its words are, and a half-built Bizum takes the reply that answers its
 question, both before anything is classified. No interpreter is asked about those.

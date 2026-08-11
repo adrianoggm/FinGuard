@@ -6,6 +6,7 @@ from datetime import date, datetime
 import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
+from finguard_orchestrator.application.queries import ask_financial_question
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
@@ -197,6 +198,40 @@ async def test_ranking_criterion_can_change_naturally_in_the_next_turn() -> None
     assert ledger.plans[-1].group_limit == 3
     assert "más operaciones" in second.text
     assert planner.calls == 0
+
+
+def test_a_named_dimension_is_not_overruled_by_the_one_before_it() -> None:
+    """Two turns about comercios, then one about categorías, read by the recogniser that loses.
+
+    Found by measuring the cascade rather than by a report: two recognisers claim
+    "Ahora top 2 categorías por ticket medio" and read it differently — the ranking one by the
+    word the sentence uses, the average one by inheriting the grouping of the turn before — and
+    only their order in `_steps` decided which ran. The episode whose stated rule is
+    "merchant/category must alter only the named dimension" was passing on that order.
+
+    So this calls the losing one directly. End to end the turn was always right, which is exactly
+    why the misreading survived: it is unreachable, and one moved branch from being on the wire.
+    """
+    about_merchants = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.SUM,
+        group_limit=3,
+    )
+
+    reading = ask_financial_question._average_plan(
+        AskFinancialQuestionQuery(
+            sentence="Ahora top 2 categorías por ticket medio",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=about_merchants),
+        )
+    )
+
+    assert isinstance(reading, FinancialPlan)
+    assert reading.group_by is GroupBy.CATEGORY, "the sentence says categorías, not comercios"
+    assert reading.metric is Metric.AVERAGE
 
 
 def test_cumulative_and_group_rankings_reject_meaningless_shapes() -> None:

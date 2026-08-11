@@ -58,6 +58,9 @@ from finguard_orchestrator.application.commands.pay import (
     ConfirmPaymentHandler,
     PreparePaymentHandler,
 )
+from finguard_orchestrator.application.queries import (
+    ask_financial_question as handler,
+)
 from finguard_orchestrator.application.queries.list_contacts import ContactRow
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
@@ -94,11 +97,19 @@ from finguard_orchestrator.domain.services import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    FinancialPlanDraft,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 
 class NoCards:
@@ -260,9 +271,14 @@ class AnyPlan:
 class Ledger:
     def __init__(self) -> None:
         self.plans: list[FinancialPlan] = []
+        # Both kinds, in the order they ran, because "which query did this turn actually execute"
+        # has to be one answer. An aggregate and a ranking are both queries a follow-up inherits
+        # from, and keeping them in separate lists means the corpus cannot ask about the turn.
+        self.ran: list[FinancialPlan | TopMovements] = []
 
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self.plans.append(plan)
+        self.ran.append(plan)
         group_key = {
             GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
             GroupBy.MERCHANT: "Mercadona",
@@ -298,6 +314,8 @@ class Ledger:
         )
 
     async def ranked(self, ranking: object, **_: object) -> Movement:
+        if isinstance(ranking, TopMovements):
+            self.ran.append(ranking)
         return Movement(
             occurred_at=datetime(2026, 3, 14, 10, 0, tzinfo=UTC),
             description="Repostaje",
@@ -484,6 +502,17 @@ class Turn:
     awaiting: str | None = None
     no_model: bool = False
     total: int | None = None
+    # Which query this turn executed, by whichever of its fields the episode cares about.
+    #
+    # The gap this closes is the one the corpus was built to find and could not see. `route` says a
+    # financial question answered the turn; `says` and `total` compare a figure the stub ledger
+    # returns for every plan alike. So a follow-up that inherited the wrong window, dropped the
+    # category or flipped the direction scored as correct — and the metric named `lost_context`
+    # counted only the turns where a *workflow* failed to survive, never a lost window.
+    #
+    # Worth most on `no_model: true` turns: there the plan came from this service's own inheritance
+    # rather than from the stub planner, so the expectation is about the code under measurement.
+    ran: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -546,6 +575,145 @@ def load() -> list[Episode]:
     return episodes
 
 
+def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
+    """The query that ran, in the vocabulary an episode writes.
+
+    Named fields rather than a repr, so an expectation states the one thing it is about and a plan
+    growing a field does not rewrite every episode. `window` folds the named period and the explicit
+    range together because a plan carries exactly one of them — the same reason `plan_merger` treats
+    them as one field.
+    """
+    ran: dict[str, Any] = {
+        "window": _window(query),
+        "direction": query.direction.value,
+        "categories": sorted(query.categories),
+        "merchants": sorted(query.merchants),
+    }
+    if isinstance(query, TopMovements):
+        return {**ran, "rank": query.rank}
+    return {**ran, "group_by": query.group_by.value, "metric": query.metric.value}
+
+
+def _window(query: FinancialPlan | TopMovements) -> str:
+    if query.date_range is not None:
+        return f"{query.date_range.start.isoformat()}..{query.date_range.end.isoformat()}"
+    if query.period is None:
+        return "NONE"
+    named = query.period.period.value
+    return f"{named}:{query.period.n}" if query.period.n else named
+
+
+# --- who claims a turn ---------------------------------------------------------------------
+#
+# `_steps` reads a sentence by asking nineteen deterministic recognisers in a fixed order and taking
+# the first that answers. The order is the design, and it is also invisible: the first one to fire
+# returns, so nothing can observe that a second one would have fired too, with a different query.
+#
+# That is what makes the cascade hard to change. Fixing one turn by moving a branch can silently
+# change another, and there is no measurement that says which turns are sitting on a tie. These
+# nineteen have the same signature — a query in, a reading or None out, no I/O — so asking all of
+# them is a thing a test can just do.
+#
+# Test-only on purpose. Production still short-circuits: evaluating a recogniser that today is
+# unreachable could raise, and a measurement is the right place to find that out.
+
+_RECOGNISERS: tuple[tuple[str, Any], ...] = (
+    ("ratio", handler._ratio_request),
+    ("gambling", handler._gambling_plan),
+    ("internal_movement", handler._internal_movement_request),
+    ("account_activity", handler._account_activity_request),
+    ("salary_history", handler._salary_history_plans),
+    ("period_comparison", handler._period_comparison_plans),
+    ("previous_period_comparison", handler._comparison_with_previous_period),
+    ("direct_period_comparison", handler._direct_period_comparison),
+    ("account_follow_up", handler._account_follow_up_plan),
+    ("contextual_follow_up", handler._contextual_follow_up_plan),
+    ("multiple_movement_ranking", handler._multiple_movement_ranking),
+    ("group_ranking", handler._group_ranking_plan),
+    ("natural_period", handler._natural_period_aggregate_plan),
+    ("deterministic_breakdown", handler._deterministic_breakdown_plan),
+    ("contextual_ranking", handler._contextual_ranking_plan),
+    ("cumulative", handler._cumulative_plan),
+    ("recurrence", handler._recurrence_plan),
+    ("frequency", handler._frequency_plan),
+    ("average", handler._average_plan),
+)
+
+
+def _reading(value: Any) -> str:
+    """One reading as a line that is both comparable and readable.
+
+    Comparable, because two recognisers producing the same query are not a conflict. Readable,
+    because the pairs are the deliverable of this measurement and a page of dataclass reprs is not
+    something anybody reads before deciding what to do about them.
+    """
+    if isinstance(value, FinancialPlan | TopMovements | FinancialPlanDraft):
+        # A draft carries the same fields, minus a window, so the same summary reads it. Named by
+        # its type so a clarification is never mistaken for a query in the report.
+        ran = executed(value)  # type: ignore[arg-type]
+        parts = [str(ran.pop("window")), str(ran.pop("direction"))]
+        parts += [f"{key}={ran[key]}" for key in sorted(ran) if ran[key] not in ((), [], "NONE", 0)]
+        kind = {FinancialPlan: "plan", TopMovements: "ranking"}.get(type(value), "draft")
+        return f"{kind} {' '.join(parts)}"
+    if isinstance(value, ComparisonPlan):
+        return f"comparison {_window(value.earlier)} vs {_window(value.latest)}"
+    if isinstance(value, RatioPlan):
+        return f"ratio {value.kind.value} {_reading(value.part)} of {_reading(value.whole)}"
+    if isinstance(value, RatioDraft):
+        return f"ratio-draft {value.kind.value}"
+    if isinstance(value, tuple):
+        return " + ".join(_reading(item) for item in value)
+    return f"{type(value).__name__} {value!r}"
+
+
+def claimants(
+    sentence: str, state: dict[str, Any] | None, *, today: date = TODAY
+) -> dict[str, str]:
+    """Every recogniser that would answer this turn, and what each would run.
+
+    Called with the conversation as it was *before* the turn, which is the only state the cascade
+    sees. A recogniser that raises is recorded as raising rather than ending the run: on this path
+    it is unreachable, so an exception is a finding about the tie and not a failure of the turn.
+    """
+    conversation = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(state) if state else None
+    )
+    query = AskFinancialQuestionQuery(
+        sentence=sentence, account_id=ACCOUNT, today=today, conversation=conversation
+    )
+    claims: dict[str, str] = {}
+    for name, recognise in _RECOGNISERS:
+        try:
+            reading = recognise(query)
+        except Exception as raised:  # noqa: BLE001 - the point is to report it, not to handle it
+            claims[name] = f"raised {type(raised).__name__}"
+            continue
+        if reading is not None:
+            claims[name] = _reading(reading)
+    return claims
+
+
+def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
+    """The turns of one episode where two recognisers want to run different queries.
+
+    Two firing with the *same* reading is not a conflict: whichever wins, the same question is
+    asked. Precedence is only load-bearing where the readings differ, and those are the turns a
+    reordering would silently change the answer to.
+    """
+    stack = a_stack()
+    state: dict[str, Any] | None = None
+    for number, turn in enumerate(episode.turns, start=1):
+        claims = claimants(turn.say, state)
+        if len(set(claims.values())) > 1:
+            yield number, turn.say, claims
+        response = stack.client.post(
+            "/v1/questions", json={"question": turn.say, "conversation": state}
+        )
+        if response.status_code != 200:
+            return
+        state = response.json()["conversation"]
+
+
 def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failure]:
     """One episode, turn by turn, exactly as a browser would have it.
 
@@ -565,6 +733,7 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
 
     for number, turn in enumerate(episode.turns, start=1):
         before = len(stack.planner.asked)
+        ran_before = len(stack.ledger.ran)
         response = stack.client.post(
             "/v1/questions", json={"question": turn.say, "conversation": conversation}
         )
@@ -574,11 +743,24 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
         answer = response.json()
         conversation = answer["conversation"]
 
-        for complaint in _complaints(turn, answer, reached_model=len(stack.planner.asked) > before):
+        for complaint in _complaints(
+            turn,
+            answer,
+            reached_model=len(stack.planner.asked) > before,
+            # This turn's queries only. A turn asserting `ran` is asking about itself, and the
+            # ledger holds the whole conversation.
+            ran=tuple(stack.ledger.ran[ran_before:]),
+        ):
             yield Failure(episode.name, number, turn.say, complaint)
 
 
-def _complaints(turn: Turn, answer: dict[str, Any], *, reached_model: bool) -> Iterator[str]:
+def _complaints(
+    turn: Turn,
+    answer: dict[str, Any],
+    *,
+    reached_model: bool,
+    ran: tuple[FinancialPlan | TopMovements, ...] = (),
+) -> Iterator[str]:
     tool = tool_of(answer)
     workflow = (answer.get("conversation") or {}).get("workflow")
     text = answer["text"]
@@ -600,6 +782,30 @@ def _complaints(turn: Turn, answer: dict[str, Any], *, reached_model: bool) -> I
         yield f"it should be waiting for {turn.awaiting} and waits for {got or 'nothing'}"
     if turn.total is not None and answer.get("total_minor") != turn.total:
         yield f"the figure should be {turn.total} and is {answer.get('total_minor')}"
+    yield from _query_complaints(turn, ran)
+
+
+def _query_complaints(turn: Turn, ran: tuple[FinancialPlan | TopMovements, ...]) -> Iterator[str]:
+    """What the turn asked the ledger, against what the episode says it should have.
+
+    The last query of the turn, because a derived answer runs two — a ratio, a comparison — and the
+    one an episode means by "this question" is the narrow side. An episode needing both operands
+    would say so with two expectations, and none does yet.
+    """
+    if not turn.ran:
+        return
+    if not ran:
+        yield f"the query ran nothing, and the turn expects {turn.ran}"
+        return
+    actual = executed(ran[-1])
+    for field_name, expected in turn.ran.items():
+        if field_name not in actual:
+            yield f"the query ran no field called {field_name!r}"
+            continue
+        seen = actual[field_name]
+        wanted = sorted(expected) if isinstance(seen, list) else expected
+        if seen != wanted:
+            yield f"the query ran {field_name}={seen!r}, and the turn expects {wanted!r}"
 
 
 def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
@@ -617,7 +823,10 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
             report.failures.append(failure)
             if "answered" in failure.complaint:
                 report.wrong_tool += 1
-            if "had to survive" in failure.complaint:
+            # Both halves of losing context, and the second one is why this metric read 0.0 % on a
+            # corpus full of ellipsis: a workflow that failed to survive was counted, and a window,
+            # category or direction that failed to survive was invisible.
+            if "had to survive" in failure.complaint or "the query ran" in failure.complaint:
                 report.lost_context += 1
             if "reached the model" in failure.complaint:
                 report.unnecessary_clarifications += 1
