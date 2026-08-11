@@ -44,7 +44,7 @@ def test_the_corpus_asserts_the_queries_it_runs() -> None:
     of turns that state which query ran is itself measured. Raise it as episodes gain them."""
     stated = sum(1 for episode in CORPUS for turn in episode.turns if turn.ran)
 
-    assert stated >= 16, f"only {stated} turns say which query they ran"
+    assert stated >= 34, f"only {stated} turns say which query they ran"
 
 
 def test_every_episode_says_why_it_exists() -> None:
