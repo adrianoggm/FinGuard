@@ -30,7 +30,7 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import payment_words, spanish
+from finguard_orchestrator.domain.services import account_words, payment_words, spanish
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
@@ -40,21 +40,68 @@ _ASKING: Final = re.compile(
     re.IGNORECASE,
 )
 
+# The past of the verbs that move money, conjugated rather than remembered.
+#
+# The lists this replaces were written by hand and were missing forms: `mandé` and `mandaste` but
+# neither `mandamos` nor `mandasteis`, `había mandado` but not `habíamos`. This is the one
+# vocabulary where a gap fails towards the dangerous side — a past form nobody enumerated is read
+# as an order, so "¿cuánto le mandé a Marta?" comes back offering to send it again. Completeness is
+# the whole property, and a person extending an alternation is not how you get it.
+#
+# The enumeration itself stays. Widening it to a stem (`mand\w*`) would invert what the failure
+# costs: it would swallow `mándale`, and the payment path is then unreachable for the sentence that
+# actually orders a payment.
+#
+# The preterite in its six persons, the participle, and the imperfect — five spellings for six,
+# because `mandaba` is the first person and the third alike. `-ir` conjugates exactly like `-er` in
+# every past form, so the two share one list. Unaccented: the sentence is folded before it is
+# matched.
+_PAST_ER: Final = "i iste io imos isteis ieron ido ia ias iamos iais ian".split()
+_PAST_ENDINGS: Final = {
+    "ar": "e aste o amos asteis aron ado aba abas abamos abais aban".split(),
+    "er": _PAST_ER,
+    "ir": _PAST_ER,
+}
+
+# What the regular endings get wrong: `pagué` keeps the hard g, `transfirió` changes its stem,
+# `devuelto` is not built from `devolv-`. Regular endings on those verbs also produce forms that are
+# not words — `devolvido` — and a form that is not a word matches nothing, so they cost nothing.
+#
+# `hacer` is absent on purpose. It is irregular throughout, and it is also the verb of "hazle un
+# bizum": its participle only counts pinned to a payment noun or to "me", never on its own.
+_IRREGULAR_PAST: Final = {
+    "pagar": ("pague",),
+    "llegar": ("llegue",),
+    "devolver": ("devuelto",),
+    "transferir": ("transfirio", "transfirieron"),
+}
+_PAYMENT_VERBS: Final = ("mandar", "enviar", "pagar", "transferir", "ingresar", "devolver")
+_HABER: Final = "he|has|ha|hemos|habeis|han|habia|habias|habiamos|habiais|habian"
+_MADE: Final = "hice|hiciste|hizo|hicimos|hicisteis|hicieron"
+
+
+def _past(*verbs: str) -> str:
+    """Every past form of these verbs, as a regex alternation."""
+    forms: set[str] = set()
+    for verb in verbs:
+        forms.update(verb[:-2] + ending for ending in _PAST_ENDINGS[verb[-2:]])
+        forms.update(_IRREGULAR_PAST.get(verb, ()))
+    return "|".join(sorted(forms))
+
+
 # A *payment* that already happened. A payment verb in the past is a statement or a question about
 # it, never an order — and reading it as one would offer to repeat a payment somebody merely
 # mentioned.
 #
-# An auxiliary only counts as past tense when a payment participle follows it. The first version
-# matched any `has`, which made "no me has entendido, hazle un bizum de 20 euros a Marta" not a
-# payment: a plain instruction, refused as an action because of a complaint in front of it. The past
-# that matters here belongs to the verb that moves money, not to whatever else was said.
+# A bare auxiliary is not the past. The first version matched any `has`, which made "no me has
+# entendido, hazle un bizum de 20 euros a Marta" not a payment: a plain instruction, refused as an
+# action because of a complaint in front of it. The past that matters here belongs to the verb that
+# moves money, and only `hacer` needs its auxiliary spelled out — because "he hecho la compra" is
+# not a payment and "he hecho un bizum" is.
 _ALREADY: Final = re.compile(
-    r"\b((he|has|ha|hemos|hab[ée]is|han|hab[ií]a)\s+"
-    r"(mandado|enviado|pagado|transferido|ingresado|devuelto"
-    r"|hecho\s+(un|una)\s+(bizum|transferencia))"
-    r"|mand[eé]|mandaste|envi[eé]|envi[óo]|envi[aá]ste|pagu[eé]|pag[óo]|transfer[ií]"
-    r"|hice|hiciste|hizo)\b",
-    re.IGNORECASE,
+    rf"\b(?:{_past(*_PAYMENT_VERBS)})\b"
+    rf"|\b(?:{_HABER})\s+hecho\s+(?:un|una)\s+(?:bizum|transferencia)\b"
+    rf"|\b(?:{_MADE})\b"
 )
 
 # Money arriving, which is never an order to send any.
@@ -69,13 +116,13 @@ _ALREADY: Final = re.compile(
 # Every turn after it was inside a payment nobody had ordered, which is what makes this the
 # expensive kind of misreading: it does not produce one wrong answer, it produces a wrong
 # conversation.
+#
+# `me` is what pins the direction, so behind it the auxiliary is optional and `hecho` needs no
+# payment noun: "me han hecho un bizum" and "me hicieron uno" are both money arriving. `llegar`
+# belongs to this half only — money never leaves by arriving.
 _RECEIVED: Final = re.compile(
-    r"\b(recib[íi]|recibiste|recibi[óo]|recibido|recibimos|recibieron)\b"
-    r"|\bme\s+(ha|han|hab[íi]a|hab[íi]an)\s+"
-    r"(mandado|enviado|hecho|ingresado|devuelto|llegado|pagado)\b"
-    r"|\bme\s+(mand[óo]|envi[óo]|hizo|ingres[óo]|devolvi[óo]|lleg[óo]|pag[óo])\b"
-    r"|\bme\s+(mandaron|enviaron|hicieron|ingresaron|devolvieron|llegaron|pagaron)\b",
-    re.IGNORECASE,
+    rf"\b(?:{_past('recibir')})\b"
+    rf"|\bme\s+(?:(?:{_HABER})\s+)?(?:{_past(*_PAYMENT_VERBS, 'llegar')}|hecho|{_MADE})\b"
 )
 
 # Sending money to somebody. Conjugations only, never participles: "mandado" and "mandé" are the
@@ -278,11 +325,21 @@ def is_payment(sentence: str) -> bool:
     folded = spanish.folded(sentence)
     if _OWN_ACCOUNTS.search(folded):
         return False
+    if account_words.destination_in(sentence):
+        # The money is going to one of the holder's own account *kinds*, so there is nobody to pay.
+        # Asked of the account vocabulary rather than added to the phrase list, which knew only
+        # the explicit framings — "entre mis cuentas" and three variations. "Pasa 100 € del
+        # fondo a la hucha" was none of them, so it reached the payment path and came back "no tengo
+        # a Fondo indexado en tus contactos": an account answered as a person who does not exist.
+        #
+        # Both tests, not one. The phrase list still catches "quiero traspasar dinero entre mis
+        # cuentas", which names no account at all and so has no destination to read.
+        return False
     if _CLASSIFYING_A_MOVEMENT.search(folded):
         return False
     if _A_CAPABILITY.search(sentence):
         return False
-    if _ALREADY.search(sentence) or _RECEIVED.search(sentence):
+    if _ALREADY.search(folded) or _RECEIVED.search(folded):
         return False
     if (
         _ASKING.search(sentence)

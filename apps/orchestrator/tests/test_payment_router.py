@@ -217,3 +217,90 @@ def test_asking_what_the_assistant_can_do_is_not_an_order(sentence: str) -> None
     lexicon was an alternation, so a capability question was refused for the wrong reason — by a
     typo, not by a rule. One edit apart matches the plural, so the rule now has to exist."""
     assert payment_router.is_payment(sentence) is False
+
+
+# --- a destination that is your own account is nobody to pay ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Reported. None of these matched the phrase list, so they reached the payment path and came
+        # back "no tengo a Fondo indexado en tus contactos": an account answered as a person who
+        # does not exist.
+        "pasa 100 del fondo a la hucha",
+        "pasame 100 a la hucha",
+        "quiero pasar dinero de mi cuenta corriente a mi fondo",
+        "mueve 200 euros a la hucha",
+        # The explicit framing, which names no account at all and so has no destination to read.
+        # Both tests are needed and this is the one the phrase list still earns its place for.
+        "quiero traspasar dinero entre mis cuentas",
+    ],
+)
+def test_moving_money_between_your_own_accounts_is_never_a_payment(sentence: str) -> None:
+    """Grounded in the account vocabulary rather than in more phrasings of "between my accounts".
+
+    The question was never lexical: it is whether the destination is one of the holder's own account
+    kinds or a person. The kind vocabulary already knew, and this router was not asking it."""
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum a Marta",
+        "hazle un bixum a carmen",
+        "mandale 20 euros a Javi",
+        "envia 50 euros a Marta Solis Vega",
+    ],
+)
+def test_a_person_is_still_somebody_to_pay(sentence: str) -> None:
+    """The half that must not break: a name is not an account kind, so nothing here reads as a
+    transfer between the holder's own accounts."""
+    assert payment_router.is_payment(sentence) is True
+
+
+# --- the past, conjugated rather than remembered ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # The persons the hand-written alternation never had: it stopped at "mandé" and "mandaste".
+        "le mandamos un bizum de 20 euros a Marta",
+        "le mandasteis el bizum a Marta",
+        "le enviamos una transferencia de 50 euros",
+        # The pluperfect, which had "había" and not "habíamos".
+        "le habíamos mandado un bizum a Marta",
+        "habíamos hecho una transferencia a Marta",
+        # The imperfect, which was absent entirely.
+        "el mes pasado le mandaba un bizum a mi hermano",
+        # The forms a regular table gets wrong, and would have dropped silently.
+        "le transfirió 30 euros por bizum",
+        "le pagué el bizum a Javi",
+        # Money arriving, in the persons and tenses that list was missing too.
+        "me llegaron 50 euros por bizum",
+        "el año pasado recibía bizums de Marta",
+    ],
+)
+def test_a_past_form_is_a_question_however_it_is_conjugated(sentence: str) -> None:
+    """The one vocabulary where a gap fails towards the dangerous side. A past form nobody
+    enumerated is read as an order, and somebody asking what they sent is shown a prompt to send it
+    again — so the forms come from the conjugation and not from what a list remembered."""
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # The other half: an imperative shares its stem with the past and is still an order.
+        "mandale un bizum de 20 euros a Marta",
+        "devuelvele los 20 euros a Marta",
+        "pagale el bizum a Javi",
+        "ingresale 50 euros a Marta",
+    ],
+)
+def test_a_wider_past_does_not_swallow_an_order(sentence: str) -> None:
+    """What a stem (``mand\\w*``) would have cost. Completeness has to come from conjugating the
+    verb, not from widening the match until it reaches the imperative too."""
+    assert payment_router.is_payment(sentence) is True

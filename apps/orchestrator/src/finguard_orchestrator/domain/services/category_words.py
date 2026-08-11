@@ -182,14 +182,51 @@ _EXCLUSION_PREFIX: Final = re.compile(
 )
 
 
+# How long a word has to be before one wrong letter still identifies it. Measured rather than
+# chosen: below seven the neighbourhood fills up with ordinary Spanish — "socio" and "odio" are one
+# edit from "ocio", "salid" from "salud", "suelo" and "suelto" from "sueldo". Every one of those
+# would filter a query by a category nobody named, which is a wrong figure and worse than the miss
+# it fixes.
+#
+# At seven and above the neighbours are the word's own plurals and conjugations — "gasolinas",
+# "dentistas", "alquilar" — which are the same category and were previously missed.
+_FUZZY_FLOOR = 7
+
+# Words long enough for the rule and still excluded from it, because they collide with a verb
+# everybody uses. "Interés" is one edit from "interesa", "interese" and "intereso": «no me interesa»
+# would become a question about savings interest. Exact matching still finds them.
+_NEVER_FUZZY: Final = frozenset({"interes", "intereses"})
+
+
+def _one_wrong_letter(word: str, haystack: str) -> bool:
+    """Whether any word of the sentence is this one with a single letter wrong.
+
+    The same rule the payment rails use, for the same reason: "gasolna", "supermercdo" and
+    "restaurntes" named no category at all, so the sentence missed every deterministic reader and
+    reached the model — which is how "36 movimientos" came back for a question about how many
+    subscriptions somebody has. Enumerating the misspellings is enumerating an open set, and it was
+    already patched once by hand, one word at a time.
+    """
+    if len(word) < _FUZZY_FLOOR or word in _NEVER_FUZZY:
+        return False
+    return any(spanish.one_edit_apart(token, word) for token in _WORDS.findall(haystack))
+
+
+_WORDS: Final = re.compile(r"[a-z0-9]+")
+
+
 def _matches(sentence: str, vocabulary: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     haystack = spanish.folded(sentence)
     found: dict[str, int] = {}
     for category, words in vocabulary.items():
         for word in sorted(words, key=len, reverse=True):
-            match = re.search(
-                rf"(?<![a-z0-9]){re.escape(spanish.folded(word))}(?![a-z0-9])", haystack
-            )
+            folded = spanish.folded(word)
+            match = re.search(rf"(?<![a-z0-9]){re.escape(folded)}(?![a-z0-9])", haystack)
+            if match is None and " " not in folded and _one_wrong_letter(folded, haystack):
+                # Position unknown, so it sorts last among the categories the sentence names. A
+                # misspelling is still a mention; where it sits only decides the order of an answer.
+                found.setdefault(category, len(haystack))
+                break
             if match:
                 # The earliest position at which this category is mentioned, so the order of the
                 # answer follows the order of the question.
