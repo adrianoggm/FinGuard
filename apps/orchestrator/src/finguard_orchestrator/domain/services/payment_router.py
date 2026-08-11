@@ -30,7 +30,7 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import payment_words, spanish
+from finguard_orchestrator.domain.services import account_words, payment_words, spanish
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
@@ -277,6 +277,16 @@ def is_payment(sentence: str) -> bool:
     """
     folded = spanish.folded(sentence)
     if _OWN_ACCOUNTS.search(folded):
+        return False
+    if account_words.destination_in(sentence):
+        # The money is going to one of the holder's own account *kinds*, so there is nobody to pay.
+        # Asked of the account vocabulary rather than added to the phrase list, which knew only
+        # the explicit framings — "entre mis cuentas" and three variations. "Pasa 100 € del
+        # fondo a la hucha" was none of them, so it reached the payment path and came back "no tengo
+        # a Fondo indexado en tus contactos": an account answered as a person who does not exist.
+        #
+        # Both tests, not one. The phrase list still catches "quiero traspasar dinero entre mis
+        # cuentas", which names no account at all and so has no destination to read.
         return False
     if _CLASSIFYING_A_MOVEMENT.search(folded):
         return False

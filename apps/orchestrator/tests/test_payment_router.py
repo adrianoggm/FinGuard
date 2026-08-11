@@ -217,3 +217,44 @@ def test_asking_what_the_assistant_can_do_is_not_an_order(sentence: str) -> None
     lexicon was an alternation, so a capability question was refused for the wrong reason — by a
     typo, not by a rule. One edit apart matches the plural, so the rule now has to exist."""
     assert payment_router.is_payment(sentence) is False
+
+
+# --- a destination that is your own account is nobody to pay ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Reported. None of these matched the phrase list, so they reached the payment path and came
+        # back "no tengo a Fondo indexado en tus contactos": an account answered as a person who
+        # does not exist.
+        "pasa 100 del fondo a la hucha",
+        "pasame 100 a la hucha",
+        "quiero pasar dinero de mi cuenta corriente a mi fondo",
+        "mueve 200 euros a la hucha",
+        # The explicit framing, which names no account at all and so has no destination to read.
+        # Both tests are needed and this is the one the phrase list still earns its place for.
+        "quiero traspasar dinero entre mis cuentas",
+    ],
+)
+def test_moving_money_between_your_own_accounts_is_never_a_payment(sentence: str) -> None:
+    """Grounded in the account vocabulary rather than in more phrasings of "between my accounts".
+
+    The question was never lexical: it is whether the destination is one of the holder's own account
+    kinds or a person. The kind vocabulary already knew, and this router was not asking it."""
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum a Marta",
+        "hazle un bixum a carmen",
+        "mandale 20 euros a Javi",
+        "envia 50 euros a Marta Solis Vega",
+    ],
+)
+def test_a_person_is_still_somebody_to_pay(sentence: str) -> None:
+    """The half that must not break: a name is not an account kind, so nothing here reads as a
+    transfer between the holder's own accounts."""
+    assert payment_router.is_payment(sentence) is True
