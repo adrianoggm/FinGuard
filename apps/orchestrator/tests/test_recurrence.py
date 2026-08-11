@@ -7,6 +7,7 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFi
 from finguard_orchestrator.domain.constants import RECURRING_EXPENSE_CATEGORIES
 from finguard_orchestrator.domain.enums import (
     CounterpartyType,
+    GroupBy,
     Metric,
     Period,
     PlanningOutcome,
@@ -228,11 +229,11 @@ async def test_natural_subscription_and_direct_debit_phrases_use_recurrence() ->
     )
 
     for sentence in (
-        "¿Qué suscripciones tengo?",
         "¿Cuáles son mis recibos domiciliados?",
         "¿Qué adeudos domiciliados tengo?",
         "Muéstrame mis recibos",
         "¿Qué pagos tengo todos los meses?",
+        "¿Qué suscripciones pago todos los meses?",
     ):
         ledger = Ledger(charges)
         result, planner = await ask(sentence, ledger)
@@ -243,6 +244,32 @@ async def test_natural_subscription_and_direct_debit_phrases_use_recurrence() ->
             assert ledger.plans[0].transaction_types == (TransactionType.DIRECT_DEBIT,)
             assert ledger.plans[0].categories == ()
         assert planner.calls == 0
+
+
+async def test_which_subscriptions_i_have_is_a_payee_count_rather_than_a_pattern() -> None:
+    """Listed above until now, and it is answered better one recogniser
+    earlier: it names them and leads with how many there are, where this discovers a pattern and
+    leads with money.
+
+    Both readings claimed that sentence for a while, and which one ran was decided by the order of
+    the cascade. The measurement that counts those ties exists so that stops happening quietly, so
+    the phrase went to the reader that answers it and this one keeps the ones about *repetition* —
+    "pago todos los meses" is a pattern, "tengo" is an inventory.
+    """
+    charges = answer(
+        *(movement(datetime(2026, month, 7), "Spotify", 1_099) for month in range(1, 5))
+    )
+    ledger = Ledger(charges)
+
+    _, planner = await ask("¿Qué suscripciones tengo?", ledger)
+
+    # The plan, not the prose: this fixture answers with movements rather than groups because it was
+    # built for the pattern path. What the sentence gets read as is the whole point here, and the
+    # sentence it produces is pinned in test_how_many_subscriptions.
+    assert ledger.plans[0].metric is not Metric.RECURRENCE
+    assert ledger.plans[0].group_by is GroupBy.MERCHANT
+    assert ledger.plans[0].categories == ("SUBSCRIPTIONS",)
+    assert planner.calls == 0
 
 
 async def test_typed_receipts_and_card_subscriptions_are_named_without_conflating_them() -> None:

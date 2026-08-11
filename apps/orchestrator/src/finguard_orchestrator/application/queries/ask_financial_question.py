@@ -807,6 +807,17 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, gambling)
             return
 
+        # Before the breakdown and before the model, because both answer it with the wrong number:
+        # the breakdown leads with the money and the planner reads "¿cuántas suscripciones?" as a
+        # count of movements. Named categories only, so "¿qué gastos fijos tengo?" still reaches the
+        # recurrence discovery further down.
+        how_many = _how_many_payees_plan(query)
+        if how_many is not None:
+            yield Stage("planned", answer_writer.describe(how_many))
+            yield Stage("querying")
+            yield await self._how_many_payees(query, how_many)
+            return
+
         internal = _internal_movement_request(query)
         if isinstance(internal, FinancialPlanDraft):
             try:
@@ -2304,6 +2315,57 @@ class AskFinancialQuestionHandler:
                 metric=facts.metric or previous.metric,
             ),
             facts,
+        )
+
+    async def _how_many_payees(
+        self, query: AskFinancialQuestionQuery, plan: FinancialPlan
+    ) -> AskFinancialQuestionResult:
+        """Run the merchant breakdown and lead with how many payees it found.
+
+        The same query the ordinary breakdown runs — this differs only in the sentence, because the
+        question is about the size of the list rather than about the money in it. Empty groups are
+        dropped: banking may return a merchant with no movements in the window, and counting one
+        as a subscription somebody has would be inventing the answer.
+        """
+        scoped = await self._scoped(plan, query)
+        try:
+            answer = await self._queries.run(
+                scoped,
+                account_id=query.account_id,
+                today=query.today,
+                reporting_timezone=query.reporting_timezone,
+            )
+        except QueryRejectedError:
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.INVALID_DOMAIN.value,
+                text="El banco ha rechazado esa consulta.",
+                conversation=query.conversation,
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="El banco no ha respondido. Vuelve a intentarlo.",
+                conversation=query.conversation,
+            )
+        counted = replace(answer, groups=tuple(g for g in answer.groups if g.movement_count > 0))
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.PLANNED.value,
+            text=answer_writer.how_many_payees(counted, scoped),
+            plan=answer_writer.describe(scoped),
+            plan_context=_spoken(scoped),
+            conversation=query.conversation.answered(scoped),
+            currency=counted.currency,
+            # The figure the question asked for. It is the size of the list, not the money in it —
+            # a total here would put the wrong number in the field a client draws large.
+            movement_count=len([g for g in counted.groups if g.key]),
+            groups=[
+                SpokenGroup(
+                    key=group.key,
+                    total_minor=group.total_minor,
+                    movement_count=group.movement_count,
+                )
+                for group in counted.groups
+            ],
         )
 
     async def _group_reference(
@@ -3835,6 +3897,46 @@ def _recurrence_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
         categories=categories,
         metric=Metric.RECURRENCE,
         transaction_types=(TransactionType.DIRECT_DEBIT,) if direct_debits_only else (),
+    )
+
+
+def _how_many_payees_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """How many distinct payees a kind of spending has, and which they are.
+
+    Reported. "¿Qué suscripciones tengo activas?" was answered "36 movimientos en suscripciones en
+    los últimos 12 meses", and the holder said what anybody would: "yo pensaba que tenía solo
+    netflix altafit spoti y steam". Both figures are true and only one is the answer — thirty-six is
+    how many times they were charged, four is how many things they are paying for.
+
+    No new metric and nothing new asked of banking. A breakdown by merchant already returns one
+    group per payee, so the count is the number of groups and the names are their keys. What was
+    missing was a question that asks for it and a sentence that leads with it.
+
+    Exactly one named category, because the question is "how many of *these*". A sentence naming
+    none is either the recurring-expenses discovery below — "¿qué gastos fijos tengo?" — or not
+    this at all, and grouping every merchant the holder ever paid is a list dump, not an answer.
+    """
+    if not explicit_facts.asks_how_many_payees(query.sentence):
+        return None
+    named = category_words.precisely_named_in(query.sentence)
+    if len(named) != 1:
+        return None
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    # A default rather than a question, exactly like the recurring-expenses discovery below.
+    # "Activas ahora mismo" is not a window this service can turn into dates, and the reported
+    # conversation shows what asking costs: "¿de qué periodo?" was answered "en el último año" and
+    # the figure that came back was one the holder did not recognise. The answer names the window,
+    # so narrowing it is one short turn.
+    window = facts.window or RelativePeriod(Period.LAST_N_MONTHS, n=12)
+    return FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+        categories=named,
+        # By merchant rather than by counterparty: a subscription is a shop that charges you, and
+        # this is the same dimension the shop rankings already group by.
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.SUM,
     )
 
 

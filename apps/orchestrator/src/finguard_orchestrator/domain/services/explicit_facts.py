@@ -115,7 +115,10 @@ _RECURRENCE: Final = re.compile(
     r"|\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b"
     r"|\b(?:que|cuales|muestra(?:me)?|ensena(?:me)?)\b.{0,25}"
     r"\b(?:mis\s+)?(?:recibos?|adeudos?)\b"
-    r"|\b(?:que|cuales)\s+suscripciones?\s+(?:pago|tengo|mantengo)\b"
+    # "¿Qué suscripciones tengo?" used to be here, and it is answered better one recogniser up:
+    # `asks_how_many_payees` names them and leads with how many there are, where this discovers a
+    # pattern and leads with money. Two recognisers claiming one sentence is a tie decided by the
+    # order of a cascade, and the measurement that counts those exists so it stays at twelve.
     r"|\b(?:que|cuales)\b.{0,25}\b(?:pagos?|cargos?)\b.{0,25}"
     r"\btodos?\s+los\s+meses\b"
 )
@@ -293,6 +296,51 @@ def asks_recurrence(sentence: str) -> bool:
 def asks_direct_debits(sentence: str) -> bool:
     """Whether the user named bank direct debits, not merely periodic card charges."""
     return bool(_DIRECT_DEBIT_QUERY.search(spanish.folded(sentence)))
+
+
+# "How many X do I have" and "which X do I have", where X is a kind of spending. The thing being
+# counted is the payee, not the charge: somebody with Netflix, Spotify, a gym and Steam has four
+# subscriptions and thirty-six movements, and answering the second is a real figure for a question
+# nobody asked. It was reported exactly that way — "yo pensaba que tenía solo netflix altafit spoti
+# y steam".
+_HOW_MANY_PAYEES: Final = re.compile(r"\b(?:cuantas|cuantos|cuales|que)\b(?![a-z])")
+
+# The verbs that make it a question about *having* rather than about spending. Without one of these
+# "¿qué gasté en suscripciones?" would be read as a list of payees.
+_HAS_THEM: Final = re.compile(
+    r"\b(?:tengo|tienes|tenemos|hay|mantengo|pago|pagas|activas?|activos?"
+    # The possessive is one of these too: "¿cuáles son mis suscripciones?" asks exactly this and
+    # names no verb of having at all.
+    r"|mis|contratadas?|contratados?|dadas?\s+de\s+alta)\b"
+)
+
+# Words naming the charge rather than the payee. "¿Cuántos pagos tengo en suscripciones?" is asking
+# how many times, which is COUNT and already answered.
+_THE_CHARGE_NOT_THE_PAYEE: Final = re.compile(
+    r"\b(?:movimientos?|veces|compras?|pagos?|cargos?|recibos?|cobros?|operaciones?|transacciones?)\b"
+)
+
+# Asking for money, which is never this however it is phrased.
+_ASKS_AN_AMOUNT: Final = re.compile(r"\b(?:cuanto|importe|total|suma|gaste|gastado|gasto|pague)\b")
+
+
+def asks_how_many_payees(sentence: str) -> bool:
+    """Whether this counts the distinct payees of a kind of spending rather than its movements.
+
+    All four conditions, because each one alone lets a different question through: the interrogative
+    without the possession verb reads "¿qué gasté en suscripciones?" as a list; the possession verb
+    without the interrogative reads "¿cuánto pago en suscripciones?"; and either without the two
+    exclusions reads "¿cuántos pagos tengo?" — which really is a count of movements and really is
+    already answered.
+
+    The category itself is not checked here. This says what shape the question is; which kind of
+    spending it is about is `category_words`' job, and a sentence naming none of them cannot become
+    this plan.
+    """
+    folded = spanish.folded(sentence)
+    if _THE_CHARGE_NOT_THE_PAYEE.search(folded) or _ASKS_AN_AMOUNT.search(folded):
+        return False
+    return bool(_HOW_MANY_PAYEES.search(folded) and _HAS_THEM.search(folded))
 
 
 @dataclass(frozen=True)
