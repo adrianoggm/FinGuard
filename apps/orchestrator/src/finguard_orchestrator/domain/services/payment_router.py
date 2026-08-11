@@ -131,6 +131,18 @@ _SUBJUNCTIVE_ORDER: Final = re.compile(
     re.IGNORECASE,
 )
 
+# A question about what this assistant can do. It names a rail and orders nothing: "¿puedes hacer
+# transferencias?" is about the product.  A second copy of a rule the intent router already has, and
+# that is a cost worth naming. The router catches it first on the deterministic path, but
+# `is_payment` is consulted directly now that a model answering the catch-all no longer settles the
+# routing — so the rule has to hold in both places, and importing the router's copy would be a
+# cycle: it imports this module. Narrow and in the safe direction, which is refusing to pay.
+_A_CAPABILITY: Final = re.compile(
+    r"\b(?:puedes|sabes|podr[íi]as|sabr[íi]as|se\s+puede)\s+(?:hacer\s+)?"
+    r"(?:transferencias?|transferir|bi[xz]ums?|pagos?|pagar|ingresos?|domiciliaciones)\b",
+    re.IGNORECASE,
+)
+
 # A transfer explicitly framed as movement between the holder's accounts belongs to the own-account
 # workflow, never to a recipient payment. This is checked before payment vocabulary because the
 # word ``transferencia`` is shared by both rails.
@@ -216,9 +228,20 @@ def repeats(sentence: str, directory: tuple[Contact, ...]) -> bool:
     )
 
 
-# The imperative, which is the third way to give the order: "hazle un bizum a Carmen".
+# The imperative, which is the third way to give the order: "hazle un bizum a Carmen". The order
+# forms of `hacer`, which is the verb that pairs with the rail noun: "hazle un bizum", "hagamos un
+# bizum". Every form that commands or proposes, and none that state or ask — "hago" and "hacemos"
+# are first person, "hacer" is the infinitive of "¿puedes hacer un bizum?", and those are questions
+# about a capability. Written as the stem plus the endings rather than as an alternation of whole
+# words, because the alternation is what kept missing one: "hagamos un bisum" was reported after
+# "que hagas" had already been added.
+_MAKING: Final = re.compile(
+    r"\bh(?:az|aga|agas|agamos|agan|aced)(?:me|le|les|nos)?\b",
+    re.IGNORECASE,
+)
+
 _IMPERATIVE_ORDER: Final = re.compile(
-    r"\b(?:haz(?:le|les|me)?|manda(?:le|les|me)?|env[ií]a(?:le|les|me)?"
+    r"\b(?:manda(?:le|les|me)?|env[ií]a(?:le|les|me)?"
     r"|p[áa]ga(?:le|les)?|transfi[eé]re(?:le)?|ingr[ée]sa(?:le)?)\b",
     re.IGNORECASE,
 )
@@ -241,6 +264,7 @@ def is_explicit_order(sentence: str) -> bool:
         _EXPLICIT_ORDER.search(sentence)
         or _SUBJUNCTIVE_ORDER.search(sentence)
         or _IMPERATIVE_ORDER.search(sentence)
+        or _MAKING.search(sentence)
     )
 
 
@@ -256,6 +280,8 @@ def is_payment(sentence: str) -> bool:
         return False
     if _CLASSIFYING_A_MOVEMENT.search(folded):
         return False
+    if _A_CAPABILITY.search(sentence):
+        return False
     if _ALREADY.search(sentence) or _RECEIVED.search(sentence):
         return False
     if (
@@ -264,4 +290,8 @@ def is_payment(sentence: str) -> bool:
         and _SUBJUNCTIVE_ORDER.search(sentence) is None
     ):
         return False
-    return bool(_PAYING.search(sentence)) and bool(_MONEY.search(sentence))
+    # A rail named however it was spelled counts as both the verb and the money, which is what
+    # `_MONEY` already said about "bizum" — said here as well so a misspelling keeps that property
+    # instead of losing it in two places at once.
+    rail = payment_words.names_a_rail(sentence)
+    return (bool(_PAYING.search(sentence)) or rail) and (bool(_MONEY.search(sentence)) or rail)

@@ -150,7 +150,7 @@ def _draft(body: dict[str, Any]) -> PaymentDraft | None:
     """
     try:
         return PaymentDraft(
-            recipient_name=_text(body, "recipient").strip() or None,
+            recipient_name=payment_words.without_trailing_filler(_text(body, "recipient")) or None,
             amount_minor=_count(body, "amountMinor") or None,
             concept=(body.get("concept") or "").strip() or None,
         )
@@ -184,7 +184,7 @@ def _build_request(body: dict[str, Any], *, sentence: str, policy: GuardPolicy) 
 
     try:
         request = PaymentRequest(
-            recipient_name=recipient.strip(),
+            recipient_name=payment_words.without_trailing_filler(recipient),
             amount_minor=amount_minor,
             currency=currency,
             concept=(body.get("concept") or "").strip() or None,

@@ -450,10 +450,17 @@ class Reader:
             or next((first for first in ("Marta", "Javi") if first.lower() in said), None)
             or (found.group(1) if found else None)
         )
+        named = payment_words.without_trailing_filler(named) if named else None
         amount = payment_words.amount_in(sentence)
 
         if named is None:
-            return PaymentReading.needs_clarification("¿A quién quieres enviárselo?")
+            # The draft travels even with no name in it, exactly like the production reader: a
+            # question whose answer this path cannot hear is the defect the whole payment state
+            # exists to prevent, and a double that drops it hides that from the corpus.
+            return PaymentReading.needs_clarification(
+                "¿A quién quieres enviárselo?",
+                draft=PaymentDraft(amount_minor=amount) if amount else PaymentDraft(),
+            )
         if amount is None:
             return PaymentReading.needs_clarification(
                 f"¿De cuánto quieres hacerle el bizum a {named}?",

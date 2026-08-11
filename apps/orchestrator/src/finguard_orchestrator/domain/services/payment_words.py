@@ -94,6 +94,58 @@ _CLEAR_CONCEPT: Final = re.compile(
 _PARTICLES: Final = frozenset({"del", "las", "los", "san", "santa", "von", "van"})
 
 
+# Words a Spanish sentence ends with that are not part of anybody's name. Reported: "hazle un bixum
+# a aitor anda" was read as a payment to *"aitor anda"*, the question came back "¿de cuánto quieres
+# hacerle el bixum a aitor anda?", and the contact lookup then found nobody — two turns lost to a
+# word that means "go on".
+#
+# Stripped rather than tolerated in the lookup, because the name is echoed back at the holder. A
+# question naming somebody who does not exist reads as the assistant having misheard, which is
+# exactly what happened.
+_TRAILING_FILLER: Final = re.compile(
+    r"[\s,]+(?:anda|venga|va|vale|porfa|por\s+favor|ya|hombre|mujer|tio|tia"
+    r"|gracias|pues|eh|oye|please)\s*$",
+    re.IGNORECASE,
+)
+
+
+# The words that name a way of moving money. A closed set of three, and the only closed set in this
+# file that people cannot spell — "bizum" is a brand most holders have never had to type. It arrived
+# as `bixum`, `bisum` and `vizum` in three separate reported conversations, and each miss made the
+# whole payment path silently unreachable.
+#
+# Matched one edit apart rather than enumerated. `bi[xz]um` was the enumeration, and it was already
+# wrong twice: an open set cannot be listed, and every unlisted spelling costs a whole conversation.
+_RAIL_LEXICON: Final = ("bizum", "transferencia")
+_WORD: Final = re.compile(r"[a-z]+")
+
+
+def names_a_rail(sentence: str) -> bool:
+    """Whether the sentence names a way of moving money, however it was spelled."""
+    return any(
+        spanish.one_edit_apart(token, rail)
+        for token in _WORD.findall(spanish.folded(sentence))
+        for rail in _RAIL_LEXICON
+    )
+
+
+def without_trailing_filler(name: str) -> str:
+    """A read name with the conversational tail taken off.
+
+    Repeated, because "a Aitor anda por favor" has two of them. Never down to nothing: if every word
+    is in the list then the whole thing was filler and no name was read, and returning the original
+    lets the layer above refuse it as the non-name it is rather than crash on an empty string.
+    """
+    trimmed = name.strip()
+    while True:
+        shorter = _TRAILING_FILLER.sub("", trimmed)
+        if shorter == trimmed:
+            return trimmed or name.strip()
+        if not shorter.strip():
+            return trimmed
+        trimmed = shorter.strip()
+
+
 def amount_in(sentence: str) -> int | None:
     """The amount this sentence names, in minor units, or None.
 

@@ -170,3 +170,50 @@ def test_a_bare_payment_word_is_not_an_instruction(sentence: str) -> None:
     asks this
     one before letting a payment interrupt an open clarification."""
     assert payment_router.is_explicit_order(sentence) is False
+
+
+# --- the spellings and the morphology, closed as classes -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Hagamos un bisum",
+        "hagamos un bizum",
+        "haz un vizum a Marta",
+        "hazle un bixum a carmen",
+        "mandale un bisum de 20 euros",
+        "hazme un bizu a Javi",
+    ],
+)
+def test_a_rail_is_read_however_it_is_spelled(sentence: str) -> None:
+    """ "Bizum" arrived as bixum, bisum and vizum in three separate reported conversations, and each
+    miss made the whole payment path silently unreachable — the worst shape a defect can have.
+
+    Enumerating the misspellings was the previous answer and it was wrong twice. One edit against a
+    two-word lexicon closes the class instead of the instance."""
+    assert payment_router.is_payment(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # A word one edit from a rail is a rail; a word two edits away is a word.
+        "¿cuánto gasté en bizcochos?",
+        "¿cuál es mi preferencia de pago?",
+        "¿cuánto he gastado en el súper?",
+    ],
+)
+def test_a_word_that_is_not_a_rail_stays_a_word(sentence: str) -> None:
+    assert payment_router.is_payment(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["¿puedes hacer transferencias?", "¿sabes hacer bizums?", "¿podrías hacer pagos?"],
+)
+def test_asking_what_the_assistant_can_do_is_not_an_order(sentence: str) -> None:
+    """The plural is what made this matter. "Transferencia" did not match "transferencias" while the
+    lexicon was an alternation, so a capability question was refused for the wrong reason — by a
+    typo, not by a rule. One edit apart matches the plural, so the rule now has to exist."""
+    assert payment_router.is_payment(sentence) is False
