@@ -59,7 +59,13 @@ _GLOSS: Final[dict[str, tuple[str, ...]]] = {
         "casa de apuestas",
         "casas de apuestas",
     ),
-    "SUBSCRIPTIONS": ("suscripciones", "cuotas mensuales", "streaming", "gimnasio"),
+    "SUBSCRIPTIONS": (
+        "suscripciones",
+        "subscripciones",
+        "cuotas mensuales",
+        "streaming",
+        "gimnasio",
+    ),
     "HOUSING_RENT": ("alquiler", "la renta", "la casa", "la vivienda"),
     "SALARY": ("nómina", "sueldo", "salario", "la paga"),
     "TRANSFER_BIZUM": ("bizum", "transferencias entre personas"),
@@ -145,7 +151,19 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "TRANSPORT_PUBLIC": ("transporte público", "metro", "autobús", "taxi"),
     "HEALTH": ("salud", "farmacia", "dentista", "óptica"),
     "LEISURE": ("cine", "videojuegos", "ocio", "apuestas", "casa de apuestas", "casas de apuestas"),
-    "SUBSCRIPTIONS": ("suscripciones", "suscripción", "gimnasio", "streaming"),
+    # "Subscripción" with the b is how a great many Spanish speakers write it, and it is not a
+    # different word — it is the same one, influenced by English. It was reported: "que
+    # subscripciones tengo activas" named no category at all, so the sentence missed this vocabulary
+    # and reached the model, which counted movements. A misspelling that costs a wrong answer is a
+    # word this reader has to know.
+    "SUBSCRIPTIONS": (
+        "suscripciones",
+        "suscripción",
+        "subscripciones",
+        "subscripción",
+        "gimnasio",
+        "streaming",
+    ),
     "HOUSING_RENT": ("alquiler",),
     "SALARY": ("nómina", "sueldo", "salario"),
     "TRANSFER_BIZUM": ("bizum", "bizums"),
