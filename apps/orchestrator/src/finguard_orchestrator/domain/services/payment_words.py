@@ -129,6 +129,38 @@ def names_a_rail(sentence: str) -> bool:
     )
 
 
+# What a whole turn may consist of and still be an answer rather than an order: the rail noun, and
+# at most an article or a discourse particle around it.
+_ONLY_A_PARTICLE: Final = frozenset(
+    {"pues", "y", "o", "un", "una", "el", "la", "lo", "de", "vale", "ok", "eso", "si"}
+)
+
+
+def is_only_a_rail_word(sentence: str) -> bool:
+    """Whether the whole turn is the name of a rail and nothing else.
+
+    The inversion this rule needed. "Pues bizum", offered as the answer to "¿de qué comercio o
+    categoría?", must belong to that question — and the previous test for it was to enumerate the
+    ways of *instructing*, which is an open set: every form missed ("que le hagas", "hagamos")
+    became a turn the open question swallowed, and one holder spent seven of them shouting.
+
+    So this enumerates the other side, which is closed and tiny. A turn that is a rail noun with an
+    article or a particle around it is a reply; a turn with anything else in it is not. The set of
+    Spanish ways to say "do it" is unbounded; the set of ways to say only "bizum" is not.
+    """
+    tokens = _WORD.findall(spanish.folded(sentence))
+    if not tokens:
+        return False
+    named = [
+        token
+        for token in tokens
+        if any(spanish.one_edit_apart(token, rail) for rail in _RAIL_LEXICON)
+    ]
+    if not named:
+        return False
+    return all(token in _ONLY_A_PARTICLE for token in tokens if token not in named)
+
+
 def without_trailing_filler(name: str) -> str:
     """A read name with the conversational tail taken off.
 

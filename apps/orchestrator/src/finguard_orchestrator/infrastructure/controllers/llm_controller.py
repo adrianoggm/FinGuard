@@ -263,11 +263,16 @@ def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bo
     ):
         return False
     asked = was.awaiting or was.last_asked
-    return (
-        asked not in _FINANCIAL_SLOTS
-        or payment_words.amount_in(sentence) is not None
-        or payment_router.is_explicit_order(sentence)
-    )
+    if asked not in _FINANCIAL_SLOTS:
+        return True
+    # An open question keeps only the turn that could be its answer, and that set is closed: a rail
+    # noun with an article or a particle around it. Everything else instructs.
+    #
+    # This used to enumerate the instructions instead, which is the open set — every form missed
+    # ("que le hagas", "hagamos") became a turn the question swallowed. Inverting it means a form
+    # nobody thought of now falls on the side of being an order, which is the side where the holder
+    # gets a preview they can decline rather than a question they did not ask.
+    return not payment_words.is_only_a_rail_word(sentence)
 
 
 # The slots a financial question leaves open. A reply while one of these is waiting belongs to it.

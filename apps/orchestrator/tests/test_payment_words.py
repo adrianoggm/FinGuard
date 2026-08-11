@@ -287,3 +287,32 @@ def test_a_conversational_tail_is_not_part_of_the_name(read: str, name: str) -> 
     question naming somebody who does not exist reads as the assistant having misheard.
     """
     assert payment_words.without_trailing_filler(read) == name
+
+
+# --- which turn belongs to the open question --------------------------------------------------
+
+
+@pytest.mark.parametrize("sentence", ["pues bizum", "bizum", "un bizum", "vale, bizum", "y bisum"])
+def test_a_turn_that_is_only_a_rail_word_belongs_to_the_open_question(sentence: str) -> None:
+    """ "Pues bizum", offered as the answer to "¿de qué comercio o categoría?", is a word given to a
+    question and not an order — reading it as one asked who to send money to, about a payment nobody
+    had ordered."""
+    assert payment_words.is_only_a_rail_word(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum a Carmen",
+        "que le hagas el bizum",
+        "hagamos un bisum",
+        "bizum de 20 euros",
+        "bizum a Marta",
+    ],
+)
+def test_anything_more_than_the_word_is_an_order(sentence: str) -> None:
+    """The inversion, and why it is the right way round. The set of Spanish ways to say "do it" is
+    unbounded and the previous rule enumerated it — so every form nobody thought of fell on the side
+    of being swallowed by a question. Enumerating the replies instead is a closed, tiny set, and a
+    form nobody thought of now falls on the side where the holder gets a preview to decline."""
+    assert payment_words.is_only_a_rail_word(sentence) is False
