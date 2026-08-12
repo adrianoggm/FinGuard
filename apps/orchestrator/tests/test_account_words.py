@@ -110,3 +110,30 @@ def test_other_accounts_are_recognised_as_a_contextual_complement(sentence: str)
 def test_a_short_custom_name_can_answer_an_open_account_slot() -> None:
     assert account_words.looks_like_account_choice("Vacaciones")
     assert not account_words.looks_like_account_choice("¿cuánto gasté este mes?")
+
+
+@pytest.mark.parametrize(
+    ("sentence", "kind"),
+    [
+        ("y en la hcuha", "SAVINGS"),
+        ("mueve 100 a la hcuha", "SAVINGS"),
+        # The entry that was written by hand and is now derived: "nomnia" is "nomina" with two
+        # letters swapped, and it was a line in the table standing for an open set.
+        ("en la nomnia", "CURRENT"),
+        ("en mi cuneta corriente", "CURRENT"),
+    ],
+)
+def test_two_swapped_letters_still_name_the_account(sentence: str, kind: str) -> None:
+    """A slip in an account name used to lose the account entirely.
+
+    "Y en la hcuha" after a balance is a question about the savings balance, and it named nothing —
+    so a follow-up this service can answer without a model was planned as a spending query.
+    """
+    assert account_words.named_in(sentence) == (kind,)
+
+
+@pytest.mark.parametrize("sentence", ["he gastado mucha pasta", "la ducha nueva", "media hora"])
+def test_a_substituted_letter_does_not_invent_an_account(sentence: str) -> None:
+    """Why swaps and not any one edit. One substitution from "hucha" is "mucha", which is in every
+    other Spanish sentence — and this vocabulary decides which accounts a figure is about."""
+    assert account_words.named_in(sentence) == ()

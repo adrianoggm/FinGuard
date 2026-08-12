@@ -1,9 +1,10 @@
 # Typing badly, which is how everybody types.
 #
-# Accents are folded, case is ignored, and a transposition is forgiven where the vocabulary is
-# closed and the word is long enough to survive it: "cunato" is "cuánto" and "qeu categorias" is
-# the catalogue. Everything else still matches exactly — "hcuha" is not "hucha" — so a slip in an
-# account name turns a balance question into a sentence for the model to guess at.
+# Accents are folded, case is ignored, and two letters arriving in the wrong order are forgiven
+# where the vocabulary is closed: "cunato" is "cuánto", "hcuha" is "hucha" and "qeu categorias" is
+# the catalogue. A letter *missing* is not — "huch" and "princpal" are entries somebody wrote down
+# by hand, and a spelling nobody wrote down still turns a balance question into a sentence for the
+# model to guess at.
 #
 # **What is asserted here is deliberately asymmetric.** A typo the service reads is asserted as
 # read. A typo it does not is asserted as reaching the model — because that is the honest fallback
@@ -79,14 +80,17 @@ episodes:
       - say: GRACIAS
         route: COURTESY
 
-  - name: a_transposed_letter_in_the_question_word_is_still_the_question
+  - name: a_transposed_letter_is_still_the_word
     why: >
-      The edge moved, on purpose. "Cunato tengo" used to go to the model — the verb beside it
-      already tolerated three misspellings written out by hand and the question word tolerated
-      none, so a balance this service holds was planned as a query. Two letters in the wrong order
-      is the slip a keyboard makes, and it is the one misspelling Spanish almost never turns into
-      another word: a substitution away from "cuanto" is "cuando", and that stays a different
-      question. The account name below is still unread, which is where the edge is now.
+      The edge moved, on purpose, and it moved twice. "Cunato tengo" used to go to the model — the
+      verb beside it already tolerated three misspellings written out by hand and the question word
+      tolerated none — and "y en la hcuha" named no account, so a follow-up about a balance was
+      planned as a spending query. Two letters in the wrong order is the slip a keyboard makes, and
+      it is the one misspelling Spanish almost never turns into another word: a substitution away
+      from "cuanto" is "cuando" and one away from "hucha" is "mucha", and both of those stay out.
+
+      What a missing letter costs is still pinned, below and elsewhere: "huch" and "princpal" are
+      entries somebody wrote down, not a rule.
     metrics: [wrong_tool]
     turns:
       - say: cunato tengo
@@ -94,14 +98,15 @@ episodes:
         no_model: true
       - say: ¿cuánto tengo?
         route: BALANCE
+      # And the thread survives the slip now. The balance memory is one turn deep, so a typo that
+      # went to the model used to cost the follow-up as well as itself — both of these are the
+      # savings balance, which is what "¿y en la hucha?" after a balance has always meant.
       - say: y en la hcuha
-        route: QUERY
-      # And the thread is gone with it: the balance memory is one turn deep, so a typo that goes to
-      # the model costs the follow-up as well as itself. Asking in full works, which is the price.
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: BALANCE
+        no_model: true
       - say: ¿y en la hucha?
-        route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+        route: BALANCE
+        no_model: true
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"
@@ -152,8 +157,9 @@ episodes:
 
   - name: typos_do_not_accumulate
     why: >
-      Six sentences, three of them unreadable. The readable ones in between still have to work, and
-      nothing may carry the confusion forward.
+      Six sentences typed badly. Three of them are read now — two swapped letters in the question
+      word, in the account and in "qué" — and the readable ones in between still have to work, with
+      nothing carrying the confusion forward.
     metrics: [context_retention, wrong_tool]
     turns:
       - say: cunato tengo
@@ -162,8 +168,8 @@ episodes:
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: y en la hcuha
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: BALANCE
+        no_model: true
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: qeu categorias hay
