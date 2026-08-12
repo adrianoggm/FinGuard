@@ -11,25 +11,31 @@ episodes:
         route: QUERY
         no_model: true
         says: acumulado
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: CUMULATIVE}
       - say: ¿Y por semana?
         route: QUERY
         no_model: true
         says: acumulado
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: WEEK, metric: CUMULATIVE}
       - say: Los tres comercios donde más gasté este año
         route: QUERY
         no_model: true
         says: mayor importe total
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MERCHANT, metric: SUM}
       - say: ¿Y por número de operaciones?
         route: QUERY
         no_model: true
         says: más operaciones
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MERCHANT, metric: COUNT}
       - say: Ahora top 2 categorías por ticket medio
         route: QUERY
         no_model: true
         says: mayor importe medio
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: AVERAGE}
       - say: Muéstrame mis tres mayores gastos de este año
         route: QUERY
         no_model: true
         says: 3 mayores gastos
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], rank: 3}
       - say: gracias
         route: COURTESY

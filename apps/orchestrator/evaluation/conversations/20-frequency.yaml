@@ -11,21 +11,26 @@ episodes:
         route: QUERY
         no_model: true
         says: frecuencia
+        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: FREQUENCY}
       - say: ¿Y este año?
         route: QUERY
         no_model: true
         says: frecuencia
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: FREQUENCY}
       - say: ¿Y el año pasado?
         route: QUERY
         no_model: true
         says: frecuencia
+        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: FREQUENCY}
       - say: ¿Qué día suelen pagarme?
         route: QUERY
         no_model: true
         says: frecuencia
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: FREQUENCY}
       - say: ¿Y este año?
         route: QUERY
         no_model: true
         says: frecuencia
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: FREQUENCY}
       - say: gracias
         route: COURTESY

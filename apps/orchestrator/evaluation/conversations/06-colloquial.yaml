@@ -21,6 +21,7 @@ episodes:
         route: BALANCE
       - say: pues dime cuánto gasté el mes pasado
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: venga, ¿quién eres?
         route: IDENTITY
       - say: oye una cosa, ¿a quién puedo pagar?
@@ -45,6 +46,7 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: guay
         route: COURTESY
 
@@ -57,14 +59,18 @@ episodes:
     turns:
       - say: ¿qué tal va la cosa este mes?
         route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto gasté este mes?
         route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ah vale
         route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
       - say: ¿y cuánto tengo?
         route: BALANCE
       - say: menos mal
         route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
       - say: gracias
         route: COURTESY
 
@@ -79,6 +85,7 @@ episodes:
         no_model: true
       - say: del banco me refiero
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿puedes hacer transferencias o solo bizums?
         route: IDENTITY
         no_model: true
@@ -98,12 +105,16 @@ episodes:
     turns:
       - say: a ver
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: es que quería saber una cosa
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: de lo del mes pasado
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: eso es
         route: COURTESY
       - say: gracias
@@ -138,8 +149,10 @@ episodes:
     turns:
       - say: ¿cuánto paso a la hucha cada mes?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿y cuánto traspaso al fondo?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: mueve 100 € a la hucha
@@ -164,6 +177,7 @@ episodes:
       # a salary with a balance, or the other way round.
       - say: ¿y en la nómina?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: ['SALARY'], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo en la cuenta corriente?
         route: BALANCE
         says: "2.270,42"
@@ -190,12 +204,15 @@ episodes:
         route: BALANCE
       - say: ajá
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ya
         route: COURTESY
       - say: ¿y en gasolina?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
 
   - name: two_questions_in_one_sentence
     why: >
@@ -207,8 +224,10 @@ episodes:
       # Both halves are safe reads and run in one bounded compound answer.
       - say: ¿cuánto tengo y cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿y cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?

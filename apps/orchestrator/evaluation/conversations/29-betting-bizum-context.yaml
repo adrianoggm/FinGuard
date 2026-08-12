@@ -21,6 +21,7 @@ episodes:
       - say: En los ultimos 3 meses
         route: QUERY
         no_model: true
+        ran: {window: 'LAST_N_MONTHS:3', direction: INCOME, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: SUM}
       - say: Me ayudas a realizar un bizum a Marta
         route: PAYMENT
         awaiting: AMOUNT

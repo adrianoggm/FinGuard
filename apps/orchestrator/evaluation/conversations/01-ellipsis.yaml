@@ -44,12 +44,15 @@ episodes:
         route: COURTESY
       - say: 1000 pavos
         not_says: mover
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: 200
         not_says: Hucha
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿y en la hucha?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"
@@ -193,17 +196,23 @@ episodes:
     turns:
       - say: ¿cuánto gasté?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: el mes pasado
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿y este año?
         route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: en 2025
         route: QUERY
+        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿y en junio?
         route: QUERY
+        ran: {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿y el año anterior?
         route: QUERY
         no_model: true
+        ran: {window: '2025-06-01..2025-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
 
   - name: a_reply_that_answers_nothing
     why: >
@@ -213,10 +222,13 @@ episodes:
     turns:
       - say: ¿cuánto llevo gastado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: pues no sé
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: bueno da igual
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo?
         route: BALANCE
         no_model: true
@@ -247,5 +259,7 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: la hucha
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}

@@ -43,6 +43,7 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿a quién puedo hacerle un bizum?
         route: CONTACTS
       - say: dime las categorías disponibles
@@ -55,6 +56,7 @@ episodes:
         route: BALANCE
       - say: ¿y cuánto gasté en gasolina?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE}
 
   - name: a_payment_interrupted_by_three_questions
     why: >
@@ -66,6 +68,7 @@ episodes:
         route: PAYMENT
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿quién eres?
@@ -95,6 +98,7 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté este mes?
         route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: vale
         route: COURTESY
 
@@ -137,6 +141,7 @@ episodes:
     turns:
       - say: ¿cuánto llevo gastado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       # The turn the episode is named after. A clarification the user walked away from must not be
@@ -171,6 +176,7 @@ episodes:
         route: COURTESY
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
 
   - name: a_transfer_abandoned_for_a_question
     why: >
@@ -186,8 +192,10 @@ episodes:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ends: true
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: 1000
         not_says: Hucha
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: mueve 1000 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
@@ -234,12 +242,14 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿a quién puedo pagar?
         route: CONTACTS
       - say: dime las categorías
         route: CATEGORIES
       - say: ¿cuánto gasté en gasolina?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE}
       - say: ¿cómo lo has calculado?
         route: EXPLANATION
       - say: ¿cuánto tengo en el fondo?
