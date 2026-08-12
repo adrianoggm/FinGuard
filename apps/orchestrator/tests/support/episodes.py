@@ -569,7 +569,11 @@ class Turn:
     # the window, the categories and the grouping out of the sentence through the same services a
     # deployment uses, so those are ours; `direction` it hardcodes to EXPENSE. Asserting the
     # direction of a model-answered turn measures the stub and passes or fails for no reason.
-    ran: dict[str, Any] = field(default_factory=dict)
+    #
+    # A list instead of a mapping asserts *every* query the turn ran, in order, which is what a
+    # comparison needs: one mapping only ever reaches the last operand, so the other half of
+    # "compara julio con junio" was unasserted.
+    ran: dict[str, Any] | list[dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -872,24 +876,38 @@ def _complaints(
 def _query_complaints(turn: Turn, ran: tuple[FinancialPlan | TopMovements, ...]) -> Iterator[str]:
     """What the turn asked the ledger, against what the episode says it should have.
 
-    The last query of the turn, because a derived answer runs two — a ratio, a comparison — and the
-    one an episode means by "this question" is the narrow side. An episode needing both operands
-    would say so with two expectations, and none does yet.
+    One mapping means the last query of the turn, because a derived answer runs two — a ratio, a
+    comparison — and the one an episode usually means by "this question" is the narrow side.
+
+    A list means every query, in the order they ran. That is what a comparison turn needs: with one
+    mapping, "compara julio con junio" asserts July and says nothing about June, so a comparison
+    that dropped an operand, ran the same window twice or reversed the pair passed. Both operands
+    are the answer there, and half of it is not a weaker check — it is no check at all for the
+    half that goes missing.
     """
     if not turn.ran:
         return
     if not ran:
         yield f"the query ran nothing, and the turn expects {turn.ran}"
         return
-    actual = executed(ran[-1])
-    for field_name, expected in turn.ran.items():
-        if field_name not in actual:
-            yield f"the query ran no field called {field_name!r}"
-            continue
-        seen = actual[field_name]
-        wanted = sorted(expected) if isinstance(seen, list) else expected
-        if seen != wanted:
-            yield f"the query ran {field_name}={seen!r}, and the turn expects {wanted!r}"
+    expectations = turn.ran if isinstance(turn.ran, list) else [turn.ran]
+    queries = ran if isinstance(turn.ran, list) else ran[-1:]
+    if len(queries) != len(expectations):
+        yield f"the query ran {len(queries)} queries, and the turn expects {len(expectations)}"
+        return
+    for position, (expected, query) in enumerate(zip(expectations, queries, strict=True)):
+        actual = executed(query)
+        where = f" (query {position + 1})" if len(expectations) > 1 else ""
+        for field_name, wanted_raw in expected.items():
+            if field_name not in actual:
+                yield f"the query ran no field called {field_name!r}{where}"
+                continue
+            seen = actual[field_name]
+            wanted = sorted(wanted_raw) if isinstance(seen, list) else wanted_raw
+            if seen != wanted:
+                yield (
+                    f"the query ran {field_name}={seen!r}, and the turn expects {wanted!r}{where}"
+                )
 
 
 def run(episodes: list[Episode], interpreter: object | None = None) -> Report:

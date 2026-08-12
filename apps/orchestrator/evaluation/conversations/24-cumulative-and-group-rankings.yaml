@@ -36,6 +36,6 @@ episodes:
         route: QUERY
         no_model: true
         says: 3 mayores gastos
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], rank: 3}
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], rank: 1}, {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], rank: 2}, {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], rank: 3}]
       - say: gracias
         route: COURTESY

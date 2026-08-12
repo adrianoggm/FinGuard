@@ -20,7 +20,7 @@ episodes:
       - say: ¿gasté más en julio que en junio?
         route: QUERY
         no_model: true
-        ran: {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: a este ritmo, ¿cuánto voy a gastar?
         route: REFUSED
         no_model: true
@@ -68,7 +68,7 @@ episodes:
       - say: ¿gasté más este mes que el pasado?
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿cuánto gasté este mes?
         route: QUERY
         ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
@@ -204,7 +204,7 @@ episodes:
       - say: compárame julio y junio
         route: QUERY
         no_model: true
-        ran: {window: '2026-07-01..2026-07-31', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: '2026-06-01..2026-06-30', direction: ALL, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿cuánto voy a gastar?
         route: REFUSED
         no_model: true

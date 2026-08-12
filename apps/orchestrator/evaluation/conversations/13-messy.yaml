@@ -179,22 +179,22 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: quería
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['quería'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: bueno
         route: COURTESY
       - say: es que
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['es que'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ya
         route: COURTESY
       - say: pues eso
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['pues eso'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: nada
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['nada'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
