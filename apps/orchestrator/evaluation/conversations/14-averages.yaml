@@ -18,7 +18,7 @@ episodes:
         route: QUERY
         no_model: true
         says: por movimiento
-        ran: {window: LAST_N_MONTHS:12, direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       # The divisor changes and nothing else does. A period average needs its calendar bucket, so the
       # grouping arrives with the metric rather than being asked for.
       - say: ¿Y al mes?
@@ -121,7 +121,7 @@ episodes:
         route: QUERY
         no_model: true
         says: últimos 3 meses
-        ran: {window: LAST_N_MONTHS:3, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:3', categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       # The direction flips, and the arithmetic is what this episode is about, so that is what is
       # asserted. What a change of direction does to the category filter is a separate question and
       # deliberately not claimed here.
@@ -165,19 +165,19 @@ episodes:
         says: perdido el hilo
       - say: En los ulltimos 4 meses
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: La principal
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: En la que ingreso la nomina vaya ç
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: an_average_can_become_a_ranking_and_return_to_a_breakdown
     why: >

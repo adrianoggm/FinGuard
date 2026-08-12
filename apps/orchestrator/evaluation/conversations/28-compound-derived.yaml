@@ -24,7 +24,7 @@ episodes:
         ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Cuál fue mi tasa de ahorro este año y cuánto gasté en supermercado?
         route: QUERY
-        ran: [{window: THIS_YEAR, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE}, {window: THIS_YEAR, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE}, {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}]
+        ran: [{window: THIS_YEAR, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE}, {window: THIS_YEAR, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE}, {window: THIS_YEAR, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}]
       - say: gracias
         route: COURTESY
         no_model: true

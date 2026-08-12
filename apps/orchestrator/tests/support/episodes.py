@@ -241,7 +241,9 @@ class AnyPlan:
     def __init__(self) -> None:
         self.asked: list[str] = []
 
-    async def plan(self, sentence: str, **_: object) -> PlanningResult:
+    async def plan(
+        self, sentence: str, *, previous: FinancialPlan | None = None, **_: object
+    ) -> PlanningResult:
         self.asked.append(sentence)
         said = sentence.lower()
         if any(word in said for word in ("mas caro", "más caro", "mas alto", "más alto", "mayor")):
@@ -258,7 +260,12 @@ class AnyPlan:
         # disagree with. A stub that ignored the category the sentence names would be refused
         # as a misreading, and every episode would measure that instead of the routing.
         facts = explicit_facts.read(sentence, today=TODAY)
-        window = facts.window or RelativePeriod(period=Period.LAST_MONTH)
+        # The window of the query behind the turn, when the sentence states none. A deployment's
+        # planner is handed `previous` for exactly this, and a stub that threw it away made every
+        # turn reaching the model look as though it had lost the thread — so an expectation about
+        # one could not state a window without asserting this stub's default instead.
+        inherited = (previous.period or previous.date_range) if previous is not None else None
+        window = facts.window or inherited or RelativePeriod(period=Period.LAST_MONTH)
         relative = isinstance(window, RelativePeriod)
         return PlanningResult.planned(
             FinancialPlan(

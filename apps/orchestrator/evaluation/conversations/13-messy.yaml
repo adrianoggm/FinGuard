@@ -76,7 +76,7 @@ episodes:
       # reads it from the sentence through the same vocabulary the service does.
       - say: ¿y de algún otro en los 2 últimos meses?
         route: QUERY
-        ran: {window: LAST_N_MONTHS:2, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:2', excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias

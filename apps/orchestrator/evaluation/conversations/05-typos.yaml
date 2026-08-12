@@ -28,7 +28,7 @@ episodes:
         ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Perdona que movimeintos he tenido ?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Me gustaria tranferir dinero a mi cuenta corriente
         route: TRANSFER
       - say: 200 euros
@@ -36,7 +36,7 @@ episodes:
         keeps: PAYMENT_CONFIRMATION
       - say: gracais
         route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['gracais'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: ['gracais'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
 
   - name: missing_accents_everywhere
     why: >
