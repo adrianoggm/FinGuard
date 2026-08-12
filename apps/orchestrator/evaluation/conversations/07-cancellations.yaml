@@ -39,7 +39,7 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: cancelar consulta
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: reintentar
         # It used to be QUERY, and that was the word "reintentar" being handed to a language model
         # to turn into a financial question. This episode exists so a retry cannot reach an
@@ -48,7 +48,7 @@ episodes:
         says: No tengo ninguna consulta guardada
       - say: ¿cuánto gasté este año?
         route: QUERY
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: gracias
         route: COURTESY
 
@@ -136,7 +136,7 @@ episodes:
         ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE}
       - say: cambiar consulta
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto gasté en restaurantes?
         route: QUERY
         ran: {window: LAST_MONTH, categories: ['RESTAURANTS'], merchants: [], group_by: NONE}
@@ -205,7 +205,7 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: déjalo
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
@@ -232,7 +232,7 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: cancelar consulta
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?

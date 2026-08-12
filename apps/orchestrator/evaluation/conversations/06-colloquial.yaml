@@ -65,12 +65,12 @@ episodes:
         ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ah vale
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿y cuánto tengo?
         route: BALANCE
       - say: menos mal
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: gracias
         route: COURTESY
 

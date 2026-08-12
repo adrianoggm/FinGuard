@@ -159,7 +159,7 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: confirmo
         not_says: Hecho
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: vale
         route: COURTESY
       - say: gracias

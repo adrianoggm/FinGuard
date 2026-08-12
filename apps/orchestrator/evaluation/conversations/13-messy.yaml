@@ -179,25 +179,25 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: quería
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: bueno
         route: COURTESY
       - say: es que
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ya
         route: COURTESY
       - say: pues eso
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: nada
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: vale
         route: COURTESY
       - say: gracias
