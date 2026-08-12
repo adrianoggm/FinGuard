@@ -53,11 +53,11 @@ episodes:
       - say: Cuanto he gastado en inversiones este mes ?
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: Caunto he invertido en el ultimo año ?
         route: QUERY
         no_model: true
-        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"
@@ -66,7 +66,7 @@ episodes:
       # money received rather than as spending on Marta.
       - say: He recibido algún bizum de Marta Solis Vega este mes ?
         route: QUERY
-        ran: {window: THIS_MONTH, direction: INCOME}
+        ran: {window: THIS_MONTH, direction: INCOME, excluded_categories: [], excluded_merchants: [], counterparties: ['Marta Solis Vega']}
       # The count on the side of "últimos" Spanish also puts it on. This read as *one* month before
       # — not as a failure, as a default — so the turn asked about four weeks and was answered about
       # one, with a real figure on it.
@@ -76,7 +76,7 @@ episodes:
       # reads it from the sentence through the same vocabulary the service does.
       - say: ¿y de algún otro en los 2 últimos meses?
         route: QUERY
-        ran: {window: LAST_N_MONTHS:2}
+        ran: {window: 'LAST_N_MONTHS:2', excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
@@ -90,7 +90,7 @@ episodes:
     turns:
       - say: Oye cual es el estado actua lde mi hucha de ahorros
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: Oye cual es el estado actual de mi hucha de ahorros
         route: BALANCE
         says: "5.485,50"
@@ -126,7 +126,7 @@ episodes:
         route: COURTESY
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES]}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES], excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: hazle un bizum a Marta Solis Vega
@@ -136,7 +136,7 @@ episodes:
       # something the payment dragged in. The divisor is the assertion.
       - say: ¿cuál es mi gasto medio?
         route: QUERY
-        ran: {metric: AVERAGE, direction: EXPENSE}
+        ran: {metric: AVERAGE, direction: EXPENSE, excluded_categories: [], excluded_merchants: []}
       - say: continuar con el bizum
         route: PAYMENT
         awaiting: AMOUNT
@@ -150,7 +150,7 @@ episodes:
         says: Hecho
       - say: cunato me queda
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -159,14 +159,14 @@ episodes:
         route: CATEGORIES
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
       - say: no es eso
         route: CLARIFY
       # Turn sixteen, and it names two words. The window has to come from turn fourteen through a
       # rejection, which is the recovery this episode exists for.
       - say: en restaurantes
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS]}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
 
   - name: a_user_who_never_finishes_a_sentence
     why: >
@@ -176,28 +176,28 @@ episodes:
     turns:
       - say: a ver
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: quería
         route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['quería'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['quería'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: bueno
         route: COURTESY
       - say: es que
         route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['es que'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['es que'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ya
         route: COURTESY
       - say: pues eso
         route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['pues eso'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['pues eso'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: nada
         route: QUERY
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['nada'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['nada'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: vale
         route: COURTESY
       - say: gracias
@@ -216,7 +216,7 @@ episodes:
         route: CLARIFY
       - say: cunato gaste
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: no es eso
         route: CLARIFY
       - say: pues no sé
@@ -224,13 +224,13 @@ episodes:
       # The recovery, and the property the episode is named for. After a refusal, a typo, a rejection
       # and an unanswerable clarification, these two turns have to be a clean exchange — which means
       # the second inherits a window from the first and nothing from the four before them.
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], excluded_categories: [], excluded_merchants: []}
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -261,7 +261,7 @@ episodes:
         ends: true
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: mueve 500 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
@@ -288,16 +288,16 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], excluded_categories: [], excluded_merchants: []}
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL]}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
       - say: ¿cuál es mi gasto medio?
         route: QUERY
-        ran: {metric: AVERAGE, direction: EXPENSE}
+        ran: {metric: AVERAGE, direction: EXPENSE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en restaurantes?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [RESTAURANTS]}
+        ran: {window: LAST_MONTH, categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
       - say: ¿a quién puedo pagar?
         route: CONTACTS
       - say: hazle un bizum de 20 € a Javi Nuñez
@@ -317,12 +317,12 @@ episodes:
         route: CATEGORIES
       - say: ¿cuánto gasté en el supermercado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: no es eso
         route: CLARIFY
       - say: en gasolina
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias, hasta luego
         route: COURTESY
 
@@ -341,10 +341,10 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en qué?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: dime las categorías disponibles
         route: CATEGORIES
       - say: ¿a quién puedo hacerle un bizum?
@@ -384,7 +384,7 @@ episodes:
         says: "5.485,50"
       - say: ¿seguro?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"
@@ -396,7 +396,7 @@ episodes:
         says: "5.485,50"
       - say: vale, me fío
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
 
   - name: the_fourth_reported_conversation_shouting_at_a_clarification
     why: >

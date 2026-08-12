@@ -241,7 +241,9 @@ class AnyPlan:
     def __init__(self) -> None:
         self.asked: list[str] = []
 
-    async def plan(self, sentence: str, **_: object) -> PlanningResult:
+    async def plan(
+        self, sentence: str, *, previous: FinancialPlan | None = None, **_: object
+    ) -> PlanningResult:
         self.asked.append(sentence)
         said = sentence.lower()
         if any(word in said for word in ("mas caro", "más caro", "mas alto", "más alto", "mayor")):
@@ -258,7 +260,12 @@ class AnyPlan:
         # disagree with. A stub that ignored the category the sentence names would be refused
         # as a misreading, and every episode would measure that instead of the routing.
         facts = explicit_facts.read(sentence, today=TODAY)
-        window = facts.window or RelativePeriod(period=Period.LAST_MONTH)
+        # The window of the query behind the turn, when the sentence states none. A deployment's
+        # planner is handed `previous` for exactly this, and a stub that threw it away made every
+        # turn reaching the model look as though it had lost the thread — so an expectation about
+        # one could not state a window without asserting this stub's default instead.
+        inherited = (previous.period or previous.date_range) if previous is not None else None
+        window = facts.window or inherited or RelativePeriod(period=Period.LAST_MONTH)
         relative = isinstance(window, RelativePeriod)
         return PlanningResult.planned(
             FinancialPlan(
@@ -607,6 +614,12 @@ class Report:
     # own coverage as well as of the service: a turn nobody wrote an expectation for is a turn
     # where the routing is checked and the plan behind it is not.
     unasserted: list[str] = field(default_factory=list)
+    # Turns whose query carries a filter the expectation does not mention. The other half of the
+    # same idea, and the answer to a question the exclusions raised: asserting a field on every
+    # turn is what found the fifteen filler merchants, but six fields already make a line nobody
+    # reads before appending to it. So the rule is narrower than the habit — say it where it is
+    # doing something — and it cannot be forgotten, because the corpus checks rather than a person.
+    unstated: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -659,10 +672,37 @@ def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
         # added, kept or undone was invisible to every check in this corpus.
         "excluded_categories": sorted(query.excluded_categories),
         "excluded_merchants": sorted(query.excluded_merchants),
+        # Which accounts, by the name the holder sees rather than by uuid. The episode called
+        # "an account subset survives period and direction changes" ran "solo la principal",
+        # "ahora solo la hucha" and "solo cuenta corriente y hucha, no el fondo" and asserted the
+        # same fields for all three, none of which is the subset.
+        "accounts": sorted(_named(query)),
+        "counterparties": sorted(getattr(query, "counterparties", ())),
+        # Movement between the holder's own accounts is a direction of its own — "¿cuánto he movido
+        # a la hucha?" is neither spending nor income — and two episodes turn on it.
+        "internal_only": getattr(query, "internal_only", False),
+        "include_internal": getattr(query, "include_internal", False),
     }
     if isinstance(query, TopMovements):
         return {**ran, "rank": query.rank}
     return {**ran, "group_by": query.group_by.value, "metric": query.metric.value}
+
+
+_ACCOUNT_NAMES = {holding.account_id: holding.display_name for holding in HOLDINGS}
+
+
+def _named(query: FinancialPlan | TopMovements) -> list[str]:
+    """The accounts a query is restricted to, by the name the holder sees.
+
+    A ranking restricts by one account and an aggregate by a set, so both are read through
+    `getattr` rather than by branching on the type: what an episode means by "which accounts" is
+    the same question of either.
+    """
+    chosen = list(getattr(query, "only_account_ids", ()))
+    single = getattr(query, "only_account_id", None)
+    if single is not None and single not in chosen:
+        chosen.append(single)
+    return [_ACCOUNT_NAMES.get(account, str(account)) for account in chosen]
 
 
 def _window(query: FinancialPlan | TopMovements) -> str:
@@ -910,6 +950,31 @@ def _query_complaints(turn: Turn, ran: tuple[FinancialPlan | TopMovements, ...])
                 )
 
 
+# Fields whose non-default value changes what a figure *means* rather than how much of it there is:
+# a subset of accounts, movement between the holder's own accounts, a named counterparty. A turn
+# whose plan carries one and whose expectation is silent about it has the same hole the exclusions
+# had — the episode written for the distinction cannot see it.
+#
+# Asserted where they are doing something rather than everywhere. Six fields on 364 turns is
+# already a line nobody reads before appending to it, and the value of `merchants: []` on every
+# turn was that a shop filter appearing from nowhere is a defect; an account subset appearing from
+# nowhere is caught by this instead, and costs no line at all where it never happens.
+_LOAD_BEARING = ("accounts", "counterparties", "internal_only", "include_internal")
+
+
+def _unstated(turn: Turn, ran: tuple[FinancialPlan | TopMovements, ...]) -> Iterator[str]:
+    """Filters this turn's queries carry that its expectation does not mention."""
+    if not turn.ran or not ran:
+        return
+    expectations = turn.ran if isinstance(turn.ran, list) else [turn.ran]
+    queries = ran if isinstance(turn.ran, list) else ran[-1:]
+    for expected, query in zip(expectations, queries, strict=False):
+        actual = executed(query)
+        for field_name in _LOAD_BEARING:
+            if actual.get(field_name) and field_name not in expected:
+                yield field_name
+
+
 def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
     """Every episode, with the review's metrics counted as it goes.
 
@@ -927,6 +992,10 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
                 break
             if ran and not turn.ran:
                 report.unasserted.append(f"{episode.name} · turn {number} · {turn.say!r}")
+            for field_name in _unstated(turn, ran):
+                report.unstated.append(
+                    f"{episode.name} · turn {number} · {turn.say!r} · {field_name}"
+                )
             for complaint in _complaints(turn, answer, reached_model=reached_model, ran=ran):
                 report.failures.append(Failure(episode.name, number, turn.say, complaint))
                 if "answered" in complaint:

@@ -13,17 +13,17 @@ episodes:
         route: QUERY
         no_model: true
         says: representa
-        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Y el mes pasado?
         route: QUERY
         no_model: true
         says: representa
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Qué porcentaje de mis gastos fue supermercado este mes?
         route: QUERY
         no_model: true
         says: gastos totales
-        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Qué parte de mis ingresos se va en restaurantes?
         route: CLARIFY
         no_model: true
@@ -31,20 +31,20 @@ episodes:
         route: QUERY
         no_model: true
         says: representa
-        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Cuál fue mi tasa de ahorro este año?
         route: QUERY
         no_model: true
         says: tasa de ahorro
-        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: Compara mis gastos de julio con junio
         route: QUERY
         no_model: true
-        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Y en porcentaje?
         route: QUERY
         no_model: true
         says: no cambió
-        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: gracias
         route: COURTESY

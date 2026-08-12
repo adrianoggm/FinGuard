@@ -11,26 +11,26 @@ episodes:
         route: QUERY
         no_model: true
         says: mismo
-        ran: [{window: '2025-03-01..2025-04-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2025-03-01..2025-04-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Y en porcentaje?
         route: QUERY
         no_model: true
         says: no cambió
-        ran: [{window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-03-01..2025-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-03-01..2025-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: Compara cuántos movimientos de gasto tuve del 1 de marzo al 15 de abril de 2026 con el periodo del 1 de mayo al 15 de junio de 2026
         route: QUERY
         no_model: true
         says: mismo número
-        ran: [{window: '2026-05-01..2026-06-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT}]
+        ran: [{window: '2026-05-01..2026-06-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}]
       - say: Compáralos otra vez
         route: QUERY
         no_model: true
         says: mismo número
-        ran: [{window: '2026-05-01..2026-06-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT}]
+        ran: [{window: '2026-05-01..2026-06-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}]
       - say: ¿Y en porcentaje?
         route: QUERY
         no_model: true
         says: no cambió
-        ran: [{window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-05-01..2026-06-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT}]
+        ran: [{window: '2026-03-01..2026-04-15', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-05-01..2026-06-15', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}]
       - say: gracias
         route: COURTESY

@@ -64,10 +64,10 @@ episodes:
         route: BALANCE
       - say: ¿y en la cuenta de la empresa?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente', 'Fondo indexado', 'Hucha']}
       - say: ¿y en la hucha?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: vale
@@ -83,10 +83,10 @@ episodes:
     turns:
       - say: ¿cuántos movimientos tengo este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuántas compras tengo?
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
       # The episode's own subject, in the turn that failed it. A bizum is a charge, so this counts
       # movements — and it was answered by grouping twelve months of them by merchant and adding
       # them up, which is how many *people* the holder has ever sent one to.
@@ -98,7 +98,7 @@ episodes:
       - say: ¿cuántos bizums tengo?
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto dinero tengo?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -178,17 +178,17 @@ episodes:
     turns:
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: ¿y en restaurantes?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY
 

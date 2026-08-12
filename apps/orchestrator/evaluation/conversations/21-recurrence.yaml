@@ -11,26 +11,26 @@ episodes:
         route: QUERY
         no_model: true
         says: gastos recurrentes
-        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: ['HOUSING_RENT', 'SUBSCRIPTIONS'], merchants: [], group_by: NONE, metric: RECURRENCE}
+        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: ['HOUSING_RENT', 'SUBSCRIPTIONS'], merchants: [], group_by: NONE, metric: RECURRENCE, excluded_categories: [], excluded_merchants: []}
       - say: Solo las suscripciones
         route: QUERY
         no_model: true
         says: gastos recurrentes
-        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: ['SUBSCRIPTIONS'], merchants: [], group_by: NONE, metric: RECURRENCE}
+        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: ['SUBSCRIPTIONS'], merchants: [], group_by: NONE, metric: RECURRENCE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y este año?
         route: QUERY
         no_model: true
         says: gastos recurrentes
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SUBSCRIPTIONS'], merchants: [], group_by: NONE, metric: RECURRENCE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SUBSCRIPTIONS'], merchants: [], group_by: NONE, metric: RECURRENCE, excluded_categories: [], excluded_merchants: []}
       - say: Mejor solo el alquiler
         route: QUERY
         no_model: true
         says: gastos recurrentes
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: RECURRENCE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: RECURRENCE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y el año pasado?
         route: QUERY
         no_model: true
         says: gastos recurrentes
-        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: RECURRENCE}
+        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: RECURRENCE, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY

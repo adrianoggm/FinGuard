@@ -34,6 +34,29 @@ REPORT = episodes.run(CORPUS)
 # a literal, and a literal that is not kept level with what exists is a check about the past.
 FLOOR = 164
 
+# Two turns whose query carries a filter from a question they are not asking, listed rather than
+# asserted away. Both are "¿cuánto gasté el mes pasado?" — an ordinary spending question — and both
+# run it restricted: one to the fund and to internal movements only, four turns after "¿cuánto he
+# invertido en el último año?"; the other to internal movements only, two turns after "¿qué
+# movimientos he tenido entre mis cuentas?". The figure that comes back is contributions to the
+# fund, presented as what the holder spent.
+#
+# Written out instead of counted, so a third cannot appear inside a number that stays the same. The
+# leak is a pending clarification taking a whole new question as the answer to the one field it was
+# missing, which is the shape this corpus keeps finding; fixing it belongs in that path, not here.
+LEAKED = [
+    "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
+    " · turn 5 · '¿cuánto gasté el mes pasado?' · accounts",
+    "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
+    " · turn 5 · '¿cuánto gasté el mes pasado?' · internal_only",
+    "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
+    " · turn 5 · '¿cuánto gasté el mes pasado?' · include_internal",
+    "09-refusals/movements_between_my_own_accounts"
+    " · turn 3 · '¿cuánto gasté el mes pasado?' · internal_only",
+    "09-refusals/movements_between_my_own_accounts"
+    " · turn 3 · '¿cuánto gasté el mes pasado?' · include_internal",
+]
+
 
 def test_the_corpus_has_not_shrunk() -> None:
     assert len(CORPUS) >= FLOOR, f"only {len(CORPUS)} episodes were loaded"
@@ -68,6 +91,22 @@ def test_every_turn_that_runs_a_query_says_which_one() -> None:
     """
     assert REPORT.unasserted == [], "\n".join(
         ["turns that ran a query in silence:", *REPORT.unasserted]
+    )
+
+
+def test_a_filter_that_is_doing_something_is_stated() -> None:
+    """The other half of the coverage rule, and the answer to what the exclusions raised.
+
+    Asserting a field on every turn is what found the fifteen filler merchants — but six fields
+    already make a line nobody reads before appending to it, and four more would make the corpus
+    unreadable to buy nothing on the turns where the value is empty. So the fields that change what
+    a figure *means* — a subset of accounts, movement between the holder's own accounts, a named
+    counterparty — are asserted where they are doing something, and this rule is what makes "where"
+    impossible to get wrong: a plan carrying one and an expectation silent about it is the same
+    hole the exclusions had.
+    """
+    assert REPORT.unstated == LEAKED, "\n".join(
+        ["filters a query carried and its turn did not mention:", *REPORT.unstated]
     )
 
 

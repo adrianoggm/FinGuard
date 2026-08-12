@@ -585,6 +585,14 @@ async def test_a_shop_named_in_a_follow_up_does_not_inherit_the_old_category() -
 
         assert planner.asked is not None, sentence
         assert ledger.plans[-1].categories == (), sentence
+        # Declining is only half the answer, and this is the half nothing else checks. The turn
+        # names a shop so that a planner can read it — and a planner that is handed the sentence
+        # without the query behind it has to rebuild the window from nothing, which is how
+        # "¿cuántas compras hice en Mercadona?" would come back about the wrong month instead of
+        # the wrong category. What this service owes the model is the thread; the merchant is the
+        # model's part.
+        assert planner.previous is not None, sentence
+        assert planner.previous.period == LAST_MONTH, sentence
 
 
 async def test_a_shop_named_beside_a_new_window_is_not_dropped() -> None:

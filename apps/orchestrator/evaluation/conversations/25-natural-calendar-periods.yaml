@@ -11,26 +11,26 @@ episodes:
         route: QUERY
         no_model: true
         says: trimestre
-        ran: {window: THIS_QUARTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_QUARTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Compáralo con el periodo anterior
         route: QUERY
         no_model: true
         says: trimestre pasado
-        ran: [{window: LAST_QUARTER, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_QUARTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_QUARTER, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_QUARTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: Ahora en la segunda quincena de julio
         route: QUERY
         no_model: true
         says: "2026-07-16"
-        ran: {window: '2026-07-16..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: '2026-07-16..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y el fin de semana pasado?
         route: QUERY
         no_model: true
         says: fin de semana pasado
-        ran: {window: LAST_WEEKEND, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_WEEKEND, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Compara mis gastos de este semestre con el anterior
         route: QUERY
         no_model: true
         says: semestre
-        ran: [{window: LAST_SEMESTER, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_SEMESTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_SEMESTER, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_SEMESTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: gracias
         route: COURTESY

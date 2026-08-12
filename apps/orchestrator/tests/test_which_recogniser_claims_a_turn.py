@@ -68,7 +68,23 @@ CORPUS = episodes.load()
 # it is why this number is twelve rather than thirteen.
 #
 # A ratchet, not a target. Lower it by removing a tie; raise it only with the new pair written down.
-CONTESTED = 12
+#
+# Thirteen now, and the move is one out and two in.
+#
+# Out: `contextual_follow_up` no longer claims "¿cuánto he gastado en inversiones?", because a
+# follow-up that names something no vocabulary here knows now declines instead of patching the
+# query in view. One reading left, so no tie.
+#
+# In, and both were always there: `executed()` could not say which accounts a query was restricted
+# to or which counterparty it named, so two pairs whose readings differ by exactly that looked
+# identical and were counted as agreement. "¿Qué aportaciones hice al fondo este año?" — one
+# reading restricted to the fund and one not. "Desglósalo por cuenta" — one keeping the shop the
+# previous answer singled out and one dropping it, which is the difference between breaking down
+# that shop and breaking down the whole category.
+#
+# Neither is a wrong answer today: the order picks the right reading in both. What changed is that
+# the measurement can see them, which is the point of a measurement.
+CONTESTED = 13
 
 
 def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixture[str]) -> None:

@@ -18,7 +18,7 @@ episodes:
         awaiting: AMOUNT
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: continuar con el bizum
         route: PAYMENT
         awaiting: AMOUNT
@@ -42,7 +42,7 @@ episodes:
         route: PAYMENT
       - say: ¿cuánto gasté en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: 20 euros
         not_says: Confirmas
       - say: ¿cuánto tengo?
@@ -85,10 +85,10 @@ episodes:
       - say: ¿cuánto gasté este mes?
         route: QUERY
         ends: true
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: 1000
         not_says: Hucha
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: mueve 1000 € a la hucha
@@ -111,7 +111,7 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: dime las categorías
         route: CATEGORIES
       - say: ¿quién eres?
@@ -137,10 +137,10 @@ episodes:
         route: BALANCE
       - say: 20 euros
         not_says: Confirmas
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY
 
@@ -152,7 +152,7 @@ episodes:
     turns:
       - say: ¿cuánto llevo gastado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿quién eres?
@@ -161,7 +161,7 @@ episodes:
         route: CONTACTS
       - say: este año
         route: QUERY
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY
 
@@ -178,7 +178,7 @@ episodes:
         keeps: PAYMENT_CONFIRMATION
       - say: 20 euros
         not_says: Confirmas
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: hazle un bizum de 20 € a Marta Solis Vega
@@ -199,7 +199,7 @@ episodes:
         awaiting: AMOUNT
       - say: espera
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
       - say: vale, mueve 500 € a la hucha
@@ -230,4 +230,4 @@ episodes:
         route: COURTESY
       - say: ¿cuánto gasté este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}

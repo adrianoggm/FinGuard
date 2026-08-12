@@ -14,21 +14,21 @@ episodes:
       - say: Este año
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: Pero no me lo has desglosado por cuenta
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Vale genial, ¿me lo podrías comparar con el año anterior?
         route: QUERY
         no_model: true
-        ran: [{window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}]
+        ran: [{window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: Compara este año income de cada cuenta con el año anterior
         route: QUERY
         no_model: true
-        ran: [{window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}]
+        ran: [{window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: Ahora, ¿cuánto gasté en la hucha este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: gracias
         route: COURTESY
