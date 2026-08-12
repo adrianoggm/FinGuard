@@ -325,10 +325,15 @@ _HAS_THEM: Final = re.compile(
 # Only the rails are added, and "domiciliaciones" and "suscripciones" deliberately are not: those
 # name the arrangement at least as often as the charge, and a question about how many of *them* you
 # have is the payee count this path exists for. A bizum is never an arrangement.
-_THE_CHARGE_NOT_THE_PAYEE: Final = re.compile(
-    r"\b(?:movimientos?|veces|compras?|pagos?|cargos?|recibos?|cobros?|operaciones?|transacciones?"
-    r"|bi[xz]ums?|transferencias?|traspasos?)\b"
+#
+# Exported, because the same nouns decide the same thing in the query handler's count follow-up and
+# were kept there by hand. They stayed level only because one change happened to touch both: the
+# rails were missing from each, and each was found separately.
+CHARGE_NOUNS: Final = (
+    r"movimientos?|veces|compras?|pagos?|cargos?|recibos?|cobros?|operaciones?|transacciones?"
+    r"|bi[xz]ums?|transferencias?|traspasos?"
 )
+_THE_CHARGE_NOT_THE_PAYEE: Final = re.compile(rf"\b(?:{CHARGE_NOUNS})\b")
 
 # Asking for money, which is never this however it is phrased.
 _ASKS_AN_AMOUNT: Final = re.compile(r"\b(?:cuanto|importe|total|suma|gaste|gastado|gasto|pague)\b")

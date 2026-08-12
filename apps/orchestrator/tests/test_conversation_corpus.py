@@ -27,7 +27,12 @@ REPORT = episodes.run(CORPUS)
 # A floor rather than an equality, so adding an episode is never a failing build — and a floor at
 # all, so a glob that matches nothing cannot pass by finding no work. Raise it as files land, never
 # lower it.
-FLOOR = 130
+#
+# It said 130 against 164 episodes, which is a third of the corpus that could have gone missing
+# without this noticing. Unlike the coverage rule below, this one cannot be derived from what the
+# corpus does — its whole job is to fail when the corpus is not there to be measured — so it stays
+# a literal, and a literal that is not kept level with what exists is a check about the past.
+FLOOR = 164
 
 
 def test_the_corpus_has_not_shrunk() -> None:

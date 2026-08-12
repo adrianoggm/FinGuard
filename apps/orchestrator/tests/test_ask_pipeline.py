@@ -563,20 +563,49 @@ async def test_a_shop_named_in_a_follow_up_does_not_inherit_the_old_category() -
     complete question: "¿y en gasolina?" introduces nothing this path does not know, and this one
     introduces the one filter it cannot represent.
     """
+    for sentence in (
+        "¿cuántas compras hice en Mercadona?",
+        # Lower case too. The rule was the capital letter at first, which is the sentence saying
+        # "this is a name" — but it left everybody who types without shift answering about the
+        # wrong category, and the check underneath never needed the capital: it asks the
+        # vocabularies whether they claim the word, and none of them claims a shop.
+        "cuantas compras hice en mercadona",
+    ):
+        ledger = RecordingLedger(ANSWER)
+        planner = FakePlanner(PlanningResult.planned(plan(metric=Metric.COUNT)))
+
+        await chat(planner, ledger).handle(
+            AskFinancialQuestionQuery(
+                sentence=sentence,
+                account_id=ACCOUNT,
+                today=TODAY,
+                conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+            )
+        )
+
+        assert planner.asked is not None, sentence
+        assert ledger.plans[-1].categories == (), sentence
+
+
+async def test_a_shop_named_beside_a_new_window_is_not_dropped() -> None:
+    """The same hole, one branch further up. "A turn containing only a new window" patches the
+    query on screen, and its test for "only" is eight words — so a sentence naming a shop *and* a
+    window is short enough to be read as the window alone, and the shop disappears into an answer
+    about whatever the previous turn was filtered by."""
     ledger = RecordingLedger(ANSWER)
-    planner = FakePlanner(PlanningResult.planned(plan(metric=Metric.COUNT)))
+    planner = FakePlanner(PlanningResult.planned(plan()))
 
     await chat(planner, ledger).handle(
         AskFinancialQuestionQuery(
-            sentence="¿cuántas compras hice en Mercadona?",
+            sentence="¿cuánto gasté en Mercadona el mes pasado?",
             account_id=ACCOUNT,
             today=TODAY,
             conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
         )
     )
 
-    assert planner.asked is not None, "it declines rather than answering about the wrong category"
-    assert ledger.plans[-1].categories == ()
+    assert planner.asked is not None, "a shop is not a window, and this path has no field for one"
+    assert ledger.plans[-1].categories != ("RESTAURANTS",)
 
 
 async def test_counting_a_kind_the_vocabulary_knows_keeps_the_window() -> None:
