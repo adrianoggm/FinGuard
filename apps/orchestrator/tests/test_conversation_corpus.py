@@ -34,16 +34,15 @@ REPORT = episodes.run(CORPUS)
 # a literal, and a literal that is not kept level with what exists is a check about the past.
 FLOOR = 164
 
-# Two turns whose query carries a filter from a question they are not asking, listed rather than
-# asserted away. Both are "¿cuánto gasté el mes pasado?" — an ordinary spending question — and both
-# run it restricted: one to the fund and to internal movements only, four turns after "¿cuánto he
-# invertido en el último año?"; the other to internal movements only, two turns after "¿qué
-# movimientos he tenido entre mis cuentas?". The figure that comes back is contributions to the
-# fund, presented as what the holder spent.
+# The one turn still carrying a filter from a question it is not asking, written out rather than
+# counted so a second cannot appear inside a number that stays the same.
 #
-# Written out instead of counted, so a third cannot appear inside a number that stays the same. The
-# leak is a pending clarification taking a whole new question as the answer to the one field it was
-# missing, which is the shape this corpus keeps finding; fixing it belongs in that path, not here.
+# "¿Cuánto gasté el mes pasado?" runs restricted to the fund and to internal movements only, four
+# turns after "¿cuánto he invertido en el último año?" — so the holder asks what they spent and is
+# told what they put into the fund, as a real figure with the right month on it. Its twin in
+# `movements_between_my_own_accounts` is fixed: a pending clarification no longer takes a whole new
+# question as the answer to the field it was missing. This one survives that fix, so it arrives by
+# a different path and has not been found yet.
 LEAKED = [
     "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
     " · turn 5 · '¿cuánto gasté el mes pasado?' · accounts",
@@ -51,10 +50,6 @@ LEAKED = [
     " · turn 5 · '¿cuánto gasté el mes pasado?' · internal_only",
     "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
     " · turn 5 · '¿cuánto gasté el mes pasado?' · include_internal",
-    "09-refusals/movements_between_my_own_accounts"
-    " · turn 3 · '¿cuánto gasté el mes pasado?' · internal_only",
-    "09-refusals/movements_between_my_own_accounts"
-    " · turn 3 · '¿cuánto gasté el mes pasado?' · include_internal",
 ]
 
 
@@ -104,6 +99,11 @@ def test_a_filter_that_is_doing_something_is_stated() -> None:
     counterparty — are asserted where they are doing something, and this rule is what makes "where"
     impossible to get wrong: a plan carrying one and an expectation silent about it is the same
     hole the exclusions had.
+
+    It found two wrong figures on the turn it was written. Both were "¿cuánto gasté el mes pasado?"
+    run restricted — one to the fund and to internal movements only, the other to internal
+    movements only. The holder asked what they spent and got what they had moved into their own
+    accounts, with the right window on it. One is fixed; `LEAKED` is the other.
     """
     assert REPORT.unstated == LEAKED, "\n".join(
         ["filters a query carried and its turn did not mention:", *REPORT.unstated]

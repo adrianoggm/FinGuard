@@ -1874,9 +1874,22 @@ class AskFinancialQuestionHandler:
 
         A reply that goes to the model is handled just below as a forced patch. That path completes
         any window it can read here, then tells the model which existing fields are settled.
+
+        **And the sentence has to be an answer.** That was the fourth condition and it was missing:
+        a whole new financial question names a window too, so "¿cuánto gasté el mes pasado?" asked
+        with "¿qué movimientos he tenido entre mis cuentas?" still open completed *that* draft and
+        came back restricted to internal movements — and in the fund episode, restricted to the
+        fund as well. The holder asked what they spent and was told what they had moved into their
+        own accounts, as a real figure with the right window on it.
+
+        A state that takes every sentence is the shape this service keeps being wrong in. The draft
+        is waiting for one missing field; a sentence that states a question of its own is not that
+        field, and it belongs to the path that reads whole questions.
         """
         active = query.conversation.active
         if not isinstance(active, FinancialClarification):
+            return None
+        if _starts_new_financial_scope(query.sentence, today=query.today):
             return None
         draft = active.draft
         if active.awaiting is Slot.CATEGORY:
@@ -1926,9 +1939,14 @@ class AskFinancialQuestionHandler:
         A compound reply such as "este año, pero cuéntalas" supplies the missing window and also
         changes the metric. `_finish_pending` correctly refuses to execute the old metric; this
         method then gives the completed draft to the planner as a forced patch instead of losing it.
+
+        The same fourth condition as above, and for the same reason: forcing the draft's settled
+        fields on a whole new question hands the model the wrong ones to keep.
         """
         active = query.conversation.active
         if not isinstance(active, FinancialClarification):
+            return None
+        if _starts_new_financial_scope(query.sentence, today=query.today):
             return None
         draft = active.draft
         complete = draft.into_plan()
