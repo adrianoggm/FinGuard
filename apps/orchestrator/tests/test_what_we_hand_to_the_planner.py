@@ -13,68 +13,65 @@ reader stood aside for a specific one — moved a turn from "we answer it" to "w
 Ceding a turn is only an improvement if whoever receives it does better, and that has been an
 assumption throughout.
 
-So the corpus reports what it handed over, and this file measures how much of that the planning
-dataset exercises. The number is a ratchet: it may only go down, and it goes down either by writing
-the missing cases or by a deterministic reader legitimately claiming the turn back.
+The cases come from `scripts/handover_cases.py`, which is what a judge will read too. One
+definition of "a turn we handed over" rather than one here and one there.
 
 **The obvious next layer is a judge.** 107 cases is more expected plans than anybody will hand-write
 well, and most of these turns have no single right plan — "¿cuántas compras hice en Mercadona?"
 needs a merchant filter this schema has, and which window it inherits is a judgement. A model
-scoring the plan against the sentence and the conversation behind it is the shape that fits, and
-this list is what it would score.
+scoring the plan against the sentence and the conversation behind it is the shape that fits; the
+anchor group is what says whether its scores can be believed.
 """
 
-import pathlib
+import sys
+from pathlib import Path
 
-import yaml
-from support import episodes
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from finguard_orchestrator.domain.services import spanish
+from handover_cases import cases  # noqa: E402
 
-CORPUS = episodes.load()
-REPORT = episodes.run(CORPUS)
-PLANNING = pathlib.Path(__file__).resolve().parents[1] / "evaluation" / "planning"
-
-
-def _sentences(node: object) -> set[str]:
-    """Every `say` in a planning dataset, however deeply the file nests its turns."""
-    if isinstance(node, dict):
-        found = set().union(*(_sentences(value) for value in node.values())) if node else set()
-        said = node.get("say")
-        return found | ({_folded(said)} if isinstance(said, str) else set())
-    if isinstance(node, list):
-        return set().union(*(_sentences(item) for item in node)) if node else set()
-    return set()
-
-
-def _folded(sentence: str) -> str:
-    return spanish.folded(sentence).strip(" ¿?¡!.,;:")
-
-
-MEASURED = _sentences(yaml.safe_load((PLANNING / "conversations.yaml").read_text("utf-8")))
+CASES = cases()
 
 # How many handed-over turns no planning case exercises. A ratchet, and it only moves one way:
 # down by writing the case, or down by a deterministic reader claiming the turn back.
 #
-# 107 of 153 the day it was measured. Not a target to grind to zero by hand — the note in the
-# docstring about a judge is the honest route for most of them — but a number that exists, where
-# before there was an assumption that ceding a turn made things better.
+# 107 of 153 the day it was measured. Not a target to grind to zero by hand — the note above about
+# a judge is the honest route for most of them — but a number that exists, where before there was
+# an assumption that ceding a turn made things better.
 UNMEASURED = 107
 
 
 def test_the_turns_we_hand_over_are_measured_somewhere() -> None:
-    unmeasured = sorted({say for say in REPORT.handed_over if _folded(say) not in MEASURED})
+    unmeasured = sorted({case["say"] for case in CASES if case["group"] == "extension"})
 
     assert len(unmeasured) <= UNMEASURED, "\n".join(
-        [
-            f"{len(unmeasured)} handed-over sentences no planning case exercises"
-            f" (was {UNMEASURED}):",
-            *unmeasured[:20],
-        ]
+        [f"{len(unmeasured)} handed-over sentences no planning case exercises:", *unmeasured[:20]]
     )
 
 
-def test_the_corpus_reports_what_it_handed_over() -> None:
-    """The measurement has to be able to be wrong. If nothing reached the planner the check above
-    would pass by finding no work, which is how a floor lies."""
-    assert len(REPORT.handed_over) > 100, "a corpus this size cedes turns; zero means a broken stub"
+def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
+    """The measurement has to be able to be wrong twice over.
+
+    If nothing reached the planner the ratchet above would pass by finding no work, which is how a
+    floor lies. And a judge validated against a handful of cases is a judge nobody should believe,
+    so the group that validates it is measured too rather than assumed to be there.
+    """
+    anchor = [case for case in CASES if case["group"] == "anchor"]
+
+    assert len(CASES) > 100, "a corpus this size cedes turns; near zero means a broken stub"
+    assert len(anchor) >= 40, f"only {len(anchor)} handed-over turns have a written expectation"
+
+
+def test_a_case_carries_the_conversation_behind_it() -> None:
+    """A sentence on its own is a different question: "¿y el mes pasado?" judged without the query
+    it follows is unanswerable, so a case that dropped the thread would measure nothing.
+
+    Fifty-six of the hundred and fifty-three arrive with a query in view, which is worth knowing
+    before choosing how to evaluate them. The other ninety-seven are the *first* financial question
+    of a thread — the sentence determines the plan on its own, which is the shape `planning/dev`
+    already scores well and the shape a person can write an expectation for. The judge earns its
+    keep on the fifty-six, where what the turn inherits is a judgement rather than a fact.
+    """
+    following = [case for case in CASES if case["previous"] is not None]
+
+    assert len(following) >= 50, f"only {len(following)} cases carry the query they follow"
