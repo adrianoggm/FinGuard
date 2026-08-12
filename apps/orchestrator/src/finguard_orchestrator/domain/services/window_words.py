@@ -48,7 +48,14 @@ _NAMED: Final[tuple[tuple[str, Period], ...]] = (
     ("en lo que llevamos de mes", Period.THIS_MONTH),
     ("en lo que va de mes", Period.THIS_MONTH),
     ("la semana pasada", Period.LAST_WEEK),
-    ("el mes pasado", Period.LAST_MONTH),
+    # Without its determiner, because "del" hides one. The entry read "el mes pasado" and the match
+    # is anchored on both sides, so "¿cuánto gasté del mes pasado?" carried no window at all —
+    # a sentence that states its period outright, sent to a model to be asked which period it meant.
+    #
+    # The year never had the defect and shows why: it is read as "ano pasado", noun and adjective,
+    # by a rule that never learned the article. Two entries below — "del ano" and "el ano" — are the
+    # same lesson written the other way, one spelling at a time.
+    ("mes pasado", Period.LAST_MONTH),
     ("esta semana", Period.THIS_WEEK),
     ("este mes", Period.THIS_MONTH),
     ("este ano", Period.THIS_YEAR),
