@@ -84,7 +84,26 @@ CORPUS = episodes.load()
 #
 # Neither is a wrong answer today: the order picks the right reading in both. What changed is that
 # the measurement can see them, which is the point of a measurement.
-CONTESTED = 13
+#
+# Eight now, and this is the first time the number has gone down by removing the overlap rather
+# than by fixing a misreading. Five of the thirteen were the general follow-up claiming a turn that
+# belongs to the ratio path — "¿y el mes pasado?" over a proportion, a savings rate, a net cash
+# flow — and it now declines while one is in view. An answer that took two queries is not something
+# to patch a window onto: read as a plain follow-up it returns one operand and drops the other.
+#
+# The eight that remain are two shapes, and both need the *sentence* read rather than the state:
+#
+#   direct_period_comparison vs a single-period reader (4)
+#       "¿En qué mes fue mayor mi gasto medio, julio o junio?" and friends. The sentence names two
+#       periods and the loser reads one. A single-period reader declining when two are named would
+#       close all four, and that is the next one to do.
+#
+#   contextual_follow_up vs a more specific reader (4)
+#       `internal_movement` on the sentence that names the movement, `account_follow_up` on the one
+#       that names the account, `deterministic_breakdown` on "desglósalo por cuenta". Declining on
+#       conversation state was tried here and is wrong: it takes "¿y el mes pasado?" away from the
+#       only reader that keeps an internal scope, and the answer comes back as ordinary spending.
+CONTESTED = 8
 
 
 def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixture[str]) -> None:

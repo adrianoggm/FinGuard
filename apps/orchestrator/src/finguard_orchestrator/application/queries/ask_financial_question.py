@@ -4616,6 +4616,23 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     previous = query.conversation.last_plan
     if not isinstance(previous, FinancialPlan):
         return None
+
+    # A follow-up over an answer that took two queries belongs to the path that ran both. This is
+    # the general reader, and being general is what made it claim seven turns another recogniser
+    # also claimed — the cascade's order picked the right one every time, and nothing said so.
+    #
+    # "¿Y el mes pasado?" after "¿qué porcentaje de mi nómina se va en alquiler?" is the whole
+    # proportion moved to another month; read here it is the rent side alone, with the income
+    # operand dropped and a real figure left standing where a percentage was asked for. Same for a
+    # savings rate and a net cash flow.
+    if query.conversation.last_ratio is not None or query.conversation.pending_ratio is not None:
+        return None
+
+    # Its twin for internal movement was tried and does not hold. `internal_movement` claims the
+    # *sentence* that names one — "¿cuánto he movido a la hucha este año?" — and not a bare window
+    # over a plan that happens to be internal: declining on `previous.internal_only` took "¿y el
+    # mes pasado?" away from the only reader that keeps the scope, and the answer came back as
+    # ordinary spending. Those two ties need the sentence read, not the state.
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
     facts = explicit_facts.read(query.sentence, today=query.today)
