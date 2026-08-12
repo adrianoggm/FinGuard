@@ -554,6 +554,51 @@ async def test_an_empty_answer_explains_the_filters_and_offers_supported_relaxat
     assert ledger.plan.period == LAST_MONTH
 
 
+async def test_a_shop_named_in_a_follow_up_does_not_inherit_the_old_category() -> None:
+    """A real figure about a different question, which is the failure this service is built around.
+
+    "¿Cuántas compras hice en Mercadona?" is five words — exactly the length the ellipsis branch
+    allows — so it patched the previous query and kept its categories, and a question about a shop
+    came back counting restaurant purchases. Length was never what tells an ellipsis from a
+    complete question: "¿y en gasolina?" introduces nothing this path does not know, and this one
+    introduces the one filter it cannot represent.
+    """
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan(metric=Metric.COUNT)))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántas compras hice en Mercadona?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+        )
+    )
+
+    assert planner.asked is not None, "it declines rather than answering about the wrong category"
+    assert ledger.plans[-1].categories == ()
+
+
+async def test_a_follow_up_that_names_nothing_new_is_still_an_ellipsis() -> None:
+    """The other half. The rule reads a name in a filter slot, not any capital and not any length,
+    so an ellipsis that introduces nothing still patches the query in view without a model."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántas compras hice?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+        )
+    )
+
+    assert planner.asked is None
+    assert ledger.plans[-1].categories == ("RESTAURANTS",)
+    assert ledger.plans[-1].metric is Metric.COUNT
+
+
 async def test_merchant_suggestions_drop_an_incompatible_period_average_metric() -> None:
     empty = QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
     ledger = RecordingLedger(empty)

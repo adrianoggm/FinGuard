@@ -4557,6 +4557,37 @@ def _last_completed_weekend(today: date) -> AbsoluteRange:
     return AbsoluteRange(start=sunday - timedelta(days=1), end=sunday)
 
 
+# A name in the slot a filter goes in. "¿Cuántas compras hice en Mercadona?" is a question about a
+# shop, and a shop is the one filter the ellipsis branch below cannot represent: it patches the
+# previous query and keeps its categories, so the turn came back counting *restaurant* purchases —
+# a real figure about a different question, which is the failure this service is built around.
+#
+# The length guard cannot see it. That sentence is five words, exactly the limit, and length was
+# never what tells an ellipsis from a complete question: "¿y en gasolina?" is an ellipsis because
+# it introduces nothing this path does not already know, and this one is not because it does.
+#
+# Capitalised, and that is the whole test. Spanish capitalises proper nouns and almost nothing else
+# mid-sentence, so a capital in the "en X" slot is the sentence saying "this is a name" — no
+# vocabulary to maintain and no shop list to be wrong about. Somebody typing all in lower case is
+# not covered here; they are covered by declining to guess further down the path, and the cost of
+# reading the capital as a name when it is not is a turn that reaches the planner, which is the
+# harmless side.
+_A_NAME_IN_A_FILTER_SLOT: Final = re.compile(
+    r"\b(?:en|de|con)\s+(?:el\s+|la\s+|los\s+|las\s+)?([A-ZÁÉÍÓÚÑ][\wáéíóúñ]{2,})"
+)
+
+
+def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
+    """Whether the sentence names something in a filter slot that no vocabulary here claims."""
+    for word in _A_NAME_IN_A_FILTER_SLOT.findall(query.sentence):
+        if category_words.named_in(word) or account_words.named_in(word):
+            continue
+        if explicit_facts.read(word, today=query.today).window is not None:
+            continue
+        return True
+    return False
+
+
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Patch explicit filters and calculations onto the last validated financial query."""
     previous = query.conversation.last_plan
@@ -4683,7 +4714,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
     # category the closed vocabulary does not know, and inheriting the old filters there would
     # answer a different question with a plausible figure.
-    if named or len(folded.split()) > 5:
+    if named or len(folded.split()) > 5 or _names_a_filter_this_cannot_read(query):
         return None
     if _COUNT_FOLLOW_UP.search(folded):
         return explicit_facts.enforce(replace(previous, metric=Metric.COUNT), facts)

@@ -266,9 +266,14 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM}
       - say: contrata un plan de pensiones entonces
         route: REFUSED
+      # A shop, and a shop is the one filter the deterministic follow-up cannot represent. It used
+      # to patch the previous query instead of declining, so a question about Mercadona came back
+      # counting restaurant purchases — a real figure about a different question. Filling
+      # `merchants` is the planner's job and the stub here does not do it, so what this asserts is
+      # the half the corpus can see: the inherited category is gone.
       - say: ¿cuántas compras hice en Mercadona?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, metric: COUNT}
       - say: gracias, adiós
         route: COURTESY
 
