@@ -91,23 +91,38 @@ CORPUS = episodes.load()
 # flow — and it now declines while one is in view. An answer that took two queries is not something
 # to patch a window onto: read as a plain follow-up it returns one operand and drops the other.
 #
-# Four now. The other four were `direct_period_comparison` against a reader of one period — the
-# sentence names two and the loser answers about one of them, which is half the question with a
-# real figure on it. `average`, `natural_period` and `deterministic_breakdown` now ask the
-# comparison reader whether it claims the sentence and stand aside when it does, so "this sentence
-# compares two periods" has one definition rather than two that drift apart.
+# **Zero.** The classes above are how the list is read, not what it holds: every one of them was
+# closed by removing the overlap, so the cascade's order no longer decides any turn of this corpus.
+# The docstring asks whether a scoring resolver is worth building, and this is the answer — there is
+# nothing left for one to resolve.
 #
-# The four that remain are one shape: `contextual_follow_up` against a more specific reader.
-# `internal_movement` on the sentence that names the movement, `account_follow_up` on the one that
-# names the account, `deterministic_breakdown` on "desglósalo por cuenta". They go one at a time
-# rather than by a rule, and one of them runs the other way — on "desglósalo por cuenta" the
-# general reader is the *right* winner, because it keeps the shop the previous answer singled out
-# and the breakdown drops it, so there the specific one is what should decline.
+# Four moves, and none of them changed a figure: the order had been picking the right reading in
+# all thirteen. What changed is that it is no longer the thing doing the picking.
 #
-# Declining on conversation state was tried here and is wrong: `previous.internal_only` takes "¿y
-# el mes pasado?" away from the only reader that keeps an internal scope, and the answer comes back
-# as ordinary spending. These need the sentence read.
-CONTESTED = 4
+#   a follow-up over a ratio belongs to the ratio (5)
+#       An answer that took two queries is not something to patch a window onto. Read as a plain
+#       follow-up, "¿y el mes pasado?" returns one operand of a proportion and drops the other.
+#
+#   a sentence that compares two periods is not one period (4)
+#       `average`, `natural_period` and `deterministic_breakdown` ask the comparison reader whether
+#       it claims the sentence. One definition of "this compares two periods" instead of two.
+#
+#   the general reader stands aside for one that knows the sentence better (3)
+#       `internal_movement` on the sentence naming a movement — read generally it comes back
+#       EXPENSE where the internal reader says INCOME, the same figure with the wrong sign — and
+#       `account_follow_up` on the one naming an account.
+#
+#   and once, the other way (1)
+#       "Desglósalo por cuenta" is not fully stated by its own words: the *lo* is the query in
+#       view, filtered to the shop the previous answer singled out, and a fresh breakdown drops it.
+#       There the general reader is the one that knows more, so the specific one declines.
+#
+# Declining on conversation state was tried and is wrong, which is worth keeping: `internal_only`
+# on the previous plan takes "¿y el mes pasado?" away from the only reader that keeps an internal
+# scope, and the answer comes back as ordinary spending. These needed the sentence read.
+#
+# A ratchet at zero now. A new tie is a design question to answer before the order answers it.
+CONTESTED = 0
 
 
 def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixture[str]) -> None:

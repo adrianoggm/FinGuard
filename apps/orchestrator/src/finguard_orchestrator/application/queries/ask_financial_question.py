@@ -4628,11 +4628,23 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     if query.conversation.last_ratio is not None or query.conversation.pending_ratio is not None:
         return None
 
-    # Its twin for internal movement was tried and does not hold. `internal_movement` claims the
-    # *sentence* that names one — "¿cuánto he movido a la hucha este año?" — and not a bare window
-    # over a plan that happens to be internal: declining on `previous.internal_only` took "¿y el
-    # mes pasado?" away from the only reader that keeps the scope, and the answer came back as
-    # ordinary spending. Those two ties need the sentence read, not the state.
+    # And the sentence itself may belong to a reader that knows more about it than this one does.
+    # "¿Cuánto he movido a la hucha este año?" is a movement between the holder's own accounts, and
+    # read here it comes back EXPENSE where the internal reader says INCOME — the same figure with
+    # the wrong sign in front of it. "En la que ingreso la nómina" names an account, and the
+    # account reader is right about which one for the same reason.
+    #
+    # Asked of those readers rather than of a vocabulary of this one's own, which is the same
+    # choice the comparison guard makes further down: two definitions of "this sentence is about
+    # an internal movement" would drift apart, and only one of them would be maintained.
+    #
+    # Declining on the *state* was tried first and is wrong: `previous.internal_only` takes "¿y el
+    # mes pasado?" away from the only reader that keeps an internal scope, and the answer comes
+    # back as ordinary spending. `internal_movement` claims the sentence that names a movement, not
+    # a bare window over a plan that happens to be internal.
+    if _internal_movement_request(query) is not None or _account_follow_up_plan(query) is not None:
+        return None
+
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
     facts = explicit_facts.read(query.sentence, today=query.today)
@@ -5037,6 +5049,13 @@ def _multiple_movement_ranking(
     )
 
 
+# The clitic that makes a breakdown a follow-up. "Desglosa por cuenta" states its own question;
+# "desglósalo por cuenta" says *that one*, and what "that one" is filtered by belongs to it.
+_REFERS_TO_THE_QUERY_IN_VIEW: Final = re.compile(
+    r"\b(?:desglosa|separa|agrupa|divide|reparte)(?:me)?(?:lo|los|la|las)\b"
+)
+
+
 def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:
     """Whether the sentence states a two-window comparison, which no single-period reader may take.
 
@@ -5098,6 +5117,23 @@ def _deterministic_breakdown_plan(
     """Build the two common breakdowns whose meaning is fully stated by the sentence."""
     if _a_comparison_owns_it(query):
         return None
+
+    # "Desglósalo por cuenta" is not fully stated by the sentence: the *lo* is the query in view,
+    # and that query is filtered to the shop the previous answer singled out. This reader builds a
+    # fresh breakdown and drops the shop, so it would answer about the whole category — a real
+    # figure about a wider question than the one asked.
+    #
+    # The one tie of the four that runs the other way. Everywhere else the general follow-up stands
+    # aside for a reader that knows more about the sentence; here it is the one that knows more,
+    # because it keeps what the pronoun is pointing at.
+    previous = query.conversation.last_plan
+    if (
+        _REFERS_TO_THE_QUERY_IN_VIEW.search(spanish.folded(query.sentence))
+        and isinstance(previous, FinancialPlan)
+        and (previous.counterparties or previous.merchants)
+    ):
+        return None
+
     facts = explicit_facts.read(query.sentence, today=query.today)
     named_categories = category_words.precisely_named_in(query.sentence)
     if not (
