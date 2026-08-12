@@ -20,6 +20,40 @@ unjudgeable is telling us the case needs a person, not a better prompt.
 
 The judge never sees the answer text or the figure. It scores the plan against the question, so a
 well-written sentence about the wrong query cannot buy a good verdict.
+
+## What the anchor said, which is that the gate works and two of the three judges failed it
+
+Seventy-two anchor turns, planned once by `qwen2.5-coder:7b` through the shipping pipeline, judged
+three times over the identical plans file:
+
+    field                 qwen3.5:9b           mistral-nemo:12b     groq/gpt-oss-120b
+    window                right 63 · wrong  1  right 18 · wrong 54  right 63 · wrong  7
+    direction             right 35 · wrong 37  right 44 · wrong  1  right 72 · wrong  0
+    categories            right 12 · wrong  8  right  7 · wrong 29  right 61 · wrong 11
+    merchants             right 25 · wrong  0  right  0 · wrong 33  right 64 · wrong  8
+    group_by              right 49 · wrong 22  right 70 · wrong  0  right 71 · wrong  1
+    metric                right 62 · wrong 10  right 67 · wrong  5  right 72 · wrong  0
+    answers_the_question  right 27 · wrong 39  right 17 · wrong 55  right 51 · wrong 17
+
+**Read the direction column first.** Sixteen of the eighteen distinct sentences are "¿cuánto
+gasté…?" and every plan says EXPENSE, so 72/0 is the only defensible answer. One local judge said
+35/37 and the other 44/1 with twenty-seven abstentions. The same is true of the window, which this
+service does not leave to a model at all — `explicit_facts` enforces it after the merge — and where
+the two local judges are sixty-two verdicts apart on identical input.
+
+So the anchor did exactly what it exists for. A model scoring plans is an opinion until it agrees
+with a person where both have an answer; these two do not even agree with each other, and neither
+may be wired to anything. The hosted judge passes the gate on the five fields with a knowable
+answer, which says the prompt and the per-field shape are sound and the local models are not big
+enough to hold them.
+
+**What this does not license.** Passing on the anchor is a licence to score the extension group with
+*that* judge, not with the idea of a judge — every model has to run this file first. And
+`answers_the_question` at 51/17 is the one column the anchor cannot settle, because it is the
+judgement the group was chosen to be easy about; the seventeen are worth reading one at a time, and
+at least one is a real planner miss rather than a judge error ("¿cuánto paso a la hucha cada mes?"
+came back THIS_YEAR with a Bizum category, which is neither the grouping nor the movement asked
+for).
 """
 
 import argparse
@@ -144,11 +178,31 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
             print(f"  {say!r}")
         return 1
 
-    provider = _provider(arguments.provider, arguments.base_url, arguments.think, None)
-    verdicts = [await judge(provider, arguments.model, case, plans[case["say"]]) for case in chosen]
+    # A sentence the pipeline declined is written into the plans file as `null`, and there is
+    # nothing here to judge: "no" and "¿y el segundo?" produced a clarification and a refusal, not
+    # a plan with a wrong window. Counted and named rather than dropped — a judge that quietly
+    # scored fewer cases than it was given would be reporting on a set nobody chose.
+    declined = [case["say"] for case in chosen if plans[case["say"]] is None]
+    scored = [case for case in chosen if plans[case["say"]] is not None]
 
-    where = f"{provider.name}/{arguments.model} · {arguments.group} · {len(chosen)} cases"
+    provider = _provider(arguments.provider, arguments.base_url, arguments.think, None)
+    # Paced like the planning evaluator, and for the same reason: a hosted free tier answers the
+    # first thirty calls and refuses the rest, which reads as a judge with an opinion about the
+    # last forty cases when it is a judge that never saw them.
+    pace = 60.0 / arguments.rpm if arguments.rpm else 0.0
+    verdicts = []
+    for number, case in enumerate(scored):
+        if number and pace:
+            await asyncio.sleep(pace)
+        verdicts.append(await judge(provider, arguments.model, case, plans[case["say"]]))
+
+    where = f"{provider.name}/{arguments.model} · {arguments.group} · {len(scored)} cases"
     print(f"\n=== judge {where} ===\n")
+    if declined:
+        print(f"  {len(declined)} turns declined by the planner and not judged, among them:")
+        for say in sorted(set(declined))[:5]:
+            print(f"    {say!r}")
+        print()
     for field, counts in tally(verdicts).items():
         print(
             f"  {field:20} right {counts['right']:>3}  wrong {counts['wrong']:>3}"
@@ -165,6 +219,7 @@ def main() -> int:
     parser.add_argument("--think", action="store_true")
     parser.add_argument("--plans", required=True, help="YAML mapping sentence -> plan")
     parser.add_argument("--group", default="anchor", choices=["anchor", "extension", "all"])
+    parser.add_argument("--rpm", type=int, default=0, help="requests a minute; 0 is unpaced")
     arguments = parser.parse_args()
     plans = yaml.safe_load(Path(arguments.plans).read_text(encoding="utf-8")) or {}
     return asyncio.run(run(arguments, plans))

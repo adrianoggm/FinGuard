@@ -339,7 +339,11 @@ def _gated(
 
 
 async def _planned(
-    planner: LlmQueryPlanner, case: dict[str, Any], *, today: date, context: Any
+    planner: LlmQueryPlanner,
+    case: dict[str, Any],
+    *,
+    today: date,
+    previous: FinancialPlan | None,
 ) -> PlanningResult:
     """One case through the pipeline as it ships, not through the model alone.
 
@@ -347,12 +351,16 @@ async def _planned(
     so a score that skipped any of them would measure a system nobody runs. This is especially
     visible for exclusions: they are intentionally absent from the constrained model schema and
     become plan fields only in the enrichment step.
+
+    `previous` arrives built rather than as a mapping to be read here. Two datasets reach this
+    pipeline now and they spell a plan differently — this file's `previous` is an expectation and
+    the handover cases' is the payload a client echoes back — so each caller uses the reader that
+    matches its own file, and there is no third spelling in the middle.
     """
     refused = capability_guard.unsupported_reason(case["question"])
     if refused is not None:
         return PlanningResult.unsupported(refused)
 
-    previous = as_plan(context) if context else None
     result = await planner.plan(case["question"], today=today, previous=previous)
     if not result.is_answerable:
         rescued = _from_what_the_sentence_said(
@@ -660,7 +668,9 @@ async def run(
             await asyncio.sleep(pace_seconds)
         started = time.perf_counter()
         context = case.get("previous")
-        result = await _planned(planner, case, today=today, context=context)
+        result = await _planned(
+            planner, case, today=today, previous=as_plan(context) if context else None
+        )
         score.latencies.append(time.perf_counter() - started)
 
         if result.outcome is PlanningOutcome.PROVIDER_ERROR:
