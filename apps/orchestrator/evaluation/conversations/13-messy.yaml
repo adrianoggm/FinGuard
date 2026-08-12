@@ -149,8 +149,8 @@ episodes:
         route: PAYMENT
         says: Hecho
       - say: cunato me queda
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: BALANCE
+        no_model: true
       - say: ¿cuánto me queda?
         route: BALANCE
       - say: ¿y en la hucha?

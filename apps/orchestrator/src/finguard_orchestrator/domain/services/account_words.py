@@ -39,7 +39,9 @@ _KINDS: Final[dict[str, tuple[str, ...]]] = {
         "la princpal",
         "cuenta princpal",
         "la nómina",
-        "la nomnia",
+        # "La nomnia" was here as its own entry and is gone: it is the noun with two letters
+        # swapped, which `_spelt` now derives for every word in this table. The two that stay —
+        # "princpal" and "huch" — are a letter *missing*, which no rule here forgives.
         "la cuenta nómina",
     ),
     "SAVINGS": (
@@ -112,13 +114,28 @@ _UNSAFE_ALIAS: Final = re.compile(
 )
 
 
+def _spelt(noun: str) -> str:
+    """The noun and every slip of two neighbouring letters in it, as an alternation.
+
+    "Y en la hcuha" named no account, so a follow-up about the savings balance was planned as a
+    spending query — and the table's answer to that had been to write the misspellings down one at
+    a time: "la nomnia", "la princpal", "huch". Three spellings somebody happened to see, standing
+    for an open set.
+
+    Transpositions and not one whole edit, for the reason the balance question word uses the same
+    rule: a substitution away from "hucha" is "mucha", which is in every other sentence, and this
+    vocabulary decides which accounts a figure is about.
+    """
+    return "|".join(re.escape(spelling) for spelling in spanish.transposed(noun))
+
+
 def _pattern(word: str) -> str:
     folded = spanish.folded(word)
     for article in _ARTICLES:
         if folded.startswith(article):
-            noun = re.escape(folded.removeprefix(article))
-            return rf"(?<![a-z0-9]){_DETERMINERS}\s+{noun}(?![a-z0-9])"
-    return rf"(?<![a-z0-9]){re.escape(folded)}(?![a-z0-9])"
+            noun = _spelt(folded.removeprefix(article))
+            return rf"(?<![a-z0-9]){_DETERMINERS}\s+(?:{noun})(?![a-z0-9])"
+    return rf"(?<![a-z0-9])(?:{_spelt(folded)})(?![a-z0-9])"
 
 
 # Prepositions that point at where money is going. "En" is here because "mete 30 en la hucha" is an
@@ -222,8 +239,8 @@ def destination_in(sentence: str) -> tuple[str, ...]:
     found: dict[str, int] = {}
     for kind, words in _KINDS.items():
         for word in sorted(words, key=len, reverse=True):
-            noun = re.escape(_noun_of(word))
-            towards = rf"(?<![a-z0-9]){_TOWARDS}\s+(?:{_DETERMINERS}\s+)?{noun}(?![a-z0-9])"
+            noun = _spelt(_noun_of(word))
+            towards = rf"(?<![a-z0-9]){_TOWARDS}\s+(?:{_DETERMINERS}\s+)?(?:{noun})(?![a-z0-9])"
             match = re.search(towards, haystack)
             if match:
                 found.setdefault(kind, match.start())

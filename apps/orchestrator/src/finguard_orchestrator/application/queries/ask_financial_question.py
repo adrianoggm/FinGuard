@@ -173,6 +173,28 @@ _COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
     r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|ano|periodo)\s+"
     r"(?:anterior|pasad[oa])$"
 )
+# "¿Y el mes anterior?" — the same question, one calendar unit back from the window on screen.
+#
+# The year had this and nothing else did. "¿Y el año anterior?" after July 2026 has meant July 2025
+# since it was written; "¿y el mes anterior?" after the same question was not read at all, so it
+# went to the planner and came back as *last month* with the category dropped — a different month
+# from the one asked for, and the petrol filter gone from a question about petrol.
+#
+# The unit is handed to `_previous_calendar_window`, which the comparison path already uses for
+# "compruébalo con el mes anterior". One definition of what precedes a window, rather than this
+# reader growing a second one that would answer June in one sentence and July in the other.
+#
+# **"Anterior" only, except for the year.** "Anterior" is relative to the window in view and says
+# so; "el mes pasado" is relative to *today* and is how everybody names last month outright, so
+# reading it as a step back would answer June to somebody who said July. The year keeps both words
+# because "el año pasado" after a month means that month a year ago, which is what it already did.
+_A_CALENDAR_UNIT_BACK: Final = re.compile(
+    r"(?:y\s+)?(?:el\s+|la\s+)?(?:"
+    r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|periodo)\s+"
+    r"(?:anterior|previo|previa)"
+    r"|(?P<year>ano)\s+(?:anterior|pasado)"
+    r")"
+)
 _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs"
     r"|mas\b.{0,55}\b(?:que|o)|menos\b.{0,55}\b(?:que|o)"
@@ -4752,15 +4774,16 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         # window, direction and calculation merely to understand "sin alquiler".
         return explicit_facts.enforce(previous, facts)
 
-    if (
-        re.fullmatch(r"(?:y\s+)?(?:el\s+)?ano\s+(?:anterior|pasado)", folded)
-        and (earlier_window := _previous_calendar_window(previous, "ano", query.today)) is not None
-    ):
-        return replace(
-            previous,
-            period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
-            date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
-        )
+    a_unit_back = _A_CALENDAR_UNIT_BACK.fullmatch(folded)
+    if a_unit_back is not None:
+        unit = a_unit_back.group("unit") or a_unit_back.group("year")
+        earlier_window = _previous_calendar_window(previous, unit, query.today)
+        if earlier_window is not None:
+            return replace(
+                previous,
+                period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
+                date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
+            )
 
     # A turn containing only a new window patches the query already on screen. Replanning
     # "en lo que llevamos de aÃ±o" from scratch discarded both categories in a comparison.

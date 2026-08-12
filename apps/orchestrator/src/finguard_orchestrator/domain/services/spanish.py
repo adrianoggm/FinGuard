@@ -33,6 +33,26 @@ def folded(text: str) -> str:
     return "".join(character for character in stripped if not unicodedata.combining(character))
 
 
+def transposed(word: str) -> tuple[str, ...]:
+    """`word`, plus every swap of two of its neighbouring letters.
+
+    The slip a keyboard makes — two fingers arriving in the wrong order — and the one misspelling
+    Spanish almost never turns into a different word. That is what makes it safe where a whole edit
+    is not: "cunato" and "cuanot" are nothing at all, while one *substitution* from "cuanto" is
+    "cuando", which is a different question, and one from "hucha" is "mucha", which is in every
+    other sentence.
+
+    Derived rather than enumerated, for the reason every list in this service ends up derived: the
+    spelling somebody misses is the one nobody thought to write down. "Cunato tengo" was answered
+    by the financial planner for as long as the balance pattern spelled out `cu[áa]nto` — a
+    question this service holds the answer to, sent to a model because two letters arrived swapped.
+
+    For closed vocabularies and short words. The caller joins these into an alternation, so a word
+    of n letters costs n patterns.
+    """
+    return (word, *(word[:i] + word[i + 1] + word[i] + word[i + 2 :] for i in range(len(word) - 1)))
+
+
 def one_edit_apart(typed: str, word: str) -> bool:
     """Whether `typed` is `word` with at most one letter wrong.
 

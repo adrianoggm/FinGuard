@@ -98,6 +98,29 @@ def test_the_longest_reading_wins() -> None:
     assert window_words.window_in("este mes").period is Period.THIS_MONTH
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto gasté del mes pasado?",
+        "los gastos del mes pasado",
+        "de lo del mes pasado",
+        # And the spelling that always worked, which is the point: the article is optional, not
+        # forbidden.
+        "el mes pasado",
+        "pues del mes pasado",
+    ],
+)
+def test_the_article_of_a_month_may_be_glued_to_its_preposition(sentence: str) -> None:
+    """ "Del" is "de" and "el", and the phrase table only knew the second one spelled out.
+
+    The entry was "el mes pasado" and it is matched between word boundaries, so "del mes pasado"
+    matched nothing and a sentence that names its period outright was sent to a model to be asked
+    which period it meant. The year never had the defect, because it is read as noun plus adjective
+    by a rule that never learned the article.
+    """
+    assert window_words.window_in(sentence).period is Period.LAST_MONTH
+
+
 def test_a_count_out_of_range_is_not_a_window() -> None:
     """The domain bounds `n`, so a sentence asking for 5000 days is not a window this can build.
     Returning None sends it to the model, which is better than raising from a reader."""

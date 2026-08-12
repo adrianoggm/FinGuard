@@ -290,10 +290,35 @@ def test_a_payment_wins_over_a_complaint() -> None:
         "saldo",
         "Cuanto tiengo en mi huch",
         "Cuanto tngo",
+        # The question word mistyped, which is the half that carried no misspellings at all while
+        # the verb beside it carried three written out by hand.
+        "cunato tengo",
+        "cunato me queda",
+        "cuanot dinero tengo",
     ],
 )
 def test_a_question_about_the_balance_is_its_own_intent(sentence: str) -> None:
     assert route(sentence) is Intent.ACCOUNT_BALANCE
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # One *substitution* from "cuanto", and a different question: when the salary arrives is
+        # not how much money there is, and answering it with a figure would be the balance defect
+        # pointing the other way.
+        "¿cuándo cobro la nómina?",
+        "¿cuándo me llega la nómina?",
+    ],
+)
+def test_a_transposition_is_forgiven_and_a_substitution_is_not(sentence: str) -> None:
+    """Why the slip this tolerates is the one a keyboard makes rather than any one edit.
+
+    Spanish almost never turns two swapped neighbours into another word — "cunato" and "cuanot" are
+    nothing — while a single substitution reaches "cuando" from "cuanto" and "mucha" from "hucha".
+    A widening that cannot tell those apart would answer a question about *when* with a balance.
+    """
+    assert route(sentence) is not Intent.ACCOUNT_BALANCE
 
 
 @pytest.mark.parametrize(

@@ -771,6 +771,43 @@ def test_the_year_before_after_a_bare_month_is_that_month_a_year_back() -> None:
     assert ledger.plans[1].categories == ("GROCERIES",)
 
 
+def test_the_month_before_is_the_same_shift_and_had_no_reader() -> None:
+    """The year had this phrase and the month did not, which is a rule written for one word.
+
+    "¿Y el mes anterior?" after a question about June is May, with the category untouched. It used
+    to reach the planner and come back as *last month* — a different month from the one asked for —
+    with the shop filter dropped on the way, because a model re-reading four words re-creates the
+    whole plan out of them.
+    """
+    client, planner, ledger, _ = wired({"junio": PlanningResult.planned(spending())})
+    chat = Chat(client)
+
+    chat.say("¿cuánto gasté en junio en el súper?")
+    asked = len(planner.asked)
+    chat.say("¿y el mes anterior?")
+
+    assert len(planner.asked) == asked, "the shift reached the model"
+    assert ledger.plans[1].date_range == AbsoluteRange(date(2026, 5, 1), date(2026, 5, 31))
+    assert ledger.plans[1].categories == ("GROCERIES",)
+
+
+def test_last_month_named_outright_is_not_a_step_back() -> None:
+    """The word that must not join it. "Anterior" is relative to the window on screen; "el mes
+    pasado" is relative to today and is how anybody names last month outright — so after a question
+    about June it is July, and reading it as a step back would answer May to somebody who said
+    July."""
+    client, _, ledger, _ = wired(
+        {"junio": PlanningResult.planned(spending()), "mes": PlanningResult.planned(spending())}
+    )
+    chat = Chat(client)
+
+    chat.say("¿cuánto gasté en junio en el súper?")
+    chat.say("¿y el mes pasado?")
+
+    assert ledger.plans[1].period is not None
+    assert ledger.plans[1].period.period is Period.LAST_MONTH
+
+
 # =========================================================================================
 # A ranking is a different shape of answer, and moving in and out of one is where the
 # context is easiest to lose.
