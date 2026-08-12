@@ -19,6 +19,10 @@ from support import episodes
 
 CORPUS = episodes.load()
 
+# One replay, read by the rates and by the coverage rule. Both are facts about the same walk of the
+# same conversations, and running them twice would double the slowest test in the suite.
+REPORT = episodes.run(CORPUS)
+
 
 # A floor rather than an equality, so adding an episode is never a failing build — and a floor at
 # all, so a glob that matches nothing cannot pass by finding no work. Raise it as files land, never
@@ -38,19 +42,28 @@ def test_every_episode_is_long_enough_to_be_a_conversation() -> None:
     assert not short, f"episodes shorter than six turns: {short}"
 
 
-def test_the_corpus_asserts_the_queries_it_runs() -> None:
-    """A floor on `ran`, for the same reason `FLOOR` exists: a check nothing uses passes by finding
-    no work. Every expectation could be deleted and the corpus would still be green, so the number
-    of turns that state which query ran is itself measured. Raise it as episodes gain them.
+def test_every_turn_that_runs_a_query_says_which_one() -> None:
+    """Coverage as a rule rather than as a number somebody raises.
 
-    Fields as well as turns. A turn asserting one field and a turn asserting five both count once,
-    and the second is four times the check — counting only turns would let coverage be diluted
-    while the number went up.
+    This was two literals — 56 turns, 164 fields — and a literal only discriminates on the day it
+    is written. It said nothing about the other 323 turns that ran a query and asserted none of it,
+    and it would have gone on saying nothing while they grew: adding a turn cannot lower a floor.
+
+    The rule that replaces it needs no maintenance and cannot drift, because it is derived from
+    what the corpus executes. A turn that runs a query and does not say which one is a turn whose
+    routing is checked and whose plan is not — which is exactly how a follow-up that inherited the
+    wrong window, dropped its category or flipped its direction scored as correct.
+
+    The second literal is gone rather than replaced. It counted fields, to stop the turn count
+    being raised by expectations too thin to check anything — but a floor derived from execution
+    cannot be gamed that way: adding a turn adds an obligation instead of headroom. A rule against
+    thin expectations was written and then deleted, because the corpus deliberately has two: "¿cuál
+    es mi gasto medio?" asked with a half-built Bizum open asserts the divisor and nothing else,
+    and that is the whole point of those turns.
     """
-    stated = [turn.ran for episode in CORPUS for turn in episode.turns if turn.ran]
-
-    assert len(stated) >= 56, f"only {len(stated)} turns say which query they ran"
-    assert sum(len(ran) for ran in stated) >= 164, "the assertions got thinner"
+    assert REPORT.unasserted == [], "\n".join(
+        ["turns that ran a query in silence:", *REPORT.unasserted]
+    )
 
 
 def test_every_episode_says_why_it_exists() -> None:
@@ -72,7 +85,7 @@ def test_the_corpus_reports_its_rates(capsys: pytest.CaptureFixture[str]) -> Non
     """The measurement, printed once so a run says what it measured rather than only whether it
     passed. Thresholds are zero on purpose: every one of these rates counts a decision this service
     makes deterministically, so a non-zero one is a defect and not a long tail."""
-    report = episodes.run(CORPUS)
+    report = REPORT
 
     lines = [
         f"conversations {report.episodes} · turns {report.turns}",
@@ -121,6 +134,15 @@ def test_a_wrong_expectation_about_the_query_is_caught() -> None:
 
     assert len(failures) == 1
     assert "the query ran window='LAST_MONTH'" in failures[0].complaint
+
+
+def test_a_turn_that_runs_a_query_in_silence_is_counted() -> None:
+    """The calibration for the coverage rule. Derived from execution rather than from a literal,
+    which only means anything if a turn that executes and says nothing actually shows up here."""
+    report = episodes.run([_one_turn(route="QUERY")])
+
+    assert report.unasserted == ["calibration/one_turn · turn 1 · '¿cuánto gasté el mes pasado?'"]
+    assert report.failures == [], "and it is not an episode failure — the episode is fine"
 
 
 def test_a_query_that_lost_its_window_is_counted_as_lost_context() -> None:

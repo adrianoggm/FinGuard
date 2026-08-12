@@ -583,6 +583,10 @@ class Report:
     lost_context: int = 0
     unsafe: int = 0
     failures: list[Failure] = field(default_factory=list)
+    # Turns that ran a query and said nothing about which one. The corpus is a measurement of its
+    # own coverage as well as of the service: a turn nobody wrote an expectation for is a turn
+    # where the routing is checked and the plan behind it is not.
+    unasserted: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -767,6 +771,24 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
     those as ACCOUNT_BALANCE is right about the destination and wrong about our plumbing, and only
     one of those two is worth counting.
     """
+    for number, turn, answer, reached_model, ran in replay(episode, interpreter):
+        if answer is None:
+            yield Failure(episode.name, number, turn.say, "HTTP error")
+            return
+        for complaint in _complaints(turn, answer, reached_model=reached_model, ran=ran):
+            yield Failure(episode.name, number, turn.say, complaint)
+
+
+def replay(
+    episode: Episode, interpreter: object | None = None
+) -> Iterator[tuple[int, Turn, dict[str, Any] | None, bool, tuple[Any, ...]]]:
+    """Each turn with what it reached: the answer, whether a model was asked, what the ledger ran.
+
+    Separate from `walk` because two things read a replay and only one of them is looking for
+    failures. Counting the turns that ran a query without saying which one is not a complaint about
+    any episode — it is a fact about the corpus — and running the conversations twice to learn it
+    would double the slowest test in the suite.
+    """
     stack = a_stack()
     if interpreter is not None:
         app.dependency_overrides[turn_interpreter] = lambda: interpreter
@@ -779,20 +801,19 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
             "/v1/questions", json={"question": turn.say, "conversation": conversation}
         )
         if response.status_code != 200:
-            yield Failure(episode.name, number, turn.say, f"HTTP {response.status_code}")
+            yield number, turn, None, False, ()
             return
         answer = response.json()
         conversation = answer["conversation"]
-
-        for complaint in _complaints(
+        # This turn's queries only. A turn asserting `ran` is asking about itself, and the ledger
+        # holds the whole conversation.
+        yield (
+            number,
             turn,
             answer,
-            reached_model=len(stack.planner.asked) > before,
-            # This turn's queries only. A turn asserting `ran` is asking about itself, and the
-            # ledger holds the whole conversation.
-            ran=tuple(stack.ledger.ran[ran_before:]),
-        ):
-            yield Failure(episode.name, number, turn.say, complaint)
+            len(stack.planner.asked) > before,
+            tuple(stack.ledger.ran[ran_before:]),
+        )
 
 
 def _complaints(
@@ -860,19 +881,25 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
     report = Report(episodes=len(episodes))
     for episode in episodes:
         report.turns += len(episode.turns)
-        for failure in walk(episode, interpreter):
-            report.failures.append(failure)
-            if "answered" in failure.complaint:
-                report.wrong_tool += 1
-            # Both halves of losing context, and the second one is why this metric read 0.0 % on a
-            # corpus full of ellipsis: a workflow that failed to survive was counted, and a window,
-            # category or direction that failed to survive was invisible.
-            if "had to survive" in failure.complaint or "the query ran" in failure.complaint:
-                report.lost_context += 1
-            if "reached the model" in failure.complaint:
-                report.unnecessary_clarifications += 1
-            if "PAYMENT answered" in failure.complaint or "TRANSFER answered" in failure.complaint:
-                report.unsafe += 1
+        for number, turn, answer, reached_model, ran in replay(episode, interpreter):
+            if answer is None:
+                report.failures.append(Failure(episode.name, number, turn.say, "HTTP error"))
+                break
+            if ran and not turn.ran:
+                report.unasserted.append(f"{episode.name} · turn {number} · {turn.say!r}")
+            for complaint in _complaints(turn, answer, reached_model=reached_model, ran=ran):
+                report.failures.append(Failure(episode.name, number, turn.say, complaint))
+                if "answered" in complaint:
+                    report.wrong_tool += 1
+                # Both halves of losing context, and the second one is why this metric read 0.0 %
+                # on a corpus full of ellipsis: a workflow that failed to survive was counted, and
+                # a window, category or direction that failed to survive was invisible.
+                if "had to survive" in complaint or "the query ran" in complaint:
+                    report.lost_context += 1
+                if "reached the model" in complaint:
+                    report.unnecessary_clarifications += 1
+                if "PAYMENT answered" in complaint or "TRANSFER answered" in complaint:
+                    report.unsafe += 1
     return report
 
 
