@@ -21,6 +21,19 @@ well, and most of these turns have no single right plan — "¿cuántas compras 
 needs a merchant filter this schema has, and which window it inherits is a judgement. A model
 scoring the plan against the sentence and the conversation behind it is the shape that fits; the
 anchor group is what says whether its scores can be believed.
+
+**And counting the work found something worse than a gap.** The 107 are 67 turns with no thread
+behind them and 40 that follow one, and the 67 are only 42 distinct sentences — but among those
+distinct sentences are "sí", "20 euros", "déjalo", "a ver", "no es eso", "no me has entendido" and
+"1000 pavos". Those state no query at all. We are asking a model to plan them, and a model asked to
+plan "déjalo" will return something, which becomes an answer to somebody who was cancelling.
+
+That is not a hole in the planning dataset, it is a routing one, and the corpus cannot see it: its
+`unnecessary model calls` rate counts only the turns an episode marked `no_model`, so a sentence
+nobody thought to mark is a model call nobody counts. Writing an expected plan for "déjalo" would
+be writing down that this is fine. The set has to be split first — sentences that state a query,
+which can have an expectation, and sentences that do not, which are a question about who should
+have answered them.
 """
 
 import sys
@@ -60,6 +73,19 @@ def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
 
     assert len(CASES) > 100, "a corpus this size cedes turns; near zero means a broken stub"
     assert len(anchor) >= 40, f"only {len(anchor)} handed-over turns have a written expectation"
+
+
+def test_the_work_is_counted_in_sentences_rather_than_turns() -> None:
+    """What it would cost to write the missing expectations, which is not what the ratchet says.
+
+    The corpus repeats itself on purpose — "¿cuánto gasté el mes pasado en el supermercado?" opens
+    seven different episodes — so 67 turns without a thread are 42 distinct sentences. Counting
+    turns makes the job look three times bigger than it is, and a job that looks impossible is a
+    job nobody starts.
+    """
+    fresh = {case["say"] for case in CASES if case["group"] == "extension" and not case["previous"]}
+
+    assert len(fresh) <= 45, f"{len(fresh)} distinct sentences with no thread behind them"
 
 
 def test_a_case_carries_the_conversation_behind_it() -> None:
