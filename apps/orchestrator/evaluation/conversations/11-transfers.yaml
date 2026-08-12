@@ -113,9 +113,13 @@ episodes:
       - say: 500
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
+      # An order to move money that points nowhere this holder has. It used to reach the planner —
+      # a query about last month, asked of a sentence that says to move 500 €. The amount is what
+      # makes it an order; the transfer path asks for the destination it is missing.
       - say: mueve 500 € a algún sitio
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: TRANSFER
+        awaiting: ACCOUNT
+        no_model: true
       - say: mueve 500 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION

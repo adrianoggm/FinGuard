@@ -152,6 +152,30 @@ def test_a_moving_verb_with_no_account_is_not() -> None:
     assert intent_router.route("mueve el dinero", has_previous=False) is not Intent.OWN_TRANSFER
 
 
+def test_an_order_to_move_a_stated_sum_is_one_even_with_nowhere_to_put_it() -> None:
+    """The destination is what this path asks for, so its absence cannot be what disqualifies it.
+
+    "Mueve 500 € a algún sitio" names no account, so the sentence fell past the transfer and was
+    handed to the financial planner — a query about a period, asked of an order to move money. The
+    amount is the half that says an order was given; the missing half is the question the transfer
+    already knows how to ask, with the accounts listed and the amount kept.
+    """
+    assert intent_router.route("mueve 500 € a algún sitio", has_previous=False) is (
+        Intent.OWN_TRANSFER
+    )
+
+
+def test_a_bare_amount_is_still_nobody_s() -> None:
+    """The other side of the same rule, and the reason it is the verb *and* the sum.
+
+    An amount arriving with nothing open is deliberately unclaimed — two episodes exist to keep a
+    payment from completing itself with a number — and reading one as a transfer would be that
+    defect on the other rail.
+    """
+    assert intent_router.route("500", has_previous=False) is not Intent.OWN_TRANSFER
+    assert intent_router.route("mejor 1000", has_previous=False) is not Intent.OWN_TRANSFER
+
+
 def test_an_account_with_no_verb_is_a_question_about_it() -> None:
     assert intent_router.route("¿cuánto tengo en la hucha?", has_previous=False) is (
         Intent.ACCOUNT_BALANCE

@@ -33,7 +33,7 @@ import re
 from enum import StrEnum
 from typing import Final
 
-from finguard_orchestrator.domain.services import courtesy, payment_router, spanish
+from finguard_orchestrator.domain.services import courtesy, payment_router, payment_words, spanish
 
 
 class Intent(StrEnum):
@@ -383,12 +383,21 @@ _ACTION_INTENT: Final = re.compile(
 
 
 def _moving_money_inside(sentence: str) -> bool:
-    """A verb of moving *and* one of this holder's accounts, and not a question.
+    """A verb of moving, not a question, and either a destination or a sum to move.
 
-    All three are required. "Mueve el dinero" is not an instruction anybody could act on, "en la
-    hucha" alone is a question about a balance, and an interrogative turns the same words back into
-    a question — reading any of them as a transfer would offer to move money at somebody who asked
-    something else.
+    The verb alone is never enough. "Mueve el dinero" is not an instruction anybody could act on,
+    "en la hucha" alone is a question about a balance, and an interrogative turns the same words
+    back into a question — reading any of them as a transfer would offer to move money at somebody
+    who asked something else.
+
+    **An amount says as much as an account.** "Mueve 500 € a algún sitio" points at no account this
+    holder has, so the destination half found nothing and the sentence fell all the way through to
+    the financial planner, which was asked to plan a query for an order to move money. The
+    destination is what the transfer path *asks for* when it is missing — it lists the accounts and
+    keeps the amount — so a stated sum is exactly the signal that there is an order here at all.
+
+    A sum and no verb of moving stays what it was: an amount arriving with nothing open is
+    deliberately nobody's, and two episodes exist to keep it that way.
     """
     from finguard_orchestrator.domain.services import account_words
 
@@ -402,6 +411,7 @@ def _moving_money_inside(sentence: str) -> bool:
         or account_words.names_a_custom_destination(sentence)
         or bool(_BETWEEN_ACCOUNTS.search(folded))
         or bool(_OWN_ACCOUNT_RELATION.search(folded))
+        or payment_words.amount_in(sentence) is not None
     )
 
 

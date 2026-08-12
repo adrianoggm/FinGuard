@@ -73,10 +73,26 @@ def test_an_amount_is_read_from_the_reply(sentence: str, minor: int) -> None:
         # Beyond the ceiling the assistant will offer. None sends it to the model, which refuses it
         # with a sentence rather than this returning a number nobody may act on.
         "20000000 euros",
+        # A length of time, which came back as four euros. Found by a measurement that consulted
+        # this reader outside the amount slot it is normally gated behind — so it cost nothing, and
+        # says what the reader answers about is digits rather than money.
+        "En los ulltimos 4 meses",
+        "en los últimos 12 meses",
+        "hace 2 semanas",
+        "3 meses",
     ],
 )
 def test_anything_else_is_not_an_amount(sentence: str) -> None:
     assert payment_words.amount_in(sentence) is None
+
+
+@pytest.mark.parametrize(
+    "sentence", ["le paso 100 al mes", "20 euros", "pues 20", "500 € cada mes"]
+)
+def test_a_period_beside_an_amount_does_not_swallow_it(sentence: str) -> None:
+    """The care the exclusion needed. A digit *adjacent* to a period noun is a period; one word
+    further away is "le paso 100 al mes", which is an amount and a common way to say one."""
+    assert payment_words.amount_in(sentence) is not None
 
 
 def test_the_first_amount_wins() -> None:

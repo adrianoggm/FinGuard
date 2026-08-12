@@ -36,11 +36,20 @@ _AMOUNT: Final = re.compile(
 # What looks like an amount and is not. A phone number is the dangerous one: read as an amount it
 # becomes an enormous payment in front of a confirmation prompt, where a distracted "sí" is the only
 # thing between it and the ledger. A date is the common one — "el 15 de julio" is not 15 euros.
+#
+# A length of time is the one this had never been asked about. "En los últimos 4 meses" came back
+# as four euros, found by a measurement that consulted this reader outside the slot it is normally
+# gated behind — so it costs nothing today and says something worth fixing anyway: what the reader
+# answers about is digits, and a digit in front of "meses" is a period.
+#
+# Adjacent only, and that is the whole care in it. Allowing a word between would swallow "le paso
+# 100 al mes", which is an amount and a common way to say one.
 _NOT_AN_AMOUNT: Final = re.compile(
     r"\+?\d[\d\s]{7,}"  # a phone number, with or without spaces
     r"|\bel\s+\d{1,2}\s+de\s+\w+"  # "el 15 de julio"
     r"|\b\d{1,2}/\d{1,2}"  # a date written with slashes
-    r"|\b\d{1,2}:\d{2}",  # a time
+    r"|\b\d{1,2}:\d{2}"  # a time
+    r"|\b\d{1,3}\s+(?:d[ií]as?|semanas?|mes|meses|a[nñ]os?|trimestres?|quincenas?)\b",
     re.IGNORECASE,
 )
 
@@ -301,6 +310,33 @@ def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact,
     if best == 0:
         return ()
     return tuple(contact for points, contact in scored if points == best)
+
+
+def name_as_written(sentence: str, directory: tuple[Contact, ...]) -> str | None:
+    """How much of a matched contact's name this sentence spells, in the directory's own casing.
+
+    The ledger stores what the bank wrote on the movement, and the holder types a fraction of it.
+    Filtering by the full display name would find nothing for somebody who wrote "Marta", and
+    filtering by an invented choice between two contacts called Marta would find the wrong person —
+    so what comes back is exactly the part they wrote, which is the widest honest filter.
+
+    None when nothing in the directory is named, which is the answer that keeps a reader from
+    building a query about a person the sentence never mentioned.
+
+    Lives here rather than beside either reader that asks it. Both directions of the same question
+    need it — "¿me ha llegado un bizum de Marta?" and "le he mandado 20 € a Marta Solis Vega" — and
+    the second copy of a rule like this is the one that drifts.
+    """
+    folded = spanish.folded(sentence)
+    mentioned: list[str] = []
+    for contact in contacts_in(sentence, directory):
+        for original in contact.display_name.split():
+            word = spanish.folded(original)
+            named = re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", folded)
+            if len(word) > 2 and named:
+                if word not in {item.casefold() for item in mentioned}:
+                    mentioned.append(original)
+    return " ".join(mentioned) or None
 
 
 # Which rail a sentence names. A closed vocabulary of two, so it is read here rather than asked of
