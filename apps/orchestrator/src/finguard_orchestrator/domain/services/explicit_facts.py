@@ -316,8 +316,18 @@ _HAS_THEM: Final = re.compile(
 
 # Words naming the charge rather than the payee. "¿Cuántos pagos tengo en suscripciones?" is asking
 # how many times, which is COUNT and already answered.
+#
+# The rails belong here and were missing. "¿Cuántos bizums tengo?" is how many times, and it came
+# back as how many *people* this holder has ever sent one to, over twelve months instead of the
+# window the conversation was in — a real figure about something else, in the middle of an episode
+# whose whole subject is that "tengo" counts.
+#
+# Only the rails are added, and "domiciliaciones" and "suscripciones" deliberately are not: those
+# name the arrangement at least as often as the charge, and a question about how many of *them* you
+# have is the payee count this path exists for. A bizum is never an arrangement.
 _THE_CHARGE_NOT_THE_PAYEE: Final = re.compile(
-    r"\b(?:movimientos?|veces|compras?|pagos?|cargos?|recibos?|cobros?|operaciones?|transacciones?)\b"
+    r"\b(?:movimientos?|veces|compras?|pagos?|cargos?|recibos?|cobros?|operaciones?|transacciones?"
+    r"|bi[xz]ums?|transferencias?|traspasos?)\b"
 )
 
 # Asking for money, which is never this however it is phrased.

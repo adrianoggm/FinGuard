@@ -3518,6 +3518,10 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
 )
+# The same nouns `explicit_facts._THE_CHARGE_NOT_THE_PAYEE` lists, written a second time here. The
+# rails are deliberately not added to this copy: "bizum" and "transferencia" are categories, so a
+# sentence naming one never reaches this branch — the guard above it declines any follow-up that
+# names a category, and sends it to the planner where the new category can be read properly.
 _COUNT_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuant[oa]s?\s+(?:veces|compras|movimientos|operaciones|pagos|cargos)\b"
 )

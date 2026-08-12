@@ -24,6 +24,7 @@ from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.conversation import IDLE
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+from finguard_orchestrator.domain.services import explicit_facts
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -204,3 +205,31 @@ async def test_a_question_about_money_is_still_about_money() -> None:
     result, ledger, _ = await ask("¿cuál es mi gasto medio en suscripciones?")
     assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
     assert ledger.plans == []
+
+
+def test_a_rail_is_a_charge_and_not_a_payee() -> None:
+    """The fourth sentence, and it was being stolen. "¿Cuántos bizums tengo?" is how many times —
+    the same question as "¿cuántos pagos tengo?" — and it came back grouped by merchant over twelve
+    months, which is how many *people* this holder has ever sent one to. It happened inside the
+    episode whose whole subject is that "tengo" counts.
+
+    The words naming the charge were a list and the rails were not in it."""
+    for sentence in (
+        "¿cuántos bizums tengo?",
+        "¿cuántas transferencias tengo?",
+        "cuantos traspasos tengo",
+    ):
+        assert explicit_facts.asks_how_many_payees(sentence) is False, sentence
+
+
+def test_a_thing_you_have_is_still_counted_by_payee() -> None:
+    """What separates the two, and why only the rails were added. A subscription and a direct debit
+    name the arrangement at least as often as the charge for it, so counting *them* is counting
+    payees — which is the question this whole path was written for. A bizum is never an
+    arrangement."""
+    for sentence in (
+        "¿cuántas suscripciones tengo?",
+        "¿cuáles son mis suscripciones?",
+        "¿cuántas domiciliaciones tengo?",
+    ):
+        assert explicit_facts.asks_how_many_payees(sentence) is True, sentence
