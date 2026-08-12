@@ -63,12 +63,21 @@ class Intent(StrEnum):
 # movimientos tengo este mes?", so anything counting movements is excluded explicitly: that is a
 # question the planner answers well, and answering it with a balance would be the same class of
 # error this fixes — a real figure about something else.
+#
+# **And "cuánto" is spelled by a rule now.** The verb beside it already carried three misspellings
+# by hand — `tiengo`, `tieno`, `tngo` — and the question word carried none, so "cunato tengo" was a
+# balance question answered by the financial planner. Both halves have to survive a slip for the
+# sentence to, and enumerating the second list would repeat what the first one taught.
+#
+# Transpositions and not one whole edit: one substitution from "cuanto" is "cuando", and reading
+# "¿cuándo cobro la nómina?" as a balance would be a real figure about a different question.
+_HOW_MUCH: Final = "|".join(spanish.transposed("cuanto"))
 _ABOUT_THE_BALANCE: Final = re.compile(
     r"\bsaldos?\b"
-    r"|\bcu[áa]nto\s+(dinero\s+)?(tengo|tiengo|tieno|tngo|ten[íi]a|me\s+queda|hay)\b"
-    r"|\bcu[áa]nto\s+dinero\s+dispongo\b"
-    r"|\bcu[áa]nto\s+(tengo\s+)?disponible\b"
-    r"|\bde\s+cu[áa]nto\s+dispongo\b"
+    rf"|\b(?:{_HOW_MUCH})\s+(dinero\s+)?(tengo|tiengo|tieno|tngo|ten[íi]a|me\s+queda|hay)\b"
+    rf"|\b(?:{_HOW_MUCH})\s+dinero\s+dispongo\b"
+    rf"|\b(?:{_HOW_MUCH})\s+(tengo\s+)?disponible\b"
+    rf"|\bde\s+(?:{_HOW_MUCH})\s+dispongo\b"
     r"|\bdinero\s+(disponible|tengo)\b"
     # "¿Qué cuentas tengo?" — the accounts themselves, which is what a balance answer already is:
     # a total with every account and its figure under it. It was excluded below and nothing else

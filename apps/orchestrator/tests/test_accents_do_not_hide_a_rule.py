@@ -126,3 +126,32 @@ def test_an_order_to_pay_survives_the_accents_it_was_typed_with(sentence: str) -
     a pattern still carrying an accent class passes one of the two and fails the other."""
     assert payment_router.is_payment(sentence) is True
     assert payment_router.is_explicit_order(sentence) is True
+
+
+def test_a_transposition_is_derived_rather_than_remembered() -> None:
+    """The other half of the same idea, for the slip that is not an accent.
+
+    A pattern that spells its misspellings out is a list somebody has to extend, and the spelling
+    they miss is the one nobody thought of: the balance question carried `tiengo`, `tieno` and
+    `tngo` for the verb and nothing at all for "cuánto", so "cunato tengo" was planned as a query.
+    """
+    assert spanish.transposed("cuanto") == (
+        "cuanto",
+        "ucanto",
+        "caunto",
+        "cunato",
+        "cuatno",
+        "cuanot",
+    )
+
+
+def test_a_transposition_never_reaches_the_word_next_door() -> None:
+    """Why this and not `one_edit_apart`, which the closed lexicons already use.
+
+    One edit from "cuanto" is "cuando" and one from "hucha" is "mucha" — a different question and
+    a word in every other sentence. Swapping two neighbours reaches neither, which is what makes it
+    safe to apply to a question word rather than only to a lexicon of three.
+    """
+    assert "cuando" not in spanish.transposed("cuanto")
+    assert "mucha" not in spanish.transposed("hucha")
+    assert spanish.one_edit_apart("cuando", "cuanto") is True

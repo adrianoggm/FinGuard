@@ -1,8 +1,9 @@
 # Typing badly, which is how everybody types.
 #
-# Every vocabulary in this service matches exactly. Accents are folded and case is ignored, and
-# nothing else is: "cunato" is not "cuánto", "hcuha" is not "hucha", and a missing letter turns a
-# balance question into a sentence for the model to guess at.
+# Accents are folded, case is ignored, and a transposition is forgiven where the vocabulary is
+# closed and the word is long enough to survive it: "cunato" is "cuánto" and "qeu categorias" is
+# the catalogue. Everything else still matches exactly — "hcuha" is not "hucha" — so a slip in an
+# account name turns a balance question into a sentence for the model to guess at.
 #
 # **What is asserted here is deliberately asymmetric.** A typo the service reads is asserted as
 # read. A typo it does not is asserted as reaching the model — because that is the honest fallback
@@ -78,16 +79,19 @@ episodes:
       - say: GRACIAS
         route: COURTESY
 
-  - name: a_transposed_letter_falls_through_to_the_model
+  - name: a_transposed_letter_in_the_question_word_is_still_the_question
     why: >
-      "Cunato tengo" is not a word this service knows, and guessing at it would be guessing about a
-      balance. It goes to the model, which is the honest fallback — and this pins the edge so that
-      moving it is somebody's decision.
+      The edge moved, on purpose. "Cunato tengo" used to go to the model — the verb beside it
+      already tolerated three misspellings written out by hand and the question word tolerated
+      none, so a balance this service holds was planned as a query. Two letters in the wrong order
+      is the slip a keyboard makes, and it is the one misspelling Spanish almost never turns into
+      another word: a substitution away from "cuanto" is "cuando", and that stays a different
+      question. The account name below is still unread, which is where the edge is now.
     metrics: [wrong_tool]
     turns:
       - say: cunato tengo
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: BALANCE
+        no_model: true
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: y en la hcuha
@@ -153,8 +157,8 @@ episodes:
     metrics: [context_retention, wrong_tool]
     turns:
       - say: cunato tengo
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: BALANCE
+        no_model: true
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: y en la hcuha
