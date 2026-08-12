@@ -3518,12 +3518,14 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
 )
-# The same nouns `explicit_facts._THE_CHARGE_NOT_THE_PAYEE` lists, written a second time here. The
-# rails are deliberately not added to this copy: "bizum" and "transferencia" are categories, so a
-# sentence naming one never reaches this branch — the guard above it declines any follow-up that
-# names a category, and sends it to the planner where the new category can be read properly.
+# The same nouns `explicit_facts._THE_CHARGE_NOT_THE_PAYEE` lists, written a second time here and
+# including the rails for the same reason: a count of bizums is a count of movements the way a
+# count of pagos is. "Bizum" and "transferencia" are also categories, which is what makes the
+# named-category branch above this one necessary — without it the sentence declines and loses the
+# window rather than counting the kind it names.
 _COUNT_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?cuant[oa]s?\s+(?:veces|compras|movimientos|operaciones|pagos|cargos)\b"
+    r"^(?:y\s+)?cuant[oa]s?\s+"
+    r"(?:veces|compras|movimientos|operaciones|pagos|cargos|bi[xz]ums?|transferencias?|traspasos?)\b"
 )
 _SUM_EXPENSE_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:gaste|gastado|pague|pagado|compre|comprado)\b"
@@ -4718,7 +4720,31 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
     # category the closed vocabulary does not know, and inheriting the old filters there would
     # answer a different question with a plausible figure.
-    if named or len(folded.split()) > 5 or _names_a_filter_this_cannot_read(query):
+    if _names_a_filter_this_cannot_read(query) or len(folded.split()) > 5:
+        return None
+
+    # Counting a kind the vocabulary *does* know is the exception to the rule below, and it is the
+    # difference between the two reasons a follow-up gets refused. Declining protects the turn that
+    # introduces something this path cannot represent; a named category is not that — it is a
+    # filter, and replacing one filter is what this whole function does.
+    #
+    # Without this, "¿cuántos bizums tengo?" declines the way "¿cuántas compras hice en Mercadona?"
+    # does, and reaches the planner having dropped the window the conversation was in. Two turns
+    # earlier the same question about compras kept it.
+    if named and _COUNT_FOLLOW_UP.search(folded):
+        return explicit_facts.enforce(
+            replace(
+                previous,
+                categories=named,
+                excluded_categories=(),
+                merchants=(),
+                merchant_terms=(),
+                group_by=GroupBy.NONE,
+                metric=Metric.COUNT,
+            ),
+            facts,
+        )
+    if named:
         return None
     if _COUNT_FOLLOW_UP.search(folded):
         return explicit_facts.enforce(replace(previous, metric=Metric.COUNT), facts)

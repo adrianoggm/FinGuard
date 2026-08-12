@@ -89,13 +89,16 @@ episodes:
         ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT}
       # The episode's own subject, in the turn that failed it. A bizum is a charge, so this counts
       # movements — and it was answered by grouping twelve months of them by merchant and adding
-      # them up, which is how many *people* the holder has ever sent one to. No window is asserted
-      # because the turn now reaches the planner: naming a category is what makes a follow-up
-      # decline, and the window it comes back with here is the stub's default, not a decision of
-      # this service.
+      # them up, which is how many *people* the holder has ever sent one to.
+      #
+      # The window is the second half of it. Naming a category makes a follow-up decline, so the
+      # fixed metric arrived with the thread dropped and this reached the planner — two turns after
+      # the same question about compras kept it. Counting a kind the vocabulary knows is a filter
+      # replacement like any other, so it stays here and keeps the month.
       - say: ¿cuántos bizums tengo?
         route: QUERY
-        ran: {categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: COUNT}
+        no_model: true
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: COUNT}
       - say: ¿cuánto dinero tengo?
         route: BALANCE
       - say: ¿y en la hucha?
