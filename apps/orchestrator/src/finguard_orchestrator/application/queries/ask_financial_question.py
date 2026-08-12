@@ -5037,10 +5037,29 @@ def _multiple_movement_ranking(
     )
 
 
+def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:
+    """Whether the sentence states a two-window comparison, which no single-period reader may take.
+
+    Four of the turns the cascade's order decides are this shape. "¿En qué mes fue mayor mi gasto
+    medio por movimiento, julio o junio?" is read by `average` as July alone; "compara mis gastos
+    de este semestre con el anterior" is read by `natural_period` as this semester alone. Each
+    loser answers about one of the two periods the sentence names — half the question, with a real
+    figure on it, and nothing downstream can tell that the other half is missing.
+
+    Asked of the comparison reader itself rather than of a vocabulary of its own, so "this sentence
+    compares two periods" has one definition instead of two that drift apart. It is a pure function
+    over the query and the cascade already runs it first on these turns: this is that ordering said
+    out loud, in the readers it was silently deciding for.
+    """
+    return _direct_period_comparison(query) is not None
+
+
 def _natural_period_aggregate_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | None:
     """A simple aggregate whose new calendar window and direction are both explicit."""
+    if _a_comparison_owns_it(query):
+        return None
     window = window_words.natural_period_in(query.sentence, today=query.today)
     if window is None:
         return None
@@ -5077,6 +5096,8 @@ def _deterministic_breakdown_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
     """Build the two common breakdowns whose meaning is fully stated by the sentence."""
+    if _a_comparison_owns_it(query):
+        return None
     facts = explicit_facts.read(query.sentence, today=query.today)
     named_categories = category_words.precisely_named_in(query.sentence)
     if not (
@@ -5209,6 +5230,8 @@ def _average_plan(
     PERIOD_AVERAGE divides by the DAY/WEEK/MONTH buckets named in the sentence. A missing window is
     kept as a draft so the next turn can answer it instead of being told the capability is absent.
     """
+    if _a_comparison_owns_it(query):
+        return None
     facts = explicit_facts.read(query.sentence, today=query.today)
     previous = query.conversation.last_plan
     natural_period = _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))

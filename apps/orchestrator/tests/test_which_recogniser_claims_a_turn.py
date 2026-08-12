@@ -91,19 +91,23 @@ CORPUS = episodes.load()
 # flow — and it now declines while one is in view. An answer that took two queries is not something
 # to patch a window onto: read as a plain follow-up it returns one operand and drops the other.
 #
-# The eight that remain are two shapes, and both need the *sentence* read rather than the state:
+# Four now. The other four were `direct_period_comparison` against a reader of one period — the
+# sentence names two and the loser answers about one of them, which is half the question with a
+# real figure on it. `average`, `natural_period` and `deterministic_breakdown` now ask the
+# comparison reader whether it claims the sentence and stand aside when it does, so "this sentence
+# compares two periods" has one definition rather than two that drift apart.
 #
-#   direct_period_comparison vs a single-period reader (4)
-#       "¿En qué mes fue mayor mi gasto medio, julio o junio?" and friends. The sentence names two
-#       periods and the loser reads one. A single-period reader declining when two are named would
-#       close all four, and that is the next one to do.
+# The four that remain are one shape: `contextual_follow_up` against a more specific reader.
+# `internal_movement` on the sentence that names the movement, `account_follow_up` on the one that
+# names the account, `deterministic_breakdown` on "desglósalo por cuenta". They go one at a time
+# rather than by a rule, and one of them runs the other way — on "desglósalo por cuenta" the
+# general reader is the *right* winner, because it keeps the shop the previous answer singled out
+# and the breakdown drops it, so there the specific one is what should decline.
 #
-#   contextual_follow_up vs a more specific reader (4)
-#       `internal_movement` on the sentence that names the movement, `account_follow_up` on the one
-#       that names the account, `deterministic_breakdown` on "desglósalo por cuenta". Declining on
-#       conversation state was tried here and is wrong: it takes "¿y el mes pasado?" away from the
-#       only reader that keeps an internal scope, and the answer comes back as ordinary spending.
-CONTESTED = 8
+# Declining on conversation state was tried here and is wrong: `previous.internal_only` takes "¿y
+# el mes pasado?" away from the only reader that keeps an internal scope, and the answer comes back
+# as ordinary spending. These need the sentence read.
+CONTESTED = 4
 
 
 def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixture[str]) -> None:
