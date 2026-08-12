@@ -4737,7 +4737,18 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
     # category the closed vocabulary does not know, and inheriting the old filters there would
     # answer a different question with a plausible figure.
-    if _names_a_filter_this_cannot_read(query) or len(folded.split()) > 5:
+    #
+    # And a complete question is not an ellipsis however short it is, which the window branch above
+    # already says and this one did not. "¿Cuánto gasté el mes pasado?" is five words, so it
+    # reached the sum-follow-up below and became the previous plan with the direction flipped —
+    # after "¿cuánto he invertido en el último año?", that plan is restricted to the fund and to
+    # internal movements only, and flipping it to EXPENSE answers "what did you spend" with what
+    # went into the fund. Two branches of one function disagreed about what an ellipsis is.
+    if (
+        _names_a_filter_this_cannot_read(query)
+        or len(folded.split()) > 5
+        or _starts_new_financial_scope(query.sentence, today=query.today)
+    ):
         return None
 
     # Counting a kind the vocabulary *does* know is the exception to the rule below, and it is the

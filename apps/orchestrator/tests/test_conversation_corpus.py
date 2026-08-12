@@ -34,24 +34,6 @@ REPORT = episodes.run(CORPUS)
 # a literal, and a literal that is not kept level with what exists is a check about the past.
 FLOOR = 164
 
-# The one turn still carrying a filter from a question it is not asking, written out rather than
-# counted so a second cannot appear inside a number that stays the same.
-#
-# "¿Cuánto gasté el mes pasado?" runs restricted to the fund and to internal movements only, four
-# turns after "¿cuánto he invertido en el último año?" — so the holder asks what they spent and is
-# told what they put into the fund, as a real figure with the right month on it. Its twin in
-# `movements_between_my_own_accounts` is fixed: a pending clarification no longer takes a whole new
-# question as the answer to the field it was missing. This one survives that fix, so it arrives by
-# a different path and has not been found yet.
-LEAKED = [
-    "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
-    " · turn 5 · '¿cuánto gasté el mes pasado?' · accounts",
-    "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
-    " · turn 5 · '¿cuánto gasté el mes pasado?' · internal_only",
-    "09-refusals/contribution_history_is_distinct_from_the_fund_balance"
-    " · turn 5 · '¿cuánto gasté el mes pasado?' · include_internal",
-]
-
 
 def test_the_corpus_has_not_shrunk() -> None:
     assert len(CORPUS) >= FLOOR, f"only {len(CORPUS)} episodes were loaded"
@@ -103,9 +85,11 @@ def test_a_filter_that_is_doing_something_is_stated() -> None:
     It found two wrong figures on the turn it was written. Both were "¿cuánto gasté el mes pasado?"
     run restricted — one to the fund and to internal movements only, the other to internal
     movements only. The holder asked what they spent and got what they had moved into their own
-    accounts, with the right window on it. One is fixed; `LEAKED` is the other.
+    accounts, with the right window on it. Both are fixed, and each by a different branch reading
+    the same predicate: a sentence that states a whole financial question of its own is neither the
+    answer to an open clarification nor an ellipsis over the query in view.
     """
-    assert REPORT.unstated == LEAKED, "\n".join(
+    assert REPORT.unstated == [], "\n".join(
         ["filters a query carried and its turn did not mention:", *REPORT.unstated]
     )
 

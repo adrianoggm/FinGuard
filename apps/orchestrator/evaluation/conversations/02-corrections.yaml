@@ -183,9 +183,13 @@ episodes:
         route: BALANCE
       - say: no es eso
         route: CLARIFY
+      # A whole question after a rejection, naming no category. It used to keep restaurants from
+      # three turns earlier, so "¿cuánto gasté este año?" answered with restaurant spending — the
+      # narrower question, with a real figure on it. The merge this episode is about is the one
+      # above: a correction that names a window keeps the category it does not name.
       - say: ¿cuánto gasté este año?
         route: QUERY
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: a_correction_then_an_aside_then_the_replacement
     why: >
