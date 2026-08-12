@@ -75,6 +75,34 @@ def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
     assert len(anchor) >= 40, f"only {len(anchor)} handed-over turns have a written expectation"
 
 
+# Turns we hand over knowing nothing at all about them: no window, no direction, no metric, no
+# grouping, no category, no account — asked of the service's own readers, not of a list written for
+# this file. 53 of 153, in 36 distinct sentences.
+#
+# A work-list rather than a defect count, and the split is the work. "¿Cuánto gasté?" is a real
+# question missing a window and belongs with a model. "Déjalo", "sí", "1000", "20 euros", "a ver"
+# and "pues no sé" are not questions at all, and what comes back for them is an answer to somebody
+# who was cancelling, confirming or thinking out loud.
+#
+# Only ever down: by a reader claiming the sentence, or by a vocabulary learning the word.
+MUTE = 53
+
+
+def test_what_we_hand_over_knowing_nothing_about_it() -> None:
+    """The other half of the same idea as the ratchet above, pointing the other way.
+
+    That one counts turns nobody measures. This counts turns we cede having recognised nothing in
+    them, which is a different failure: not an unmeasured model call but an unnecessary one, and
+    the corpus cannot see it — its `unnecessary model calls` rate counts only turns an episode
+    marked `no_model`, so a sentence nobody thought to mark is a call nobody counts.
+    """
+    mute = sorted({case["say"] for case in CASES if not case["states_a_query"]})
+
+    assert len([case for case in CASES if not case["states_a_query"]]) <= MUTE, "\n".join(
+        [f"{len(mute)} distinct sentences handed over with nothing recognised:", *mute[:20]]
+    )
+
+
 def test_the_work_is_counted_in_sentences_rather_than_turns() -> None:
     """What it would cost to write the missing expectations, which is not what the ratchet says.
 

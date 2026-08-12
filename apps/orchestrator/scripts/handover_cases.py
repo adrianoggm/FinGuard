@@ -48,7 +48,12 @@ os.environ.setdefault(
 
 from support import episodes  # noqa: E402
 
-from finguard_orchestrator.domain.services import spanish  # noqa: E402
+from finguard_orchestrator.domain.services import (  # noqa: E402
+    account_words,
+    category_words,
+    explicit_facts,
+    spanish,
+)
 
 PLANNING = ROOT / "evaluation" / "planning"
 WRITTEN = PLANNING / "conversations.yaml"
@@ -68,6 +73,30 @@ def _sentences(node: object) -> set[str]:
     if isinstance(node, list):
         return set().union(*(_sentences(item) for item in node)) if node else set()
     return set()
+
+
+def _states_a_query(sentence: str, today: Any) -> bool:
+    """Whether any vocabulary here recognises something to build a query out of.
+
+    Asked of the service's own readers rather than of a list written for this file: a window, a
+    direction, a metric, a grouping, a category, an account. Nothing new to maintain, and no
+    opinion about what a question is beyond what the service already holds.
+
+    False is the interesting answer. "Déjalo", "sí", "20 euros", "a ver" and "1000 pavos" all
+    reach a planner, and about every one of them this service knows *nothing* — so what it hands
+    over is a sentence and a shrug, and whatever comes back is an answer to somebody who was
+    cancelling, confirming or thinking out loud. An expected plan cannot be written for those, and
+    writing one would record that it is fine.
+    """
+    facts = explicit_facts.read(sentence, today=today)
+    return bool(
+        facts.window
+        or facts.direction
+        or facts.metric
+        or facts.group_by
+        or category_words.named_in(sentence)
+        or account_words.named_in(sentence)
+    )
 
 
 def cases() -> list[dict[str, Any]]:
@@ -100,6 +129,7 @@ def cases() -> list[dict[str, Any]]:
                     # means anything after another turn. Trimmed to what is set, so a case reads.
                     "previous": {k: v for k, v in before.items() if v} if before else None,
                     "group": "anchor" if _folded(turn.say) in measured else "extension",
+                    "states_a_query": _states_a_query(turn.say, episodes.TODAY),
                 }
             )
     return found
