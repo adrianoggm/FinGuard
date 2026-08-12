@@ -4616,6 +4616,35 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     previous = query.conversation.last_plan
     if not isinstance(previous, FinancialPlan):
         return None
+
+    # A follow-up over an answer that took two queries belongs to the path that ran both. This is
+    # the general reader, and being general is what made it claim seven turns another recogniser
+    # also claimed — the cascade's order picked the right one every time, and nothing said so.
+    #
+    # "¿Y el mes pasado?" after "¿qué porcentaje de mi nómina se va en alquiler?" is the whole
+    # proportion moved to another month; read here it is the rent side alone, with the income
+    # operand dropped and a real figure left standing where a percentage was asked for. Same for a
+    # savings rate and a net cash flow.
+    if query.conversation.last_ratio is not None or query.conversation.pending_ratio is not None:
+        return None
+
+    # And the sentence itself may belong to a reader that knows more about it than this one does.
+    # "¿Cuánto he movido a la hucha este año?" is a movement between the holder's own accounts, and
+    # read here it comes back EXPENSE where the internal reader says INCOME — the same figure with
+    # the wrong sign in front of it. "En la que ingreso la nómina" names an account, and the
+    # account reader is right about which one for the same reason.
+    #
+    # Asked of those readers rather than of a vocabulary of this one's own, which is the same
+    # choice the comparison guard makes further down: two definitions of "this sentence is about
+    # an internal movement" would drift apart, and only one of them would be maintained.
+    #
+    # Declining on the *state* was tried first and is wrong: `previous.internal_only` takes "¿y el
+    # mes pasado?" away from the only reader that keeps an internal scope, and the answer comes
+    # back as ordinary spending. `internal_movement` claims the sentence that names a movement, not
+    # a bare window over a plan that happens to be internal.
+    if _internal_movement_request(query) is not None or _account_follow_up_plan(query) is not None:
+        return None
+
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
     facts = explicit_facts.read(query.sentence, today=query.today)
@@ -5020,10 +5049,36 @@ def _multiple_movement_ranking(
     )
 
 
+# The clitic that makes a breakdown a follow-up. "Desglosa por cuenta" states its own question;
+# "desglósalo por cuenta" says *that one*, and what "that one" is filtered by belongs to it.
+_REFERS_TO_THE_QUERY_IN_VIEW: Final = re.compile(
+    r"\b(?:desglosa|separa|agrupa|divide|reparte)(?:me)?(?:lo|los|la|las)\b"
+)
+
+
+def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:
+    """Whether the sentence states a two-window comparison, which no single-period reader may take.
+
+    Four of the turns the cascade's order decides are this shape. "¿En qué mes fue mayor mi gasto
+    medio por movimiento, julio o junio?" is read by `average` as July alone; "compara mis gastos
+    de este semestre con el anterior" is read by `natural_period` as this semester alone. Each
+    loser answers about one of the two periods the sentence names — half the question, with a real
+    figure on it, and nothing downstream can tell that the other half is missing.
+
+    Asked of the comparison reader itself rather than of a vocabulary of its own, so "this sentence
+    compares two periods" has one definition instead of two that drift apart. It is a pure function
+    over the query and the cascade already runs it first on these turns: this is that ordering said
+    out loud, in the readers it was silently deciding for.
+    """
+    return _direct_period_comparison(query) is not None
+
+
 def _natural_period_aggregate_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | None:
     """A simple aggregate whose new calendar window and direction are both explicit."""
+    if _a_comparison_owns_it(query):
+        return None
     window = window_words.natural_period_in(query.sentence, today=query.today)
     if window is None:
         return None
@@ -5060,6 +5115,25 @@ def _deterministic_breakdown_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
     """Build the two common breakdowns whose meaning is fully stated by the sentence."""
+    if _a_comparison_owns_it(query):
+        return None
+
+    # "Desglósalo por cuenta" is not fully stated by the sentence: the *lo* is the query in view,
+    # and that query is filtered to the shop the previous answer singled out. This reader builds a
+    # fresh breakdown and drops the shop, so it would answer about the whole category — a real
+    # figure about a wider question than the one asked.
+    #
+    # The one tie of the four that runs the other way. Everywhere else the general follow-up stands
+    # aside for a reader that knows more about the sentence; here it is the one that knows more,
+    # because it keeps what the pronoun is pointing at.
+    previous = query.conversation.last_plan
+    if (
+        _REFERS_TO_THE_QUERY_IN_VIEW.search(spanish.folded(query.sentence))
+        and isinstance(previous, FinancialPlan)
+        and (previous.counterparties or previous.merchants)
+    ):
+        return None
+
     facts = explicit_facts.read(query.sentence, today=query.today)
     named_categories = category_words.precisely_named_in(query.sentence)
     if not (
@@ -5192,6 +5266,8 @@ def _average_plan(
     PERIOD_AVERAGE divides by the DAY/WEEK/MONTH buckets named in the sentence. A missing window is
     kept as a draft so the next turn can answer it instead of being told the capability is absent.
     """
+    if _a_comparison_owns_it(query):
+        return None
     facts = explicit_facts.read(query.sentence, today=query.today)
     previous = query.conversation.last_plan
     natural_period = _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
