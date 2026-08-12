@@ -162,6 +162,26 @@ def test_a_question_about_payments_is_still_a_question(sentence: str) -> None:
     assert payment_router.is_payment(sentence) is False
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum a Carmen",
+        "mándale 20 euros a Marta",
+        "envíale 20 euros a Marta",
+        "págale 20 euros a Marta",
+        "transfiérele 20 euros a Marta",
+        "ingrésale 20 euros a Marta",
+        # The one the imperative list did not have. It was a payment and not an order, so it could
+        # not interrupt an open clarification — which is the whole reason this predicate exists.
+        "devuélvele los 20 euros a Marta",
+    ],
+)
+def test_an_order_in_the_imperative_is_an_order(sentence: str) -> None:
+    """Every verb that moves money, in the form that commands it. A verb present in the payment
+    vocabulary and absent from this one is a payment nothing lets through a clarification."""
+    assert payment_router.is_explicit_order(sentence) is True
+
+
 @pytest.mark.parametrize("sentence", ["pues bizum", "bizum", "un bizum"])
 def test_a_bare_payment_word_is_not_an_instruction(sentence: str) -> None:
     """The distinction the precedence rule rests on. A bare noun offered as the answer to "¿de qué

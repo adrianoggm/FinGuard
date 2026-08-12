@@ -25,8 +25,10 @@ episodes:
         says: "5.485,50"
       - say: Caunto he gastado este mes ?
         route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: Perdona que movimeintos he tenido ?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: Me gustaria tranferir dinero a mi cuenta corriente
         route: TRANSFER
       - say: 200 euros
@@ -34,6 +36,7 @@ episodes:
         keeps: PAYMENT_CONFIRMATION
       - say: gracais
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
 
   - name: missing_accents_everywhere
     why: >
@@ -47,6 +50,7 @@ episodes:
         route: BALANCE
       - say: cuanto gaste el mes pasado
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: quien eres
         route: IDENTITY
       - say: a quien puedo pagar
@@ -66,6 +70,7 @@ episodes:
         route: BALANCE
       - say: CUANTO GASTE EL MES PASADO
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: QUIEN ERES
         route: IDENTITY
       - say: MUEVE 200 EUROS A LA HUCHA
@@ -82,14 +87,17 @@ episodes:
     turns:
       - say: cunato tengo
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: y en la hcuha
         route: QUERY
       # And the thread is gone with it: the balance memory is one turn deep, so a typo that goes to
       # the model costs the follow-up as well as itself. Asking in full works, which is the price.
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿y en la hucha?
         route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"
@@ -108,6 +116,7 @@ episodes:
         route: BALANCE
       - say: "  ¿cuánto gasté el mes pasado?  "
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: "quién eres!!!"
         route: IDENTITY
       - say: "mueve 200 € a la hucha."
@@ -145,10 +154,12 @@ episodes:
     turns:
       - say: cunato tengo
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: y en la hcuha
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
       - say: qeu categorias hay
@@ -221,6 +232,7 @@ episodes:
         route: BALANCE
       - say: cuanto gaste el mes pasado?
         route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: quien eres?
         route: IDENTITY
       - say: a quien puedo pagar?

@@ -14,16 +14,21 @@ episodes:
       - say: Este año
         route: QUERY
         no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: Pero no me lo has desglosado por cuenta
         route: QUERY
         no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}
       - say: Vale genial, ¿me lo podrías comparar con el año anterior?
         route: QUERY
         no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}
       - say: Compara este año income de cada cuenta con el año anterior
         route: QUERY
         no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}
       - say: Ahora, ¿cuánto gasté en la hucha este mes?
         route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
       - say: gracias
         route: COURTESY

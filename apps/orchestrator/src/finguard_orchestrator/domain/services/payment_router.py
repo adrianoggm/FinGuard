@@ -24,6 +24,12 @@ Three signals, and the order matters:
     money arriving          "he recibido", "me ha llegado" — the opposite direction, and never an
                             order however many payment words it carries.
     a payment verb + money  what is left. "bizum" counts as both.
+
+Every rule below reads the folded sentence, and the entry points fold once. The alternative is what
+this module used to do — write `cu[áa]nt[oa]s?` and remember to do it again next time — which is a
+habit and not a rule. "Que le envíes 20 euros a Marta" is what the habit cost: `envies` was the one
+form nobody spelled twice, so an order fell through to the interrogative test on the "que" it
+starts with, and stayed a question for as long as the pattern existed.
 """
 
 import re
@@ -35,10 +41,7 @@ from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraf
 
 # Questions about facts. Spanish marks these, and the mark is the signal — unlike the question mark,
 # which polite instructions carry too.
-_ASKING: Final = re.compile(
-    r"\b(cu[áa]nt[oa]s?|qu[ée]|cu[áa]l(es)?|cu[áa]ndo|d[óo]nde|c[óo]mo|por\s+qu[ée])\b",
-    re.IGNORECASE,
-)
+_ASKING: Final = re.compile(r"\b(cuant[oa]s?|que|cual(es)?|cuando|donde|como|por\s+que)\b")
 
 # The past of the verbs that move money, conjugated rather than remembered.
 #
@@ -138,15 +141,14 @@ _RECEIVED: Final = re.compile(
 # below still has to agree before any of this is read as an order, so a wider verb list cannot make
 # a payment out of a sentence with no money in it.
 _PAYING: Final = re.compile(
-    r"\b(bi[xz]um|transferencia|tra[nm]sferir|transfiere|transfi[eé]rele"
-    r"|enviar|env[ií]a|env[ií]ale|mandar|mandrle|manda|m[áa]ndale"
-    r"|pagar|paga|p[áa]gale|ingresa|ingr[ée]sale"
+    r"\b(bi[xz]um|transferencia|tra[nm]sferir|transfiere|transfierele"
+    r"|enviar|envia|enviale|mandar|mandrle|manda|mandale"
+    r"|pagar|paga|pagale|ingresa|ingresale"
     # The second-person subjunctive, which is the form the order above is given in: "que le mandes
     # 20 euros". These are payment verbs and nothing else — unlike "hagas", which is deliberately
     # absent because "que hagas el desglose" is not a payment.
-    r"|mandes|env[ií]es|pagues|transfieras"
-    r"|devuelve|devu[eé]lvele)\b",
-    re.IGNORECASE,
+    r"|mandes|envies|pagues|transfieras"
+    r"|devuelve|devuelvele)\b"
 )
 
 # A fully stated instruction remains an instruction when the user appends ``¿cómo lo hago?`` or
@@ -155,8 +157,7 @@ _PAYING: Final = re.compile(
 _EXPLICIT_ORDER: Final = re.compile(
     r"\b(?:quiero|necesito|voy\s+a|vamos\s+a|tengo\s+que)\s+"
     r"(?:hacer\s+(?:una?\s+)?|dar(?:le|les|me)?\s+(?:el\s+|un\s+|una\s+)?)?"
-    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar)\b",
-    re.IGNORECASE,
+    r"(?:bi[xz]um|transferencia|tra[nm]sferir|enviar|mandar|mandrle|pagar)\b"
 )
 
 # The same instruction in the subjunctive, which is how Spanish actually gives one: "que le hagas el
@@ -174,8 +175,7 @@ _EXPLICIT_ORDER: Final = re.compile(
 _SUBJUNCTIVE_ORDER: Final = re.compile(
     r"\bque\s*h?\s*(?:agas|agais)\b|\bque\s+(?:me|le|les|nos)\s*h?\s*(?:agas|agais)\b"
     r"|\bque\s+(?:me|le|les|nos)\s+(?:mandes|envies|pagues|transfieras|des)\b"
-    r"|\bque\s+(?:mandes|envies|pagues|transfieras)\b",
-    re.IGNORECASE,
+    r"|\bque\s+(?:mandes|envies|pagues|transfieras)\b"
 )
 
 # A question about what this assistant can do. It names a rail and orders nothing: "¿puedes hacer
@@ -185,9 +185,8 @@ _SUBJUNCTIVE_ORDER: Final = re.compile(
 # routing — so the rule has to hold in both places, and importing the router's copy would be a
 # cycle: it imports this module. Narrow and in the safe direction, which is refusing to pay.
 _A_CAPABILITY: Final = re.compile(
-    r"\b(?:puedes|sabes|podr[íi]as|sabr[íi]as|se\s+puede)\s+(?:hacer\s+)?"
-    r"(?:transferencias?|transferir|bi[xz]ums?|pagos?|pagar|ingresos?|domiciliaciones)\b",
-    re.IGNORECASE,
+    r"\b(?:puedes|sabes|podrias|sabrias|se\s+puede)\s+(?:hacer\s+)?"
+    r"(?:transferencias?|transferir|bi[xz]ums?|pagos?|pagar|ingresos?|domiciliaciones)\b"
 )
 
 # A transfer explicitly framed as movement between the holder's accounts belongs to the own-account
@@ -198,13 +197,12 @@ _OWN_ACCOUNTS: Final = re.compile(
     r"|\bde\s+una\s+(?:de\s+)?mis\s+cuentas\s+a\s+otra\b"
     r"|\bde\s+una\s+cuenta(?:\s+mia)?\s+a\s+otra\s+cuenta\b.{0,35}"
     r"\b(?:mia|mias|tengo\s+yo)\b"
-    r"|\bde\s+una\s+cuenta\s+a\s+otra\b.{0,30}\bambas\s+mias\b",
-    re.IGNORECASE,
+    r"|\bde\s+una\s+cuenta\s+a\s+otra\b.{0,30}\bambas\s+mias\b"
 )
 
 # Money in the sentence: a figure, a symbol, the word, or a means of payment that is only ever
 # money. Without one, "manda un correo a Marta" would be read as a payment.
-_MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbi[xz]um\b|\btransferencia\b)", re.IGNORECASE)
+_MONEY: Final = re.compile(r"(\d|€|\beuros?\b|\bbi[xz]um\b|\btransferencia\b)")
 
 # A whole reply that says the user cannot fill the slot yet. Narrow and anchored so "no sé a
 # quién tengo en contactos" remains a contact-list question, while a bare "no sé" does not fall
@@ -282,15 +280,15 @@ def repeats(sentence: str, directory: tuple[Contact, ...]) -> bool:
 # about a capability. Written as the stem plus the endings rather than as an alternation of whole
 # words, because the alternation is what kept missing one: "hagamos un bisum" was reported after
 # "que hagas" had already been added.
-_MAKING: Final = re.compile(
-    r"\bh(?:az|aga|agas|agamos|agan|aced)(?:me|le|les|nos)?\b",
-    re.IGNORECASE,
-)
+_MAKING: Final = re.compile(r"\bh(?:az|aga|agas|agamos|agan|aced)(?:me|le|les|nos)?\b")
 
+# `devuelve` belongs here for the same reason the other five do, and it was missing: "devuélvele
+# los 20 euros a Marta" was a payment by `is_payment` and not an order by this predicate, so it
+# could not interrupt an open clarification — the exact defect the docstring below describes,
+# surviving in the one verb whose imperative nobody copied across.
 _IMPERATIVE_ORDER: Final = re.compile(
-    r"\b(?:manda(?:le|les|me)?|env[ií]a(?:le|les|me)?"
-    r"|p[áa]ga(?:le|les)?|transfi[eé]re(?:le)?|ingr[ée]sa(?:le)?)\b",
-    re.IGNORECASE,
+    r"\b(?:manda(?:le|les|me)?|envia(?:le|les|me)?|paga(?:le|les)?"
+    r"|transfiere(?:le)?|ingresa(?:le)?|devuelve(?:le|les|me)?)\b"
 )
 
 
@@ -307,11 +305,12 @@ def is_explicit_order(sentence: str) -> bool:
     le hagas un bizum") and imperative ("hazle un bizum"). Missing two of them is what let an open
     clarification swallow seven consecutive attempts to send somebody twenty-five euros.
     """
+    folded = spanish.folded(sentence)
     return bool(
-        _EXPLICIT_ORDER.search(sentence)
-        or _SUBJUNCTIVE_ORDER.search(sentence)
-        or _IMPERATIVE_ORDER.search(sentence)
-        or _MAKING.search(sentence)
+        _EXPLICIT_ORDER.search(folded)
+        or _SUBJUNCTIVE_ORDER.search(folded)
+        or _IMPERATIVE_ORDER.search(folded)
+        or _MAKING.search(folded)
     )
 
 
@@ -337,18 +336,18 @@ def is_payment(sentence: str) -> bool:
         return False
     if _CLASSIFYING_A_MOVEMENT.search(folded):
         return False
-    if _A_CAPABILITY.search(sentence):
+    if _A_CAPABILITY.search(folded):
         return False
     if _ALREADY.search(folded) or _RECEIVED.search(folded):
         return False
     if (
-        _ASKING.search(sentence)
-        and _EXPLICIT_ORDER.search(sentence) is None
-        and _SUBJUNCTIVE_ORDER.search(sentence) is None
+        _ASKING.search(folded)
+        and _EXPLICIT_ORDER.search(folded) is None
+        and _SUBJUNCTIVE_ORDER.search(folded) is None
     ):
         return False
     # A rail named however it was spelled counts as both the verb and the money, which is what
     # `_MONEY` already said about "bizum" — said here as well so a misspelling keeps that property
     # instead of losing it in two places at once.
     rail = payment_words.names_a_rail(sentence)
-    return (bool(_PAYING.search(sentence)) or rail) and (bool(_MONEY.search(sentence)) or rail)
+    return (bool(_PAYING.search(folded)) or rail) and (bool(_MONEY.search(folded)) or rail)

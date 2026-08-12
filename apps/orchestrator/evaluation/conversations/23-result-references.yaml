@@ -10,26 +10,34 @@ episodes:
       - say: ¿En qué categoría he gastado más este año?
         route: QUERY
         no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM}
       - say: ¿Y cuánto gasté en esa categoría el mes pasado?
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM}
       - say: Sepáralo por comercio
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: COUNTERPARTY, metric: SUM}
       - say: ¿Cuánto gasté en ese comercio?
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM}
       - say: Desglósalo por cuenta
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: ACCOUNT, metric: SUM}
       - say: ¿Cuántos movimientos tuvo esa cuenta?
         route: QUERY
         no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT}
       - say: Muéstrame los últimos 5 movimientos de mis cuentas
         route: QUERY
         no_model: true
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ¿Cuánto suman esos movimientos?
         route: QUERY
         no_model: true
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: gracias
         route: COURTESY
