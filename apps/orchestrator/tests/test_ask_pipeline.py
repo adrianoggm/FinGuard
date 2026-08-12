@@ -579,6 +579,27 @@ async def test_a_shop_named_in_a_follow_up_does_not_inherit_the_old_category() -
     assert ledger.plans[-1].categories == ()
 
 
+async def test_a_shop_named_beside_a_new_window_is_not_dropped() -> None:
+    """The same hole, one branch further up. "A turn containing only a new window" patches the
+    query on screen, and its test for "only" is eight words — so a sentence naming a shop *and* a
+    window is short enough to be read as the window alone, and the shop disappears into an answer
+    about whatever the previous turn was filtered by."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté en Mercadona el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+        )
+    )
+
+    assert planner.asked is not None, "a shop is not a window, and this path has no field for one"
+    assert ledger.plans[-1].categories != ("RESTAURANTS",)
+
+
 async def test_counting_a_kind_the_vocabulary_knows_keeps_the_window() -> None:
     """The two reasons a follow-up declines are not the same reason.
 
