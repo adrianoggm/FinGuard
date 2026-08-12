@@ -249,6 +249,21 @@ def continues(sentence: str, draft: PaymentDraft, directory: tuple[Contact, ...]
     )
 
 
+def describes_a_past_payment(sentence: str) -> bool:
+    """Whether the sentence says money already left, rather than ordering any to leave.
+
+    `is_payment` reads this to refuse, which is half of what the sentence means and the half that
+    matters most. The other half was falling through: "le he mandado 20 € a Marta Solis Vega" is
+    about a movement that exists, and it reached the financial planner with nothing recognised in
+    it — a model asked to build a query out of a sentence this vocabulary had already understood.
+
+    Both signals, because the tense alone does not say which way the money went. "Me ha llegado un
+    bizum" is equally past and is somebody else's payment.
+    """
+    folded = spanish.folded(sentence)
+    return bool(_ALREADY.search(folded)) and _RECEIVED.search(folded) is None
+
+
 def is_uncertain(sentence: str) -> bool:
     """Whether a reply to a missing payment field says only that the user does not know yet."""
     return _UNCERTAIN.fullmatch(spanish.folded(sentence)) is not None

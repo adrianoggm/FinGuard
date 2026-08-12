@@ -59,6 +59,19 @@ class NoCards:
         return ()
 
 
+class NoContacts:
+    """An address book with nobody in it, which is a real state and not a missing dependency.
+
+    This was `None` until a reader started consulting the directory about sentences in the past
+    tense — "¿cuántas compras hice?" is one — and three tests here raised `AttributeError` on a
+    build no deployment can make: the port is required precisely so an unwired one is found by
+    mypy rather than by a user.
+    """
+
+    async def all_of(self, account_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 5)
 
@@ -178,7 +191,7 @@ async def asked(
         planner,  # type: ignore[arg-type]
         ledger or Ledger(),  # type: ignore[arg-type]
         accounts=Bank(),  # type: ignore[arg-type]
-        contacts=None,
+        contacts=NoContacts(),  # type: ignore[arg-type]
         cards=NoCards(),  # type: ignore[arg-type]
     )
     return await handler.handle(

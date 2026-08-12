@@ -40,20 +40,9 @@ def counterparty_in(sentence: str, directory: tuple[Contact, ...] = ()) -> str |
     if not is_incoming(sentence):
         return None
     folded = spanish.folded(sentence)
-    contacts = payment_words.contacts_in(sentence, directory)
-    if contacts:
-        # Keep only name words the holder actually wrote. Two contacts named Marta therefore
-        # become the ledger counterparty "Marta", rather than an invented choice between them.
-        mentioned: list[str] = []
-        for contact in contacts:
-            for original in contact.display_name.split():
-                word = spanish.folded(original)
-                named = re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", folded)
-                if len(word) > 2 and named:
-                    if word not in {item.casefold() for item in mentioned}:
-                        mentioned.append(original)
-        if mentioned:
-            return " ".join(mentioned)
+    grounded = payment_words.name_as_written(sentence, directory)
+    if grounded is not None:
+        return grounded
 
     for pattern in (_BEFORE_ME, _AFTER_FROM):
         match = pattern.search(folded)

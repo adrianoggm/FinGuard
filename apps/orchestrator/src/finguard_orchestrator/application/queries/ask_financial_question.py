@@ -79,6 +79,7 @@ from finguard_orchestrator.domain.services import (
     incoming_payment_words,
     intent_router,
     merchant_words,
+    payment_router,
     payment_words,
     plan_verifier,
     query_recovery,
@@ -785,6 +786,27 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, incoming_payment)
             return
 
+        past_payment = await self._past_person_payment_plan(query)
+        if isinstance(past_payment, FinancialPlanDraft):
+            person = past_payment.counterparties[0]
+            sent = "los Bizums" if past_payment.categories else "los pagos"
+            question = f"¿De qué periodo quieres comprobar {sent} que le has hecho a {person}?"
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(draft=past_payment, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        if isinstance(past_payment, FinancialPlan):
+            yield Stage("planned", answer_writer.describe(past_payment))
+            yield Stage("querying")
+            yield await self._answer(query, past_payment)
+            return
+
         gambling = _gambling_plan(query)
         if isinstance(gambling, FinancialPlanDraft):
             question = (
@@ -1382,6 +1404,42 @@ class AskFinancialQuestionHandler:
         person = incoming_payment_words.counterparty_in(query.sentence, directory)
         if person is None:
             return None
+        return self._person_payment_plan(query, person, Direction.INCOME)
+
+    async def _past_person_payment_plan(
+        self, query: AskFinancialQuestionQuery
+    ) -> FinancialPlan | FinancialPlanDraft | None:
+        """The same reading in the other direction: a payment the holder says they already made.
+
+        "Le he mandado 20 € a Marta Solis Vega" is a statement about a movement that exists. The
+        payment router already refuses to *repeat* it — that is the expensive half, and offering to
+        pay twice is the worst thing this rail can do — but the sentence then reached the planner
+        with nothing recognised in it, and what came back was a query about a period nobody named.
+
+        Every word it needs is grounded here: the tense from the payment vocabulary, the person
+        from this holder's own directory. A name the directory does not have is nobody, and the
+        turn goes on to the model rather than becoming a query about a stranger.
+        """
+        if not payment_router.describes_a_past_payment(query.sentence):
+            return None
+        try:
+            directory = await self._contacts.all_of(query.account_id)
+        except BankingUnavailableError:
+            directory = ()
+        person = payment_words.name_as_written(query.sentence, directory)
+        if person is None:
+            return None
+        return self._person_payment_plan(query, person, Direction.EXPENSE)
+
+    def _person_payment_plan(
+        self, query: AskFinancialQuestionQuery, person: str, direction: Direction
+    ) -> FinancialPlan | FinancialPlanDraft:
+        """Movements between the holder and one person, in whichever direction was read.
+
+        A draft when the sentence names no window and there is nothing behind it to inherit one
+        from: the period is the one thing neither vocabulary can know, and asking for it is cheaper
+        than a month somebody did not ask about.
+        """
         window = window_words.window_in(query.sentence, today=query.today)
         if (
             window is None
@@ -1395,14 +1453,14 @@ class AskFinancialQuestionHandler:
         transaction_types = (TransactionType.BIZUM,) if is_bizum else (TransactionType.TRANSFER,)
         if window is None:
             return FinancialPlanDraft(
-                direction=Direction.INCOME,
+                direction=direction,
                 categories=categories,
                 counterparties=(person,),
                 counterparty_types=(CounterpartyType.PERSON,),
                 transaction_types=transaction_types,
             )
         return FinancialPlan(
-            direction=Direction.INCOME,
+            direction=direction,
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=categories,

@@ -81,6 +81,33 @@ def test_a_past_payment_is_a_question_not_an_order() -> None:
     assert not payment_router.is_payment("le envié 20 euros a Marta el martes")
 
 
+def test_a_past_payment_is_also_read_as_one_rather_than_only_refused() -> None:
+    """The half of the same sentence that used to be thrown away.
+
+    `is_payment` says what must not happen — no offer to send it again — and for a long time that
+    was all this module said about the past. So "le he mandado 20 € a Marta" left here as a
+    negative and reached the financial planner with nothing recognised in it, and a model was asked
+    to build a query out of a sentence whose tense and direction this vocabulary already knew.
+    """
+    assert payment_router.describes_a_past_payment("le he mandado 20 € a Marta")
+    assert payment_router.describes_a_past_payment("¿cuánto le mandé a Marta el mes pasado?")
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Equally past, and somebody else's payment. Reading it as money the holder sent would
+        # answer "¿he recibido algún bizum de Marta?" with what they spent.
+        "me ha llegado un bizum de Marta",
+        "Marta me hizo un bizum de 20 euros",
+        # Not the past at all. An order stays an order, and `is_payment` is what handles it.
+        "hazle un bizum de 20 euros a Marta",
+    ],
+)
+def test_what_is_not_a_payment_already_made(sentence: str) -> None:
+    assert payment_router.describes_a_past_payment(sentence) is False
+
+
 @pytest.mark.parametrize(
     "reply", ["no sé", "No lo se.", "ni idea", "no estoy segura", "todavía no lo sé"]
 )
