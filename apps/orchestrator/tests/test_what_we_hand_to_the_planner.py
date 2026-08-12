@@ -16,14 +16,14 @@ assumption throughout.
 The cases come from `scripts/handover_cases.py`, which is what a judge will read too. One
 definition of "a turn we handed over" rather than one here and one there.
 
-**The obvious next layer is a judge.** 107 cases is more expected plans than anybody will hand-write
+**The obvious next layer is a judge.** 104 cases is more expected plans than anybody will hand-write
 well, and most of these turns have no single right plan — "¿cuántas compras hice en Mercadona?"
 needs a merchant filter this schema has, and which window it inherits is a judgement. A model
 scoring the plan against the sentence and the conversation behind it is the shape that fits; the
 anchor group is what says whether its scores can be believed.
 
-**And counting the work found something worse than a gap.** The 107 are 67 turns with no thread
-behind them and 40 that follow one, and the 67 are only 42 distinct sentences — but among those
+**And counting the work found something worse than a gap.** The 104 are 65 turns with no thread
+behind them and 39 that follow one, and the 65 are only 40 distinct sentences — but among those
 distinct sentences are "sí", "20 euros", "déjalo", "a ver", "no es eso", "no me has entendido" and
 "1000 pavos". Those state no query at all. We are asking a model to plan them, and a model asked to
 plan "déjalo" will return something, which becomes an answer to somebody who was cancelling.
@@ -45,13 +45,20 @@ from handover_cases import cases  # noqa: E402
 
 CASES = cases()
 
-# How many handed-over turns no planning case exercises. A ratchet, and it only moves one way:
-# down by writing the case, or down by a deterministic reader claiming the turn back.
+# How many handed-over *sentences* no planning case exercises. A ratchet, and it only moves one
+# way: down by writing the case, or down by a deterministic reader claiming the turn back.
 #
-# 107 of 153 the day it was measured. Not a target to grind to zero by hand — the note above about
-# a judge is the honest route for most of them — but a number that exists, where before there was
-# an assumption that ceding a turn made things better.
-UNMEASURED = 107
+# **It was 107, and 107 was the wrong unit.** That number counted turns; the assertion below counts
+# distinct sentences, because the corpus repeats itself and writing an expectation is per sentence
+# rather than per turn. The two are 104 and 69 today, so the ratchet was carrying thirty-five
+# sentences of slack — it would have passed while half as many again appeared, which is the precise
+# failure a ratchet exists to prevent. A literal only discriminates on the day it is written, and
+# this one had never been level with what it compares against.
+#
+# Not a target to grind to zero by hand — the note above about a judge is the honest route for most
+# of them — but a number that exists, where before there was an assumption that ceding a turn made
+# things better.
+UNMEASURED = 69
 
 
 def test_the_turns_we_hand_over_are_measured_somewhere() -> None:
