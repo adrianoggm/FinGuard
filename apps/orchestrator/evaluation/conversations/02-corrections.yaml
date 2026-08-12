@@ -252,9 +252,13 @@ episodes:
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      # June, and still about petrol. It used to be July with no category at all: "el mes anterior"
+      # was a phrase only the year had a reader for, so the turn went to the planner, which
+      # answered the month it was already looking at and dropped the filter on the way.
       - say: ¿y el mes anterior?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        no_model: true
+        ran: {window: '2026-06-01..2026-06-30', categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: vale
         route: COURTESY
       - say: gracias
