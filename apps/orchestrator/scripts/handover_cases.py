@@ -51,7 +51,10 @@ from support import episodes  # noqa: E402
 from finguard_orchestrator.domain.services import (  # noqa: E402
     account_words,
     category_words,
+    courtesy,
     explicit_facts,
+    payment_words,
+    query_recovery,
     spanish,
 )
 
@@ -99,6 +102,24 @@ def _states_a_query(sentence: str, today: Any) -> bool:
     )
 
 
+def _another_vocabulary_has_a_word_for_it(sentence: str) -> bool:
+    """Whether some reader here already knows this kind of turn, without owning this one.
+
+    The half of the mute set that is a routing gap rather than a planning one. "Déjalo" is a
+    control `query_recovery` reads, "20 euros" is an amount `payment_words` reads, "gracias" is
+    courtesy — each is a word this service has, arriving at a moment where nothing consults it, so
+    the turn reaches a model that has nothing to plan.
+
+    Separated from the rest because the work is different. These want a reader to claim them; the
+    others are real questions missing a window, and those want an expectation written.
+    """
+    return bool(
+        payment_words.amount_in(sentence) is not None
+        or query_recovery.retry_action(sentence) is not None
+        or courtesy.is_courtesy(sentence, at_rest=True)
+    )
+
+
 def cases() -> list[dict[str, Any]]:
     """One case per turn the corpus handed to the planner, oldest conversation first."""
     measured = _sentences(yaml.safe_load(WRITTEN.read_text(encoding="utf-8")))
@@ -130,6 +151,7 @@ def cases() -> list[dict[str, Any]]:
                     "previous": {k: v for k, v in before.items() if v} if before else None,
                     "group": "anchor" if _folded(turn.say) in measured else "extension",
                     "states_a_query": _states_a_query(turn.say, episodes.TODAY),
+                    "known_elsewhere": _another_vocabulary_has_a_word_for_it(turn.say),
                 }
             )
     return found

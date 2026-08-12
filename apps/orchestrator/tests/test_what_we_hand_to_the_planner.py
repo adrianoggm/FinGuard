@@ -103,6 +103,29 @@ def test_what_we_hand_over_knowing_nothing_about_it() -> None:
     )
 
 
+def test_the_mute_turns_split_into_two_different_jobs() -> None:
+    """13 of the 53 are a word this service already has, arriving where nothing consults it.
+
+    Amounts — "1000", "20 euros", "mejor 1000", "500" — plus "mueve 500 € a algún sitio" and "le
+    he mandado 20 € a Marta Solis Vega". Those want a reader to claim them, and the work is a
+    precondition. The other 40 are real questions missing a window, and the work there is an
+    expectation somebody writes.
+
+    Two jobs, and the smaller one is worth more per turn: a reader claiming "1000" removes a model
+    call, its latency and an invented answer, while an expectation only records what should have
+    happened.
+
+    The check is `payment_words.amount_in`, and it is not clean: "En los ulltimos 4 meses" lands
+    here on the 4. Harmless in this measurement and worth writing down rather than filtering away,
+    because it says that reader answers about digits and not about money — behind a payment slot
+    that is gated, and this is the first place it has been asked outside one.
+    """
+    mute = [case for case in CASES if not case["states_a_query"]]
+    known = [case for case in mute if case["known_elsewhere"]]
+
+    assert 5 <= len(known) <= 20, f"{len(known)} of {len(mute)} mute turns a reader could claim"
+
+
 def test_the_work_is_counted_in_sentences_rather_than_turns() -> None:
     """What it would cost to write the missing expectations, which is not what the ratchet says.
 
