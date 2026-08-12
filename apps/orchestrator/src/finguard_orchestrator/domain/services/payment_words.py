@@ -36,11 +36,20 @@ _AMOUNT: Final = re.compile(
 # What looks like an amount and is not. A phone number is the dangerous one: read as an amount it
 # becomes an enormous payment in front of a confirmation prompt, where a distracted "sí" is the only
 # thing between it and the ledger. A date is the common one — "el 15 de julio" is not 15 euros.
+#
+# A length of time is the one this had never been asked about. "En los últimos 4 meses" came back
+# as four euros, found by a measurement that consulted this reader outside the slot it is normally
+# gated behind — so it costs nothing today and says something worth fixing anyway: what the reader
+# answers about is digits, and a digit in front of "meses" is a period.
+#
+# Adjacent only, and that is the whole care in it. Allowing a word between would swallow "le paso
+# 100 al mes", which is an amount and a common way to say one.
 _NOT_AN_AMOUNT: Final = re.compile(
     r"\+?\d[\d\s]{7,}"  # a phone number, with or without spaces
     r"|\bel\s+\d{1,2}\s+de\s+\w+"  # "el 15 de julio"
     r"|\b\d{1,2}/\d{1,2}"  # a date written with slashes
-    r"|\b\d{1,2}:\d{2}",  # a time
+    r"|\b\d{1,2}:\d{2}"  # a time
+    r"|\b\d{1,3}\s+(?:d[ií]as?|semanas?|mes|meses|a[nñ]os?|trimestres?|quincenas?)\b",
     re.IGNORECASE,
 )
 
