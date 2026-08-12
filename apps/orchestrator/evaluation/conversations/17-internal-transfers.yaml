@@ -18,25 +18,25 @@ episodes:
         route: QUERY
         no_model: true
         says: entre tus cuentas
-        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], internal_only: True, include_internal: True}
       - say: ¿Y el mes pasado?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], internal_only: True, include_internal: True}
       - say: ¿Cuánto he movido a la hucha este año?
         route: QUERY
         no_model: true
         says: hacia la cuenta consultada
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha'], internal_only: True, include_internal: True}
       - say: Caunto he invertido en el ultimo año?
         route: QUERY
         no_model: true
         says: hacia la cuenta consultada
-        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿Y este mes?
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: gracias
         route: COURTESY
 
@@ -49,20 +49,20 @@ episodes:
       - say: ¿Cuánto he gastado en inversiones este mes?
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿Y el mes pasado?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿Qué aportaciones hice al fondo este año?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿Cuál fue el importe medio mensual?
         route: QUERY
         no_model: true
         says: importe medio mensual
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: Vale, ¿cuánto gasté en supermercados este mes?
         route: QUERY
         ran: {window: THIS_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}

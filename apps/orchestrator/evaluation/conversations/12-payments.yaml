@@ -210,7 +210,7 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿he recibido algún bizum de Marta Solis Vega?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: INCOME, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: INCOME, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], counterparties: ['Marta Solis Vega']}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale

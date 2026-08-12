@@ -52,7 +52,7 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en la hucha?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"
@@ -123,10 +123,10 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en la hucha?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -262,4 +262,4 @@ episodes:
         ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: la hucha
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}

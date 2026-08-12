@@ -87,7 +87,7 @@ episodes:
       - say: ¿cuánto he invertido en el último año?
         route: QUERY
         no_model: true
-        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"
