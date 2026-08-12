@@ -912,9 +912,20 @@ class AskFinancialQuestionHandler:
             # when you take it is worse than no suggestion at all.
             #
             # No model and no bank call to decide it: the previous plan carries the window and this
-            # replaces one field. A name that matches nothing is not a problem either — the empty
-            # answer then offers the shops that do exist, which is the same repair one turn later.
-            yield await self._answer(
+            # replaces one field.
+            #
+            # **It guesses, and then it checks.** Deciding by what a word is *not* — no category, no
+            # account, no window, no verb any vocabulary here owns — is a rule that cannot abstain,
+            # and the corpus says what that costs once the plans are asserted: "gracais", "déjalo",
+            # "nada", "es que", "ah vale" and eleven more became shop filters, and two of them
+            # outlived their turn. "¿Cuánto gasté el mes pasado?" ran with merchants=['nada'].
+            #
+            # The check needs no vocabulary and no extra call. An empty answer already spends a
+            # query listing the shops this window does have, and answers `¿te refieres a...?` when
+            # one of them is close — so a PLANNED answer with nothing in it is the ledger saying
+            # the word matched no shop and resembled none either. That is not a shop, and the
+            # question the user was already in is the true thing to answer instead.
+            answered = await self._answer(
                 query,
                 replace(
                     previous,
@@ -926,6 +937,13 @@ class AskFinancialQuestionHandler:
                     ),
                 ),
             )
+            if answered.outcome == PlanningOutcome.PLANNED.value and not answered.movement_count:
+                # The one real shop this gives up on: a shop with no movements in *this* window,
+                # where "0 €" was a true answer. It costs a second query on the turn that was
+                # producing a wrong one, and the answer it retracts to is the question the user
+                # asked, not an invented one.
+                answered = await self._answer(query, previous)
+            yield answered
             return
 
         if intent is Intent.ACCOUNT_BALANCE:

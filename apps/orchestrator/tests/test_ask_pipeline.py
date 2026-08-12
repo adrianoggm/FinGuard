@@ -569,10 +569,43 @@ async def test_merchant_suggestions_drop_an_incompatible_period_average_metric()
     )
 
     assert result.outcome == PlanningOutcome.PLANNED.value
-    assert len(ledger.plans) == 2
+    assert len(ledger.plans) == 3
     assert ledger.plans[0].metric is Metric.PERIOD_AVERAGE
     assert ledger.plans[1].group_by is GroupBy.MERCHANT
     assert ledger.plans[1].metric is Metric.SUM
+    # And the third is the retraction: this ledger has no shops at all, so "Acme" matched none and
+    # resembled none, and a word that is no shop leaves the question the user was in unchanged.
+    assert ledger.plans[2].merchants == ()
+    assert ledger.plans[2].metric is Metric.PERIOD_AVERAGE
+    assert ledger.plans[2].group_by is GroupBy.MONTH
+
+
+async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
+    """The guess is checked before it is believed.
+
+    `_a_bare_shop_name` decides by what a word is *not* — no category, no account, no window, no
+    verb — which is a rule that can never abstain. Reported by the corpus once the plans were
+    asserted: "gracais", "déjalo", "nada" and twelve more became shop filters, and two outlived
+    their turn, so "¿cuánto gasté el mes pasado?" ran a turn later filtered by "nada".
+
+    Nothing here reads the word. The ledger says whether it is a shop, on a query the empty answer
+    was already spending."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="ah vale",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[0].merchants == ("ah vale",), "it still guesses first"
+    assert ledger.plans[-1].merchants == (), "and retracts to the question the user was asking"
+    assert ledger.plans[-1].categories == ("GROCERIES",), "which keeps everything else it had"
 
 
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
