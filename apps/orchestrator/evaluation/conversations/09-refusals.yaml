@@ -20,7 +20,7 @@ episodes:
       - say: ¿gasté más en julio que en junio?
         route: QUERY
         no_model: true
-        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: a este ritmo, ¿cuánto voy a gastar?
         route: REFUSED
         no_model: true
@@ -29,7 +29,7 @@ episodes:
         no_model: true
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
 
   - name: the_refusal_does_not_outlive_its_question
     why: >
@@ -39,14 +39,14 @@ episodes:
     turns:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuál es mi gasto medio?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: AVERAGE}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto gasté en gasolina el mes pasado?
         route: QUERY
         ends: true
-        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: ¿y en la hucha?
@@ -64,17 +64,17 @@ episodes:
         route: QUERY
       - say: ¿y el segundo?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿gasté más este mes que el pasado?
         route: QUERY
         no_model: true
-        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿cuánto gasté este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿y el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY
 
@@ -87,7 +87,7 @@ episodes:
       - say: ¿cuánto he invertido en el último año?
         route: QUERY
         no_model: true
-        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo en el fondo?
         route: BALANCE
         says: "2.700,00"
@@ -98,7 +98,7 @@ episodes:
         no_model: true
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY
 
@@ -115,7 +115,7 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿y los traspasos entre cuentas?
         route: CLARIFY
         no_model: true
@@ -132,16 +132,16 @@ episodes:
     turns:
       - say: ¿cuánto gasté el mes pasado en el supermercado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuál es la media?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: AVERAGE}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: AVERAGE}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en restaurantes?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: AVERAGE}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: gracias
@@ -161,10 +161,10 @@ episodes:
         route: REFUSED
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY
 
@@ -178,10 +178,10 @@ episodes:
         route: REFUSED
       - say: ¿cuánto llevo gastado este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿y llegaré a fin de mes?
         route: REFUSED
       - say: ¿cuánto tengo?
@@ -204,7 +204,7 @@ episodes:
       - say: compárame julio y junio
         route: QUERY
         no_model: true
-        ran: [{window: '2026-06-01..2026-06-30', direction: ALL, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+        ran: [{window: '2026-06-01..2026-06-30', direction: ALL, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
       - say: ¿cuánto voy a gastar?
         route: REFUSED
         no_model: true
@@ -252,18 +252,18 @@ episodes:
     turns:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: vende mis acciones del fondo indexado
         route: REFUSED
         not_says: calcularlo
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: bloquea mi tarjeta que la he perdido
         route: REFUSED
       - say: vale, ¿y en restaurantes?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: contrata un plan de pensiones entonces
         route: REFUSED
       # A shop, and a shop is the one filter the deterministic follow-up cannot represent. It used
@@ -273,7 +273,7 @@ episodes:
       # the half the corpus can see: the inherited category is gone.
       - say: ¿cuántas compras hice en Mercadona?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
       - say: gracias, adiós
         route: COURTESY
 
@@ -325,7 +325,7 @@ episodes:
     turns:
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Que tarjetas tengo de credito ?
         route: CARDS
         no_model: true
@@ -335,7 +335,7 @@ episodes:
         no_model: true
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: mis tarjetas
         route: CARDS
       - say: gracias

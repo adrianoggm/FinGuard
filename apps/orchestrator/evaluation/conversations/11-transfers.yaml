@@ -115,7 +115,7 @@ episodes:
         keeps: PAYMENT_CONFIRMATION
       - say: mueve 500 € a algún sitio
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: mueve 500 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
@@ -174,7 +174,7 @@ episodes:
       # cancelled at the bank rather than merely dropped here.
       - say: sí
         not_says: Hecho
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: mueve 200 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION
@@ -213,12 +213,12 @@ episodes:
     turns:
       - say: ¿cuánto paso a la hucha cada mes?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿qué traspaso al fondo?
         route: QUERY
       # A question about the movements between the holder's own accounts, which no plan can
       # express. Refused with its reason rather than answered with every movement of the year.
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto muevo entre cuentas?
         route: REFUSED
       - say: mueve 100 € a la hucha
@@ -249,7 +249,7 @@ episodes:
         keeps: PAYMENT_CONFIRMATION
       - say: mejor 1000
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: mueve 1000 € a la hucha
         route: PAYMENT
         keeps: PAYMENT_CONFIRMATION

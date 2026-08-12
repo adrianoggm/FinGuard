@@ -28,7 +28,7 @@ episodes:
         route: COURTESY
       - say: ¿cuánto gasté este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
 
   - name: the_recipient_first_then_the_amount
     why: >
@@ -204,13 +204,13 @@ episodes:
     turns:
       - say: le he mandado 20 € a Marta Solis Vega
         not_says: Confirmas
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto le mandé a Marta Solis Vega el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿he recibido algún bizum de Marta Solis Vega?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: INCOME, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: INCOME, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿cuánto tengo?
         route: BALANCE
       - say: vale
@@ -292,9 +292,9 @@ episodes:
         route: BALANCE
       - say: ¿cuánto gasté este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿y en gasolina?
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: gracias, adiós
         route: COURTESY

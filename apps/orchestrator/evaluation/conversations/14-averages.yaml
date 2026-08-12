@@ -18,7 +18,7 @@ episodes:
         route: QUERY
         no_model: true
         says: por movimiento
-        ran: {window: LAST_N_MONTHS:12, direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE}
+        ran: {window: LAST_N_MONTHS:12, direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       # The divisor changes and nothing else does. A period average needs its calendar bucket, so the
       # grouping arrives with the metric rather than being asked for.
       - say: ¿Y al mes?
@@ -54,7 +54,7 @@ episodes:
         route: QUERY
         no_model: true
         says: lo que va de mes
-        ran: {window: THIS_MONTH, categories: [HOUSING_RENT], metric: AVERAGE, group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [HOUSING_RENT], metric: AVERAGE, group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y por semana?
         route: QUERY
         no_model: true
@@ -121,7 +121,7 @@ episodes:
         route: QUERY
         no_model: true
         says: últimos 3 meses
-        ran: {window: LAST_N_MONTHS:3, categories: [GROCERIES], metric: AVERAGE}
+        ran: {window: LAST_N_MONTHS:3, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       # The direction flips, and the arithmetic is what this episode is about, so that is what is
       # asserted. What a change of direction does to the category filter is a separate question and
       # deliberately not claimed here.
@@ -129,12 +129,12 @@ episodes:
         route: QUERY
         no_model: true
         says: ingreso medio por mes
-        ran: {window: THIS_YEAR, direction: INCOME, metric: PERIOD_AVERAGE, group_by: MONTH}
+        ran: {window: THIS_YEAR, direction: INCOME, metric: PERIOD_AVERAGE, group_by: MONTH, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y cuánto suelo gastar al mes?
         route: QUERY
         no_model: true
         says: gasto medio por mes
-        ran: {window: THIS_YEAR, direction: EXPENSE, metric: PERIOD_AVERAGE, group_by: MONTH}
+        ran: {window: THIS_YEAR, direction: EXPENSE, metric: PERIOD_AVERAGE, group_by: MONTH, excluded_categories: [], excluded_merchants: []}
 
   - name: the_reported_conversation_keeps_its_mean_ranking_and_account_context
     why: >
@@ -148,36 +148,36 @@ episodes:
         route: QUERY
         no_model: true
         says: medio por mes
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Y el semanal ?
         route: QUERY
         no_model: true
         says: medio por semana
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Vale en que categoria es la que he gastado mas a lo largo de este año?
         route: QUERY
         no_model: true
         says: categoría
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Que te pasa ?
         route: GUIDANCE
         no_model: true
         says: perdido el hilo
       - say: En los ulltimos 4 meses
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: La principal
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: En la que ingreso la nomina vaya ç
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: an_average_can_become_a_ranking_and_return_to_a_breakdown
     why: >
@@ -190,34 +190,34 @@ episodes:
         route: QUERY
         no_model: true
         says: medio por mes
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Y semanal?
         route: QUERY
         no_model: true
         says: medio por semana
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Y por movimiento?
         route: QUERY
         no_model: true
         says: por movimiento
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Y en alquiler?
         route: QUERY
         no_model: true
         says: alquiler
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Cual ha sido el gasto mas alto?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], rank: 1}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], rank: 1, excluded_categories: [], excluded_merchants: []}
       - say: Y el segundo?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], rank: 2}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], rank: 2, excluded_categories: [], excluded_merchants: []}
       - say: Y en que categoria he gastado mas?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: category_filters_metrics_and_comparisons_are_patches
     why: >
@@ -229,34 +229,34 @@ episodes:
       - say: Compara mi gasto medio en supermercados y restaurantes este año
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Cual de las dos es mayor?
         route: QUERY
         no_model: true
       # The window moves and the pair of filters does not, which is the patch this episode claims.
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: AVERAGE}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Y el mes pasado?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE}
+        ran: {window: LAST_MONTH, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Ahora solo supermercados
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: AVERAGE}
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
       # Three turns switching the metric and nothing else. Only the metric distinguishes them, and
       # the answer text cannot: the stub ledger returns the same figure whichever one ran.
       - say: Cuantas compras hice?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: COUNT}
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: COUNT, excluded_categories: [], excluded_merchants: []}
       - say: Y cuanto gaste?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: SUM}
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: En que comercio compre mas?
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: MERCHANT, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: MERCHANT, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: an_account_subset_survives_period_and_direction_changes
     why: >
@@ -266,33 +266,33 @@ episodes:
     turns:
       - say: Enseñame los movimientos de los ultimos 4 meses
         route: QUERY
-        ran: {window: 'LAST_N_MONTHS:4', categories: [], merchants: [], group_by: NONE}
+        ran: {window: 'LAST_N_MONTHS:4', categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Hazme el desglose por cuenta
         route: QUERY
         no_model: true
-        ran: {window: 'LAST_N_MONTHS:4', direction: EXPENSE, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM}
+        ran: {window: 'LAST_N_MONTHS:4', direction: EXPENSE, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Solo la principal
         route: QUERY
         no_model: true
-        ran: {window: 'LAST_N_MONTHS:4', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: 'LAST_N_MONTHS:4', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Y el mes pasado?
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Ahora solo la hucha
         route: QUERY
         no_model: true
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Y este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Solo cuenta corriente y hucha, no el fondo
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Y solo los ingresos?
         route: QUERY
         no_model: true
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
 
   - name: a_natural_comparison_can_be_refined_without_speaking_like_a_query_language
     why: >
@@ -308,23 +308,23 @@ episodes:
       - say: En lo que llevamos de año
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿Cuánta diferencia hay?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Vale, quédate solo con el súper
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿Cuántas veces he comprado?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
       - say: Ponme un par de ejemplos
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
 
   - name: salary_analysis_survives_an_aside_and_pronouns
     why: >
@@ -335,27 +335,27 @@ episodes:
     turns:
       - say: Oye, ¿cuánto he cobrado de nómina este año?
         route: QUERY
-        ran: {window: THIS_YEAR, categories: ['SALARY'], merchants: [], group_by: NONE}
+        ran: {window: THIS_YEAR, categories: ['SALARY'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Eso cuánto sale al mes?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y por semana?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
       - say: Espera, ¿cuánto tengo ahora mismo?
         route: BALANCE
         no_model: true
       - say: Volviendo a lo de antes, ¿cuál fue la nómina más alta?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 1}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 1, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y la siguiente?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 2}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 2, excluded_categories: [], excluded_merchants: []}
       - say: Esa, ¿de qué fecha es?
         route: QUERY
         no_model: true
-        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 2}
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 2, excluded_categories: [], excluded_merchants: []}

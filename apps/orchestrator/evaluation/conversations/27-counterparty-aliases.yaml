@@ -11,20 +11,20 @@ episodes:
         route: GUIDANCE
         no_model: true
         says: como persona
-        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
       - say: ¿Cuánto le envié a mi hermana este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Cuando diga el súper, me refiero al comercio Mercadona
         route: GUIDANCE
         no_model: true
         says: como comercio
-        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: COUNT}
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
       - say: ¿Cuánto gasté en el súper este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y con mi hermana?
         route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: gracias
         route: COURTESY

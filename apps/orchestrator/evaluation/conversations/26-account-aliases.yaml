@@ -21,7 +21,7 @@ episodes:
         says: Cuenta corriente
       - say: ¿Cuánto gasté en viajes este mes?
         route: QUERY
-        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: Llama recibos a la cuenta corriente
         route: GUIDANCE
         no_model: true
