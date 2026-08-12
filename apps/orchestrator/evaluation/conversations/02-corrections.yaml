@@ -65,7 +65,7 @@ episodes:
         ran: {window: "2025-01-01..2025-12-31", categories: [RESTAURANTS]}
       - say: ahora sí
         route: QUERY
-        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM}
 
   - name: three_corrections_in_a_row
     why: >

@@ -36,7 +36,7 @@ episodes:
         keeps: PAYMENT_CONFIRMATION
       - say: gracais
         route: QUERY
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], group_by: NONE, metric: SUM}  # merchants: a filler word became a shop filter
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
 
   - name: missing_accents_everywhere
     why: >

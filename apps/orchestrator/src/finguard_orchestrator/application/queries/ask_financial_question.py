@@ -912,9 +912,20 @@ class AskFinancialQuestionHandler:
             # when you take it is worse than no suggestion at all.
             #
             # No model and no bank call to decide it: the previous plan carries the window and this
-            # replaces one field. A name that matches nothing is not a problem either — the empty
-            # answer then offers the shops that do exist, which is the same repair one turn later.
-            yield await self._answer(
+            # replaces one field.
+            #
+            # **It guesses, and then it checks.** Deciding by what a word is *not* — no category, no
+            # account, no window, no verb any vocabulary here owns — is a rule that cannot abstain,
+            # and the corpus says what that costs once the plans are asserted: "gracais", "déjalo",
+            # "nada", "es que", "ah vale" and eleven more became shop filters, and two of them
+            # outlived their turn. "¿Cuánto gasté el mes pasado?" ran with merchants=['nada'].
+            #
+            # The check needs no vocabulary and no extra call. An empty answer already spends a
+            # query listing the shops this window does have, and answers `¿te refieres a...?` when
+            # one of them is close — so a PLANNED answer with nothing in it is the ledger saying
+            # the word matched no shop and resembled none either. That is not a shop, and the
+            # question the user was already in is the true thing to answer instead.
+            answered = await self._answer(
                 query,
                 replace(
                     previous,
@@ -926,6 +937,13 @@ class AskFinancialQuestionHandler:
                     ),
                 ),
             )
+            if answered.outcome == PlanningOutcome.PLANNED.value and not answered.movement_count:
+                # The one real shop this gives up on: a shop with no movements in *this* window,
+                # where "0 €" was a true answer. It costs a second query on the turn that was
+                # producing a wrong one, and the answer it retracts to is the question the user
+                # asked, not an invented one.
+                answered = await self._answer(query, previous)
+            yield answered
             return
 
         if intent is Intent.ACCOUNT_BALANCE:
@@ -3500,6 +3518,10 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
 )
+# The same nouns `explicit_facts._THE_CHARGE_NOT_THE_PAYEE` lists, written a second time here. The
+# rails are deliberately not added to this copy: "bizum" and "transferencia" are categories, so a
+# sentence naming one never reaches this branch — the guard above it declines any follow-up that
+# names a category, and sends it to the planner where the new category can be read properly.
 _COUNT_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuant[oa]s?\s+(?:veces|compras|movimientos|operaciones|pagos|cargos)\b"
 )
@@ -4539,6 +4561,37 @@ def _last_completed_weekend(today: date) -> AbsoluteRange:
     return AbsoluteRange(start=sunday - timedelta(days=1), end=sunday)
 
 
+# A name in the slot a filter goes in. "¿Cuántas compras hice en Mercadona?" is a question about a
+# shop, and a shop is the one filter the ellipsis branch below cannot represent: it patches the
+# previous query and keeps its categories, so the turn came back counting *restaurant* purchases —
+# a real figure about a different question, which is the failure this service is built around.
+#
+# The length guard cannot see it. That sentence is five words, exactly the limit, and length was
+# never what tells an ellipsis from a complete question: "¿y en gasolina?" is an ellipsis because
+# it introduces nothing this path does not already know, and this one is not because it does.
+#
+# Capitalised, and that is the whole test. Spanish capitalises proper nouns and almost nothing else
+# mid-sentence, so a capital in the "en X" slot is the sentence saying "this is a name" — no
+# vocabulary to maintain and no shop list to be wrong about. Somebody typing all in lower case is
+# not covered here; they are covered by declining to guess further down the path, and the cost of
+# reading the capital as a name when it is not is a turn that reaches the planner, which is the
+# harmless side.
+_A_NAME_IN_A_FILTER_SLOT: Final = re.compile(
+    r"\b(?:en|de|con)\s+(?:el\s+|la\s+|los\s+|las\s+)?([A-ZÁÉÍÓÚÑ][\wáéíóúñ]{2,})"
+)
+
+
+def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
+    """Whether the sentence names something in a filter slot that no vocabulary here claims."""
+    for word in _A_NAME_IN_A_FILTER_SLOT.findall(query.sentence):
+        if category_words.named_in(word) or account_words.named_in(word):
+            continue
+        if explicit_facts.read(word, today=query.today).window is not None:
+            continue
+        return True
+    return False
+
+
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Patch explicit filters and calculations onto the last validated financial query."""
     previous = query.conversation.last_plan
@@ -4665,7 +4718,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     # These are deliberately short ellipses. A complete question can introduce a merchant or a
     # category the closed vocabulary does not know, and inheriting the old filters there would
     # answer a different question with a plausible figure.
-    if named or len(folded.split()) > 5:
+    if named or len(folded.split()) > 5 or _names_a_filter_this_cannot_read(query):
         return None
     if _COUNT_FOLLOW_UP.search(folded):
         return explicit_facts.enforce(replace(previous, metric=Metric.COUNT), facts)

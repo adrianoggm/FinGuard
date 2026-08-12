@@ -271,6 +271,19 @@ class AnyPlan:
         )
 
 
+# The shops this account has, and the only part of the ledger that reads the plan it is given.
+#
+# A stub that answers every plan with the same figure cannot see a filter that names something
+# which is not a shop, and that is the defect the corpus found and then could not confirm:
+# `_a_bare_shop_name` narrows the last question to any bare word, and the retraction that checks
+# the guess only fires on an empty answer. Against a ledger where every filter matches, it never
+# fires — so "ah vale" stayed a shop here while being fixed in the deployment.
+#
+# Three names rather than a dataset. What makes a merchant filter wrong is naming a shop nobody
+# ever paid, and that needs a list to *not* be in, not a ledger to add up.
+SHOPS = ("Mercadona", "Cepsa", "Spotify")
+
+
 class Ledger:
     def __init__(self) -> None:
         self.plans: list[FinancialPlan] = []
@@ -282,6 +295,9 @@ class Ledger:
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self.plans.append(plan)
         self.ran.append(plan)
+        known = {shop.casefold() for shop in SHOPS}
+        if plan.merchants and not any(shop.casefold() in known for shop in plan.merchants):
+            return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
         group_key = {
             GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
             GroupBy.MERCHANT: "Mercadona",
