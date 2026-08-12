@@ -329,7 +329,7 @@ async def test_the_evaluator_applies_deterministic_exclusions_before_scoring() -
         )
     )
 
-    result = await evaluate._planned(PlannerAnswer(raw), case, today=TODAY, context=None)
+    result = await evaluate._planned(PlannerAnswer(raw), case, today=TODAY, previous=None)
 
     assert isinstance(result.plan, FinancialPlan)
     assert result.plan.categories == ()
@@ -347,7 +347,7 @@ async def test_the_evaluator_uses_the_same_deterministic_rescue_as_the_applicati
         PlannerAnswer(PlanningResult.unsupported("the question cannot be expressed as a query")),
         case,
         today=TODAY,
-        context=None,
+        previous=None,
     )
 
     assert isinstance(result.plan, FinancialPlan)
