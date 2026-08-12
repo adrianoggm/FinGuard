@@ -15,21 +15,21 @@ episodes:
         route: QUERY
         no_model: true
         says: flujo neto
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿Y el mes pasado?
         route: QUERY
         no_model: true
         says: ingresaste
-        ran: {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿Cuál fue el balance entre ingresos y gastos este mes?
         route: QUERY
         no_model: true
         says: gastaste
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿Y cuál fue mi tasa de ahorro este año?
         route: QUERY
         no_model: true
         says: tasa de ahorro
-        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: gracias
         route: COURTESY

@@ -16,7 +16,7 @@ episodes:
         route: QUERY
         no_model: true
         says: trimestre pasado
-        ran: {window: THIS_QUARTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_QUARTER, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_QUARTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: Ahora en la segunda quincena de julio
         route: QUERY
         no_model: true
@@ -31,6 +31,6 @@ episodes:
         route: QUERY
         no_model: true
         says: semestre
-        ran: {window: THIS_SEMESTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_SEMESTER, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_SEMESTER, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: gracias
         route: COURTESY

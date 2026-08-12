@@ -136,6 +136,42 @@ def test_a_wrong_expectation_about_the_query_is_caught() -> None:
     assert "the query ran window='LAST_MONTH'" in failures[0].complaint
 
 
+def _a_comparison(**expectation: object) -> episodes.Episode:
+    return episodes.Episode(
+        name="calibration/comparison",
+        why="the harness measuring itself",
+        turns=(episodes.Turn(say="compárame julio y junio", **expectation),),  # type: ignore[arg-type]
+    )
+
+
+JUNE = {"window": "2026-06-01..2026-06-30"}
+JULY = {"window": "2026-07-01..2026-07-31"}
+
+
+def test_both_operands_of_a_comparison_can_be_asserted() -> None:
+    """One mapping only ever reaches the last query, so "compárame julio y junio" asserted July and
+    said nothing about June. A list asserts every query the turn ran, in order."""
+    assert list(episodes.walk(_a_comparison(route="QUERY", ran=[JUNE, JULY]))) == []
+
+
+def test_a_comparison_that_ran_the_wrong_operand_is_caught() -> None:
+    """The test that makes the one above mean something. Without it a comparison could drop an
+    operand, run the same window twice or reverse the pair, and the corpus would agree."""
+    failures = list(episodes.walk(_a_comparison(route="QUERY", ran=[JULY, JULY])))
+
+    assert len(failures) == 1
+    assert "(query 1)" in failures[0].complaint
+
+
+def test_a_comparison_asserted_as_one_query_is_caught() -> None:
+    """And a turn that says two and runs one — or the reverse — is a mismatch rather than a pass on
+    whichever half happens to line up."""
+    failures = list(episodes.walk(_a_comparison(route="QUERY", ran=[JUNE, JULY, JULY])))
+
+    assert len(failures) == 1
+    assert "ran 2 queries, and the turn expects 3" in failures[0].complaint
+
+
 def test_a_turn_that_runs_a_query_in_silence_is_counted() -> None:
     """The calibration for the coverage rule. Derived from execution rather than from a literal,
     which only means anything if a turn that executes and says nothing actually shows up here."""

@@ -579,6 +579,31 @@ async def test_a_shop_named_in_a_follow_up_does_not_inherit_the_old_category() -
     assert ledger.plans[-1].categories == ()
 
 
+async def test_counting_a_kind_the_vocabulary_knows_keeps_the_window() -> None:
+    """The two reasons a follow-up declines are not the same reason.
+
+    Declining protects the turn that introduces something this path cannot represent — a shop. A
+    category is not that: it is a filter, and replacing one filter is what the follow-up does all
+    day. Treating them alike sent "¿cuántos bizums tengo?" to the planner with the month dropped,
+    two turns after the same question about compras had kept it."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántos bizums tengo?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("GROCERIES",))),
+        )
+    )
+
+    assert planner.asked is None, "a named category is a filter, not a question this cannot read"
+    assert ledger.plans[-1].period == LAST_MONTH, "the window the conversation was in"
+    assert ledger.plans[-1].categories == ("TRANSFER_BIZUM",)
+    assert ledger.plans[-1].metric is Metric.COUNT
+
+
 async def test_a_follow_up_that_names_nothing_new_is_still_an_ellipsis() -> None:
     """The other half. The rule reads a name in a filter slot, not any capital and not any length,
     so an ellipsis that introduces nothing still patches the query in view without a model."""

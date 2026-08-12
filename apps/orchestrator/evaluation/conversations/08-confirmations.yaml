@@ -159,7 +159,7 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: confirmo
         not_says: Hecho
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['confirmo'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: vale
         route: COURTESY
       - say: gracias

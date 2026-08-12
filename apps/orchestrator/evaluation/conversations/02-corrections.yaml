@@ -65,7 +65,7 @@ episodes:
         ran: {window: "2025-01-01..2025-12-31", categories: [RESTAURANTS]}
       - say: ahora sí
         route: QUERY
-        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: ['ahora sí'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: ['ahora sí'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM}]
 
   - name: three_corrections_in_a_row
     why: >

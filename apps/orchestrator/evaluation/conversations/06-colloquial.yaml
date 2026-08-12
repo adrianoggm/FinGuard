@@ -65,12 +65,12 @@ episodes:
         ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
       - say: ah vale
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: ['ah vale'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: ¿y cuánto tengo?
         route: BALANCE
       - say: menos mal
         route: QUERY
-        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: ['menos mal'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}]
       - say: gracias
         route: COURTESY
 
