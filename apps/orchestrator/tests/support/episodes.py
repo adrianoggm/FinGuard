@@ -620,6 +620,10 @@ class Report:
     # reads before appending to it. So the rule is narrower than the habit — say it where it is
     # doing something — and it cannot be forgotten, because the corpus checks rather than a person.
     unstated: list[str] = field(default_factory=list)
+    # The sentences this service declined to read itself. Every fix that stops a vocabulary
+    # guessing adds one, so this list grows as the deterministic path gets *better* — and what it
+    # hands over is, by definition, exactly what the planner has to be good at.
+    handed_over: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -990,6 +994,8 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
             if answer is None:
                 report.failures.append(Failure(episode.name, number, turn.say, "HTTP error"))
                 break
+            if reached_model:
+                report.handed_over.append(turn.say)
             if ran and not turn.ran:
                 report.unasserted.append(f"{episode.name} · turn {number} · {turn.say!r}")
             for field_name in _unstated(turn, ran):
