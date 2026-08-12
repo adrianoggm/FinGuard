@@ -117,6 +117,8 @@ def test_account_exclusion_is_not_mistaken_for_an_unsupported_category_exclusion
         "págale 20 euros a Marta",
         "transfierele 20 euros a Marta",
         "transfiérele 20 euros a Marta",
+        "devuelvele los 20 euros a Marta",
+        "devuélvele los 20 euros a Marta",
     ],
 )
 def test_an_order_to_pay_survives_the_accents_it_was_typed_with(sentence: str) -> None:

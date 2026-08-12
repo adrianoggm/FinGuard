@@ -282,9 +282,13 @@ def repeats(sentence: str, directory: tuple[Contact, ...]) -> bool:
 # "que hagas" had already been added.
 _MAKING: Final = re.compile(r"\bh(?:az|aga|agas|agamos|agan|aced)(?:me|le|les|nos)?\b")
 
+# `devuelve` belongs here for the same reason the other five do, and it was missing: "devuélvele
+# los 20 euros a Marta" was a payment by `is_payment` and not an order by this predicate, so it
+# could not interrupt an open clarification — the exact defect the docstring below describes,
+# surviving in the one verb whose imperative nobody copied across.
 _IMPERATIVE_ORDER: Final = re.compile(
-    r"\b(?:manda(?:le|les|me)?|envia(?:le|les|me)?"
-    r"|paga(?:le|les)?|transfiere(?:le)?|ingresa(?:le)?)\b"
+    r"\b(?:manda(?:le|les|me)?|envia(?:le|les|me)?|paga(?:le|les)?"
+    r"|transfiere(?:le)?|ingresa(?:le)?|devuelve(?:le|les|me)?)\b"
 )
 
 
