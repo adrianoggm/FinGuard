@@ -416,3 +416,98 @@ conversations:
           rank: 3
         must_keep: [window, categories]
         must_change: [rank]
+
+  # --- the sentences this service hands over, which nothing here used to score ----------------
+  #
+  # `tests/test_what_we_hand_to_the_planner.py` counts the turns the deterministic path cedes and
+  # asks whether anybody checks them. It found ninety-seven, and the answer for every one of these
+  # was no — while the corpus repeated "¿cuánto gasté este mes?" through eight different episodes,
+  # measuring only that it *reached* a model and nothing about what came back.
+  #
+  # They are the cheapest of that set to write, because each states its own window and the window
+  # is the field `explicit_facts` enforces after the merge. Everything else stays an implication.
+
+  - id: this_month_is_a_whole_question
+    why: >
+      Eight turns of the routing corpus are this sentence and none of them scored the plan. It
+      states its period outright, so the window is ours to demand; what it spends on is not.
+    turns:
+      - say: ¿cuánto gasté este mes?
+        expect_plan:
+          window: THIS_MONTH
+
+  - id: a_month_and_a_shop_named_in_one_breath
+    why: >
+      The most repeated sentence in the whole corpus after the one above — seven episodes open
+      with it. Which category "el supermercado" is remains the model's reading; the month does not.
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        expect_plan:
+          window: LAST_MONTH
+      - say: ¿y este mes?
+        expect_plan:
+          window: THIS_MONTH
+        must_keep: [categories]
+        must_change: [window]
+
+  - id: the_same_question_typed_badly_and_said_shorter
+    why: >
+      "Caunto he gastado este mes" was typed at the demo and "el súper" is how the same shop gets
+      named in half the corpus. Both were handed over unmeasured, and both state their window.
+    turns:
+      - say: Caunto he gastado este mes ?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿cuánto gasté el mes pasado en el súper?
+        expect_plan:
+          window: LAST_MONTH
+        must_change: [window]
+
+  - id: this_year_is_a_whole_question_too
+    why: The other named period a corpus turn opens with, and the one a year-long window gets wrong.
+    turns:
+      - say: ¿cuánto gasté este año?
+        expect_plan:
+          window: THIS_YEAR
+
+  - id: a_category_with_no_window_is_finished_by_the_next_turn
+    why: >
+      Three corpus turns are this sentence and it names no period, so demanding a plan would fail
+      for a model that asks — which is the right thing to do with it. What holds either way is that
+      the answer to the period keeps the category the first turn established.
+    turns:
+      - say: ¿cuánto gasté en gasolina?
+      - say: este mes
+        completes: true
+        expect_plan:
+          window: THIS_MONTH
+        must_keep: [categories]
+
+  - id: the_same_category_asked_as_a_follow_up
+    why: >
+      "¿Y cuánto gasté en gasolina?" arrives after another question, so it is the same sentence
+      with a thread behind it — and the thread is exactly what it must not inherit a category from.
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+      - say: ¿y cuánto gasté en gasolina?
+        must_keep: [window]
+        must_change: [categories]
+
+  - id: a_habit_asked_about_by_month
+    why: >
+      "Cada mes" is a grouping and not a window, which is the distinction this sentence exists to
+      hold: read as a period it becomes one month of a habit that only means anything across many.
+    turns:
+      - say: ¿cuánto paso a la hucha cada mes?
+      - say: ¿y el año pasado?
+        must_keep: [group_by]
+
+  - id: a_correction_that_names_only_the_period
+    why: >
+      Both of these are corrections the corpus hands over: one replaces the window and says nothing
+      about the category, the other names an account and no period at all.
+    turns:
+      - say: ¿cuánto gasté el mes pasado en restaurantes?
+      - say: quería decir el año pasado
+        must_keep: [categories]
+        must_change: [window]
