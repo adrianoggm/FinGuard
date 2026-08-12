@@ -108,6 +108,34 @@ def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixt
     )
 
 
+def test_a_turn_the_order_decides_says_which_query_it_ran() -> None:
+    """The tie is not resolved. What is fixed is that it can no longer change an answer quietly.
+
+    On a contested turn the two readings are not variants of one answer: a follow-up would return
+    the spending side of a net cash flow and drop the income one; `internal_movement` and
+    `contextual_follow_up` differ by the sign of the figure; a comparison and a single-period query
+    answer about two months and about one. Reordering the cascade to fix one turn would have moved
+    those, and the corpus would have agreed — it asserted which *tool* answered, and both readings
+    are the same tool.
+
+    Every one of the thirteen now states the plan it ran, so the losing reading fails the episode
+    rather than passing it with a different figure: a different window, direction or category is a
+    complaint, and a comparison collapsing to one query is a count mismatch. That is what a
+    resolver would have been built to protect, without building one — and this test is what keeps
+    it true, because a contested turn added tomorrow could arrive without an expectation.
+    """
+    silent = [
+        f"{episode.name} · turn {number} · {said!r}"
+        for episode in CORPUS
+        for number, said, _ in episodes.contested(episode)
+        if not episode.turns[number - 1].ran
+    ]
+
+    assert silent == [], "\n".join(
+        ["turns the cascade's order decides and no expectation pins:", *silent]
+    )
+
+
 def test_no_recogniser_raises_on_a_turn_it_does_not_own() -> None:
     """The reason production still short-circuits, checked instead of assumed.
 

@@ -777,6 +777,63 @@ async def test_listing_categories_does_not_close_the_clarification_that_needed_o
     assert result.conversation.active == clarification
 
 
+async def test_a_new_question_is_not_the_answer_to_the_open_one() -> None:
+    """A state that takes every sentence, which is the shape this service keeps being wrong in.
+
+    The draft is waiting for a window and a whole new financial question names one too, so
+    "¿cuánto gasté el mes pasado?" asked with "¿qué movimientos he tenido entre mis cuentas?" still
+    open completed *that* draft: the holder asked what they spent and was told what they had moved
+    into their own accounts, as a real figure with the right month on it. In the fund episode it
+    came back restricted to the fund as well.
+
+    The draft is waiting for one missing field. A sentence that states a question of its own is not
+    that field."""
+    ledger = RecordingLedger(ANSWER)
+    clarification = FinancialClarification(
+        draft=FinancialPlanDraft(
+            direction=Direction.ALL, internal_only=True, include_internal=True
+        ),
+        awaiting=Slot.WINDOW,
+    )
+
+    await chat(FakePlanner(PlanningResult.planned(plan())), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=clarification),
+        )
+    )
+
+    assert ledger.plans[-1].internal_only is False, "spending is not movement between own accounts"
+
+
+async def test_a_window_on_its_own_is_still_the_answer() -> None:
+    """The other half. Declining protects the turn that asks something else; a reply that names the
+    missing field and nothing more is exactly what the clarification asked for."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    clarification = FinancialClarification(
+        draft=FinancialPlanDraft(
+            direction=Direction.ALL, internal_only=True, include_internal=True
+        ),
+        awaiting=Slot.WINDOW,
+    )
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="el mes pasado",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=clarification),
+        )
+    )
+
+    assert planner.asked is None, "a bare window still completes the draft without a model"
+    assert ledger.plans[-1].internal_only is True
+    assert ledger.plans[-1].period == LAST_MONTH
+
+
 async def test_a_category_name_completes_the_clarification_without_a_model() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     clarification = FinancialClarification(
