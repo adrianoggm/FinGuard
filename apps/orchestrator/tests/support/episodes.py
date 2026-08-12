@@ -649,6 +649,12 @@ def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
         "direction": query.direction.value,
         "categories": sorted(query.categories),
         "merchants": sorted(query.merchants),
+        # The negative half, and it was missing. "¿Y sin contar el alquiler?", "Ahora sin
+        # Mercadona", "Quita ese filtro", "Déjalo como estaba antes" — a whole episode exists for
+        # these and could assert nothing about the only field they change, so the exclusion being
+        # added, kept or undone was invisible to every check in this corpus.
+        "excluded_categories": sorted(query.excluded_categories),
+        "excluded_merchants": sorted(query.excluded_merchants),
     }
     if isinstance(query, TopMovements):
         return {**ran, "rank": query.rank}

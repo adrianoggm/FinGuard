@@ -42,34 +42,37 @@ episodes:
       restore it without asking which period or calculation the user meant.
     metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
     turns:
+      # Six turns that asserted the same six fields, none of which is the one they change. The
+      # exclusion being added, kept, undone and added again — the entire subject of this episode —
+      # was invisible to every check in the corpus until `executed()` could say it.
       - say: ¿Cuánto gasté durante este año?
         route: QUERY
-        ran: {window: THIS_YEAR, categories: [], merchants: [], group_by: NONE}
+        ran: {window: THIS_YEAR, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
       - say: ¿Y sin contar el alquiler?
         route: QUERY
         no_model: true
         says: sin alquiler
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: ['HOUSING_RENT'], excluded_merchants: []}
       - say: Quita ese filtro
         route: QUERY
         no_model: true
         says: vuelto a la consulta anterior
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Ahora sin Mercadona
         route: QUERY
         no_model: true
         says: sin mercadona
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: ['mercadona']}
       - say: Déjalo como estaba antes
         route: QUERY
         no_model: true
         says: vuelto a la consulta anterior
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Todos menos supermercados
         route: QUERY
         no_model: true
         says: sin supermercado
-        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM}
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: ['GROCERIES'], excluded_merchants: []}
 
   - name: direct_comparisons_and_referents_keep_the_query_in_view
     why: >
