@@ -3518,14 +3518,13 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
 )
-# The same nouns `explicit_facts._THE_CHARGE_NOT_THE_PAYEE` lists, written a second time here and
-# including the rails for the same reason: a count of bizums is a count of movements the way a
-# count of pagos is. "Bizum" and "transferencia" are also categories, which is what makes the
-# named-category branch above this one necessary — without it the sentence declines and loses the
-# window rather than counting the kind it names.
+# The nouns that name a charge, from the vocabulary that owns them. They were written out here as
+# well and the two copies stayed level only by accident: the rails were missing from both, and each
+# was found on its own. "Bizum" and "transferencia" are also categories, which is what makes the
+# named-category branch necessary — without it the sentence declines and loses the window rather
+# than counting the kind it names.
 _COUNT_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?cuant[oa]s?\s+"
-    r"(?:veces|compras|movimientos|operaciones|pagos|cargos|bi[xz]ums?|transferencias?|traspasos?)\b"
+    rf"^(?:y\s+)?cuant[oa]s?\s+(?:{explicit_facts.CHARGE_NOUNS})\b"
 )
 _SUM_EXPENSE_FOLLOW_UP: Final = re.compile(
     r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:gaste|gastado|pague|pagado|compre|comprado)\b"
@@ -4579,13 +4578,13 @@ def _last_completed_weekend(today: date) -> AbsoluteRange:
 # reading the capital as a name when it is not is a turn that reaches the planner, which is the
 # harmless side.
 _A_NAME_IN_A_FILTER_SLOT: Final = re.compile(
-    r"\b(?:en|de|con)\s+(?:el\s+|la\s+|los\s+|las\s+)?([A-ZÁÉÍÓÚÑ][\wáéíóúñ]{2,})"
+    r"\b(?:en|de|con)\s+(?:el\s+|la\s+|los\s+|las\s+|mi\s+|mis\s+)?([a-z][a-z0-9]{2,})"
 )
 
 
 def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
     """Whether the sentence names something in a filter slot that no vocabulary here claims."""
-    for word in _A_NAME_IN_A_FILTER_SLOT.findall(query.sentence):
+    for word in _A_NAME_IN_A_FILTER_SLOT.findall(spanish.folded(query.sentence)):
         if category_words.named_in(word) or account_words.named_in(word):
             continue
         if explicit_facts.read(word, today=query.today).window is not None:
