@@ -13,7 +13,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from judge_plans import FIELDS, VERDICT_SCHEMA, judge, prompt_for, tally  # noqa: E402
+from judge_plans import (  # noqa: E402
+    FIELDS,
+    VERDICT_SCHEMA,
+    judge,
+    prompt_for,
+    spread,
+    tally,
+)
 
 CASE = {
     "say": "¿cuántas compras hice en Mercadona?",
@@ -116,3 +123,38 @@ def test_a_missing_field_counts_as_unjudgeable_rather_than_right() -> None:
     assert counted["window"]["right"] == 1
     assert counted["metric"]["unjudgeable"] == 1
     assert counted["metric"]["right"] == 0
+
+
+def test_a_field_with_one_value_everywhere_is_a_column_nobody_can_fail() -> None:
+    """The number that says what a verdict is worth, and it is not in the verdicts.
+
+    The anchor's seventy-four rows are eighteen sentences and sixteen are "¿cuánto gasté…?", so
+    every plan in it says EXPENSE and every plan says SUM. On a field like that, "always right" and
+    a judge that read every sentence score the same full marks — which is how five green columns
+    were read as a judge passing a gate it had not been asked to walk through.
+
+    Derived from the plans, so it stays true as the group changes. A sentence in a docstring saying
+    "direction is constant here" is right the day it is written.
+    """
+    varied = spread(
+        [
+            {"direction": "EXPENSE", "metric": "SUM", "categories": ["GROCERIES"]},
+            {"direction": "EXPENSE", "metric": "SUM", "categories": ["RESTAURANTS"]},
+            {"direction": "INCOME", "metric": "SUM", "categories": ["GROCERIES"]},
+        ]
+    )
+
+    assert varied["metric"] == 1, "a constant column, where the baseline is also the ceiling"
+    assert varied["direction"] == 2
+    assert varied["categories"] == 2
+
+
+def test_the_baseline_is_full_marks_by_construction() -> None:
+    """What every real judge has to beat, and what it means when one does not.
+
+    A judge saying `right` to everything is not a strawman: it is the score a model gets for
+    declining to disagree, and on a constant field it is unbeatable rather than merely easy.
+    """
+    counted = tally([json.loads(_all("right"))] * 72)
+
+    assert all(counts["right"] == 72 and counts["wrong"] == 0 for counts in counted.values())
