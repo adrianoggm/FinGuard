@@ -27,13 +27,14 @@ restructure that does not move this number did not fix the thing it was for.
 from pathlib import Path
 
 import yaml
+from support.ratchets import Floor
 
 from finguard_orchestrator.domain.services.intent_router import Intent, route
 
 PARAPHRASES = Path(__file__).resolve().parents[1] / "evaluation" / "paraphrases"
 
 # The sole remaining miss is intentionally ambiguous after its ownership words are lost.
-FLOOR = 95
+FLOOR = Floor(95, "paraphrases that dispatch where their group does")
 
 
 def _groups() -> list[dict[str, object]]:
@@ -80,6 +81,4 @@ def test_the_rate_only_goes_up(capsys) -> None:  # noqa: ANN001
         for means, said, got in failures:
             print(f"  {got:<16} «{said}»   ({means})")
 
-    assert reached >= FLOOR, (
-        f"{reached}/{len(CASES)} paraphrases dispatch correctly, below the floor of {FLOOR}"
-    )
+    assert not FLOOR.undercut_by(reached), FLOOR.undercut_by(reached)

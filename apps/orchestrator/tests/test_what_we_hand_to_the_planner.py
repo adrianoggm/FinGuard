@@ -16,14 +16,14 @@ assumption throughout.
 The cases come from `scripts/handover_cases.py`, which is what a judge will read too. One
 definition of "a turn we handed over" rather than one here and one there.
 
-**The obvious next layer is a judge.** 69 cases is more expected plans than anybody will hand-write
+**The obvious next layer is a judge.** 55 cases is more expected plans than anybody will hand-write
 well, and most of these turns have no single right plan — "¿cuántas compras hice en Mercadona?"
 needs a merchant filter this schema has, and which window it inherits is a judgement. A model
 scoring the plan against the sentence and the conversation behind it is the shape that fits; the
 anchor group is what says whether its scores can be believed.
 
-**And counting the work found something worse than a gap.** The 69 are 44 turns with no thread
-behind them and 25 that follow one, and the 44 are only 32 distinct sentences — but among those
+**And counting the work found something worse than a gap.** The 55 are 35 turns with no thread
+behind them and 20 that follow one, and the 35 are only 23 distinct sentences — but among those
 distinct sentences are "sí", "20 euros", "déjalo", "a ver", "no es eso", "no me has entendido" and
 "1000 pavos". Those state no query at all. We are asking a model to plan them, and a model asked to
 plan "déjalo" will return something, which becomes an answer to somebody who was cancelling.
@@ -42,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from handover_cases import cases  # noqa: E402
+from support.ratchets import Ceiling  # noqa: E402
 
 CASES = cases()
 
@@ -58,15 +59,13 @@ CASES = cases()
 # Not a target to grind to zero by hand — the note above about a judge is the honest route for most
 # of them — but a number that exists, where before there was an assumption that ceding a turn made
 # things better.
-UNMEASURED = 54
+UNMEASURED = Ceiling(40, "handed-over sentences no planning case exercises")
 
 
 def test_the_turns_we_hand_over_are_measured_somewhere() -> None:
     unmeasured = sorted({case["say"] for case in CASES if case["group"] == "extension"})
 
-    assert len(unmeasured) <= UNMEASURED, "\n".join(
-        [f"{len(unmeasured)} handed-over sentences no planning case exercises:", *unmeasured[:20]]
-    )
+    assert not UNMEASURED.exceeded_by(unmeasured), UNMEASURED.exceeded_by(unmeasured)
 
 
 def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
@@ -96,7 +95,7 @@ def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
 # **And not to zero.** Two of the fifty-three were an order to move money and a payment already
 # made, arriving on the reading path; both now have a reader. What is left of the half a vocabulary
 # could claim is bare amounts, and those are unclaimed on purpose — see the test below.
-MUTE = 44
+MUTE = Ceiling(44, "turns handed over with nothing recognised in them")
 
 
 def test_what_we_hand_over_knowing_nothing_about_it() -> None:
@@ -106,12 +105,14 @@ def test_what_we_hand_over_knowing_nothing_about_it() -> None:
     them, which is a different failure: not an unmeasured model call but an unnecessary one, and
     the corpus cannot see it — its `unnecessary model calls` rate counts only turns an episode
     marked `no_model`, so a sentence nobody thought to mark is a call nobody counts.
-    """
-    mute = sorted({case["say"] for case in CASES if not case["states_a_query"]})
 
-    assert len([case for case in CASES if not case["states_a_query"]]) <= MUTE, "\n".join(
-        [f"{len(mute)} distinct sentences handed over with nothing recognised:", *mute[:20]]
-    )
+    **Turns and not distinct sentences**, which is the distinction that made the ratchet above lie
+    for as long as it existed. The two are 44 and 29 here, and the unit is declared where the
+    number is so nobody has to read the assertion to find out which one it means.
+    """
+    mute = [case for case in CASES if not case["states_a_query"]]
+
+    assert not MUTE.exceeded_by(mute), MUTE.exceeded_by(sorted({case["say"] for case in mute}))
 
 
 def test_the_mute_turns_split_into_two_different_jobs() -> None:
@@ -144,13 +145,13 @@ def test_the_work_is_counted_in_sentences_rather_than_turns() -> None:
     """What it would cost to write the missing expectations, which is not what the ratchet says.
 
     The corpus repeats itself on purpose — "¿cuánto gasté el mes pasado en el supermercado?" opens
-    seven different episodes — so 44 turns without a thread are 32 distinct sentences. Counting
+    seven different episodes — so 35 turns without a thread are 23 distinct sentences. Counting
     turns makes the job look three times bigger than it is, and a job that looks impossible is a
     job nobody starts.
     """
     fresh = {case["say"] for case in CASES if case["group"] == "extension" and not case["previous"]}
 
-    assert len(fresh) <= 32, f"{len(fresh)} distinct sentences with no thread behind them"
+    assert len(fresh) <= 23, f"{len(fresh)} distinct sentences with no thread behind them"
 
 
 def test_a_case_carries_the_conversation_behind_it() -> None:

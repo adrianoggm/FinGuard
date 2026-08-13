@@ -195,6 +195,22 @@ _A_CALENDAR_UNIT_BACK: Final = re.compile(
     r"|(?P<year>ano)\s+(?:anterior|pasado)"
     r")"
 )
+
+# The same words anywhere in a longer sentence, which is a different question: not "is this turn a
+# step back" but "is a step back what this turn is about", and the answer keeps the generic window
+# patch off it. "Vale, compruébalo con el mes anterior" is a comparison between two months and the
+# comparison reader owns it; read as a plain new window it becomes one month with the other operand
+# dropped.
+#
+# **This was written for the year alone**, as `\bano\s+(anterior|pasado)\b` inline, and the day the
+# month learned the word "anterior" the corpus grew a turn whose reader was decided by the order of
+# the cascade. Same mould as the four before it — a rule written for the member in front of somebody
+# rather than for the class — and this time a parity test is what turned it up.
+_A_UNIT_BACK_ANYWHERE: Final = re.compile(
+    r"\b(?:fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|periodo)\s+"
+    r"(?:anterior|previo|previa)\b"
+    r"|\bano\s+(?:anterior|pasado)\b"
+)
 _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs"
     r"|mas\b.{0,55}\b(?:que|o)|menos\b.{0,55}\b(?:que|o)"
@@ -4795,7 +4811,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         and len(folded.split()) <= 8
         and not _starts_new_financial_scope(query.sentence, today=query.today)
         and not (_GROUP_RANKING_DIMENSION.search(folded) and _GROUP_RANKING_SIGNAL.search(folded))
-        and not re.search(r"\bano\s+(?:anterior|pasado)\b", folded)
+        and not _A_UNIT_BACK_ANYWHERE.search(folded)
         and capability_guard.unsupported_reason(query.sentence) is None
     ):
         patched = explicit_facts.enforce(previous, facts)

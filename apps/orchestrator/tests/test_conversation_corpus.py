@@ -16,6 +16,7 @@ and would measure the model instead.
 
 import pytest
 from support import episodes
+from support.ratchets import Floor
 
 CORPUS = episodes.load()
 
@@ -32,11 +33,11 @@ REPORT = episodes.run(CORPUS)
 # without this noticing. Unlike the coverage rule below, this one cannot be derived from what the
 # corpus does — its whole job is to fail when the corpus is not there to be measured — so it stays
 # a literal, and a literal that is not kept level with what exists is a check about the past.
-FLOOR = 164
+FLOOR = Floor(164, "episodes loaded from evaluation/conversations")
 
 
 def test_the_corpus_has_not_shrunk() -> None:
-    assert len(CORPUS) >= FLOOR, f"only {len(CORPUS)} episodes were loaded"
+    assert not FLOOR.undercut_by(CORPUS), FLOOR.undercut_by(CORPUS)
 
 
 def test_every_episode_is_long_enough_to_be_a_conversation() -> None:

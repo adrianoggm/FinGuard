@@ -18,6 +18,7 @@ nothing for one to resolve, and building it would be a mechanism in search of a 
 
 import pytest
 from support import episodes
+from support.ratchets import Ceiling
 
 CORPUS = episodes.load()
 
@@ -122,7 +123,7 @@ CORPUS = episodes.load()
 # scope, and the answer comes back as ordinary spending. These needed the sentence read.
 #
 # A ratchet at zero now. A new tie is a design question to answer before the order answers it.
-CONTESTED = 0
+CONTESTED = Ceiling(0, "turns two recognisers both claim")
 
 
 def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixture[str]) -> None:
@@ -141,8 +142,9 @@ def test_the_corpus_reports_which_turns_are_contested(capsys: pytest.CaptureFixt
             for who, reading in sorted(claims.items()):
                 print(f"        {who}: {reading}")
 
-    assert len(contested) <= CONTESTED, (
-        "the cascade's order decides these turns, and nothing else records that it does"
+    assert not CONTESTED.exceeded_by(contested), (
+        "the cascade's order decides these turns, and nothing else records that it does: "
+        + CONTESTED.exceeded_by(contested)
     )
 
 
