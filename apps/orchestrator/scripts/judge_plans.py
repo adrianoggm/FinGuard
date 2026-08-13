@@ -62,16 +62,21 @@ should read it as reproduced at the new one.
 
 ## Running this against a hosted judge, which is where the time went
 
-    groq        429 at 25 rpm and again at 12. Completes at 6. The limit is tokens a minute and
-                not requests, so pacing is the fix and the number is small.
-    cloudflare  429 too, and pacing does not help: at 6 rpm it fails, and so does a single call
-                once the day's allowance is gone. Workers AI meters a daily budget rather than a
-                rate, so a run either fits in what is left or it does not.
+    groq        429 at 25 requests a minute and again at 12; completed at 6, when a call cost
+                about 1,400 tokens. So the wall is somewhere between 8k and 17k tokens a minute,
+                and `--tpm 8000` is the setting that reproduces the run that worked.
+    cloudflare  429 as well, and pacing does not reach it: at the same 6 a minute it fails, and so
+                does a single call once the day is spent. Workers AI meters a daily allowance
+                rather than a rate, so a run either fits in what is left of the day or it does not.
+
+**The flag is `--tpm` and it used to be `--rpm`, which measured the thing neither provider limits.**
+Requests a minute is a number somebody remembers; it stops being right the moment the answer budget
+changes, and the next person to run this gets the 429 back. Given the budget the pace is arithmetic,
+so the flag now takes the limit the provider publishes and derives the rest.
 
 Both of Cloudflare's earlier failures were ours rather than theirs, and they hid the quota until it
 was fixed: at 800 tokens `@cf/qwen/qwen3-30b-a3b-fp8` spent the budget reasoning and returned first
-truncated JSON and then the provider's own "output budget exhausted before final answer". Seven
-verdicts with a reason each is about five hundred tokens before a reasoning model thinks at all.
+truncated JSON and then the provider's own "output budget exhausted before final answer".
 """
 
 import argparse
@@ -79,7 +84,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -157,6 +162,26 @@ def prompt_for(case: dict[str, Any], plan: dict[str, Any]) -> str:
     )
 
 
+# Seven verdicts, each with a reason of up to two hundred characters, is about five hundred tokens
+# of answer before a reasoning model has thought about anything. A ceiling and not a reservation,
+# so the models that answer inside it pay nothing for the room.
+#
+# At 800 `@cf/qwen/qwen3-30b-a3b-fp8` spent the budget thinking and came back with either truncated
+# JSON or the provider's own "output budget exhausted before final answer" — two symptoms of one
+# number being too small for what this prompt asks for.
+MAX_ANSWER_TOKENS: Final = 2000
+
+
+def _tokens_in(case: dict[str, Any], plan: dict[str, Any]) -> int:
+    """What one judgement costs a tokens-a-minute budget, near enough to pace by.
+
+    Four characters to the token is the usual rule for Spanish and it does not need to be better
+    than that: what this feeds is a sleep, and being twenty per cent pessimistic costs seconds
+    while being wrong in the other direction costs the run.
+    """
+    return MAX_ANSWER_TOKENS + len(prompt_for(case, plan)) // 4
+
+
 async def judge(
     provider: Any, model: str, case: dict[str, Any], plan: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -175,15 +200,7 @@ async def judge(
             prompt_for(case, plan),
             model=model,
             temperature=0.0,
-            # Seven verdicts, each with a reason of up to two hundred characters, is about five
-            # hundred tokens of answer before a reasoning model has thought about anything. At 800
-            # `@cf/qwen/qwen3-30b-a3b-fp8` spent the budget thinking and came back with either
-            # truncated JSON or the provider's own "output budget exhausted before final answer" —
-            # two symptoms of one number being too small for what this prompt asks for.
-            #
-            # A ceiling and not a reservation, so the models that answer in five hundred tokens pay
-            # nothing for it.
-            max_output_tokens=2000,
+            max_output_tokens=MAX_ANSWER_TOKENS,
             schema=VERDICT_SCHEMA,
         )
         try:
@@ -226,10 +243,20 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
     scored = [case for case in chosen if plans[case["say"]] is not None]
 
     provider = _provider(arguments.provider, arguments.base_url, arguments.think, None)
-    # Paced like the planning evaluator, and for the same reason: a hosted free tier answers the
-    # first thirty calls and refuses the rest, which reads as a judge with an opinion about the
-    # last forty cases when it is a judge that never saw them.
-    pace = 60.0 / arguments.rpm if arguments.rpm else 0.0
+    # Paced from the limit the provider actually enforces. This was `--rpm`, and requests a minute
+    # is not what Groq counts — it counts tokens, so a number that worked at one answer budget
+    # returns 429 at another and the next person to run this rediscovers that. Given the budget,
+    # the pace is arithmetic rather than a remembered number.
+    #
+    # Cloudflare is not paceable at all: its Workers AI free tier meters a *daily* allowance, so a
+    # run either fits in what is left of the day or a single call fails.
+    cost = max((_tokens_in(case, plans[case["say"]]) for case in scored), default=0)
+    pace = 60.0 * cost / arguments.tpm if arguments.tpm else 0.0
+    if pace:
+        print(
+            f"pacing at {60.0 / pace:.1f} calls a minute · {cost} tokens each · tpm {arguments.tpm}"
+        )
+
     verdicts = []
     unreadable: list[str] = []
     for number, case in enumerate(scored):
@@ -269,7 +296,12 @@ def main() -> int:
     parser.add_argument("--think", action="store_true")
     parser.add_argument("--plans", required=True, help="YAML mapping sentence -> plan")
     parser.add_argument("--group", default="anchor", choices=["anchor", "extension", "all"])
-    parser.add_argument("--rpm", type=int, default=0, help="requests a minute; 0 is unpaced")
+    parser.add_argument(
+        "--tpm",
+        type=int,
+        default=0,
+        help="the provider's tokens-a-minute limit; the pace comes from it. 0 is unpaced",
+    )
     arguments = parser.parse_args()
     plans = yaml.safe_load(Path(arguments.plans).read_text(encoding="utf-8")) or {}
     return asyncio.run(run(arguments, plans))
