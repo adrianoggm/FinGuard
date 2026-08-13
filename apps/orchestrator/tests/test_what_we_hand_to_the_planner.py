@@ -95,7 +95,15 @@ def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
 # **And not to zero.** Two of the fifty-three were an order to move money and a payment already
 # made, arriving on the reading path; both now have a reader. What is left of the half a vocabulary
 # could claim is bare amounts, and those are unclaimed on purpose — see the test below.
-MUTE = Ceiling(42, "turns handed over with nothing recognised in them")
+#
+# **42 → 43, and the one that raised it is not debt of the same kind.** "¿Y en Amazon?" arrived with
+# `30-income-and-unnamed-shops`, and there is nothing in it to recognise: Amazon could be a shop, a
+# category or an account, and the ledger has none of the three under that name. Every other entry
+# here is a sentence a reader or a vocabulary could eventually claim, so the ceiling reads as work
+# left to do. This one cannot be claimed by anything that only reads the sentence, and it was worth
+# ceding anyway — it is the anchor's only case where a follow-up has to *stop* filtering by the
+# previous shop, which is the planner defect `must_change: [merchants]` was written for.
+MUTE = Ceiling(43, "turns handed over with nothing recognised in them")
 
 
 def test_what_we_hand_over_knowing_nothing_about_it() -> None:
@@ -107,7 +115,7 @@ def test_what_we_hand_over_knowing_nothing_about_it() -> None:
     marked `no_model`, so a sentence nobody thought to mark is a call nobody counts.
 
     **Turns and not distinct sentences**, which is the distinction that made the ratchet above lie
-    for as long as it existed. The two are 42 and 27 here, and the unit is declared where the
+    for as long as it existed. The two are 43 and 28 here, and the unit is declared where the
     number is so nobody has to read the assertion to find out which one it means.
     """
     mute = [case for case in CASES if not case["states_a_query"]]

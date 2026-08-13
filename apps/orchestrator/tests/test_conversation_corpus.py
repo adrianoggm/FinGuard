@@ -33,7 +33,7 @@ REPORT = episodes.run(CORPUS)
 # without this noticing. Unlike the coverage rule below, this one cannot be derived from what the
 # corpus does — its whole job is to fail when the corpus is not there to be measured — so it stays
 # a literal, and a literal that is not kept level with what exists is a check about the past.
-FLOOR = Floor(164, "episodes loaded from evaluation/conversations")
+FLOOR = Floor(166, "episodes loaded from evaluation/conversations")
 
 
 def test_the_corpus_has_not_shrunk() -> None:
