@@ -83,11 +83,43 @@ a merchant for a judge to be right or wrong about. That is a fact about `qwen2.5
 about the group, and it will change the day a planner that answers it produces this file.
 
 **The three model columns are now from a different group.** They were measured on the 74-row anchor
-at `max_output_tokens=800`; the table above and the spread come from the 80-row one at 2000. Nobody
-should read them as one run. Re-running the three is the cheap part; what has to happen first is
-reading the seventeen `wrong` verdicts on `answers_the_question` one at a time, because at least one
-of them is a planner miss rather than a judge error — "¿cuánto paso a la hucha cada mes?" came back
-THIS_YEAR with a Bizum category, which is neither the grouping nor the movement asked for.
+at `max_output_tokens=800`; the spread above comes from the 80-row one at 2000. Nobody should read
+them as one run.
+
+## Reading the disagreements, which is what `--explain` is for
+
+The hosted judge on the 80-row anchor: window 70/6, direction 77/0, categories 67/10, merchants
+70/7, group_by 76/1, metric 75/2, and `answers_the_question` 56 right · 19 wrong · 2 unjudgeable.
+Nineteen rows, read one at a time, and they are not one thing:
+
+**Eleven are the judge, and six of those are a single misreading.** "¿Cuánto gasté el mes pasado en
+el supermercado?" was rejected six times for "missing merchant filter and incorrect category" — the
+judge taking a generic noun for a shop, which is its own rule about named merchants applied to a
+word that names none. That one cluster also explains the seven `wrong` merchants on a group where
+every merchant list is empty. Two more are the judge saying a plan lacks a window while the plan in
+front of it carries `LAST_MONTH`, and three are calls about an inherited window that its own
+instruction to abstain should have made `unjudgeable`.
+
+**Eight are the planner, and they are real defects of the kind this corpus keeps surfacing:**
+
+    "¿cuánto paso a la hucha cada mes?"         THIS_YEAR + TRANSFER_BIZUM for a question about
+                                                money moved between the holder's own accounts
+    "Caunto he gastado este mes ?"              group_by CATEGORY invented for a plain total
+    "Enséñame los movimientos de los ultimos 4 meses"   metric SUM, so a request for a list
+                                                        comes back as one figure
+    "Cuanto gaste en la cuenta principal este mes?"     the account scope dropped entirely
+    "¿cuál es el bizum más alto que he hecho este año?" a rank query carrying metric SUM
+
+Four of those five are the sentences added to widen the anchor, which is the argument for widening
+it: a group of one question shape cannot report a defect that only appears in another shape.
+
+**The prompt has been sharpened and the sharpening is unmeasured.** Two rules were added — that a
+merchant is a proper noun and "el supermercado" is a category, and that a field present in the plan
+cannot be missing — and Groq's budget was spent before they could be run. The prediction, written
+before the measurement: the six supermarket rows and the two invented missing windows disappear,
+`merchants` returns to 77/0 on a group where nothing varies, and `answers_the_question` lands near
+64/11. If it does not, the prompt was not the cause and this paragraph is the evidence that it was
+a guess.
 
 ## Running this against a hosted judge, which is where the time went
 
@@ -177,7 +209,11 @@ Reglas:
 - Una pregunta que abre tema nuevo no hereda filtros de la consulta anterior.
 - Un seguimiento conserva lo que no menciona y cambia sólo lo que menciona.
 - "cuánto" es una suma; "cuántos"/"cuántas veces" es un recuento.
-- Un comercio nombrado es un filtro de comercio, nunca la categoría a la que pertenece.
+- Un comercio es un NOMBRE PROPIO: Mercadona, Repsol, Netflix. "El supermercado", "el súper",
+  "la gasolinera" y "restaurantes" son CATEGORÍAS, no comercios — para ésas el plan debe llevar
+  categoría y NO debe llevar filtro de comercio. Echar en falta un comercio ahí es un error.
+- Juzga sólo lo que ves: un campo que está en el plan no puede faltar. Si el plan trae `period`
+  o `date_range`, tiene ventana.
 - Si dudas entre right y wrong, responde unjudgeable. Inventar una regla es peor que abstenerse.
 
 `answers_the_question` es el veredicto global: ¿este plan, ejecutado, contesta lo que se preguntó?
