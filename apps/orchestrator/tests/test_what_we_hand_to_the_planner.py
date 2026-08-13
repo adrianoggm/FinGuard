@@ -42,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from handover_cases import cases  # noqa: E402
+from support.ratchets import Ceiling  # noqa: E402
 
 CASES = cases()
 
@@ -58,15 +59,13 @@ CASES = cases()
 # Not a target to grind to zero by hand — the note above about a judge is the honest route for most
 # of them — but a number that exists, where before there was an assumption that ceding a turn made
 # things better.
-UNMEASURED = 40
+UNMEASURED = Ceiling(40, "handed-over sentences no planning case exercises")
 
 
 def test_the_turns_we_hand_over_are_measured_somewhere() -> None:
     unmeasured = sorted({case["say"] for case in CASES if case["group"] == "extension"})
 
-    assert len(unmeasured) <= UNMEASURED, "\n".join(
-        [f"{len(unmeasured)} handed-over sentences no planning case exercises:", *unmeasured[:20]]
-    )
+    assert not UNMEASURED.exceeded_by(unmeasured), UNMEASURED.exceeded_by(unmeasured)
 
 
 def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
@@ -96,7 +95,7 @@ def test_the_anchor_is_big_enough_to_validate_a_judge() -> None:
 # **And not to zero.** Two of the fifty-three were an order to move money and a payment already
 # made, arriving on the reading path; both now have a reader. What is left of the half a vocabulary
 # could claim is bare amounts, and those are unclaimed on purpose — see the test below.
-MUTE = 44
+MUTE = Ceiling(44, "turns handed over with nothing recognised in them")
 
 
 def test_what_we_hand_over_knowing_nothing_about_it() -> None:
@@ -106,12 +105,14 @@ def test_what_we_hand_over_knowing_nothing_about_it() -> None:
     them, which is a different failure: not an unmeasured model call but an unnecessary one, and
     the corpus cannot see it — its `unnecessary model calls` rate counts only turns an episode
     marked `no_model`, so a sentence nobody thought to mark is a call nobody counts.
-    """
-    mute = sorted({case["say"] for case in CASES if not case["states_a_query"]})
 
-    assert len([case for case in CASES if not case["states_a_query"]]) <= MUTE, "\n".join(
-        [f"{len(mute)} distinct sentences handed over with nothing recognised:", *mute[:20]]
-    )
+    **Turns and not distinct sentences**, which is the distinction that made the ratchet above lie
+    for as long as it existed. The two are 44 and 29 here, and the unit is declared where the
+    number is so nobody has to read the assertion to find out which one it means.
+    """
+    mute = [case for case in CASES if not case["states_a_query"]]
+
+    assert not MUTE.exceeded_by(mute), MUTE.exceeded_by(sorted({case["say"] for case in mute}))
 
 
 def test_the_mute_turns_split_into_two_different_jobs() -> None:

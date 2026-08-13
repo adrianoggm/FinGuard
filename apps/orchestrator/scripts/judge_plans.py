@@ -121,6 +121,31 @@ before the measurement: the six supermarket rows and the two invented missing wi
 64/11. If it does not, the prompt was not the cause and this paragraph is the evidence that it was
 a guess.
 
+## The ceiling of this judge, and where the thread ends
+
+**This judge is validated over spending questions and nothing else, and that is not an accident of
+how the anchor was written.** Counting what is left to cede settles it: of the forty-eight distinct
+sentences this service still hands over, seventeen are "¿cuánto gasté…?" and about twenty are not
+questions at all — "sí", "a ver", "ajá", "déjalo", "1000". Eight are anything else. The
+deterministic readers already answer the incomes, the counts, the groupings and the balances, so
+what reaches a planner is a spending question with an awkward window plus a pile of non-questions.
+
+Which means the group cannot be diversified out of what is already ceded. Widening it from those
+eight is worth doing and was done, and it moved direction from one distinct value to three and
+metric from one to two — but for a judge to be scored on money arriving, on a count or on a
+grouping at any depth, the *corpus* has to grow conversations whose questions this service is
+obliged to hand over in those shapes. That turns "the corpus should grow" from general advice into
+a dependency of this file.
+
+So there are two honest answers and this is the one taken: **the header says what the judge is
+validated for.** The other — grow the corpus with the explicit aim of ceding other question shapes —
+stays open, and whoever takes it should change this paragraph rather than add to it.
+
+**The thread ends when the extension group has a score somebody believes.** Not when the judge runs,
+not when it agrees with the anchor on the fields `explicit_facts` and `plan_verifier` already check.
+When `answers_the_question` on the turns nobody measures is a number that survives being read one
+case at a time.
+
 ## Running this against a hosted judge, which is where the time went
 
     groq        429 at 25 requests a minute and again at 12; completed at 6, when a call cost
@@ -129,6 +154,13 @@ a guess.
     cloudflare  429 as well, and pacing does not reach it: at the same 6 a minute it fails, and so
                 does a single call once the day is spent. Workers AI meters a daily allowance
                 rather than a rate, so a run either fits in what is left of the day or it does not.
+
+**Groq is the judge's provider, and Cloudflare is not one.** A daily allowance means no judge lives
+there: the run that matters is the one somebody repeats after changing the prompt, and a provider
+that answers on Tuesday and refuses on Wednesday cannot hold a measurement anybody compares. That is
+written here, beside the table, because the alternative is the next person spending an afternoon
+rediscovering it — as this one did, through a truncated JSON and an exhausted output budget before
+the quota ever showed itself.
 
 **The flag is `--tpm` and it used to be `--rpm`, which measured the thing neither provider limits.**
 Requests a minute is a number somebody remembers; it stops being right the moment the answer budget

@@ -20,12 +20,13 @@ from pathlib import Path
 
 import yaml
 from support import episodes
+from support.ratchets import Floor
 
 CORPUS = Path(__file__).resolve().parents[1] / "evaluation" / "conversations_drift.yaml"
 
 # All sixty variants now preserve the conversation they continue. Add a new corpus case when a
 # genuinely different phrasing is discovered; never lower this target to make a regression pass.
-FLOOR = 60
+FLOOR = Floor(60, "reworded follow-ups that inherit what they should")
 
 
 def _variants() -> list[tuple[str, episodes.Episode]]:
@@ -76,4 +77,4 @@ def test_the_rate_only_goes_up(capsys) -> None:  # noqa: ANN001
         for name, said, complaint in failures:
             print(f"  «{said}»\n      {complaint}   ({name})")
 
-    assert reached >= FLOOR, f"{reached}/{len(VARIANTS)} correct, below the floor of {FLOOR}"
+    assert not FLOOR.undercut_by(reached), FLOOR.undercut_by(reached)

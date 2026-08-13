@@ -19,13 +19,14 @@ file is how the fix is judged.
 from pathlib import Path
 
 import yaml
+from support.ratchets import Floor
 
 from finguard_orchestrator.domain.services import payment_words
 
 CORPUS = Path(__file__).resolve().parents[1] / "evaluation" / "payments" / "drift.yaml"
 
 # Every instruction must yield both the amount and the note it names.
-FLOOR = 40
+FLOOR = Floor(40, "payment instructions read into the slots they name")
 
 
 def _cases() -> list[tuple[str, int, str | None, str]]:
@@ -73,4 +74,4 @@ def test_the_rate_only_goes_up(capsys) -> None:  # noqa: ANN001
         for said, got, want in failures:
             print(f"  {want!r} read as {got!r}\n      «{said}»")
 
-    assert reached >= FLOOR, f"{reached}/{len(CASES)} read correctly, below the floor of {FLOOR}"
+    assert not FLOOR.undercut_by(reached), FLOOR.undercut_by(reached)
