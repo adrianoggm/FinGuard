@@ -62,16 +62,32 @@ for: `explicit_facts` enforces the window after the merge, and `plan_verifier` a
 direction and the metric against the sentence. So today's licence reads *this judge is right about
 what we can already check without it*, which is a necessary step and not the one that was wanted.
 
-Two things have to happen before the extension group is worth scoring: the anchor needs sentences
-that are not "¿cuánto gasté…?" — an income, a count, a grouping, so direction, metric and merchants
-stop being constants — and the seventeen `wrong` verdicts need reading one at a time. At least one
-of them is a planner miss rather than a judge error: "¿cuánto paso a la hucha cada mes?" came back
-THIS_YEAR with a Bizum category, which is neither the grouping nor the movement asked for.
+## The anchor after the first thing was done about it
 
-The three model columns were measured with `max_output_tokens=800`, before Cloudflare showed the
-number was too small. It is a ceiling, so a model that answered inside it answers the same inside
-2000 — but the run behind the table was made at the old number and nobody should read it as
-reproduced at the new one. The baseline and the spread need no model and are current.
+Six sentences were added to `planning/conversations.yaml` for exactly this — money arriving, a
+count, a superlative, a list of movements, one account — all of them handed-over turns, none of
+them "¿cuánto gasté…?". The group went from 74 rows to 80, and what matters is the spread:
+
+    field         before  after
+    window             4      5
+    direction          1      3
+    categories         5      6
+    merchants          1      1
+    group_by           3      3
+    metric             1      2
+
+Direction and metric stop being constants, which retires two of the three free columns. **Merchants
+did not move, and the reason is worth keeping:** the one anchor sentence that names a shop —
+"¿cuántas compras hice en Mercadona?" — was *declined* by the planner, so there is no plan carrying
+a merchant for a judge to be right or wrong about. That is a fact about `qwen2.5-coder:7b` and not
+about the group, and it will change the day a planner that answers it produces this file.
+
+**The three model columns are now from a different group.** They were measured on the 74-row anchor
+at `max_output_tokens=800`; the table above and the spread come from the 80-row one at 2000. Nobody
+should read them as one run. Re-running the three is the cheap part; what has to happen first is
+reading the seventeen `wrong` verdicts on `answers_the_question` one at a time, because at least one
+of them is a planner miss rather than a judge error — "¿cuánto paso a la hucha cada mes?" came back
+THIS_YEAR with a Bizum category, which is neither the grouping nor the movement asked for.
 
 ## Running this against a hosted judge, which is where the time went
 

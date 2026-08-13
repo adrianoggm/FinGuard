@@ -511,3 +511,87 @@ conversations:
       - say: quería decir el año pasado
         must_keep: [categories]
         must_change: [window]
+
+  # --- and the same set, chosen for what it is *not* ------------------------------------------
+  #
+  # The eight cases above are all "¿cuánto gasté…?", which is what the corpus repeats — and running
+  # the judge against the group they form showed what that costs: three of its six fields take one
+  # value across every case in it. Every plan is EXPENSE, every plan is SUM, every merchant list is
+  # empty. On a column like that a judge saying `right` to everything scores full marks, so the
+  # hosted judge's 72/0 on direction was the baseline and not a result.
+  #
+  # These are handed-over turns too, and they are here to break those three constants: money coming
+  # in, a count rather than a sum, a shop named outright, a movement rather than an aggregate, and
+  # one account instead of all of them. `scripts/judge_plans.py --baseline` prints the spread beside
+  # every run, so the day this stops being true is a day somebody sees.
+
+  - id: salary_is_money_arriving
+    why: >
+      The direction, which was EXPENSE in all seventy-four rows of the anchor. "He cobrado" is
+      income and the sentence says so, so `explicit_facts` owns it after the merge.
+    turns:
+      - say: Oye, ¿cuánto he cobrado de nómina este año?
+        expect_plan:
+          window: THIS_YEAR
+          direction: INCOME
+
+  - id: how_many_is_not_how_much
+    why: >
+      The metric, which was SUM everywhere. "Cuántos" is a count and answering it with an amount is
+      the reported defect that `COUNT_ANSWERED_AS_AMOUNT` exists to refuse.
+    turns:
+      - say: ¿cuántos movimientos tengo este mes?
+        expect_plan:
+          window: THIS_MONTH
+          metric: COUNT
+
+  - id: a_count_in_one_shop
+    why: >
+      Two constants at once: a count, and the only anchor sentence that names a merchant. Which
+      merchant string it becomes is the model's reading and stays an implication; that the window
+      it inherits survives a follow-up is not.
+    turns:
+      - say: ¿cuántas compras hice en Mercadona?
+        expect_plan:
+          metric: COUNT
+      - say: ¿y el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        must_keep: [merchants, metric]
+
+  - id: the_largest_bizum_is_one_movement
+    why: >
+      Not an aggregate at all. A superlative asks for a row, and the shape is the assertion —
+      answering it with a total is a real figure about a different question.
+    turns:
+      - say: ¿cuál es el bizum más alto que he hecho este año?
+        expect_plan:
+          window: THIS_YEAR
+        expect_shape: MOVEMENT
+        not_says: comparo
+
+  - id: show_me_the_movements
+    why: >
+      A list rather than a figure, and a counted window rather than a named one — "los últimos 4
+      meses" is the shape that used to come back as the previous five.
+    turns:
+      - say: Enséñame los movimientos de los ultimos 4 meses
+        expect_plan:
+          window: LAST_N_MONTHS:4
+        must_change: [window]
+
+  - id: one_account_and_not_all_of_them
+    why: >
+      The account scope, which no anchor row carried. What survives the follow-up cannot be
+      asserted here — this file's checker knows eight fields and the account subset is not one of
+      them, which is a gap worth naming rather than working around. The window is ours either way,
+      and the sentence still belongs in the group: a plan scoped to one account is a shape the
+      judge had never been shown.
+    turns:
+      - say: Cuanto gaste en la cuenta principal este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿y el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        must_change: [window]
