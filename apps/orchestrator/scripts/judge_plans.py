@@ -54,6 +54,24 @@ judgement the group was chosen to be easy about; the seventeen are worth reading
 at least one is a real planner miss rather than a judge error ("¿cuánto paso a la hucha cada mes?"
 came back THIS_YEAR with a Bizum category, which is neither the grouping nor the movement asked
 for).
+
+Those three columns were measured with `max_output_tokens=800`, which is where it stood before
+Cloudflare showed the number was too small. It is a ceiling, so the models that answered inside it
+answer the same inside 2000 — but the run behind the table was made at the old number and nobody
+should read it as reproduced at the new one.
+
+## Running this against a hosted judge, which is where the time went
+
+    groq        429 at 25 rpm and again at 12. Completes at 6. The limit is tokens a minute and
+                not requests, so pacing is the fix and the number is small.
+    cloudflare  429 too, and pacing does not help: at 6 rpm it fails, and so does a single call
+                once the day's allowance is gone. Workers AI meters a daily budget rather than a
+                rate, so a run either fits in what is left or it does not.
+
+Both of Cloudflare's earlier failures were ours rather than theirs, and they hid the quota until it
+was fixed: at 800 tokens `@cf/qwen/qwen3-30b-a3b-fp8` spent the budget reasoning and returned first
+truncated JSON and then the provider's own "output budget exhausted before final answer". Seven
+verdicts with a reason each is about five hundred tokens before a reasoning model thinks at all.
 """
 
 import argparse
@@ -141,19 +159,41 @@ def prompt_for(case: dict[str, Any], plan: dict[str, Any]) -> str:
 
 async def judge(
     provider: Any, model: str, case: dict[str, Any], plan: dict[str, Any]
-) -> dict[str, Any]:
-    """One verdict per field for one case. Raises whatever the provider raises."""
-    answered = await provider.complete(
-        prompt_for(case, plan),
-        model=model,
-        temperature=0.0,
-        max_output_tokens=800,
-        schema=VERDICT_SCHEMA,
-    )
-    parsed = json.loads(answered)
-    if not isinstance(parsed, dict):
-        raise ValueError(f"the judge did not return an object: {answered[:120]}")
-    return parsed
+) -> dict[str, Any] | None:
+    """One verdict per field for one case, or None when the judge did not produce one.
+
+    Retried once, then given up on. A judge that loops instead of answering is a fact about that
+    model, and the run has to survive it: `@cf/qwen/qwen3-30b-a3b-fp8` came back with eight
+    kilobytes of repetition on one case of seventy-two, and took the whole run down with it.
+
+    None rather than `unjudgeable`, which already means something else — that the *sentence* admits
+    more than one defensible reading. Counting a crash as an abstention would put a defect about
+    the judge into a column that reports on the corpus.
+    """
+    for attempt in range(2):
+        answered = await provider.complete(
+            prompt_for(case, plan),
+            model=model,
+            temperature=0.0,
+            # Seven verdicts, each with a reason of up to two hundred characters, is about five
+            # hundred tokens of answer before a reasoning model has thought about anything. At 800
+            # `@cf/qwen/qwen3-30b-a3b-fp8` spent the budget thinking and came back with either
+            # truncated JSON or the provider's own "output budget exhausted before final answer" —
+            # two symptoms of one number being too small for what this prompt asks for.
+            #
+            # A ceiling and not a reservation, so the models that answer in five hundred tokens pay
+            # nothing for it.
+            max_output_tokens=2000,
+            schema=VERDICT_SCHEMA,
+        )
+        try:
+            parsed = json.loads(answered)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+        del attempt
+    return None
 
 
 def tally(verdicts: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
@@ -191,13 +231,23 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
     # last forty cases when it is a judge that never saw them.
     pace = 60.0 / arguments.rpm if arguments.rpm else 0.0
     verdicts = []
+    unreadable: list[str] = []
     for number, case in enumerate(scored):
         if number and pace:
             await asyncio.sleep(pace)
-        verdicts.append(await judge(provider, arguments.model, case, plans[case["say"]]))
+        verdict = await judge(provider, arguments.model, case, plans[case["say"]])
+        if verdict is None:
+            unreadable.append(case["say"])
+            continue
+        verdicts.append(verdict)
 
-    where = f"{provider.name}/{arguments.model} · {arguments.group} · {len(scored)} cases"
+    where = f"{provider.name}/{arguments.model} · {arguments.group} · {len(verdicts)} cases"
     print(f"\n=== judge {where} ===\n")
+    if unreadable:
+        print(f"  {len(unreadable)} of {len(scored)} came back unparseable twice, among them:")
+        for say in sorted(set(unreadable))[:5]:
+            print(f"    {say!r}")
+        print()
     if declined:
         print(f"  {len(declined)} turns declined by the planner and not judged, among them:")
         for say in sorted(set(declined))[:5]:
