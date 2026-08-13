@@ -303,6 +303,7 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
     scored = [case for case in chosen if plans[case["say"]] is not None]
 
     verdicts: list[dict[str, Any]] = []
+    judged: list[dict[str, Any]] = []
     unreadable: list[str] = []
     if arguments.baseline:
         # A judge that says `right` to everything, which needs no provider and is the number every
@@ -336,6 +337,7 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
                 unreadable.append(case["say"])
                 continue
             verdicts.append(verdict)
+            judged.append({"case": case, "verdict": verdict})
         where = f"{provider.name}/{arguments.model} · {arguments.group} · {len(verdicts)} cases"
     print(f"\n=== judge {where} ===\n")
     if unreadable:
@@ -360,6 +362,21 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
             f"  {field:20} right {counts['right']:>3}  wrong {counts['wrong']:>3}"
             f"  unjudgeable {counts['unjudgeable']:>3}{says}"
         )
+
+    if arguments.explain:
+        # The disagreements, one at a time, which is the only way this stops being a scoreboard.
+        # A `wrong` is either a planner defect or a judge defect and the count cannot say which —
+        # "¿cuánto paso a la hucha cada mes?" came back with a Bizum category and the judge was
+        # right to reject it, while eight `wrong` merchants on a group where every merchant list is
+        # empty were the judge inventing a disagreement. Both are one row in the same column.
+        print(f"\n--- every wrong verdict on {arguments.explain} ---\n")
+        for entry in judged:
+            said = entry["verdict"].get(arguments.explain, {})
+            if said.get("verdict") != "wrong":
+                continue
+            print(f"  {entry['case']['say']!r}")
+            print(f"      plan  {json.dumps(plans[entry['case']['say']], ensure_ascii=False)}")
+            print(f"      judge {said.get('why', '')}")
     return 0
 
 
@@ -371,6 +388,12 @@ def main() -> int:
         "--baseline",
         action="store_true",
         help="score with a judge that says right to everything; needs no provider",
+    )
+    parser.add_argument(
+        "--explain",
+        default=None,
+        choices=[*FIELDS, ANSWERS],
+        help="print every wrong verdict on this field, with the plan and the judge's reason",
     )
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--think", action="store_true")
