@@ -389,6 +389,26 @@ def test_an_explicit_movement_quantity_is_a_count(sentence: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuánto pago de alquiler?",
+        "¿cuánto ingreso al mes?",
+        "¿cuánto cargo me han hecho este mes?",
+    ],
+)
+def test_a_singular_verb_spelled_like_a_noun_is_not_a_count(sentence: str) -> None:
+    """The other side of the rule above, and it was answering the wrong question.
+
+    Three of the nouns a count is asked with — pago, ingreso, cargo — are spelled exactly like the
+    first person of the verb that asks for an amount. "¿Cuánto pago de alquiler?" came back "3
+    movimientos en alquiler el mes pasado": asked how much, told how many, with a real figure of
+    the wrong kind on it. It is the opening sentence of `planning/conversations.yaml` and no turn of
+    the routing corpus asks it, which is why 1113 measured turns never saw it.
+    """
+    assert explicit_facts.read(sentence).metric is not Metric.COUNT
+
+
+@pytest.mark.parametrize(
     ("sentence", "group_by"),
     [
         ("¿Cuánto suelo gastar al mes en supermercados?", GroupBy.MONTH),

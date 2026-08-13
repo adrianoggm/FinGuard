@@ -202,9 +202,13 @@ episodes:
         route: BALANCE
       - say: ¿y en la hucha?
         route: BALANCE
+      # This episode said so in its own `why` and then expected the opposite: "ajá" was a turn the
+      # financial planner was asked to build a query out of. It is the same tier as "ya" three
+      # turns down — manners when nothing is waiting for a reply — and it was missing from the list
+      # rather than excluded from it.
       - say: ajá
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: COURTESY
+        no_model: true
       - say: ¿cuánto gasté el mes pasado?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}

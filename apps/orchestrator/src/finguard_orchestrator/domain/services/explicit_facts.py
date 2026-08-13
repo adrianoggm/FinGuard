@@ -134,8 +134,18 @@ _CUMULATIVE: Final = re.compile(
     r"|\bcuanto\s+llevaba\s+(?:gastado|ingresado|acumulado)\b"
     r"|\bcomo\s+(?:iba|fue|ha\s+ido)\s+(?:mi\s+)?(?:gasto|ingreso)\b"
 )
+# **The number has to agree, because three of these nouns are also verbs.** The interrogative and
+# the noun each carried their own optional `s`, so a singular "cuánto" beside a singular "pago"
+# matched — and "¿cuánto pago de alquiler?" came back "3 movimientos en alquiler el mes pasado".
+# Asked how much, told how many, with a real figure of the wrong kind on it. The same held for
+# "cuánto ingreso" and "cuánto cargo": in each, the noun the count rule is looking for is spelled
+# exactly like the first person of the verb that asks for an amount.
+#
+# So the plural is required on both sides. "Cuántos pagos" counts, "cuánto pago" does not, and
+# nothing else has to be enumerated for it: the agreement *is* the rule. `veces` needs no partner
+# spelling because it has no singular anybody says.
 _COUNT: Final = re.compile(
-    r"\bcuant[oa]s?\s+(?:veces|movimientos?|operaciones?|compras?|pagos?|cargos?|ingresos?)\b"
+    r"\bcuant[oa]s\s+(?:veces|movimientos|operaciones|compras|pagos|cargos|ingresos)\b"
     r"|\b(?:numero|cantidad)\s+de\s+"
     r"(?:movimientos?|operaciones?|compras?|pagos?|cargos?|ingresos?)\b"
     r"|\b(?:mas|menos)\s+(?:movimientos?|operaciones?|compras?|pagos?|cargos?)\b"

@@ -682,3 +682,56 @@ conversations:
     turns:
       - say: Oye cual es el estado actua lde mi hucha de ahorros
         expect: BALANCE
+
+  - id: money_arriving_from_a_source_the_vocabulary_does_not_name
+    why: >
+      El ancla sobre la que se valida el juez estaba entera de gasto y de suma, así que `direction` y
+      `metric` no variaban y un acierto sobre ellas no distinguía a un planificador de otro. "La beca"
+      y "la mutua" no están en el vocabulario cerrado de categorías, de modo que la pregunta se cede;
+      lo que la frase dice es que el dinero entra y en qué periodo, y esos dos campos son nuestros
+      después del plan. Lo que queda a juicio es que el recuento no se quede pegado a la siguiente:
+      "cuánto cobré" pide un importe, y responderlo con "3" es una cifra real de otra pregunta.
+    turns:
+      - say: ¿cuánto me han ingresado de la beca este año?
+        expect_plan:
+          window: THIS_YEAR
+          direction: INCOME
+      - say: ¿cuántos ingresos me han entrado este mes?
+        expect_plan:
+          window: THIS_MONTH
+          direction: INCOME
+          metric: COUNT
+      - say: ¿cuánto cobré de la mutua el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+          direction: INCOME
+        must_change: [metric]
+
+  - id: shops_the_closed_vocabulary_cannot_name
+    why: >
+      Ningún lector determinista reclama un comercio que el libro no tenga, así que estas tres se
+      ceden enteras y el comercio es lo único que las separa. "¿Y en Amazon?" no nombra periodo: el
+      año tiene que sobrevivir y la tienda tiene que dejar de ser Netflix, porque un plan que herede
+      la tienda anterior contesta con el gasto de otra. Y "cómo se reparte" pide un desglose — un
+      total sin agrupar es una cifra correcta que no responde a lo que se preguntó.
+    turns:
+      - say: ¿cuánto me he gastado en Netflix este año?
+        expect_plan:
+          window: THIS_YEAR
+      - say: ¿y en Amazon?
+        must_keep: [window]
+        must_change: [merchants]
+      - say: ¿cuántas compras le he hecho a Amazon este año?
+        expect_plan:
+          window: THIS_YEAR
+          metric: COUNT
+        must_keep: [merchants]
+      - say: ¿cómo se reparte mi sueldo este mes?
+        expect_plan:
+          window: THIS_MONTH
+          direction: INCOME
+        must_change: [group_by, metric]
+      - say: ¿y el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        must_keep: [direction, categories, group_by]

@@ -58,8 +58,8 @@ _FAREWELL: Final = re.compile(
 
 # The second tier: manners only when nothing is waiting for a reply. See the module docstring.
 _ACKNOWLEDGEMENT: Final = re.compile(
-    r"^(vale|ok|okay|oki|perfecto|genial|estupendo|guay|bueno|ya|entendido|correcto)$"
-    r"|^(eso\s+es|de\s+acuerdo|esta\s+bien|muy\s+bien|asi\s+es)$",
+    r"^(vale|ok|okay|oki|perfecto|genial|estupendo|guay|bueno|ya|entendido|correcto|aja|ajam)$"
+    r"|^(eso\s+es|de\s+acuerdo|esta\s+bien|muy\s+bien|asi\s+es|me\s+fio|te\s+creo)$",
 )
 
 # Reply text lives here rather than in `answer_writer` because there is nothing to compose: these

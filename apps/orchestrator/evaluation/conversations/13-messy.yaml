@@ -394,9 +394,12 @@ episodes:
       - say: ¿cuánto tengo en la hucha?
         route: BALANCE
         says: "5.485,50"
+      # The last turn of somebody who asked the same thing five times and finally accepted it. Two
+      # halves and both are manners, which is what the comma rule was written for — "vale" was
+      # already a pleasantry and "me fío" was not, so the whole turn went to the planner.
       - say: vale, me fío
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+        route: COURTESY
+        no_model: true
 
   - name: the_fourth_reported_conversation_shouting_at_a_clarification
     why: >

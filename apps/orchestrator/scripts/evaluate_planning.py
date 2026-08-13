@@ -62,6 +62,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import cloudflare_workers_ai
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
@@ -484,8 +485,43 @@ def plan_fields(plan: FinancialPlan, today: date) -> dict[str, Any]:
     }
 
 
+def ranking_fields(plan: TopMovements, today: date) -> dict[str, Any]:
+    """A ranking scored on the dimensions it has, and empty on the ones it does not.
+
+    `TopMovements` is a plan with no grouping, no metric and no account scope: "el gasto más caro
+    del año" is one row, and asking it which aggregate it computes is asking about a field the
+    domain does not give it. Those come back as the neutral value a dataset case that does not
+    mention them compares equal to.
+
+    Its `rank` is the field that only exists here, and it is the reason the shape exists at all —
+    the recogniser that reads it used to return a boolean, so "¿y el tercero?" answered with the
+    second largest.
+    """
+    aggregate = FinancialPlan(
+        direction=plan.direction,
+        period=plan.period,
+        date_range=plan.date_range,
+        categories=plan.categories,
+        excluded_categories=plan.excluded_categories,
+        merchants=plan.merchants,
+        merchant_terms=plan.merchant_terms,
+        excluded_merchants=plan.excluded_merchants,
+    )
+    return {**plan_fields(aggregate, today), "rank": plan.rank}
+
+
 def actual_fields(result: PlanningResult, today: date) -> dict[str, Any]:
+    """What the pipeline produced, in the vocabulary the dataset writes.
+
+    **A ranking used to hit an `assert` here and take the whole run down with it**, which is how
+    this script came to be unrunnable without anybody noticing: the scores in
+    `evaluation/planning/RESULTS.md` were measured before `TopMovements` existed, and every attempt
+    to reproduce them since has died on the first superlative in the dataset. A number nobody can
+    reproduce is a number, and it was being quoted.
+    """
     plan = result.plan
+    if isinstance(plan, TopMovements):
+        return ranking_fields(plan, today)
     assert isinstance(plan, FinancialPlan)
     return plan_fields(plan, today)
 

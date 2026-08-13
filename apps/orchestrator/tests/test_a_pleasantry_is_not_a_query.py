@@ -145,7 +145,24 @@ def test_these_are_pleasantries_whatever_is_open(said: str) -> None:
 
 @pytest.mark.parametrize(
     "said",
-    ["vale", "ok", "perfecto", "genial", "eso es", "ya", "bueno", "de acuerdo", "entendido"],
+    [
+        "vale",
+        "ok",
+        "perfecto",
+        "genial",
+        "eso es",
+        "ya",
+        "bueno",
+        "de acuerdo",
+        "entendido",
+        # Two the tier was missing rather than excluding. "Ajá" sat in an episode whose own `why`
+        # says an interjection may never be answered as a question about money, and was expected as
+        # a QUERY three lines below it; "me fío" is the second half of "vale, me fío", where the
+        # comma rule already split the turn and only one half was manners.
+        "ajá",
+        "me fío",
+        "vale, me fío",
+    ],
 )
 def test_these_are_pleasantries_only_when_nothing_is_waiting(said: str) -> None:
     """The second tier, and the reason it needs the conversation. Thirty of the corpus's turns are
@@ -167,6 +184,9 @@ def test_these_are_pleasantries_only_when_nothing_is_waiting(said: str) -> None:
         # rule that could read it as manners is a rule that could swallow a confirmation.
         "sí",
         "si",
+        # And "no" for the same reason, which is the argument the module makes about "sí" read in
+        # the other direction: it is the word that *declines* a payment.
+        "no",
         # A question with manners on the front. The question is what has to be answered.
         "vale, ¿y en la hucha?",
         "gracias, ¿cuánto tengo?",
