@@ -47,15 +47,23 @@ _NAMED: Final[tuple[tuple[str, Period], ...]] = (
     ("en lo que va de ano", Period.THIS_YEAR),
     ("en lo que llevamos de mes", Period.THIS_MONTH),
     ("en lo que va de mes", Period.THIS_MONTH),
-    ("la semana pasada", Period.LAST_WEEK),
-    # Without its determiner, because "del" hides one. The entry read "el mes pasado" and the match
-    # is anchored on both sides, so "¿cuánto gasté del mes pasado?" carried no window at all —
-    # a sentence that states its period outright, sent to a model to be asked which period it meant.
+    # The month and the week, in all four spellings their five sister units get from one regex each.
     #
-    # The year never had the defect and shows why: it is read as "ano pasado", noun and adjective,
-    # by a rule that never learned the article. Two entries below — "del ano" and "el ano" — are the
-    # same lesson written the other way, one spelling at a time.
+    # **The parity is enforced by a test rather than by the shape of this table.** Quarter,
+    # semester, fortnight, weekend and year are read further up as a noun plus an adjective, so all
+    # five have known "anterior" since they were written; the month and the week were literals here
+    # and knew only "pasado". Moving them up there was tried and is wrong for a reason worth
+    # keeping: `natural_period_in` is consulted by a *different* recogniser, so a month that
+    # answered from it stopped being handed over at all — fifty-five turns changing hands to fix
+    # two spellings, and two turns of the corpus left with their reader decided by the order of a
+    # cascade. The table is data; `tests/test_a_class_knows_what_its_sisters_know.py` is the rule.
+    #
+    # Without the determiner, because "del" hides one: the entry read "el mes pasado" and is matched
+    # between word boundaries, so "¿cuánto gasté del mes pasado?" carried no window at all.
+    ("semana pasada", Period.LAST_WEEK),
+    ("semana anterior", Period.LAST_WEEK),
     ("mes pasado", Period.LAST_MONTH),
+    ("mes anterior", Period.LAST_MONTH),
     ("esta semana", Period.THIS_WEEK),
     ("este mes", Period.THIS_MONTH),
     ("este ano", Period.THIS_YEAR),
@@ -188,6 +196,7 @@ _PREVIOUS_WEEKEND: Final = re.compile(
     r"\b(?:(?:el\s+)?fin\s+de\s+semana\s+(?:pasado|anterior)"
     r"|(?:el\s+)?ultimo\s+fin\s+de\s+semana)\b"
 )
+
 
 _BLOCK_POSITION: Final[dict[str, int]] = {
     "primer": 1,
