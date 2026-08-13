@@ -595,3 +595,90 @@ conversations:
         expect_plan:
           window: LAST_MONTH
         must_change: [window]
+
+  # --- the eight that are left, and why there are only eight ----------------------------------
+  #
+  # Of the forty-eight distinct sentences still handed over, seventeen are "¿cuánto gasté…?" and
+  # about twenty are not questions at all — "sí", "a ver", "ajá", "déjalo", "1000". These are the
+  # rest, and counting them settles an argument the judge's anchor started: direction, metric and
+  # merchants are not constants because whoever wrote the anchor was careless. **They are constants
+  # because that is what this service cedes.** The deterministic readers already answer the incomes,
+  # the counts and the groupings, so what reaches a planner is a spending question with an awkward
+  # window, plus a pile of non-questions.
+  #
+  # Which makes the corpus growing a dependency of the judge rather than general advice: for a judge
+  # to be scored on INCOME, on COUNT or on a grouping, there have to be *conversations* whose
+  # questions this service is obliged to hand over in those shapes. Writing these eight raises the
+  # anchor and lowers UNMEASURED with one piece of work; it does not break the constant.
+
+  - id: a_person_who_is_not_in_the_contact_list
+    why: >
+      "Mi hermana" is a typed alias rather than a contact, so the counterparty is a reading and
+      stays an implication. The month is not, and the follow-up must not lose the person.
+    turns:
+      - say: ¿Cuánto le envié a mi hermana este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿Y con mi hermana?
+        must_keep: [window]
+
+  - id: the_salary_side_of_an_account
+    why: >
+      The one handed-over follow-up whose direction is not EXPENSE. "La nómina" is money arriving
+      and `explicit_facts` reads it, so the direction is ours to demand — and it has to *replace*
+      the direction of the question it follows rather than inherit it.
+    turns:
+      - say: ¿cuánto gasté este mes?
+      - say: ¿y en la nómina?
+        expect_plan:
+          direction: INCOME
+        must_keep: [window]
+        must_change: [direction]
+
+  - id: an_account_the_holder_does_not_have_is_still_a_question
+    why: >
+      There is no "cuenta de la empresa", and the answer to that is to say so — not to widen the
+      query back to every account, which is the shape a model reaches for when a filter fails.
+    turns:
+      - say: Cuanto gaste en la cuenta principal este mes?
+      - say: ¿y en la cuenta de la empresa?
+        must_keep: [window]
+
+  - id: another_one_over_a_counted_window
+    why: >
+      "Los 2 últimos meses" is a counted window and the sentence states it outright, which is the
+      field `explicit_facts` enforces after the merge. What "algún otro" refers to is not.
+    turns:
+      - say: ¿he recibido algún bizum de Marta Solis Vega este mes?
+      - say: ¿y de algún otro en los 2 últimos meses?
+        expect_plan:
+          window: LAST_N_MONTHS:2
+        must_change: [window]
+
+  - id: a_question_with_no_noun_in_it
+    why: >
+      "¿Qué tal va la cosa este mes?" names a period and nothing else, and it is a real question —
+      somebody asking how the month is going. Whatever it becomes, it may not become a month other
+      than this one.
+    turns:
+      - say: ¿qué tal va la cosa este mes?
+        expect_plan:
+          window: THIS_MONTH
+
+  - id: movements_asked_for_badly
+    why: >
+      Two typos and a courtesy in front of it, and it is still a request for movements rather than
+      for a total — the shape is the assertion, because answering a list with one figure is a real
+      number about a different question.
+    turns:
+      - say: Perdona que movimeintos he tenido ?
+        expect_shape: MOVEMENT
+
+  - id: a_balance_asked_with_a_slipped_space
+    why: >
+      "El estado actua lde mi hucha" is the balance, and the balance is not a plan at all — this
+      service answers it from the account summary. A planner producing a window for it has already
+      answered the wrong question.
+    turns:
+      - say: Oye cual es el estado actua lde mi hucha de ahorros
+        expect: BALANCE
