@@ -276,3 +276,22 @@ def test_cumulative_buckets_are_exact_sums_in_chronological_order() -> None:
 def test_cumulative_without_a_calendar_group_is_invalid() -> None:
     with pytest.raises(InvalidValueError, match="CUMULATIVE requires"):
         query(metric=Metric.CUMULATIVE)
+
+
+def test_asking_across_accounts_while_naming_one_is_invalid() -> None:
+    """The combination the compiler cannot express, and the answer it gave was about everything.
+
+    `only_account_ids` is a filter the compiler applies outright; the single `only_account_id` was
+    only ever applied through `scoped_to` in the `elif not across_accounts` arm. So naming the
+    piggy bank *and* asking across accounts fell out of both arms, no account condition was
+    emitted, and the read came back over every account the holder has — while `scoped_to` still
+    said the piggy bank. A real figure about a wider scope than the one asked for.
+
+    Rejected rather than resolved by precedence: whichever half you honour, the other half was
+    somebody's intent, and there is no reading of "solo la hucha, en todas mis cuentas" to prefer.
+    """
+    with pytest.raises(InvalidValueError, match="acrossAccounts"):
+        query(only_account_id=uuid.UUID(int=4), across_accounts=True)
+
+    with pytest.raises(InvalidValueError, match="acrossAccounts"):
+        query(only_account_ids=(uuid.UUID(int=4),), across_accounts=True)

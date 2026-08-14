@@ -157,6 +157,27 @@ def test_average_and_a_selected_account_subset_reach_the_domain() -> None:
     assert repository.received.only_account_ids == tuple(selected)
 
 
+def test_a_named_account_asked_across_accounts_is_refused_rather_than_widened() -> None:
+    """Over the wire, because the pair is expressible over the wire and was answered there.
+
+    Nothing reached the repository: a request that names the piggy bank and also asks across
+    accounts had no account condition compiled for it, so the answer covered every account the
+    holder has and `scopedTo` still said the piggy bank. The refusal is the whole fix — a client
+    that meant either half can send either half.
+    """
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "onlyAccountId": str(uuid.UUID(int=3)), "acrossAccounts": True},
+    )
+
+    assert response.status_code == 422
+    assert "acrossAccounts" in str(response.json()["detail"])
+    assert repository.received is None
+
+
 def test_frequency_reaches_the_domain_as_a_metric_with_complete_evidence_requested() -> None:
     repository = FakeRepository(RESULT)
     app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)

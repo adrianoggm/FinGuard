@@ -113,6 +113,14 @@ class FinancialQuery:
             raise InvalidValueError("internalOnly requires includeInternal")
         if self.only_account_id is not None and self.only_account_ids:
             raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
+        # Contradictory, and the contradiction resolved itself the wrong way. The compiler filters
+        # on `only_account_ids` outright and reaches the single `only_account_id` only through
+        # `scoped_to`, in the arm guarded by `not across_accounts` — so this pair emitted no account
+        # condition at all and the read widened to every account the holder has, while `scoped_to`
+        # went on naming the one that was asked for. A correct figure about a scope nobody requested
+        # is the failure this service is built to refuse, so the state is refused instead.
+        if self.across_accounts and (self.only_account_id is not None or self.only_account_ids):
+            raise InvalidValueError("acrossAccounts cannot be combined with onlyAccountId(s)")
         if len(set(self.only_account_ids)) != len(self.only_account_ids):
             raise InvalidValueError("onlyAccountIds cannot contain duplicates")
         if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
