@@ -112,9 +112,15 @@ async def read_cards(
     against *this* deployment's clock and bin the charges in a zone hardcoded one layer down, so a
     holder in the Canaries read the chat on their day and their card charges on Madrid's.
     """
-    since = (reference or today) - timedelta(days=days - 1)
+    until = reference or today
+    since = until - timedelta(days=days - 1)
     result = await queries.ask(
-        ListCardsQuery(account_id=account_id, since=since, reporting_timezone=timezone or zone)
+        ListCardsQuery(
+            account_id=account_id,
+            since=since,
+            until=until,
+            reporting_timezone=timezone or zone,
+        )
     )
     return http_mapper.cards_to_dto(result)
 
@@ -147,6 +153,7 @@ async def read_card_charges(
             account_id=account_id,
             card_id=card_id,
             since=(reference or today) - timedelta(days=days - 1),
+            until=reference or today,
             limit=limit,
             reporting_timezone=timezone or zone,
         )

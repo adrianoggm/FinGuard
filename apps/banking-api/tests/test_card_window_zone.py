@@ -52,16 +52,26 @@ class Records:
 
     def __init__(self) -> None:
         self.since: date | None = None
+        self.until: date | None = None
         self.timezone: str | None = None
 
-    async def all_of(self, account_id: uuid.UUID, *, since: date, timezone: str) -> tuple[()]:
-        self.since, self.timezone = since, timezone
+    async def all_of(
+        self, account_id: uuid.UUID, *, since: date, until: date, timezone: str
+    ) -> tuple[()]:
+        self.since, self.until, self.timezone = since, until, timezone
         return ()
 
     async def charges_on(
-        self, account_id: uuid.UUID, card_id: uuid.UUID, *, since: date, timezone: str, limit: int
+        self,
+        account_id: uuid.UUID,
+        card_id: uuid.UUID,
+        *,
+        since: date,
+        until: date,
+        timezone: str,
+        limit: int,
     ) -> tuple[()]:
-        self.since, self.timezone = since, timezone
+        self.since, self.until, self.timezone = since, until, timezone
         return ()
 
 
@@ -191,3 +201,25 @@ def test_a_window_of_n_days_is_n_days_and_not_n_plus_one() -> None:
     )
 
     assert cards.since == date(2026, 7, 28), "a week ending on 3 August starts on 28 July"
+
+
+def test_the_window_ends_on_the_callers_day_rather_than_running_on() -> None:
+    """There was no far end at all: the SQL asked for `>= since` and nothing else.
+
+    So the window ran from a date to whenever the reader happened to be, and a charge booked with a
+    date ahead of the caller's own day counted towards a total labelled as the last thirty days. The
+    query compiler has bounded both ends of every range since it was written; the card screen and
+    the chat were answering about different spans of the same money.
+    """
+    client, cards = a_deployment_in_madrid()
+
+    client.get(
+        f"/v1/accounts/{ACCOUNT}/cards",
+        params={"days": 30, "reference": CANARIAN_TODAY.isoformat(), "timezone": CANARIAN_ZONE},
+    )
+
+    assert cards.until == CANARIAN_TODAY
+
+    client.get(f"/v1/accounts/{ACCOUNT}/cards/{CARD}/charges", params={"days": 30})
+
+    assert cards.until == DEPLOYMENT_TODAY, "and the deployment's day when the caller says nothing"

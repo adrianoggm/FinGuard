@@ -34,6 +34,9 @@ class ListCardChargesQuery(Query[ListCardChargesResult]):
     account_id: UUID
     card_id: UUID
     since: date
+    # Inclusive, and the same window the list uses. A total and the charges behind it that disagree
+    # about the far end is the failure this endpoint exists to prevent.
+    until: date
     limit: int
     # Required, like on `ListCardsQuery` and for the same reason: the default was a zone the
     # controller never overrode, so the list and the charges behind it agreed with each other and
@@ -50,6 +53,7 @@ class ListCardChargesHandler:
             query.account_id,
             query.card_id,
             since=query.since,
+            until=query.until,
             timezone=query.reporting_timezone,
             limit=query.limit,
         )

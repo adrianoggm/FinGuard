@@ -40,6 +40,9 @@ class ListCardsResult:
 class ListCardsQuery(Query[ListCardsResult]):
     account_id: UUID
     since: date
+    # The far end of the window, inclusive, and it arrives here for the same reason `since` does.
+    # Without it the window had no top and a charge booked with a date in the future was inside it.
+    until: date
     # No default. It was "Europe/Madrid", which the controller never overrode, so every card screen
     # binned its charges in that zone whatever the caller or the deployment had said. A default here
     # cannot be right: the zone belongs to whoever is asking, and a wrong one moves a charge made
@@ -53,7 +56,10 @@ class ListCardsHandler:
 
     async def handle(self, query: ListCardsQuery) -> ListCardsResult:
         held = await self._cards.all_of(
-            query.account_id, since=query.since, timezone=query.reporting_timezone
+            query.account_id,
+            since=query.since,
+            until=query.until,
+            timezone=query.reporting_timezone,
         )
         return ListCardsResult(
             # Echoed back, because every figure here is "since this date" and a caller that had to
