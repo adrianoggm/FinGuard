@@ -1412,7 +1412,7 @@ class AskFinancialQuestionHandler:
             else:
                 yield AskFinancialQuestionResult(
                     outcome=PlanningOutcome.INVALID_DOMAIN.value,
-                    text=_refusal_for(broken, query.sentence),
+                    text=_refusal_for(broken, query.sentence, checked),
                     plan=answer_writer.describe(checked),
                     # The plan is shown but not remembered: it is the one that misread the
                     # question, and inheriting from it would carry the misreading into the
@@ -5929,7 +5929,7 @@ _REPHRASE = (
 )
 
 
-def _refusal_for(rule: str, sentence: str) -> str:
+def _refusal_for(rule: str, sentence: str, plan: FinancialPlan | TopMovements) -> str:
     """Why the plan was refused, in words, when the rule knows enough to say.
 
     A specific refusal is worth writing because the generic one leaves somebody guessing at what to
@@ -5942,6 +5942,28 @@ def _refusal_for(rule: str, sentence: str) -> str:
     follow up on is the same dishonesty as a button that does nothing, so it suggests a sentence
     instead — one the user can send and this pipeline can answer.
     """
+    if rule == "BREAKDOWN_ANSWERED_AS_ONE_GROUP" and isinstance(plan, FinancialPlan):
+        # The generic message is worse than useless for this one: the person asked for a breakdown,
+        # the grouping collapsed because it is filtered to a single value, and saying "díla de otra
+        # forma" invites the same sentence and the same collapse. What they can change is the
+        # dimension, so that is what this names — and it suggests a month, the one dimension
+        # `_ONE_VALUE_COLLAPSES` can never collapse, so the sentence it offers is answerable.
+        #
+        # Four words duplicated from `answer_writer`, which names the same dimensions for group
+        # headings. Sharing them would mean a domain service holding user-facing Spanish; the cost
+        # of the copy is that both have to change together, and the cost of the alternative is a
+        # layer boundary, so the copy wins and this comment is what pays for it.
+        dimension = {
+            GroupBy.CATEGORY: "categoría",
+            GroupBy.MERCHANT: "comercio",
+            GroupBy.COUNTERPARTY: "contraparte",
+            GroupBy.ACCOUNT: "cuenta",
+        }.get(plan.group_by, "eso")
+        return (
+            f"Me pides un reparto, pero la consulta que he construido agrupa por {dimension} y "
+            f"a la vez la filtra a una sola, así que saldría una única fila y no te diría nada. "
+            f"Dime por qué quieres que lo reparta y te lo doy: por ejemplo «por mes»."
+        )
     if rule != "CATEGORY_MISREAD":
         return _REPHRASE
     named = category_words.precisely_named_in(sentence)
