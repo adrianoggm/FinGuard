@@ -1049,11 +1049,16 @@ async def cards(
 
     No model: a card list is a read. The window is rolling and says so — a figure labelled as a
     month that is really thirty days is wrong on the 1st by everything that happened on the 31st.
+
+    `days` counts days with both ends inside, so a week is `since` six days back and not seven. It
+    subtracted the whole count and left the caller's own day in the window as well, which made every
+    span one longer than its label; banking had the same arithmetic and the two agreed with each
+    other while both disagreed with what they said.
     """
     result = await queries.ask(
         ListCardsQuery(
             account_id=who.account_id,
-            since=today - timedelta(days=days),
+            since=today - timedelta(days=days - 1),
             today=today,
             reporting_timezone=who.reporting_timezone,
         )
@@ -1086,7 +1091,7 @@ async def card_charges(
         GetCardChargesQuery(
             account_id=who.account_id,
             card_id=card_id,
-            since=today - timedelta(days=days),
+            since=today - timedelta(days=days - 1),
             today=today,
             reporting_timezone=who.reporting_timezone,
             limit=limit,

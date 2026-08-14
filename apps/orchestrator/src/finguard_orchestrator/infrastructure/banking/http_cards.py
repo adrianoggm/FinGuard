@@ -116,11 +116,17 @@ def _window(since: date, today: date, timezone: str) -> str:
     `timezone` is what that day is measured in; sending either alone asks the far side to guess the
     other half, and its guess is a deployment setting.
 
+    **`+ 1`, because both ends of the window are inside it.** `since` and `today` are two dates and
+    the span between them is one more day than their difference — banking resolves the count back
+    into a date the same way, so sending the bare difference asked for a window starting one day
+    later than the one this side had computed, and the cards were read over a shorter period than
+    the chat beside them.
+
     urlencode because a zone has a slash in it.
     """
     return urlencode(
         {
-            "days": max(1, (today - since).days),
+            "days": max(1, (today - since).days + 1),
             "reference": today.isoformat(),
             "timezone": timezone,
         }
