@@ -28,21 +28,24 @@ seconds, and it is the only version of this that measures the right thing.
 FINANCIAL_QUERY whenever a provider fails, which is right in production — a model outage must not
 break a conversation — and turns a 429 into an opinion here. The first run against Groq produced a
 plausible confusion table in which every row was an HTTP 429. The failures are now counted and
-reported above the table, and `--rpm` paces the run.
+reported above the table, and `--tpm` paces the run.
 
 Groq's free tier, for `openai/gpt-oss-120b`: 30 requests/minute, **8K tokens/minute**, 200K
 tokens/day. One turn of this corpus costs about 750 tokens — roughly 500 of prompt and 224 of
 reasoning the model does before answering — so the token limit binds first:
 
-    8000 / 750   ->  --rpm 10, not 30
+    8000 / 750   ->  ten turns a minute, not the thirty the request limit allows
     200000 / 750 ->  about 260 turns a day, so the full 818 does not fit in one
+
+That first division is `--tpm`'s whole job. It used to be written here as `--rpm 10`, which is the
+right answer to an arithmetic nobody re-does when the prompt grows.
 
 Which means a full run is a three-day job on the free tier, and a 20-episode sample is the honest
 unit of measurement. That sample was within 0.2 points of the full run for qwen3:8b.
 
 None of that arithmetic transfers to `--provider cloudflare`: Workers AI meters in *neurons* per
 day rather than tokens per minute, so what a turn of this corpus costs there is unmeasured and
-`--rpm` has no known right value. Watch the failure count above the table on the first run.
+no tokens-a-minute figure describes it. Watch the failure count above the table on the first run.
 
 It also means fewer turns are scored than the corpus has. A preview owns the next turn and a
 half-built payment takes the reply that answers its question, both before anything is classified,
@@ -93,6 +96,13 @@ from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import (  # no
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (  # noqa: E402
     OpenAiCompatibleProvider,
 )
+
+# What one turn costs a tokens-a-minute budget: about 500 of prompt and 224 the model reasons before
+# answering. Measured and not derived — the prompt lives inside `LlmTurnInterpreter` and this file
+# never builds it — so this is the number to re-measure if that prompt grows. What `--tpm` buys is
+# that the division stops being done by hand: the header used to carry `8000 / 750 -> --rpm 10`, and
+# a remembered 10 is right only for the prompt it was worked out against.
+TURN_TOKENS = 750
 
 
 def _table(report: episodes.Agreement, limit: int) -> str:
@@ -156,11 +166,11 @@ async def main() -> int:
     )
     parser.add_argument("--worst", type=int, default=12, help="how many confusion pairs to print")
     parser.add_argument(
-        "--rpm",
+        "--tpm",
         type=int,
         default=0,
-        help="requests per minute, for an endpoint that rate-limits. 0 means as fast as it goes. "
-        "On Groq's free tier the binding limit is tokens rather than requests — see below.",
+        help="the provider's tokens-a-minute limit; the pace comes from it. 0 means as fast as "
+        "it goes. Groq's free tier publishes 8000",
     )
     args = parser.parse_args()
 
@@ -221,7 +231,9 @@ async def main() -> int:
         return 2
 
     interpreter = LlmTurnInterpreter(
-        provider, model=args.model, pace_seconds=60 / args.rpm if args.rpm else 0.0
+        provider,
+        model=args.model,
+        pace_seconds=60.0 * TURN_TOKENS / args.tpm if args.tpm else 0.0,
     )
     started = time.monotonic()
     report = await episodes.compare(corpus, interpreter, Deterministic())
@@ -242,7 +254,8 @@ async def main() -> int:
         )
         if share > 5:
             print(
-                "   Rate limited? See --rpm; on Groq's free tier 10 is the number.", file=sys.stderr
+                "   Rate limited? See --tpm; on Groq's free tier 8000 is the number.",
+                file=sys.stderr,
             )
 
     said = sum(len(episode.turns) for episode in corpus)

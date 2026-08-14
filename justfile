@@ -135,12 +135,12 @@ test-unit:
 # Accuracy of the query engine given a correct plan (phase 2)
 # Accuracy of turning a Spanish sentence into a plan (phase 3). The model name must belong to
 # the selected provider; hosted providers read their credentials from apps/orchestrator/.env.
-evaluate-planning model="qwen2.5-coder:7b" provider="ollama" rpm="0":
-    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --rpm {{ rpm }}
+evaluate-planning model="qwen2.5-coder:7b" provider="ollama" tpm="0":
+    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --tpm {{ tpm }}
 # Local wording changes must produce local plan changes. Hosted providers need their credentials
-# in apps/orchestrator/.env; rpm=2 is a safe starting point for Groq's token-limited free tier.
-evaluate-metamorphic model="qwen3.5:9b" provider="ollama" rpm="0":
-    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset metamorphic --rpm {{ rpm }}
+# in apps/orchestrator/.env; tpm=8000 is what Groq's free tier publishes and the pace comes from it.
+evaluate-metamorphic model="qwen3.5:9b" provider="ollama" tpm="0":
+    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset metamorphic --tpm {{ tpm }}
 # The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
 # up, because the point is to exercise the deployed service and not the handler.
 # Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.

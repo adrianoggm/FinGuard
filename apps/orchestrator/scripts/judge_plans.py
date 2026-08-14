@@ -113,33 +113,99 @@ instruction to abstain should have made `unjudgeable`.
 Four of those five are the sentences added to widen the anchor, which is the argument for widening
 it: a group of one question shape cannot report a defect that only appears in another shape.
 
-**The prompt has been sharpened and the sharpening is unmeasured.** Two rules were added — that a
-merchant is a proper noun and "el supermercado" is a category, and that a field present in the plan
-cannot be missing — and Groq's budget was spent before they could be run. The prediction, written
-before the measurement: the six supermarket rows and the two invented missing windows disappear,
-`merchants` returns to 77/0 on a group where nothing varies, and `answers_the_question` lands near
-64/11. If it does not, the prompt was not the cause and this paragraph is the evidence that it was
-a guess.
+**The prompt was sharpened, the prediction was written down, and it has now been run.** Two rules
+were added — that a merchant is a proper noun and "el supermercado" is a category, and that a field
+present in the plan cannot be missing — and the prediction written before the measurement was: the
+six supermarket rows and the two invented missing windows disappear, `merchants` returns to 77/0 on
+a group where nothing varies, and `answers_the_question` lands near 64/11.
+
+Measured over the 95-row anchor, 86 of which carry a plan:
+
+    field                 spread  80 rows before  86 rows after
+    window                     5            70/6       80/4 · 2 unjudgeable
+    direction                  3            77/0                       85/1
+    categories                 6           67/10                       81/5
+    merchants                  3            70/7                       85/1
+    group_by                   3            76/1                       85/1
+    metric                     2            75/2                       84/2
+    answers_the_question       —        56/19 · 2u      69/14 · 3 unjudgeable
+
+**The prediction holds on the claim it was making.** The six supermarket rows are gone — no sentence
+containing "supermercado" appears among the wrongs at all — and so are the two invented missing
+windows. `answers_the_question` was predicted at 64 right of 80, which is 80.0 %, and came back 69
+of 86, which is 80.2 %. So the cluster was the prompt, and saying so is now a measurement rather
+than a hope.
+
+**Two things it got wrong, and both matter more than the part it got right.** `merchants` did not
+reach 77/0; it is 85/1. But the qualifier in the prediction — "on a group where nothing varies" — is
+no longer true of this group, and that is the more important half: `merchants` now takes three
+distinct values, so 85/1 is a result and 77/0 would have been a free one. And the two misreadings
+that disappeared were replaced by a *new* one of the same kind: on two rows the judge rejects a plan
+for `across_accounts` — "set to false contradicts inherited true", "omits across_accounts
+inheritance" — a field this service does not read from a sentence and does not ask a planner for.
+That is the next rule to add, and this paragraph is the record that the last one worked.
+
+**Five of the fourteen are the judge, down from eleven of nineteen.** Three are still calls about an
+inherited window that its own instruction to abstain should have made `unjudgeable`, and two are the
+`across_accounts` invention above.
+
+**Nine are the planner, and four of them are new.** Two of the four could not have been reported by
+any earlier version of this group, because the group had no question of their shape in it:
+
+    "¿cuánto me han ingresado de la beca este año?"  categories SALARY for a grant, so the answer
+                                                    would be the payroll and read as correct
+    "¿cuánto cobré de la mutua el mes pasado?"       no filter at all, so every euro that arrived
+                                                    that month is offered as what the mutua paid
+    "¿cómo se reparte mi sueldo este mes?"           group_by CATEGORY *inside* categories=[SALARY]
+                                                    — a breakdown of one category into itself, which
+                                                    is one group and shows nothing
+    "¿Cuánto le envié a mi hermana este mes?"        direction INCOME for money going out
+
+The third is the one worth reading twice. It is not a wrong field: every field is defensible on its
+own, the plan groups as a distribution question should, and the result is still a single row. A
+defect of that shape is invisible to `plan_verifier`, which checks fields against the sentence, and
+it cannot occur in a question that asks for a total. The fourth is a direction defect, which the
+group could not have surfaced while every plan in it was EXPENSE.
 
 ## The ceiling of this judge, and where the thread ends
 
-**This judge is validated over spending questions and nothing else, and that is not an accident of
-how the anchor was written.** Counting what is left to cede settles it: of the forty-eight distinct
-sentences this service still hands over, seventeen are "¿cuánto gasté…?" and about twenty are not
-questions at all — "sí", "a ver", "ajá", "déjalo", "1000". Eight are anything else. The
+**This judge was validated over spending questions and nothing else, and that was not an accident of
+how the anchor was written.** Counting what was left to cede settled it: of the forty-eight distinct
+sentences this service then handed over, seventeen were "¿cuánto gasté…?" and about twenty were not
+questions at all — "sí", "a ver", "ajá", "déjalo", "1000". Eight were anything else. The
 deterministic readers already answer the incomes, the counts, the groupings and the balances, so
 what reaches a planner is a spending question with an awkward window plus a pile of non-questions.
 
-Which means the group cannot be diversified out of what is already ceded. Widening it from those
-eight is worth doing and was done, and it moved direction from one distinct value to three and
+The count today is seventy-seven distinct sentences handed over, thirty-nine of them with a written
+expectation and thirty-eight without. Of those thirty-eight, twenty-two have nothing in them that a
+reader recognised — the non-questions — and sixteen are real questions nobody has written an
+expectation for. Sixteen is the size of the job the paragraph at the end of this file is about.
+
+Which meant the group could not be diversified out of what was already ceded. Widening it from those
+eight was worth doing and was done, and it moved direction from one distinct value to three and
 metric from one to two — but for a judge to be scored on money arriving, on a count or on a
-grouping at any depth, the *corpus* has to grow conversations whose questions this service is
-obliged to hand over in those shapes. That turns "the corpus should grow" from general advice into
+grouping at any depth, the *corpus* had to grow conversations whose questions this service is
+obliged to hand over in those shapes. That turned "the corpus should grow" from general advice into
 a dependency of this file.
 
-So there are two honest answers and this is the one taken: **the header says what the judge is
-validated for.** The other — grow the corpus with the explicit aim of ceding other question shapes —
-stays open, and whoever takes it should change this paragraph rather than add to it.
+**That was taken, and this paragraph is the one it was supposed to replace.**
+`30-income-and-unnamed-shops` adds two episodes of twelve turns whose questions no reader here can
+resolve — money arriving from a grant and from an insurer, a count of purchases, two shops this
+ledger does not have, and one distribution — and the corresponding expectations went into
+`planning/conversations.yaml`, which is what puts them in the anchor. The group went from 80 rows to
+95, of which 86 carry a plan.
+
+**What it bought, measured rather than argued:** `merchants` stopped being a constant, which was the
+last of the three free columns — one distinct value to three, and the judge scored 85/1 on it where
+77/0 would have cost it nothing. Four planner defects that no earlier version of this group could
+report, two of them in shapes it did not contain, and one of those a grouping defect that is not a
+wrong field in any single column. `window`, `categories` and `group_by` kept the spread they had.
+
+**What it did not buy.** `direction` and `metric` are still at three values and two: the sentences
+added here land on values the previous widening had already put in the group, so they add rows of
+new shapes rather than new values. And `answers_the_question` on the *extension* group — the turns
+nobody measures — is still unscored, which is the thread's actual end and is untouched by any of
+this. Growing the anchor makes the judge worth believing; it does not make the extension measured.
 
 **The thread ends when the extension group has a score somebody believes.** Not when the judge runs,
 not when it agrees with the anchor on the fields `explicit_facts` and `plan_verifier` already check.
@@ -149,8 +215,18 @@ case at a time.
 ## Running this against a hosted judge, which is where the time went
 
     groq        429 at 25 requests a minute and again at 12; completed at 6, when a call cost
-                about 1,400 tokens. So the wall is somewhere between 8k and 17k tokens a minute,
-                and `--tpm 8000` is the setting that reproduces the run that worked.
+                about 1,400 tokens. The wall was guessed at "somewhere between 8k and 17k tokens a
+                minute" and it is not a guess any more — the response headers publish it:
+                `x-ratelimit-limit-tokens: 8000` a minute and `x-ratelimit-limit-requests: 1000`.
+                So `--tpm 8000` is the setting, and the 86-row run paced itself to 3.2 calls a
+                minute at 2,465 tokens each without a single failure.
+
+                **The request budget is a refilling bucket and not a midnight reset**, which is
+                worth knowing before planning a day around it. `remaining-requests` went 993 → 909
+                across that run and `reset-requests` went 10m → 2h11m: about 1.44 minutes per
+                request, which is a thousand a day arriving continuously. So a run that does not
+                fit waits hours rather than until tomorrow, and two runs of this size in an
+                afternoon is the shape of what the tier allows.
     cloudflare  429 as well, and pacing does not reach it: at the same 6 a minute it fails, and so
                 does a single call once the day is spent. Workers AI meters a daily allowance
                 rather than a rate, so a run either fits in what is left of the day or it does not.

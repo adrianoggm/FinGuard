@@ -2,7 +2,7 @@
 
     uv run python scripts/evaluate_planning.py --model qwen3.5:4b
     uv run python scripts/evaluate_planning.py --provider groq \
-        --model openai/gpt-oss-120b --dataset metamorphic --rpm 2
+        --model openai/gpt-oss-120b --dataset metamorphic --tpm 8000
     uv run python scripts/evaluate_planning.py --provider cloudflare \
         --model @cf/qwen/qwen3-30b-a3b-fp8 --dataset metamorphic
 
@@ -68,9 +68,15 @@ from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaL
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
     OpenAiCompatibleProvider,
 )
+from finguard_orchestrator.infrastructure.planning import prompt
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 
 PLANNING = Path(__file__).resolve().parents[1] / "evaluation" / "planning"
+
+# The answer budget every planning call is made with. It was written twice as a literal beside the
+# two planners built here, and the pace below has to be derived from the same number — a budget that
+# changes in one place and not the other is the 429 this flag exists to prevent.
+ANSWER_TOKENS = 384
 
 # The vocabulary that exists in the seeded data. It belongs to banking; until there is
 # somewhere legitimate to read it from, it is stated here and the drift shows up as an
@@ -694,7 +700,7 @@ async def run(
         provider,
         model=model,
         temperature=0.0,
-        max_output_tokens=384,
+        max_output_tokens=ANSWER_TOKENS,
         categories=CATEGORIES,
     )
 
@@ -871,7 +877,7 @@ async def ablate(
         provider,
         model=model,
         temperature=0.0,
-        max_output_tokens=384,
+        max_output_tokens=ANSWER_TOKENS,
         categories=CATEGORIES,
     )
 
@@ -967,11 +973,11 @@ def main() -> int:
         help="override the selected provider's configured request timeout",
     )
     parser.add_argument(
-        "--rpm",
+        "--tpm",
         type=int,
         default=0,
-        help="maximum evaluated cases per minute. 0 means no pacing; use this with hosted "
-        "free tiers so rate limiting cannot invalidate the run",
+        help="the provider's tokens-a-minute limit; the pace comes from it. 0 is unpaced. "
+        "Use this with hosted free tiers so rate limiting cannot invalidate the run",
     )
     parser.add_argument(
         "--ablate",
@@ -989,11 +995,47 @@ def main() -> int:
         "carries a few points of noise — enough to invent an improvement.",
     )
     args = parser.parse_args()
-    if args.rpm < 0:
-        parser.error("--rpm cannot be negative")
+    if args.tpm < 0:
+        parser.error("--tpm cannot be negative")
     if args.think and args.provider != "ollama":
         parser.error("--think is only supported by the Ollama adapter")
     return asyncio.run(_evaluate(args))
+
+
+def _pace(args: argparse.Namespace) -> float:
+    """Seconds between calls, derived from the limit the provider publishes.
+
+    **This was `--rpm`, and requests a minute is not what anybody limits.** Groq answers
+    `x-ratelimit-limit-tokens: 8000` and `x-ratelimit-limit-requests: 1000` — a minute budget in
+    tokens and a *daily* one in requests — so a rate remembered in calls is right only for the
+    prompt it was measured against. This prompt is 2,300 tokens of template before the sentence, so
+    `--rpm 4` asks for eleven thousand tokens a minute against a wall of eight and gets a 429 on the
+    first case. `judge_plans.py` learned this and took the flag in tokens; this file kept the old
+    one, which is the same rule written for one member of a class and missing under its sister.
+
+    Four characters to the token, as there, and pessimistically: the cost is the longest prompt in
+    the dataset with a previous plan attached, whether or not the case has one. Being twenty per
+    cent slow costs seconds; being wrong the other way costs the run.
+    """
+    data = yaml.safe_load((PLANNING / f"{args.dataset}.yaml").read_text(encoding="utf-8"))
+    cases = data["cases"][: args.limit] if args.limit else data["cases"]
+    longest = max(
+        len(
+            prompt.build_prompt(
+                case["question"],
+                today=data["reference"],
+                categories=CATEGORIES,
+                previous=FinancialPlan(
+                    direction=Direction.EXPENSE,
+                    period=RelativePeriod(period=Period.LAST_MONTH),
+                ),
+            )
+        )
+        for case in cases
+    )
+    cost = ANSWER_TOKENS + longest // 4
+    print(f"# pacing {args.tpm / cost:.1f} cases a minute · {cost} tokens each · tpm {args.tpm}")
+    return 60.0 * cost / args.tpm
 
 
 async def _evaluate(args: argparse.Namespace) -> int:
@@ -1013,7 +1055,7 @@ async def _evaluate(args: argparse.Namespace) -> int:
         print(f"{args.provider} did not answer", file=sys.stderr)
         return 2
 
-    pace_seconds = 60 / args.rpm if args.rpm else 0.0
+    pace_seconds = _pace(args) if args.tpm else 0.0
     if args.ablate:
         return await ablate(args.model, provider, args.dataset, pace_seconds)
     return await repeated(
