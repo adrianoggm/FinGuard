@@ -525,7 +525,11 @@ class AskFinancialQuestionHandler:
         async for step in self.stream(query):
             if isinstance(step, AskFinancialQuestionResult):
                 result = step
-        assert result is not None  # the pipeline always ends with one
+        if result is None:
+            # `assert` here vanished under `python -O`, and this is the one where that changed the
+            # outcome rather than the error message: a `handle()` typed to return an answer returned
+            # None instead, and what a caller does with that is decided a layer away from here.
+            raise RuntimeError("the question pipeline ended without a result")
         return result
 
     async def stream(
@@ -603,7 +607,10 @@ class AskFinancialQuestionHandler:
             # Execute the validated plan verbatim. Re-planning the word "reintenta" would make a
             # transient bank outage change the question, which is the opposite of a retry.
             retry = was.retry_plan
-            assert retry is not None
+            if retry is None:
+                # `retry_control` is only RETRY when this is set, three lines up — so this is the
+                # coupling written down rather than a case anybody has reached.
+                raise RuntimeError("a retry was accepted with no plan to retry")
             yield Stage("planned", answer_writer.describe(retry))
             yield Stage("querying")
             if isinstance(retry, TopMovements):

@@ -477,7 +477,8 @@ class PreparePaymentHandler:
         None is the useful answer as often as an answer is: "no sé" fills no slot, and a sentence
         nobody can read deterministically belongs on the ordinary path.
         """
-        assert command.pending is not None
+        if command.pending is None:
+            raise RuntimeError("continuing a payment that is not pending")
         pending = command.pending
         # An identifier with no name beside it is a choice that has not been applied yet: this
         # service fills the name in from its own directory, so a draft carrying both has been
