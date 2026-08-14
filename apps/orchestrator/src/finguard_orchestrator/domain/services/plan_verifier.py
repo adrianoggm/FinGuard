@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, Metric
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric
 from finguard_orchestrator.domain.services import category_words, spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
@@ -42,6 +42,76 @@ def _count_answered_as_amount(sentence: str, plan: FinancialPlan | TopMovements)
         # reached; the check is here so the function is total on its own type.
         return False
     return bool(_COUNTING.search(spanish.folded(sentence))) and (plan.metric is not Metric.COUNT)
+
+
+# Asking how something divides up. "¿Cómo se reparte mi sueldo?", "¿en qué se me va el dinero?",
+# "desglósame el año", "por categoría" — the last of these `explicit_facts` also reads, and the
+# overlap is deliberate: this rule has to fire whether the grouping came from the sentence or from a
+# model, because the failure below is the same either way.
+_DIVIDES_UP: Final = re.compile(
+    # `se me va` and `se va` both, because the pronoun is what a person actually says and
+    # leaving it out matched neither of the two corpus sentences this rule was written for.
+    r"\b(?:como|en que)\s+se\s+(?:me\s+)?(?:reparte|reparten|va|van)\b"
+    r"|\breparte|\bdesglos|\bdistribu"
+    r"|\bpor\s+(?:categoria|comercio|cuenta)\b"
+)
+
+# Which filter collapses which grouping. Only the four list-shaped dimensions: a window can also
+# leave DAY or MONTH with a single bucket, but how many buckets a window covers is banking's
+# arithmetic and not a property of the plan, so this does not pretend to know it.
+_ONE_VALUE_COLLAPSES: Final = (
+    (GroupBy.CATEGORY, "categories"),
+    (GroupBy.MERCHANT, "merchants"),
+    (GroupBy.COUNTERPARTY, "counterparties"),
+    (GroupBy.ACCOUNT, "only_account_ids"),
+)
+
+
+def _cannot_discriminate(plan: FinancialPlan) -> bool:
+    """The plan groups by a dimension it has already filtered to one value.
+
+    A breakdown by category of a query filtered to one category is one row. Not an error and not a
+    wrong figure — the row's total equals the ungrouped total — which is exactly why nothing else
+    here sees it: every field is defensible on its own, the domain accepts it, banking runs it, and
+    what comes back is a real amount wearing the shape of an answer it is not.
+
+    `merchant_terms` is not in the table above. A term is a fragment matching a family of shops, so
+    filtering by one term and grouping by merchant can legitimately return many rows.
+    """
+    for dimension, filtered in _ONE_VALUE_COLLAPSES:
+        if plan.group_by is not dimension:
+            continue
+        if dimension is GroupBy.ACCOUNT and plan.only_account_id is not None:
+            return not plan.only_account_ids
+        return len(getattr(plan, filtered)) == 1
+    return False
+
+
+def _breakdown_answered_as_one_group(sentence: str, plan: FinancialPlan | TopMovements) -> bool:
+    """The sentence asks how something divides up and the plan cannot divide it.
+
+    Found by `judge_plans.py` on "¿cómo se reparte mi sueldo este mes?", which came back
+    `categories: ["SALARY"]` with `group_by: CATEGORY` — a breakdown of one category into itself.
+    The category was ours, read from "sueldo" by `category_words`; the grouping was the model's.
+    Neither half is wrong alone, which is why this needs a rule of its own rather than a stricter
+    version of an existing one.
+
+    **No repair, and the reason is the one already written in `repaired`.** There are two ways out
+    and the plan does not say which: drop the filter and the answer widens to money the question was
+    not about, or drop the grouping and a total is served to somebody who asked for a distribution.
+    The second is tempting because the figure does not change — and a figure that does not change is
+    precisely how this class of defect reads as correct. So the caller refuses, as it does for a
+    misread category.
+
+    Our own deterministic paths already obey this rule; they just obeyed it one site at a time.
+    `_shop_names_to_suggest` and the top-merchant follow-up both clear `merchants` before setting
+    `group_by=MERCHANT`, with nothing beside them saying why. This is that why, in one place.
+    """
+    if isinstance(plan, TopMovements):
+        # A ranking has no grouping to collapse. `_RANKING_RULES` excludes this rule before it is
+        # reached; the check is here so the function is total on its own type.
+        return False
+    return bool(_DIVIDES_UP.search(spanish.folded(sentence))) and _cannot_discriminate(plan)
 
 
 def _category_misread(sentence: str, plan: FinancialPlan | TopMovements) -> bool:
@@ -81,6 +151,7 @@ _RULES: Final[tuple[tuple[str, Callable[[str, FinancialPlan | TopMovements], boo
     ("SPENDING_ANSWERED_AS_EVERYTHING", _spending_answered_as_everything),
     ("COUNT_ANSWERED_AS_AMOUNT", _count_answered_as_amount),
     ("CATEGORY_MISREAD", _category_misread),
+    ("BREAKDOWN_ANSWERED_AS_ONE_GROUP", _breakdown_answered_as_one_group),
 )
 
 RULES: Final = frozenset(name for name, _ in _RULES)

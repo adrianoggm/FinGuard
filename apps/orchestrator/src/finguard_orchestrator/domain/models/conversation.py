@@ -292,7 +292,7 @@ class Conversation:
     retry_plan: PlannedQuery | None = None
     # A category the last answer explicitly singled out (for example the largest group). The plan
     # alone remembers that a category breakdown was run, but not which row the answer called
-    # "the one where you spent most". This small referent makes "esa categorÃ­a" resolvable without
+    # "the one where you spent most". This small referent makes "esa categoría" resolvable without
     # storing financial results or asking a model to guess a row.
     referenced_category: str | None = None
     # The concrete row the last answer put in focus. Unlike `referenced_category`, this also

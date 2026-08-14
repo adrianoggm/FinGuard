@@ -246,7 +246,7 @@ class ConversationPayload(_Payload):
     # a spending one — the same sentence, two meanings, decided by the turn before.
     answered_the_balance: bool = False
     # The category explicitly highlighted by the last answer. It is an identifier from banking,
-    # not prose, and the client only echoes it so a later "esa categorÃ­a" can be grounded.
+    # not prose, and the client only echoes it so a later "esa categoría" can be grounded.
     referenced_category: str | None = Field(
         default=None, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$"
     )

@@ -1,4 +1,21 @@
-# Reading a turn — can a model replace the rules?
+# Historical experiment — a model against deterministic turn routing
+
+> **A snapshot, not the current state.** Measured on 2026-08-06 against `326e2f6`, with the
+> corpus at 13 files and the reference date 2026-08-05. The table below and everything under
+> "Open" describe the service as it was *before* the Phase 5 routing work, and two things have
+> moved since:
+>
+> - **`Intent.COURTESY` exists.** The 57 turns of «gracias» reaching a planner — the finding this
+>   document argues hardest for — are handled deterministically now, and the corpus asserts that
+>   they do not reach a model. Read §"The 57 are a defect in this service" as the reason the
+>   intent was added, not as an open problem.
+> - **The corpus has grown**, from 130 episodes and 879 turns to 166 and 1125, so the
+>   denominators here no longer match the ones `test_conversation_corpus` prints.
+>
+> Kept whole rather than updated, because the value in it is the experiment: seven local models
+> measured under one harness, three prompt changes that failed, and what each of them cost. Any
+> figure below is evidence about 6 August. It is not a capability statement about `main`.
+
 
 ```bash
 cd apps/orchestrator && uv run python scripts/evaluate_interpreting.py --model qwen3:8b
@@ -160,9 +177,9 @@ and the correction are the two candidates for the same treatment.
 
 ## Open, in the order they are worth doing
 
-1. **Somewhere for a pleasantry to go.** 57 turns of «gracias» reach a planner today. It needs
-   a decision — a tenth intent, or a deterministic filter before any interpreter — and it is
-   worth fixing whether or not a model is ever promoted.
+1. ~~**Somewhere for a pleasantry to go.**~~ **Done.** It became both of the options named here:
+   `Intent.COURTESY` and a deterministic reader in front of any interpreter. No turn of «gracias»
+   reaches a planner, and the corpus fails if one does.
 2. **Few-shot.** All three prompt experiments were *instructions*. Nobody has tried three
    worked sentence → intent pairs, which is a different mechanism and usually the stronger one
    for classification.
