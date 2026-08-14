@@ -298,8 +298,8 @@ def _starts_new_financial_scope(sentence: str, *, today: date) -> bool:
     """Whether this turn states a complete new question rather than an ellipsis.
 
     A concrete window plus a financial question is enough to stand on its own. Inheriting an old
-    category there is how "cuÃ¡nto gastÃ© en la cuenta principal este mes" remained filtered by
-    restaurants. Short turns without a window ("y cuÃ¡nto gastÃ©?") remain follow-ups.
+    category there is how "cuánto gasté en la cuenta principal este mes" remained filtered by
+    restaurants. Short turns without a window ("y cuánto gasté?") remain follow-ups.
     """
     folded = spanish.folded(sentence)
     if re.search(r"\b(?:esa|ese|esas|esos)\b|\blo\s+mismo\b", folded):
@@ -2726,7 +2726,7 @@ class AskFinancialQuestionHandler:
             ),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
             # Keep the compared pair as validated query memory. This makes a direct comparison
-            # behave like two consecutive questions: a later "compÃ¡ralos otra vez" or a repair can
+            # behave like two consecutive questions: a later "compáralos otra vez" or a repair can
             # still point at the same two windows without reconstructing either from prose.
             conversation=replace(
                 comparison_memory,
@@ -4818,7 +4818,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
             )
 
     # A turn containing only a new window patches the query already on screen. Replanning
-    # "en lo que llevamos de aÃ±o" from scratch discarded both categories in a comparison.
+    # "en lo que llevamos de año" from scratch discarded both categories in a comparison.
     if (
         facts.window is not None
         and not facts.names_a_category
