@@ -280,6 +280,20 @@ def _clean_turn(sentence: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", spanish.folded(sentence)).strip()
 
 
+def _across_every_account(plan: FinancialPlan) -> FinancialPlan:
+    """Widen to the whole holder, and drop the narrowing that is being given up.
+
+    Written once because it was written five times and four of them forgot the second half. A plan
+    reaching `_scoped` may already name an account — `merge` rebuilds a follow-up out of the earlier
+    plan and the scope survives that — so widening with `replace(plan, across_accounts=True)` alone
+    left the account in place. Banking reads that pair as a request for every account of the holder
+    while `scoped_to` goes on naming the one that was asked for: a real figure about a wider scope
+    than the question had. It is refused outright on that side now, so leaving it here only trades a
+    wrong answer for a 422. Widening means widening.
+    """
+    return replace(plan, across_accounts=True, only_account_id=None, only_account_ids=())
+
+
 def _starts_new_financial_scope(sentence: str, *, today: date) -> bool:
     """Whether this turn states a complete new question rather than an ellipsis.
 
@@ -3183,16 +3197,11 @@ class AskFinancialQuestionHandler:
         if plan.group_by is GroupBy.ACCOUNT and (
             asks_account_breakdown or (not named and not excluded and not explicit_custom)
         ):
-            return replace(
-                plan,
-                across_accounts=True,
-                only_account_id=None,
-                only_account_ids=(),
-            )
+            return _across_every_account(plan)
         if not named and not excluded and not explicit_custom:
             if plan.only_account_id is not None or plan.only_account_ids:
                 return plan
-            return replace(plan, across_accounts=True)
+            return _across_every_account(plan)
 
         if not named and self._account_directory is not None:
             try:
@@ -3201,7 +3210,7 @@ class AskFinancialQuestionHandler:
                 logger.warning(
                     "scope.accounts_unavailable account=%s", account_ref(query.account_id)
                 )
-                return replace(plan, across_accounts=True)
+                return _across_every_account(plan)
             names = tuple(holding.display_name for holding in holdings if holding.display_name)
             custom = account_words.custom_chosen_among(query.sentence, names)
             wanted_custom = [holding for holding in holdings if holding.display_name in custom]
@@ -3222,7 +3231,7 @@ class AskFinancialQuestionHandler:
                     only_account_id=None,
                     only_account_ids=tuple(holding.account_id for holding in wanted_custom),
                 )
-            return replace(plan, across_accounts=True)
+            return _across_every_account(plan)
 
         try:
             summary = await self._accounts.of(
@@ -3233,7 +3242,7 @@ class AskFinancialQuestionHandler:
             # wider answer rather than the declared account: one account out of three, labelled as
             # though the word had been understood, is the failure this whole method exists to stop.
             logger.warning("scope.accounts_unavailable account=%s", account_ref(query.account_id))
-            return replace(plan, across_accounts=True)
+            return _across_every_account(plan)
 
         names = tuple(holding.display_name for holding in summary.holdings if holding.display_name)
         custom = account_words.custom_chosen_among(query.sentence, names)
@@ -3250,7 +3259,7 @@ class AskFinancialQuestionHandler:
             # None of that kind. Narrowing to nothing would look like a genuinely empty period.
             if plan.internal_only and named:
                 raise AccountScopeNotFoundError(named)
-            return replace(plan, across_accounts=True)
+            return _across_every_account(plan)
         if len(wanted) > 1:
             return replace(
                 plan,
