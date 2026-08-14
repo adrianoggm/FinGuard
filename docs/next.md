@@ -381,7 +381,12 @@ Correct, agreed, and not load-bearing for a date:
 - **`PlanPayload` as a real union.** A period plus a lone `start` currently ignores the
   orphan instead of refusing it. Exactly one of period or both range ends, `n` only for
   the counted periods, no duplicate categories, question non-empty after `strip()`.
-- **No `assert` on production invariants.** Four of them, and they vanish under `-O`.
+- ~~**No `assert` on production invariants.**~~ Done for the four that mattered: the end of
+  the question pipeline, the retry path, continuing a payment, and a draft becoming a
+  request. Twenty-eight remain and stay — every one narrows a type immediately after the
+  branch that established it, so under `-O` they fail on the next line with a worse message
+  rather than continuing with a wrong value. The four that were converted are the ones
+  where `-O` changed the outcome instead of the error.
 - **Presenters per channel.** `answer_writer` mixes Spanish, currency formatting and how
   many groups to read out. §4.4 argues for the split; I would make it when the second
   consumer exists — voice in phase 6, A2A in phase 7 — because an abstraction shaped by

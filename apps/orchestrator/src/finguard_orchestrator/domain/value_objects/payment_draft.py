@@ -134,7 +134,10 @@ class PaymentDraft:
         """
         if self.missing:
             return None
-        assert self.recipient_name is not None and self.amount_minor is not None
+        if self.recipient_name is None or self.amount_minor is None:
+            # What `missing` means, stated where it is relied on. `PaymentRequest` would refuse the
+            # payment anyway, so this names the invariant that broke rather than adding safety.
+            raise RuntimeError("a draft with nothing missing is missing a slot")
         return PaymentRequest(
             recipient_name=self.recipient_name,
             recipient_contact_id=self.recipient_contact_id,

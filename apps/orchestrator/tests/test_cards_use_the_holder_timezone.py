@@ -73,7 +73,7 @@ async def test_the_card_list_sends_the_holders_day_and_zone(
     seen: list[httpx.URL] = []
 
     await _asking(monkeypatch, seen, WALLET).all_of(
-        ACCOUNT, since=date(2026, 7, 4), today=CANARIAN_TODAY, timezone=CANARIAN_ZONE
+        ACCOUNT, since=date(2026, 7, 5), today=CANARIAN_TODAY, timezone=CANARIAN_ZONE
     )
 
     assert seen[0].params["reference"] == "2026-08-03"
@@ -89,7 +89,7 @@ async def test_the_charges_send_them_too(monkeypatch: "pytest.MonkeyPatch") -> N
     await _asking(monkeypatch, seen, CHARGES).charges_on(
         ACCOUNT,
         CARD,
-        since=date(2026, 7, 4),
+        since=date(2026, 7, 5),
         today=CANARIAN_TODAY,
         timezone=CANARIAN_ZONE,
         limit=50,
@@ -107,7 +107,7 @@ async def test_a_zone_survives_being_put_in_a_url(monkeypatch: "pytest.MonkeyPat
     seen: list[httpx.URL] = []
 
     await _asking(monkeypatch, seen, WALLET).all_of(
-        ACCOUNT, since=date(2026, 7, 4), today=CANARIAN_TODAY, timezone=CANARIAN_ZONE
+        ACCOUNT, since=date(2026, 7, 5), today=CANARIAN_TODAY, timezone=CANARIAN_ZONE
     )
 
     assert seen[0].path == f"/v1/accounts/{ACCOUNT}/cards"
@@ -174,7 +174,7 @@ def test_the_cards_route_asks_in_the_holders_zone() -> None:
     assert response.status_code == 200
     assert cards.timezone == CANARIAN_ZONE
     assert cards.today == CANARIAN_TODAY
-    assert cards.since == date(2026, 7, 4)
+    assert cards.since == date(2026, 7, 5)
 
 
 def test_the_charges_route_asks_in_the_holders_zone() -> None:
@@ -195,3 +195,28 @@ def test_the_zone_is_the_credentials_and_not_a_default() -> None:
     client.get("/v1/cards", params={"days": 30})
 
     assert cards.timezone != Caller(holder_reference="x", account_id=ACCOUNT).reporting_timezone
+
+
+async def test_the_day_count_counts_both_ends_of_the_window(
+    monkeypatch: "pytest.MonkeyPatch",
+) -> None:
+    """`since` and `today` are two dates; the span between them is their difference plus one.
+
+    Banking takes a count and resolves it back into a date the same way, so sending the bare
+    difference asked the far side for a window starting one day after the one computed here — the
+    cards were read over a shorter period than the chat beside them, both labelled the same. The
+    single day is the case that needs no arithmetic: from today to today is one day, not zero.
+    """
+    seen: list[httpx.URL] = []
+
+    await _asking(monkeypatch, seen, WALLET).all_of(
+        ACCOUNT, since=CANARIAN_TODAY, today=CANARIAN_TODAY, timezone=CANARIAN_ZONE
+    )
+
+    assert seen[0].params["days"] == "1"
+
+    await _asking(monkeypatch, seen, WALLET).all_of(
+        ACCOUNT, since=date(2026, 7, 28), today=CANARIAN_TODAY, timezone=CANARIAN_ZONE
+    )
+
+    assert seen[1].params["days"] == "7", "28 July to 3 August inclusive is a week"
