@@ -93,7 +93,7 @@ def test_the_window_starts_from_the_callers_day_and_not_this_ones() -> None:
     )
 
     assert response.status_code == 200
-    assert cards.since == date(2026, 7, 4), "thirty days back from the caller's 3 August"
+    assert cards.since == date(2026, 7, 5), "thirty days ending on the caller's 3 August"
 
 
 def test_the_callers_zone_is_the_zone_the_charges_are_binned_in() -> None:
@@ -120,7 +120,7 @@ def test_the_charges_behind_a_card_use_the_same_window() -> None:
     )
 
     assert response.status_code == 200
-    assert (cards.since, cards.timezone) == (date(2026, 7, 4), CANARIAN_ZONE)
+    assert (cards.since, cards.timezone) == (date(2026, 7, 5), CANARIAN_ZONE)
 
 
 # --- what happens when it does not -------------------------------------------------------
@@ -133,7 +133,7 @@ def test_a_caller_that_says_nothing_gets_the_deployments_day_and_zone() -> None:
 
     client.get(f"/v1/accounts/{ACCOUNT}/cards", params={"days": 30})
 
-    assert cards.since == date(2026, 7, 5)
+    assert cards.since == date(2026, 7, 6)
     assert cards.timezone == DEPLOYMENT_ZONE
 
 
@@ -164,3 +164,30 @@ def test_an_unknown_zone_is_refused_rather_than_ignored() -> None:
 
     assert response.status_code == 422
     assert cards.timezone is None, "it reached the handler anyway"
+
+
+def test_a_window_of_n_days_is_n_days_and_not_n_plus_one() -> None:
+    """`since = reference - days` counts the reference day twice over.
+
+    Both ends are included — the charges on `since` are in the window and so are the ones on the
+    caller's own day — so subtracting thirty produced thirty-one distinct dates. A card total
+    labelled "últimos 30 días" carried a thirty-first day of charges, and on the 1st of a month that
+    thirty-first day is the whole of the previous month's last day.
+
+    One day is the case that shows it without arithmetic: asking for a single day has to mean today.
+    """
+    client, cards = a_deployment_in_madrid()
+
+    client.get(
+        f"/v1/accounts/{ACCOUNT}/cards",
+        params={"days": 1, "reference": CANARIAN_TODAY.isoformat(), "timezone": CANARIAN_ZONE},
+    )
+
+    assert cards.since == CANARIAN_TODAY
+
+    client.get(
+        f"/v1/accounts/{ACCOUNT}/cards/{CARD}/charges",
+        params={"days": 7, "reference": CANARIAN_TODAY.isoformat(), "timezone": CANARIAN_ZONE},
+    )
+
+    assert cards.since == date(2026, 7, 28), "a week ending on 3 August starts on 28 July"

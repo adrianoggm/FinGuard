@@ -102,12 +102,17 @@ async def read_cards(
     month is what a caller assumes when nothing says otherwise, and a figure labelled as a month
     that is really thirty days is wrong on the 1st by everything that happened on the 31st.
 
+    `days` counts days, both ends included. It used to subtract `days` from the reference and hand
+    the result over as the start, which is one too many: with the reference day inside the window as
+    well, "the last 30 days" spanned thirty-one dates, and the extra one was the far end — on the
+    1st of a month, the whole of the previous month's last day, in a figure labelled as thirty days.
+
     `reference` and `timezone` are the caller's day and the zone it was measured in, exactly as on
     the query endpoint, and when they arrive they win. This route used to resolve "thirty days ago"
     against *this* deployment's clock and bin the charges in a zone hardcoded one layer down, so a
     holder in the Canaries read the chat on their day and their card charges on Madrid's.
     """
-    since = (reference or today) - timedelta(days=days)
+    since = (reference or today) - timedelta(days=days - 1)
     result = await queries.ask(
         ListCardsQuery(account_id=account_id, since=since, reporting_timezone=timezone or zone)
     )
@@ -141,7 +146,7 @@ async def read_card_charges(
         ListCardChargesQuery(
             account_id=account_id,
             card_id=card_id,
-            since=(reference or today) - timedelta(days=days),
+            since=(reference or today) - timedelta(days=days - 1),
             limit=limit,
             reporting_timezone=timezone or zone,
         )
