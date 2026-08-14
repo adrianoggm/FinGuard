@@ -52,16 +52,26 @@ class Records:
 
     def __init__(self) -> None:
         self.since: date | None = None
+        self.until: date | None = None
         self.timezone: str | None = None
 
-    async def all_of(self, account_id: uuid.UUID, *, since: date, timezone: str) -> tuple[()]:
-        self.since, self.timezone = since, timezone
+    async def all_of(
+        self, account_id: uuid.UUID, *, since: date, until: date, timezone: str
+    ) -> tuple[()]:
+        self.since, self.until, self.timezone = since, until, timezone
         return ()
 
     async def charges_on(
-        self, account_id: uuid.UUID, card_id: uuid.UUID, *, since: date, timezone: str, limit: int
+        self,
+        account_id: uuid.UUID,
+        card_id: uuid.UUID,
+        *,
+        since: date,
+        until: date,
+        timezone: str,
+        limit: int,
     ) -> tuple[()]:
-        self.since, self.timezone = since, timezone
+        self.since, self.until, self.timezone = since, until, timezone
         return ()
 
 
@@ -93,7 +103,7 @@ def test_the_window_starts_from_the_callers_day_and_not_this_ones() -> None:
     )
 
     assert response.status_code == 200
-    assert cards.since == date(2026, 7, 4), "thirty days back from the caller's 3 August"
+    assert cards.since == date(2026, 7, 5), "thirty days ending on the caller's 3 August"
 
 
 def test_the_callers_zone_is_the_zone_the_charges_are_binned_in() -> None:
@@ -120,7 +130,7 @@ def test_the_charges_behind_a_card_use_the_same_window() -> None:
     )
 
     assert response.status_code == 200
-    assert (cards.since, cards.timezone) == (date(2026, 7, 4), CANARIAN_ZONE)
+    assert (cards.since, cards.timezone) == (date(2026, 7, 5), CANARIAN_ZONE)
 
 
 # --- what happens when it does not -------------------------------------------------------
@@ -133,7 +143,7 @@ def test_a_caller_that_says_nothing_gets_the_deployments_day_and_zone() -> None:
 
     client.get(f"/v1/accounts/{ACCOUNT}/cards", params={"days": 30})
 
-    assert cards.since == date(2026, 7, 5)
+    assert cards.since == date(2026, 7, 6)
     assert cards.timezone == DEPLOYMENT_ZONE
 
 
@@ -164,3 +174,52 @@ def test_an_unknown_zone_is_refused_rather_than_ignored() -> None:
 
     assert response.status_code == 422
     assert cards.timezone is None, "it reached the handler anyway"
+
+
+def test_a_window_of_n_days_is_n_days_and_not_n_plus_one() -> None:
+    """`since = reference - days` counts the reference day twice over.
+
+    Both ends are included — the charges on `since` are in the window and so are the ones on the
+    caller's own day — so subtracting thirty produced thirty-one distinct dates. A card total
+    labelled "últimos 30 días" carried a thirty-first day of charges, and on the 1st of a month that
+    thirty-first day is the whole of the previous month's last day.
+
+    One day is the case that shows it without arithmetic: asking for a single day has to mean today.
+    """
+    client, cards = a_deployment_in_madrid()
+
+    client.get(
+        f"/v1/accounts/{ACCOUNT}/cards",
+        params={"days": 1, "reference": CANARIAN_TODAY.isoformat(), "timezone": CANARIAN_ZONE},
+    )
+
+    assert cards.since == CANARIAN_TODAY
+
+    client.get(
+        f"/v1/accounts/{ACCOUNT}/cards/{CARD}/charges",
+        params={"days": 7, "reference": CANARIAN_TODAY.isoformat(), "timezone": CANARIAN_ZONE},
+    )
+
+    assert cards.since == date(2026, 7, 28), "a week ending on 3 August starts on 28 July"
+
+
+def test_the_window_ends_on_the_callers_day_rather_than_running_on() -> None:
+    """There was no far end at all: the SQL asked for `>= since` and nothing else.
+
+    So the window ran from a date to whenever the reader happened to be, and a charge booked with a
+    date ahead of the caller's own day counted towards a total labelled as the last thirty days. The
+    query compiler has bounded both ends of every range since it was written; the card screen and
+    the chat were answering about different spans of the same money.
+    """
+    client, cards = a_deployment_in_madrid()
+
+    client.get(
+        f"/v1/accounts/{ACCOUNT}/cards",
+        params={"days": 30, "reference": CANARIAN_TODAY.isoformat(), "timezone": CANARIAN_ZONE},
+    )
+
+    assert cards.until == CANARIAN_TODAY
+
+    client.get(f"/v1/accounts/{ACCOUNT}/cards/{CARD}/charges", params={"days": 30})
+
+    assert cards.until == DEPLOYMENT_TODAY, "and the deployment's day when the caller says nothing"

@@ -11,6 +11,7 @@ of them. The same closed vocabulary, and the model never sees the decision.
 """
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
@@ -65,8 +66,11 @@ def summary(*holdings: Holding) -> AccountSummary:
 
 
 class Planner:
+    def __init__(self, plan: FinancialPlan = SPENDING) -> None:
+        self._plan = plan
+
     async def plan(self, *_: object, **__: object) -> PlanningResult:
-        return PlanningResult(outcome=PlanningOutcome.PLANNED, plan=SPENDING)
+        return PlanningResult(outcome=PlanningOutcome.PLANNED, plan=self._plan)
 
 
 class Ledger:
@@ -102,10 +106,11 @@ async def ran(
     sentence: str,
     of: AccountSummary | None = None,
     directory: Directory | None = None,
+    planned: FinancialPlan | None = None,
 ) -> FinancialPlan:
     ledger = Ledger()
     handler = AskFinancialQuestionHandler(
-        Planner(),  # type: ignore[arg-type]
+        Planner(planned or SPENDING),  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Bank(of or summary()),  # type: ignore[arg-type]
         account_directory=directory,
@@ -212,3 +217,24 @@ async def test_the_scope_is_not_part_of_the_plan_that_is_remembered() -> None:
 
     assert plan.direction is SPENDING.direction
     assert plan.period == SPENDING.period
+
+
+async def test_widening_clears_the_account_the_plan_was_already_narrowed_to() -> None:
+    """The two tests above widen from a plan that named no account, which is why they pass.
+
+    A plan arriving here with one is the case nobody wrote: `merge` rebuilds a follow-up from the
+    previous plan, and scope survives that, so "¿y en el fondo?" after "¿cuánto gasté en la hucha?"
+    reaches this method already narrowed to the piggy bank. Widening then set `across_accounts` and
+    left the piggy bank in place — and banking reads that pair as a request for every account, so
+    the answer covered all of them while `scoped_to` still said the hucha. Since the invariant
+    landed on the other side it is a 422 instead, which is louder but no more correct.
+
+    Widening means widening: the narrowing that is being abandoned has to go with it.
+    """
+    narrowed = replace(SPENDING, only_account_id=PIGGY)
+
+    plan = await ran("¿cuánto gasté este mes en el fondo?", planned=narrowed)
+
+    assert plan.across_accounts is True
+    assert plan.only_account_id is None
+    assert plan.only_account_ids == ()
