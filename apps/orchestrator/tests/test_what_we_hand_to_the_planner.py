@@ -56,10 +56,18 @@ CASES = cases()
 # the precise failure a ratchet exists to prevent. A literal only discriminates on the day it is
 # written, and this one had never been level with what it compares against.
 #
-# Not a target to grind to zero by hand — the note above about a judge is the honest route for most
-# of them — but a number that exists, where before there was an assumption that ceding a turn made
-# things better.
-UNMEASURED = Ceiling(38, "handed-over sentences no planning case exercises")
+# **38 → 22, and what is left is not the same kind of thing.** Sixteen expectations were written for
+# the sixteen sentences of this group that were real questions, so the count of those is now zero
+# and every question this service hands to a planner has something to be right or wrong about. The
+# twenty-two that remain are the non-questions — "sí", "a ver", "ajá", "déjalo", "1000" — and they
+# are not waiting for someone to write a plan expectation, because a plan is the wrong answer to all
+# of them. They come off this number by a reader claiming them or a vocabulary learning the word,
+# which is the other route named above and is the same work the ceiling below counts.
+#
+# So the two ratchets have converged on one set: every sentence under this ceiling is also under
+# `MUTE`. That is worth saying out loud, because it means this number can no longer be reduced by
+# writing YAML, and a reader who assumes otherwise will go looking for questions that are not there.
+UNMEASURED = Ceiling(22, "handed-over sentences no planning case exercises")
 
 
 def test_the_turns_we_hand_over_are_measured_somewhere() -> None:
