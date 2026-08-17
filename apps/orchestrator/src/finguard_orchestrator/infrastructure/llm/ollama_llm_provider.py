@@ -40,7 +40,7 @@ something the caller hopes for. It says nothing about whether the plan answers t
 question asked; only the evaluation dataset says that.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 import httpx2 as httpx
 
@@ -60,15 +60,17 @@ class OllamaLlmProvider:
         timeout_seconds: float,
         context_tokens: int,
         seed: int,
-        think: bool = False,
+        think: bool | Literal["low", "medium", "high"] = False,
     ) -> None:
         """No defaults except `think`, and the absence is the design. Every number here is
         a measurement that belongs to a deployment, so it lives in .env.defaults with the
         experiment that produced it written beside it. Required rather than optional so an
         adapter cannot be built with numbers nobody chose.
 
-        `think` keeps its default because it is not a tuning knob: false is a correctness
-        requirement, for the reason in the module docstring."""
+        `think` keeps its default because it is not a tuning knob for ordinary models: false
+        is the compatibility behaviour. OpenAI's gpt-oss models are the exception; Ollama
+        expects a reasoning level (`low`, `medium` or `high`) and structured output can be
+        empty when they receive `false`, so the deployment may select a level explicitly."""
         self._base_url = base_url.rstrip("/")
         # Public because they are configuration, and configuration that reaches an adapter
         # without being observable is configuration nobody can prove arrived.
