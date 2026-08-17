@@ -214,7 +214,7 @@ async def test_barge_in_reports_old_turn_before_new_turn(active_state: SessionSt
 
 @pytest.mark.asyncio
 async def test_barge_in_ack_is_one_shot_and_has_no_waiting_window() -> None:
-    ticks = iter((0.0, 0.010, 0.020, 0.030, 0.040))
+    ticks = iter((0.0, 0.010, 0.020, 0.030, 0.040, 0.050))
     session = VoiceSession("session", "credential", services, monotonic=lambda: next(ticks))
     session.machine.configure()
     session.machine.start_input("old-turn")

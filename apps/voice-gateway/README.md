@@ -112,3 +112,51 @@ and bytes.
 Observed dependency-only check (no model loaded or downloaded): Python 3.14.7 installed
 `faster-whisper==1.2.1` and `ctranslate2==4.8.1`; CTranslate2 detected one CUDA device. This does
 not validate cuDNN, model loading, or real CUDA inference.
+
+End-to-end latency benchmark (requires the development group, including `websockets`):
+
+```bash
+uv run --directory apps/voice-gateway python scripts/benchmark_e2e.py \
+  --url http://127.0.0.1:8000 --token "$VOICE_GATEWAY_TOKEN" \
+  --warmup 2 --runs 20 --cancel-runs 1 --require-stage-timings --format json
+```
+
+The runner performs separate warmup turns, then uses one authenticated HTTP session and its
+one-use ticket for a WebSocket carrying control JSON and binary frames. It records the first audio
+frame received by the client and runs cancellation probes after audio starts. Each probe requires
+a matching `response.cancelled` and uses the protocol's `ping`/`pong` as a fence against trailing
+audio. Output contains `status`, requested/completed counts, failures and P50/P95/mean in
+milliseconds. Tokens
+are accepted only as an argument or environment variable and are never printed. A non-zero exit
+code means startup failed, a requested sample/probe failed, or the assistant returned a provider
+or banking error outcome; `--format table` gives a compact human-readable report.
+
+Fake mode is the deterministic default:
+
+```bash
+VOICE_GATEWAY_ASSISTANT_MODE=fake VOICE_GATEWAY_STT_MODE=fake VOICE_GATEWAY_TTS_MODE=fake \
+  uv run --directory apps/voice-gateway python scripts/benchmark_e2e.py \
+  --token "$VOICE_GATEWAY_TOKEN" --cancel-runs 0
+```
+
+Keep `--cancel-runs 0` with instantaneous fake providers: they can complete before the cancel frame
+is scheduled, so cancellation is meaningful only with a provider that has observable in-flight
+work.
+
+For a real run, start the gateway with the desired `orchestrator_http`, `local` STT and/or `local`
+TTS settings, then invoke the same runner with `--pcm-file utterance.pcm`. The file must be raw mono
+PCM16 little-endian at 16 kHz; without it, `--text` is only a deterministic fake-STT payload. Add
+`--require-stage-timings` when using the orchestrator so missing stage metrics fail the run.
+Register hardware (CPU, RAM, GPU model/VRAM/driver),
+provider versions, model/voice identifiers, device, compute type, warmup state, and whether models
+were loaded from local files. The runner never downloads models or voices.
+
+`turn.completed.timings` contains only durations from the server's monotonic clock:
+`inputStartToInputCommitMs`, `inputCommitToTranscriptFinalMs`,
+`inputCommitToAssistantFirstStageMs`, `assistantFirstStageToAssistantTextFinalMs`,
+`assistantTextFinalToTtsFirstByteMs`, `ttsFirstByteToTurnCompletedMs`, and
+`inputStartToTurnCompletedMs`. `clientPlaybackStartMs` is measured separately when the first
+binary audio frame reaches the runner; it is a network-side proxy, not proof that a browser made
+the sample audible. Missing milestones are `null`; canceled turns never
+publish final timings. These objects contain no transcript, audio, credentials, conversations or
+financial fields.

@@ -31,6 +31,7 @@ from finguard_voice_gateway.protocol import (
     parse_event,
 )
 from finguard_voice_gateway.tickets import TicketStore
+from finguard_voice_gateway.timings import TurnTimings
 
 services = build_services()
 tickets = TicketStore(services.settings.ticket_ttl_seconds)
@@ -106,6 +107,7 @@ class VoiceSession:
         self.last_activity = self.created
         self.server_sequence = 0
         self.last_cancel_ack_ms: float | None = None
+        self.turn_timings: dict[str, TurnTimings] = {}
 
     def next_sequence(self) -> int:
         value = self.server_sequence
@@ -121,6 +123,8 @@ class VoiceSession:
         started = self.monotonic()
         self.cancel_generation += 1
         old_turn_id = self.machine.cancel()
+        if old_turn_id is not None:
+            self.turn_timings.pop(old_turn_id, None)
         if self.task is not None and not self.task.done():
             task = self.task
             task.cancel()
@@ -296,6 +300,8 @@ async def handle_control(
             else None
         )
         session.machine.start_input(control.turnId)
+        session.turn_timings[control.turnId] = TurnTimings(session.monotonic)
+        session.turn_timings[control.turnId].mark("input_start")
         if old_turn_id:
             await websocket.send_json(
                 event(
@@ -309,6 +315,9 @@ async def handle_control(
         if session.machine.turn_id != control.turnId:
             raise SessionProtocolError("TURN_MISMATCH", "event turnId does not match active turn")
         session.machine.commit()
+        timings = session.turn_timings.get(control.turnId)
+        if timings is not None:
+            timings.mark("input_commit")
         session.task = asyncio.create_task(process_turn(websocket, session, control.turnId))
     elif isinstance(control, CancelEvent):
         old_turn_id = await session.cancel()
@@ -372,6 +381,14 @@ async def process_turn(websocket: VoiceTransport, session: VoiceSession, turn_id
 
 async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_id: str) -> None:
     generation = session.cancel_generation
+    timings = session.turn_timings.get(turn_id)
+    if timings is None:
+        # Keep direct internal callers and protocol-compatible adapters working;
+        # normal WebSocket turns create these marks in handle_control.
+        timings = TurnTimings(session.monotonic)
+        timings.mark("input_start")
+        timings.mark("input_commit")
+        session.turn_timings[turn_id] = timings
     audio = bytes(session.audio)
     session.audio.clear()
     await websocket.send_json(
@@ -397,19 +414,28 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
             text=text,
         )
     )
+    timings.mark("transcript_final")
     session.machine.thinking()
     if session.payment_confirmation_required:
         reply_text = "No puedo confirmar pagos por voz; usa el control explícito en pantalla."
         reply_conversation = session.conversation
         payment_required = True
         reply_answer: dict[str, object] = {
-            "outcome": "AWAITING_CONFIRMATION", "text": reply_text,
-            "question": None, "intent_id": None, "plan": None,
-            "conversation": reply_conversation, "currency": None,
-            "total_minor": None, "movement_count": 0, "groups": [],
-            "movements": [], "suggestions": [],
+            "outcome": "AWAITING_CONFIRMATION",
+            "text": reply_text,
+            "question": None,
+            "intent_id": None,
+            "plan": None,
+            "conversation": reply_conversation,
+            "currency": None,
+            "total_minor": None,
+            "movement_count": 0,
+            "groups": [],
+            "movements": [],
+            "suggestions": [],
         }
     else:
+
         async def relay_stage(stage: str, detail: str | None) -> None:
             if not session.cancelled(generation, turn_id):
                 await websocket.send_json(
@@ -422,6 +448,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
                         detail=detail,
                     )
                 )
+                timings.mark("assistant_first_stage")
 
         reply = await session.services.assistant.ask(
             text,
@@ -448,6 +475,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
             paymentConfirmationRequired=payment_required,
         )
     )
+    timings.mark("assistant_text_final")
     await websocket.send_json(
         event(
             "audio.started",
@@ -463,6 +491,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         if session.cancelled(generation, turn_id):
             return
         await websocket.send_bytes(chunk)
+        timings.mark("tts_first_byte")
     if session.cancelled(generation, turn_id):
         return
     await websocket.send_json(
@@ -477,15 +506,20 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     session.conversation = reply_conversation
     session.payment_confirmation_required = payment_required
     session.machine.completed()
-    await websocket.send_json(
-        event(
-            "turn.completed",
-            session.session_id,
-            turn_id=turn_id,
-            sequence=session.next_sequence(),
-            conversation=reply_conversation,
+    timings.mark("turn_completed")
+    try:
+        await websocket.send_json(
+            event(
+                "turn.completed",
+                session.session_id,
+                turn_id=turn_id,
+                sequence=session.next_sequence(),
+                conversation=reply_conversation,
+                timings={"schemaVersion": 1, **timings.durations()},
+            )
         )
-    )
+    finally:
+        session.turn_timings.pop(turn_id, None)
 
 
 async def send_error(
