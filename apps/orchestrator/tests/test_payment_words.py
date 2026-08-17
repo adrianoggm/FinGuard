@@ -42,6 +42,14 @@ EVERYBODY = (AITOR, CARMEN, MARTA_RUIZ, MARTA_SOLIS)
         ("1.000 euros", 100_000),
         ("0,99 €", 99),
         ("EUR 30", 3_000),
+        ("veinte euros", 2_000),
+        ("venti euros", 2_000),
+        ("treinta y cinco euros", 3_500),
+        ("mil doscientos euros", 120_000),
+        ("un bizum de veinte euros", 2_000),
+        ("veinte euros y cincuenta céntimos", 2_050),
+        ("cincuenta céntimos", 50),
+        ("pues veinte", 2_000),
     ],
 )
 def test_an_amount_is_read_from_the_reply(sentence: str, minor: int) -> None:
@@ -54,6 +62,9 @@ def test_an_amount_is_read_from_the_reply(sentence: str, minor: int) -> None:
         "",
         "no sé",
         "a Marta",
+        "un bizum a Marta",
+        # Typo tolerance is an explicit allow-list, not arbitrary fuzzy arithmetic.
+        "vienti euros",
         "lo que tú veas",
         # A phone number is not an amount, and neither is a date. Both would otherwise arrive as
         # enormous payments in front of a confirmation prompt.
@@ -62,16 +73,36 @@ def test_an_amount_is_read_from_the_reply(sentence: str, minor: int) -> None:
         # Beyond the ceiling the assistant will offer. None sends it to the model, which refuses it
         # with a sentence rather than this returning a number nobody may act on.
         "20000000 euros",
+        # A length of time, which came back as four euros. Found by a measurement that consulted
+        # this reader outside the amount slot it is normally gated behind — so it cost nothing, and
+        # says what the reader answers about is digits rather than money.
+        "En los ulltimos 4 meses",
+        "en los últimos 12 meses",
+        "hace 2 semanas",
+        "3 meses",
     ],
 )
 def test_anything_else_is_not_an_amount(sentence: str) -> None:
     assert payment_words.amount_in(sentence) is None
 
 
+@pytest.mark.parametrize(
+    "sentence", ["le paso 100 al mes", "20 euros", "pues 20", "500 € cada mes"]
+)
+def test_a_period_beside_an_amount_does_not_swallow_it(sentence: str) -> None:
+    """The care the exclusion needed. A digit *adjacent* to a period noun is a period; one word
+    further away is "le paso 100 al mes", which is an amount and a common way to say one."""
+    assert payment_words.amount_in(sentence) is not None
+
+
 def test_the_first_amount_wins() -> None:
     """A payment of 15, not of 100. Reading the largest figure, or the last, would both be
     defensible — and neither is what the sentence says first."""
     assert payment_words.amount_in("15 euros de los 100 que le debo") == 1_500
+
+
+def test_a_written_amount_beyond_the_payment_ceiling_is_refused() -> None:
+    assert payment_words.amount_in("once mil euros") is None
 
 
 # --- the recipient -------------------------------------------------------------------
@@ -196,7 +227,11 @@ def test_the_order_of_the_parts_does_not_matter() -> None:
         ("con el concepto tapas", "tapas"),
         ("15 euros concepto: cena del viernes", "cena del viernes"),
         ("mándale 20 en concepto de alquiler", "alquiler"),
-        ("con concepto de la cena de ayer a Marta", "la cena de ayer"),
+        ("con concepto de la cena de ayer", "la cena de ayer"),
+        ("con el concepto viaje a Málaga", "viaje a Málaga"),
+        ("con el concepto cena por bizum ahora mismo", "cena"),
+        ("con el conecpto cena por favor", "cena"),
+        ("el concepto del pago es viaje a Málaga", "viaje a Málaga"),
     ],
 )
 def test_the_concept_is_read_when_it_is_named(sentence: str, concept: str) -> None:
@@ -222,9 +257,78 @@ def test_nothing_else_is_a_concept(sentence: str) -> None:
 def test_the_recipient_is_not_swallowed_into_the_concept() -> None:
     """ "con concepto de comida a Marta" ends at "a Marta": the name is a different slot, and a
     concept that ate it would put the recipient in the ledger's description."""
-    assert payment_words.concept_in("con concepto de comida a Marta") == "comida"
+    assert payment_words.concept_in("con concepto de comida a Marta", EVERYBODY) == "comida"
+
+
+def test_a_place_is_not_mistaken_for_a_recipient() -> None:
+    assert payment_words.concept_in("con concepto de viaje a Málaga", EVERYBODY) == "viaje a Málaga"
+
+
+def test_a_place_before_a_real_recipient_stays_in_the_concept() -> None:
+    assert (
+        payment_words.concept_in("con concepto viaje a Málaga a Marta Solis Vega", EVERYBODY)
+        == "viaje a Málaga"
+    )
 
 
 def test_a_concept_longer_than_the_field_is_refused() -> None:
     """None rather than a truncation. A note cut in half is a note the user did not write."""
     assert payment_words.concept_in("con concepto de " + "x" * 300) is None
+
+
+# --- a name is not the word after it ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("read", "name"),
+    [
+        ("aitor anda", "aitor"),
+        ("aitor anda por favor", "aitor"),
+        ("Aitor, venga", "Aitor"),
+        ("Javi ya", "Javi"),
+        ("Marta Solis Vega", "Marta Solis Vega"),
+        ("Carmen Nieto Lara", "Carmen Nieto Lara"),
+        # Every word is filler, so no name was read. Returning it unchanged lets the layer above
+        # refuse it as the non-name it is rather than crash on an empty string.
+        ("anda", "anda"),
+        ("Vale", "Vale"),
+    ],
+)
+def test_a_conversational_tail_is_not_part_of_the_name(read: str, name: str) -> None:
+    """Reported. "Hazle un bixum a aitor anda" was read as a payment to *"aitor anda"*, the question
+    came back "¿de cuánto quieres hacerle el bixum a aitor anda?", and the contact lookup then found
+    nobody — two turns lost to a word that means "go on".
+
+    Stripped rather than tolerated in the lookup, because the name is echoed back at the holder. A
+    question naming somebody who does not exist reads as the assistant having misheard.
+    """
+    assert payment_words.without_trailing_filler(read) == name
+
+
+# --- which turn belongs to the open question --------------------------------------------------
+
+
+@pytest.mark.parametrize("sentence", ["pues bizum", "bizum", "un bizum", "vale, bizum", "y bisum"])
+def test_a_turn_that_is_only_a_rail_word_belongs_to_the_open_question(sentence: str) -> None:
+    """ "Pues bizum", offered as the answer to "¿de qué comercio o categoría?", is a word given to a
+    question and not an order — reading it as one asked who to send money to, about a payment nobody
+    had ordered."""
+    assert payment_words.is_only_a_rail_word(sentence) is True
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "hazle un bizum a Carmen",
+        "que le hagas el bizum",
+        "hagamos un bisum",
+        "bizum de 20 euros",
+        "bizum a Marta",
+    ],
+)
+def test_anything_more_than_the_word_is_an_order(sentence: str) -> None:
+    """The inversion, and why it is the right way round. The set of Spanish ways to say "do it" is
+    unbounded and the previous rule enumerated it — so every form nobody thought of fell on the side
+    of being swallowed by a question. Enumerating the replies instead is a closed, tiny set, and a
+    form nobody thought of now falls on the side where the holder gets a preview to decline."""
+    assert payment_words.is_only_a_rail_word(sentence) is False

@@ -1,0 +1,361 @@
+# Average conversations are changes of divisor, filter and window, not five fresh questions.
+# Every short follow-up here is explicit enough to update the previous plan without a model.
+
+episodes:
+  - name: an_average_changes_divisor_category_and_window
+    why: >
+      A person starts with a per-movement average and then asks for the monthly equivalent, changes
+      category, returns to a per-movement ticket and narrows the period. Each turn must retain every
+      field it did not replace and must say which divisor it actually used.
+
+      "Must retain every field it did not replace" is a claim about the query, so every turn states
+      it. Five of the six are two or three words, so each field asserted below is one the sentence
+      could not have supplied — and `says` cannot tell a right divisor over the wrong window from a
+      right one over the right window, because the stub ledger answers both with the same figure.
+    metrics: [context_retention, unnecessary_clarification]
+    turns:
+      - say: ¿Cuál es mi gasto medio por movimiento en supermercados en los últimos 12 meses?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      # The divisor changes and nothing else does. A period average needs its calendar bucket, so the
+      # grouping arrives with the metric rather than being asked for.
+      - say: ¿Y al mes?
+        route: QUERY
+        no_model: true
+        says: medio por mes
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [GROCERIES]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
+      - say: ¿Y en alquiler?
+        route: QUERY
+        no_model: true
+        says: alquiler
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [HOUSING_RENT]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
+      # Back to movements as the divisor, which also has to drop the calendar bucket: a per-movement
+      # mean grouped by month is a different question with the same words on it.
+      - say: ¿Y por movimiento?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [HOUSING_RENT]
+          metric: AVERAGE
+          group_by: NONE
+      - say: ¿Y este mes?
+        route: QUERY
+        no_model: true
+        says: lo que va de mes
+        ran: {window: THIS_MONTH, categories: [HOUSING_RENT], metric: AVERAGE, group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y por semana?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+        ran:
+          window: THIS_MONTH
+          categories: [HOUSING_RENT]
+          metric: PERIOD_AVERAGE
+          group_by: WEEK
+
+  - name: natural_word_orders_for_period_averages
+    why: >
+      Users say "suelo gastar", "mensual medio" and "coste semanal medio" as often as they say
+      "media por mes". These forms name the same arithmetic and should not depend on paraphrasing.
+    metrics: [wrong_tool, unnecessary_clarification]
+    turns:
+      - say: ¿Cuánto suelo gastar al mes en supermercados durante el último año?
+        route: QUERY
+        no_model: true
+        says: medio por mes
+        ran:
+          window: LAST_N_MONTHS:12
+          direction: EXPENSE
+          categories: [GROCERIES]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
+      - say: ¿Y cuál es mi gasto mensual medio en alquiler?
+        route: QUERY
+        no_model: true
+        says: alquiler
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [HOUSING_RENT]
+          metric: PERIOD_AVERAGE
+          group_by: MONTH
+      - say: ¿Y el coste semanal medio en restaurantes?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [RESTAURANTS]
+          metric: PERIOD_AVERAGE
+          group_by: WEEK
+      - say: ¿Y por movimiento?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [RESTAURANTS]
+          metric: AVERAGE
+          group_by: NONE
+      - say: ¿Y en supermercados?
+        route: QUERY
+        no_model: true
+        says: supermercado
+        ran:
+          window: LAST_N_MONTHS:12
+          categories: [GROCERIES]
+          metric: AVERAGE
+          group_by: NONE
+      - say: ¿Y los últimos 3 meses?
+        route: QUERY
+        no_model: true
+        says: últimos 3 meses
+        ran: {window: 'LAST_N_MONTHS:3', categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      # The direction flips, and the arithmetic is what this episode is about, so that is what is
+      # asserted. What a change of direction does to the category filter is a separate question and
+      # deliberately not claimed here.
+      - say: ¿Y cuánto suelo cobrar al mes durante este año?
+        route: QUERY
+        no_model: true
+        says: ingreso medio por mes
+        ran: {window: THIS_YEAR, direction: INCOME, metric: PERIOD_AVERAGE, group_by: MONTH, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y cuánto suelo gastar al mes?
+        route: QUERY
+        no_model: true
+        says: gasto medio por mes
+        ran: {window: THIS_YEAR, direction: EXPENSE, metric: PERIOD_AVERAGE, group_by: MONTH, excluded_categories: [], excluded_merchants: []}
+
+  - name: the_reported_conversation_keeps_its_mean_ranking_and_account_context
+    why: >
+      This is the reported failure chain: a change of average divisor became last week, a category
+      ranking became an explanation of the old query, frustration opened an unrelated money slot,
+      and an account breakdown became a merchant. Every elliptical turn here has enough validated
+      context to be handled without asking the model to reconstruct the conversation.
+    metrics: [context_retention, wrong_tool, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Me gustaria consultar el gasto medio mensual que tengo durante este año
+        route: QUERY
+        no_model: true
+        says: medio por mes
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Y el semanal ?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Vale en que categoria es la que he gastado mas a lo largo de este año?
+        route: QUERY
+        no_model: true
+        says: categoría
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Que te pasa ?
+        route: GUIDANCE
+        no_model: true
+        says: perdido el hilo
+      - say: En los ulltimos 4 meses
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: La principal
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: En la que ingreso la nomina vaya ç
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+  - name: an_average_can_become_a_ranking_and_return_to_a_breakdown
+    why: >
+      Natural conversation changes the calculation without restating its year and category. A
+      temporal adjective must not become a merchant, and a superlative must inherit the validated
+      scope before an ordinal advances it.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Me gustaria saber mi gasto medio mensual en supermercados durante este año
+        route: QUERY
+        no_model: true
+        says: medio por mes
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Y semanal?
+        route: QUERY
+        no_model: true
+        says: medio por semana
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Y por movimiento?
+        route: QUERY
+        no_model: true
+        says: por movimiento
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Y en alquiler?
+        route: QUERY
+        no_model: true
+        says: alquiler
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Cual ha sido el gasto mas alto?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], rank: 1, excluded_categories: [], excluded_merchants: []}
+      - say: Y el segundo?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], rank: 2, excluded_categories: [], excluded_merchants: []}
+      - say: Y en que categoria he gastado mas?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+  - name: category_filters_metrics_and_comparisons_are_patches
+    why: >
+      Changing one category, asking which of two is larger and switching between average, count
+      and total are patches to the last query. Treating each fragment as a fresh request loses the
+      period and starts clarification loops even though the missing information is on screen.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Compara mi gasto medio en supermercados y restaurantes este año
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Cual de las dos es mayor?
+        route: QUERY
+        no_model: true
+      # The window moves and the pair of filters does not, which is the patch this episode claims.
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Y el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES, RESTAURANTS], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Ahora solo supermercados
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      # Three turns switching the metric and nothing else. Only the metric distinguishes them, and
+      # the answer text cannot: the stub ledger returns the same figure whichever one ran.
+      - say: Cuantas compras hice?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: COUNT, excluded_categories: [], excluded_merchants: []}
+      - say: Y cuanto gaste?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, categories: [GROCERIES], metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: En que comercio compre mas?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: MERCHANT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+  - name: an_account_subset_survives_period_and_direction_changes
+    why: >
+      Account scope is conversational state. Positive selections and exclusions must be applied
+      together, then survive a change from all movements to income without reopening the period.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Enseñame los movimientos de los ultimos 4 meses
+        route: QUERY
+        ran: {window: 'LAST_N_MONTHS:4', categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Hazme el desglose por cuenta
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:4', direction: EXPENSE, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Solo la principal
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:4', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente']}
+      - say: Y el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente']}
+      - say: Ahora solo la hucha
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: Y este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: Solo cuenta corriente y hucha, no el fondo
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente', 'Hucha']}
+      - say: Y solo los ingresos?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente', 'Hucha']}
+
+  - name: a_natural_comparison_can_be_refined_without_speaking_like_a_query_language
+    why: >
+      A person asks whether one everyday expense is larger than another, supplies the missing
+      period in a second turn, then refers to the result with pronouns. Courtesy words and an
+      elliptical request for examples must not reset the period or categories.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Voy gastando más en el súper o comiendo fuera?
+        route: CLARIFY
+        awaiting: WINDOW
+        no_model: true
+      - say: En lo que llevamos de año
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Cuánta diferencia hay?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES', 'RESTAURANTS'], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Vale, quédate solo con el súper
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Cuántas veces he comprado?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
+      - say: Ponme un par de ejemplos
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
+
+  - name: salary_analysis_survives_an_aside_and_pronouns
+    why: >
+      The user changes the divisor conversationally, pauses to inspect their balance, returns to
+      salary without restating the year and then asks about one ranked row as "esa". This is the
+      difference between preserving a topic and merely parsing each sentence independently.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Oye, ¿cuánto he cobrado de nómina este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: ['SALARY'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Eso cuánto sale al mes?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y por semana?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: WEEK, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Espera, ¿cuánto tengo ahora mismo?
+        route: BALANCE
+        no_model: true
+      - say: Volviendo a lo de antes, ¿cuál fue la nómina más alta?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 1, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y la siguiente?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 2, excluded_categories: [], excluded_merchants: []}
+      - say: Esa, ¿de qué fecha es?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], rank: 2, excluded_categories: [], excluded_merchants: []}

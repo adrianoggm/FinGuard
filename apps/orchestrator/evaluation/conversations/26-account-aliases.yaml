@@ -1,0 +1,32 @@
+# Explicitly taught account names are durable conversational memory.
+
+episodes:
+  - name: learned_account_aliases_survive_other_turns
+    why: >
+      An alias is stored only after it is grounded to one real account. It must then survive
+      balances, ordinary financial questions and learning a second alias.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Cuando diga viajes, me refiero a la cuenta Hucha
+        route: GUIDANCE
+        no_model: true
+        says: usaré Hucha
+      - say: ¿Cuánto tengo en viajes?
+        route: BALANCE
+        no_model: true
+        says: Hucha
+      - say: ¿Y en la cuenta corriente?
+        route: BALANCE
+        no_model: true
+        says: Cuenta corriente
+      - say: ¿Cuánto gasté en viajes este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: Llama recibos a la cuenta corriente
+        route: GUIDANCE
+        no_model: true
+        says: usaré Cuenta corriente
+      - say: ¿Cuánto tengo en recibos?
+        route: BALANCE
+        no_model: true
+        says: Cuenta corriente

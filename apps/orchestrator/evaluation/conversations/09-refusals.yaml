@@ -1,0 +1,342 @@
+# Being told no, and what happens next.
+#
+# Unsupported shapes are declined before the model is asked, while supported deterministic shapes
+# such as two whole calendar months are answered on that same side of the boundary.
+#
+# What every episode here checks is the turn *after* the refusal. A refusal that colours the rest of
+# the conversation teaches somebody to start over, and a user who starts over stops asking.
+
+episodes:
+  - name: each_family_refused_and_the_conversation_continues
+    why: Different capability decisions must not damage the financial context around them.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuál es mi gasto medio en gasolina?
+        route: CLARIFY
+        no_model: true
+      - say: ¿qué porcentaje de mi gasto es el alquiler?
+        route: REFUSED
+        no_model: true
+      - say: ¿gasté más en julio que en junio?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: a este ritmo, ¿cuánto voy a gastar?
+        route: REFUSED
+        no_model: true
+      - say: ¿debería recortar en restaurantes?
+        route: REFUSED
+        no_model: true
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+
+  - name: the_refusal_does_not_outlive_its_question
+    why: >
+      The state that names the capability is gone by the next turn, and the conversation after it is
+      an ordinary conversation.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuál es mi gasto medio?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+        ends: true
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: a_superlative_is_not_a_comparison
+    why: >
+      "El bizum más alto que he hecho" carries "más … que" where the "que" opens a relative clause.
+      It was refused as a comparison — to a question with one period and a real answer.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuál es el bizum más alto que he hecho este año?
+        route: QUERY
+      - say: ¿y el segundo?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿gasté más este mes que el pasado?
+        route: QUERY
+        no_model: true
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: contribution_history_is_distinct_from_the_fund_balance
+    why: >
+      Contribution history is the incoming internal leg of transfers into the fund; its balance is
+      still a separate cost-basis question and neither may be answered with ordinary income.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto he invertido en el último año?
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿cuánto he gastado en inversiones?
+        route: CLARIFY
+        no_model: true
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: movements_between_my_own_accounts
+    why: >
+      Internal transfers have their own narrow query. They ask for a missing period and never widen
+      to every movement merely because both accounts belong to the holder.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿qué movimientos he tenido entre mis cuentas?
+        route: CLARIFY
+        no_model: true
+      - say: ¿cuánto tengo entre mis cuentas?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y los traspasos entre cuentas?
+        route: CLARIFY
+        no_model: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: a_refusal_between_two_halves_of_one_thread
+    why: >
+      The plan behind the refusal is still there afterwards, so the follow-up two turns later still
+      has its window.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuál es la media?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: asking_for_advice_repeatedly
+    why: >
+      Reading a ledger is not advising on it, and the distance between the two is regulatory rather
+      than technical. Asked three times, refused three times, and the fourth turn still works.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿debería ahorrar más?
+        route: REFUSED
+      - say: ¿qué me recomiendas?
+        route: REFUSED
+      - say: ¿podría ahorrar en algo?
+        route: REFUSED
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: a_forecast_and_then_the_past
+    why: >
+      Only what already happened is in the ledger. The refusal has to be about the future rather
+      than about the question being unclear, or somebody rephrases it forever.
+    metrics: [wrong_tool]
+    turns:
+      - say: a este ritmo, ¿cuánto voy a gastar este mes?
+        route: REFUSED
+      - say: ¿cuánto llevo gastado este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y llegaré a fin de mes?
+        route: REFUSED
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: vale
+        route: COURTESY
+
+  - name: the_guard_runs_before_the_model_every_time
+    why: >
+      Supported deterministic comparisons and genuine refusals are both decided before the model;
+      the boundary must not move with whichever model is installed.
+    metrics: [unnecessary_clarification]
+    turns:
+      - say: ¿cuál es mi gasto medio?
+        route: CLARIFY
+        no_model: true
+      - say: ¿qué porcentaje va en alquiler?
+        route: REFUSED
+        no_model: true
+      - say: compárame julio y junio
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: ALL, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿cuánto voy a gastar?
+        route: REFUSED
+        no_model: true
+      - say: ¿me recomiendas algo?
+        route: REFUSED
+        no_model: true
+      - say: ¿cuánto he invertido?
+        route: CLARIFY
+        no_model: true
+
+  - name: a_refusal_in_the_middle_of_a_payment
+    why: >
+      The Bizum survives it. A refusal is an answer about the product and not a reset of whatever
+      was under way.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: ¿cuál es mi gasto medio?
+        route: PAYMENT
+      - say: continuar con el bizum
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: COURTESY
+
+  - name: somebody_asking_it_to_operate_the_account
+    why: >
+      A person who already uses a bank app asks it to do things, not only to read. Every one of
+      these used to fall through to the planner and come back as a total over a period — a real
+      figure answering a request, which is the one answer nothing downstream can contradict. The
+      refusal also has to say what this is rather than "eso no puedo calcularlo": nobody asked for
+      a calculation.
+
+      Mixed with real questions on purpose. A guard that refuses the operation and then poisons the
+      question after it has traded one wrong answer for two.
+    metrics: [wrong_tool, unsafe_action, context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: vende mis acciones del fondo indexado
+        route: REFUSED
+        not_says: calcularlo
+      - say: ¿y en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: bloquea mi tarjeta que la he perdido
+        route: REFUSED
+      - say: vale, ¿y en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: contrata un plan de pensiones entonces
+        route: REFUSED
+      # A shop, and a shop is the one filter the deterministic follow-up cannot represent. It used
+      # to patch the previous query instead of declining, so a question about Mercadona came back
+      # counting restaurant purchases — a real figure about a different question. Filling
+      # `merchants` is the planner's job and the stub here does not do it, so what this asserts is
+      # the half the corpus can see: the inherited category is gone.
+      - say: ¿cuántas compras hice en Mercadona?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
+      - say: gracias, adiós
+        route: COURTESY
+
+  - name: a_refused_capability_is_not_a_balance_follow_up
+    why: >
+      After a balance, a bare account name is about the balance — that is what makes "¿y en la
+      hucha?" work. A sentence with a verb of its own is not bare, and it slipped through every
+      condition the moment it happened to name an account, because the balance is routed before
+      the guard ever runs:
+
+          "¿cuál es mi gasto medio en la hucha?"   →  "Tienes 5.485,50 € en Hucha."
+          "¿qué porcentaje tengo en el fondo?"     →  the fund's balance
+
+      A refused capability answered with a real figure about something else, stated as fact. The
+      ellipsis itself has to keep working, which is why it is exercised before each one.
+    metrics: [wrong_tool, unsafe_action, context_retention]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿cuál es mi gasto medio en la hucha?
+        route: CLARIFY
+        not_says: "5.485,50"
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: ¿qué porcentaje tengo en el fondo?
+        route: REFUSED
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: vale
+        route: COURTESY
+
+  - name: the_wallet_from_the_chat
+    why: >
+      Reported from the demo. "¿Qué tarjetas tengo de crédito?" came back "eso no puedo calcularlo
+      todavía" — about data this service holds and a screen the user can open — and "¿cuánto he
+      gastado con cada tarjeta?" came back with the *account* total, 868,97 €, wearing the label of
+      an answer about cards.
+
+      A plan has no card dimension, so the planner could only approximate one, and an approximation
+      with a euro sign on it is the failure this service exists to avoid. Both questions were always
+      one query: the card row carries the name, the kind and what has been charged.
+
+      Mixed with real questions, because a new intent that swallows neighbouring turns has traded
+      one wrong answer for several.
+    metrics: [wrong_tool, unnecessary_clarification]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Que tarjetas tengo de credito ?
+        route: CARDS
+        no_model: true
+        not_says: calcularlo
+      - say: cuanto he gastado con cada tarjeta en el ultimo mes
+        route: CARDS
+        no_model: true
+      - say: ¿y en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: mis tarjetas
+        route: CARDS
+      - say: gracias
+        route: COURTESY

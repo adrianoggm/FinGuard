@@ -1,0 +1,41 @@
+# Running totals and aggregate rankings keep their unit while the conversation changes shape.
+
+episodes:
+  - name: cumulative_and_ranked_groups_are_natural_follow_ups
+    why: >
+      Calendar accumulation, top-N limits and ranking criteria are typed plan fields. Changing
+      week/month, SUM/COUNT/AVERAGE or merchant/category must alter only the named dimension.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Muéstrame mi gasto acumulado por mes este año
+        route: QUERY
+        no_model: true
+        says: acumulado
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: CUMULATIVE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y por semana?
+        route: QUERY
+        no_model: true
+        says: acumulado
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: WEEK, metric: CUMULATIVE, excluded_categories: [], excluded_merchants: []}
+      - say: Los tres comercios donde más gasté este año
+        route: QUERY
+        no_model: true
+        says: mayor importe total
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MERCHANT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y por número de operaciones?
+        route: QUERY
+        no_model: true
+        says: más operaciones
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: MERCHANT, metric: COUNT, excluded_categories: [], excluded_merchants: []}
+      - say: Ahora top 2 categorías por ticket medio
+        route: QUERY
+        no_model: true
+        says: mayor importe medio
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}
+      - say: Muéstrame mis tres mayores gastos de este año
+        route: QUERY
+        no_model: true
+        says: 3 mayores gastos
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], rank: 1}, {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], rank: 2}, {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], rank: 3, excluded_categories: [], excluded_merchants: []}]
+      - say: gracias
+        route: COURTESY

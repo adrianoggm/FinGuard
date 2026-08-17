@@ -1,5 +1,10 @@
 # What comes next, and why in this order
 
+> **Actualización (2026-08):** el roadmap funcional y su matriz de verdad están en
+> [conversational-capabilities.md](conversational-capabilities.md). Este documento conserva el
+> orden histórico de endurecimiento de las fases 3 y 4; no debe utilizarse como lista actual de
+> capacidades conversacionales pendientes.
+
 Phase 3 is implemented and measured, and **not signed off**: two known risks let it
 answer confidently and wrongly, so `/v1/questions` ships disabled by default. This is the
 ordered list of what is still open, written down so the order survives the conversation
@@ -216,6 +221,26 @@ payment", so it is not an extra — it is that phase's first requirement, arrivi
 double entry, receipt, audit trail. Six of the fourteen demo steps, and the contacts table
 the demo needs to show a recipient.
 
+**Known follow-ups carried out of phase 5.** The end-to-end payment path is complete, but the
+branch deliberately records six non-blocking defects for the next iteration. They are tracked as
+GitHub issues so that “done” does not make them disappear:
+
+- [#6](https://github.com/adrianoggm/FinGuard/issues/6) — use the holder's timezone consistently
+  in card routes.
+- [#7](https://github.com/adrianoggm/FinGuard/issues/7) — apply movement classifications to card
+  charges.
+- [#8](https://github.com/adrianoggm/FinGuard/issues/8) — populate `system_category` in the
+  production classification path.
+- [#9](https://github.com/adrianoggm/FinGuard/issues/9) — make payment preparation idempotent
+  across client retries.
+- [#10](https://github.com/adrianoggm/FinGuard/issues/10) — resolve unrecognised month names
+  before the bare “hoy” fallback.
+- [#11](https://github.com/adrianoggm/FinGuard/issues/11) — prevent clarification loops without
+  an active draft workflow.
+
+The next branch should close these issues with regression coverage before treating the phase as
+fully hardened.
+
 **Done, end to end through both containers.** One chat box takes "hazle un bizum de 20 euros a
 Marta Solis" and answers *Vas a enviar 20,00€ a Marta Solis Vega (+34600333444). Te quedarían
 10.350,42€. ¿Confirmas?*; "sí" books a double-entry transaction and answers with the receipt;
@@ -376,7 +401,12 @@ Correct, agreed, and not load-bearing for a date:
 - **`PlanPayload` as a real union.** A period plus a lone `start` currently ignores the
   orphan instead of refusing it. Exactly one of period or both range ends, `n` only for
   the counted periods, no duplicate categories, question non-empty after `strip()`.
-- **No `assert` on production invariants.** Four of them, and they vanish under `-O`.
+- ~~**No `assert` on production invariants.**~~ Done for the four that mattered: the end of
+  the question pipeline, the retry path, continuing a payment, and a draft becoming a
+  request. Twenty-eight remain and stay — every one narrows a type immediately after the
+  branch that established it, so under `-O` they fail on the next line with a worse message
+  rather than continuing with a wrong value. The four that were converted are the ones
+  where `-O` changed the outcome instead of the error.
 - **Presenters per channel.** `answer_writer` mixes Spanish, currency formatting and how
   many groups to read out. §4.4 argues for the split; I would make it when the second
   consumer exists — voice in phase 6, A2A in phase 7 — because an abstraction shaped by

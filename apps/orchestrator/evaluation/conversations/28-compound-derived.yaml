@@ -1,0 +1,30 @@
+episodes:
+  - name: typed_relationships_inside_compound_reads
+    why: >
+      Una relación financiera cerrada sigue siendo una sola petición aunque nombre dos operandos.
+      Puede convivir con otra lectura segura, conservar su memoria tras un saldo y aceptar después
+      una reformulación; dividirla por su "y" interna cambiaría tanto la operación como el contexto.
+    metrics: [wrong_tool, lost_context, unnecessary_model_calls, unsafe_routing]
+    turns:
+      - say: ¿Cuál fue mi flujo neto este mes y cuánto tengo?
+        route: QUERY
+        no_model: true
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Compara mis gastos de junio y julio y dime cuánto tengo
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y cuál fue la diferencia porcentual?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Cuál fue mi tasa de ahorro este año y cuánto gasté en supermercado?
+        route: QUERY
+        ran: [{window: THIS_YEAR, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE}, {window: THIS_YEAR, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE}, {window: THIS_YEAR, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}]
+      - say: gracias
+        route: COURTESY
+        no_model: true

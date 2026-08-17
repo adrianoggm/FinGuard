@@ -1,0 +1,240 @@
+# Stopping something halfway, which is the turn nobody writes a specification for.
+#
+# Cancelling is where the cost is asymmetric in the direction that matters. A cancellation that is
+# not honoured leaves somebody looking at a preview they thought they had dismissed, and the next
+# "sí" they type is about something else entirely.
+
+episodes:
+  - name: a_preview_refused_outright
+    why: A no is a no, and the intent is cancelled rather than left waiting for a better answer.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: "no"
+        route: PAYMENT
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: sí
+        not_says: Hecho
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: cancelling_a_query_that_could_not_be_run
+    why: >
+      "Cancelar consulta" has to actually discard the saved plan, or a later "reintenta" reaches a
+      question the user abandoned.
+    metrics: [correction_recovery]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: cancelar consulta
+        route: QUERY
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['cancelar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: reintentar
+        # It used to be QUERY, and that was the word "reintentar" being handed to a language model
+        # to turn into a financial question. This episode exists so a retry cannot reach an
+        # abandoned query; saying there is nothing saved honours that better than planning it.
+        route: GUIDANCE
+        says: No tengo ninguna consulta guardada
+      - say: ¿cuánto gasté este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: a_payment_dropped_before_it_was_previewed
+    why: >
+      Half-built and abandoned. Nothing was staged, so cancelling costs nothing — but the state has
+      to close, or the next amount completes a payment nobody remembers starting.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: mejor no
+        not_says: Confirmas
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: 20 euros
+        not_says: Confirmas
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: cancelling_and_then_doing_it_after_all
+    why: >
+      Changing your mind twice. The second attempt must not inherit anything from the first — a
+      cancelled payment is gone, not paused.
+    metrics: [unsafe_action, correction_recovery]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: "no"
+        route: PAYMENT
+        ends: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: COURTESY
+
+  - name: a_transfer_dropped_by_saying_something_else
+    why: >
+      A transfer has no cancellation because it has no state to cancel beyond the question it asked.
+      Saying anything else ends it, which is the same thing by other means.
+    metrics: [unsafe_action]
+    turns:
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: déjalo
+        route: QUERY
+        ends: true
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: 500
+        not_says: Hucha
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: vale
+        route: COURTESY
+      - say: gracias
+        route: COURTESY
+
+  - name: changing_the_query_rather_than_cancelling_it
+    why: >
+      "Cambiar consulta" and "cancelar consulta" are two different instructions and both are
+      controls this service reads itself. Neither may reach the model.
+    metrics: [unnecessary_clarification]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿cuánto gasté en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: cambiar consulta
+        route: QUERY
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: ['cambiar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['cambiar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿cuánto gasté en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: a_no_in_the_middle_of_a_question
+    why: >
+      "No, en gasolina" is a correction and not a cancellation, and reading it as a refusal would
+      throw away a question somebody was in the middle of asking.
+    metrics: [correction_recovery]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: no, en gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: no es eso
+        route: CLARIFY
+      - say: en el supermercado
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: eso es
+        route: COURTESY
+
+  - name: cancelling_by_changing_the_subject_entirely
+    why: >
+      Nobody types "cancelar". They ask about something else, and the operation has to close by
+      itself rather than waiting for a word the user will never say.
+    metrics: [unsafe_action]
+    turns:
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ends: true
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: 1000
+        not_says: Hucha
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: two_cancellations_in_a_row
+    why: >
+      Cancelling something already cancelled is not an error and must not become one. It is the turn
+      a nervous user types twice.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+      - say: "no"
+        route: PAYMENT
+        ends: true
+      - say: "no"
+        not_says: Hecho
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: déjalo
+        route: QUERY
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['déjalo'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: everything_cancelled_and_then_a_clean_conversation
+    why: >
+      Eight turns of stopping and starting, ending in an ordinary exchange. Nothing may have
+      accumulated by then.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: déjalo
+        not_says: Confirmas
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+      - say: déjalo
+        route: QUERY
+        ends: true
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: cancelar consulta
+        route: QUERY
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: ['cancelar consulta'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"

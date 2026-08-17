@@ -48,6 +48,8 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
   return {
     workflow: null,
     awaiting: null,
+    last_asked: null,
+    answered_the_balance: false,
     last_plan: null,
     retry_plan: null,
     draft: null,
@@ -55,6 +57,8 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
     payment: null,
     suspended: false,
     candidates: [],
+    transfer_to: null,
+    transfer_amount_minor: null,
     intent_id: null,
     recipient: null,
     amount_minor: null,
@@ -80,6 +84,7 @@ function answer(fields: Partial<Answer> = {}): Answer {
     groups: [],
     movements: [],
     suggestions: [],
+    parts: [],
     ...fields,
   };
 }
@@ -152,6 +157,36 @@ describe("the state the service sent", () => {
 });
 
 describe("what the client still works out for itself", () => {
+  it("renders every compound part with its own query", () => {
+    const compound = thread({
+      turns: [
+        {
+          who: "assistant",
+          answer: answer({
+            outcome: "COMPOUND",
+            parts: [
+              answer({ text: "Tienes 100,00 €.", plan: "saldo" }),
+              answer({ text: "Gastaste 25,00 €.", plan: "este mes, expense" }),
+            ],
+          }),
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: compound,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Tienes 100,00 €.");
+    expect(markup).toContain("Gastaste 25,00 €.");
+    expect(markup.match(/Ver la consulta/g)).toHaveLength(2);
+  });
+
   it("renders only the latest answer's structured recovery actions", () => {
     const retrying = thread({
       turns: [
@@ -330,5 +365,37 @@ describe("the one field this client writes", () => {
     const idle = thread();
 
     expect(withChoice(idle, "contact-2")).toBe(idle);
+  });
+});
+
+describe("financial breakdowns", () => {
+  it("renders a count by merchant as movement counts, not monetary totals", () => {
+    const countPlan = { ...LAST_MONTH, group_by: "MERCHANT", metric: "COUNT" };
+    const counted = thread({
+      turns: [
+        {
+          who: "assistant",
+          answer: answer({
+            text: "8 movimientos.",
+            currency: "EUR",
+            conversation: state({ last_plan: countPlan }),
+            groups: [{ key: "Mercadona", total_minor: 48_945, movement_count: 8 }],
+          }),
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: counted,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Mercadona");
+    expect(markup).toContain("8 movimientos");
+    expect(markup).not.toContain("489,45");
   });
 });

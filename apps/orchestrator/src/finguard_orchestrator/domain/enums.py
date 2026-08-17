@@ -33,9 +33,9 @@ class PlanningOutcome(StrEnum):
     one returns a real figure for a question nobody asked — worse than asking."""
 
     UNSUPPORTED = "UNSUPPORTED"
-    """Outside what a financial query can express: an average, a comparison of two
-    periods, a forecast. Answering with the nearest expressible plan is a wrong answer
-    delivered confidently."""
+    """Outside what a financial query can express: a time-normalised average, a
+    comparison of two periods or a forecast. Answering with the nearest expressible plan is a
+    wrong answer delivered confidently."""
 
     INVALID_STRUCTURE = "INVALID_STRUCTURE"
     """The answer was not JSON matching the schema. Under constrained decoding this
@@ -66,6 +66,14 @@ class Period(StrEnum):
     LAST_WEEK = "LAST_WEEK"
     THIS_MONTH = "THIS_MONTH"
     LAST_MONTH = "LAST_MONTH"
+    THIS_QUARTER = "THIS_QUARTER"
+    LAST_QUARTER = "LAST_QUARTER"
+    THIS_SEMESTER = "THIS_SEMESTER"
+    LAST_SEMESTER = "LAST_SEMESTER"
+    THIS_FORTNIGHT = "THIS_FORTNIGHT"
+    LAST_FORTNIGHT = "LAST_FORTNIGHT"
+    THIS_WEEKEND = "THIS_WEEKEND"
+    LAST_WEEKEND = "LAST_WEEKEND"
     THIS_YEAR = "THIS_YEAR"
     LAST_N_DAYS = "LAST_N_DAYS"
     LAST_N_MONTHS = "LAST_N_MONTHS"
@@ -93,6 +101,36 @@ class Direction(StrEnum):
     ALL = "ALL"
 
 
+class TransactionType(StrEnum):
+    ACCOUNT_OPENING = "ACCOUNT_OPENING"
+    SALARY = "SALARY"
+    DIRECT_DEBIT = "DIRECT_DEBIT"
+    CARD_PAYMENT = "CARD_PAYMENT"
+    BIZUM = "BIZUM"
+    TRANSFER = "TRANSFER"
+    INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
+
+
+class CounterpartyType(StrEnum):
+    MERCHANT = "MERCHANT"
+    PERSON = "PERSON"
+    EMPLOYER = "EMPLOYER"
+    BILLER = "BILLER"
+    ACCOUNT = "ACCOUNT"
+    BANK = "BANK"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReceiptCategory(StrEnum):
+    RENT = "RENT"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    UTILITIES = "UTILITIES"
+    INSURANCE = "INSURANCE"
+    LOAN = "LOAN"
+    TAX = "TAX"
+    OTHER = "OTHER"
+
+
 class GroupBy(StrEnum):
     NONE = "NONE"
     DAY = "DAY"
@@ -100,6 +138,8 @@ class GroupBy(StrEnum):
     MONTH = "MONTH"
     CATEGORY = "CATEGORY"
     MERCHANT = "MERCHANT"
+    COUNTERPARTY = "COUNTERPARTY"
+    ACCOUNT = "ACCOUNT"
 
 
 class Rail(StrEnum):
@@ -125,6 +165,25 @@ class Rail(StrEnum):
 class Metric(StrEnum):
     SUM = "SUM"
     COUNT = "COUNT"
+    # Arithmetic mean of the matching movements. Banking still returns the exact sum and
+    # count; the deterministic answer writer derives the displayed mean from those two
+    # integers, so no rounded model-generated number enters the response.
+    AVERAGE = "AVERAGE"
+    # Mean of the totals of every calendar bucket in the requested window. The
+    # temporal GroupBy says whether the divisor is days, weeks or months. This is
+    # deliberately distinct from AVERAGE, whose divisor is movements.
+    PERIOD_AVERAGE = "PERIOD_AVERAGE"
+    # Running total across ordered calendar buckets. Banking supplies exact bucket sums and the
+    # orchestrator accumulates them, preserving zero-activity periods as the previous total.
+    CUMULATIVE = "CUMULATIVE"
+    # Cadence of matching movements. Banking returns the complete bounded evidence and the
+    # orchestrator derives intervals from ledger dates; keeping this in the plan preserves the
+    # question through follow-ups such as "¿y el año pasado?".
+    FREQUENCY = "FREQUENCY"
+    # Discovery of periodic charges. Unlike FREQUENCY, which describes one already-grounded
+    # stream, RECURRENCE finds stable patterns among several counterparties and retains that
+    # intent through conversational follow-ups.
+    RECURRENCE = "RECURRENCE"
 
 
 # Periods that are a count of something, and therefore need `n`. Kept beside the enum
@@ -166,6 +225,9 @@ class Spoken(StrEnum):
 
     # About the assistant: what it is, what it can do.
     IDENTITY = "IDENTITY"
+    # «Gracias», «hola», «adiós». Not about their account and not about the assistant either, which
+    # is why it is its own outcome: without one, 98 of the corpus's turns reached the planner.
+    COURTESY = "COURTESY"
     # About the previous answer: which query ran, and what a category means.
     EXPLANATION = "EXPLANATION"
     # How much money there is. Read from the ledger, but through the fixed question the home
@@ -176,6 +238,9 @@ class Spoken(StrEnum):
     CONTACTS = "CONTACTS"
     # Which product categories a financial query can filter by. Repository data, not account data.
     CATEGORIES = "CATEGORIES"
+    # The wallet, and what each card has taken. Read from banking's own card views, with no plan in
+    # the path: a plan has no card dimension, so the planner could only ever approximate one.
+    CARDS = "CARDS"
     # A deterministic conversation control such as abandoning a saved retry. No model or ledger
     # produced it, so it belongs with the other spoken outcomes rather than planning failures.
     GUIDANCE = "GUIDANCE"

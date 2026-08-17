@@ -1,0 +1,207 @@
+# Pronouns refer to validated query state, not to a new sentence for a model to reconstruct.
+
+episodes:
+  - name: two_consecutive_periods_can_be_compared_by_pronoun
+    why: >
+      After asking the same financial question for two different periods, "compáralos" and
+      "en cuál gasté más" refer unambiguously to those two answers. The pair must remain in
+      conversation state after the first comparison so the second wording works as well. When
+      the user then changes topic, "sepáralos" must refer to the exact recent rows just shown.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto gasté en restaurantes el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y este mes?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Compáralos
+        route: QUERY
+        no_model: true
+        says: mismo
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y en cuál gasté más?
+        route: QUERY
+        no_model: true
+        says: mismo
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Muéstrame los cinco últimos movimientos de mis cuentas
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], include_internal: True}
+      - say: Sepáralos por cuenta
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: [], include_internal: True}
+
+  - name: negative_filters_can_be_added_and_undone
+    why: >
+      Exclusions are patches over a validated query, not a reason to rebuild it or return the
+      inclusive opposite. The previous plan remains available so natural repair language can
+      restore it without asking which period or calculation the user meant.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      # Six turns that asserted the same six fields, none of which is the one they change. The
+      # exclusion being added, kept, undone and added again — the entire subject of this episode —
+      # was invisible to every check in the corpus until `executed()` could say it.
+      - say: ¿Cuánto gasté durante este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y sin contar el alquiler?
+        route: QUERY
+        no_model: true
+        says: sin alquiler
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: ['HOUSING_RENT'], excluded_merchants: []}
+      - say: Quita ese filtro
+        route: QUERY
+        no_model: true
+        says: vuelto a la consulta anterior
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Ahora sin Mercadona
+        route: QUERY
+        no_model: true
+        says: sin mercadona
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: ['mercadona']}
+      - say: Déjalo como estaba antes
+        route: QUERY
+        no_model: true
+        says: vuelto a la consulta anterior
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Todos menos supermercados
+        route: QUERY
+        no_model: true
+        says: sin supermercado
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: ['GROCERIES'], excluded_merchants: []}
+
+  - name: direct_comparisons_and_referents_keep_the_query_in_view
+    why: >
+      A user should not need to issue two artificial standalone queries before comparing a result,
+      nor repeat a category or account scope that the immediately preceding answer identified.
+      These turns are patches over validated state and must not depend on the model.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Cuanto gaste en supermercados este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Comparalo con el mes anterior
+        route: QUERY
+        no_model: true
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Y esa categoria el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: No, me referia a restaurantes
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: En que categoria gaste mas este ano?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Cuanto gaste en la cuenta principal este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente']}
+      - say: Y en las demas cuentas?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado', 'Hucha']}
+
+  - name: payroll_account_and_month_comparisons_stay_anchored
+    why: >
+      Asking where payroll landed is an account breakdown even when its period is missing. A
+      numbered-month reply completes that same question, and later comparisons are relative to
+      the payroll month on screen rather than to the wall clock. Natural verbs such as
+      "compruebalo" and "cual he cobrado mas" must resolve the two validated months directly.
+    metrics: [context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Sabrias decirme si he cobrado mi nomina en que cuenta?
+        route: CLARIFY
+        no_model: true
+      - say: Pues prueba el mes 7 y si no el 8
+        route: QUERY
+        no_model: true
+        ran: {window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: He cobrado mas en esa nomina que en las anteriores?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-07-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Vale compruebalo con el mes anterior
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: De junio me refiero
+        route: QUERY
+        no_model: true
+        ran: {window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Entonces cual he cobrado mas?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: ACCOUNT, metric: SUM}, {window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+
+  - name: two_new_periods_can_be_compared_in_one_sentence
+    why: >
+      Two complete calendar months or years are closed data, not an unsupported capability. The
+      comparison keeps an explicit financial subject, or reuses the validated filters when the
+      turn only names the two periods. Every pair is executed directly without asking the model to
+      reconstruct either side.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: Cuanto gaste en supermercados este ano?
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Comparame julio y junio
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: ['GROCERIES'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Y en cual gaste mas?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: ['GROCERIES'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Compara mi nomina de julio con junio
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Entonces cual cobre mas?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: INCOME, categories: ['SALARY'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Compara mis ingresos de 2025 vs 2026
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-01-01..2026-12-31', direction: INCOME, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+
+  - name: a_comparison_keeps_the_measure_the_user_named
+    why: >
+      Comparing two windows is not synonymous with comparing money. Counts, per-movement means
+      and calendar means use different divisors, and every result can look plausible if the
+      orchestrator silently falls back to SUM. Each complete question owns its metric and reaches
+      banking without a model changing the unit.
+    metrics: [wrong_tool, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto gasté este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿En qué mes hice más compras, julio o junio?
+        route: QUERY
+        no_model: true
+        says: movimientos
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: COUNT}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿En qué mes fue mayor mi gasto medio por movimiento, julio o junio?
+        route: QUERY
+        no_model: true
+        says: importe medio por movimiento
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: AVERAGE}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: AVERAGE, excluded_categories: [], excluded_merchants: []}]
+      - say: Compara mi gasto medio mensual de 2025 con 2026
+        route: QUERY
+        no_model: true
+        says: gasto medio mensual
+        ran: [{window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y en cuál hubo más?
+        route: QUERY
+        no_model: true
+        says: gasto medio mensual
+        ran: [{window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}]
+      - say: gracias
+        route: COURTESY

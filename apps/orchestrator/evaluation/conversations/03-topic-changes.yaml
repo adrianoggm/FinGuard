@@ -1,0 +1,260 @@
+# Abrupt changes of subject, and the ones that only look abrupt.
+#
+# A conversation is not a list of sentences and it is not one thread either. Somebody asks about
+# last month, then about a card, then who they can pay, then back to last month — and the last turn
+# only means anything if the three in between kept their hands off the plan.
+#
+# The rule the whole file measures: three kinds of turn are answered from this repository, two from
+# banking, and none of the five may change what a follow-up inherits.
+
+episodes:
+  - name: spending_identity_spending
+    why: >
+      An aside in the middle, and the follow-up four turns later still has its window. Which is a
+      claim about the query, so the query is what the last two turns state: neither sentence names a
+      period, so a LAST_MONTH that survived two asides is the only place it can have come from.
+    metrics: [context_retention, wrong_tool]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES], excluded_categories: [], excluded_merchants: []}
+      - say: ¿quién eres?
+        route: IDENTITY
+        no_model: true
+      - say: ¿qué sabes hacer?
+        route: IDENTITY
+        no_model: true
+      - say: ¿y en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+
+  - name: five_subjects_in_eight_turns
+    why: >
+      A tour of the whole surface, in the order somebody actually wanders through it. Every turn is
+      a different kind and none of them may be answered by the one before.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿a quién puedo hacerle un bizum?
+        route: CONTACTS
+      - say: dime las categorías disponibles
+        route: CATEGORIES
+      - say: ¿cómo lo has calculado?
+        route: EXPLANATION
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: ¿y cuánto gasté en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+
+  - name: a_payment_interrupted_by_three_questions
+    why: >
+      The half-built Bizum steps aside for each one and is still there afterwards. A bare amount in
+      the middle must not silently resume it — the user had stopped thinking about the payment.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: continuar con el bizum
+        route: PAYMENT
+      - say: 20 euros
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+
+  - name: from_a_balance_to_a_transfer_and_back
+    why: >
+      Reading a balance, moving money, then reading it again. Three different paths and the middle
+      one leaves nothing open once it has been read in full.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: ¿y en el fondo?
+        route: BALANCE
+      - say: mueve 200 € a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: ¿cuánto tengo ahora en la hucha?
+        route: BALANCE
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: vale
+        route: COURTESY
+
+  - name: a_question_about_cards_in_the_middle
+    why: >
+      Cards have a screen of their own, and this used to say they had "no answer on this path, so
+      the question goes to the planner". That was the defect written down as a rule: the planner
+      has no card dimension either, so it refused — "eso no puedo calcularlo todavía" about data
+      sitting one query away — and when the question named an amount it answered with the account
+      total instead.
+
+      What this episode was always really about is the turn *after* it, and that still holds: a
+      question about the wallet must not cost the thread it interrupted.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿qué tarjetas tengo?
+        route: CARDS
+        no_model: true
+      # The wallet is a screen of its own, so the thread it interrupted has to be intact underneath:
+      # this sentence names a category and no period.
+      - say: ¿y en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: the_subject_changes_mid_clarification
+    why: >
+      A clarification does not suspend. The question it asked is either answered or it is not, and
+      keeping one alive across a change of subject is how "este año" completed a plan the user had
+      moved on from.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto llevo gastado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      # The turn the episode is named after. A clarification the user walked away from must not be
+      # completed by this, so what runs is a plain year with no filter carried into it — and only the
+      # query says which of the two happened.
+      - say: este año
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: [], excluded_categories: [], excluded_merchants: []}
+      - say: ¿quién eres?
+        route: IDENTITY
+      - say: ¿cuánto gasté este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], excluded_categories: [], excluded_merchants: []}
+      - say: vale
+        route: COURTESY
+
+  - name: a_greeting_in_the_middle_of_everything
+    why: >
+      Politeness is a turn too, and it must not be given an answer about money. What it also must
+      not do is reset anything.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: buenas
+        route: COURTESY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+      - say: muy amable
+        route: COURTESY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+
+  - name: a_transfer_abandoned_for_a_question
+    why: >
+      A transfer under way is not a payment and does not suspend. Asking something else ends it, and
+      the reply that would have finished it belongs to the new subject.
+    metrics: [context_retention, unsafe_action]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ends: true
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: 1000
+        not_says: Hucha
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: mueve 1000 € a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: gracias
+        route: COURTESY
+
+  - name: back_and_forth_between_two_accounts
+    why: >
+      Six turns alternating between two accounts, so a scope that leaked would show as an answer
+      about the wrong one. The words are the only thing that decides.
+    metrics: [context_retention]
+    turns:
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en la corriente?
+        route: BALANCE
+        says: "2.270,42"
+      - say: ¿y en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: ¿y en el fondo?
+        route: BALANCE
+        says: "2.700,00"
+      - say: ¿y en total?
+        route: BALANCE
+        says: "7.755,92"
+      - say: gracias
+        route: COURTESY
+
+  - name: a_long_wander
+    why: >
+      Twelve turns with no thread at all, which is what a demo looks like when somebody is exploring
+      rather than asking. Nothing here is hard; the point is that nothing accumulates.
+    metrics: [wrong_tool]
+    turns:
+      - say: hola
+        route: COURTESY
+      - say: ¿qué puedes hacer?
+        route: IDENTITY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿y en la hucha?
+        route: BALANCE
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: dime las categorías
+        route: CATEGORIES
+      - say: ¿cuánto gasté en gasolina?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cómo lo has calculado?
+        route: EXPLANATION
+      - say: ¿cuánto tengo en el fondo?
+        route: BALANCE
+      - say: ¿puedes hacer transferencias?
+        route: IDENTITY
+      - say: gracias, adiós
+        route: COURTESY

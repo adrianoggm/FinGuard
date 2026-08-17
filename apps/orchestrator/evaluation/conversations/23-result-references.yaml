@@ -1,0 +1,43 @@
+# Result rows and displayed movements remain grounded across natural pronoun follow-ups.
+
+episodes:
+  - name: highlighted_groups_and_evidence_can_be_reused_without_replanning
+    why: >
+      A pronoun must point to the concrete row or movement identifiers the user just saw, not to
+      a merchant guessed by the model or to the broader query that originally produced the list.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿En qué categoría he gastado más este año?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y cuánto gasté en esa categoría el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Sepáralo por comercio
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: COUNTERPARTY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Cuánto gasté en ese comercio?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], counterparties: ['Mercadona']}
+      - say: Desglósalo por cuenta
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: [], counterparties: ['Mercadona']}
+      - say: ¿Cuántos movimientos tuvo esa cuenta?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente'], counterparties: ['Mercadona']}
+      - say: Muéstrame los últimos 5 movimientos de mis cuentas
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], include_internal: True}
+      - say: ¿Cuánto suman esos movimientos?
+        route: QUERY
+        no_model: true
+        ran: {window: 'LAST_N_MONTHS:24', direction: ALL, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], include_internal: True}
+      - say: gracias
+        route: COURTESY

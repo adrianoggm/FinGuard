@@ -55,6 +55,27 @@ def test_the_contract_carries_them() -> None:
     assert plan_from_dto(body, date(2026, 7, 15)).merchants == ("Mercadona", "Carrefour")
 
 
+def test_partial_name_terms_have_a_separate_contract() -> None:
+    body = FinancialQueryRequest.model_validate(
+        {
+            "accountId": str(ACCOUNT),
+            "merchantTerms": ["apuest", "bet"],
+            "dateRange": {"from": "2026-07-01", "to": "2026-07-31"},
+        }
+    )
+
+    assert plan_from_dto(body, date(2026, 7, 15)).merchant_terms == ("apuest", "bet")
+
+
+def test_partial_name_terms_are_or_alternatives_and_bound_parameters() -> None:
+    compiled = compile_aggregate(plan(merchant_terms=("apuest", "bet")), "Europe/Madrid")
+
+    assert "strpos(lower(COALESCE(t.merchant_name, ''))" in compiled.sql
+    assert " OR " in compiled.sql
+    assert "apuest" not in compiled.sql and "bet" not in compiled.sql
+    assert "apuest" in compiled.parameters and "bet" in compiled.parameters
+
+
 def test_a_name_travels_as_a_parameter_and_never_as_sql() -> None:
     """The one property a free-text filter has to have. A category is a closed enum and this
     is whatever the user typed, so it is the first value in this contract that a model could

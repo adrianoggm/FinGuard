@@ -1,7 +1,10 @@
 """Reads the cards and what each one has been charged. Through the views and the restricted role.
 
 The aggregation is here rather than in the view because the window needs a zone and a migration
-does not know the deployment's. The view gives one row per booked charge; this decides "since".
+does not know the deployment's. The view gives one row per booked charge; this decides the window.
+
+Both ends of it, inclusive. There was only a lower bound, so a charge dated ahead of the caller's
+own day counted towards a total labelled as the last thirty days.
 
 A LEFT JOIN, so a card with no charges comes back with zero rather than not coming back. A card
 missing from a card screen is worse than a card showing 0,00 €.
@@ -37,6 +40,7 @@ _SQL = """
     LEFT JOIN assistant_read.card_charges_v1 h
            ON h.card_id = c.card_id
           AND (h.occurred_at AT TIME ZONE $1)::date >= $2
+          AND (h.occurred_at AT TIME ZONE $1)::date <= $3
     GROUP BY
         c.card_id, c.display_name, c.brand, c.kind, c.last_four,
         c.expires_month, c.expires_year, c.status, c.spending_limit_minor
@@ -51,8 +55,9 @@ _CHARGES_SQL = """
     FROM assistant_read.card_charges_v1
     WHERE card_id = $1
       AND (occurred_at AT TIME ZONE $2)::date >= $3
+      AND (occurred_at AT TIME ZONE $2)::date <= $4
     ORDER BY occurred_at DESC
-    LIMIT $4
+    LIMIT $5
 """
 
 
@@ -62,12 +67,14 @@ class PostgresCardRepository:
     def __init__(self, pool: asyncpg.Pool[Any]) -> None:
         self._pool = pool
 
-    async def all_of(self, account_id: UUID, *, since: date, timezone: str) -> tuple[Card, ...]:
+    async def all_of(
+        self, account_id: UUID, *, since: date, until: date, timezone: str
+    ) -> tuple[Card, ...]:
         async with self._pool.acquire() as connection, connection.transaction():
             # The same declaration every read makes. The views filter on it and row-level security
             # enforces it underneath, so another account's card does not exist here.
             await declare(connection, str(account_id))
-            rows = await connection.fetch(_SQL, timezone, since)
+            rows = await connection.fetch(_SQL, timezone, since, until)
 
         return tuple(
             Card(
@@ -89,7 +96,14 @@ class PostgresCardRepository:
         )
 
     async def charges_on(
-        self, account_id: UUID, card_id: UUID, *, since: date, timezone: str, limit: int
+        self,
+        account_id: UUID,
+        card_id: UUID,
+        *,
+        since: date,
+        until: date,
+        timezone: str,
+        limit: int,
     ) -> tuple[CardCharge, ...]:
         """What was bought with one card, newest first.
 
@@ -100,7 +114,7 @@ class PostgresCardRepository:
         """
         async with self._pool.acquire() as connection, connection.transaction():
             await declare(connection, str(account_id))
-            rows = await connection.fetch(_CHARGES_SQL, card_id, timezone, since, limit)
+            rows = await connection.fetch(_CHARGES_SQL, card_id, timezone, since, until, limit)
 
         return tuple(
             CardCharge(

@@ -69,6 +69,22 @@ class FakeProvider:
         return self._answer or ""
 
 
+class SequenceProvider(FakeProvider):
+    """Returns consecutive attempts so schema repair can be observed."""
+
+    def __init__(self, answers: list[str]) -> None:
+        super().__init__()
+        self.answers = iter(answers)
+        self.prompts: list[str] = []
+
+    async def complete(self, prompt: str, **kwargs: object) -> str:
+        self.prompts.append(prompt)
+        schema = kwargs.get("schema")
+        if isinstance(schema, dict):
+            self.schema = schema
+        return next(self.answers)
+
+
 def planner_for(provider: FakeProvider) -> LlmQueryPlanner:
     return LlmQueryPlanner(
         provider, model="m", temperature=0.0, max_output_tokens=256, categories=CATEGORIES
@@ -208,6 +224,35 @@ async def test_text_that_is_not_json_is_structural() -> None:
     assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
 
 
+async def test_an_invalid_structure_is_retried_once_and_can_recover() -> None:
+    provider = SequenceProvider(["not json", json.dumps(FULL)])
+
+    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+
+    assert result.outcome is PlanningOutcome.PLANNED
+    assert len(provider.prompts) == 2
+    assert "not json" not in provider.prompts[1]
+    assert "required JSON schema" in provider.prompts[1]
+
+
+async def test_a_second_invalid_structure_is_returned_without_a_loop() -> None:
+    provider = SequenceProvider(["not json", "still not json"])
+
+    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+
+    assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
+    assert len(provider.prompts) == 2
+
+
+async def test_a_domain_rejection_is_not_retried() -> None:
+    provider = SequenceProvider([json.dumps({**FULL, "period": "LAST_DECADE"})])
+
+    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+
+    assert result.outcome is PlanningOutcome.INVALID_DOMAIN
+    assert len(provider.prompts) == 1
+
+
 async def test_a_json_array_is_structural() -> None:
     result = await plan_from("[1, 2, 3]")
 
@@ -221,7 +266,7 @@ async def test_an_unknown_outcome_is_structural() -> None:
 
 
 async def test_a_period_outside_the_enum_is_a_domain_failure() -> None:
-    result = await plan_from({**FULL, "period": "LAST_FORTNIGHT"})
+    result = await plan_from({**FULL, "period": "LAST_DECADE"})
 
     assert result.outcome is PlanningOutcome.INVALID_DOMAIN
 

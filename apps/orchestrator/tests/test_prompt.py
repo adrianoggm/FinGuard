@@ -143,6 +143,8 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         for d in Direction
         for g in GroupBy
         for m in Metric
+        if m not in {Metric.PERIOD_AVERAGE, Metric.CUMULATIVE}
+        or g in (GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH)
     ]
     windows.append(
         FinancialPlan(
@@ -158,8 +160,13 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         "pasada",
         "hoy",
         "ayer",
+        "este",
         "esta",
         "semana",
+        "trimestre",
+        "semestre",
+        "quincena",
+        "fin",
         "la",
         "en",
         "lo",
@@ -178,11 +185,20 @@ def test_every_word_of_the_previous_section_comes_from_a_closed_set() -> None:
         "income",
         "all",
         "count",
+        "average",
+        "frecuencia",
+        "gastos",
+        "recurrentes",
+        "acumulado",
+        "media",
+        "periodo",
         "day",
         "week",
         "month",
         "category",
         "merchant",
+        "counterparty",
+        "account",
         "2026-01-01",
         "2026-01-31",
         "groceries/transport_fuel/restaurants",

@@ -175,3 +175,58 @@ def test_the_rule_can_be_switched_off_by_name() -> None:
 
 def test_the_rule_is_in_the_registry() -> None:
     assert RULE in plan_verifier.RULES
+
+
+# --- the car, which is fuel in this ledger and nothing else -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "¿qué he gastado con el coche este año?",
+        "gastos del coche",
+        "cuánto me cuesta el coche al mes",
+    ],
+)
+def test_the_car_is_read_as_fuel_rather_than_left_to_the_model(question: str) -> None:
+    """One model answered this three ways on three runs: TRANSPORT_FUEL, then TRANSPORT_PUBLIC —
+    a car is not a bus — and then no filter at all, which reported 14.019,05 € of everything as
+    the car.
+
+    The point is not that fuel is a clever guess. It is that TRANSPORT_FUEL is 184 movements of BP
+    and Cepsa and this ledger has no insurance, repairs or parking category, so "spending on the
+    car" is fuel entirely rather than approximately. Any deterministic answer beats a three-way
+    coin flip, and this one is also correct.
+    """
+    from finguard_orchestrator.domain.services import category_words
+
+    assert category_words.precisely_named_in(question) == ("TRANSPORT_FUEL",)
+
+
+@pytest.mark.parametrize(
+    ("categories", "refused"),
+    [((), True), (("TRANSPORT_PUBLIC",), True), (("TRANSPORT_FUEL",), False)],
+)
+def test_a_car_question_answered_as_something_else_is_refused(
+    categories: tuple[str, ...], refused: bool
+) -> None:
+    """The vocabulary entry earns its place here rather than in the planner's accuracy.
+
+    A word the gate is sure about turns two wrong readings from *answers* into *refusals* —
+    including the empty one, which is the dangerous shape: a real figure about everything,
+    labelled as the car, with evidence underneath it that visibly contradicts the label.
+    """
+    from finguard_orchestrator.domain.services import plan_verifier
+    from finguard_orchestrator.domain.value_objects.financial_plan import (
+        FinancialPlan,
+        RelativePeriod,
+    )
+
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=categories,
+    )
+
+    said = plan_verifier.disagreement("¿qué he gastado con el coche este año?", plan)
+    assert (said is not None) is refused

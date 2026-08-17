@@ -15,7 +15,19 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, Rail
+from finguard_orchestrator.domain.constants import (
+    MAX_REMEMBERED_TURNS,
+    MAX_TURN_NOTE,
+    MAX_TURN_SENTENCE,
+)
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    Rail,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -24,15 +36,18 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentConfirmation,
     PaymentInProgress,
     Slot,
+    Turn,
     UnsupportedCapability,
     Workflow,
 )
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
@@ -70,6 +85,217 @@ def test_the_memory_of_the_last_answer_survives() -> None:
     back = there_and_back(IDLE.answered(LAST_MONTH))
 
     assert back.last_plan == LAST_MONTH
+
+
+def test_partial_merchant_terms_survive_the_client_round_trip() -> None:
+    betting = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3),
+        categories=("LEISURE",),
+        merchant_terms=("apuest", "bet"),
+    )
+
+    assert there_and_back(IDLE.answered(betting)).last_plan == betting
+
+
+def test_a_direct_debit_scope_survives_the_client_round_trip() -> None:
+    receipts = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        metric=Metric.RECURRENCE,
+        transaction_types=(TransactionType.DIRECT_DEBIT,),
+    )
+
+    assert there_and_back(IDLE.answered(receipts)).last_plan == receipts
+
+
+def test_a_group_ranking_limit_survives_the_client_round_trip() -> None:
+    ranking = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.AVERAGE,
+        group_limit=3,
+    )
+
+    assert there_and_back(IDLE.answered(ranking)).last_plan == ranking
+
+
+def test_a_highlighted_category_survives_the_client_round_trip() -> None:
+    out = IDLE.answered(LAST_MONTH, referenced_category="GROCERIES")
+
+    back = there_and_back(out)
+
+    assert back.referenced_category == "GROCERIES"
+
+
+def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
+    evidence = (uuid.UUID(int=21), uuid.UUID(int=22))
+    out = IDLE.answered(
+        LAST_MONTH,
+        referenced_group_by=GroupBy.MERCHANT,
+        referenced_group_key="Mercadona",
+        referenced_transaction_ids=evidence,
+    )
+
+    back = there_and_back(out)
+
+    assert back.referenced_group_by is GroupBy.MERCHANT
+    assert back.referenced_group_key == "Mercadona"
+    assert back.referenced_transaction_ids == evidence
+
+
+def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate({"referenced_group_by": "MERCHANT"})
+
+
+def test_duplicate_referenced_movements_are_not_valid_conversation_state() -> None:
+    movement_id = str(uuid.UUID(int=21))
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(
+            {"referenced_transaction_ids": [movement_id, movement_id]}
+        )
+
+
+def test_two_plans_and_an_exact_movement_selection_survive_together() -> None:
+    earlier = LAST_MONTH
+    latest = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        transaction_ids=(uuid.UUID(int=7), uuid.UUID(int=8)),
+    )
+
+    back = there_and_back(Conversation(last_plan=latest, prior_plan=earlier))
+
+    assert back.last_plan == latest
+    assert back.prior_plan == earlier
+
+
+def test_an_answered_comparison_survives_as_one_validated_pair() -> None:
+    earlier = LAST_MONTH
+    latest = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_MONTH),
+        categories=("GROCERIES",),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.COUNT,
+    )
+    comparison = ComparisonPlan.between(earlier, latest)
+    assert comparison is not None
+
+    back = there_and_back(IDLE.answered_comparison(comparison))
+
+    assert back.last_comparison == comparison
+    assert back.prior_plan == comparison.earlier
+    assert back.last_plan == comparison.latest
+
+
+@pytest.mark.parametrize("missing", ["earlier", "latest"])
+def test_a_partial_comparison_is_not_valid_conversation_state(missing: str) -> None:
+    fields: dict[str, object] = {
+        "last_comparison_earlier": mapper.plan_payload(LAST_MONTH),
+        "last_comparison_latest": mapper.plan_payload(
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.THIS_MONTH),
+                categories=("GROCERIES",),
+                group_by=GroupBy.CATEGORY,
+                metric=Metric.COUNT,
+            )
+        ),
+    }
+    fields[f"last_comparison_{missing}"] = None
+
+    with pytest.raises(ValidationError, match="both ordered operands"):
+        ConversationPayload(**fields)
+
+
+def test_an_answered_percentage_survives_with_both_operands() -> None:
+    whole = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("SALARY",),
+    )
+    part = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("HOUSING_RENT",),
+    )
+    ratio = RatioPlan(part=part, whole=whole, kind=RatioKind.SHARE)
+
+    back = there_and_back(IDLE.answered_ratio(ratio))
+
+    assert back.last_ratio == ratio
+    assert back.last_plan == part
+    assert back.prior_plan == whole
+
+
+def test_a_percentage_waiting_only_for_its_window_survives() -> None:
+    ratio = RatioDraft(
+        part=FinancialPlanDraft(direction=Direction.EXPENSE, categories=("GROCERIES",)),
+        whole=FinancialPlanDraft(direction=Direction.EXPENSE),
+        kind=RatioKind.SHARE,
+    )
+
+    back = there_and_back(IDLE.waiting_for_ratio(ratio))
+
+    assert back.pending_ratio == ratio
+    assert back.last_asked is Slot.WINDOW
+
+
+@pytest.mark.parametrize("missing", ["kind", "part", "whole"])
+def test_a_partial_percentage_pair_is_not_valid_conversation_state(missing: str) -> None:
+    plan = mapper.plan_payload(LAST_MONTH)
+    fields: dict[str, object] = {
+        "last_ratio_kind": RatioKind.SHARE,
+        "last_ratio_part": plan,
+        "last_ratio_whole": plan,
+    }
+    fields[f"last_ratio_{missing}"] = None
+
+    with pytest.raises(ValidationError):
+        ConversationPayload(**fields)
+
+
+def test_negative_filters_survive_the_client_round_trip() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        excluded_categories=("HOUSING_RENT",),
+        excluded_merchants=("Mercadona",),
+    )
+
+    back = there_and_back(IDLE.answered(plan))
+
+    assert back.last_plan == plan
+
+
+def test_an_internal_only_query_survives_the_client_round_trip() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        include_internal=True,
+        internal_only=True,
+        across_accounts=True,
+    )
+
+    back = there_and_back(IDLE.answered(plan))
+
+    assert back.last_plan == plan
+
+
+def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
+    scoped = FinancialPlan(
+        direction=Direction.ALL,
+        period=RelativePeriod(period=Period.LAST_N_MONTHS, n=4),
+        only_account_id=uuid.UUID(int=7),
+    )
+
+    back = there_and_back(IDLE.answered(scoped))
+
+    assert back.last_plan == scoped
 
 
 def test_a_query_waiting_for_a_bank_retry_survives_without_becoming_an_answer() -> None:
@@ -127,6 +353,27 @@ def test_a_half_built_payment_survives_with_everything_on_it() -> None:
     back = there_and_back(out)
 
     assert back == out
+
+
+def test_a_half_built_transfer_keeps_its_rail_and_chosen_contact() -> None:
+    """Both values cross the client boundary; losing either changes where or how money leaves."""
+    out = IDLE.with_active(
+        PaymentInProgress(
+            draft=PaymentDraft(
+                recipient_contact_id=MARTA.contact_id,
+                amount_minor=1_500,
+                rail=Rail.TRANSFER,
+            ),
+            awaiting=Slot.AMOUNT,
+        )
+    )
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert isinstance(back.active, PaymentInProgress)
+    assert back.active.draft.recipient_contact_id == MARTA.contact_id
+    assert back.active.draft.rail is Rail.TRANSFER
 
 
 def test_a_confirmation_survives() -> None:
@@ -282,3 +529,72 @@ def test_a_bizum_confirmation_carries_no_account() -> None:
     assert isinstance(back.active, PaymentConfirmation)
     assert back.active.rail is Rail.BIZUM
     assert back.active.recipient_iban is None
+
+
+def test_a_completed_payment_keeps_a_one_turn_rail_referent() -> None:
+    out = IDLE.paid(Rail.BIZUM)
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert back.active is None
+    assert back.recent_payment_rail is Rail.BIZUM
+
+
+# --- the log of what happened --------------------------------------------------------
+
+
+def test_the_thread_survives_the_wire() -> None:
+    """The whole point of putting it on the payload. There are no sessions here, so a log the
+    mapper drops is a thread the next turn does not have — and the next turn is where it is read."""
+    out = IDLE.with_turn(
+        Turn(
+            sentence="¿cuánto gasté?",
+            outcome="NEEDS_CLARIFICATION",
+            question="¿De qué periodo?",
+        )
+    ).with_turn(Turn(sentence="el mes pasado", outcome="PLANNED", plan="del mes pasado, gasto"))
+
+    back = there_and_back(out)
+
+    assert back == out
+    assert [turn.sentence for turn in back.turns] == ["¿cuánto gasté?", "el mes pasado"]
+
+
+def test_the_log_keeps_the_newest_turns() -> None:
+    """Bounded because it rides every request. Truncating rather than refusing: a long conversation
+    is the normal case, and the far end of one is what an ellipsis never reaches back to."""
+    conversation = IDLE
+    for index in range(MAX_REMEMBERED_TURNS + 3):
+        conversation = conversation.with_turn(Turn(sentence=f"turno {index}", outcome="PLANNED"))
+
+    assert len(conversation.turns) == MAX_REMEMBERED_TURNS
+    assert conversation.turns[-1].sentence == f"turno {MAX_REMEMBERED_TURNS + 2}"
+    assert there_and_back(conversation) == conversation
+
+
+def test_a_caller_cannot_send_back_more_turns_than_travel() -> None:
+    """The payload bounds what the domain bounds. Without this the ceiling is only enforced on the
+    way out, and a caller echoing a hand-written log decides how long our prompts are."""
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(
+            {"turns": [{"sentence": "x", "outcome": "PLANNED"}] * (MAX_REMEMBERED_TURNS + 1)}
+        )
+
+
+def test_a_turn_too_long_to_remember_is_cut_rather_than_lost() -> None:
+    """A record is not a query. Every other value object here refuses what it cannot hold, because
+    it is about to be executed; a turn is only ever read as evidence, and refusing one would let a
+    long sentence six turns ago fail the turn happening now. Cut at the length the payload allows,
+    so what the domain keeps is exactly what survives a round trip."""
+    out = IDLE.with_turn(
+        Turn(
+            sentence="a" * (MAX_TURN_SENTENCE + 50),
+            outcome="PLANNED",
+            plan="b" * (MAX_TURN_NOTE + 50),
+        )
+    )
+
+    assert len(out.turns[0].sentence) == MAX_TURN_SENTENCE
+    assert out.turns[0].plan is not None and len(out.turns[0].plan) == MAX_TURN_NOTE
+    assert there_and_back(out) == out

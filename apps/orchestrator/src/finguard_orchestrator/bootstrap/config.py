@@ -1,9 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -80,6 +80,92 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float
     ollama_context_tokens: int
     ollama_seed: int
+
+    # --- hosted inference (Groq), for comparing against a bigger model ----------------
+    #
+    # The key, and the only field in this class that is a secret. `SecretStr` so a stray log
+    # line, a `repr` or a `/version`-style dump prints `**********` instead of a live
+    # credential — the characters come out at exactly one call site, the composition root.
+    #
+    # **None means the provider does not exist.** Not "exists and fails at the first request":
+    # a provider nobody configured cannot be built, which is the same rule that took Ollama out
+    # of the registry's zero-argument builders. It also means the whole feature is off by
+    # default, and turning it on is a deliberate act by whoever holds the key.
+    #
+    # It belongs in `.env`, which is gitignored, and never in `.env.defaults`, which is not.
+    # Compose reads that same file, so there is one place for it whichever way this is started.
+    groq_api_key: SecretStr | None = None
+
+    # --- hosted inference (Cloudflare Workers AI) -------------------------------------
+    #
+    # A second registration of the same protocol rather than a second adapter — see
+    # infrastructure/llm/cloudflare_workers_ai.py, which is where the reasoning lives and
+    # where the three things a live token still has to settle are written down.
+    #
+    # Two fields, and the provider exists only when **both** are set. The token is the secret.
+    # The account id is not one, but it is equally personal — it names whose Cloudflare account
+    # is billed for every question asked — so it belongs in `.env` with the token and never as a
+    # value in this file or in .env.defaults. Half a credential is worse than none: a missing
+    # account id interpolates into `/accounts//ai/v1`, which is a 404 that reads like an outage.
+    cloudflare_api_token: SecretStr | None = None
+    cloudflare_account_id: str | None = None
+
+    @field_validator("groq_api_key", "cloudflare_api_token", "cloudflare_account_id", mode="before")
+    @classmethod
+    def _a_blank_key_is_no_key(cls, value: object) -> object:
+        """`ORCHESTRATOR_XAI_API_KEY=` means the provider does not exist, not that it has a
+        blank credential.
+
+        An empty string is what a half-filled `.env` line produces, and what compose passes when
+        a `${VAR:-}` interpolation finds nothing. Taken literally it builds a provider whose every
+        request is a 401 — the exact failure the "no key, no provider" rule exists to prevent,
+        arriving by the one route that rule does not cover.
+
+        The account id gets the same treatment because it fails the same way from one line lower:
+        blank, it is not a rejected credential but a URL with a hole in it.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+    # Defaults rather than required fields, unlike every operational number above, because
+    # these have a right answer that does not belong to a deployment: the endpoint is the
+    # vendor's and the timeout is a ceiling for "something is wrong". A deployment that never
+    # uses the provider should not have to state them.
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_timeout_seconds: float = 60.0
+
+    # The floor this puts under a caller's token budget when the endpoint is a hosted one.
+    #
+    # A reasoning model generates its thinking first and bills it against the same ceiling, so a
+    # budget sized for the answer truncates the reasoning and the request fails with a message
+    # about JSON rather than about tokens. Measured against openai/gpt-oss-120b with this
+    # service's own prompts: reading a turn generated 224 tokens for a ten-token answer, and
+    # planning a query generated 698-907 for a plan of about 120. The callers ask for 32 and 384.
+    #
+    # A ceiling and not a reservation — you pay for what is generated — so this is generous on
+    # purpose. It buys nothing on a non-reasoning model and it is the difference between working
+    # and not on a reasoning one.
+    groq_reasoning_headroom: int = 2048
+
+    # The API root the account path is hung off. A default for the same reason Groq's base URL
+    # is one — the endpoint is the vendor's, not the deployment's — and a field at all so a
+    # proxy or a recorded fixture can stand in front of it without a commit.
+    cloudflare_api_base: str = "https://api.cloudflare.com/client/v4"
+    cloudflare_timeout_seconds: float = 60.0
+
+    # A larger floor than Groq's, for the same reason, on a different endpoint.
+    # `@cf/qwen/qwen3-30b-a3b-fp8` is a reasoning model, so a budget sized for the answer is a
+    # budget the thinking eats. Measured on the planning prompt: one exclusion case consumed all
+    # 2048 completion tokens as reasoning and returned null content with finish_reason `length`;
+    # 4096 completed the same constrained plan. A higher ceiling is billed only when generated.
+    cloudflare_reasoning_headroom: int = 4096
+
+    # Which provider turns a sentence into a plan, and reads a turn.
+    #
+    # It was `ollama` in code at the composition root, which made "try a bigger model" a patch
+    # rather than a setting. The catalogue beside it chooses who *answers* /v1/messages; this
+    # chooses who *plans*, and they stay separate for the reason they always have — planning is
+    # measured its own way and one knob for both would hide which one moved.
+    planner_provider: str = "ollama"
 
     # Planner sampling. These were literals at the composition root, which is the same
     # defect one layer up. Temperature 0 is deliberate: the planner is not being creative,
@@ -170,6 +256,60 @@ class Settings(BaseSettings):
     # is an operator who believes a rule is off, measures with it on, and concludes it is
     # worthless.
     disabled_guards: tuple[str, ...] = ()
+
+    # Who reads a turn: the rules, the rules with a model watching, or the model.
+    #
+    #   router   the deterministic rules alone. Today's behaviour, and the default.
+    #   shadow   both. The rules still decide and the model's opinion becomes a log line, which is
+    #            the number that has to exist before anybody argues about the third value. Costs a
+    #            model call per turn and changes no answer.
+    #   hybrid   the rules keep every turn they recognise; the model may widen only their catch-all
+    #            and may never create a payment or own-account transfer.
+    #   model    `Promoted`: the model decides everything except a payment, which the rules keep.
+    #
+    # Named modes rather than booleans because "shadow and promoted" is not a thing — a model
+    # cannot both be watched and be the authority, and a pair of switches would let somebody
+    # configure that and get one of them silently ignored.
+    #
+    # The case for `model` is measured and it is lopsided. On the 879-turn corpus the rules score
+    # 100 % by construction — their answers *are* its labels — so that corpus can never show them
+    # failing, and the model's 91.5 % on it is a disagreement rate with the rules rather than an
+    # error rate. On 96 sentences written by something that had never seen this vocabulary, the
+    # rules reach 37 and `Promoted` reaches 86. See test_the_same_question_said_differently.py.
+    #
+    # 86 and not the 88 the model scores alone, because nobody can run the model alone: two of the
+    # sentences it read as payments are refused by the rule above. Both are worth the refusal —
+    # "puedo hacerlo por bizum, ¿verdad?" and "¿cómo lo hago?" ask how the thing works rather than
+    # instructing anybody to send money — so the two points are the rule doing its job, not its
+    # price.
+    #
+    # **And then the other side was measured, and `model` is not ready.** Replaying all 133
+    # episodes through `Promoted` — 900 turns, the tool each one reached — costs 35 failures, and
+    # two of them move money:
+    #
+    #   * "Déjalo" is read as manners, so the transfer it was cancelling stays open, and the "500"
+    #     in the next turn lands inside it. Two episodes, and it is the failure this service exists
+    #     to make impossible.
+    #   * "¿Qué traspaso al fondo?" and "mueve 200 € a la cuenta de la empresa" — a question and an
+    #     account the holder does not have — both come back as transfers. `Promoted` refuses to let
+    #     a model start a PAYMENT and says nothing about OWN_TRANSFER, which is the same decision
+    #     one rail over. A hole in the rule, found by measuring rather than by reading it.
+    #   * The short balance vocabulary regresses: "saldo", "dinero disponible" and "¿cuánto tenía?"
+    #     stop reaching the balance, and "cuánto he gastado con cada tarjeta" stops reaching the
+    #     wallet and answers with the account total — the exact defect the wallet intent fixed.
+    #
+    # The other 23 are one shape: the model over-specifies when the reading depends on the turn
+    # before. "¿Y en la hucha?" after a question about spending is a narrowed *query*, and the
+    # model calls it a balance. That is the interpreter's prompt, not the arrangement, and it is
+    # where the work goes before this is worth revisiting.
+    #
+    # So the honest summary is that neither reader dominates. The rules lose to phrasing and the
+    # model loses to context, and the corpus and the drift set each only measure one of those.
+    #
+    # Still not the default, and now for a second reason. Flipping how every turn in production is
+    # read is the operator's call rather than a value shipped in a settings class; and on today's
+    # numbers there is no case for flipping it.
+    turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

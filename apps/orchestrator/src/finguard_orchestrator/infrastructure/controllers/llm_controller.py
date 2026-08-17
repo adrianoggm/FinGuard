@@ -24,6 +24,7 @@ from finguard_orchestrator.application import (
     AnswerMessageQuery,
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
     CategoriseMovementCommand,
     CommandBus,
     ConfirmPaymentCommand,
@@ -35,6 +36,7 @@ from finguard_orchestrator.application import (
     ListCardsQuery,
     ListContactsQuery,
     PaymentAnswer,
+    PrepareOwnTransferCommand,
     PreparePaymentCommand,
     QueryBus,
     ReplaceLlmPolicyCommand,
@@ -43,6 +45,7 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.application.queries.browse_account import MAX_DAYS, MAX_MOVEMENTS
 from finguard_orchestrator.bootstrap.dependencies import (
+    attempt_key,
     get_ask_handler,
     get_command_bus,
     get_query_bus,
@@ -51,8 +54,16 @@ from finguard_orchestrator.bootstrap.dependencies import (
     questions_enabled,
     reporting_today,
     requires,
+    turn_interpreter,
 )
-from finguard_orchestrator.domain.enums import GroupBy, PaymentOutcome, PlanningOutcome, Rail
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    PaymentOutcome,
+    PlanningOutcome,
+    Rail,
+    Spoken,
+)
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
@@ -64,13 +75,19 @@ from finguard_orchestrator.domain.models.conversation import (
     Slot,
     slot_for,
 )
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
+    intent_router,
     payment_router,
     payment_words,
     payment_writer,
+    turn_analyzer,
+    window_words,
 )
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
@@ -97,6 +114,13 @@ Today = Annotated[date, Depends(reporting_today)]
 Asking = Annotated[AskFinancialQuestionHandler, Depends(get_ask_handler)]
 Who = Annotated[Caller, Depends(requires(Scope.QUESTIONS_READ))]
 PaymentsOn = Annotated[bool, Depends(payments_available)]
+# The caller's name for this attempt. The chat prepares payments too, so a resent question that
+# happened to be "hazle un bizum de 20 a Marta" must not leave two intents. See `attempt_key`.
+Attempt = Annotated[str, Depends(attempt_key)]
+# How a turn is read. Asked once per turn, at the top of the route, and carried from there — the
+# three decisions below used to ask separately, which was three chances to disagree while it was
+# free and would be three model calls once it is not.
+Reads = Annotated[TurnInterpreterPort, Depends(turn_interpreter)]
 Categories = Annotated[tuple[str, ...], Depends(known_categories)]
 
 assistant_router = APIRouter(tags=["assistant"])
@@ -202,6 +226,61 @@ async def reset_policy(commands: Commands) -> CatalogueResponse:
     return llm_mapper.catalogue_to_dto(await commands.dispatch(ResetLlmPolicyCommand()))
 
 
+def _is_an_order_to_pay(read_as: Intent, sentence: str, was: Conversation) -> bool:
+    """Whether this sentence starts a payment, given how the turn was read.
+
+    It used to ask `payment_router.is_payment` directly, which is the *narrower* question: is there
+    a payment order in these words. The interpreter adds the one case where the answer is no anyway
+    — a sentence asking who can be paid — and that rule was written because "¿qué contactos tengo
+    para mandar bizum?" was read as an order and answered by asking who to pay.
+
+    The rule lived only in the handler, and this check runs before the handler is reached. So it
+    worked for the phrasings that say "contactos" and not for "¿a quién puedo hacerle un bizum?",
+    which is the same question reaching the same wrong answer by the same route.
+
+    The reading is now taken as an argument rather than computed, because two copies of "is this a
+    payment" is how the first one came to be incomplete — and because it costs a model call once
+    the interpreter is a model.
+
+    An open question takes precedence over a payment word, unless the sentence carries an amount
+    **or instructs**. "Pues bizum", answering "¿de qué comercio o categoría?", started a payment and
+    asked who to send it to — a word offered as the answer to a question, read as an order. But the
+    amount alone was too narrow an escape: reported, a holder wrote "que le hagas el puto bizum" and
+    then "quiero que hagas un bizum" with a clarification open, and both reached the planner and
+    came back "¿de qué periodo?". A bare noun has no verb; those two are instructions. This stays
+    here rather than moving into the interpreter: it is not about what the sentence means, it is
+    about which of two open subjects owns the turn.
+
+    **A reading of FINANCIAL_QUERY does not settle it.** That intent is the catch-all — the prompt
+    tells the model to answer it whenever unsure — so a deterministic reader requiring a payment
+    verb *and* money is the better authority there, and this is the doctrine `explicit_facts` rests
+    on: the model decides what is ambiguous, and an order to move money is not. Every other reading
+    is a positive choice and is left alone. LIST_CONTACTS for "¿a quién puedo hacerle un bizum?" is
+    the case this function was written to protect, and overriding that would undo it.
+    """
+    if read_as is not Intent.PAYMENT and not (
+        read_as is Intent.FINANCIAL_QUERY and payment_router.is_payment(sentence)
+    ):
+        return False
+    asked = was.awaiting or was.last_asked
+    if asked not in _FINANCIAL_SLOTS:
+        return True
+    # An open question keeps only the turn that could be its answer, and that set is closed: a rail
+    # noun with an article or a particle around it. Everything else instructs.
+    #
+    # This used to enumerate the instructions instead, which is the open set — every form missed
+    # ("que le hagas", "hagamos") became a turn the question swallowed. Inverting it means a form
+    # nobody thought of now falls on the side of being an order, which is the side where the holder
+    # gets a preview they can decline rather than a question they did not ask.
+    return not payment_words.is_only_a_rail_word(sentence)
+
+
+# The slots a financial question leaves open. A reply while one of these is waiting belongs to it.
+_FINANCIAL_SLOTS: frozenset[Slot | None] = frozenset(
+    {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION, Slot.ACCOUNT}
+)
+
+
 async def _as_payment(
     sentence: str,
     who: Caller,
@@ -209,6 +288,8 @@ async def _as_payment(
     payments_on: bool,
     was: Conversation = IDLE,
     pending: PaymentDraft | None = None,
+    *,
+    key: str,
 ) -> QuestionResponse:
     """The payment path, reached from the chat.
 
@@ -230,7 +311,7 @@ async def _as_payment(
         PreparePaymentCommand(
             sentence=sentence,
             account_id=who.account_id,
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=key,
             pending=pending,
         )
     )
@@ -242,6 +323,96 @@ async def _as_payment(
         # failed-query retry through it and let a later bare "reintenta" revive stale context.
         conversation=conversation_mapper.to_payload(
             was.without_retry().with_active(_payment_state(answer))
+        ),
+    )
+
+
+def _answers_a_transfer_preview(reply: str) -> bool:
+    """Whether this sentence answers a transfer preview: yes or no, and nothing else.
+
+    Deliberately narrower than what a Bizum preview accepts. A Bizum has a revision path because
+    re-stating a recipient is tedious and getting one wrong is expensive; a transfer has two fields
+    and saying the whole thing again — "mueve 1000 a la hucha" — is one short sentence that already
+    produces a new preview. So there is no third case to get wrong here.
+
+    Reusing the Bizum rule was tried and is what the first version did. It read "gracias" and
+    "perfecto" as answers, because a concept reader finds a concept in almost any words and the yes
+    vocabulary contains the polite ones — so a pleasantry moved money. And it read "pasa 100 € del
+    fondo a la hucha" as *changing the recipient* of the preview, which came back "no tengo a Fondo
+    indexado en tus contactos": a transfer instruction answered as a failed payment to a person who
+    is an account.
+    """
+    return confirmation.is_confirmation(reply) or confirmation.is_refusal(reply)
+
+
+async def _abandons_a_transfer_preview(
+    reply: str,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    active: PaymentConfirmation,
+) -> bool:
+    """Give up an internal-transfer preview the turn is not about, and say whether it was given up.
+
+    The intent is cancelled at the bank rather than merely forgotten here. A held intent nobody
+    answered is a thing that expires on its own, and leaving one behind while telling the user about
+    their balance would mean the next `sí` — to some later question entirely — could still find it.
+
+    Only when this caller could have confirmed it. Otherwise the preview is left alone and the
+    ordinary confirmation path answers "no puedo hacer pagos", which is honest and does not
+    quietly discard something staged.
+    """
+    if active.rail is not Rail.INTERNAL or _answers_a_transfer_preview(reply):
+        return False
+    if not payments_on or not who.may(Scope.PAYMENTS_CONFIRM):
+        return False
+    await commands.dispatch(
+        ConfirmPaymentCommand(reply="no", account_id=who.account_id, intent_id=active.intent_id)
+    )
+    return True
+
+
+async def _as_own_transfer(
+    result: AskFinancialQuestionResult,
+    who: Caller,
+    commands: CommandBus,
+    payments_on: bool,
+    *,
+    key: str,
+) -> QuestionResponse:
+    """Turn a fully-read transfer between the holder's own accounts into a preview to confirm.
+
+    The read path resolved which account and how much, and then told the holder to go and say it
+    again on a screen. A Bizum asked in the same box comes back as a preview and a yes, and there
+    is no reason for a transfer to be the one operation that cannot be finished where it was
+    started — the confirmation is what protects it, and the confirmation is right here.
+
+    It keeps the preview and the explicit yes even though the money never leaves the household,
+    exactly like the form route: that step guards against a mistake rather than against a
+    misreading, and 150 € in the wrong direction between two of your own accounts is a mistake worth
+    being asked about.
+
+    The scope is checked here and not on the route, for the reason `_as_payment` checks it here:
+    a 403 is a fact about our configuration that the holder can do nothing with. Without it they get
+    the sentence naming the screen, which is what they got before this existed.
+    """
+    if not payments_on or not who.may(Scope.PAYMENTS_PREPARE) or result.transfer_to is None:
+        return llm_mapper.question_to_dto(result)
+    answer = await commands.dispatch(
+        PrepareOwnTransferCommand(
+            account_id=who.account_id,
+            to_account_id=uuid.UUID(result.transfer_to),
+            amount_minor=result.total_minor or 0,
+            currency=result.currency or "EUR",
+            idempotency_key=key,
+        )
+    )
+    return QuestionResponse(
+        outcome=answer.outcome,
+        text=answer.text,
+        intent_id=str(answer.intent_id) if answer.intent_id else None,
+        conversation=conversation_mapper.to_payload(
+            result.conversation.with_active(_payment_state(answer))
         ),
     )
 
@@ -281,9 +452,15 @@ def _payment_state(answer: PaymentAnswer) -> ActiveWorkflow | None:
 
     drafted = PaymentDraft(
         recipient_name=answer.draft.recipient_name,
+        recipient_contact_id=(
+            uuid.UUID(answer.draft.recipient_contact_id)
+            if answer.draft.recipient_contact_id
+            else None
+        ),
         amount_minor=answer.draft.amount_minor,
         currency=answer.draft.currency,
         concept=answer.draft.concept,
+        rail=Rail(answer.draft.rail),
     )
     candidates = tuple(
         Contact(uuid.UUID(row.contact_id), row.display_name, row.phone) for row in answer.candidates
@@ -304,6 +481,8 @@ def _payment_events(
     payments_on: bool,
     was: Conversation = IDLE,
     pending: PaymentDraft | None = None,
+    *,
+    key: str,
 ) -> StreamingResponse:
     """The payment path as server-sent events: one stage, then the answer.
 
@@ -318,7 +497,7 @@ def _payment_events(
 
     async def events() -> AsyncIterator[str]:
         yield _sse({"type": "stage", "name": "reading", "detail": None})
-        answer = await _as_payment(sentence, who, commands, payments_on, was, pending)
+        answer = await _as_payment(sentence, who, commands, payments_on, was, pending, key=key)
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -331,6 +510,8 @@ async def _as_confirmation(
     payments_on: bool,
     was: Conversation,
     active: PaymentConfirmation,
+    *,
+    key: str,
 ) -> QuestionResponse:
     """Answer the payment preview that is active in this chat.
 
@@ -388,6 +569,7 @@ async def _as_confirmation(
             payments_on,
             was.with_active(None),
             replacement,
+            key=key,
         )
         return revised.model_copy(
             update={"text": f"He descartado el Bizum anterior. {revised.text}"}
@@ -406,7 +588,15 @@ async def _as_confirmation(
         PaymentOutcome.AWAITING_CONFIRMATION.value,
         PaymentOutcome.BANKING_UNAVAILABLE.value,
     }
-    conversation = was if still_waiting else was.with_active(None)
+    conversation = (
+        was
+        if still_waiting
+        else (
+            was.paid(active.rail)
+            if answer.outcome == PaymentOutcome.PAID.value
+            else was.with_active(None)
+        )
+    )
     return QuestionResponse(
         outcome=answer.outcome,
         # The chat state retains the material facts even though the standalone confirmation
@@ -430,11 +620,13 @@ def _confirmation_events(
     payments_on: bool,
     was: Conversation,
     active: PaymentConfirmation,
+    *,
+    key: str,
 ) -> StreamingResponse:
     """The streaming shape of a confirmation: one answer, with no invented planning stage."""
 
     async def events() -> AsyncIterator[str]:
-        answer = await _as_confirmation(reply, who, commands, payments_on, was, active)
+        answer = await _as_confirmation(reply, who, commands, payments_on, was, active, key=key)
         yield _sse({"type": "answer", **answer.model_dump()})
 
     return StreamingResponse(events(), media_type="text/event-stream")
@@ -506,6 +698,166 @@ def _open_payment_events(answer: QuestionResponse) -> StreamingResponse:
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
+def _compound_reply(clauses: tuple[str, ...], was: Conversation) -> QuestionResponse:
+    """Ask the holder to choose instead of silently executing one half of their turn."""
+    return QuestionResponse(
+        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+        text="Has pedido varias cosas. ¿Con cuál empezamos?",
+        question="¿Con cuál empezamos?",
+        suggestions=list(clauses),
+        conversation=conversation_mapper.to_payload(was),
+    )
+
+
+_SAFE_COMPOUND_READS = frozenset({Intent.FINANCIAL_QUERY, Intent.ACCOUNT_BALANCE})
+_COMPOUND_SUCCESS = frozenset({PlanningOutcome.PLANNED.value, Spoken.BALANCE.value})
+
+
+def _compound_read_order(
+    clauses: tuple[str, ...], was: Conversation, today: date
+) -> tuple[tuple[int, Intent], ...] | None:
+    """Safe read-only clauses, with one explicit financial window executed first when needed."""
+    if not 2 <= len(clauses) <= 3:
+        return None
+    intents = tuple(
+        intent_router.route(
+            clause,
+            has_previous=was.last_plan is not None,
+            at_rest=was.at_rest,
+        )
+        for clause in clauses
+    )
+    if any(intent not in _SAFE_COMPOUND_READS for intent in intents):
+        return None
+
+    financial = tuple(
+        index for index, intent in enumerate(intents) if intent is Intent.FINANCIAL_QUERY
+    )
+    explicit = tuple(
+        index
+        for index in financial
+        if window_words.has_complete_window(clauses[index], today=today)
+    )
+    shareable = tuple(
+        index
+        for index in financial
+        if not window_words.has_compared_windows(clauses[index], today=today)
+        and window_words.window_in(clauses[index], today=today) is not None
+    )
+    if financial and was.last_plan is None and not explicit:
+        return None
+    if (
+        was.last_plan is None
+        and any(index not in explicit for index in financial)
+        and not shareable
+    ):
+        # A comparison owns two windows; choosing either as the period of an adjacent abbreviated
+        # query would be an invented interpretation.
+        return None
+
+    order = list(range(len(clauses)))
+    if was.last_plan is None and financial and financial[0] not in explicit:
+        seed = shareable[0]
+        order.remove(seed)
+        order.insert(0, seed)
+    return tuple((index, intents[index]) for index in order)
+
+
+def _window_only_context(answered: Conversation) -> Conversation | None:
+    """The shared modifier from a seed clause, without any of that clause's filters."""
+    plan = answered.last_plan
+    if plan is None:
+        return None
+    return Conversation(
+        last_plan=FinancialPlan(
+            direction=Direction.ALL,
+            period=plan.period,
+            date_range=plan.date_range,
+        ),
+        account_aliases=answered.account_aliases,
+        counterparty_aliases=answered.counterparty_aliases,
+        # Filters are what this strips. The thread is not a filter, and a clause read without it is
+        # the blindness the log exists to end.
+        turns=answered.turns,
+    )
+
+
+async def _compound_read_reply(
+    clauses: tuple[str, ...],
+    was: Conversation,
+    *,
+    who: Caller,
+    today: date,
+    queries: QueryBus,
+) -> QuestionResponse | None:
+    """Execute bounded read-only clauses and retain a separately auditable answer for each."""
+    ordered = _compound_read_order(clauses, was, today)
+    if ordered is None:
+        return None
+
+    current = was
+    shared_window: Conversation | None = None
+    parts: list[QuestionResponse | None] = [None] * len(clauses)
+    conversations: list[Conversation | None] = [None] * len(clauses)
+    final_outcome = "COMPOUND"
+    final_question: str | None = None
+    final_suggestions: list[str] = []
+    for index, intent in ordered:
+        has_explicit_window = intent is Intent.FINANCIAL_QUERY and window_words.has_complete_window(
+            clauses[index], today=today
+        )
+        if intent is Intent.ACCOUNT_BALANCE:
+            # A balance is an aside. It uses the accumulated conversation so a relationship
+            # answered immediately before it remains available to the next follow-up.
+            clause_context = current
+        else:
+            clause_context = was if has_explicit_window or shared_window is None else shared_window
+        result = await queries.ask(
+            AskFinancialQuestionQuery(
+                sentence=clauses[index],
+                account_id=who.account_id,
+                today=today,
+                reporting_timezone=who.reporting_timezone,
+                conversation=clause_context,
+                intent=intent,
+            )
+        )
+        current = result.conversation
+        conversations[index] = current
+        rendered = llm_mapper.question_to_dto(result)
+        parts[index] = rendered.model_copy(update={"conversation": None, "parts": []})
+        if rendered.outcome not in _COMPOUND_SUCCESS:
+            final_outcome = rendered.outcome
+            final_question = rendered.question
+            final_suggestions = rendered.suggestions
+            break
+        if has_explicit_window and shared_window is None:
+            shared_window = _window_only_context(current)
+
+    completed_with_indexes = tuple(
+        (index, part) for index, part in enumerate(parts, start=1) if part is not None
+    )
+    completed = [part for _, part in completed_with_indexes]
+    completed_conversations = tuple(
+        (index, conversation)
+        for index, conversation in enumerate(conversations)
+        if conversation is not None
+    )
+    if completed_conversations:
+        # Conversation follows the clause the user mentioned last, not the internal execution
+        # order (which may have moved a trailing shared window to the front).
+        current = completed_conversations[-1][1]
+    text = "\n".join(f"{index}. {part.text}" for index, part in completed_with_indexes)
+    return QuestionResponse(
+        outcome=final_outcome,
+        text=text,
+        question=final_question,
+        conversation=conversation_mapper.to_payload(current),
+        suggestions=final_suggestions,
+        parts=completed,
+    )
+
+
 def _sse(payload: Mapping[str, object]) -> str:
     """One JSON object per `data:` line, blank line between.
 
@@ -526,13 +878,13 @@ def _conversation_of(request: QuestionRequest) -> Conversation:
 
 
 async def _continues_a_payment(
-    was: Conversation, question: str, who: Caller, queries: QueryBus
+    read_as: Intent, was: Conversation, question: str, who: Caller, queries: QueryBus
 ) -> PaymentDraft | None:
     """The payment this sentence continues, or None.
 
-    Checked before the sentence is classified at all, because a conversation with a payment under
-    way is a state machine rather than a sequence of unrelated sentences. Without it "15 euros"
-    reached the financial planner: money with no payment verb is not a payment.
+    Checked before the sentence's *meaning* decides anything, because a conversation with a payment
+    under way is a state machine rather than a sequence of unrelated sentences. Without it "15
+    euros" reached the financial planner: money with no payment verb is not a payment.
 
     The directory is fetched only when a payment is actually under way, which is rare. The prepare
     handler reads it again to resolve the recipient — one extra local call on those turns, and the
@@ -541,6 +893,13 @@ async def _continues_a_payment(
     """
     active = was.active
     if not isinstance(active, PaymentInProgress):
+        return None
+    if read_as is Intent.OWN_TRANSFER:
+        # An instruction to move money between the holder's own accounts, not a reply to the Bizum.
+        # "Mueve 200 euros a la hucha" carries a figure, and a half-built payment missing its amount
+        # took it — so a sentence naming one of the holder's own accounts completed a payment to
+        # somebody else. Both halves of a transfer have to be present for the router to say so, and
+        # neither of them belongs to a Bizum.
         return None
     drafted = active.draft
     if active.suspended:
@@ -566,6 +925,22 @@ async def _continues_a_payment(
     if payment_router.continues(question, drafted, contacts):
         return drafted
     return None
+
+
+async def _repeats_a_recent_payment(
+    was: Conversation, question: str, who: Caller, queries: QueryBus
+) -> PaymentDraft | None:
+    """Build the empty draft an immediate ``otro`` fills, after grounding its contact."""
+    if was.recent_payment_rail is None:
+        return None
+    directory = await queries.ask(ListContactsQuery(account_id=who.account_id))
+    contacts = tuple(
+        Contact(uuid.UUID(row.contact_id), row.display_name, row.phone)
+        for row in directory.contacts
+    )
+    if not payment_router.repeats(question, contacts):
+        return None
+    return PaymentDraft(rail=was.recent_payment_rail)
 
 
 @assistant_router.get(
@@ -674,9 +1049,19 @@ async def cards(
 
     No model: a card list is a read. The window is rolling and says so — a figure labelled as a
     month that is really thirty days is wrong on the 1st by everything that happened on the 31st.
+
+    `days` counts days with both ends inside, so a week is `since` six days back and not seven. It
+    subtracted the whole count and left the caller's own day in the window as well, which made every
+    span one longer than its label; banking had the same arithmetic and the two agreed with each
+    other while both disagreed with what they said.
     """
     result = await queries.ask(
-        ListCardsQuery(account_id=who.account_id, since=today - timedelta(days=days))
+        ListCardsQuery(
+            account_id=who.account_id,
+            since=today - timedelta(days=days - 1),
+            today=today,
+            reporting_timezone=who.reporting_timezone,
+        )
     )
     return llm_mapper.wallet_to_dto(result)
 
@@ -706,7 +1091,9 @@ async def card_charges(
         GetCardChargesQuery(
             account_id=who.account_id,
             card_id=card_id,
-            since=today - timedelta(days=days),
+            since=today - timedelta(days=days - 1),
+            today=today,
+            reporting_timezone=who.reporting_timezone,
             limit=limit,
         )
     )
@@ -773,6 +1160,8 @@ async def ask(
     today: Today,
     commands: Commands,
     payments_on: PaymentsOn,
+    attempt: Attempt,
+    reads: Reads,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -786,12 +1175,25 @@ async def ask(
     """
     who.assert_may_read(who.account_id)
 
+    key = attempt
     was = _conversation_of(request)
 
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
         # not a new instruction: the deterministic confirmation reader leaves the preview open.
-        return await _as_confirmation(request.question, who, commands, payments_on, was, was.active)
+        #
+        # A transfer between the holder's own accounts is the exception, and it is the ordinary case
+        # that made it one: move money, then look at the balance. Stubbornness there answered
+        # "¿cuánto tengo en la hucha?" with the pending transfer, and every turn after it too.
+        previewed = was.active
+        if await _abandons_a_transfer_preview(
+            request.question, who, commands, payments_on, previewed
+        ):
+            was = was.with_active(None)
+        else:
+            return await _as_confirmation(
+                request.question, who, commands, payments_on, was, previewed, key=key
+            )
 
     if isinstance(was.active, PaymentInProgress):
         paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
@@ -801,16 +1203,51 @@ async def ask(
         if immediate is not None:
             return immediate
 
-    continuing = await _continues_a_payment(was, request.question, who, queries)
+    repeated = await _repeats_a_recent_payment(was, request.question, who, queries)
+    if repeated is not None:
+        return await _as_payment(
+            request.question,
+            who,
+            commands,
+            payments_on,
+            was.without_recent_payment(),
+            repeated,
+            key=key,
+        )
+    if was.recent_payment_rail is not None:
+        # The referent is intentionally one turn wide. An unrelated sentence cannot revive a
+        # payment several questions later merely because it contains the word "otro".
+        was = was.without_recent_payment()
+
+    # One reading, before any of the three decisions that need one. It is asked after the
+    # confirmation and open-payment branches above on purpose: those turns belong to a state
+    # machine whatever the words mean, and paying to classify them would be paying for nothing.
+    analysis = await turn_analyzer.analyze(
+        request.question, conversation=was, interpreter=reads, today=today
+    )
+    if analysis.is_compound:
+        compound = await _compound_read_reply(
+            analysis.clauses,
+            was,
+            who=who,
+            today=today,
+            queries=queries,
+        )
+        return compound or _compound_reply(analysis.clauses, was)
+    read_as = analysis.intent
+
+    continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
         # A payment under way takes the reply that answers its question, before anything is
         # classified. "15 euros" is an amount because something asked for one.
-        return await _as_payment(request.question, who, commands, payments_on, was, continuing)
+        return await _as_payment(
+            request.question, who, commands, payments_on, was, continuing, key=key
+        )
 
-    if payment_router.is_payment(request.question):
+    if _is_an_order_to_pay(read_as, request.question, was):
         # One chat box, two paths, and the decision is deterministic — a client cannot make it,
         # because making it is what this router is for.
-        return await _as_payment(request.question, who, commands, payments_on, was)
+        return await _as_payment(request.question, who, commands, payments_on, was, key=key)
 
     result = await queries.ask(
         AskFinancialQuestionQuery(
@@ -823,8 +1260,14 @@ async def ask(
             # disagree about "hoy" on the same phone.
             reporting_timezone=who.reporting_timezone,
             conversation=was,
+            # The reading this route already made. Handed down rather than made again — see the
+            # field. Everything above decided *not* to pay on the strength of it, and the handler
+            # deciding otherwise from a second reading is the disagreement this removes.
+            intent=read_as,
         )
     )
+    if result.outcome == Spoken.TRANSFER_READY.value:
+        return await _as_own_transfer(result, who, commands, payments_on, key=key)
     return llm_mapper.question_to_dto(result)
 
 
@@ -844,6 +1287,8 @@ async def ask_streaming(
     # continued. This route takes its own handler rather than the bus for the answer itself; the
     # directory is an ordinary query and goes through the bus like everything else.
     queries: Queries,
+    attempt: Attempt,
+    reads: Reads,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -856,10 +1301,22 @@ async def ask_streaming(
     plan that misread the question can be seen for what it is while that still helps —
     rather than arriving as a footnote under a number the user has already read.
     """
+    key = attempt
     was = _conversation_of(request)
 
     if isinstance(was.active, PaymentConfirmation):
-        return _confirmation_events(request.question, who, commands, payments_on, was, was.active)
+        # Here too, and for the reason every payment branch is duplicated: the browser types into
+        # this endpoint, so a rule that only held on the other one is a rule the conversation never
+        # got.
+        previewed = was.active
+        if await _abandons_a_transfer_preview(
+            request.question, who, commands, payments_on, previewed
+        ):
+            was = was.with_active(None)
+        else:
+            return _confirmation_events(
+                request.question, who, commands, payments_on, was, previewed, key=key
+            )
 
     if isinstance(was.active, PaymentInProgress):
         paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
@@ -869,20 +1326,50 @@ async def ask_streaming(
         if immediate is not None:
             return _open_payment_events(immediate)
 
-    continuing = await _continues_a_payment(was, request.question, who, queries)
+    repeated = await _repeats_a_recent_payment(was, request.question, who, queries)
+    if repeated is not None:
+        return _payment_events(
+            request.question,
+            who,
+            commands,
+            payments_on,
+            was.without_recent_payment(),
+            repeated,
+            key=key,
+        )
+    if was.recent_payment_rail is not None:
+        was = was.without_recent_payment()
+
+    analysis = await turn_analyzer.analyze(
+        request.question, conversation=was, interpreter=reads, today=today
+    )
+    if analysis.is_compound:
+        compound = await _compound_read_reply(
+            analysis.clauses,
+            was,
+            who=who,
+            today=today,
+            queries=queries,
+        )
+        return _open_payment_events(compound or _compound_reply(analysis.clauses, was))
+    read_as = analysis.intent
+
+    continuing = await _continues_a_payment(read_as, was, request.question, who, queries)
     if continuing is not None:
         # Here as well as on the other route, and for the reason written below: the web client types
         # into *this* endpoint, so a payment that could only be continued on the other one was a
         # payment that could not be continued at all. The first version of this change wired the
         # routing into `/v1/questions` alone and the browser conversation still broke.
-        return _payment_events(request.question, who, commands, payments_on, was, continuing)
+        return _payment_events(
+            request.question, who, commands, payments_on, was, continuing, key=key
+        )
 
-    if payment_router.is_payment(request.question):
+    if _is_an_order_to_pay(read_as, request.question, was):
         # Routed here too, and not only on the other route. A demo that shows stages on screen uses
         # the stream, so leaving this out made the endpoint the user actually types into the one
         # that could not pay — the same sentence answering differently depending on which endpoint
         # a client happened to call.
-        return _payment_events(request.question, who, commands, payments_on, was)
+        return _payment_events(request.question, who, commands, payments_on, was, key=key)
 
     question = AskFinancialQuestionQuery(
         sentence=request.question,
@@ -893,12 +1380,19 @@ async def ask_streaming(
         # conversation never used.
         reporting_timezone=who.reporting_timezone,
         conversation=was,
+        intent=read_as,
     )
 
     async def events() -> AsyncIterator[str]:
         async for step in asking.stream(question):
             if isinstance(step, Stage):
                 payload = {"type": "stage", "name": step.name, "detail": step.detail}
+            elif step.outcome == Spoken.TRANSFER_READY.value:
+                # Staged here as well as on the other route, for the reason the payment branches
+                # above are: the browser types into *this* endpoint, so a transfer that could only
+                # be confirmed on the other one could not be confirmed at all.
+                staged = await _as_own_transfer(step, who, commands, payments_on, key=key)
+                payload = {"type": "answer", **staged.model_dump()}
             else:
                 payload = {"type": "answer", **llm_mapper.question_to_dto(step).model_dump()}
             yield _sse(payload)

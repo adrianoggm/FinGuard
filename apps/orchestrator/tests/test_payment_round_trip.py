@@ -55,6 +55,7 @@ CONTACTS = ListContactsResult(
     contacts=[
         ContactRow(str(uuid.UUID(int=1)), "Marta Ruiz Gomez", "+34600111222"),
         ContactRow(str(uuid.UUID(int=2)), "Marta Solis Vega", "+34600333444"),
+        ContactRow(str(uuid.UUID(int=3)), "Aitor Beltran Diaz", "+34600444555"),
     ]
 )
 
@@ -172,6 +173,37 @@ def test_an_amount_continues_the_payment_it_was_asked_for() -> None:
     assert preparing.commands[0].pending is not None
     assert preparing.commands[0].pending.recipient_name == "Marta Solis Vega"
     assert body["intent_id"] == str(INTENT)
+
+
+def test_an_immediate_other_payment_reuses_only_the_completed_rail() -> None:
+    """The amount and recipient are fresh and grounded; only ``otro`` comes from the prior turn."""
+    client, preparing, asking = client_for()
+
+    body = client.post(
+        "/v1/questions",
+        json={
+            "question": "y ahora otro de 14 a Aitor",
+            "conversation": {"recent_payment_rail": "BIZUM"},
+        },
+    ).json()
+
+    assert asking.sentences == []
+    assert len(preparing.commands) == 1
+    pending = preparing.commands[0].pending
+    assert pending is not None and pending.recipient_name is None
+    assert pending.amount_minor is None
+    assert preparing.commands[0].sentence == "y ahora otro de 14 a Aitor"
+    assert body["outcome"] == PaymentOutcome.AWAITING_CONFIRMATION.value
+    assert body["conversation"]["recent_payment_rail"] is None
+
+
+def test_other_does_not_start_a_payment_without_a_recent_success() -> None:
+    client, preparing, asking = client_for()
+
+    client.post("/v1/questions", json={"question": "y ahora otro de 14 a Aitor"})
+
+    assert preparing.commands == []
+    assert asking.sentences == ["y ahora otro de 14 a Aitor"]
 
 
 def test_a_name_continues_a_payment_that_is_missing_one() -> None:

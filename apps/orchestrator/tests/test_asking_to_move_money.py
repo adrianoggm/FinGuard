@@ -12,15 +12,37 @@ would answer somebody with an offer to move money they never asked to move.
 import uuid
 from datetime import UTC, date, datetime
 
+import pytest
+
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
 )
 from finguard_orchestrator.domain.enums import Spoken
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
-from finguard_orchestrator.domain.models.conversation import Slot, Workflow, workflow_of
+from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
+    Conversation,
+    Slot,
+    TransferInProgress,
+)
 from finguard_orchestrator.domain.services import intent_router
 from finguard_orchestrator.domain.services.intent_router import Intent
+
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 5)
@@ -28,6 +50,7 @@ TODAY = date(2026, 8, 5)
 CURRENT = Holding(ACCOUNT, "CURRENT", "Cuenta corriente", "EUR", 227_042)
 PIGGY = Holding(uuid.UUID(int=2), "SAVINGS", "Hucha", "EUR", 548_550)
 FUND = Holding(uuid.UUID(int=3), "ASSET", "Fondo indexado", "EUR", 270_000)
+VACATIONS = Holding(uuid.UUID(int=5), "SAVINGS", "Vacaciones", "EUR", 75_000)
 
 
 def summary(*holdings: Holding) -> AccountSummary:
@@ -55,16 +78,19 @@ class Never:
         raise AssertionError(f"a transfer sentence reached {name}")
 
 
-async def said(sentence: str, of: AccountSummary | None = None):  # type: ignore[no-untyped-def]
+async def said(sentence: str, of: AccountSummary | None = None, was: Conversation = IDLE):  # type: ignore[no-untyped-def]
     handler = AskFinancialQuestionHandler(
         Never(),  # type: ignore[arg-type]
         Never(),  # type: ignore[arg-type]
         accounts=FakeBank(of or summary()),  # type: ignore[arg-type]
-        contacts=Never(),  # type: ignore[arg-type]
+        contacts=Never(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
     last = None
     async for step in handler.stream(
-        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+        AskFinancialQuestionQuery(
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=was
+        )
     ):
         if not hasattr(step, "name"):
             last = step
@@ -88,9 +114,66 @@ def test_a_question_carrying_the_same_words_is_not() -> None:
         assert intent_router.route(sentence, has_previous=False) is not Intent.OWN_TRANSFER
 
 
+def test_wanting_information_about_transfers_does_not_prepare_one() -> None:
+    sentence = "Quiero saber cómo transferir dinero entre mis cuentas"
+
+    assert intent_router.route(sentence, has_previous=False) is Intent.FINANCIAL_QUERY
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Quiero transferir dinero de una de mis cuentas a otra",
+        "Tengo que pasar dinero de una cuenta mía a otra cuenta que también es mía",
+        "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?",
+        "Necesito trasvasar dinero de una cuenta a otra, ambas mías",
+    ],
+)
+def test_explicitly_owned_account_relationships_are_internal_transfers(sentence: str) -> None:
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
+
+
+def test_a_damaged_own_account_phrase_stays_on_the_safe_internal_rail() -> None:
+    sentence = "Quiero mover dinreo de una cuenta a otr, ¿es posible?"
+
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
+
+
+def test_two_generic_accounts_offer_only_the_holders_internal_accounts() -> None:
+    sentence = "Quiero transferir dinero de una cuenta a otra cuenta"
+
+    # OWN_TRANSFER can only resolve an account from the authenticated holder's directory; this
+    # route cannot invent an external beneficiary or prepare a third-party transfer.
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
+
+
 def test_a_moving_verb_with_no_account_is_not() -> None:
     """ "Mueve el dinero" is not an instruction anybody could act on."""
     assert intent_router.route("mueve el dinero", has_previous=False) is not Intent.OWN_TRANSFER
+
+
+def test_an_order_to_move_a_stated_sum_is_one_even_with_nowhere_to_put_it() -> None:
+    """The destination is what this path asks for, so its absence cannot be what disqualifies it.
+
+    "Mueve 500 € a algún sitio" names no account, so the sentence fell past the transfer and was
+    handed to the financial planner — a query about a period, asked of an order to move money. The
+    amount is the half that says an order was given; the missing half is the question the transfer
+    already knows how to ask, with the accounts listed and the amount kept.
+    """
+    assert intent_router.route("mueve 500 € a algún sitio", has_previous=False) is (
+        Intent.OWN_TRANSFER
+    )
+
+
+def test_a_bare_amount_is_still_nobody_s() -> None:
+    """The other side of the same rule, and the reason it is the verb *and* the sum.
+
+    An amount arriving with nothing open is deliberately unclaimed — two episodes exist to keep a
+    payment from completing itself with a number — and reading one as a transfer would be that
+    defect on the other rail.
+    """
+    assert intent_router.route("500", has_previous=False) is not Intent.OWN_TRANSFER
+    assert intent_router.route("mejor 1000", has_previous=False) is not Intent.OWN_TRANSFER
 
 
 def test_an_account_with_no_verb_is_a_question_about_it() -> None:
@@ -142,22 +225,97 @@ async def test_an_account_the_holder_does_not_have_is_said_plainly() -> None:
     assert "No tienes ninguna cuenta de ese tipo" in answer.text
 
 
+async def test_an_unknown_custom_account_keeps_the_transfer_open_without_guessing() -> None:
+    answer = await said("mueve 200 € a la cuenta Empresa", summary(CURRENT, VACATIONS))
+
+    assert answer.conversation.awaiting is Slot.ACCOUNT
+    assert "No encuentro una cuenta con ese nombre" in answer.text
+    assert "Cuenta corriente" in answer.text and "Vacaciones" in answer.text
+    active = answer.conversation.active
+    assert isinstance(active, TransferInProgress)
+    assert active.amount_minor == 20_000
+
+
 # --- the one question this service asks about an account --------------------------------
 
 
-async def test_two_accounts_of_one_kind_is_the_one_thing_worth_asking() -> None:
-    """`Slot.ACCOUNT` finally has an emitter, and this is why it took one.
+async def test_two_accounts_of_one_kind_is_asked_about_and_the_answer_is_heard() -> None:
+    """The ambiguity is real, so the question has to be asked — and for one release it was a
+    question this path could not hear the answer to.
 
-    Every other ambiguity here is better answered with a breakdown than with a question — showing
-    every account lets the reader take what they meant. An instruction cannot be answered that way:
-    either the money moves or it does not, and moving it into an account nobody named is an act
-    rather than a sentence.
+    Nothing here held state: reading a sentence was all it did, and preparing is a
+    `payments:prepare` scope on another route. So the amount was already gone when the reply
+    arrived, and "¿a cuál lo muevo?" answered "a Hucha" fell through to the financial planner, which
+    asked which period. Reported twice from real conversations, once for this question and once for
+    the amount.
+
+    The turn keeps what it read, so the reply only has to name the account.
     """
     other = Holding(uuid.UUID(int=4), "SAVINGS", "Hucha viajes", "EUR", 100_00)
+    accounts = summary(CURRENT, PIGGY, other)
 
-    answer = await said("mueve 200 € a la hucha", summary(CURRENT, PIGGY, other))
+    asked = await said("mueve 200 € a la hucha", accounts)
+
+    assert "Hucha" in asked.text and "Hucha viajes" in asked.text
+    assert asked.conversation.awaiting is Slot.ACCOUNT
+    active = asked.conversation.active
+    assert isinstance(active, TransferInProgress)
+    assert active.amount_minor == 200_00, "the amount was dropped and cannot be asked for twice"
+
+    finished = await said("a Hucha viajes", accounts, was=asked.conversation)
+
+    assert finished.outcome == Spoken.TRANSFER_READY.value
+    assert finished.total_minor == 200_00
+    assert "Hucha viajes" in finished.text
+    assert finished.conversation.active is None
+
+
+async def test_the_amount_asked_for_is_the_amount_it_hears() -> None:
+    """The other half of the same defect, and the turn that reported it: "¿Cuánto quieres mover a
+    Hucha?" answered "1000 pavos" came back "¿de qué periodo?"."""
+    asked = await said("quiero traspasar del fondo a hucha")
+    assert asked.conversation.awaiting is Slot.AMOUNT
+
+    finished = await said("1000 pavos", was=asked.conversation)
+
+    assert finished.outcome == Spoken.TRANSFER_READY.value
+    assert finished.total_minor == 100_000
+    assert "Hucha" in finished.text
+
+
+async def test_a_transfer_hears_an_amount_written_in_words() -> None:
+    answer = await said("mueve doscientos euros a la hucha")
+
+    assert answer.outcome == Spoken.TRANSFER_READY.value
+    assert answer.total_minor == 20_000
+
+
+async def test_a_transfer_resolves_the_holders_custom_account_name() -> None:
+    answer = await said(
+        "mueve doscientos euros a la cuenta Vacaciones",
+        summary(CURRENT, PIGGY, VACATIONS),
+    )
+
+    assert answer.outcome == Spoken.TRANSFER_READY.value
+    assert answer.total_minor == 20_000
+    assert "Vacaciones" in answer.text
+
+
+async def test_a_custom_name_answers_the_account_choice_the_service_asked() -> None:
+    accounts = summary(CURRENT, VACATIONS)
+    asked = await said("quiero transferir dinero entre mis cuentas", accounts)
+
+    finished = await said("Vacaciones", accounts, was=asked.conversation)
+
+    assert finished.conversation.awaiting is Slot.AMOUNT
+    assert "Vacaciones" in finished.text
+
+
+async def test_a_transfer_that_names_no_account_asks_which_rather_than_refusing() -> None:
+    """ "Me gustaría transferir dinero entre cuentas" is an instruction with the destination left
+    out. It used to reach the capability guard and be refused with a sentence about *querying* the
+    transfers between accounts — a refusal about reading, to somebody asking to write."""
+    answer = await said("me gustaria transferir dinero entre cuentas")
 
     assert answer.conversation.awaiting is Slot.ACCOUNT
-    assert workflow_of(answer.conversation.active) is Workflow.FINANCIAL_CLARIFICATION
-    assert "Hucha" in answer.text and "Hucha viajes" in answer.text
-    assert "¿A cuál" in answer.text
+    assert "Hucha" in answer.text and "Cuenta corriente" in answer.text
