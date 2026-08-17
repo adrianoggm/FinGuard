@@ -62,6 +62,8 @@ async def test_adapter_sends_real_payload_auth_and_stable_key() -> None:
                 "text": "saldo: 20 €",
                 "conversation": {"workflow": None, "last": "saldo"},
                 "outcome": "ANSWERED",
+                "groups": [{"key": "Cuenta", "total_minor": 2000, "movement_count": 1}],
+                "future_visual": {"kind": "bar"},
             },
         )
     )
@@ -84,6 +86,13 @@ async def test_adapter_sends_real_payload_auth_and_stable_key() -> None:
     assert stages == [("reading", None)]
     assert reply.text == "saldo: 20 €"
     assert reply.conversation == {"workflow": None, "last": "saldo"}
+    assert reply.answer == {
+        "text": "saldo: 20 €",
+        "conversation": {"workflow": None, "last": "saldo"},
+        "outcome": "ANSWERED",
+        "groups": [{"key": "Cuenta", "total_minor": 2000, "movement_count": 1}],
+        "future_visual": {"kind": "bar"},
+    }
     assert not reply.payment_confirmation_required
 
 

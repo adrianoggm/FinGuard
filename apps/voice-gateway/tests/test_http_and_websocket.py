@@ -15,6 +15,7 @@ from finguard_voice_gateway.app import (
     _process_turn,
     app,
     handle_control,
+    process_turn,
     receive_audio,
     services,
     sessions,
@@ -129,6 +130,10 @@ def test_fake_text_turn_and_spoken_payment_confirmation_refusal() -> None:
             response_text = response["text"]
             assert isinstance(response_text, str)
             assert "He entendido" in response_text
+            response_answer = response["answer"]
+            assert isinstance(response_answer, dict)
+            assert response_answer["text"] == response_text
+            assert response_answer["groups"] == []
             assert response["paymentConfirmationRequired"] is False
     sessions.clear()
 
@@ -186,13 +191,15 @@ class _Socket:
 
 
 @pytest.mark.asyncio
-async def test_barge_in_reports_old_turn_before_new_turn() -> None:
+@pytest.mark.parametrize("active_state", [SessionState.THINKING, SessionState.SPEAKING])
+async def test_barge_in_reports_old_turn_before_new_turn(active_state: SessionState) -> None:
     session = VoiceSession("session", "credential", services)
     session.machine.configure()
     session.machine.start_input("old-turn")
     session.machine.commit()
     session.machine.thinking()
-    session.machine.speaking()
+    if active_state == SessionState.SPEAKING:
+        session.machine.speaking()
     socket = _Socket()
     await handle_control(
         socket,
@@ -203,6 +210,71 @@ async def test_barge_in_reports_old_turn_before_new_turn() -> None:
     assert socket.events[0]["turnId"] == "old-turn"
     assert session.machine.state.value == SessionState.LISTENING.value
     assert session.machine.turn_id == "new-turn"
+
+
+@pytest.mark.asyncio
+async def test_barge_in_ack_is_one_shot_and_has_no_waiting_window() -> None:
+    ticks = iter((0.0, 0.010, 0.020, 0.030, 0.040, 0.050))
+    session = VoiceSession("session", "credential", services, monotonic=lambda: next(ticks))
+    session.machine.configure()
+    session.machine.start_input("old-turn")
+    session.machine.commit()
+    session.machine.thinking()
+    socket = _Socket()
+    await handle_control(
+        socket,
+        session,
+        parse_event(json.loads(_control("input.start", "session", 0, "new-turn"))),
+    )
+    await handle_control(
+        socket,
+        session,
+        parse_event(json.loads(_control("response.cancel", "session", 1))),
+    )
+    assert session.last_cancel_ack_ms == pytest.approx(10.0)
+    assert session.last_cancel_ack_ms is not None
+    assert session.last_cancel_ack_ms < 250
+    assert [event["type"] for event in socket.events].count("response.cancelled") == 1
+
+
+@pytest.mark.asyncio
+async def test_barge_in_does_not_wait_for_a_provider_that_suppresses_cancellation() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stubborn_provider() -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release.wait()
+
+    session = VoiceSession("session", "credential", services)
+    session.machine.configure()
+    session.machine.start_input("old-turn")
+    session.machine.commit()
+    session.machine.thinking()
+    session.task = asyncio.create_task(stubborn_provider())
+    await entered.wait()
+    socket = _Socket()
+
+    await asyncio.wait_for(
+        handle_control(
+            socket,
+            session,
+            parse_event(json.loads(_control("input.start", "session", 0, "new-turn"))),
+        ),
+        timeout=0.25,
+    )
+
+    assert session.machine.state == SessionState.LISTENING
+    assert session.machine.turn_id == "new-turn"
+    assert socket.events[0]["type"] == "response.cancelled"
+    assert len(session.retired_tasks) == 1
+    release.set()
+    await asyncio.gather(*session.retired_tasks)
+    await asyncio.sleep(0)
+    assert session.retired_tasks == set()
 
 
 @pytest.mark.asyncio
@@ -380,6 +452,53 @@ class _FailingTTS:
             yield b"unreachable"
 
         return stream()
+
+
+class _CancellationResistantTTS:
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def synthesize(self, text: str, *, cancelled: Callable[[], bool]) -> AsyncIterator[bytes]:
+        async def stream() -> AsyncIterator[bytes]:
+            self.entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await self.release.wait()
+            yield b"stale audio"
+
+        return stream()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_speaking_turn_does_not_commit_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resistant_tts = _CancellationResistantTTS()
+    monkeypatch.setattr(services, "tts", resistant_tts)
+    session = VoiceSession("session", "credential", services)
+    original_conversation = {"last": "previous"}
+    session.conversation = original_conversation
+    session.machine.configure()
+    session.machine.start_input("old-turn")
+    session.audio.extend(b"old text")
+    session.machine.commit()
+    transport = _RecordingTransport()
+    session.task = asyncio.create_task(process_turn(transport, session, "old-turn"))
+    await resistant_tts.entered.wait()
+
+    await handle_control(
+        transport,
+        session,
+        parse_event(json.loads(_control("input.start", "session", 0, "new-turn"))),
+    )
+    resistant_tts.release.set()
+    await asyncio.gather(*session.retired_tasks)
+
+    assert session.conversation is original_conversation
+    assert session.machine.turn_id == "new-turn"
+    assert transport.audio == []
 
 
 @pytest.mark.parametrize("provider", ["stt", "tts"])

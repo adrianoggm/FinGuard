@@ -40,8 +40,8 @@ class SessionStateMachine:
         self.state = SessionState.READY
 
     def start_input(self, turn_id: str) -> bool:
-        barged_in = self.state == SessionState.SPEAKING
-        if self.state not in (SessionState.READY, SessionState.SPEAKING):
+        barged_in = self.state in (SessionState.THINKING, SessionState.SPEAKING)
+        if self.state not in (SessionState.READY, SessionState.THINKING, SessionState.SPEAKING):
             raise SessionProtocolError("INVALID_STATE", "input.start is not valid now")
         self.state = SessionState.LISTENING
         self.turn_id = turn_id

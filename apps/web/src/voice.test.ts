@@ -59,9 +59,9 @@ describe("PcmPlayer contract G", () => {
 });
 
 describe("VoiceClient transport A-J", () => {
-  function makeClient() {
+  function makeClient(uuid: (() => string) = () => "turn-1") {
     const fakeSocket = socketFake(); const media = mediaFake(); const order: string[] = []; const capture = captureContext(48_000, () => { order.push(typeof fakeSocket.sent.at(-1) === "string" ? JSON.parse(fakeSocket.sent.at(-1) as string).type : "binary"); }); const playback = playbackContext(); const statuses: string[] = []; const finished: string[] = []; const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
-    const client = new VoiceClient({ gatewayUrl: "http://gateway.test", token: "secret", fetch: async (input, init) => { fetchCalls.push({ input, init }); return new Response(json({ sessionId: "s-1", ticket: "opaque-ticket", websocketUrl: "/v1/voice/sessions/s-1" }), { status: 200, headers: { "content-type": "application/json" } }); }, websocket: (_url, protocols) => { expect(protocols).toEqual([VOICE_SUBPROTOCOL, "opaque-ticket"]); expect(_url).not.toContain("ticket"); return fakeSocket.socket; }, mediaDevices: media.media, captureContext: () => capture.context, player: new PcmPlayer(() => playback.context), uuid: () => "turn-1", clock: () => "2026-08-17T00:00:00.000Z", onEvent: () => undefined, onStatus: (status, error) => { statuses.push(error ? `${status}:${error}` : status); }, onFinished: () => { finished.push("finished"); } });
+    const client = new VoiceClient({ gatewayUrl: "http://gateway.test", token: "secret", fetch: async (input, init) => { fetchCalls.push({ input, init }); return new Response(json({ sessionId: "s-1", ticket: "opaque-ticket", websocketUrl: "/v1/voice/sessions/s-1" }), { status: 200, headers: { "content-type": "application/json" } }); }, websocket: (_url, protocols) => { expect(protocols).toEqual([VOICE_SUBPROTOCOL, "opaque-ticket"]); expect(_url).not.toContain("ticket"); return fakeSocket.socket; }, mediaDevices: media.media, captureContext: () => capture.context, player: new PcmPlayer(() => playback.context), uuid, clock: () => "2026-08-17T00:00:00.000Z", onEvent: () => undefined, onStatus: (status, error) => { statuses.push(error ? `${status}:${error}` : status); }, onFinished: () => { finished.push("finished"); } });
     return { client, fakeSocket, media, capture, playback, statuses, finished, order, fetchCalls };
   }
   async function ready() { const setup = makeClient(); const promise = setup.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open(); expect(setup.fakeSocket.sent).toHaveLength(1); setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; expect(setup.statuses).toEqual(["connecting", "listening"]); expect(JSON.parse(setup.fakeSocket.sent[1] as string).type).toBe("input.start"); return setup; }
@@ -99,4 +99,18 @@ describe("VoiceClient transport A-J", () => {
     const client = new VoiceClient({ gatewayUrl: "http://gateway.test", token: "x", fetch: async () => new Response(json({ sessionId: "s-1", ticket: "t", websocketUrl: "/v1/voice/sessions/s-1" })), websocket: () => setup.fakeSocket.socket, mediaDevices: setup.media.media, captureContext: () => context, player: new PcmPlayer(() => setup.playback.context), url: urls, onEvent: () => undefined, onStatus: () => undefined }); const promise = client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); setup.fakeSocket.open(); setup.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; await client.close(); await client.close(); expect(revoked).toEqual(["blob:capture"]); expect(contextsClosed).toBe(1); expect(setup.media.stopped()).toBe(1); expect(setup.capture.stats.sourceDisconnects).toBe(1); const releasedWorklet = workletNode as { port: { onmessage: unknown }; disconnects: number } | null; expect(releasedWorklet?.port.onmessage).toBeNull(); expect(releasedWorklet?.disconnects).toBe(1); expect(setup.fakeSocket.socket.readyState).toBe(3); vi.unstubAllGlobals();
   });
   it("cancels playback as a one-shot and reports idle once", async () => { const setup = await ready(); setup.client.cancel(); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(setup.finished).toHaveLength(1); expect(setup.statuses.at(-1)).toBe("idle"); expect(setup.fakeSocket.socket.readyState).toBe(3); });
+  it("barge-in stops playback synchronously and orders cancel before the new start", async () => {
+    let next = 0;
+    const setup = await (async () => { const value = makeClient(() => `turn-${++next}`); const promise = value.client.start(); for (let i = 0; i < 10; i += 1) await Promise.resolve(); value.fakeSocket.open(); value.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 })); await promise; return value; })();
+    setup.client.stopCapture();
+    setup.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 }));
+    setup.fakeSocket.message(new Uint8Array([0, 0]).buffer);
+    const before = setup.fakeSocket.sent.length;
+    await setup.client.start();
+    expect(setup.fakeSocket.sent.slice(before, before + 2).map((value) => typeof value === "string" ? JSON.parse(value).type : "binary")).toEqual(["response.cancel", "input.start"]);
+    expect(setup.playback.sources).toHaveLength(1);
+    setup.fakeSocket.message(event("response.cancelled", "s-1", 2, { turnId: "turn-1" }));
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 3, { turnId: "turn-1", text: "stale" }));
+    expect(setup.statuses.at(-1)).toBe("listening");
+  });
 });

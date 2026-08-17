@@ -24,13 +24,14 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, createVoiceClient, newAttempt, type Answer, type ConversationState } from "./api";
+import { ask, createVoiceClient, newAttempt, validateVoiceAnswer, type Answer, type ConversationState } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
+  transcribing: "Transcribiendo lo que has dicho…",
   reading: "Leyendo lo que has pedido…",
   planning: "Pensando la consulta…",
   planned: "Consulta lista",
@@ -67,6 +68,85 @@ type Props = {
   onSettled: () => void;
 };
 
+type VoiceControlClient = Pick<VoiceClient, "start" | "stopCapture" | "cancel" | "close">;
+
+type VoiceUiUpdate = {
+  thread?: Thread;
+  stage?: string | null;
+  clearVoiceError?: boolean;
+};
+
+const ONE_SHOT_VOICE_EVENTS = new Set([
+  "transcript.final",
+  "assistant.text.final",
+  "turn.completed",
+  "response.cancelled",
+]);
+
+export function voiceEventIdentity(event: VoiceEvent): string {
+  const suffix = ONE_SHOT_VOICE_EVENTS.has(event.type)
+    ? event.turnId ?? "session"
+    : `${event.turnId ?? "session"}:${event.sequence}`;
+  return `${event.type}:${suffix}`;
+}
+
+/** Pure state transition shared by the callback and its same-tick event tests. */
+export function applyVoiceEvent(
+  current: Thread,
+  event: VoiceEvent,
+  onSettled: () => void,
+): VoiceUiUpdate {
+  if (event.type === "assistant.stage") {
+    return { stage: STAGES[String(event.stage)] ?? null };
+  }
+  if (event.type === "transcript.final") {
+    const text = typeof event.text === "string" ? event.text : "";
+    return text
+      ? { thread: { ...current, turns: [...current.turns, { who: "user", text }] }, clearVoiceError: true }
+      : { clearVoiceError: true };
+  }
+  if (event.type === "assistant.text.final") {
+    const answer = validateVoiceAnswer(event.answer);
+    const turns = [...current.turns, { who: "assistant" as const, answer }];
+    return { thread: settled(current, turns, answer, onSettled), stage: null };
+  }
+  if (event.type === "turn.completed") {
+    const conversation = event.conversation;
+    if (
+      conversation !== null &&
+      (typeof conversation !== "object" || Array.isArray(conversation))
+    ) {
+      throw new Error("Conversación de voz inválida.");
+    }
+    return conversation === null
+      ? { stage: null }
+      : { thread: { ...current, conversation: conversation as ConversationState }, stage: null };
+  }
+  return {};
+}
+
+/** Apply the action represented by the voice button to the current session. */
+export async function voiceButtonAction(
+  status: VoiceStatus,
+  client: VoiceControlClient,
+): Promise<"stopped" | "barge-in" | "cancelled"> {
+  if (status === "listening") {
+    client.stopCapture();
+    return "stopped";
+  }
+  if (status === "processing" || status === "speaking") {
+    // VoiceClient.start() reuses the open session and performs the fencing/cancellation handshake.
+    await client.start();
+    return "barge-in";
+  }
+  if (status === "connecting") {
+    client.cancel();
+    await client.close();
+    return "cancelled";
+  }
+  return "cancelled";
+}
+
 export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [draft, setDraft] = useState("");
   const [stage, setStage] = useState<string | null>(null);
@@ -82,17 +162,44 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const voice = useRef<VoiceClient | null>(null);
+  const threadRef = useRef(thread);
+  const seenVoiceEvents = useRef(new Set<string>());
+  threadRef.current = thread;
 
   useEffect(() => () => { void voice.current?.close(); }, []);
 
   async function toggleVoice() {
     if (voice.current && voiceStatus !== "idle" && voiceStatus !== "error") {
-      if (voiceStatus === "listening") voice.current.stopCapture();
-      else { voice.current.cancel(); await voice.current.close(); voice.current = null; setVoiceStatus("idle"); }
+      const action = await voiceButtonAction(voiceStatus, voice.current);
+      if (action === "cancelled") {
+        voice.current = null;
+        setVoiceStatus("idle");
+      }
       return;
     }
     setVoiceError(null);
-    const client = createVoiceClient({ onStatus: (status, error) => { setVoiceStatus(status); if (error) setVoiceError(error); }, onFinished: () => { voice.current = null; }, onEvent: (event: VoiceEvent) => { if (event.type === "transcript.final") setVoiceError(null); } });
+    const client = createVoiceClient({
+      onStatus: (status, error) => { setVoiceStatus(status); if (error) setVoiceError(error); },
+      onFinished: () => { voice.current = null; },
+      onEvent: (event: VoiceEvent) => {
+        const key = voiceEventIdentity(event);
+        if (seenVoiceEvents.current.has(key)) return;
+        seenVoiceEvents.current.add(key);
+        try {
+          const update = applyVoiceEvent(threadRef.current, event, onSettled);
+          if (update.clearVoiceError) setVoiceError(null);
+          if ("stage" in update) setStage(update.stage ?? null);
+          if (update.thread) {
+            // Update synchronously: WebSocket can deliver transcript and answer before
+            // React renders the first onThread call.
+            threadRef.current = update.thread;
+            onThread(update.thread);
+          }
+        } catch (error) {
+          setVoiceError(error instanceof Error ? error.message : "Respuesta de voz inválida.");
+        }
+      },
+    });
     if (!client) return;
     voice.current = client;
     try { await client.start(); } catch { voice.current = null; }
@@ -159,8 +266,8 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         </button>
       </header>
       {voiceEnabled && <div className="voice-controls" aria-label="Control de voz">
-        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"}>
-          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : "⏹ Detener voz"}
+        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"} aria-label={voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : undefined}>
+          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "🎙️ Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "⏹ Detener voz"}
         </button>
         <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
         {voiceError && <small className="voice-error">{voiceError}</small>}

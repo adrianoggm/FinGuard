@@ -37,6 +37,17 @@ def test_cancel_is_idempotent() -> None:
     assert machine.cancel() is None
 
 
+def test_thinking_accepts_barge_in_as_a_new_turn() -> None:
+    machine = SessionStateMachine()
+    machine.configure()
+    machine.start_input("old-turn")
+    machine.commit()
+    machine.thinking()
+    assert machine.start_input("new-turn") is True
+    assert machine.state == SessionState.LISTENING
+    assert machine.turn_id == "new-turn"
+
+
 @pytest.mark.parametrize(
     "operation",
     ["configure", "start_input", "receive_audio", "commit", "thinking", "speaking"],

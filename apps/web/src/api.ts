@@ -304,6 +304,47 @@ export type Answer = {
   parts?: Answer[];
 };
 
+/** Narrow transport boundary for answers arriving through the voice gateway. */
+export function validateVoiceAnswer(value: unknown): Answer {
+  return validateVoiceAnswerAt(value, 0);
+}
+
+function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
+  if (depth > 2) throw new Error("Respuesta de voz inválida.");
+  if (!value || typeof value !== "object") throw new Error("Respuesta de voz inválida.");
+  const body = value as Record<string, unknown>;
+  const nullableString = (field: unknown) => field === null || typeof field === "string";
+  const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
+  const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  if (
+    typeof body.outcome !== "string" || typeof body.text !== "string" ||
+    !nullableString(body.question) || !nullableString(body.intent_id) ||
+    !nullableString(body.plan) ||
+    (body.conversation !== null &&
+      (typeof body.conversation !== "object" || Array.isArray(body.conversation))) ||
+    !nullableString(body.currency) || !nullableNumber(body.total_minor) ||
+    !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
+    !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
+    body.groups.some((group) => {
+      if (!group || typeof group !== "object") return true;
+      const item = group as Record<string, unknown>;
+      return typeof item.key !== "string" || !finiteNumber(item.total_minor) ||
+        !finiteNumber(item.movement_count);
+    }) || body.suggestions.some((item) => typeof item !== "string") ||
+    body.movements.some((movement) => {
+      if (!movement || typeof movement !== "object") return true;
+      const item = movement as Record<string, unknown>;
+      return typeof item.occurred_at !== "string" || typeof item.description !== "string" ||
+        !finiteNumber(item.amount_minor) || !nullableString(item.merchant_name) ||
+        !nullableString(item.category);
+    }) ||
+    (body.parts !== undefined && (!Array.isArray(body.parts) || body.parts.some((part) => {
+      try { validateVoiceAnswerAt(part, depth + 1); return false; } catch { return true; }
+    })))
+  ) throw new Error("Respuesta de voz inválida.");
+  return body as unknown as Answer;
+}
+
 export type Stage = { name: string };
 
 export class ApiError extends Error {
