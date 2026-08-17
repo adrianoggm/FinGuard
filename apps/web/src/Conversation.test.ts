@@ -27,6 +27,7 @@ import {
   quickReplies,
   recipientChoices,
   settled,
+  voiceButtonAction,
   withChoice,
   type Thread,
 } from "./Conversation";
@@ -159,6 +160,41 @@ describe("the state the service sent", () => {
     const after = settled(thread({ conversation: before }), [], answer(), noop);
 
     expect(after.conversation).toBe(before);
+  });
+});
+
+describe("voice button controls", () => {
+  it("reuses the existing client for barge-in without cancelling or closing it", async () => {
+    const calls: string[] = [];
+    const client = {
+      start: async () => { calls.push("start"); },
+      stopCapture: () => { calls.push("stopCapture"); },
+      cancel: () => { calls.push("cancel"); },
+      close: async () => { calls.push("close"); },
+    };
+
+    const first = await voiceButtonAction("processing", client);
+    const second = await voiceButtonAction("speaking", client);
+
+    expect(first).toBe("barge-in");
+    expect(second).toBe("barge-in");
+    expect(calls).toEqual(["start", "start"]);
+    expect(calls).not.toContain("cancel");
+    expect(calls).not.toContain("close");
+  });
+
+  it("keeps listening as the capture confirmation action", async () => {
+    const calls: string[] = [];
+    const client = {
+      start: async () => { calls.push("start"); },
+      stopCapture: () => { calls.push("stopCapture"); },
+      cancel: () => { calls.push("cancel"); },
+      close: async () => { calls.push("close"); },
+    };
+
+    await voiceButtonAction("listening", client);
+
+    expect(calls).toEqual(["stopCapture"]);
   });
 });
 

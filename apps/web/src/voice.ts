@@ -310,6 +310,9 @@ export class VoiceClient {
   private turnCompleted = false;
   private playerIdle = false;
   private finishCalled = false;
+  private turnState: "idle" | "listening" | "processing" | "speaking" = "idle";
+  private discardFencedAudio = false;
+  private bargeInActive = false;
   private readonly player: PcmPlayer;
 
   constructor(private readonly options: VoiceClientOptions) {
@@ -324,7 +327,12 @@ export class VoiceClient {
   }
 
   async start(): Promise<void> {
-    if (!this.closed) return;
+    if (!this.closed) {
+      if (this.turnState === "speaking" || this.turnState === "processing") {
+        await this.beginBargeIn();
+      }
+      return;
+    }
 
     this.resetForStart();
     this.options.onStatus("connecting");
@@ -356,6 +364,7 @@ export class VoiceClient {
       // emit a worklet block synchronously from connect(), so the gateway must see the turn first.
       this.turnId = (this.options.uuid ?? (() => crypto.randomUUID()))();
       this.send("input.start", this.turnId);
+      this.turnState = "listening";
       await this.connectCapture();
       this.options.onStatus("listening");
     } catch (error) {
@@ -371,13 +380,16 @@ export class VoiceClient {
     const tail = this.resampler?.flush();
     if (tail && tail.length > 0) this.sendBinary(pcm16le(tail));
     this.send("input.commit", this.turnId);
+    this.turnState = "processing";
     this.options.onStatus("processing");
   }
 
   cancel(): void {
     if (this.closed) return;
-    this.send("response.cancel");
+    this.send("response.cancel", this.turnId);
     this.player.clear();
+    this.discardFencedAudio = true;
+    this.turnState = "idle";
     this.audioCompleted = true;
     this.turnCompleted = true;
     this.finishAfterCancel();
@@ -401,6 +413,42 @@ export class VoiceClient {
     this.serverSequence = -1;
     this.sessionId = "";
     this.turnId = "";
+    this.turnState = "idle";
+    this.discardFencedAudio = false;
+    this.bargeInActive = false;
+  }
+
+  private async beginBargeIn(): Promise<void> {
+    if (this.closed || !this.socket || this.socket.readyState !== 1 || !this.turnId) return;
+
+    // This is deliberately synchronous before any await: audible output must stop
+    // before the cancellation and the next input can be observed by the gateway.
+    const previousTurn = this.turnId;
+    this.player.clear();
+    this.audioStarted = false;
+    this.audioCompleted = false;
+    this.turnCompleted = false;
+    this.playerIdle = false;
+    this.discardFencedAudio = true;
+    this.bargeInActive = true;
+    this.send("response.cancel", previousTurn);
+
+    this.turnId = (this.options.uuid ?? (() => crypto.randomUUID()))();
+    this.commitSent = false;
+    this.resampler = null;
+    this.send("input.start", this.turnId);
+    this.turnState = "listening";
+    try {
+      const media = this.options.mediaDevices ?? navigator.mediaDevices;
+      this.stream = await media.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true },
+      });
+      await this.connectCapture();
+      this.bargeInActive = false;
+      this.options.onStatus("listening");
+    } catch (error) {
+      await this.fail(mapCaptureError(error));
+    }
   }
 
   private async open(url: string, ticket: string): Promise<void> {
@@ -453,6 +501,7 @@ export class VoiceClient {
 
   private receive(data: unknown, onReady: () => void): void {
     if (data instanceof ArrayBuffer) {
+      if (this.discardFencedAudio && !this.audioStarted) return;
       if (
         !this.audioStarted ||
         this.audioCompleted ||
@@ -477,8 +526,6 @@ export class VoiceClient {
 
     validateEvent(event, this.sessionId, this.serverSequence);
     this.serverSequence = event.sequence;
-    this.options.onEvent(event);
-
     if (event.type === "session.ready") {
       if (this.ready) throw new Error("session.ready duplicado.");
       onReady();
@@ -490,8 +537,12 @@ export class VoiceClient {
       TURN_EVENTS.has(event.type) &&
       (typeof event.turnId !== "string" || event.turnId !== this.turnId)
     ) {
-      throw new Error("Evento de turno inválido.");
+      // The server sequence is still consumed above, but late work from a
+      // cancelled turn is intentionally invisible to the active turn.
+      return;
     }
+
+    this.options.onEvent(event);
 
     if (event.type === "audio.started") {
       if (event.sampleRate !== VOICE_OUTPUT_RATE || this.audioStarted) {
@@ -501,6 +552,9 @@ export class VoiceClient {
       this.audioCompleted = false;
       this.playerIdle = false;
       this.player.begin();
+      this.discardFencedAudio = false;
+      this.bargeInActive = false;
+      this.turnState = "speaking";
       this.options.onStatus("speaking");
     } else if (event.type === "audio.completed") {
       if (!this.audioStarted || this.audioCompleted) {
@@ -512,6 +566,7 @@ export class VoiceClient {
       this.turnCompleted = true;
       this.maybeFinish();
     } else if (event.type === "response.cancelled") {
+      if (this.bargeInActive) return;
       this.player.clear();
       this.audioCompleted = true;
       this.turnCompleted = true;
@@ -539,6 +594,7 @@ export class VoiceClient {
   private async finishTurn(): Promise<void> {
     if (this.closed || this.finishCalled) return;
     this.finishCalled = true;
+    this.turnState = "idle";
     await this.cleanup(false);
     this.options.onStatus("idle");
     this.options.onFinished?.();

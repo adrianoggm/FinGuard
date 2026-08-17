@@ -100,10 +100,12 @@ class VoiceSession:
         self.audio = bytearray()
         self.payment_confirmation_required = False
         self.task: asyncio.Task[None] | None = None
+        self.retired_tasks: set[asyncio.Task[None]] = set()
         self.cancel_generation = 0
         self.created = self.monotonic()
         self.last_activity = self.created
         self.server_sequence = 0
+        self.last_cancel_ack_ms: float | None = None
 
     def next_sequence(self) -> int:
         value = self.server_sequence
@@ -114,15 +116,27 @@ class VoiceSession:
         return generation != self.cancel_generation or self.machine.turn_id != turn_id
 
     async def cancel(self) -> str | None:
+        # Fence first: a non-abortable provider may return while its task is being
+        # cancelled, but it must observe the new generation/state immediately.
+        started = self.monotonic()
         self.cancel_generation += 1
+        old_turn_id = self.machine.cancel()
         if self.task is not None and not self.task.done():
-            self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                pass
+            task = self.task
+            task.cancel()
+            # Cancellation is a fence, not a promise that an external provider
+            # has stopped. Keep a strong reference and consume its result without
+            # delaying the acknowledgement or the next input.start.
+            self.retired_tasks.add(task)
+            task.add_done_callback(self._reap_retired_task)
         self.task = None
-        return self.machine.cancel()
+        self.last_cancel_ack_ms = (self.monotonic() - started) * 1000
+        return old_turn_id
+
+    def _reap_retired_task(self, task: asyncio.Task[None]) -> None:
+        self.retired_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
 
     def expired(self) -> bool:
         return self.remaining_seconds() <= 0
@@ -277,7 +291,9 @@ async def handle_control(
         )
     elif isinstance(control, StartEvent):
         old_turn_id = (
-            await session.cancel() if session.machine.state == SessionState.SPEAKING else None
+            await session.cancel()
+            if session.machine.state in (SessionState.THINKING, SessionState.SPEAKING)
+            else None
         )
         session.machine.start_input(control.turnId)
         if old_turn_id:
@@ -320,18 +336,26 @@ async def process_turn(websocket: VoiceTransport, session: VoiceSession, turn_id
     except asyncio.CancelledError:
         raise
     except AssistantClientError as exc:
+        if session.machine.turn_id != turn_id:
+            return
         session.machine.close()
         await send_error(websocket, session, exc.code, "assistant provider failed", fatal=True)
         await websocket.close(code=1011)
     except SpeechToTextError as exc:
+        if session.machine.turn_id != turn_id:
+            return
         session.machine.close()
         await send_error(websocket, session, exc.code, "speech provider failed", fatal=True)
         await websocket.close(code=1011)
     except TextToSpeechError as exc:
+        if session.machine.turn_id != turn_id:
+            return
         session.machine.close()
         await send_error(websocket, session, exc.code, "speech provider failed", fatal=True)
         await websocket.close(code=1011)
     except Exception as exc:
+        if session.machine.turn_id != turn_id:
+            return
         session.machine.close()
         await send_error(
             websocket,
@@ -404,8 +428,6 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         reply_text = reply.text
         reply_conversation = reply.conversation
         payment_required = reply.payment_confirmation_required
-        session.conversation = reply_conversation
-        session.payment_confirmation_required = payment_required
     session.machine.speaking()
     await websocket.send_json(
         event(
@@ -439,6 +461,12 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
             "audio.completed", session.session_id, turn_id=turn_id, sequence=session.next_sequence()
         )
     )
+    if session.cancelled(generation, turn_id):
+        return
+    # Conversation is committed only after the turn survives synthesis. A
+    # cancelled answer may have completed remotely, but it is discarded here.
+    session.conversation = reply_conversation
+    session.payment_confirmation_required = payment_required
     session.machine.completed()
     await websocket.send_json(
         event(

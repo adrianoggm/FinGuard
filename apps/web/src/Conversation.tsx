@@ -67,6 +67,30 @@ type Props = {
   onSettled: () => void;
 };
 
+type VoiceControlClient = Pick<VoiceClient, "start" | "stopCapture" | "cancel" | "close">;
+
+/** Apply the action represented by the voice button to the current session. */
+export async function voiceButtonAction(
+  status: VoiceStatus,
+  client: VoiceControlClient,
+): Promise<"stopped" | "barge-in" | "cancelled"> {
+  if (status === "listening") {
+    client.stopCapture();
+    return "stopped";
+  }
+  if (status === "processing" || status === "speaking") {
+    // VoiceClient.start() reuses the open session and performs the fencing/cancellation handshake.
+    await client.start();
+    return "barge-in";
+  }
+  if (status === "connecting") {
+    client.cancel();
+    await client.close();
+    return "cancelled";
+  }
+  return "cancelled";
+}
+
 export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [draft, setDraft] = useState("");
   const [stage, setStage] = useState<string | null>(null);
@@ -87,8 +111,11 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
 
   async function toggleVoice() {
     if (voice.current && voiceStatus !== "idle" && voiceStatus !== "error") {
-      if (voiceStatus === "listening") voice.current.stopCapture();
-      else { voice.current.cancel(); await voice.current.close(); voice.current = null; setVoiceStatus("idle"); }
+      const action = await voiceButtonAction(voiceStatus, voice.current);
+      if (action === "cancelled") {
+        voice.current = null;
+        setVoiceStatus("idle");
+      }
       return;
     }
     setVoiceError(null);
@@ -159,8 +186,8 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         </button>
       </header>
       {voiceEnabled && <div className="voice-controls" aria-label="Control de voz">
-        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"}>
-          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : "⏹ Detener voz"}
+        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"} aria-label={voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : undefined}>
+          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "🎙️ Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "⏹ Detener voz"}
         </button>
         <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
         {voiceError && <small className="voice-error">{voiceError}</small>}
