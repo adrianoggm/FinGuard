@@ -293,6 +293,37 @@ model as an unsupported request and is refused three times in five. Either phase
 comparisons or the demo script loses a step; deciding that late is how a script gets
 rewritten the night before.
 
+## 10. Phase 6 — real-time voice — planned
+
+The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate
+channel adapter rather than a second financial assistant:
+
+```text
+browser audio → voice-gateway → transcript → orchestrator → answer → voice-gateway → audio
+```
+
+`voice-gateway` owns streaming audio, session state, transcription, synthesis and cancellation. It
+may call only the orchestrator; it does not read banking, interpret a financial sentence or rebuild
+the conversation from prose. The orchestrator's typed `conversation` payload travels through the
+gateway unchanged.
+
+The implementation order is deliberately vertical:
+
+1. Versioned WebSocket events and a deterministic session state machine.
+2. `apps/voice-gateway` with fake STT, fake TTS and protocol tests.
+3. Authenticated HTTP/SSE connection to the existing orchestrator.
+4. Browser microphone capture and audio playback.
+5. Measured local STT and TTS adapters.
+6. Barge-in, cancellation fencing and backpressure.
+7. Synchronised text, audio and visual results, followed by a P50/P95 latency report.
+
+The first release may prepare a payment and speak its preview, but it cannot confirm one by voice.
+Recognition turning noise into “sí” is not evidence that a holder authorised moving money; the
+existing explicit control in the web client remains the confirmation boundary.
+
+The first implementation branch starts with contract fixtures and fakes. Choosing an STT or TTS
+engine before that would bind the protocol to whichever SDK happened to arrive first.
+
 ---
 
 ## The gates for turning `/v1/questions` on
