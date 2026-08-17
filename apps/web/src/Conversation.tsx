@@ -24,8 +24,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, newAttempt, type Answer, type ConversationState } from "./api";
+import { ask, createVoiceClient, newAttempt, type Answer, type ConversationState } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
+import { voiceEnabled } from "./api";
+import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
@@ -77,6 +79,24 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   // back must reach the same intent rather than making a second. Cleared once the turn is answered,
   // because saying the same thing again after an answer is a second payment and means to be.
   const attempt = useRef<{ text: string; key: string } | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voice = useRef<VoiceClient | null>(null);
+
+  useEffect(() => () => { void voice.current?.close(); }, []);
+
+  async function toggleVoice() {
+    if (voice.current && voiceStatus !== "idle" && voiceStatus !== "error") {
+      if (voiceStatus === "listening") voice.current.stopCapture();
+      else { voice.current.cancel(); await voice.current.close(); voice.current = null; setVoiceStatus("idle"); }
+      return;
+    }
+    setVoiceError(null);
+    const client = createVoiceClient({ onStatus: (status, error) => { setVoiceStatus(status); if (error) setVoiceError(error); }, onFinished: () => { voice.current = null; }, onEvent: (event: VoiceEvent) => { if (event.type === "transcript.final") setVoiceError(null); } });
+    if (!client) return;
+    voice.current = client;
+    try { await client.start(); } catch { voice.current = null; }
+  }
 
   function keyFor(text: string): string {
     if (attempt.current?.text !== text) attempt.current = { text, key: newAttempt() };
@@ -138,6 +158,13 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
           ✕
         </button>
       </header>
+      {voiceEnabled && <div className="voice-controls" aria-label="Control de voz">
+        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"}>
+          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : "⏹ Detener voz"}
+        </button>
+        <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
+        {voiceError && <small className="voice-error">{voiceError}</small>}
+      </div>}
 
       <div className="turns">
         {thread.turns.length === 0 && <Suggestions onPick={send} />}

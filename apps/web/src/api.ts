@@ -9,8 +9,25 @@
  * from an issuer and this becomes the one place that changes.
  */
 
+import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
+
 const BASE = (import.meta.env.VITE_ORCHESTRATOR_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const TOKEN = import.meta.env.VITE_ORCHESTRATOR_TOKEN ?? "";
+
+export const voiceGatewayUrl = import.meta.env.VITE_VOICE_GATEWAY_URL ?? "";
+export const voiceEnabled = voiceGatewayUrl !== "" && TOKEN !== "";
+
+export type VoiceCallbacks = {
+  onEvent: (event: VoiceEvent) => void;
+  onStatus: (status: VoiceStatus, error?: string) => void;
+  onFinished?: () => void;
+};
+
+export function createVoiceClient(callbacks: VoiceCallbacks): VoiceClient | null {
+  if (!voiceEnabled) return null;
+  // Keep the credential in this module's closure. The UI receives a configured client, never the token.
+  return new VoiceClient({ gatewayUrl: voiceGatewayUrl, token: TOKEN, ...callbacks });
+}
 
 export const configured = TOKEN !== "";
 
