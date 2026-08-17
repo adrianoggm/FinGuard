@@ -402,6 +402,13 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         reply_text = "No puedo confirmar pagos por voz; usa el control explícito en pantalla."
         reply_conversation = session.conversation
         payment_required = True
+        reply_answer: dict[str, object] = {
+            "outcome": "AWAITING_CONFIRMATION", "text": reply_text,
+            "question": None, "intent_id": None, "plan": None,
+            "conversation": reply_conversation, "currency": None,
+            "total_minor": None, "movement_count": 0, "groups": [],
+            "movements": [], "suggestions": [],
+        }
     else:
         async def relay_stage(stage: str, detail: str | None) -> None:
             if not session.cancelled(generation, turn_id):
@@ -428,6 +435,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         reply_text = reply.text
         reply_conversation = reply.conversation
         payment_required = reply.payment_confirmation_required
+        reply_answer = reply.answer
     session.machine.speaking()
     await websocket.send_json(
         event(
@@ -436,6 +444,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
             turn_id=turn_id,
             sequence=session.next_sequence(),
             text=reply_text,
+            answer=reply_answer,
             paymentConfirmationRequired=payment_required,
         )
     )

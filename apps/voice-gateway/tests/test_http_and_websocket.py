@@ -130,6 +130,10 @@ def test_fake_text_turn_and_spoken_payment_confirmation_refusal() -> None:
             response_text = response["text"]
             assert isinstance(response_text, str)
             assert "He entendido" in response_text
+            response_answer = response["answer"]
+            assert isinstance(response_answer, dict)
+            assert response_answer["text"] == response_text
+            assert response_answer["groups"] == []
             assert response["paymentConfirmationRequired"] is False
     sessions.clear()
 

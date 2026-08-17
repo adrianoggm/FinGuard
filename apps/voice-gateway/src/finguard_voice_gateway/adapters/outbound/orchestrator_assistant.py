@@ -165,4 +165,5 @@ def _reply_from(payload: dict[str, Any]) -> AssistantReply:
         isinstance(conversation, dict)
         and conversation.get("workflow") == "PAYMENT_CONFIRMATION"
     ) or payload.get("outcome") == "AWAITING_CONFIRMATION"
-    return AssistantReply(text, conversation, payment_required)
+    answer = {key: value for key, value in payload.items() if key != "type"}
+    return AssistantReply(text, conversation, answer, payment_required)

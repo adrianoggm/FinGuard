@@ -22,14 +22,30 @@ class FakeAssistantClient:
             "quiero preparar un pago",
             "preparar pago",
         }
-        return AssistantReply(
-            text=(
+        reply_text = (
                 "Vista previa preparada; confirma el pago con el control explícito en pantalla."
                 if normalized in {"quiero preparar un pago", "preparar pago"}
                 else "Confirmación por voz no disponible; usa el control explícito en pantalla."
                 if payment
                 else f"He entendido: {text}"
-            ),
-            conversation={"previous": conversation, "last": text},
+            )
+        reply_conversation = {"previous": conversation, "last": text}
+        return AssistantReply(
+            text=reply_text,
+            conversation=reply_conversation,
+            answer={
+                "outcome": "AWAITING_CONFIRMATION" if payment else "ANSWERED",
+                "text": reply_text,
+                "question": None,
+                "intent_id": "fake-intent" if payment else None,
+                "plan": None,
+                "conversation": reply_conversation,
+                "currency": "EUR",
+                "total_minor": None,
+                "movement_count": 0,
+                "groups": [],
+                "movements": [],
+                "suggestions": [],
+            },
             payment_confirmation_required=payment,
         )

@@ -22,16 +22,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   Conversation,
+  applyVoiceEvent,
   awaitingConfirmation,
   pendingIntent,
   quickReplies,
   recipientChoices,
   settled,
   voiceButtonAction,
+  voiceEventIdentity,
   withChoice,
   type Thread,
 } from "./Conversation";
-import { voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
+import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -195,6 +197,59 @@ describe("voice button controls", () => {
     await voiceButtonAction("listening", client);
 
     expect(calls).toEqual(["stopCapture"]);
+  });
+});
+
+describe("voice event synchronisation", () => {
+  const event = (type: string, sequence: number, fields: Record<string, unknown> = {}) => ({
+    type,
+    sessionId: "session-1",
+    turnId: "turn-1",
+    sequence,
+    at: "2026-08-17T00:00:00.000Z",
+    ...fields,
+  });
+
+  it("retains transcript, structured answer and conversation across same-tick events", () => {
+    let current = thread();
+    current = applyVoiceEvent(
+      current,
+      event("transcript.final", 1, { text: "gastos por categoría" }),
+      noop,
+    ).thread!;
+    const structured = answer({
+      text: "Comida fue la categoría principal.",
+      groups: [{ key: "Comida", total_minor: 1200, movement_count: 2 }],
+    });
+    current = applyVoiceEvent(
+      current,
+      event("assistant.text.final", 2, { answer: structured }),
+      noop,
+    ).thread!;
+
+    expect(current.turns.map((turn) => turn.who)).toEqual(["user", "assistant"]);
+    expect((current.turns[1] as { who: "assistant"; answer: Answer }).answer.groups).toEqual(
+      structured.groups,
+    );
+    // Text and visual data are committed before playback finishes.
+    expect(applyVoiceEvent(current, event("audio.completed", 3), noop).thread).toBeUndefined();
+
+    const finalConversation = state({ last_plan: LAST_MONTH });
+    current = applyVoiceEvent(
+      current,
+      event("turn.completed", 4, { conversation: finalConversation }),
+      noop,
+    ).thread!;
+    expect(current.conversation).toBe(finalConversation);
+  });
+
+  it("maps stages and gives one-shot events a turn identity independent of sequence", () => {
+    expect(
+      applyVoiceEvent(thread(), event("assistant.stage", 1, { stage: "planning" }), noop).stage,
+    ).toBe("Pensando la consulta…");
+    expect(voiceEventIdentity(event("assistant.text.final", 2))).toBe(
+      voiceEventIdentity(event("assistant.text.final", 9)),
+    );
   });
 });
 
@@ -411,6 +466,18 @@ describe("the one field this client writes", () => {
 });
 
 describe("financial breakdowns", () => {
+  it("validates the complete voice answer, including groups and parts", () => {
+    const payload = answer({
+      text: "Dos resultados",
+      groups: [{ key: "Comida", total_minor: 1200, movement_count: 2 }],
+      parts: [answer({ text: "Parte uno" })],
+    });
+    expect(validateVoiceAnswer(payload)).toBe(payload);
+    expect(() => validateVoiceAnswer({ ...payload, groups: [{ key: "incompleto" }] })).toThrow();
+    expect(() => validateVoiceAnswer({ ...payload, conversation: [] })).toThrow();
+    expect(() => validateVoiceAnswer({ ...payload, total_minor: Number.NaN })).toThrow();
+  });
+
   it("renders a count by merchant as movement counts, not monetary totals", () => {
     const countPlan = { ...LAST_MONTH, group_by: "MERCHANT", metric: "COUNT" };
     const counted = thread({

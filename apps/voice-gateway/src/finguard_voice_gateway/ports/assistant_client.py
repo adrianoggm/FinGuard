@@ -7,6 +7,7 @@ from typing import Protocol
 class AssistantReply:
     text: str
     conversation: object
+    answer: dict[str, object]
     payment_confirmation_required: bool = False
 
 
