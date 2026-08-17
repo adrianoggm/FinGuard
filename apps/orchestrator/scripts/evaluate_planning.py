@@ -73,10 +73,10 @@ from finguard_orchestrator.infrastructure.planning.llm_query_planner import LlmQ
 
 PLANNING = Path(__file__).resolve().parents[1] / "evaluation" / "planning"
 
-# The answer budget every planning call is made with. It was written twice as a literal beside the
-# two planners built here, and the pace below has to be derived from the same number — a budget that
-# changes in one place and not the other is the 429 this flag exists to prevent.
-ANSWER_TOKENS = 384
+# The answer budget every planning call is made with. It comes from the same deployment setting as
+# the service: reasoning models such as gpt-oss need headroom for their hidden chain of thought,
+# while the versioned default remains 384 for ordinary local models.
+ANSWER_TOKENS = get_settings().planner_max_output_tokens
 
 # The vocabulary that exists in the seeded data. It belongs to banking; until there is
 # somewhere legitimate to read it from, it is stated here and the drift shows up as an
@@ -259,7 +259,7 @@ def as_plan(spec: dict[str, Any]) -> FinancialPlan:
 def _provider(
     name: str,
     base_url: str | None,
-    think: bool,
+    think: bool | str,
     timeout_seconds: float | None,
 ) -> EvaluationProvider:
     """Build the selected provider from the same settings used by the service.
@@ -301,7 +301,10 @@ def _provider(
         timeout_seconds=timeout_seconds or settings.ollama_timeout_seconds,
         context_tokens=settings.ollama_context_tokens,
         seed=settings.ollama_seed,
-        think=think,
+        # False is the historical CLI default. Let the deployment choose a model-specific
+        # level (gpt-oss needs low/medium/high for structured output) unless the caller
+        # explicitly enabled thinking for this run.
+        think=settings.ollama_think if not think else think,
     )
 
 

@@ -221,6 +221,26 @@ payment", so it is not an extra — it is that phase's first requirement, arrivi
 double entry, receipt, audit trail. Six of the fourteen demo steps, and the contacts table
 the demo needs to show a recipient.
 
+**Known follow-ups carried out of phase 5.** The end-to-end payment path is complete, but the
+branch deliberately records six non-blocking defects for the next iteration. They are tracked as
+GitHub issues so that “done” does not make them disappear:
+
+- [#6](https://github.com/adrianoggm/FinGuard/issues/6) — use the holder's timezone consistently
+  in card routes.
+- [#7](https://github.com/adrianoggm/FinGuard/issues/7) — apply movement classifications to card
+  charges.
+- [#8](https://github.com/adrianoggm/FinGuard/issues/8) — populate `system_category` in the
+  production classification path.
+- [#9](https://github.com/adrianoggm/FinGuard/issues/9) — make payment preparation idempotent
+  across client retries.
+- [#10](https://github.com/adrianoggm/FinGuard/issues/10) — resolve unrecognised month names
+  before the bare “hoy” fallback.
+- [#11](https://github.com/adrianoggm/FinGuard/issues/11) — prevent clarification loops without
+  an active draft workflow.
+
+The next branch should close these issues with regression coverage before treating the phase as
+fully hardened.
+
 **Done, end to end through both containers.** One chat box takes "hazle un bizum de 20 euros a
 Marta Solis" and answers *Vas a enviar 20,00€ a Marta Solis Vega (+34600333444). Te quedarían
 10.350,42€. ¿Confirmas?*; "sí" books a double-entry transaction and answers with the receipt;

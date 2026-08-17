@@ -35,6 +35,7 @@ def test_the_provider_takes_every_operational_number_from_settings() -> None:
         ollama_timeout_seconds=30.0,
         ollama_context_tokens=8192,
         ollama_seed=7,
+        ollama_think="low",
     )
 
     provider = OllamaLlmProvider(
@@ -43,12 +44,14 @@ def test_the_provider_takes_every_operational_number_from_settings() -> None:
         timeout_seconds=settings.ollama_timeout_seconds,
         context_tokens=settings.ollama_context_tokens,
         seed=settings.ollama_seed,
+        think=settings.ollama_think,
     )
 
     assert provider.keep_alive == "5m"
     assert provider.timeout_seconds == 30.0
     assert provider.context_tokens == 8192
     assert provider.seed == 7
+    assert provider.think == "low"
 
 
 def test_the_planner_sampling_is_configuration() -> None:
@@ -64,10 +67,11 @@ def test_the_defaults_are_the_measured_ones() -> None:
     """The numbers in the adapters were not arbitrary — `num_ctx: 4096` and a pinned seed
     each came from an experiment written up in evaluation/planning/RESULTS.md. Making them
     configurable must not quietly change them."""
-    settings = Settings()
+    settings = Settings(ollama_think=False)
 
     assert settings.ollama_context_tokens == 4096
     assert settings.ollama_seed == 0
+    assert settings.ollama_think is False
     assert settings.ollama_keep_alive == "30m"
     assert settings.planner_temperature == 0.0
     assert settings.supporting_movements == 10

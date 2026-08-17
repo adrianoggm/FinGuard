@@ -132,6 +132,7 @@ def create_app() -> FastAPI:
             timeout_seconds=settings.ollama_timeout_seconds,
             context_tokens=settings.ollama_context_tokens,
             seed=settings.ollama_seed,
+            think=settings.ollama_think,
         ),
     }
     if (groq_key := settings.groq_api_key) is not None:

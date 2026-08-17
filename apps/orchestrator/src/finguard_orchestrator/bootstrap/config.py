@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float
     ollama_context_tokens: int
     ollama_seed: int
+    ollama_think: bool | Literal["low", "medium", "high"]
 
     # --- hosted inference (Groq), for comparing against a bigger model ----------------
     #
