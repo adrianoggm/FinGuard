@@ -108,6 +108,11 @@ body {
   filter: brightness(0.97) saturate(0.9);
 }
 
+.voice-controls { display: grid; gap: .35rem; padding: .65rem 1rem; background: var(--card); border-bottom: 1px solid var(--line); font-size: .78rem; }
+.voice-button { border: 0; border-radius: 999px; padding: .55rem .8rem; color: white; background: var(--brand); font: inherit; cursor: pointer; }
+.voice-button:focus-visible { outline: 3px solid #f0b429; outline-offset: 2px; }
+.voice-error { color: var(--out); }
+
 /* --- the screens ----------------------------------------------------------------- */
 
 .screen {

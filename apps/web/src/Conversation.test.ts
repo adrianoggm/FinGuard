@@ -30,7 +30,7 @@ import {
   withChoice,
   type Thread,
 } from "./Conversation";
-import type { Answer, ConversationState, PlanContext } from "./api";
+import { voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -96,6 +96,12 @@ function thread(fields: Partial<Thread> = {}): Thread {
 const noop = () => {};
 
 describe("the state the service sent", () => {
+  it("keeps voice opt-in without changing the server-rendered conversation", () => {
+    const markup = renderToStaticMarkup(createElement(Conversation, { thread: thread(), onThread: noop, onClose: noop, onSettled: noop }));
+    expect(markup).toContain('aria-label="Conversación"');
+    if (!voiceEnabled) expect(markup).not.toContain('aria-label="Control de voz"');
+  });
+
   it("is stored as it arrived", () => {
     // Verbatim, not merged: the service decided what this turn leaves open, and combining it with
     // what came before is exactly the inference this replaced.
