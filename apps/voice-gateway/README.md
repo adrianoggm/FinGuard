@@ -44,6 +44,18 @@ be force-aborted safely and retains its slot until completion. The service maps 
 provider failures to sanitized WebSocket errors. `VOICE_GATEWAY_STT_WARMUP=true` loads the model
 during startup and makes startup fail if it cannot load; otherwise loading is lazy.
 
+Local TTS uses the optional `piper-tts` extra. Piper is an ONNX-based local adapter with Spanish
+voices available; the voice model is deliberately not bundled or downloaded by CI. Set
+`VOICE_GATEWAY_TTS_MODE=local` and point `VOICE_GATEWAY_TTS_MODEL_PATH` to a downloaded Spanish
+`.onnx` voice beside its `.onnx.json` configuration. `VOICE_GATEWAY_TTS_DEVICE=cpu` is the portable
+default; `cuda` requires a compatible ONNX Runtime GPU installation. Piper output is converted to
+mono PCM16 little-endian at the protocol's fixed 24 kHz and emitted in configurable 20 ms chunks.
+Inference runs in a worker thread, with bounded backpressure and cooperative cancellation.
+`VOICE_GATEWAY_TTS_WARMUP=true` loads the voice during startup.
+`piper-tts` is GPL-3.0 software and remains an optional, separately installed local dependency;
+review its [license](https://github.com/OHF-Voice/piper1-gpl/blob/main/LICENSE.md) before distributing
+a bundled voice-gateway image.
+
 The assistant is fake by default. To use the real orchestrator, set
 `VOICE_GATEWAY_ASSISTANT_MODE=orchestrator_http` and configure
 `VOICE_GATEWAY_ORCHESTRATOR_BASE_URL`. The gateway calls the observed
@@ -84,6 +96,18 @@ The WAV must be PCM16 little-endian, mono, 16 kHz. Output reports model/device, 
 factor and transcript character count; it never prints the transcript or audio. `--model small`
 may download from Hugging Face if not cached; use a local model path plus `--local-files-only` for
 zero downloads.
+
+Manual local-TTS benchmark (requires `uv sync --extra local-tts`; the voice must already exist):
+
+```bash
+uv run --directory apps/voice-gateway --extra local-tts \
+  python scripts/benchmark_tts.py "Hola, este es FinGuard." \
+  --model /models/es/voice.onnx
+```
+
+Use `--config` only when the voice JSON is not beside the model. The benchmark never downloads a
+voice or prints generated audio; it reports loading, synthesis, real-time factor, output chunks
+and bytes.
 
 Observed dependency-only check (no model loaded or downloaded): Python 3.14.7 installed
 `faster-whisper==1.2.1` and `ctranslate2==4.8.1`; CTranslate2 detected one CUDA device. This does

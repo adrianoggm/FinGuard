@@ -19,6 +19,7 @@ from finguard_voice_gateway.domain.state import (
 )
 from finguard_voice_gateway.ports.assistant_client import AssistantClientError
 from finguard_voice_gateway.ports.speech_to_text import SpeechToTextError, SpeechToTextLifecycle
+from finguard_voice_gateway.ports.text_to_speech import TextToSpeechError, TextToSpeechLifecycle
 from finguard_voice_gateway.protocol import (
     CancelEvent,
     CloseEvent,
@@ -42,6 +43,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if services.settings.stt_mode == "local" and services.settings.stt_warmup:
         if isinstance(services.stt, SpeechToTextLifecycle):
             await services.stt.warmup()
+    if services.settings.tts_mode == "local" and services.settings.tts_warmup:
+        if isinstance(services.tts, TextToSpeechLifecycle):
+            await services.tts.warmup()
     cleanup = asyncio.create_task(tickets.cleanup_loop(1.0))
     try:
         yield
@@ -55,6 +59,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             await services.http_client.aclose()
         if isinstance(services.stt, SpeechToTextLifecycle):
             await services.stt.close()
+        if isinstance(services.tts, TextToSpeechLifecycle):
+            await services.tts.close()
 
 
 app = FastAPI(title="FinGuard Voice Gateway", version=__version__, lifespan=lifespan)
@@ -318,6 +324,10 @@ async def process_turn(websocket: VoiceTransport, session: VoiceSession, turn_id
         await send_error(websocket, session, exc.code, "assistant provider failed", fatal=True)
         await websocket.close(code=1011)
     except SpeechToTextError as exc:
+        session.machine.close()
+        await send_error(websocket, session, exc.code, "speech provider failed", fatal=True)
+        await websocket.close(code=1011)
+    except TextToSpeechError as exc:
         session.machine.close()
         await send_error(websocket, session, exc.code, "speech provider failed", fatal=True)
         await websocket.close(code=1011)

@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     stt_max_concurrency: int = 1
     stt_warmup: bool = False
     stt_local_files_only: bool = False
+    tts_mode: Literal["fake", "local"] = "fake"
+    tts_model_path: str = ""
+    tts_config_path: str = ""
+    tts_device: Literal["cpu", "cuda"] = "cpu"
+    tts_speaker: int | None = None
+    tts_length_scale: float | None = None
+    tts_chunk_ms: int = 20
+    tts_timeout_seconds: float = 60.0
+    tts_warmup: bool = False
     orchestrator_base_url: str = "http://127.0.0.1:8080"
     orchestrator_timeout_seconds: float = 60.0
     orchestrator_stream_path: str = "/v1/questions/stream"
@@ -53,3 +62,14 @@ class Settings(BaseSettings):
                 raise ValueError("VOICE_GATEWAY_STT_TIMEOUT_SECONDS must be positive")
             if self.stt_max_concurrency < 1:
                 raise ValueError("VOICE_GATEWAY_STT_MAX_CONCURRENCY must be positive")
+        if self.tts_mode == "local":
+            if not self.tts_model_path.strip():
+                raise ValueError("VOICE_GATEWAY_TTS_MODEL_PATH is required in local mode")
+            if self.tts_chunk_ms <= 0:
+                raise ValueError("VOICE_GATEWAY_TTS_CHUNK_MS must be positive")
+            if self.tts_timeout_seconds <= 0:
+                raise ValueError("VOICE_GATEWAY_TTS_TIMEOUT_SECONDS must be positive")
+            if self.tts_speaker is not None and self.tts_speaker < 0:
+                raise ValueError("VOICE_GATEWAY_TTS_SPEAKER must not be negative")
+            if self.tts_length_scale is not None and self.tts_length_scale <= 0:
+                raise ValueError("VOICE_GATEWAY_TTS_LENGTH_SCALE must be positive")
