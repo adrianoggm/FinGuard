@@ -196,9 +196,7 @@ class LocalTextToSpeech:
                     if remaining <= 0:
                         raise TextToSpeechUnavailableError("local TTS timed out")
                     try:
-                        item = await asyncio.wait_for(
-                            output.get(), min(remaining, 0.05)
-                        )
+                        item = await asyncio.wait_for(output.get(), min(remaining, 0.05))
                     except TimeoutError:
                         continue
                     if item is _END:

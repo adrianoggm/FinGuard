@@ -14,6 +14,7 @@ from finguard_voice_gateway.ports.assistant_client import (
 
 MAX_SSE_EVENT_BYTES = 256 * 1024
 
+
 async def _sse_events(
     response: httpx.Response, max_event_bytes: int = MAX_SSE_EVENT_BYTES
 ) -> AsyncIterator[dict[str, Any]]:
@@ -162,8 +163,7 @@ def _reply_from(payload: dict[str, Any]) -> AssistantReply:
     if conversation is not None and not isinstance(conversation, dict):
         raise AssistantClientError("malformed orchestrator conversation", "ORCHESTRATOR_PROTOCOL")
     payment_required = (
-        isinstance(conversation, dict)
-        and conversation.get("workflow") == "PAYMENT_CONFIRMATION"
+        isinstance(conversation, dict) and conversation.get("workflow") == "PAYMENT_CONFIRMATION"
     ) or payload.get("outcome") == "AWAITING_CONFIRMATION"
     answer = {key: value for key, value in payload.items() if key != "type"}
     return AssistantReply(text, conversation, answer, payment_required)

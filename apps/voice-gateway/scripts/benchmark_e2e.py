@@ -103,6 +103,11 @@ def validate_sample_counts(
         expected |= OPTIONAL_STAGE_TIMING_NAMES
     if cancel_runs:
         expected |= {"cancelAcknowledgementMs"}
+    # The stage metrics appear whenever the orchestrator reports its stages, which is not the same
+    # question as whether the caller demanded them. `validate_timings` already treats them as
+    # optional per turn; treating them as unknown here made a run where every turn was PLANNED
+    # report "failed".
+    expected |= set(metrics) & OPTIONAL_STAGE_TIMING_NAMES
     if set(metrics) != expected:
         raise RuntimeError("benchmark did not produce the exact required metric set")
     for name in expected:

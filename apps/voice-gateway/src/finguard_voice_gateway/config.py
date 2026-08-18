@@ -51,7 +51,11 @@ class Settings(BaseSettings):
             if self.stt_device not in {"auto", "cpu", "cuda"}:
                 raise ValueError("VOICE_GATEWAY_STT_DEVICE must be auto, cpu or cuda")
             if self.stt_compute_type not in {
-                "int8", "int8_float16", "int8_float32", "float16", "float32"
+                "int8",
+                "int8_float16",
+                "int8_float32",
+                "float16",
+                "float32",
             }:
                 raise ValueError("VOICE_GATEWAY_STT_COMPUTE_TYPE is not supported")
             if not self.stt_model.strip():

@@ -36,6 +36,14 @@ ignore = ["N815"]  # Wire protocol fields intentionally use the ADR's camelCase 
 python_version = "3.12"
 strict = true
 
+# The two speech providers are optional extras, so the environment that typechecks this
+# service does not have them installed — and the one that runs it may. `ignore_missing_imports`
+# is inert when the package is present, which a per-line `# type: ignore` is not: under
+# `strict` that ignore becomes an unused-ignore error the moment somebody installs the extra.
+[[tool.mypy.overrides]]
+module = ["faster_whisper.*", "piper.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

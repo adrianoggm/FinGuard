@@ -73,7 +73,7 @@ class FasterWhisperEngine:
 
 def faster_whisper_factory(settings: Settings, device: str) -> WhisperEngine:
     try:
-        from faster_whisper import WhisperModel  # type: ignore
+        from faster_whisper import WhisperModel
     except ImportError as exc:
         raise SpeechToTextUnavailableError(
             "local STT requires the optional faster-whisper dependency"

@@ -10,8 +10,11 @@ from finguard_voice_gateway.config import Settings
 
 async def run(args: argparse.Namespace) -> None:
     settings = Settings(
-        tts_mode="local", tts_model_path=args.model, tts_config_path=args.config,
-        tts_device=args.device, tts_speaker=args.speaker,
+        tts_mode="local",
+        tts_model_path=args.model,
+        tts_config_path=args.config,
+        tts_device=args.device,
+        tts_speaker=args.speaker,
         tts_length_scale=args.length_scale,
     )
     tts = LocalTextToSpeech(settings)

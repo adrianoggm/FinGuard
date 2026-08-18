@@ -60,7 +60,7 @@ def local_settings(**kwargs: object) -> Settings:
 
 
 def test_resampler_returns_pcm16_24khz() -> None:
-    source = (b"\x00\x00" * 160)  # 10 ms at 16 kHz
+    source = b"\x00\x00" * 160  # 10 ms at 16 kHz
     converted = resample_pcm16le(source, 16_000)
     assert len(converted) == 480
     assert len(converted) % 2 == 0
@@ -72,6 +72,11 @@ def test_resampler_rejects_incomplete_sample() -> None:
 
 
 def test_piper_engine_uses_audio_chunk_api() -> None:
+    # The engine builds a real `SynthesisConfig`, so this one test needs the optional provider
+    # installed. Every other test here reaches the adapter through a fake engine and runs without
+    # it, which is the split ADR-010 accepted: fakes are the deterministic suite, the real
+    # providers are a separately reported benchmark.
+    pytest.importorskip("piper", reason="install the local-tts extra to run this")
     voice = FakePiperVoice()
     engine = PiperVoiceEngine(voice)
     chunks = list(engine.synthesize("hola", speaker_id=2, length_scale=1.1))
@@ -142,9 +147,11 @@ async def test_local_tts_missing_optional_dependency_is_sanitized(
 ) -> None:
     from finguard_voice_gateway.adapters.outbound import local_tts
 
-    monkeypatch.setattr(local_tts, "piper_factory", lambda _: (_ for _ in ()).throw(
-        TextToSpeechUnavailableError("missing")
-    ))
+    monkeypatch.setattr(
+        local_tts,
+        "piper_factory",
+        lambda _: (_ for _ in ()).throw(TextToSpeechUnavailableError("missing")),
+    )
     tts = LocalTextToSpeech(local_settings(), local_tts.piper_factory)
     with pytest.raises(TextToSpeechUnavailableError):
         _ = [chunk async for chunk in tts.synthesize("hola", cancelled=lambda: False)]

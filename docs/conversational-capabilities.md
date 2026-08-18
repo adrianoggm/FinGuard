@@ -1,6 +1,6 @@
 # Matriz de capacidades conversacionales
 
-Estado vivo del orquestador a 10 de agosto de 2026. Esta es la referencia para evitar que la ayuda,
+Estado vivo del orquestador a 18 de agosto de 2026. Esta es la referencia para evitar que la ayuda,
 el `capability_guard`, el planificador y el corpus se contradigan. Una capacidad sólo puede
 considerarse **activa** cuando tiene representación de dominio, ejecución determinista y una prueba
 conversacional. Los textos de producto no deben prometer una fila que siga en **siguiente**.
@@ -27,6 +27,9 @@ conversacional. Los textos de producto no deben prometer una fila que siga en **
 | Trimestre, semestre, quincena y fin de semana | Activa | periodos relativos tipados + rangos calendario numerados | `test_natural_periods.py`, corpus 25 |
 | Alias aprendidos de entidades | Activa para cuentas, comercios y contrapartes | cuenta alias→UUID; contraparte alias→(nombre, tipo), comprobados contra banca | `test_account_aliases.py`, `test_counterparty_aliases.py`, corpus 26 y 27 |
 | Consultas compuestas generales | Activa para 2-3 lecturas seguras, incluidas relaciones tipadas | cada parte conserva `FinancialPlan`, `RatioPlan` o `ComparisonPlan`, evidencia y contexto; las operaciones o mezclas ambiguas piden elección | `test_a_conversation_that_wanders.py`, corpus 28 |
+| Respuesta con gráfico | Siguiente, fase 4 | `ChartSpec` tipado sin protocolo, derivado del plan y del resultado ya verificados; ninguna cifra dentro del spec | [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md) |
+| Reformular el gráfico con palabras | Siguiente, fase 4 | parche de codificación emitido por el modelo, validado contra el esquema y contra los campos del resultado, y fusionado por código | [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md) |
+| Guardar una métrica y volver a verla | Siguiente, fase 4 | `saved_metric` con `plan_json` y `encoding_json`, sin filas ni totales; el plan almacenado es entrada no confiable y se reejecuta con el alcance recomprobado | [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md) |
 
 ## Evaluación obligatoria por capacidad
 
@@ -58,3 +61,8 @@ El bloque funcional previsto está completo. Las consultas compuestas admiten re
 cuando sus operandos y ventanas tienen representación tipada. Las operaciones siguen fuera de la
 ejecución múltiple automática: mezclar una lectura con un Bizum o una transferencia siempre exige
 elegir primero.
+
+Lo que falta ya no es aritmética, es presentación. Comparaciones, ratios, acumulados, frecuencia,
+recurrencia y rankings por grupo se calculan y se leen en prosa: **ninguna de esas filas activas
+tiene todavía una forma de verse**. Las tres filas marcadas como siguiente son ese hueco, y su
+regla es que el vocabulario del gráfico es abierto mientras el origen de sus cifras está cerrado.

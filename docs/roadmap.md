@@ -106,18 +106,32 @@ adversarial set where the bar is zero.
 ORCHESTRATOR_QUESTIONS_ENABLED stays false until both clear. A documented risk is not a
 control, and neither is a threshold nobody agreed.
 
-### Phase 4 — Dynamic visualisation
+### Phase 4 — Visualisation and «Mis métricas»
 
-- Implement the visual planner.
-- Generate Vega-Lite.
-- Validate the specifications.
+Rewritten after phase 6, which is when it became the next thing to build.
+[ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md) is the accepted design. The
+vocabulary of a chart is open; what stays closed is where its numbers come from.
+
+- Define `ChartSpec`: a typed, protocol-free value carrying encodings and **no measured figure**.
+- Derive a default chart per capability already built — comparison, ratio, cumulative, frequency,
+  recurrence, group ranking, breakdown — with no model call.
+- Emit Vega-Lite from a presenter in infrastructure, validated against its schema and against the
+  fields the result has.
 - Bring charts into the chat.
-- Allow reformulation:
-  - «Muéstralo por semanas».
-  - «Mejor en barras».
-  - «Compara con junio».
+- Accept reshaping in the holder's own words as an **encoding patch** the model emits and code
+  merges: «apílalo por cuenta», «ponlo en porcentaje», «solo el top 3», «mejor en barras».
+  «Muéstralo por semanas» and «compara con junio» already work — they patch the plan, and the chart
+  follows.
+- Give the orchestrator its first persistence: an `assistant` schema, its own migrations,
+  row-level security. Banking's migrations do not grow.
+- Save **structure and not data**: `plan_json` plus `encoding_json`, no rows and no totals. A
+  relative period stays relative.
+- Re-execute a saved plan through the same path a question takes, treating the stored plan as
+  untrusted input.
+- Build «Mis métricas»: save from a turn, re-execute on open, retitle, reshape, reorder.
 
-*Outcome:* dynamically generated charts.
+*Outcome:* charts that show what the holder asked to see, and cannot show a figure the ledger did
+not produce. A saved metric is a question that keeps answering itself, not a screenshot that ages.
 
 ### Phase 5 — Secure Bizum
 
