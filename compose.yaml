@@ -159,6 +159,7 @@ services:
         # it pulls CTranslate2 and downloads a model on first use; the fake provider is what makes
         # the compose stack start in seconds.
         INSTALL_LOCAL_STT: ${VOICE_INSTALL_LOCAL_STT:-0}
+        INSTALL_LOCAL_TTS: ${VOICE_INSTALL_LOCAL_TTS:-0}
     profiles: ["voice"]
     environment:
       # The assistant by service name on this network, not the loopback default, which inside a
@@ -173,6 +174,17 @@ services:
       VOICE_GATEWAY_WEB_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000","http://127.0.0.1:5173","http://localhost:5173"]'
       VOICE_GATEWAY_STT_MODE: ${VOICE_STT_MODE:-fake}
       VOICE_GATEWAY_TTS_MODE: ${VOICE_TTS_MODE:-fake}
+      # The voice lives in the model volume, not in the image: `just voice-models` downloads it.
+      VOICE_GATEWAY_TTS_MODEL_PATH: /models/piper/es_ES-davefx-medium.onnx
+      VOICE_GATEWAY_TTS_WARMUP: "true"
+      # Unconditionally true because the gateway only warms up in local mode: a missing model or a
+      # broken runtime then fails the healthcheck instead of the holder's first sentence.
+      VOICE_GATEWAY_STT_WARMUP: "true"
+      # Named models are downloaded on first use. Without a cache that is half a gigabyte every
+      # time the container is recreated, which turns `just voice` into a download.
+      HF_HOME: /models/huggingface
+    volumes:
+      - voice-models:/models
     # 8002 on the host, beside banking's 8001. Not 8080: it is the most contested port on a
     # development machine — Docker Desktop's own Kubernetes forwarding had it on this one — and
     # the container's port stays 8000 either way.
@@ -190,3 +202,4 @@ services:
 
 volumes:
   postgres-data:
+  voice-models:
