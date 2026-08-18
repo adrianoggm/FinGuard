@@ -31,6 +31,13 @@ back:
 # measured local ones run on the host, where the GPU and the models are.
 voice:
     docker compose --profile voice up -d --wait --build --remove-orphans
+# Downloads the Spanish Piper voice into the model volume, once. Out of the image on purpose: a
+# model is data, and an image that carries 63 MB of it is an image nobody wants to pull twice.
+voice-models:
+    docker compose run --rm --entrypoint python voice-gateway -c "import urllib.request as r, pathlib; base='https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/davefx/medium/es_ES-davefx-medium.onnx'; d=pathlib.Path('/models/piper'); d.mkdir(parents=True, exist_ok=True); [(_ := r.urlretrieve(base+suffix, d/('es_ES-davefx-medium.onnx'+suffix)), print('ok', suffix or '.onnx')) for suffix in ('', '.json')]"
+# Real speech both ways: Whisper in, Piper out. Needs `just voice-models` first.
+voice-real:
+    docker compose -f compose.yaml -f compose.voice-real.yaml --profile voice up -d --wait --build --remove-orphans
 # Frontend development server. Keeps the terminal attached so Ctrl+C stops Vite.
 web:
     npm --prefix apps/web run dev

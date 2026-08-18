@@ -1,0 +1,16 @@
+# Real speech both ways, layered over compose.yaml:
+#   docker compose -f compose.yaml -f compose.voice-real.yaml --profile voice up -d --wait --build
+#
+# A separate file rather than `NAME=value docker compose ...` in a recipe: that is Bourne syntax and
+# `just` hands recipes to PowerShell on the machine this is developed on, where it is a parse error.
+# The build args and the modes belong together anyway — a local mode without its extra fails at
+# startup, which is the pair this file keeps.
+services:
+  voice-gateway:
+    build:
+      args:
+        INSTALL_LOCAL_STT: "1"
+        INSTALL_LOCAL_TTS: "1"
+    environment:
+      VOICE_GATEWAY_STT_MODE: local
+      VOICE_GATEWAY_TTS_MODE: local
