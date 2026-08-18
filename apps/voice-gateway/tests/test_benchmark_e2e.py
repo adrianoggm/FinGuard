@@ -77,6 +77,34 @@ def test_percentiles_and_counts_are_deterministic() -> None:
     )
 
 
+def test_sample_counts_tolerate_stage_metrics_nobody_asked_to_require() -> None:
+    # A stack whose orchestrator reports its stages produces these two metrics whether or not the
+    # caller passed --require-stage-timings. Rejecting them made a healthy run report "failed":
+    # every turn was PLANNED, banking answered 200, and the harness disagreed with itself because
+    # per-turn validation calls them optional and this check called them unknown.
+    metrics = {
+        name: {"count": 2, "p50Ms": 1.0, "p95Ms": 1.0, "meanMs": 1.0}
+        for name in REQUIRED_TIMING_NAMES | {"clientPlaybackStartMs"} | OPTIONAL_STAGE_TIMING_NAMES
+    }
+    validate_sample_counts(metrics, 2, cancel_runs=0, require_stage_timings=False)
+
+    # Present is not the same as unmeasured: a stage metric that appears must have every sample.
+    short = dict(metrics)
+    name = sorted(OPTIONAL_STAGE_TIMING_NAMES)[0]
+    short[name] = {"count": 1, "p50Ms": 1.0, "p95Ms": 1.0, "meanMs": 1.0}
+    with pytest.raises(RuntimeError):
+        validate_sample_counts(short, 2, cancel_runs=0, require_stage_timings=False)
+
+    # An unknown metric is still an error.
+    with pytest.raises(RuntimeError):
+        validate_sample_counts(
+            {**metrics, "inventedMs": {"count": 2, "p50Ms": 1.0, "p95Ms": 1.0, "meanMs": 1.0}},
+            2,
+            cancel_runs=0,
+            require_stage_timings=False,
+        )
+
+
 def test_timings_require_schema_exact_names_numeric_values_and_optional_stages() -> None:
     parsed = validate_timings(timings())
     assert parsed["inputCommitToAssistantFirstStageMs"] is None
