@@ -281,17 +281,76 @@ the dataset never exercised the lifecycle it was supposed to represent. Every te
 the same. Both now create PENDING, add entries, and book, so 1,621 transactions pass through
 the state machine each time the database is built.
 
-## 9. Phase 4 — visualisation
+## 9. Phase 4 — visualisation and «Mis métricas»
 
-Vega-Lite specs, validated, in the chat. Two demo steps and a lot of visible impact for
-relatively little code, which is why it can wait until the parts other things depend on
-are done — and why it should not be dropped if time runs short.
+**This is what comes next.** The accepted design is
+[ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md).
 
-Note that demo step 7 is "the user asks for a weekly comparison". Comparison is a field
-in the vision's IR (§9.2) that the implementation never built, so today it reaches the
-model as an unsupported request and is refused three times in five. Either phase 4 brings
-comparisons or the demo script loses a step; deciding that late is how a script gets
-rewritten the night before.
+The entry that used to sit here said "Vega-Lite specs, validated, in the chat" and warned that
+comparisons were unbuilt and would cost the demo its weekly-comparison step. That warning expired
+in the best way: comparisons, ratios, cumulative totals, frequency, recurrence and group rankings
+are all **active** capabilities now — see
+[conversational-capabilities.md](conversational-capabilities.md). What is missing is not the
+arithmetic. It is that every one of those is read out as prose and a table, and the web client
+still draws CSS bars over a fixed endpoint because
+[Finances.tsx](../apps/web/src/Finances.tsx) declined to buy a charting library ahead of this
+decision.
+
+**The design turns on separating two things that were being confused.** A closed mapping from plan
+to chart shape — temporal means a line, category means bars, everything else means nothing — is
+trivially safe and is the wrong product: a holder wants a share, a stack, a top three, two periods
+on one axis. A model emitting a finished chart is expressive and adds a second place a figure can
+be invented, because `"value": 1840` inside a spec renders in the same typeface as a number the
+ledger produced.
+
+These are not the same risk. **What a chart looks like** is a product question; **where its numbers
+come from** is the only safety property. So:
+
+```text
+plan (verified) → typed result → ChartSpec: encodings that NAME result fields
+                                            ↓ presenter, in infrastructure
+                                          Vega-Lite bound to those rows at the edge
+```
+
+A spec with a numeric literal in a data position is rejected, and that one property is what pays
+for an open vocabulary. Marks, stacking, ordering, limits, multiple views, whatever the grammar
+expresses and the result can supply. The worst a badly chosen encoding can do is read poorly.
+
+Three sources decide the shape: a **derived default** with no model call so an ordinary turn is
+charted for free; the **holder's words** as an encoding patch the model emits and code merges —
+the same division of labour that fixed follow-ups in item 4; and the **screen**, where it is
+retitled and reshaped. Two of the three reformulations the old roadmap promised already work:
+«muéstralo por semanas» and «compara con junio» patch the plan, and the chart follows for nothing.
+
+**«Mis métricas» saves the structure, and the structure is the plan.** The orchestrator gets its
+first persistence — an `assistant` schema in the existing PostgreSQL, its own migrations, banking
+untouched:
+
+```text
+saved_metric(id, holder_id, title, plan_json, encoding_json, created_at)
+```
+
+No rows, no totals. A relative period stays relative, so a metric saved in August is October's
+month in October. Opening the screen re-executes each plan through the path a question takes.
+
+**The invariant the feature turns on: a stored plan is untrusted input.** `holder_id` from the
+credential on every read, row-level security on the table, and the plan's account scope re-checked
+at execution rather than trusted because it was checked when it was saved. Without that, "save a
+metric" is a route to reading rows a live question would refuse.
+
+Its gates, in the shape the rest of this file uses — zero for what code can guarantee:
+
+| property | bar |
+| --- | --- |
+| Specs with a numeric literal in a data position | **0** on the whole corpus |
+| Specs invalid against the schema, or naming an absent field | **0** |
+| Charts disagreeing with the figure in the answer text | **0**, the same reconciliation as evidence |
+| Answers with ≥2 rows that offer no chart | **0** — the bar against becoming restrictive again |
+| Charts of a single row | **0**, they restate the number above them |
+| Saved metrics readable by another holder | **0**, mirroring cross-account containment |
+
+Steps 1–4 of the delivery order in the ADR ship a chart in the chat without any of the persistence;
+if time runs short, that is the half to keep.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
@@ -454,7 +513,9 @@ Correct, agreed, and not load-bearing for a date:
 - **Presenters per channel.** `answer_writer` mixes Spanish, currency formatting and how
   many groups to read out. §4.4 argues for the split; I would make it when the second
   consumer exists — voice in phase 6, A2A in phase 7 — because an abstraction shaped by
-  one case is a guess and by two is a design.
+  one case is a guess and by two is a design. **Voice arrived, so this now lands in item 9:**
+  the chart is the third consumer and the Vega-Lite emission is a presenter by construction,
+  because `ChartSpec` is not allowed to know a protocol.
 - **Reused HTTP clients** in the FastAPI lifespan, with separate connect/read/pool
   timeouts and a semaphore so two inferences never contend for one GPU. The benchmark
   proved that last one the hard way: two jobs sharing an 8 GB card timed out the models
