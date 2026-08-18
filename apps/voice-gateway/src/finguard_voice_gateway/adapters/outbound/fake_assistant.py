@@ -23,12 +23,12 @@ class FakeAssistantClient:
             "preparar pago",
         }
         reply_text = (
-                "Vista previa preparada; confirma el pago con el control explícito en pantalla."
-                if normalized in {"quiero preparar un pago", "preparar pago"}
-                else "Confirmación por voz no disponible; usa el control explícito en pantalla."
-                if payment
-                else f"He entendido: {text}"
-            )
+            "Vista previa preparada; confirma el pago con el control explícito en pantalla."
+            if normalized in {"quiero preparar un pago", "preparar pago"}
+            else "Confirmación por voz no disponible; usa el control explícito en pantalla."
+            if payment
+            else f"He entendido: {text}"
+        )
         reply_conversation = {"previous": conversation, "last": text}
         return AssistantReply(
             text=reply_text,

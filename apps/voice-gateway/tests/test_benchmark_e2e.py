@@ -51,6 +51,7 @@ class Socket:
             await asyncio.Future()
         return self.messages.popleft()
 
+
 def valid_turn_messages(turn_id: str = "benchmark-1") -> list[str | bytes]:
     return [
         event("assistant.text.final", turn_id, answer={"outcome": "ANSWERED"}),

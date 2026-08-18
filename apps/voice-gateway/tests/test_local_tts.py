@@ -60,7 +60,7 @@ def local_settings(**kwargs: object) -> Settings:
 
 
 def test_resampler_returns_pcm16_24khz() -> None:
-    source = (b"\x00\x00" * 160)  # 10 ms at 16 kHz
+    source = b"\x00\x00" * 160  # 10 ms at 16 kHz
     converted = resample_pcm16le(source, 16_000)
     assert len(converted) == 480
     assert len(converted) % 2 == 0
@@ -142,9 +142,11 @@ async def test_local_tts_missing_optional_dependency_is_sanitized(
 ) -> None:
     from finguard_voice_gateway.adapters.outbound import local_tts
 
-    monkeypatch.setattr(local_tts, "piper_factory", lambda _: (_ for _ in ()).throw(
-        TextToSpeechUnavailableError("missing")
-    ))
+    monkeypatch.setattr(
+        local_tts,
+        "piper_factory",
+        lambda _: (_ for _ in ()).throw(TextToSpeechUnavailableError("missing")),
+    )
     tts = LocalTextToSpeech(local_settings(), local_tts.piper_factory)
     with pytest.raises(TextToSpeechUnavailableError):
         _ = [chunk async for chunk in tts.synthesize("hola", cancelled=lambda: False)]

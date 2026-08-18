@@ -46,9 +46,7 @@ class CaptureTransport(httpx.AsyncBaseTransport):
 
 
 def sse(*events: dict[str, Any]) -> list[bytes]:
-    raw = b"".join(
-        f": keepalive\n\ndata: {json.dumps(event)}\n\n".encode() for event in events
-    )
+    raw = b"".join(f": keepalive\n\ndata: {json.dumps(event)}\n\n".encode() for event in events)
     return [raw[index : index + 3] for index in range(0, len(raw), 3)]
 
 
@@ -96,9 +94,7 @@ async def test_adapter_sends_real_payload_auth_and_stable_key() -> None:
     assert not reply.payment_confirmation_required
 
 
-async def _record(
-    target: list[tuple[str, str | None]], name: str, detail: str | None
-) -> None:
+async def _record(target: list[tuple[str, str | None]], name: str, detail: str | None) -> None:
     target.append((name, detail))
 
 
@@ -143,16 +139,13 @@ async def test_adapter_accepts_multiline_data_split_across_chunks() -> None:
 @pytest.mark.parametrize(
     ("chunks", "expected_code"),
     [
-        ([b"data: {\"type\": \"mystery\"}\n\n"], "ORCHESTRATOR_PROTOCOL"),
+        ([b'data: {"type": "mystery"}\n\n'], "ORCHESTRATOR_PROTOCOL"),
         (
-            [
-                b'data: {"type": "answer", "text": "a"}\n\n'
-                b'data: {"type": "answer", "text": "b"}\n\n'
-            ],
+            [b'data: {"type": "answer", "text": "a"}\n\ndata: {"type": "answer", "text": "b"}\n\n'],
             "ORCHESTRATOR_PROTOCOL",
         ),
-        ([b"data: {\"type\": \"stage\", \"name\": 3}\n\n"], "ORCHESTRATOR_PROTOCOL"),
-        ([b"data: {\"type\": \"stage\", \"name\": \"reading\"}\n\n"], "ORCHESTRATOR_PROTOCOL"),
+        ([b'data: {"type": "stage", "name": 3}\n\n'], "ORCHESTRATOR_PROTOCOL"),
+        ([b'data: {"type": "stage", "name": "reading"}\n\n'], "ORCHESTRATOR_PROTOCOL"),
     ],
 )
 async def test_adapter_rejects_protocol_variants_with_exact_code(
@@ -169,9 +162,7 @@ async def test_adapter_rejects_protocol_variants_with_exact_code(
 
 @pytest.mark.asyncio
 async def test_adapter_rejects_non_sse_content_type() -> None:
-    transport = CaptureTransport(
-        httpx.Response(200, headers={"content-type": "application/json"})
-    )
+    transport = CaptureTransport(httpx.Response(200, headers={"content-type": "application/json"}))
     async with httpx.AsyncClient(transport=transport, base_url="http://orchestrator") as http:
         with pytest.raises(AssistantClientError) as error:
             await OrchestratorAssistantClient(http).ask(
@@ -215,8 +206,8 @@ async def test_adapter_sanitizes_remote_http_errors(status: int) -> None:
     "chunks",
     [
         [b"data: {not-json}\n\n"],
-        [b"data: {\"type\": \"stage\", \"name\": \"reading\"}\n\n"],
-        [b"data: {\"type\": \"answer\", \"text\": 3}\n\n"],
+        [b'data: {"type": "stage", "name": "reading"}\n\n'],
+        [b'data: {"type": "answer", "text": 3}\n\n'],
     ],
 )
 async def test_adapter_rejects_malformed_or_incomplete_sse(chunks: list[bytes]) -> None:
@@ -346,8 +337,7 @@ async def test_vertical_gateway_session_to_http_adapter() -> None:
         await _process_turn(socket, session, "turn")
     assert any(item["type"] == "turn.completed" for item in socket.json)
     assert any(
-        item["type"] == "assistant.stage" and item["stage"] == "reading"
-        for item in socket.json
+        item["type"] == "assistant.stage" and item["stage"] == "reading" for item in socket.json
     )
     assert transport.request is not None
     assert transport.request.headers["authorization"] == "Bearer credential"
