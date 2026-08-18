@@ -28,9 +28,7 @@ class Services:
 def build_services(settings: Settings | None = None) -> Services:
     effective = settings or Settings()
     stt: SpeechToText = (
-        LocalSpeechToText(effective)
-        if effective.stt_mode == "local"
-        else FakeSpeechToText(effective)
+        LocalSpeechToText(effective) if effective.stt_mode == "local" else FakeSpeechToText()
     )
     tts: TextToSpeech = (
         LocalTextToSpeech(effective)

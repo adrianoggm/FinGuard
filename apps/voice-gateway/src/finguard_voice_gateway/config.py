@@ -17,10 +17,6 @@ class Settings(BaseSettings):
     audio_bytes_per_second: int = 16_000 * 2
     assistant_mode: Literal["fake", "orchestrator_http"] = "fake"
     stt_mode: Literal["fake", "local"] = "fake"
-    # What the fake transcriber hears when the audio is real. A browser sends PCM16, which is
-    # not text, so there is nothing to echo back: this is the sentence a microphone "says"
-    # when no model is installed, and it is a setting so the payment path can be tried too.
-    fake_transcript: str = "cuánto he gastado este mes"
     stt_model: str = "small"
     stt_device: str = "auto"
     stt_compute_type: str = "int8"

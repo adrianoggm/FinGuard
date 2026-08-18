@@ -1,25 +1,29 @@
 from collections.abc import Callable
 
-from finguard_voice_gateway.config import Settings
+from finguard_voice_gateway.ports.speech_to_text import SpeechToTextUnavailableError
 
 
 class FakeSpeechToText:
-    """Deterministic transcription for the protocol suite, and for a browser with no model.
+    """Deterministic transcription for the protocol suite. It does not pretend to hear.
 
-    Two callers send two different shapes. The benchmark sends its sentence as UTF-8 bytes and
-    wants it back verbatim, which is what keeps the protocol tests independent of any model. A
-    browser sends microphone PCM16, which is not text: decoding it raised UnicodeDecodeError and
-    every turn came back as a provider failure. So text is honoured when the audio *is* text, and
-    real audio transcribes to a configured sentence rather than to an error.
+    The benchmark and the protocol tests send their sentence as UTF-8 bytes and want it back
+    verbatim, which is what keeps them independent of any model. Real microphone audio is not text,
+    and there are only two honest things to do with it here: crash, or say there is no model.
+
+    There was briefly a third — return a configured sentence — and it was the wrong one. Somebody
+    said "hazle un bizum a Aitor de 23 euros" and the assistant answered how much they had spent
+    this month, because the fake had substituted a different intention for theirs. This service
+    refuses to let a recogniser turn noise into a confirmation; inventing a whole instruction is the
+    same mistake with a bigger blast radius. Speaking requires a real model, by design.
     """
-
-    def __init__(self, settings: Settings | None = None) -> None:
-        self.settings = settings or Settings()
 
     async def transcribe(self, audio: bytes, *, cancelled: Callable[[], bool]) -> str:
         if cancelled() or not audio:
             return ""
         try:
             return audio.decode("utf-8")
-        except UnicodeDecodeError:
-            return self.settings.fake_transcript
+        except UnicodeDecodeError as exc:
+            raise SpeechToTextUnavailableError(
+                "no speech model is installed: build with INSTALL_LOCAL_STT=1 and set "
+                "VOICE_GATEWAY_STT_MODE=local to transcribe real audio"
+            ) from exc

@@ -1,8 +1,11 @@
 import asyncio
 
+import pytest
+
 from finguard_voice_gateway.adapters.outbound.fake_stt import FakeSpeechToText
 from finguard_voice_gateway.adapters.outbound.fake_tts import FakeTextToSpeech
 from finguard_voice_gateway.config import Settings
+from finguard_voice_gateway.ports.speech_to_text import SpeechToTextUnavailableError
 
 
 def collect(source: object) -> list[bytes]:
@@ -49,24 +52,19 @@ def test_fake_tts_stops_when_cancelled() -> None:
     assert 0 < len(chunks) <= 3
 
 
-def test_fake_stt_reads_text_bytes_and_survives_real_audio() -> None:
-    # Two callers, two shapes. The benchmark sends its sentence as UTF-8 bytes and expects it back
-    # verbatim, which is what makes the protocol suite deterministic. A browser sends microphone
-    # PCM16, which is not UTF-8, and decoding it raised UnicodeDecodeError — the page reported
-    # "voice provider failed" for every single turn.
-    stt = FakeSpeechToText(Settings())
+def test_fake_stt_reads_text_bytes_and_refuses_to_invent_a_sentence() -> None:
+    # The benchmark sends its sentence as UTF-8 bytes and gets it back verbatim. A browser sends
+    # microphone PCM16, which is not text. Returning a configured sentence for that case answered
+    # "cuánto he gastado este mes" to somebody who had said "hazle un bizum a Aitor de 23 euros":
+    # a fake substituting an intention is worse than a fake that says it cannot hear.
+    stt = FakeSpeechToText()
     assert asyncio.run(stt.transcribe("cuánto gasté".encode(), cancelled=lambda: False)) == (
         "cuánto gasté"
     )
-    microphone = bytes(range(256)) * 4
-    assert asyncio.run(stt.transcribe(microphone, cancelled=lambda: False)) == (
-        Settings().fake_transcript
-    )
     assert asyncio.run(stt.transcribe(b"", cancelled=lambda: False)) == ""
+    microphone = bytes(range(256)) * 4
     assert asyncio.run(stt.transcribe(microphone, cancelled=lambda: True)) == ""
-
-
-def test_fake_transcript_is_configurable() -> None:
-    stt = FakeSpeechToText(Settings(fake_transcript="hazle un bizum de 20 euros a Marta"))
-    spoken = asyncio.run(stt.transcribe(bytes(range(256)), cancelled=lambda: False))
-    assert spoken == "hazle un bizum de 20 euros a Marta"
+    with pytest.raises(SpeechToTextUnavailableError) as unavailable:
+        asyncio.run(stt.transcribe(microphone, cancelled=lambda: False))
+    assert unavailable.value.code == "STT_UNAVAILABLE"
+    assert "STT_MODE=local" in str(unavailable.value)
