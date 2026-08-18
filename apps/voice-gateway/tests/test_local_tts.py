@@ -72,6 +72,11 @@ def test_resampler_rejects_incomplete_sample() -> None:
 
 
 def test_piper_engine_uses_audio_chunk_api() -> None:
+    # The engine builds a real `SynthesisConfig`, so this one test needs the optional provider
+    # installed. Every other test here reaches the adapter through a fake engine and runs without
+    # it, which is the split ADR-010 accepted: fakes are the deterministic suite, the real
+    # providers are a separately reported benchmark.
+    pytest.importorskip("piper", reason="install the local-tts extra to run this")
     voice = FakePiperVoice()
     engine = PiperVoiceEngine(voice)
     chunks = list(engine.synthesize("hola", speaker_id=2, length_scale=1.1))
