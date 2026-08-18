@@ -14,3 +14,9 @@ services:
     environment:
       VOICE_GATEWAY_STT_MODE: local
       VOICE_GATEWAY_TTS_MODE: local
+      # `medium`, not the `small` of the phase-6 measurement. Measured on the same sentence: small
+      # heard "hazle un bizum a Aitor de 23 euros" as "hazle un bizuma y torde 23 euros" and the
+      # assistant could only ask who; medium got every word including the name. It costs about
+      # three seconds of CPU for three seconds of speech, against under one for small — the whole
+      # turn is 3.4 s p50 here because a payment is answered by rules and never reaches a model.
+      VOICE_GATEWAY_STT_MODEL: medium

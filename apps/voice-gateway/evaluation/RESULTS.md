@@ -62,3 +62,59 @@ uv run --directory apps/voice-gateway python scripts/benchmark_e2e.py \
 
 The token is never emitted. `utterance.pcm` is deliberately not committed: a reproducible run may
 use any non-empty mono PCM16 16 kHz fixture, while real user audio must not become repository data.
+
+---
+
+## Second run — 18 August 2026, in containers, and what a browser found
+
+The measurement above is the accepted phase-6 baseline: `small`, fake providers for the protocol
+suite, a one-second fixture, and a Python client. Running the same path from a **browser** — the
+client somebody actually speaks into — found six defects that a Python runner cannot see. They are
+recorded here because the shape of the mistake matters more than the numbers: every one of them was
+invisible to the harness that declared the phase measured.
+
+| what broke | why nothing caught it |
+| --- | --- |
+| The gateway answered no CORS preflight, so the page could not open a session at all | the runner is not a browser; `curl` answered every route |
+| The answer played as a run of clicks: one frame per `onended`, an event-loop gap every 20 ms | the runner records when the first frame *arrives*, never how it sounds |
+| The fake transcriber decoded microphone PCM16 as UTF-8 | the runner sends its sentence *as* text bytes, which decodes |
+| `small` heard "hazle un bizum a Aitor de 23 euros" as "hazle un bizuma y torde 23 euros" | the fixture was one second of a phrase the model already knew |
+| A near-silent clip where a name should be came back as "Adiós." | a synthetic fixture is never near-silent |
+| The runner sent each utterance as one frame, over the 64 KiB the protocol publishes | one second of PCM16 is 32 KiB, so the limit was never reached |
+
+### Result, real speech both ways
+
+`docker compose -f compose.yaml -f compose.voice-real.yaml`: Faster Whisper `medium` CPU `int8`,
+Piper `es_ES-davefx-medium`, 2.9 s of Spanish speech, three recorded turns after one warmup.
+
+| milestone | P50 | P95 |
+| --- | ---: | ---: |
+| input commit → transcript final | 3,040 ms | 3,061 ms |
+| input commit → first orchestrator stage | 3,073 ms | 3,077 ms |
+| first stage → assistant text final | 5.5 ms | 6.1 ms |
+| assistant text final → first TTS byte | 212 ms | 218 ms |
+| input start → turn completed | 3,445 ms | 3,478 ms |
+| cancellation acknowledgement | 15 ms | — |
+
+The assistant stage is milliseconds because the sentence is a payment: the deterministic router
+answers it and no model is called. Transcription is now the whole cost, at roughly one second of
+CPU per second of speech.
+
+### Vocabulary, measured
+
+`initial_prompt` carries the words a general Spanish model has never seen. On the same audio:
+
+```
+small,  no prompt:  "Hazle un vizuma y torde 23 euros."     → the assistant can only refuse
+small,  with prompt: "Hazle un bizuma y torde 23 euros."    → the rail and the amount survive
+medium, with prompt: "Hazle un bizum a Aitor de 23 euros."  → every word, name included
+```
+
+A hypothesis that did **not** survive measurement: the browser's 48 kHz → 16 kHz resampling
+interpolates without an anti-aliasing stage, which looked like an obvious cause. Feeding the same
+48 kHz utterance through the current interpolation and through a windowed-sinc decimation produced
+byte-identical transcripts. The capture path now asks for a 16 kHz `AudioContext` so the browser's
+own resampler does the work, but that is hygiene, not the fix — the model was.
+
+Speech synthesised by Piper and transcribed back by Whisper returns the same sentence bar one word,
+which is the check that the audio is intelligible speech rather than well-formed noise.

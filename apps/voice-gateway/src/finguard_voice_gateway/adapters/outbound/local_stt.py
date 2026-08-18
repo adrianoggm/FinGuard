@@ -79,6 +79,11 @@ class FasterWhisperEngine:
             beam_size=beam_size,
             vad_filter=vad_filter,
             initial_prompt=initial_prompt,
+            # Not a setting, a decision. Conditioning on the text decoded so far is what makes a
+            # recogniser continue a plausible sentence instead of transcribing what it heard: a
+            # near-silent clip where a name should be came back as "Adiós." One turn is one
+            # utterance here, so there is no previous text worth carrying anyway.
+            condition_on_previous_text=False,
         )
         return " ".join(str(segment.text) for segment in segments)
 

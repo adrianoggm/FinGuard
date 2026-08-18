@@ -36,6 +36,16 @@ OPTIONAL_STAGE_TIMING_NAMES = frozenset(
 )
 KNOWN_TIMING_NAMES = REQUIRED_TIMING_NAMES | OPTIONAL_STAGE_TIMING_NAMES
 ERROR_OUTCOMES = frozenset({"BANKING_UNAVAILABLE", "PROVIDER_ERROR"})
+# The protocol caps a binary frame at 64 KiB, so audio has to be chunked like a browser chunks it.
+# Sending the file whole worked only because the first measured utterance was one second long: at
+# 16 kHz PCM16 anything past two seconds was rejected as FRAME_TOO_LARGE, which reads as a broken
+# service rather than as a runner that ignored the limit it publishes. 100 ms is a capture block.
+AUDIO_FRAME_BYTES = 3_200
+
+
+async def send_audio(socket: Any, audio: bytes) -> None:
+    for offset in range(0, len(audio), AUDIO_FRAME_BYTES):
+        await socket.send(audio[offset : offset + AUDIO_FRAME_BYTES])
 
 
 @dataclass
@@ -185,7 +195,7 @@ async def run_turn(
     turn_id = f"benchmark-{sequence}"
     deadline = time.monotonic() + wait_seconds
     await socket.send(control("input.start", session_id, sequence, turn_id))
-    await socket.send(audio)
+    await send_audio(socket, audio)
     started = time.monotonic()
     commit_sequence = sequence + 1
     await socket.send(control("input.commit", session_id, commit_sequence, turn_id))
@@ -234,7 +244,7 @@ async def run_cancel_probe(
     turn_id = f"cancel-probe-{sequence}"
     deadline = time.monotonic() + wait_seconds
     await socket.send(control("input.start", session_id, sequence, turn_id))
-    await socket.send(audio)
+    await send_audio(socket, audio)
     await socket.send(control("input.commit", session_id, sequence + 1, turn_id))
     while True:
         message = await asyncio.wait_for(socket.recv(), timeout=_remaining(deadline))
