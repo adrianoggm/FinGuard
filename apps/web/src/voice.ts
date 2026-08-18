@@ -1,6 +1,9 @@
 export const VOICE_SUBPROTOCOL = "finguard.voice.v1";
 export const VOICE_INPUT_RATE = 16_000;
 export const VOICE_OUTPUT_RATE = 24_000;
+// How far ahead of the clock the first frame of a turn is scheduled. Enough to absorb the
+// jitter of frames arriving over a socket, small enough that nobody waits for it.
+const PLAYBACK_LEAD_SECONDS = 0.06;
 
 export type VoiceStatus =
   | "idle"
@@ -130,21 +133,31 @@ type AudioSource = {
   onended: (() => void) | null;
   buffer: AudioBuffer | null;
   connect(node: AudioNode): void;
-  start(): void;
+  start(when?: number): void;
   stop(): void;
   disconnect(): void;
 };
 
 type PlayerContext = Pick<
   AudioContext,
-  "destination" | "createBuffer" | "createBufferSource" | "close"
+  "currentTime" | "destination" | "createBuffer" | "createBufferSource" | "close"
 >;
 
-/** Ordered PCM playback. end() drains; clear() cancels and drops every queued frame. */
+/**
+ * Ordered PCM playback. end() drains; clear() cancels and drops every queued frame.
+ *
+ * Frames are scheduled back to back on the context clock rather than chained on the previous
+ * frame's `onended`. That callback is delivered by the main-thread event loop, so chaining put a
+ * scheduling turn of silence between every 20 ms of audio and an answer arrived as a run of clicks —
+ * audible on any machine, and invisible to a benchmark that only records when the first frame lands.
+ *
+ * Scheduling ahead means several sources are live at once, so cancellation has to stop all of them:
+ * barge-in that only dropped the queue would leave whatever was already scheduled still playing.
+ */
 export class PcmPlayer {
   private context: PlayerContext | null = null;
-  private queue: ArrayBuffer[] = [];
-  private source: AudioSource | null = null;
+  private live = new Set<AudioSource>();
+  private nextStart = 0;
   private streamEnded = false;
   private idleNotified = true;
   private ended?: () => void;
@@ -166,15 +179,15 @@ export class PcmPlayer {
   begin(): void {
     this.streamEnded = false;
     this.idleNotified = false;
+    // A new turn starts from now, never from a schedule the previous one left behind.
+    this.nextStart = 0;
   }
 
   enqueue(frame: ArrayBuffer): boolean {
     if (frame.byteLength === 0 || frame.byteLength % 2 !== 0 || this.streamEnded) {
       return false;
     }
-    this.queue.push(frame.slice(0));
-    void this.play();
-    return true;
+    return this.schedule(frame);
   }
 
   end(): void {
@@ -183,16 +196,19 @@ export class PcmPlayer {
   }
 
   clear(): void {
-    this.queue = [];
     this.streamEnded = false;
     this.idleNotified = true;
-    try {
-      this.source?.stop();
-    } catch {
-      // The source may already have ended.
+    this.nextStart = 0;
+    for (const source of [...this.live]) {
+      this.live.delete(source);
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        // The source may already have ended.
+      }
+      source.disconnect();
     }
-    this.source?.disconnect();
-    this.source = null;
   }
 
   async close(): Promise<void> {
@@ -203,31 +219,19 @@ export class PcmPlayer {
   }
 
   private maybeIdle(): void {
-    if (
-      this.streamEnded &&
-      !this.source &&
-      this.queue.length === 0 &&
-      !this.idleNotified
-    ) {
+    if (this.streamEnded && this.live.size === 0 && !this.idleNotified) {
       this.idleNotified = true;
       this.ended?.();
     }
   }
 
-  private async play(): Promise<void> {
+  private schedule(frame: ArrayBuffer): boolean {
     try {
-      if (this.source || this.queue.length === 0) {
-        this.maybeIdle();
-        return;
-      }
-
       this.context ??= this.makeContext();
-      const frame = this.queue.shift()!;
       const samples = frame.byteLength / 2;
       const buffer = this.context.createBuffer(1, samples, VOICE_OUTPUT_RATE);
       const channel = buffer.getChannelData(0);
       const view = new DataView(frame);
-
       for (let index = 0; index < samples; index += 1) {
         const value = view.getInt16(index * 2, true);
         channel[index] = value < 0 ? value / 32768 : value / 32767;
@@ -236,16 +240,22 @@ export class PcmPlayer {
       const source = this.context.createBufferSource() as AudioSource;
       source.buffer = buffer;
       source.connect(this.context.destination);
-      this.source = source;
+      // A frame that arrives late starts now; one that arrives early waits for the frame before it
+      // to finish, to the sample. The lead keeps a jittery provider from underrunning the device.
+      const startAt = Math.max(this.context.currentTime + PLAYBACK_LEAD_SECONDS, this.nextStart);
+      this.nextStart = startAt + samples / VOICE_OUTPUT_RATE;
+      this.live.add(source);
       source.onended = () => {
-        if (this.source === source) this.source = null;
+        this.live.delete(source);
         source.disconnect();
-        void this.play();
+        this.maybeIdle();
       };
-      source.start();
+      source.start(startAt);
+      return true;
     } catch {
       this.clear();
       this.failed?.();
+      return false;
     }
   }
 }

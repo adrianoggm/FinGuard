@@ -22,7 +22,13 @@ from finguard_voice_gateway.ports.speech_to_text import (
 
 class WhisperEngine(Protocol):
     def transcribe(
-        self, samples: Any, *, language: str, beam_size: int, vad_filter: bool
+        self,
+        samples: Any,
+        *,
+        language: str,
+        beam_size: int,
+        vad_filter: bool,
+        initial_prompt: str | None,
     ) -> str: ...
     def close(self) -> None: ...
 
@@ -53,9 +59,26 @@ def _normalise(text: str) -> str:
 class FasterWhisperEngine:
     model: Any
 
-    def transcribe(self, samples: Any, *, language: str, beam_size: int, vad_filter: bool) -> str:
+    def transcribe(
+        self,
+        samples: Any,
+        *,
+        language: str,
+        beam_size: int,
+        vad_filter: bool,
+        initial_prompt: str | None,
+    ) -> str:
+        # `initial_prompt` biases the decoder towards words it would otherwise never choose. A
+        # general Spanish model does not know "bizum" or a holder's contacts, and measured on this
+        # dataset it heard "hazle un bizum a Aitor" as "hazle un vizuma y torde" — a sentence the
+        # assistant can only refuse. The vocabulary is a setting because it belongs to the product,
+        # not to the adapter.
         segments, _info = self.model.transcribe(
-            samples, language=language, beam_size=beam_size, vad_filter=vad_filter
+            samples,
+            language=language,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+            initial_prompt=initial_prompt,
         )
         return " ".join(str(segment.text) for segment in segments)
 
@@ -170,6 +193,7 @@ class LocalSpeechToText(SpeechToTextLifecycle):
                 language=self.settings.stt_language,
                 beam_size=self.settings.stt_beam_size,
                 vad_filter=self.settings.stt_vad_filter,
+                initial_prompt=self.settings.stt_initial_prompt or None,
             )
             native = loop.run_in_executor(self._executor, call)
             self._track_reaper(native)

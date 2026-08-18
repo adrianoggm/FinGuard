@@ -65,12 +65,23 @@ class CaptureModel:
 def test_faster_whisper_boundary_passes_ndarray_and_options() -> None:
     model = CaptureModel()
     FasterWhisperEngine(model).transcribe(
-        np.array([0.25, -0.5], dtype=np.float32), language="es", beam_size=3, vad_filter=True
+        np.array([0.25, -0.5], dtype=np.float32),
+        language="es",
+        beam_size=3,
+        vad_filter=True,
+        initial_prompt="bizum",
     )
     assert isinstance(model.samples, np.ndarray)
     assert model.samples.dtype == np.float32
     assert model.samples.shape == (2,)
-    assert model.kwargs == {"language": "es", "beam_size": 3, "vad_filter": True}
+    # The vocabulary bias has to cross this boundary: without it the model chose "vizuma" for
+    # "bizum" and the assistant could only refuse a sentence the holder had said correctly.
+    assert model.kwargs == {
+        "language": "es",
+        "beam_size": 3,
+        "vad_filter": True,
+        "initial_prompt": "bizum",
+    }
 
 
 def test_effective_device_checks_nested_ctranslate_backend() -> None:
@@ -97,9 +108,16 @@ class Engine:
     release: threading.Event | None = None
 
     def transcribe(
-        self, samples: Sequence[float], *, language: str, beam_size: int, vad_filter: bool
+        self,
+        samples: Sequence[float],
+        *,
+        language: str,
+        beam_size: int,
+        vad_filter: bool,
+        initial_prompt: str | None,
     ) -> str:
         assert (language, beam_size, vad_filter) == ("es", 5, True)
+        assert initial_prompt is not None and "bizum" in initial_prompt
         self.calls += 1
         if self.entered:
             self.entered.set()

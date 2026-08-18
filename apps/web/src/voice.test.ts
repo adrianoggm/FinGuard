@@ -31,9 +31,9 @@ function captureContext(sampleRate = 48_000, onConnect?: () => void) {
   return { context, stats } as unknown as { context: AudioContext; stats: typeof stats };
 }
 
-function playbackContext() {
-  const sources: Array<{ onended: (() => void) | null; buffer: AudioBuffer | null; connect: () => void; start: () => void; stop: () => void; disconnect: () => void }> = [];
-  const context = { destination: {}, createBuffer: (_channels: number, length: number) => ({ getChannelData: () => new Float32Array(length) }), createBufferSource: () => { const source = { onended: null as (() => void) | null, buffer: null as AudioBuffer | null, connect: () => undefined, start: () => undefined, stop: () => source.onended?.(), disconnect: () => undefined }; sources.push(source); return source; }, close: async () => undefined } as unknown as AudioContext;
+function playbackContext(sampleRate = 24_000) {
+  const sources: Array<{ onended: (() => void) | null; buffer: AudioBuffer | null; startedAt: number | null; stopped: boolean; connect: () => void; start: (when?: number) => void; stop: () => void; disconnect: () => void }> = [];
+  const context = { currentTime: 0, sampleRate, destination: {}, createBuffer: (_channels: number, length: number, rate: number) => ({ length, duration: length / rate, getChannelData: () => new Float32Array(length) }), createBufferSource: () => { const source = { onended: null as (() => void) | null, buffer: null as AudioBuffer | null, startedAt: null as number | null, stopped: false, connect: () => undefined, start: (when = 0) => { source.startedAt = when; }, stop: () => { source.stopped = true; source.onended?.(); }, disconnect: () => undefined }; sources.push(source); return source; }, close: async () => undefined } as unknown as AudioContext & { currentTime: number };
   return { context, sources };
 }
 
@@ -53,8 +53,36 @@ describe("DSP contract K", () => {
 });
 
 describe("PcmPlayer contract G", () => {
+  // Chaining a chunk on the previous one's `onended` put a main-thread event-loop turn between every
+  // 20 ms of audio, so a whole answer arrived as a run of clicks. Frames are scheduled back to back
+  // on the context clock instead: contiguous start times, no gap to hear.
+  it("schedules every queued frame contiguously instead of waiting for onended", async () => {
+    const fake = playbackContext(); const player = new PcmPlayer(() => fake.context); player.begin();
+    const frame = new ArrayBuffer(960); // 20 ms at 24 kHz, PCM16
+    player.enqueue(frame); player.enqueue(frame); player.enqueue(frame);
+    expect(fake.sources).toHaveLength(3);
+    const started = fake.sources.map((source) => source.startedAt!);
+    expect(started[1]! - started[0]!).toBeCloseTo(0.02, 6);
+    expect(started[2]! - started[1]!).toBeCloseTo(0.02, 6);
+    await player.close();
+  });
+
   it("keeps order, drains normally and clear cancels without idle", async () => {
-    const fake = playbackContext(); let idle = 0; const player = new PcmPlayer(() => fake.context); player.onIdle(() => { idle += 1; }); player.begin(); player.enqueue(new Uint8Array([0, 0]).buffer); player.enqueue(new Uint8Array([255, 127]).buffer); player.end(); expect(fake.sources).toHaveLength(1); fake.sources[0]!.onended?.(); expect(fake.sources).toHaveLength(2); expect(idle).toBe(0); fake.sources[1]!.onended?.(); await Promise.resolve(); expect(idle).toBe(1); player.begin(); player.enqueue(new ArrayBuffer(2)); player.clear(); expect(idle).toBe(1); await player.close();
+    const fake = playbackContext(); let idle = 0; const player = new PcmPlayer(() => fake.context); player.onIdle(() => { idle += 1; }); player.begin(); player.enqueue(new Uint8Array([0, 0]).buffer); player.enqueue(new Uint8Array([255, 127]).buffer); player.end(); expect(fake.sources).toHaveLength(2); expect(idle).toBe(0); fake.sources[0]!.onended?.(); expect(idle).toBe(0); fake.sources[1]!.onended?.(); await Promise.resolve(); expect(idle).toBe(1); player.begin(); player.enqueue(new ArrayBuffer(2)); player.clear(); expect(idle).toBe(1); await player.close();
+  });
+
+  it("clear stops every frame already scheduled, which is what barge-in needs", async () => {
+    const fake = playbackContext(); let idle = 0; const player = new PcmPlayer(() => fake.context); player.onIdle(() => { idle += 1; }); player.begin();
+    for (let index = 0; index < 4; index += 1) player.enqueue(new ArrayBuffer(960));
+    expect(fake.sources).toHaveLength(4);
+    player.clear();
+    expect(fake.sources.every((source) => source.stopped)).toBe(true);
+    expect(idle).toBe(0);
+    // A cancelled turn leaves no schedule behind: the next turn starts from the current clock.
+    (fake.context as unknown as { currentTime: number }).currentTime = 5;
+    player.begin(); player.enqueue(new ArrayBuffer(960));
+    expect(fake.sources.at(-1)!.startedAt).toBeCloseTo(5.06, 6); // the clock plus the lead
+    await player.close();
   });
 });
 
@@ -87,9 +115,9 @@ describe("VoiceClient transport A-J", () => {
   it("accepts binary only between audio events and closes after either completion order", async () => {
     for (const reverse of [false, true]) { const setup = await ready(); setup.client.stopCapture(); setup.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); setup.fakeSocket.message(new Uint8Array([0, 0]).buffer); if (reverse) setup.fakeSocket.message(event("turn.completed", "s-1", 2, { turnId: "turn-1" })); setup.fakeSocket.message(event("audio.completed", "s-1", reverse ? 3 : 2, { turnId: "turn-1" })); if (!reverse) setup.fakeSocket.message(event("turn.completed", "s-1", 3, { turnId: "turn-1" })); expect(setup.finished).toHaveLength(0); setup.playback.sources[0]!.onended?.(); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(setup.finished).toHaveLength(1); expect(setup.fakeSocket.socket.readyState).toBe(3); }
   });
-  it("clears active playback on response.cancelled/error and never starts the queued second frame", async () => {
-    const cancelled = await ready(); cancelled.client.stopCapture(); cancelled.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); cancelled.fakeSocket.message(new Uint8Array([0, 0]).buffer); cancelled.fakeSocket.message(new Uint8Array([1, 0]).buffer); cancelled.fakeSocket.message(event("response.cancelled", "s-1", 2, { turnId: "turn-1" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(cancelled.playback.sources).toHaveLength(1); expect(cancelled.finished).toHaveLength(1); expect(cancelled.statuses.at(-1)).toBe("idle");
-    const failed = await ready(); failed.client.stopCapture(); failed.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); failed.fakeSocket.message(new Uint8Array([0, 0]).buffer); failed.fakeSocket.message(new Uint8Array([1, 0]).buffer); failed.fakeSocket.message(event("error", "s-1", 2, { code: "PROVIDER_ERROR", message: "provider failed", fatal: true })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(failed.playback.sources).toHaveLength(1); expect(failed.statuses.at(-1)).toBe("error:provider failed"); expect(failed.fakeSocket.socket.readyState).toBe(3);
+  it("clears active playback on response.cancelled/error so no scheduled frame survives", async () => {
+    const cancelled = await ready(); cancelled.client.stopCapture(); cancelled.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); cancelled.fakeSocket.message(new Uint8Array([0, 0]).buffer); cancelled.fakeSocket.message(new Uint8Array([1, 0]).buffer); cancelled.fakeSocket.message(event("response.cancelled", "s-1", 2, { turnId: "turn-1" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(cancelled.playback.sources).toHaveLength(2); expect(cancelled.playback.sources.every((source) => source.stopped)).toBe(true); expect(cancelled.finished).toHaveLength(1); expect(cancelled.statuses.at(-1)).toBe("idle");
+    const failed = await ready(); failed.client.stopCapture(); failed.fakeSocket.message(event("audio.started", "s-1", 1, { turnId: "turn-1", sampleRate: 24_000 })); failed.fakeSocket.message(new Uint8Array([0, 0]).buffer); failed.fakeSocket.message(new Uint8Array([1, 0]).buffer); failed.fakeSocket.message(event("error", "s-1", 2, { code: "PROVIDER_ERROR", message: "provider failed", fatal: true })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(failed.playback.sources.every((source) => source.stopped)).toBe(true); expect(failed.statuses.at(-1)).toBe("error:provider failed"); expect(failed.fakeSocket.socket.readyState).toBe(3);
   });
   it("rejects binary before audio.started and cleans every resource idempotently", async () => {
     const setup = await ready(); setup.fakeSocket.message(new ArrayBuffer(2)); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(setup.statuses.at(-1)).toMatch(/^error/); expect(setup.fakeSocket.socket.readyState).toBe(3); await setup.client.close(); await setup.client.close(); expect(setup.media.stopped()).toBe(1); expect(setup.capture.stats.sourceDisconnects).toBe(1); expect(setup.capture.stats.processorDisconnects).toBe(1);
