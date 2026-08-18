@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     tts_chunk_ms: int = 20
     tts_timeout_seconds: float = 60.0
     tts_warmup: bool = False
+    # Browser origins allowed to call this service. Exact origins, never a wildcard: the caller's
+    # token travels in a header, and `*` with credentials lets any page a holder visits spend their
+    # session. The WebSocket is not covered by CORS — its gate is the one-use ticket.
+    web_origins: tuple[str, ...] = (
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    )
     orchestrator_base_url: str = "http://127.0.0.1:8080"
     orchestrator_timeout_seconds: float = 60.0
     orchestrator_stream_path: str = "/v1/questions/stream"
