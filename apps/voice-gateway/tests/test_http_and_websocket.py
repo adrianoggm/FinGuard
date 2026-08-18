@@ -37,6 +37,37 @@ def _control(event_type: str, session_id: str, sequence: int, turn_id: str | Non
     )
 
 
+def test_browser_preflight_is_answered_for_a_listed_origin_only() -> None:
+    # The web client cannot reach this service without this. A browser sends OPTIONS before a
+    # cross-origin POST carrying an Authorization header, and until this existed that preflight got
+    # 405 with no allow-origin: the page said "Voz no disponible / Failed to fetch" while `curl`
+    # answered every route perfectly. The Python benchmark never noticed: it is not a browser.
+    with TestClient(app) as client:
+        allowed = client.options(
+            "/v1/voice/sessions",
+            headers={
+                "Origin": "http://127.0.0.1:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert allowed.status_code == 200
+        assert allowed.headers["access-control-allow-origin"] == "http://127.0.0.1:3000"
+        assert "authorization" in allowed.headers["access-control-allow-headers"].lower()
+
+        # An origin nobody listed gets no such statement: the credential is in a header, so a
+        # wildcard would let any page a holder visits spend their session.
+        refused = client.options(
+            "/v1/voice/sessions",
+            headers={
+                "Origin": "http://evil.example",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        assert "access-control-allow-origin" not in refused.headers
+
+
 def test_health_version_and_ticket_is_one_use() -> None:
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}

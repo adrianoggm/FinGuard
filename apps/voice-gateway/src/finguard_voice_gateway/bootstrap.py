@@ -31,7 +31,9 @@ def build_services(settings: Settings | None = None) -> Services:
         LocalSpeechToText(effective) if effective.stt_mode == "local" else FakeSpeechToText()
     )
     tts: TextToSpeech = (
-        LocalTextToSpeech(effective) if effective.tts_mode == "local" else FakeTextToSpeech()
+        LocalTextToSpeech(effective)
+        if effective.tts_mode == "local"
+        else FakeTextToSpeech(effective)
     )
     if effective.assistant_mode == "orchestrator_http":
         client = httpx.AsyncClient(

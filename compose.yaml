@@ -168,6 +168,9 @@ services:
       # Fake speech by default. Local providers are measured on the host where the GPU and the
       # models are — see apps/voice-gateway/evaluation/RESULTS.md — and switching them on here
       # means building with the extra and mounting a voice.
+      # The page that may call this, exactly, and never a wildcard: the caller's token is in a
+      # header. Same origins the orchestrator lists, because it is the same client.
+      VOICE_GATEWAY_WEB_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000","http://127.0.0.1:5173","http://localhost:5173"]'
       VOICE_GATEWAY_STT_MODE: ${VOICE_STT_MODE:-fake}
       VOICE_GATEWAY_TTS_MODE: ${VOICE_TTS_MODE:-fake}
     # 8002 on the host, beside banking's 8001. Not 8080: it is the most contested port on a

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from finguard_voice_gateway import __version__
@@ -65,6 +66,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="FinGuard Voice Gateway", version=__version__, lifespan=lifespan)
+
+# The browser's first dependency, not a detail: a rejected preflight never reaches a route, so
+# without this the session bootstrap is unreachable from a page while answering `curl` perfectly.
+# The orchestrator's own CORS comment describes this exact failure; this service repeated it because
+# every client that exercised it — the benchmark, the protocol tests — was not a browser.
+#
+# Methods and headers are spelled out rather than "*": the answer to a preflight is a statement
+# about what this service accepts, and a wildcard makes that statement unfalsifiable.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(services.settings.web_origins),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 def now_iso() -> str:
