@@ -27,6 +27,10 @@ component name:
 # Skeleton: database + backend APIs. The skin (web, mobile) stays out
 back:
     docker compose --profile core up -d --wait --build --remove-orphans
+# Skeleton plus the real-time voice gateway on 8080. Fake speech providers by default: the
+# measured local ones run on the host, where the GPU and the models are.
+voice:
+    docker compose --profile voice up -d --wait --build --remove-orphans
 # Frontend development server. Keeps the terminal attached so Ctrl+C stops Vite.
 web:
     npm --prefix apps/web run dev
@@ -93,6 +97,7 @@ evaluate-expected:
 install:
     uv sync --project apps/banking-api
     uv sync --project apps/orchestrator
+    uv sync --project apps/voice-gateway
     npm --prefix apps/web ci
 # banking-api with autoreload. Needs port 8001 free: use `just db`, not `just back`
 serve-banking:
@@ -100,6 +105,10 @@ serve-banking:
 # orchestrator with autoreload. Needs port 8000 free
 serve-orchestrator:
     uv run --directory apps/orchestrator uvicorn finguard_orchestrator.bootstrap.main:app --reload --port 8000
+# voice-gateway with autoreload on 8080. Fake providers unless VOICE_GATEWAY_* says otherwise;
+# apps/voice-gateway/.env.defaults documents every setting.
+serve-voice:
+    uv run --directory apps/voice-gateway uvicorn finguard_voice_gateway.main:app --reload --port 8080
 # The active LLM policy. The default is the compose operator token; pass another
 # explicitly when running against a different local configuration.
 llm-policy token="demo-token-operator":
@@ -115,23 +124,30 @@ lint:
     uv run --directory apps/banking-api ruff format --check .
     uv run --directory apps/orchestrator ruff check .
     uv run --directory apps/orchestrator ruff format --check .
+    uv run --directory apps/voice-gateway ruff check .
+    uv run --directory apps/voice-gateway ruff format --check .
 # Applies formatting and automatic fixes
 format:
     uv run --directory apps/banking-api ruff format .
     uv run --directory apps/banking-api ruff check --fix .
     uv run --directory apps/orchestrator ruff format .
     uv run --directory apps/orchestrator ruff check --fix .
+    uv run --directory apps/voice-gateway ruff format .
+    uv run --directory apps/voice-gateway ruff check --fix .
 typecheck:
     uv run --directory apps/banking-api mypy src
     uv run --directory apps/orchestrator mypy src
+    uv run --directory apps/voice-gateway mypy src
 # Tests for every service. The ones marked integration need `just db`
 test:
     uv run --directory apps/banking-api pytest -q
     uv run --directory apps/orchestrator pytest -q
+    uv run --directory apps/voice-gateway pytest -q
 # Without a database: skips the integration tests
 test-unit:
     uv run --directory apps/banking-api pytest -q -m "not integration"
     uv run --directory apps/orchestrator pytest -q -m "not integration"
+    uv run --directory apps/voice-gateway pytest -q -m "not integration"
 # Accuracy of the query engine given a correct plan (phase 2)
 # Accuracy of turning a Spanish sentence into a plan (phase 3). The model name must belong to
 # the selected provider; hosted providers read their credentials from apps/orchestrator/.env.
