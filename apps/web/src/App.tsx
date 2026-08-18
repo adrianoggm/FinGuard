@@ -24,7 +24,7 @@ import { Cards } from "./Cards";
 import { Conversation, EMPTY_THREAD, type Thread } from "./Conversation";
 import { Finances } from "./Finances";
 import { Home } from "./Home";
-import { TABS, tabOf, type Tab } from "./tabs";
+import { TABS, accountOf, tabOf, type Tab } from "./tabs";
 
 export function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -89,7 +89,14 @@ export function App() {
           )}
           {where === "traspaso" && <Transfer summary={summary} onPaid={load} />}
           {tabOf(where) === "cuentas" && where !== "traspaso" && (
-            <Accounts summary={summary} searching={where === "cuentas-buscar"} onGo={go} />
+            <Accounts
+              summary={summary}
+              searching={where === "cuentas-buscar"}
+              // Which account the destination named, when it named one. The tab bar's own "Cuentas"
+              // names none, and that is every account — the same distinction the screen draws.
+              account={accountOf(where)}
+              onGo={go}
+            />
           )}
           {where === "tarjetas" && <Cards />}
           {where === "finanzas" && <Finances />}

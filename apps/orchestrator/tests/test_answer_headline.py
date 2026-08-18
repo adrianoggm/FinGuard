@@ -16,12 +16,16 @@ The filter is named in Spanish, from the same vocabulary the planner's prompt us
 `GROCERIES` is an identifier and "supermercado" is what the user said.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import answer_writer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 
 LAST_MONTH = RelativePeriod(period=Period.LAST_MONTH)
 
@@ -76,6 +80,148 @@ def test_a_count_names_the_filter_too() -> None:
     assert said == "2 movimientos en ocio el mes pasado."
 
 
+def test_an_average_is_derived_from_the_exact_sum_and_count() -> None:
+    said = answer_writer.write(
+        answer(total=1_001, count=4),
+        plan(categories=("RESTAURANTS",), metric=Metric.AVERAGE),
+    )
+
+    assert said == (
+        "El importe medio por movimiento en restaurantes el mes pasado fue de 2,50 €, "
+        "calculado sobre 4 movimientos."
+    )
+
+
+def test_an_average_rounds_half_away_from_zero_in_minor_units() -> None:
+    said = answer_writer.write(answer(total=101, count=2), plan(metric=Metric.AVERAGE))
+
+    assert "0,51 €" in said
+
+
+def test_an_empty_period_has_no_per_movement_average() -> None:
+    said = answer_writer.comparison_figure(answer(total=0, count=0), plan(metric=Metric.AVERAGE))
+
+    assert said == "sin movimientos"
+
+
+def test_a_monthly_average_includes_calendar_months_with_no_movements() -> None:
+    answered = QueryAnswer(
+        currency="EUR",
+        total_minor=120_000,
+        movement_count=9,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 6, 30),
+        # No row for February or May: they still belong in the six-month divisor.
+        groups=(
+            Group("2026-01", 30_000, 2),
+            Group("2026-03", 30_000, 2),
+            Group("2026-04", 30_000, 2),
+            Group("2026-06", 30_000, 3),
+        ),
+    )
+
+    said = answer_writer.write(
+        answered,
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            date_range=AbsoluteRange(start=date(2026, 1, 1), end=date(2026, 6, 30)),
+            categories=("GROCERIES",),
+            group_by=GroupBy.MONTH,
+            metric=Metric.PERIOD_AVERAGE,
+        ),
+    )
+
+    assert "gasto medio por mes en supermercado" in said
+    assert "200,00 €" in said
+    assert "6 meses" in said
+
+
+def test_a_rolling_twelve_month_average_divides_by_twelve_not_endpoint_labels() -> None:
+    answered = QueryAnswer(
+        currency="EUR",
+        total_minor=1_200_000,
+        movement_count=20,
+        period_start=date(2025, 8, 6),
+        period_end=date(2026, 8, 6),
+    )
+    monthly = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    said = answer_writer.write(answered, monthly)
+
+    assert "1.000,00 €" in said
+    assert "12 meses" in said
+
+
+def test_a_monthly_income_average_is_not_described_as_spending() -> None:
+    answered = QueryAnswer(
+        currency="EUR",
+        total_minor=1_200_000,
+        movement_count=4,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 4, 30),
+    )
+    salary = FinancialPlan(
+        direction=Direction.INCOME,
+        date_range=AbsoluteRange(start=date(2026, 1, 1), end=date(2026, 4, 30)),
+        categories=("SALARY",),
+        group_by=GroupBy.MONTH,
+        metric=Metric.PERIOD_AVERAGE,
+    )
+
+    said = answer_writer.write(answered, salary)
+
+    assert "ingreso medio por mes" in said
+    assert "gasto medio" not in said
+
+
+def test_a_category_comparison_shows_an_average_for_each_category() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=2_000,
+        movement_count=4,
+        groups=(Group("GROCERIES", 1_500, 3), Group("RESTAURANTS", 500, 1)),
+    )
+
+    said = answer_writer.write(
+        grouped,
+        plan(
+            categories=("GROCERIES", "RESTAURANTS"),
+            group_by=GroupBy.CATEGORY,
+            metric=Metric.AVERAGE,
+        ),
+    )
+
+    assert "supermercado: media 5,00 € (3)" in said
+    assert "restaurantes: media 5,00 € (1)" in said
+
+
+def test_an_average_comparison_does_not_lead_with_the_combined_average() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=5_028,
+        movement_count=8,
+        groups=(Group("GROCERIES", 3_600, 6), Group("RESTAURANTS", 1_428, 2)),
+    )
+    compared = plan(
+        categories=("GROCERIES", "RESTAURANTS"),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.AVERAGE,
+    )
+
+    said = answer_writer.compare_averages(grouped, compared)
+
+    assert "supermercado: 6,00 € (6 movimientos)" in said
+    assert "restaurantes: 7,14 € (2 movimientos)" in said
+    assert "más alta fue la de restaurantes" in said
+    assert "6,29 €" not in said, "the combined mean does not compare either category"
+
+
 def test_an_empty_answer_says_what_it_looked_for() -> None:
     """ "No he encontrado movimientos el mes pasado" invites the user to believe there were none.
     Naming the filter is what lets them see the query was wrong instead."""
@@ -109,6 +255,34 @@ def test_a_breakdown_keeps_its_lines() -> None:
     said = answer_writer.write(grouped, plan(group_by=GroupBy.CATEGORY, categories=("GROCERIES",)))
 
     assert said.splitlines()[0].startswith("80,00 € en supermercado")
+
+
+def test_a_single_account_breakdown_answers_whether_everything_came_from_it() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=713_320,
+        movement_count=112,
+        groups=(Group("Cuenta corriente", 713_320, 112),),
+    )
+
+    said = answer_writer.write(grouped, plan(group_by=GroupBy.ACCOUNT))
+
+    assert said.startswith("Todos los 112 movimientos encontrados")
+    assert "están en Cuenta corriente" in said
+
+
+def test_one_movement_in_one_account_is_singular() -> None:
+    grouped = QueryAnswer(
+        currency="EUR",
+        total_minor=244_287,
+        movement_count=1,
+        groups=(Group("Cuenta corriente", 244_287, 1),),
+    )
+
+    said = answer_writer.write(grouped, plan(group_by=GroupBy.ACCOUNT))
+
+    assert said.startswith("El movimiento encontrado")
+    assert "Todos los 1" not in said
 
 
 def test_the_movements_behind_it_are_still_the_evidence() -> None:

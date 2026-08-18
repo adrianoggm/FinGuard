@@ -1,0 +1,36 @@
+# Frequency is retained as a metric, so changing only the period never turns it back into money.
+
+episodes:
+  - name: frequency_survives_natural_period_follow_ups
+    why: >
+      A cadence question gets a useful twelve-month default, uses complete bounded evidence, and
+      keeps its metric while the user moves between periods or changes from purchases to payroll.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Cada cuánto compro gasolina?
+        route: QUERY
+        no_model: true
+        says: frecuencia
+        ran: {window: 'LAST_N_MONTHS:12', direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: FREQUENCY, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y este año?
+        route: QUERY
+        no_model: true
+        says: frecuencia
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: FREQUENCY, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y el año pasado?
+        route: QUERY
+        no_model: true
+        says: frecuencia
+        ran: {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: FREQUENCY, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Qué día suelen pagarme?
+        route: QUERY
+        no_model: true
+        says: frecuencia
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: FREQUENCY, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y este año?
+        route: QUERY
+        no_model: true
+        says: frecuencia
+        ran: {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: FREQUENCY, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY

@@ -41,8 +41,17 @@ def test_an_average_is_refused_however_it_is_worded() -> None:
     assert unsupported_reason("¿Cuánto gasto de media a la semana?") is not None
 
 
+def test_an_explicit_average_per_movement_is_supported() -> None:
+    assert unsupported_reason("¿Cuál fue el importe medio de mis compras este mes?") is None
+    assert unsupported_reason("Dame la media por movimiento de gasolina este año") is None
+
+
 def test_a_comparison_between_periods_is_refused() -> None:
     assert unsupported_reason("¿He gastado más este mes que el anterior?") is not None
+
+
+def test_a_comparison_between_two_named_categories_is_one_supported_breakdown() -> None:
+    assert unsupported_reason("Compara gasolina frente a restaurantes este mes") is None
 
 
 def test_a_ranking_is_not_a_comparison() -> None:
@@ -197,3 +206,67 @@ def test_a_sentence_with_content_of_its_own_is_not_a_continuation(sentence: str)
     """Anchored at both ends. Reading a whole question as "the next one" would answer it with the
     second largest expense, which is worse than the loop the ordinal reader replaced."""
     assert capability_guard.ordinal_in(sentence) is None
+
+
+# --- operating on the account, rather than reading it ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # Selling and buying.
+        "vende mis acciones del fondo indexado",
+        "quiero vender participaciones del fondo",
+        "compra 10 acciones de Inditex",
+        "cómprame acciones de Telefónica",
+        "quiero invertir 500 euros en bolsa",
+        "invierte 1000 en el fondo",
+        # Contracting a product, and ending one.
+        "contrata un plan de pensiones",
+        "quiero contratar una hipoteca",
+        "domicilia el recibo de la luz",
+        "dame de baja de la cuenta nómina",
+        "abre una cuenta nueva",
+        "cierra mi hucha",
+        # The card, and cash.
+        "bloquea mi tarjeta",
+        "anula la tarjeta de crédito",
+        "saca 100 euros del cajero",
+        "retira efectivo de la cuenta",
+    ],
+)
+def test_a_request_to_operate_is_refused_before_any_model_sees_it(question: str) -> None:
+    """All sixteen used to reach the planner, and whatever it planned came back as a figure.
+
+    Measured, not supposed: eight of these were run through the service and every one was answered
+    with a total over a period. A real figure answering a different question is the failure nothing
+    downstream can contradict, and here it answers a *request* with one.
+
+    It also fixes what the user reads. Falling through produced "eso no puedo calcularlo todavía"
+    for a request to sell shares — true of the wrong thing, because nobody asked for a calculation.
+    """
+    assert unsupported_reason(question) == "ACTION"
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        # «Compra» is a noun before it is an imperative, which is why the pattern needs the thing
+        # bought. Refusing these would be the expensive direction: a question this service answers
+        # well, turned into a dead end.
+        "¿cuánto gasté en la compra?",
+        "¿cuántas compras hice en Mercadona?",
+        "¿cuál fue mi compra más cara?",
+        # «Abre» and «cierra» are about periods at least as often as about accounts.
+        "¿cuánto llevo desde que abre el mes?",
+        # Past tense is a question about what already happened, never an instruction.
+        "¿cuánto he sacado del cajero este mes?",
+        "¿cuánto he retirado en efectivo?",
+        "¿cuánto he pagado de recibos domiciliados?",
+        "¿cuánto vendí el año pasado?",
+    ],
+)
+def test_asking_about_an_operation_that_happened_is_not_a_request_to_perform_one(
+    question: str,
+) -> None:
+    assert unsupported_reason(question) is None

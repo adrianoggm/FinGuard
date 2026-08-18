@@ -5,7 +5,7 @@ another holder's card id selects nothing. Containment does not depend on this ha
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from finguard_banking.application.bus.query_bus import Query
@@ -15,7 +15,7 @@ from finguard_banking.domain.ports.card_directory import CardDirectoryPort
 @dataclass(frozen=True)
 class CardChargeRow:
     transaction_id: UUID
-    occurred_at: str
+    occurred_at: datetime
     description: str
     merchant_name: str | None
     category: str | None
@@ -34,8 +34,14 @@ class ListCardChargesQuery(Query[ListCardChargesResult]):
     account_id: UUID
     card_id: UUID
     since: date
+    # Inclusive, and the same window the list uses. A total and the charges behind it that disagree
+    # about the far end is the failure this endpoint exists to prevent.
+    until: date
     limit: int
-    reporting_timezone: str = "Europe/Madrid"
+    # Required, like on `ListCardsQuery` and for the same reason: the default was a zone the
+    # controller never overrode, so the list and the charges behind it agreed with each other and
+    # with nobody else.
+    reporting_timezone: str
 
 
 class ListCardChargesHandler:
@@ -47,6 +53,7 @@ class ListCardChargesHandler:
             query.account_id,
             query.card_id,
             since=query.since,
+            until=query.until,
             timezone=query.reporting_timezone,
             limit=query.limit,
         )
@@ -56,7 +63,7 @@ class ListCardChargesHandler:
             charges=[
                 CardChargeRow(
                     transaction_id=charge.transaction_id,
-                    occurred_at=charge.occurred_at.isoformat(),
+                    occurred_at=charge.occurred_at,
                     description=charge.description,
                     merchant_name=charge.merchant_name,
                     category=charge.category,

@@ -2,6 +2,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
+from finguard_banking.domain.enums import (
+    CounterpartyType,
+    ReceiptCategory,
+    TransactionType,
+)
 from finguard_banking.domain.value_objects.money import Money
 
 
@@ -37,6 +42,11 @@ class Movement:
     # has to be able to say whose opinion it is showing. Last, and with a default, because a
     # dataclass will not take a defaulted field before a required one.
     category_is_custom: bool = False
+    # Banking semantics kept apart from the historical `merchant_name` compatibility field.
+    transaction_type: TransactionType | None = None
+    counterparty_name: str | None = None
+    counterparty_type: CounterpartyType = CounterpartyType.UNKNOWN
+    receipt_category: ReceiptCategory | None = None
 
 
 @dataclass(frozen=True)

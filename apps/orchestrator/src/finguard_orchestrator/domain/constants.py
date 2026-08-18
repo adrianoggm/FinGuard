@@ -61,6 +61,24 @@ MAX_CATEGORY_LENGTH = 40
 MAX_MERCHANTS = 10
 MAX_MERCHANT_LENGTH = 140
 
+# Accounts explicitly selected for one query. A normal chat names one or two; the
+# ceiling prevents a list-shaped scan from travelling through the plan contract.
+MAX_SELECTED_ACCOUNTS = 20
+
+# A previously displayed movement selection. It is a narrowing filter, and the ceiling matches
+# the largest conversational list the assistant will remember.
+MAX_SELECTED_TRANSACTIONS = 50
+
+# Complete bounded evidence for temporal-frequency calculations. When a window contains more rows
+# the answer reports incomplete evidence rather than extrapolating from the first page.
+MAX_SUPPORTING_MOVEMENTS = 100
+
+# The conservative catalogue used when somebody asks for recurring expenses without naming a
+# category. These categories are periodic commitments by meaning. Narrowing the evidence also
+# keeps it complete under banking's bounded movement page and avoids calling ordinary repeat
+# shopping a subscription.
+RECURRING_EXPENSE_CATEGORIES = ("SUBSCRIPTIONS", "HOUSING_RENT")
+
 MAX_PERIOD_MONTHS = 24
 MAX_PERIOD_DAYS = 366
 
@@ -69,6 +87,31 @@ MAX_PERIOD_DAYS = 366
 # bounds it at the same number, and disagreeing would mean a plan this service accepts and
 # that one rejects.
 MAX_RANK = 100
+
+# A spoken ranking of grouped results. Banking returns at least this many groups in metric order;
+# keeping the conversational ceiling small prevents a "top 200" request from becoming a list dump.
+MAX_GROUP_RANK = 10
+MAX_ENTITY_ALIASES = 12
+MAX_ENTITY_ALIAS_LENGTH = 48
+
+# --- what the conversation remembers happening -----------------------------------------
+
+# How many turns of history travel with a conversation. There are no sessions here, so the log
+# rides the wire, and every number in it is paid for on every request — which is the honest reason
+# it is small rather than an arbitrary one. Six covers the ellipsis chains the corpus actually
+# contains ("¿y en gasolina?" → "¿y el mes pasado?" → "¿y el segundo?") with room to spare.
+MAX_REMEMBERED_TURNS = 6
+
+# One turn's sentence, as the holder wrote it. Bounded well under MAX_PROMPT_LENGTH because six of
+# them plus the rules have to fit in one prompt, and a sentence longer than this is not an ellipsis
+# needing context — it is a question that says what it wants.
+MAX_TURN_SENTENCE = 200
+
+# What we said the turn was about: the query in words, or the question asked back. Ours rather than
+# the holder's, and bounded anyway — the log is echoed by the caller, so every field in it is one
+# somebody could rewrite before sending it back into a prompt. Six turns times sentence plus note
+# is the whole transcript, and it has to stay small enough to be evidence rather than the prompt.
+MAX_TURN_NOTE = 400
 
 # --- what a payment may say -------------------------------------------------------------
 

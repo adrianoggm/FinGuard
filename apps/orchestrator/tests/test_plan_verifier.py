@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
-from finguard_orchestrator.domain.services.plan_verifier import disagreement
+from finguard_orchestrator.domain.services.plan_verifier import disagreement, repaired
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -85,6 +85,99 @@ def test_asking_how_many_may_not_be_answered_with_how_much() -> None:
     amount. "¿Cuántas veces fui al súper?" answered as a SUM is the defect the review
     found, one layer earlier — the plan itself is wrong, not just its rendering."""
     assert disagreement("¿Cuántas veces fui al súper el mes pasado?", plan()) is not None
+
+
+def test_a_precise_exclusion_must_be_negative_not_positive() -> None:
+    sentence = "¿Cuánto gasté este año sin contar el alquiler?"
+
+    assert disagreement(sentence, plan(categories=("HOUSING_RENT",))) is not None
+    assert disagreement(sentence, plan(excluded_categories=("HOUSING_RENT",))) is None
+
+
+def test_a_breakdown_of_one_category_into_itself_is_not_a_breakdown() -> None:
+    """The defect `judge_plans.py` found on the widened anchor, and the reason it needed a judge.
+
+    "¿Cómo se reparte mi sueldo este mes?" came back `categories: ["SALARY"]` with
+    `group_by: CATEGORY`. Every field is defensible alone — the category is ours, read from
+    "sueldo", and grouping is what a distribution question deserves — the domain accepts it, banking
+    runs it, and one row comes back whose total equals the ungrouped total. So the figure is right
+    and the shape is a lie, which is this whole file's failure mode with nothing wrong to point at.
+    """
+    sentence = "¿Cómo se reparte mi sueldo este mes?"
+
+    assert disagreement(sentence, plan(categories=("SALARY",), group_by=GroupBy.CATEGORY)) == (
+        "BREAKDOWN_ANSWERED_AS_ONE_GROUP"
+    )
+    # Divide by a dimension the filter does not collapse, and it is answerable.
+    assert disagreement(sentence, plan(categories=("SALARY",), group_by=GroupBy.MONTH)) is None
+    # **And dropping the filter was never the other way out.** "Sueldo" names SALARY, so a plan
+    # without that category is refused by `CATEGORY_MISREAD` before this rule is reached — which
+    # leaves this sentence exactly one answerable shape and is why `repaired` has nothing to offer:
+    # of the two corrections available in principle, another rule already forbids one.
+    assert disagreement(sentence, plan(group_by=GroupBy.CATEGORY)) == "CATEGORY_MISREAD"
+
+
+def test_two_values_are_enough_to_divide_by() -> None:
+    """One is the whole rule. Two categories grouped by category is two rows, which is a breakdown
+    by any reading, and refusing it would reject a correct plan to catch a degenerate one."""
+    sentence = "Desglósame el mes pasado por categoría"
+
+    assert (
+        disagreement(sentence, plan(categories=("SALARY", "GROCERIES"), group_by=GroupBy.CATEGORY))
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("group_by", "field_name"),
+    [
+        (GroupBy.MERCHANT, "merchants"),
+        (GroupBy.COUNTERPARTY, "counterparties"),
+    ],
+)
+def test_the_sisters_of_the_category_case_collapse_the_same_way(
+    group_by: GroupBy, field_name: str
+) -> None:
+    """A rule written for one member of a class is a hole under the rest of it. Category is the one
+    a judge happened to report; a single shop grouped by shop, or one person grouped by person, is
+    one row for the same reason and would have shipped unnoticed."""
+    sentence = "¿En qué se me va el dinero?"
+
+    assert disagreement(sentence, plan(**{field_name: ("Netflix",)}, group_by=group_by)) is not None
+    assert disagreement(sentence, plan(group_by=group_by)) is None
+
+
+def test_the_shape_our_own_code_builds_is_not_refused() -> None:
+    """`_shop_names_to_suggest` and the top-merchant follow-up both clear `merchants` before
+    grouping by merchant, which is this rule applied by hand at two sites. The point of moving it
+    here is that they keep working, so this is the assertion that they do."""
+    assert (
+        disagreement("¿En qué se me va el dinero?", plan(merchants=(), group_by=GroupBy.MERCHANT))
+        is None
+    )
+
+
+def test_a_collapsed_grouping_nobody_asked_for_is_not_this_rule() -> None:
+    """The rule is about a question that went unanswered, not about a useless field. With no
+    sentence asking anything to be divided up, a grouping that groups nothing is a plan worth
+    tidying and not a figure worth refusing — and refusing here would turn a correct total into an
+    apology."""
+    assert (
+        disagreement(
+            "¿cuánto gasté en gasolina el mes pasado?",
+            plan(categories=("TRANSPORT_FUEL",), group_by=GroupBy.CATEGORY),
+        )
+        is None
+    )
+
+
+def test_a_breakdown_that_cannot_divide_has_no_repair() -> None:
+    """Two ways out and the plan does not say which, so the caller refuses. Dropping the grouping
+    is the tempting one because the figure does not change — and not changing the figure is exactly
+    how this defect reads as correct."""
+    broken = plan(categories=("SALARY",), group_by=GroupBy.CATEGORY)
+
+    assert repaired("BREAKDOWN_ANSWERED_AS_ONE_GROUP", broken) is None
 
 
 # --- against the dataset ------------------------------------------------------------

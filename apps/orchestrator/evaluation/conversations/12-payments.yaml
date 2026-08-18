@@ -1,0 +1,306 @@
+# A Bizum, start to finish, and the ten ways it goes sideways.
+#
+# The one property to hold on to while reading this file: **nothing reaches `confirm` except an
+# unambiguous yes.** Every other path — a question, a name that matches two people, an amount
+# nobody said, a change of mind — ends in a sentence and no movement.
+#
+# Two Martas in the directory on purpose. Resolving a name has to be a question rather than a
+# choice, and a directory where every name is unique would let that go untested until somebody's
+# money went to the wrong person.
+
+episodes:
+  - name: the_whole_thing_in_one_sentence
+    why: The shortest real payment, and the turns around it that must not disturb it.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+        ends: true
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+
+  - name: the_recipient_first_then_the_amount
+    why: >
+      The reported conversation. "15 euros" used to be classified from scratch — money with no
+      payment verb is not a payment — and reached the financial planner, which asked which month.
+    metrics: [context_retention]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 15 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: vale
+        route: COURTESY
+      - say: gracias
+        route: COURTESY
+
+  - name: two_people_with_the_same_name
+    why: >
+      The choice comes back as an identifier rather than the name again, which is what stops the
+      second Marta from being resolved by matching a string twice.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Marta
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+        says: Marta Ruiz Gomez
+      - say: a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: a_name_nobody_in_the_list_answers_to
+    why: >
+      Not "no autorizado": a contact who is not in this account's list does not exist here, and a
+      caller who could tell those apart could enumerate other people's contacts one name at a time.
+    metrics: [unsafe_action]
+    turns:
+      - say: hazle un bizum de 20 € a Pepe
+        route: PAYMENT
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Javi Nuñez
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: an_unknown_contact_then_a_short_contact_choice
+    why: >
+      The reported regression. Rejecting Custo must clear only that name: the amount survives a
+      contact-list aside, "a Aitor" finishes the draft, and a later shorthand correction must not
+      retain Aitor or fall into the financial planner.
+    metrics: [unsafe_action, context_retention, wrong_tool]
+    turns:
+      - say: hazle un bizum a Custo
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: 2500 euros
+        route: PAYMENT
+        awaiting: RECIPIENT
+        says: otro contacto
+      - say: dame los contactos que tengo
+        route: CONTACTS
+        keeps: PAYMENT_IN_PROGRESS
+      - say: a Aitor
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: A Marta 500 euros concepto pa la rule
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+      - say: Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+        says: 500,00
+      - say: "no"
+        route: PAYMENT
+        ends: true
+      - say: gracias
+        route: COURTESY
+
+  - name: the_concept_arrives_with_the_amount
+    why: >
+      "Pues 15 euros con concepto de cena" answers the amount question and carries the note in the
+      same breath. Reading one without the other lost it exactly where it was written.
+    metrics: [context_retention]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: pues 15 euros con concepto de cena
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: vale
+        route: COURTESY
+      - say: gracias
+        route: COURTESY
+
+  - name: asking_who_can_be_paid_in_the_middle_of_paying
+    why: >
+      This question is usually asked *in order to* finish a payment, so the payment is exactly what
+      must not be lost. It is the one intent checked before payments for that reason.
+    metrics: [context_retention]
+    turns:
+      - say: hazle un bizum a Marta Solis Vega
+        route: PAYMENT
+        awaiting: AMOUNT
+      - say: ¿qué contactos tengo?
+        route: CONTACTS
+        keeps: PAYMENT_IN_PROGRESS
+      - say: 20 euros
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: gracias
+        route: COURTESY
+      - say: ¿cuánto me queda?
+        route: BALANCE
+
+  - name: a_contacts_question_that_mentions_bizum
+    why: >
+      "¿Qué contactos tengo para mandar bizum?" was read as a payment, because "bizum" is a payment
+      word — so the assistant asked who to pay, about a payment nobody had ordered.
+    metrics: [wrong_tool]
+    turns:
+      - say: ¿podrías decirme qué contactos tengo para mandar bizum?
+        route: CONTACTS
+        no_model: true
+      - say: ¿a quién puedo hacerle un bizum?
+        route: CONTACTS
+        no_model: true
+      - say: hazle un bizum de 20 € a Javi Nuñez
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: a_payment_that_already_happened
+    why: >
+      "Le he mandado 20 € a Marta" is a statement about the past, and offering to repeat it would be
+      offering to pay twice. The costliest direction of this router.
+    metrics: [unsafe_action]
+    turns:
+      # Refusing to repeat it was always the expensive half. The other half went to the planner
+      # with nothing recognised in it, and came back a query about a period nobody named — so both
+      # of these turns now read the tense and the person here, and ask only for the window.
+      - say: le he mandado 20 € a Marta Solis Vega
+        route: CLARIFY
+        not_says: Confirmas
+        awaiting: WINDOW
+        no_model: true
+      - say: ¿cuánto le mandé a Marta Solis Vega el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], counterparties: [Marta Solis Vega]}
+      - say: ¿he recibido algún bizum de Marta Solis Vega?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: INCOME, categories: ['TRANSFER_BIZUM'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], counterparties: ['Marta Solis Vega']}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: vale
+        route: COURTESY
+      - say: gracias
+        route: COURTESY
+
+  - name: two_payments_one_after_the_other
+    why: >
+      The second must not inherit anything from the first. A recipient that carried over would pay
+      the wrong person the right amount.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+        ends: true
+      - say: hazle un bizum de 30 € a Javi Nuñez
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: the_messiest_payment_in_the_file
+    why: >
+      Fourteen turns: a name that matches two people, three asides, a change of mind, an unclear
+      reply and a yes. If the seam between asking and paying survives this, it survives a demo.
+    metrics: [unsafe_action, context_retention]
+    turns:
+      - say: hola
+        route: COURTESY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Marta
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+      - say: ¿quién eres?
+        route: IDENTITY
+      # An aside suspends it, so a bare name is answered with a reminder rather than resuming
+      # silently — the same value would have completed an active draft, and after a change of
+      # subject it may have been written about the subject.
+      - say: a Marta Solis Vega
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+      - say: continuar con el bizum
+        route: PAYMENT
+      - say: a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      # "Espera" is a refusal, and reading it as one is right: somebody who says wait has not
+      # agreed, and the preview is dismissed rather than left holding an intent they may confirm by
+      # accident three turns later.
+      - say: espera
+        route: PAYMENT
+        ends: true
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: ¿y cuánto me quedaría?
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: bueno
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+        ends: true
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en gasolina?
+        route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias, adiós
+        route: COURTESY

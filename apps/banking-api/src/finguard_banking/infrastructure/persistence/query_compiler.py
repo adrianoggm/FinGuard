@@ -22,6 +22,7 @@ VIEW = "assistant_read.transactions_v1"
 
 # The ceiling from the domain is the default; a deployment may only narrow it.
 DEFAULT_GROUP_LIMIT = MAX_GROUPS
+UNKNOWN_COUNTERPARTY = "UNKNOWN_COUNTERPARTY"
 
 
 @dataclass(frozen=True)
@@ -59,9 +60,32 @@ def _group_expression(group_by: GroupBy, tz: str) -> str:
             return f"COALESCE(t.category, '{UNCATEGORISED}')"
         case GroupBy.MERCHANT:
             return f"COALESCE(t.merchant_name, '{UNKNOWN_MERCHANT}')"
+        case GroupBy.COUNTERPARTY:
+            return f"COALESCE({_counterparty_name_expression()}, '{UNKNOWN_COUNTERPARTY}')"
+        case GroupBy.ACCOUNT:
+            return "COALESCE(a.display_name, t.account_id::text)"
 
 
-def _group_ordering(group_by: GroupBy, metric: Metric) -> str:
+def _counterparty_name_expression() -> str:
+    """The same transparent fallback used by the result mapper, expressed in SQL."""
+    return "COALESCE(NULLIF(BTRIM(t.merchant_name), ''), NULLIF(BTRIM(t.description), ''))"
+
+
+def _counterparty_type_expression() -> str:
+    """Classify from the ledger-native transaction type, never from a person's name."""
+    return """CASE t.transaction_type
+        WHEN 'CARD_PAYMENT' THEN 'MERCHANT'
+        WHEN 'BIZUM' THEN 'PERSON'
+        WHEN 'SALARY' THEN 'EMPLOYER'
+        WHEN 'DIRECT_DEBIT' THEN 'BILLER'
+        WHEN 'TRANSFER' THEN 'ACCOUNT'
+        WHEN 'INTERNAL_TRANSFER' THEN 'ACCOUNT'
+        WHEN 'ACCOUNT_OPENING' THEN 'BANK'
+        ELSE 'UNKNOWN'
+    END"""
+
+
+def _group_ordering(group_by: GroupBy, metric: Metric, direction: Direction) -> str:
     """Which groups survive the limit.
 
     This was `ORDER BY 1`, which with a LIMIT keeps the groups whose *key* sorts first.
@@ -81,6 +105,10 @@ def _group_ordering(group_by: GroupBy, metric: Metric) -> str:
         return "key"
     if metric is Metric.COUNT:
         return "movement_count DESC"
+    if metric is Metric.AVERAGE:
+        # Use the aggregate directly. PostgreSQL accepts an output alias as a bare
+        # ORDER BY item, but not embedded inside another expression.
+        return f"AVG({_amount_expression(direction)}) DESC"
     return "total_minor DESC"
 
 
@@ -102,7 +130,10 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         f"t.occurred_at < (({end}::date + 1)::timestamp AT TIME ZONE {tz})",
     ]
 
-    if not query.across_accounts:
+    if query.only_account_ids:
+        selected = parameters.bind(list(query.only_account_ids))
+        conditions.append(f"t.account_id = ANY({selected})")
+    elif not query.across_accounts:
         # The same fact enforced twice from two independent places: the session declared this
         # account and the compiler filters on it, so a compiler that dropped its WHERE would still
         # see only the holder's rows.
@@ -113,7 +144,16 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         # narrowing.
         conditions.append(f"t.account_id = {parameters.bind(query.scoped_to)}")
 
-    if not query.include_internal:
+    if query.transaction_ids:
+        selected_transactions = parameters.bind(list(query.transaction_ids))
+        conditions.append(f"t.transaction_id = ANY({selected_transactions})")
+    if query.transaction_types:
+        transaction_types = parameters.bind([item.value for item in query.transaction_types])
+        conditions.append(f"t.transaction_type = ANY({transaction_types})")
+
+    if query.internal_only:
+        conditions.append("t.is_internal")
+    elif not query.include_internal:
         # Before the direction, because it is the wider cut and reads in the order somebody
         # would say it: money that left the household, then which way it went.
         conditions.append("NOT t.is_internal")
@@ -124,6 +164,12 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
     if query.categories:
         conditions.append(f"t.category = ANY({parameters.bind(query.category_values())})")
 
+    if query.excluded_categories:
+        excluded = parameters.bind(query.excluded_category_values())
+        # NULL means uncategorised, not one of the excluded categories. SQL's `NOT IN`-style
+        # semantics would otherwise turn it into UNKNOWN and silently discard the row.
+        conditions.append(f"(t.category IS NULL OR NOT (t.category = ANY({excluded})))")
+
     if query.merchants:
         # Lowered on both sides rather than ILIKE: this is equality, not a pattern, and a
         # name the user typed must not be read as one — "100%" is a legitimate shop name and
@@ -132,6 +178,39 @@ def _conditions(query: FinancialQuery, parameters: _Parameters, tz: str) -> list
         # nothing there".
         names = parameters.bind([merchant.strip().lower() for merchant in query.merchants])
         conditions.append(f"lower(t.merchant_name) = ANY({names})")
+
+    merchant_terms = getattr(query, "merchant_terms", ())
+    if merchant_terms:
+        # Each fragment is a bound value, never a LIKE pattern: '%' remains a literal percent and
+        # cannot widen the search. Terms are OR alternatives, so apuesta/bet finds either family.
+        contains = [
+            "strpos(lower(COALESCE(t.merchant_name, '')), "
+            f"{parameters.bind(term.strip().lower())}) > 0"
+            for term in merchant_terms
+        ]
+        conditions.append(f"({' OR '.join(contains)})")
+
+    if query.excluded_merchants:
+        names = parameters.bind([merchant.strip().lower() for merchant in query.excluded_merchants])
+        conditions.append(
+            f"(t.merchant_name IS NULL OR NOT (lower(t.merchant_name) = ANY({names})))"
+        )
+
+    counterparties = getattr(query, "counterparties", ())
+    excluded_counterparties = getattr(query, "excluded_counterparties", ())
+    counterparty_types = getattr(query, "counterparty_types", ())
+    if counterparties:
+        names = parameters.bind([value.strip().lower() for value in counterparties])
+        conditions.append(f"lower({_counterparty_name_expression()}) = ANY({names})")
+
+    if excluded_counterparties:
+        names = parameters.bind([value.strip().lower() for value in excluded_counterparties])
+        expression = _counterparty_name_expression()
+        conditions.append(f"({expression} IS NULL OR NOT (lower({expression}) = ANY({names})))")
+
+    if counterparty_types:
+        types = parameters.bind([item.value for item in counterparty_types])
+        conditions.append(f"({_counterparty_type_expression()}) = ANY({types})")
 
     return conditions
 
@@ -142,6 +221,18 @@ def compile_aggregate(
     parameters = _Parameters()
     tz = parameters.bind(reporting_timezone)
     conditions = _conditions(query, parameters, tz)
+    # The transaction view remains the authority for which movements are visible. This
+    # holder-scoped join adds only the account's display name for an account breakdown.
+    account_join = (
+        "LEFT JOIN assistant_read.my_accounts_v1 a ON a.account_id = t.account_id"
+        if query.group_by is GroupBy.ACCOUNT
+        else ""
+    )
+    # A running total is incorrect when a deployment's presentation limit drops calendar buckets.
+    # The period itself is bounded, so returning every bucket remains bounded by MAX_GROUPS.
+    effective_limit = (
+        MAX_GROUPS if query.metric is Metric.CUMULATIVE else min(group_limit, MAX_GROUPS)
+    )
 
     sql = f"""
         SELECT
@@ -149,10 +240,11 @@ def compile_aggregate(
             COALESCE(SUM({_amount_expression(query.direction)}), 0) AS total_minor,
             COUNT(*) AS movement_count
         FROM {VIEW} t
+        {account_join}
         WHERE {" AND ".join(conditions)}
         GROUP BY 1
-        ORDER BY {_group_ordering(query.group_by, query.metric)}
-        LIMIT {min(group_limit, MAX_GROUPS)}
+        ORDER BY {_group_ordering(query.group_by, query.metric, query.direction)}
+        LIMIT {effective_limit}
     """
     return CompiledQuery(sql=sql, parameters=parameters.values)
 
@@ -168,6 +260,7 @@ def compile_movements(query: FinancialQuery, reporting_timezone: str) -> Compile
             t.transaction_id,
             t.occurred_at,
             COALESCE(t.description, '') AS description,
+            t.transaction_type,
             t.merchant_name,
             t.category,
             t.category_is_custom,
@@ -208,6 +301,7 @@ def compile_ranked(query: FinancialQuery, reporting_timezone: str, *, rank: int)
             t.transaction_id,
             t.occurred_at,
             COALESCE(t.description, '') AS description,
+            t.transaction_type,
             t.merchant_name,
             t.category,
             t.category_is_custom,

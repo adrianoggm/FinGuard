@@ -21,7 +21,8 @@ from dataclasses import replace
 
 import pytest
 
-from finguard_orchestrator.domain.enums import Direction, Metric, Period
+from finguard_orchestrator.application.queries.ask_financial_question import _refusal_for
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.services import plan_verifier
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -66,7 +67,10 @@ def test_the_repaired_plan_no_longer_disagrees() -> None:
     assert plan_verifier.disagreement(HOW_MANY, mended) is None
 
 
-@pytest.mark.parametrize("rule", ["CATEGORY_MISREAD", "SPENDING_ANSWERED_AS_EVERYTHING"])
+@pytest.mark.parametrize(
+    "rule",
+    ["CATEGORY_MISREAD", "SPENDING_ANSWERED_AS_EVERYTHING", "BREAKDOWN_ANSWERED_AS_ONE_GROUP"],
+)
 def test_a_disagreement_with_no_determinate_repair_still_refuses(rule: str) -> None:
     """The important half. "¿Cuántas veces fui al cine?" planned as RESTAURANTS could be repaired to
     ENTERTAINMENT, and choosing that is the same guess the model already got wrong — the difference
@@ -80,3 +84,28 @@ def test_a_ranking_has_nothing_to_repair() -> None:
     ranking = TopMovements(direction=Direction.EXPENSE, period=THIS_MONTH, rank=1)
 
     assert plan_verifier.repaired("COUNT_ANSWERED_AS_AMOUNT", ranking) is None
+
+
+def test_a_refused_breakdown_says_what_to_change_instead_of_asking_for_a_rephrasing() -> None:
+    """The generic refusal is worse than nothing for this rule.
+
+    "Díla de otra forma" invites the same sentence, which produces the same collapsed grouping and
+    the same refusal — a loop the person cannot get out of by rephrasing, because what has to change
+    is the dimension and nothing told them so. So the message names the dimension that collapsed and
+    offers a month, which `_ONE_VALUE_COLLAPSES` cannot collapse. The sentence it suggests being
+    answerable is asserted next door, in `test_plan_verifier`, over a plan grouped by month.
+    """
+    broken = FinancialPlan(
+        direction=Direction.INCOME,
+        period=THIS_MONTH,
+        categories=("SALARY",),
+        group_by=GroupBy.CATEGORY,
+    )
+    sentence = "¿cómo se reparte mi sueldo este mes?"
+    assert plan_verifier.disagreement(sentence, broken) == "BREAKDOWN_ANSWERED_AS_ONE_GROUP"
+
+    text = _refusal_for("BREAKDOWN_ANSWERED_AS_ONE_GROUP", sentence, broken)
+
+    assert "categoría" in text
+    assert "por mes" in text
+    assert "de otra forma" not in text

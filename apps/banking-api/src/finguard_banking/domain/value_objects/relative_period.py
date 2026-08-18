@@ -67,6 +67,34 @@ def _same_day_months_back(day: date, months: int) -> date:
     return date(year, month, min(day.day, monthrange(year, month)[1]))
 
 
+def _quarter_start(day: date) -> date:
+    return date(day.year, ((day.month - 1) // 3) * 3 + 1, 1)
+
+
+def _semester_start(day: date) -> date:
+    return date(day.year, 1 if day.month <= 6 else 7, 1)
+
+
+def _fortnight_start(day: date) -> date:
+    return day.replace(day=1 if day.day <= 15 else 16)
+
+
+def _previous_fortnight(day: date) -> DateRange:
+    if day.day > 15:
+        return DateRange(start=day.replace(day=1), end=day.replace(day=15))
+    previous_end = day.replace(day=1) - timedelta(days=1)
+    return DateRange(start=previous_end.replace(day=16), end=previous_end)
+
+
+def _previous_weekend(day: date) -> DateRange:
+    if day.weekday() <= 4:
+        sunday = day - timedelta(days=day.weekday() + 1)
+    else:
+        current_saturday = day - timedelta(days=day.weekday() - 5)
+        sunday = current_saturday - timedelta(days=6)
+    return DateRange(start=sunday - timedelta(days=1), end=sunday)
+
+
 def resolve(relative: RelativePeriod, today: date) -> DateRange:
     """Turns the period into a closed range, both ends included."""
     reference = relative.reference or today
@@ -96,6 +124,35 @@ def resolve(relative: RelativePeriod, today: date) -> DateRange:
                 start=_months_back(reference, 1),
                 end=_first_of_month(reference) - timedelta(days=1),
             )
+
+        case Period.THIS_QUARTER:
+            return DateRange(start=_quarter_start(reference), end=reference)
+
+        case Period.LAST_QUARTER:
+            end = _quarter_start(reference) - timedelta(days=1)
+            return DateRange(start=_quarter_start(end), end=end)
+
+        case Period.THIS_SEMESTER:
+            return DateRange(start=_semester_start(reference), end=reference)
+
+        case Period.LAST_SEMESTER:
+            end = _semester_start(reference) - timedelta(days=1)
+            return DateRange(start=_semester_start(end), end=end)
+
+        case Period.THIS_FORTNIGHT:
+            return DateRange(start=_fortnight_start(reference), end=reference)
+
+        case Period.LAST_FORTNIGHT:
+            return _previous_fortnight(reference)
+
+        case Period.THIS_WEEKEND:
+            if reference.weekday() < 5:
+                raise InvalidValueError("THIS_WEEKEND has not started yet")
+            saturday = reference - timedelta(days=reference.weekday() - 5)
+            return DateRange(start=saturday, end=reference)
+
+        case Period.LAST_WEEKEND:
+            return _previous_weekend(reference)
 
         case Period.THIS_YEAR:
             return DateRange(start=date(reference.year, 1, 1), end=reference)

@@ -66,6 +66,30 @@ class TransactionType(StrEnum):
     INTERNAL_TRANSFER = "INTERNAL_TRANSFER"
 
 
+class CounterpartyType(StrEnum):
+    """What role the other side plays, derived from the ledger transaction type."""
+
+    MERCHANT = "MERCHANT"
+    PERSON = "PERSON"
+    EMPLOYER = "EMPLOYER"
+    BILLER = "BILLER"
+    ACCOUNT = "ACCOUNT"
+    BANK = "BANK"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReceiptCategory(StrEnum):
+    """A direct debit's purpose when the ledger category supports that claim."""
+
+    RENT = "RENT"
+    SUBSCRIPTION = "SUBSCRIPTION"
+    UTILITIES = "UTILITIES"
+    INSURANCE = "INSURANCE"
+    LOAN = "LOAN"
+    TAX = "TAX"
+    OTHER = "OTHER"
+
+
 class Metric(StrEnum):
     """What is being asked for.
 
@@ -75,6 +99,18 @@ class Metric(StrEnum):
 
     SUM = "SUM"
     COUNT = "COUNT"
+    # Average amount per matching movement. Aggregate rows deliberately keep carrying
+    # both their sum and their count; callers derive the mean without losing either fact.
+    AVERAGE = "AVERAGE"
+    # The aggregate still returns exact sums per temporal bucket. The caller uses
+    # the resolved date range to include empty buckets in the divisor.
+    PERIOD_AVERAGE = "PERIOD_AVERAGE"
+    # Exact per-period sums used by the assistant to produce a running total.
+    CUMULATIVE = "CUMULATIVE"
+    # The aggregate and evidence shape is unchanged; the caller derives cadence from the complete
+    # bounded movement dates. Keeping it in the contract preserves the requested semantics.
+    FREQUENCY = "FREQUENCY"
+    RECURRENCE = "RECURRENCE"
 
 
 class Direction(StrEnum):
@@ -100,6 +136,8 @@ class GroupBy(StrEnum):
     MONTH = "MONTH"
     CATEGORY = "CATEGORY"
     MERCHANT = "MERCHANT"
+    COUNTERPARTY = "COUNTERPARTY"
+    ACCOUNT = "ACCOUNT"
 
 
 class Period(StrEnum):
@@ -125,6 +163,14 @@ class Period(StrEnum):
     LAST_WEEK = "LAST_WEEK"
     THIS_MONTH = "THIS_MONTH"
     LAST_MONTH = "LAST_MONTH"
+    THIS_QUARTER = "THIS_QUARTER"
+    LAST_QUARTER = "LAST_QUARTER"
+    THIS_SEMESTER = "THIS_SEMESTER"
+    LAST_SEMESTER = "LAST_SEMESTER"
+    THIS_FORTNIGHT = "THIS_FORTNIGHT"
+    LAST_FORTNIGHT = "LAST_FORTNIGHT"
+    THIS_WEEKEND = "THIS_WEEKEND"
+    LAST_WEEKEND = "LAST_WEEKEND"
     THIS_YEAR = "THIS_YEAR"
     LAST_N_DAYS = "LAST_N_DAYS"
     LAST_N_MONTHS = "LAST_N_MONTHS"

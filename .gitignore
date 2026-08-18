@@ -26,9 +26,13 @@ build/
 # record of one session, not of the repository.
 .playwright-mcp/
 
+# Nota local sobre la evolución del orquestador. Es material de lectura personal, no del repositorio.
+docs/evolucion-orchestrator.md
+
 # Herramientas y SO
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+.claude/*

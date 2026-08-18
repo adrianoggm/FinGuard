@@ -21,7 +21,14 @@ from datetime import date, datetime
 import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    PlanningOutcome,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
@@ -32,6 +39,23 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+
+
+class NoCards:
+    """The card directory, required like the balance and the address book so no build can be
+    half-wired. A chat that could not reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from datetime import date
+
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
@@ -94,7 +118,7 @@ class FakeContacts:
 
 async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: object):
     handler = AskFinancialQuestionHandler(
-        planner, ledger, accounts=FakeAccounts(), contacts=FakeContacts()
+        planner, ledger, accounts=FakeAccounts(), contacts=FakeContacts(), cards=NoCards()
     )
     return await handler.handle(
         AskFinancialQuestionQuery(
@@ -107,6 +131,46 @@ async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: 
 
 
 # --- the window the user wrote down ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sentence", "categories", "merchants"),
+    [
+        ("Todos mis gastos excepto alquiler", ("HOUSING_RENT",), ()),
+        ("Si no contamos el supermercado", ("GROCERIES",), ()),
+        ("Lo mismo, pero sin Mercadona", (), ("mercadona",)),
+    ],
+)
+def test_negative_filters_are_explicit_facts(
+    sentence: str, categories: tuple[str, ...], merchants: tuple[str, ...]
+) -> None:
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.excluded_categories == categories
+    assert facts.excluded_merchants == merchants
+
+
+async def test_a_direct_debit_amount_keeps_sum_and_adds_the_banking_rail() -> None:
+    planned = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        metric=Metric.SUM,
+    )
+    ledger = FakeLedger()
+
+    await ask(
+        "¿Cuánto he pagado de recibos domiciliados este año?",
+        FakePlanner(PlanningResult.planned(planned)),
+        ledger,
+    )
+
+    assert ledger.plans[0].metric is Metric.SUM
+    assert ledger.plans[0].transaction_types == (TransactionType.DIRECT_DEBIT,)
+
+
+def test_showing_receipts_is_recurrence_but_asking_their_total_is_not() -> None:
+    assert explicit_facts.asks_recurrence("Muéstrame mis recibos")
+    assert not explicit_facts.asks_recurrence("¿Cuánto he pagado de recibos domiciliados este año?")
 
 
 async def test_an_explicit_window_is_not_inherited_from_the_previous_turn() -> None:
@@ -217,7 +281,7 @@ async def test_asking_who_produces_groups_and_not_a_total() -> None:
         ledger,
     )
 
-    assert ledger.plans[0].group_by is GroupBy.MERCHANT
+    assert ledger.plans[0].group_by is GroupBy.COUNTERPARTY
     assert [group.key for group in result.groups] == ["Elena", "Sergio"]
 
 
@@ -229,6 +293,52 @@ def test_a_sentence_that_names_no_window_states_nothing_about_one() -> None:
     assert explicit_facts.read("¿y en gasolina?", today=TODAY).window is None
 
 
+def test_the_reported_short_weekly_follow_up_names_the_week_divisor() -> None:
+    facts = explicit_facts.read("Y el semanal ?", today=TODAY)
+
+    assert facts.group_by is GroupBy.WEEK
+    assert facts.metric is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [("Y semanl?", GroupBy.WEEK), ("Y semnal?", GroupBy.WEEK), ("Y mensula?", GroupBy.MONTH)],
+)
+def test_a_small_typo_does_not_turn_an_average_divisor_into_a_merchant(
+    sentence: str, expected: GroupBy
+) -> None:
+    assert explicit_facts.read(sentence, today=TODAY).group_by is expected
+
+
+def test_the_reported_highest_category_is_a_category_ranking() -> None:
+    facts = explicit_facts.read(
+        "Vale en que categoria es la que he gastado mas a lo largo de este año?", today=TODAY
+    )
+
+    assert facts.asks_top_category
+    assert facts.group_by is GroupBy.CATEGORY
+    assert facts.window == RelativePeriod(Period.THIS_YEAR)
+
+
+def test_the_reported_account_breakdown_is_not_a_category_question() -> None:
+    facts = explicit_facts.read(
+        "Me harias el desglose por cuenta ? o esta todo de la cuenta nomina ?", today=TODAY
+    )
+
+    assert facts.asks_account_breakdown
+    assert facts.group_by is GroupBy.ACCOUNT
+
+
+def test_asking_where_payroll_landed_is_an_account_breakdown() -> None:
+    facts = explicit_facts.read(
+        "Sabrias decirme si he cobrado mi nomina en que cuenta?", today=TODAY
+    )
+
+    assert facts.asks_account_breakdown
+    assert facts.group_by is GroupBy.ACCOUNT
+    assert facts.direction is Direction.INCOME
+
+
 def test_the_direction_is_left_to_the_verifier() -> None:
     """Refusing a spending question planned as ALL is a control with a test of its own. Rewriting
     it here would also be the pipeline quietly repairing a prompt injection instead of reporting
@@ -237,6 +347,133 @@ def test_the_direction_is_left_to_the_verifier() -> None:
     planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.LAST_MONTH))
 
     assert explicit_facts.enforce(planned, facts).direction is Direction.ALL
+
+
+def test_an_explicit_average_overrides_a_sum_plan() -> None:
+    facts = explicit_facts.read(
+        "¿Cuál fue el importe medio de mis compras el mes pasado?", today=TODAY
+    )
+    planned = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH))
+
+    assert explicit_facts.enforce(planned, facts).metric is Metric.AVERAGE
+
+
+def test_a_monthly_average_is_not_confused_with_an_average_movement() -> None:
+    facts = explicit_facts.read(
+        "¿Cuál es mi gasto medio anual en supermercados por mes?", today=TODAY
+    )
+
+    assert facts.metric is Metric.PERIOD_AVERAGE
+    assert facts.group_by is GroupBy.MONTH
+    assert facts.window == TWELVE_MONTHS
+    assert facts.names_a_category
+
+
+def test_a_monthly_breakdown_of_average_movements_keeps_the_movement_divisor() -> None:
+    facts = explicit_facts.read("¿Cuál es el importe medio por movimiento mensual?", today=TODAY)
+
+    assert facts.metric is Metric.AVERAGE
+    assert facts.group_by is GroupBy.MONTH
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿En qué mes hice más compras, julio o junio?",
+        "¿Tuve más movimientos en julio o junio?",
+        "Compara el número de operaciones de julio y junio",
+    ],
+)
+def test_an_explicit_movement_quantity_is_a_count(sentence: str) -> None:
+    assert explicit_facts.read(sentence).metric is Metric.COUNT
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Cuánto pago de alquiler?",
+        "¿cuánto ingreso al mes?",
+        "¿cuánto cargo me han hecho este mes?",
+    ],
+)
+def test_a_singular_verb_spelled_like_a_noun_is_not_a_count(sentence: str) -> None:
+    """The other side of the rule above, and it was answering the wrong question.
+
+    Three of the nouns a count is asked with — pago, ingreso, cargo — are spelled exactly like the
+    first person of the verb that asks for an amount. "¿Cuánto pago de alquiler?" came back "3
+    movimientos en alquiler el mes pasado": asked how much, told how many, with a real figure of
+    the wrong kind on it. It is the opening sentence of `planning/conversations.yaml` and no turn of
+    the routing corpus asks it, which is why 1113 measured turns never saw it.
+    """
+    assert explicit_facts.read(sentence).metric is not Metric.COUNT
+
+
+@pytest.mark.parametrize(
+    ("sentence", "group_by"),
+    [
+        ("¿Cuánto suelo gastar al mes en supermercados?", GroupBy.MONTH),
+        ("¿Cuál es mi gasto mensual medio en alquiler?", GroupBy.MONTH),
+        ("¿Qué coste semanal medio tengo en restaurantes?", GroupBy.WEEK),
+        ("¿Cuánto pago normalmente por día en transporte público?", GroupBy.DAY),
+        ("¿Cuánto suelo cobrar al mes?", GroupBy.MONTH),
+    ],
+)
+def test_natural_period_average_word_orders_are_explicit_facts(
+    sentence: str, group_by: GroupBy
+) -> None:
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.metric is Metric.PERIOD_AVERAGE
+    assert facts.group_by is group_by
+
+
+def test_a_typical_monthly_amount_can_be_income() -> None:
+    facts = explicit_facts.read("¿Cuánto suelo cobrar al mes?", today=TODAY)
+
+    assert facts.metric is Metric.PERIOD_AVERAGE
+    assert facts.direction is Direction.INCOME
+
+
+def test_asking_which_category_has_the_higher_average_requests_a_breakdown() -> None:
+    facts = explicit_facts.read(
+        "¿Cuál tiene mayor gasto medio, supermercados o restaurantes, este año?", today=TODAY
+    )
+
+    assert facts.metric is Metric.AVERAGE
+    assert facts.group_by is GroupBy.CATEGORY
+    assert facts.compared_categories == ("GROCERIES", "RESTAURANTS")
+
+
+def test_two_compared_categories_are_both_kept_and_grouped() -> None:
+    facts = explicit_facts.read("Compara gasolina frente a restaurantes el mes pasado", today=TODAY)
+    wrong = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("TRANSPORT_FUEL",),
+    )
+
+    repaired = explicit_facts.enforce(wrong, facts)
+
+    assert repaired.categories == ("TRANSPORT_FUEL", "RESTAURANTS")
+    assert repaired.group_by is GroupBy.CATEGORY
+
+
+def test_salary_and_income_words_force_incoming_movements() -> None:
+    for sentence in (
+        "¿Qué nómina he recibido este año?",
+        "¿Qué ingresos he tenido este mes?",
+        "¿Cuánto he cobrado el mes pasado?",
+    ):
+        facts = explicit_facts.read(sentence, today=TODAY)
+        planned = FinancialPlan(direction=Direction.ALL, period=RelativePeriod(Period.THIS_MONTH))
+
+        assert explicit_facts.enforce(planned, facts).direction is Direction.INCOME
+
+
+def test_income_and_expenses_together_do_not_get_narrowed_to_income() -> None:
+    facts = explicit_facts.read("Compara mis ingresos y gastos este mes", today=TODAY)
+
+    assert facts.direction is None
 
 
 # --- when, not how much -----------------------------------------------------------------
@@ -299,7 +536,7 @@ def test_a_pattern_is_only_claimed_when_the_evidence_is_complete() -> None:
 
     said = answer_writer.when(sampled, groceries)
 
-    assert "patrón" in said
+    assert "sin extrapolar" in said
     assert "una al mes" not in said
 
 
@@ -321,7 +558,7 @@ def test_movements_that_are_not_monthly_are_not_called_monthly() -> None:
     said = answer_writer.when(twice_in_july, plan)
 
     assert "una al mes" not in said
-    assert "fechas debajo" in said
+    assert "separadas por 16 días" in said
 
 
 @pytest.mark.parametrize(
@@ -438,4 +675,8 @@ async def test_a_category_the_sentence_names_is_never_dropped() -> None:
         conversation=Conversation(last_plan=HEALTH_LAST_QUARTER),
     )
 
-    assert [p.categories for p in ledger.plans] == [("HEALTH",)]
+    # Twice now, and the category survives both. The second call is the shop lookup an empty
+    # answer with a merchant filter makes before giving up: it asks which shops are in this
+    # window so it can offer a spelling, finds the name spelled correctly and offers nothing.
+    # What this test is about is that neither call dropped a category the sentence named.
+    assert [p.categories for p in ledger.plans] == [("HEALTH",), ("HEALTH",)]

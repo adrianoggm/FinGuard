@@ -13,13 +13,14 @@ caller cannot forget a check it has no way to skip.
 """
 
 import json
+from dataclasses import replace
 from typing import Any, Final
 
 from finguard_orchestrator.domain.enums import PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
-from finguard_orchestrator.domain.services import payment_grounding
+from finguard_orchestrator.domain.services import payment_grounding, payment_words
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
@@ -115,7 +116,15 @@ def _read(answer: str, *, sentence: str, policy: GuardPolicy) -> PaymentReading:
                 question = _text(body, "question").strip()
             except _MalformedError as exc:
                 return PaymentReading.invalid_structure(str(exc))
-            return PaymentReading.needs_clarification(question or FALLBACK_QUESTION, _draft(body))
+            drafted = _draft(body)
+            written = payment_words.amount_in(sentence)
+            if drafted is not None and drafted.amount_minor is None and written is not None:
+                drafted = replace(drafted, amount_minor=written)
+                request = drafted.into_request()
+                if request is not None:
+                    return _grounded(request, sentence=sentence, policy=policy)
+                question = MISSING_RECIPIENT
+            return PaymentReading.needs_clarification(question or FALLBACK_QUESTION, drafted)
 
         case PlanningOutcome.UNSUPPORTED:
             return PaymentReading.unsupported("the sentence is not a payment this assistant makes")
@@ -141,7 +150,7 @@ def _draft(body: dict[str, Any]) -> PaymentDraft | None:
     """
     try:
         return PaymentDraft(
-            recipient_name=_text(body, "recipient").strip() or None,
+            recipient_name=payment_words.without_trailing_filler(_text(body, "recipient")) or None,
             amount_minor=_count(body, "amountMinor") or None,
             concept=(body.get("concept") or "").strip() or None,
         )
@@ -162,14 +171,20 @@ def _build_request(body: dict[str, Any], *, sentence: str, policy: GuardPolicy) 
         # raise and come back as "no lo he entendido" — about a sentence that was understood except
         # for one field.
         drafted = _draft(body)
+        written = payment_words.amount_in(sentence)
+        if drafted is not None and drafted.amount_minor is None and written is not None:
+            drafted = replace(drafted, amount_minor=written)
+            request = drafted.into_request()
+            if request is not None:
+                return _grounded(request, sentence=sentence, policy=policy)
         missing_amount = amount_minor <= 0
         return PaymentReading.needs_clarification(
-            MISSING_AMOUNT if missing_amount else MISSING_RECIPIENT, drafted
+            MISSING_AMOUNT if missing_amount and written is None else MISSING_RECIPIENT, drafted
         )
 
     try:
         request = PaymentRequest(
-            recipient_name=recipient.strip(),
+            recipient_name=payment_words.without_trailing_filler(recipient),
             amount_minor=amount_minor,
             currency=currency,
             concept=(body.get("concept") or "").strip() or None,
@@ -179,6 +194,11 @@ def _build_request(body: dict[str, Any], *, sentence: str, policy: GuardPolicy) 
         # carrying a value the domain will not take — and none of it reaches a confirmation prompt.
         return PaymentReading.invalid_domain(str(exc))
 
+    return _grounded(request, sentence=sentence, policy=policy)
+
+
+def _grounded(request: PaymentRequest, *, sentence: str, policy: GuardPolicy) -> PaymentReading:
+    """A complete extraction still has to equal the words before it may leave this reader."""
     ungrounded = payment_grounding.ungrounded_reason(sentence, request, policy)
     if ungrounded is not None:
         # The reading is well formed and does not correspond to the sentence. `reason` is the

@@ -13,6 +13,13 @@ from finguard_banking.application.queries.movement_summary import (
 )
 from finguard_banking.bootstrap.dependencies import get_query_bus
 from finguard_banking.bootstrap.main import app
+from finguard_banking.domain.enums import (
+    CounterpartyType,
+    GroupBy,
+    Metric,
+    ReceiptCategory,
+    TransactionType,
+)
 from finguard_banking.domain.errors import AccountNotFoundError
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.financial_query_result import (
@@ -48,6 +55,10 @@ RESULT = FinancialQueryResult(
             category="TRANSPORT_FUEL",
             amount=Money(3_420, "EUR"),
             direction="EXPENSE",
+            transaction_type=TransactionType.DIRECT_DEBIT,
+            counterparty_name="Repsol",
+            counterparty_type=CounterpartyType.BILLER,
+            receipt_category=ReceiptCategory.OTHER,
         )
     ],
 )
@@ -90,6 +101,8 @@ def test_it_answers_with_the_contract_names() -> None:
         "currency": "EUR",
         "totalMinor": 12_743,
         "movementCount": 3,
+        "periodStart": "2026-07-01",
+        "periodEnd": "2026-07-31",
         "groups": [{"key": "2026-07-06", "totalMinor": 3_420, "movementCount": 1}],
         "supportingMovements": [
             {
@@ -106,6 +119,10 @@ def test_it_answers_with_the_contract_names() -> None:
                 # caller sees, which is the same answer it saw before these existed.
                 "categorySource": "NONE",
                 "isInternal": False,
+                "transactionType": "DIRECT_DEBIT",
+                "counterpartyName": "Repsol",
+                "counterpartyType": "BILLER",
+                "receiptCategory": "OTHER",
                 "amountMinor": 3_420,
                 "direction": "EXPENSE",
             }
@@ -118,6 +135,129 @@ def test_an_unknown_account_returns_404() -> None:
     response = _with_repository(None).post("/v1/financial-queries", json=BODY)
 
     assert response.status_code == 404
+
+
+def test_average_and_a_selected_account_subset_reach_the_domain() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+    selected = [uuid.UUID(int=3), uuid.UUID(int=4)]
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={
+            **BODY,
+            "metric": "AVERAGE",
+            "onlyAccountIds": [str(account_id) for account_id in selected],
+        },
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric.value == "AVERAGE"
+    assert repository.received.only_account_ids == tuple(selected)
+
+
+def test_a_named_account_asked_across_accounts_is_refused_rather_than_widened() -> None:
+    """Over the wire, because the pair is expressible over the wire and was answered there.
+
+    Nothing reached the repository: a request that names the piggy bank and also asks across
+    accounts had no account condition compiled for it, so the answer covered every account the
+    holder has and `scopedTo` still said the piggy bank. The refusal is the whole fix — a client
+    that meant either half can send either half.
+    """
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "onlyAccountId": str(uuid.UUID(int=3)), "acrossAccounts": True},
+    )
+
+    assert response.status_code == 422
+    assert "acrossAccounts" in str(response.json()["detail"])
+    assert repository.received is None
+
+
+def test_frequency_reaches_the_domain_as_a_metric_with_complete_evidence_requested() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "metric": "FREQUENCY", "groupBy": "NONE", "supportingLimit": 100},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric.value == "FREQUENCY"
+    assert repository.received.supporting_limit == 100
+
+
+def test_recurrence_reaches_the_domain_as_a_metric_with_complete_evidence_requested() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "metric": "RECURRENCE", "groupBy": "NONE", "supportingLimit": 100},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric.value == "RECURRENCE"
+    assert repository.received.supporting_limit == 100
+
+
+def test_cumulative_reaches_the_domain_with_its_calendar_group() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "metric": "CUMULATIVE", "groupBy": "MONTH"},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.metric is Metric.CUMULATIVE
+    assert repository.received.group_by is GroupBy.MONTH
+
+
+def test_direct_debit_filter_reaches_the_domain() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "transactionTypes": ["DIRECT_DEBIT"]},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.transaction_types == (TransactionType.DIRECT_DEBIT,)
+
+
+def test_internal_only_reaches_the_domain_only_with_its_explicit_opt_in() -> None:
+    repository = FakeRepository(RESULT)
+    app.dependency_overrides[get_query_bus] = lambda: _bus_with(repository)
+
+    response = TestClient(app).post(
+        "/v1/financial-queries",
+        json={**BODY, "includeInternal": True, "internalOnly": True},
+    )
+
+    assert response.status_code == 200
+    assert repository.received is not None
+    assert repository.received.include_internal is True
+    assert repository.received.internal_only is True
+
+
+def test_internal_only_without_internal_opt_in_is_rejected() -> None:
+    response = _with_repository(RESULT).post(
+        "/v1/financial-queries", json={**BODY, "internalOnly": True}
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,13 @@ decision that depends on the currency, and a float in between is how cents go mi
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
+
+from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
+    ReceiptCategory,
+    TransactionType,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,12 @@ class Movement:
     # Supporting movements leave it None because their answer already carries the account's
     # currency once, and repeating it per row would be two places for it to disagree.
     currency: str | None = None
+    # Ledger-native semantics. `merchant_name` remains for compatibility with existing clients;
+    # recurrence uses the explicit counterparty role and direct-debit classification below.
+    transaction_type: TransactionType | None = None
+    counterparty_name: str | None = None
+    counterparty_type: CounterpartyType = CounterpartyType.UNKNOWN
+    receipt_category: ReceiptCategory | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +68,8 @@ class QueryAnswer:
     currency: str
     total_minor: int
     movement_count: int
+    period_start: date | None = None
+    period_end: date | None = None
     groups: tuple[Group, ...] = field(default_factory=tuple)
     movements: tuple[Movement, ...] = field(default_factory=tuple)
 

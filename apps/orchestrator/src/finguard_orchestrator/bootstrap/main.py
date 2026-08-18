@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -39,7 +41,16 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyHandler,
 )
 from finguard_orchestrator.bootstrap.config import get_settings
+from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
+from finguard_orchestrator.domain.services.turn_interpreters import (
+    Deterministic,
+    Hybrid,
+    Promoted,
+    Shadowed,
+)
 from finguard_orchestrator.infrastructure import (
+    HttpAccounts,
     HttpAccountSummary,
     HttpCards,
     HttpContacts,
@@ -54,13 +65,29 @@ from finguard_orchestrator.infrastructure import (
     payments_router,
     register_error_handlers,
 )
+from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
+    LlmTurnInterpreter,
+)
+from finguard_orchestrator.infrastructure.llm.cloudflare_workers_ai import (
+    CLOUDFLARE,
+    cloudflare_workers_ai,
+)
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaLlmProvider
+from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
+    OpenAiCompatibleProvider,
+)
 from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
 from finguard_orchestrator.observability import configure_logging
+
+# The vendor behind the OpenAI-compatible adapter. A name and a base URL are the whole of
+# what distinguishes one from another, which is why the adapter is not named after this one.
+# `CLOUDFLARE` is the second such vendor and is imported rather than spelled here, because that
+# one needs a builder to assemble its URLs and the name belongs beside them.
+GROQ = "groq"
 
 DESCRIPTION = """
 Conversational orchestrator of FinGuard.
@@ -97,18 +124,46 @@ def create_app() -> FastAPI:
     catalogue = settings.catalogue()
     # The registry builds providers with no arguments; the one that needs configuration
     # gets it here, in the only place allowed to know what the deployment looks like.
-    providers = ProviderRegistry(
-        {
-            EchoLlmProvider.name: EchoLlmProvider,
-            OllamaLlmProvider.name: lambda: OllamaLlmProvider(
-                base_url=settings.ollama_base_url,
-                keep_alive=settings.ollama_keep_alive,
-                timeout_seconds=settings.ollama_timeout_seconds,
-                context_tokens=settings.ollama_context_tokens,
-                seed=settings.ollama_seed,
-            ),
-        }
-    )
+    builders: dict[str, Callable[[], LlmProviderPort]] = {
+        EchoLlmProvider.name: EchoLlmProvider,
+        OllamaLlmProvider.name: lambda: OllamaLlmProvider(
+            base_url=settings.ollama_base_url,
+            keep_alive=settings.ollama_keep_alive,
+            timeout_seconds=settings.ollama_timeout_seconds,
+            context_tokens=settings.ollama_context_tokens,
+            seed=settings.ollama_seed,
+            think=settings.ollama_think,
+        ),
+    }
+    if (groq_key := settings.groq_api_key) is not None:
+        # Registered only when a key exists, so an unconfigured deployment cannot reach a
+        # provider that would 401 every request — and `providers.available()`, which /admin
+        # reports and the catalogue is validated against, tells the truth about this build.
+        #
+        # The one place the secret is unwrapped. Everywhere else it is a `SecretStr` whose repr
+        # is `**********`, which is what keeps a stray log line from being a live credential.
+        builders[GROQ] = lambda: OpenAiCompatibleProvider(
+            name=GROQ,
+            api_key=groq_key.get_secret_value(),
+            base_url=settings.groq_base_url,
+            timeout_seconds=settings.groq_timeout_seconds,
+            reasoning_headroom=settings.groq_reasoning_headroom,
+        )
+    if (cf_token := settings.cloudflare_api_token) is not None and (
+        cf_account := settings.cloudflare_account_id
+    ) is not None:
+        # Both halves or nothing, which is the same rule as Groq's above with one more way to
+        # break: the account id is not a credential, it is the path segment every request is
+        # posted to, so a deployment holding only the token would register a provider whose URL
+        # has a hole in it. Neither half alone is a provider.
+        builders[CLOUDFLARE] = lambda: cloudflare_workers_ai(
+            api_token=cf_token.get_secret_value(),
+            account_id=cf_account,
+            api_base=settings.cloudflare_api_base,
+            timeout_seconds=settings.cloudflare_timeout_seconds,
+            reasoning_headroom=settings.cloudflare_reasoning_headroom,
+        )
+    providers = ProviderRegistry(builders)
     # The active policy is created at startup and lives in the application state: the
     # service is deliberately not stateless, its configuration changes at runtime.
     policies = PolicyStore(catalogue, catalogue.default_policy())
@@ -121,7 +176,11 @@ def create_app() -> FastAPI:
     # The planning path. It does not go through the LLM policy on purpose: the policy
     # chooses who *answers*, and planning is a different job measured a different way
     # (scripts/evaluate_planning.py). One knob per decision beats one knob for both.
-    planner_provider = providers.get(OllamaLlmProvider.name)
+    # Configured rather than hardcoded, which is what makes "try a bigger model" a setting and
+    # not a patch. An unknown or unconfigured name is a startup error from the registry, and
+    # that is the right moment for it: the alternative is a service that starts and then fails
+    # every financial question.
+    planner_provider = providers.get(settings.planner_provider)
     banking = HttpFinancialQuery(
         base_url=settings.banking_base_url,
         timeout_seconds=settings.banking_timeout_seconds,
@@ -142,6 +201,31 @@ def create_app() -> FastAPI:
         days=settings.summary_days,
         movements=settings.summary_movements,
     )
+    account_directory = HttpAccounts(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
+    # How a turn is read, chosen once. The rules always exist — under `shadow` they still decide
+    # and under `model` they keep the payments and catch the outages — so this builds one and then
+    # decides what stands in front of it. See `Shadowed`, `Hybrid` and `Promoted`.
+    rules: TurnInterpreterPort = Deterministic()
+    interpreter = rules
+    if settings.turn_interpreter != "router":
+        reading = LlmTurnInterpreter(planner_provider, model=settings.planner_model)
+        if settings.turn_interpreter == "shadow":
+            interpreter = Shadowed(rules, reading)
+        elif settings.turn_interpreter == "hybrid":
+            interpreter = Hybrid(reading, rules)
+        else:
+            interpreter = Promoted(reading, rules)
+
+    # One adapter for both readers of the wallet, like the balance and the address book. The chat
+    # answering "cuánto llevo con cada tarjeta" from a different window than the screen shows would
+    # be two figures on one phone, which is the failure those two were unified to avoid.
+    cards = HttpCards(
+        base_url=settings.banking_base_url,
+        timeout_seconds=settings.banking_timeout_seconds,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -157,8 +241,14 @@ def create_app() -> FastAPI:
         # "¿Cuánto dinero tengo?" and "¿a quién puedo hacer un bizum?" are answered from these,
         # with no model in the path.
         accounts=accounts,
+        account_directory=account_directory,
         contacts=contacts,
+        cards=cards,
         read_attempts=settings.banking_read_attempts,
+        # Only used when a caller did not classify the turn itself. Both HTTP routes do, so on the
+        # live path this is unreachable — it is here so the handler and the edge cannot end up
+        # reading a sentence two different ways when somebody adds a third caller.
+        interpreter=interpreter,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
@@ -169,10 +259,6 @@ def create_app() -> FastAPI:
     query_bus.register(GetBreakdownQuery, GetBreakdownHandler(banking))
     # The cards, and the contacts a payment form offers. Both are reads through banking's own
     # restricted role, and neither has a model anywhere in it.
-    cards = HttpCards(
-        base_url=settings.banking_base_url,
-        timeout_seconds=settings.banking_timeout_seconds,
-    )
     query_bus.register(ListCardsQuery, ListCardsHandler(cards))
     query_bus.register(GetCardChargesQuery, GetCardChargesHandler(cards))
     query_bus.register(
@@ -267,6 +353,8 @@ def create_app() -> FastAPI:
     # somebody wants from a running service is always another one of these.
     app.state.settings = settings
     app.state.planner_probe = planner_provider
+    # Read by both question routes, which classify the turn once and carry the answer down.
+    app.state.turn_interpreter = interpreter
     app.state.banking_probe = banking
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
@@ -282,7 +370,13 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         # Spelled out rather than "*": the answer to a preflight is a statement about what this
         # service accepts, and a wildcard makes that statement unfalsifiable.
-        allow_headers=["Authorization", "Content-Type"],
+        #
+        # `Idempotency-Key` is the one that has to be remembered here. A header the routes read and
+        # CORS does not list is not a header that gets ignored — the browser refuses the preflight
+        # and never sends the request at all, so adding it to the client took the whole chat down
+        # while every route still answered `curl` perfectly. A wildcard would have hidden that, and
+        # would hide the next one too.
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
 
     # Outermost, so it sees the status a handler's exception turns into and the ones CORS answers

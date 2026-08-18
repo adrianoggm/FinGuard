@@ -1,0 +1,251 @@
+# Typing badly, which is how everybody types.
+#
+# Accents are folded, case is ignored, and two letters arriving in the wrong order are forgiven
+# where the vocabulary is closed: "cunato" is "cuánto", "hcuha" is "hucha" and "qeu categorias" is
+# the catalogue. A letter *missing* is not — "huch" and "princpal" are entries somebody wrote down
+# by hand, and a spelling nobody wrote down still turns a balance question into a sentence for the
+# model to guess at.
+#
+# **What is asserted here is deliberately asymmetric.** A typo the service reads is asserted as
+# read. A typo it does not is asserted as reaching the model — because that is the honest fallback
+# and a wrong guess about somebody's money is worse than a slower answer. The episodes that assert
+# QUERY are not saying the behaviour is good; they are pinning where the edge is, so moving it is a
+# decision somebody makes on purpose rather than a regression nobody noticed.
+#
+# The transposed and doubled letters here are real: they come from the reported conversations
+# ("Cuanto", "tranferir", "Caunto", "movimeintos", "bixum").
+
+episodes:
+  - name: the_typos_from_the_reported_conversations
+    why: >
+      Every one of these was typed at the demo by somebody who was not being careful, which is the
+      only way anybody types.
+    metrics: [wrong_tool]
+    turns:
+      - say: Cuanto dinero tengo en mi cuenta de ahorros ?
+        route: BALANCE
+        says: "5.485,50"
+      - say: Caunto he gastado este mes ?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Perdona que movimeintos he tenido ?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: Me gustaria tranferir dinero a mi cuenta corriente
+        route: TRANSFER
+      - say: 200 euros
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: gracais
+        route: QUERY
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: ['gracais'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+
+  - name: missing_accents_everywhere
+    why: >
+      Nobody types accents into a chat box. Every vocabulary folds them, and this is the episode
+      that says so rather than leaving it to one lucky phrase.
+    metrics: [wrong_tool]
+    turns:
+      - say: cuanto tengo
+        route: BALANCE
+      - say: y en la hucha
+        route: BALANCE
+      - say: cuanto gaste el mes pasado
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: quien eres
+        route: IDENTITY
+      - say: a quien puedo pagar
+        route: CONTACTS
+      - say: cuanto tengo en el fondo
+        route: BALANCE
+
+  - name: shouting_in_capitals
+    why: >
+      Case is folded too. "CUÁNTO TENGO" is the same question and it must not fall through for
+      being loud.
+    metrics: [wrong_tool]
+    turns:
+      - say: CUANTO DINERO TENGO
+        route: BALANCE
+      - say: Y EN LA HUCHA
+        route: BALANCE
+      - say: CUANTO GASTE EL MES PASADO
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: QUIEN ERES
+        route: IDENTITY
+      - say: MUEVE 200 EUROS A LA HUCHA
+        route: PAYMENT
+      - say: GRACIAS
+        route: COURTESY
+
+  - name: a_transposed_letter_is_still_the_word
+    why: >
+      The edge moved, on purpose, and it moved twice. "Cunato tengo" used to go to the model — the
+      verb beside it already tolerated three misspellings written out by hand and the question word
+      tolerated none — and "y en la hcuha" named no account, so a follow-up about a balance was
+      planned as a spending query. Two letters in the wrong order is the slip a keyboard makes, and
+      it is the one misspelling Spanish almost never turns into another word: a substitution away
+      from "cuanto" is "cuando" and one away from "hucha" is "mucha", and both of those stay out.
+
+      What a missing letter costs is still pinned, below and elsewhere: "huch" and "princpal" are
+      entries somebody wrote down, not a rule.
+    metrics: [wrong_tool]
+    turns:
+      - say: cunato tengo
+        route: BALANCE
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      # And the thread survives the slip now. The balance memory is one turn deep, so a typo that
+      # went to the model used to cost the follow-up as well as itself — both of these are the
+      # savings balance, which is what "¿y en la hucha?" after a balance has always meant.
+      - say: y en la hcuha
+        route: BALANCE
+        no_model: true
+      - say: ¿y en la hucha?
+        route: BALANCE
+        no_model: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: gracias
+        route: COURTESY
+
+  - name: extra_spaces_and_stray_punctuation
+    why: >
+      A chat box collects double spaces, trailing question marks and commas nobody meant. None of
+      it changes what the sentence says.
+    metrics: [wrong_tool]
+    turns:
+      - say: "¿¿cuánto  tengo??"
+        route: BALANCE
+      - say: "y en la hucha ,,,"
+        route: BALANCE
+      - say: "  ¿cuánto gasté el mes pasado?  "
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: "quién eres!!!"
+        route: IDENTITY
+      - say: "mueve 200 € a la hucha."
+        route: PAYMENT
+      - say: "gracias!!"
+        route: COURTESY
+
+  - name: a_misspelt_recipient_is_still_ambiguous
+    why: >
+      Names are matched against the holder's own directory, so a half-typed one either finds
+      somebody or does not. What must not happen is a payment to whoever is nearest.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Marta
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+      - say: a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: ¿cuánto me queda?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: typos_do_not_accumulate
+    why: >
+      Six sentences typed badly. Three of them are read now — two swapped letters in the question
+      word, in the account and in "qué" — and the readable ones in between still have to work, with
+      nothing carrying the confusion forward.
+    metrics: [context_retention, wrong_tool]
+    turns:
+      - say: cunato tengo
+        route: BALANCE
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: y en la hcuha
+        route: BALANCE
+        no_model: true
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+      - say: qeu categorias hay
+        # It used to be QUERY, and that was the typo winning: the catalogue patterns all began at
+        # "qué", so a misspelt one sent a question about the product's own vocabulary to a language
+        # model. Anchoring on "categorias hay" instead makes the spelling of "qué" irrelevant,
+        # which is the point of this episode.
+        route: CATEGORIES
+      - say: dime las categorías disponibles
+        route: CATEGORIES
+
+  - name: a_number_written_in_words
+    why: >
+      "Doscientos euros" is read by the deterministic Spanish cardinal grammar. It may complete
+      the transfer only as exactly 200,00 euros; the model is never trusted to invent the figure.
+    metrics: [unsafe_action]
+    turns:
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: quiero traspasar del fondo a hucha
+        route: TRANSFER
+        awaiting: AMOUNT
+      # The figure, in the preview's own words. `total` was the transfer-ready answer's leading
+      # figure and a preview has no such field — what it has is the amount it is asking about, which
+      # is the thing worth pinning: the cardinal grammar read exactly two hundred.
+      - say: doscientos euros
+        route: PAYMENT
+        says: "200,00"
+        keeps: PAYMENT_CONFIRMATION
+      - say: mueve 200 € a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: ¿cuánto me queda en el fondo?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: writing_the_amount_three_different_ways
+    why: >
+      "20 euros", "20€", "20 pavos" are one figure. The grammar reads all three, and a transfer that
+      only understood one of them would be a transfer that works on the demo and not in a chat.
+    metrics: [wrong_tool]
+    turns:
+      - say: mueve 20 euros a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: mueve 20€ a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: mueve 20 pavos a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: mueve 20,50 € a la hucha
+        route: PAYMENT
+        keeps: PAYMENT_CONFIRMATION
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: gracias
+        route: COURTESY
+
+  - name: a_question_mark_that_never_closes
+    why: >
+      Spanish opens its questions and half the world does not type the opening mark. Nothing may
+      depend on it.
+    metrics: [wrong_tool]
+    turns:
+      - say: cuanto tengo?
+        route: BALANCE
+      - say: y en la hucha?
+        route: BALANCE
+      - say: cuanto gaste el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: quien eres?
+        route: IDENTITY
+      - say: a quien puedo pagar?
+        route: CONTACTS
+      - say: gracias
+        route: COURTESY
