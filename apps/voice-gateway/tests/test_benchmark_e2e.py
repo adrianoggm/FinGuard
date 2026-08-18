@@ -17,6 +17,7 @@ from benchmark_e2e import (
     Sample,
     run_cancel_probe,
     run_turn,
+    send_audio,
     summarize,
     validate_sample_counts,
     validate_timings,
@@ -75,6 +76,23 @@ def test_percentiles_and_counts_are_deterministic() -> None:
         cancel_runs=0,
         require_stage_timings=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_audio_is_chunked_within_the_protocol_frame_limit() -> None:
+    # Every frame has to fit the 64 KiB the protocol publishes. Sending a whole utterance in one
+    # frame made the gateway answer FRAME_TOO_LARGE for anything longer than two seconds.
+    sent: list[bytes] = []
+
+    class Socket:
+        async def send(self, payload: bytes) -> None:
+            sent.append(payload)
+
+    audio = bytes(200_000)
+    await send_audio(Socket(), audio)
+    assert b"".join(sent) == audio
+    assert sent and all(len(frame) <= 65_536 for frame in sent)
+    assert len(sent) > 1
 
 
 def test_sample_counts_tolerate_stage_metrics_nobody_asked_to_require() -> None:
