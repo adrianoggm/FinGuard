@@ -366,9 +366,21 @@ export class VoiceClient {
       await this.open(wsUrl, bootstrap.ticket);
       const media = this.options.mediaDevices ?? navigator.mediaDevices;
       this.stream = await media.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true },
+        // autoGainControl matters most of the three: a quiet or distant microphone is what makes a
+        // recogniser hallucinate a word into a silence, and it arrives as a confident transcript.
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
-      this.context = (this.options.captureContext ?? (() => new AudioContext()))();
+      // Ask for a context already at the rate the gateway wants: the browser then resamples the
+      // microphone with its own polyphase filter instead of leaving it to StreamingResampler, which
+      // interpolates without an anti-aliasing stage. The resampler stays for devices that ignore the
+      // hint — it short-circuits to a passthrough when the rates already agree.
+      this.context = (this.options.captureContext ??
+        (() => new AudioContext({ sampleRate: VOICE_INPUT_RATE })))();
 
       // The capture source is deliberately connected only after input.start. Some browsers can
       // emit a worklet block synchronously from connect(), so the gateway must see the turn first.
@@ -451,7 +463,14 @@ export class VoiceClient {
     try {
       const media = this.options.mediaDevices ?? navigator.mediaDevices;
       this.stream = await media.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true },
+        // autoGainControl matters most of the three: a quiet or distant microphone is what makes a
+        // recogniser hallucinate a word into a silence, and it arrives as a confident transcript.
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       await this.connectCapture();
       this.bargeInActive = false;
