@@ -37,3 +37,46 @@ model = "echo-2"
 # alias = "local"
 # provider = "ollama"
 # model = "qwen2.5-coder:7b"
+
+# Hosted inference, for comparing against something bigger than an 8 GB card fits.
+#
+# The provider is named after the vendor and the adapter after the protocol: `groq`, `xai` and
+# OpenAI itself all speak OpenAI chat-completions and differ by a base URL, so they are
+# registrations rather than implementations.
+#
+# It only exists when ORCHESTRATOR_GROQ_API_KEY is set — see .env.defaults for where the key
+# goes, which is not there and not here. With no key these entries name a provider this build
+# does not have.
+#
+# Everything typed here leaves the machine. That is the difference from `ollama` above and it
+# is a decision about somebody's bank questions, not a performance setting.
+#
+# **Not every model can serve this pipeline.** Constrained decoding is what the plan verifier
+# and the payment reader rest on, and it is model-dependent. Measured on Groq: the gpt-oss
+# family accepts `json_schema`; `llama-3.3-70b-versatile` and `qwen/qwen3.6-27b` refuse it with
+# a 400. Naming one of those here would give you a provider that fails every question.
+#
+# [[models]]
+# alias = "hosted"
+# provider = "groq"
+# model = "openai/gpt-oss-120b"
+
+# Cloudflare Workers AI. The same adapter as `groq` above with a different base URL, which is
+# the whole of what a second OpenAI-compatible vendor costs.
+#
+# It exists only when both ORCHESTRATOR_CLOUDFLARE_API_TOKEN and
+# ORCHESTRATOR_CLOUDFLARE_ACCOUNT_ID are set — the account id is part of the URL, so half a
+# configuration is not a provider. See .env.defaults for where those go, which is not there
+# and not here.
+#
+# **Uncommenting this is not yet a supported configuration.** Whether Cloudflare's endpoint
+# constrains the decoder to a JSON Schema — the property the plan verifier and the payment
+# reader rest on — is unverified, and its own documentation says it "can't guarantee" it. On
+# Groq a model that cannot be constrained refuses the parameter with a 400, which is a failure
+# you can see; here the same situation may just return unconstrained text. Measure before
+# trusting, with scripts/evaluate_interpreting.py --provider cloudflare.
+#
+# [[models]]
+# alias = "hosted"
+# provider = "cloudflare"
+# model = "@cf/qwen/qwen3-30b-a3b-fp8"

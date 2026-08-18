@@ -82,10 +82,26 @@ def _words(reply: str) -> list[str]:
     return _WORD.findall(folded)
 
 
+# Words that may travel with a yes and are not one on their own. "Sí, gracias" and "vale, por favor"
+# are consent; a bare "gracias" is somebody being polite, and reading it as consent moved money.
+#
+# The corpus already said so — every "gracias" in it is asserted to be COURTESY — so this is two
+# parts of the service agreeing rather than a new opinion. It went unnoticed while the only preview
+# was a Bizum, because a Bizum was always answered before anybody thanked anyone.
+_POLITENESS: Final = frozenset({"gracias", "por", "favor"})
+
+
 def is_confirmation(reply: str) -> bool:
-    """Whether this reply is an unambiguous yes and nothing else."""
+    """Whether this reply is an unambiguous yes and nothing else.
+
+    Politeness alone is not a yes. Every word still has to be in the yes vocabulary — that part is
+    unchanged and is what keeps "sí pero 30" out — and at least one of them has to actually mean
+    agreement.
+    """
     words = _words(reply)
-    return bool(words) and all(word in _YES for word in words)
+    if not words or not all(word in _YES for word in words):
+        return False
+    return any(word not in _POLITENESS for word in words)
 
 
 def is_refusal(reply: str) -> bool:

@@ -38,6 +38,17 @@ from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRa
         ("últimos 7 dias", Period.LAST_N_DAYS, 7),
         ("los últimos 3 meses", Period.LAST_N_MONTHS, 3),
         ("en los últimos 6 meses", Period.LAST_N_MONTHS, 6),
+        # The count on the other side of the word, which Spanish puts there just as often. These
+        # did not fail before — they fell through to the default and became *one*, so "los 10
+        # últimos días" answered about yesterday with a real figure on it. Found by asserting the
+        # query a corpus turn ran rather than only which tool answered it.
+        ("los 2 últimos meses", Period.LAST_N_MONTHS, 2),
+        ("en los 3 últimos meses", Period.LAST_N_MONTHS, 3),
+        ("los 10 últimos días", Period.LAST_N_DAYS, 10),
+        # Written out, either side, because that was the same silent one.
+        ("los dos últimos meses", Period.LAST_N_MONTHS, 2),
+        ("los últimos dos meses", Period.LAST_N_MONTHS, 2),
+        ("los cinco últimos meses", Period.LAST_N_MONTHS, 5),
         # Inside a longer sentence, because a reply to "¿de qué periodo?" is often a small sentence
         # rather than a bare phrase.
         ("pues el mes pasado", Period.LAST_MONTH, None),
@@ -87,6 +98,29 @@ def test_the_longest_reading_wins() -> None:
     assert window_words.window_in("este mes").period is Period.THIS_MONTH
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuánto gasté del mes pasado?",
+        "los gastos del mes pasado",
+        "de lo del mes pasado",
+        # And the spelling that always worked, which is the point: the article is optional, not
+        # forbidden.
+        "el mes pasado",
+        "pues del mes pasado",
+    ],
+)
+def test_the_article_of_a_month_may_be_glued_to_its_preposition(sentence: str) -> None:
+    """ "Del" is "de" and "el", and the phrase table only knew the second one spelled out.
+
+    The entry was "el mes pasado" and it is matched between word boundaries, so "del mes pasado"
+    matched nothing and a sentence that names its period outright was sent to a model to be asked
+    which period it meant. The year never had the defect, because it is read as noun plus adjective
+    by a rule that never learned the article.
+    """
+    assert window_words.window_in(sentence).period is Period.LAST_MONTH
+
+
 def test_a_count_out_of_range_is_not_a_window() -> None:
     """The domain bounds `n`, so a sentence asking for 5000 days is not a window this can build.
     Returning None sends it to the model, which is better than raising from a reader."""
@@ -97,6 +131,19 @@ def test_the_singular_forms_are_read_too() -> None:
     """Somebody answering "el último mes" means one month, and "en el último día" means one day.
     Both are counted periods with n=1 rather than a separate name."""
     assert window_words.window_in("el último mes") == window_words.window_in("los últimos 1 meses")
+
+
+def test_a_word_beside_the_last_that_is_not_a_number_still_means_one() -> None:
+    """The article and the preposition sit exactly where a count would, and neither is one.
+
+    This is what makes reading the count on both sides safe: "el último mes" and "de los últimos
+    días" put a word there and mean one, and an amount that happens to end up adjacent — "gasté 500
+    euros el último mes" — is separated from the word by the article it needs."""
+    assert window_words.window_in("el último mes") == RelativePeriod(Period.LAST_N_MONTHS, n=1)
+    assert window_words.window_in("de los últimos días") == RelativePeriod(Period.LAST_N_DAYS, n=1)
+    assert window_words.window_in("gasté 500 euros el último mes") == RelativePeriod(
+        Period.LAST_N_MONTHS, n=1
+    )
 
 
 # --- the phrasings the loop was made of ----------------------------------------------
@@ -171,8 +218,16 @@ def test_last_year_is_the_previous_calendar_year() -> None:
 
 def test_a_four_digit_number_that_is_not_a_year_is_not_a_window() -> None:
     """A marker is required. "Gasté 2025 euros" is an amount, and reading it as a year would
-    answer a question about one purchase with a whole calendar."""
-    assert window_words.window_in("gasté 2025 euros en agosto", today=TODAY) is None
+    answer a question about one purchase with a whole calendar.
+
+    The window here is August, which the sentence does name. It used to be None, because a month
+    with no year was not a window this file knew — the assertion was about the number all along and
+    now says so without depending on the month being unreadable.
+    """
+    assert window_words.window_in(
+        "gasté 2025 euros en agosto", today=TODAY
+    ) == window_words.whole_month(TODAY.year, 8)
+    assert window_words.window_in("gasté 2025 euros", today=TODAY) is None
 
 
 @pytest.mark.parametrize(
@@ -208,3 +263,231 @@ def test_only_a_bare_continuation_shifts_a_window() -> None:
 
     assert window_words.a_year_earlier("¿cuánto gasté el año anterior en ocio?", july) is None
     assert window_words.a_year_earlier("¿y el año anterior?", None) is None
+
+
+# --- a month with no year, which used to be no window at all ------------------------------
+
+
+def test_a_bare_hoy_no_longer_outranks_the_month_beside_it() -> None:
+    """The reported sentence. "En junio" was not a window this file knew, so the phrase table found
+    "hoy" and answered about today — a real figure, about the wrong thirty days, with nothing
+    anywhere to contradict it."""
+    assert window_words.window_in(
+        "hoy quiero saber cuánto gasté en junio", today=TODAY
+    ) == AbsoluteRange(start=date(2026, 6, 1), end=date(2026, 6, 30))
+
+
+@pytest.mark.parametrize(
+    ("sentence", "start", "end"),
+    [
+        # Already past this year, so it is this year's.
+        ("¿cuánto gasté en junio?", date(2026, 6, 1), date(2026, 6, 30)),
+        # The month under way counts as having happened: it is the one somebody means.
+        ("¿cuánto gasté en agosto?", date(2026, 8, 1), date(2026, 8, 31)),
+        # Not yet come round, so it is last year's. Nobody says "en octubre" about a month four
+        # months away — that is "el octubre que viene", and this reads no futures.
+        ("¿cuánto gasté en octubre?", date(2025, 10, 1), date(2025, 10, 31)),
+        ("durante diciembre", date(2025, 12, 1), date(2025, 12, 31)),
+    ],
+)
+def test_a_month_with_no_year_is_the_last_time_it_happened(
+    sentence: str, start: date, end: date
+) -> None:
+    assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(start=start, end=end)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["el mes 7", "prueba el mes 7", "el mes 7 y si no el 8"],
+)
+def test_a_numbered_month_answer_is_a_calendar_month(sentence: str) -> None:
+    assert window_words.window_in(sentence, today=TODAY) == AbsoluteRange(
+        start=date(2026, 7, 1), end=date(2026, 7, 31)
+    )
+
+
+def test_a_month_of_the_year_before_is_that_month_and_not_the_whole_year() -> None:
+    """ "El año pasado" on its own is a calendar year and is read as one. Beside a month it is the
+    year that month belongs to, and answering with twelve months instead of one is the same class
+    of mistake in the other direction."""
+    assert window_words.window_in(
+        "¿cuánto gasté en julio del año pasado?", today=TODAY
+    ) == AbsoluteRange(start=date(2025, 7, 1), end=date(2025, 7, 31))
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # A date, not a month. The whole of June is thirty times the question.
+        "¿cuánto gasté el 15 de junio?",
+        # Two months is a range, and answering with either is a fraction of what was asked.
+        "¿cuánto gasté de junio a septiembre?",
+    ],
+)
+def test_a_sentence_this_is_not_sure_about_goes_to_the_model(sentence: str) -> None:
+    """Precision over coverage, which is this file's whole rule: a miss costs one turn and a wrong
+    guess costs a figure about the wrong days, presented as the answer."""
+    assert window_words.window_in(sentence, today=TODAY) is None
+
+
+def test_a_month_with_no_year_needs_to_know_what_year_it_is() -> None:
+    """No clock is read here. Without `today` the phrase is unresolvable rather than resolved
+    against a date this service invented — the rule that lets the evaluation replay a turn."""
+    assert window_words.window_in("¿cuánto gasté en junio?") is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected"),
+    [
+        (
+            "¿Cuánto gasté del 1 de junio al 15 de julio?",
+            AbsoluteRange(date(2026, 6, 1), date(2026, 7, 15)),
+        ),
+        (
+            "desde el 15 de diciembre hasta el 15 de enero",
+            AbsoluteRange(date(2025, 12, 15), date(2026, 1, 15)),
+        ),
+        (
+            "del 1 de marzo al 15 de abril de 2025",
+            AbsoluteRange(date(2025, 3, 1), date(2025, 4, 15)),
+        ),
+    ],
+)
+def test_an_explicit_range_is_resolved_without_a_model(
+    sentence: str, expected: AbsoluteRange
+) -> None:
+    assert window_words.date_range_in(sentence, today=TODAY) == expected
+    assert window_words.window_in(sentence, today=TODAY) == expected
+
+
+def test_a_future_or_impossible_explicit_range_is_not_executed() -> None:
+    assert (
+        window_words.date_range_in("del 1 de septiembre al 15 de octubre de 2026", today=TODAY)
+        is None
+    )
+    assert (
+        window_words.date_range_in("del 31 de febrero al 15 de marzo de 2026", today=TODAY) is None
+    )
+
+
+def test_two_arbitrary_ranges_are_read_in_mention_order() -> None:
+    sentence = (
+        "compara del 1 de marzo al 15 de abril de 2026 "
+        "con el periodo del 1 de mayo al 15 de junio de 2026"
+    )
+
+    assert window_words.compared_date_ranges(sentence, today=TODAY) == (
+        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
+        AbsoluteRange(date(2026, 5, 1), date(2026, 6, 15)),
+    )
+
+
+def test_the_same_explicit_period_last_year_is_derived_exactly() -> None:
+    sentence = "compara del 1 de marzo al 15 de abril de 2026 con el mismo periodo del año pasado"
+
+    assert window_words.compared_date_ranges(sentence, today=TODAY) == (
+        AbsoluteRange(date(2026, 3, 1), date(2026, 4, 15)),
+        AbsoluteRange(date(2025, 3, 1), date(2025, 4, 15)),
+    )
+
+
+@pytest.mark.parametrize("name", list(range(1, 13)))
+def test_every_month_maps_to_its_own_number(name: int) -> None:
+    """It was `enumerate` over a list with "setiembre" in the middle of it, skipped by an `if`, so
+    every month after September was one too high: October answered November, and December was
+    month 13 — a `ValueError` on the way to a 500."""
+    spelled = [
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    ][name - 1]
+
+    window = window_words.window_in(f"en {spelled} de 2025", today=TODAY)
+
+    assert window == window_words.whole_month(2025, name)
+
+
+def test_both_spellings_of_september_are_september() -> None:
+    assert window_words.window_in("en setiembre de 2025", today=TODAY) == window_words.window_in(
+        "en septiembre de 2025", today=TODAY
+    )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "first", "second"),
+    [
+        (
+            "\u00bfGast\u00e9 m\u00e1s en julio que en junio?",
+            window_words.whole_month(2026, 7),
+            window_words.whole_month(2026, 6),
+        ),
+        (
+            "\u00bfEn qu\u00e9 mes gast\u00e9 m\u00e1s, julio o junio?",
+            window_words.whole_month(2026, 7),
+            window_words.whole_month(2026, 6),
+        ),
+        (
+            "Compara julio de 2025 con junio de 2026",
+            window_words.whole_month(2025, 7),
+            window_words.whole_month(2026, 6),
+        ),
+        (
+            "Compara enero y diciembre",
+            window_words.whole_month(2026, 1),
+            window_words.whole_month(2025, 12),
+        ),
+        (
+            "Compara el mes 7 frente al mes 6",
+            window_words.whole_month(2026, 7),
+            window_words.whole_month(2026, 6),
+        ),
+    ],
+)
+def test_two_compared_months_are_read_in_mention_order(
+    sentence: str, first: AbsoluteRange, second: AbsoluteRange
+) -> None:
+    assert window_words.compared_calendar_months(sentence, today=TODAY) == (first, second)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "compara los movimientos del 1 de junio con el 15 de julio",
+        "compara mis gastos de junio a septiembre",
+        "compara julio, junio y mayo",
+    ],
+)
+def test_ambiguous_month_ranges_are_not_rewritten_as_two_whole_months(sentence: str) -> None:
+    assert window_words.compared_calendar_months(sentence, today=TODAY) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["Compara mis ingresos de 2025 con 2026", "Ingresos de 2025 vs 2026"],
+)
+def test_two_calendar_years_can_be_read_from_one_comparison(sentence: str) -> None:
+    assert window_words.compared_calendar_years(sentence, today=TODAY) == (
+        window_words.whole_year(2025),
+        window_words.whole_year(2026),
+    )
+
+
+def test_a_single_window_is_complete_but_not_a_comparison_pair() -> None:
+    assert window_words.has_complete_window("este mes", today=TODAY)
+    assert not window_words.has_compared_windows("este mes", today=TODAY)
+
+
+def test_two_compared_windows_are_complete_without_becoming_one_shareable_window() -> None:
+    sentence = "compara junio y julio"
+
+    assert window_words.has_complete_window(sentence, today=TODAY)
+    assert window_words.has_compared_windows(sentence, today=TODAY)

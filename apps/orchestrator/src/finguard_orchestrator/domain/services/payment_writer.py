@@ -150,8 +150,18 @@ def several_candidates(candidates: tuple[str, ...]) -> str:
     return f"Tienes varios contactos con ese nombre: {', '.join(candidates)}. ¿A quién se lo envío?"
 
 
-def not_a_contact(name: str) -> str:
-    return f"No tengo a {name} en tus contactos, así que no puedo enviarle nada."
+def not_a_contact(name: str, draft: PaymentDraft | None = None) -> str:
+    """Reject only the unknown name, while making a recoverable payment actionable.
+
+    A complete request can fail contact resolution after the user already supplied the amount and
+    concept. Ending the whole workflow there made a subsequent contact choice look like a financial
+    query. When a draft is supplied, the question names the retained amount and asks only for a
+    replacement recipient; the no-draft form remains the terminal sentence used elsewhere.
+    """
+    refused = f"No tengo a {name} en tus contactos, así que no puedo enviarle nada."
+    if draft is None:
+        return refused
+    return f"{refused} Puedes elegir otro contacto. {still_missing(draft)}"
 
 
 def no_account_for(name: str) -> str:
@@ -179,6 +189,18 @@ def not_a_contact_chosen() -> str:
 
 def insufficient_funds() -> str:
     return "No he enviado nada: tu saldo no cubre ese pago."
+
+
+def nothing_was_sent() -> str:
+    """The bank refused the request itself, so no intent was ever pending.
+
+    Its own sentence because the one below is a claim: "ya no está pendiente" says a payment
+    existed and has been dealt with, and sending somebody to check their movements for a payment
+    that was never made is a wrong answer about money in the direction that alarms people. This
+    covers a reused idempotency key and any refusal this service does not have a name for, and both
+    mean the same two things to whoever is reading — nothing moved, and trying again works.
+    """
+    return "No he enviado nada. Vuelve a intentarlo."
 
 
 def no_longer_live() -> str:

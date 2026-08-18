@@ -127,6 +127,36 @@ def test_a_payment_typed_into_the_chat_reaches_the_payment_path() -> None:
     assert preparing.sentences == [PAYMENT]
 
 
+def test_a_payment_mixed_with_a_read_is_returned_as_choices_before_either_runs() -> None:
+    client, preparing = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
+
+    response = client.post(
+        "/v1/questions", json={"question": "Haz un bizum a Marta y cuanto gaste este mes"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "NEEDS_CLARIFICATION"
+    assert response.json()["suggestions"] == [
+        "Haz un bizum a Marta",
+        "cuanto gaste este mes",
+    ]
+    assert preparing.sentences == []
+
+
+def test_an_unsafe_compound_has_the_same_choice_on_the_streaming_endpoint() -> None:
+    client, _ = client_for(Scope.QUESTIONS_READ)
+
+    response = client.post(
+        "/v1/questions/stream",
+        json={"question": "Haz un bizum a Marta y cuanto gaste este mes"},
+    )
+    events = events_of(response)
+
+    assert [event["type"] for event in events] == ["answer"]
+    assert events[0]["outcome"] == "NEEDS_CLARIFICATION"
+    assert events[0]["suggestions"] == ["Haz un bizum a Marta", "cuanto gaste este mes"]
+
+
 def test_starting_a_payment_discards_an_older_failed_query_retry() -> None:
     client, _ = client_for(Scope.QUESTIONS_READ, Scope.PAYMENTS_PREPARE)
 
@@ -238,6 +268,7 @@ def test_changing_the_amount_cancels_the_old_intent_and_prepares_a_new_preview()
     ("correction", "recipient", "concept"),
     [
         ("era para María", None, "tapas"),
+        ("A Marta 500 euros concepto pa la rule", None, "tapas"),
         ("cambia el concepto a cena", "Marta Solis Vega", "tapas"),
         ("quita el concepto", "Marta Solis Vega", None),
     ],
@@ -291,6 +322,8 @@ def test_the_stream_returns_the_state_after_a_payment_confirmation(
     assert answer["outcome"] == outcome
     assert answer["conversation"]["workflow"] == workflow
     assert payments.confirmations == [reply]
+    if outcome == PaymentOutcome.PAID.value:
+        assert answer["conversation"]["recent_payment_rail"] == "BIZUM"
     if outcome == PaymentOutcome.AWAITING_CONFIRMATION.value:
         assert "Marta Solis Vega" in answer["text"]
         assert "20,00" in answer["text"]

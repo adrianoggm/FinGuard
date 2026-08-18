@@ -33,7 +33,12 @@ from finguard_orchestrator.domain.models.payment_result import PaymentPreview, P
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.payment_gateway import PaymentGatewayPort
 from finguard_orchestrator.domain.ports.payment_reader import PaymentReaderPort
-from finguard_orchestrator.domain.services import confirmation, payment_words, payment_writer
+from finguard_orchestrator.domain.services import (
+    confirmation,
+    payment_router,
+    payment_words,
+    payment_writer,
+)
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
@@ -59,6 +64,9 @@ class SpokenPaymentDraft:
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
+    # The draft crosses the chat boundary between turns. Without the rail here, a transfer that
+    # needed another recipient or amount came back as the default Bizum on the next turn.
+    rail: str = Rail.BIZUM.value
 
 
 @dataclass(frozen=True)
@@ -178,6 +186,7 @@ def _drafted(draft: PaymentDraft) -> SpokenPaymentDraft:
         amount_minor=draft.amount_minor,
         currency=draft.currency,
         concept=draft.concept,
+        rail=draft.rail.value,
     )
 
 
@@ -232,10 +241,21 @@ async def _previewed(
             ],
         )
     except RecipientNotFoundError as nobody:
+        # The name is the only invalid field. Keep what the holder already said so choosing one of
+        # their contacts is a continuation, not a fresh sentence that can fall into the financial
+        # planner. The rejected name itself is deliberately cleared: retaining it would let a bare
+        # amount retry the same invalid recipient forever.
+        draft = PaymentDraft(
+            amount_minor=request.amount_minor,
+            currency=request.currency,
+            concept=request.concept,
+            rail=request.rail,
+        )
         return PaymentAnswer(
-            outcome=PaymentOutcome.REFUSED.value,
-            text=payment_writer.not_a_contact(nobody.name),
+            outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
+            text=payment_writer.not_a_contact(nobody.name, draft),
             reason=nobody.code,
+            draft=_drafted(draft),
         )
     except RecipientHasNoAccountError as unreachable:
         # Not a refusal and not a not-found. The person exists, the holder chose them, and what
@@ -381,6 +401,25 @@ class PreparePaymentHandler:
 
         reading = await self._reader.read(command.sentence, policy=self._policy)
 
+        # Concepts are user-owned text. When the sentence marks one explicitly, the deterministic
+        # reader is authoritative over a model that may truncate ``viaje a Malaga`` or append
+        # ``por bizum``. The directory is what lets it distinguish a trailing payee from a place.
+        explicit_concept = payment_words.concept_in(command.sentence)
+        directory: tuple[Contact, ...] | None = None
+        if explicit_concept is not None:
+            directory = await self._contacts.all_of(command.account_id)
+            explicit_concept = payment_words.concept_in(command.sentence, directory)
+            if reading.request is not None:
+                reading = replace(
+                    reading,
+                    request=replace(reading.request, concept=explicit_concept),
+                )
+            elif reading.draft is not None:
+                reading = replace(
+                    reading,
+                    draft=replace(reading.draft, concept=explicit_concept),
+                )
+
         # Stamped here, from the sentence, on whatever the reader produced. The rail is not
         # in the prompt and not in the schema: "bizum" and "transferencia" are a closed
         # vocabulary of two, and letting a decoder choose between them would be letting it
@@ -402,7 +441,11 @@ class PreparePaymentHandler:
             account_id=command.account_id,
             key=command.idempotency_key,
             # So an ambiguous name comes back with identifiers rather than as prose to retype.
-            directory=await self._contacts.all_of(command.account_id),
+            directory=(
+                directory
+                if directory is not None
+                else await self._contacts.all_of(command.account_id)
+            ),
         )
 
     async def _chosen(
@@ -434,7 +477,8 @@ class PreparePaymentHandler:
         None is the useful answer as often as an answer is: "no sé" fills no slot, and a sentence
         nobody can read deterministically belongs on the ordinary path.
         """
-        assert command.pending is not None
+        if command.pending is None:
+            raise RuntimeError("continuing a payment that is not pending")
         pending = command.pending
         # An identifier with no name beside it is a choice that has not been applied yet: this
         # service fills the name in from its own directory, so a draft carrying both has been
@@ -452,16 +496,27 @@ class PreparePaymentHandler:
         amount = payment_words.amount_in(command.sentence)
         concept = payment_words.concept_in(command.sentence)
         clears_concept = payment_words.clears_concept(command.sentence)
+        directory: tuple[Contact, ...] = ()
+        if concept is not None or PaymentField.RECIPIENT in missing:
+            directory = await self._contacts.all_of(command.account_id)
+            concept = payment_words.concept_in(command.sentence, directory)
         named: tuple[Contact, ...] = ()
         if PaymentField.RECIPIENT in missing:
             # Only when the recipient is what is missing. Otherwise a sentence that happens to
             # mention a contact — "los 15 de la cena con Marta" — would silently change who is
             # being paid.
-            named = payment_words.contacts_in(
-                command.sentence, await self._contacts.all_of(command.account_id)
-            )
+            named = payment_words.contacts_in(command.sentence, directory)
 
         if amount is None and not named and not chose and concept is None and not clears_concept:
+            if payment_router.resumes(command.sentence):
+                # An explicit resumption adds no field and is not nothing: it is the turn that
+                # brings the payment back. Falling through here read the sentence afresh, and
+                # "continuar con el bizum" names nobody — so the reader found no recipient and the
+                # Bizum started over, having been suspended precisely to avoid that.
+                #
+                # It asks for whatever is still missing, which is the question the payment was
+                # holding when the subject changed.
+                return _asking_for(pending)
             return None
 
         if clears_concept:
@@ -473,11 +528,7 @@ class PreparePaymentHandler:
             # Ambiguous, and this is the one place that can say so with the names in hand. Banking
             # refuses to choose too, and reaching it would spend a round trip to be told the same
             # thing without the candidates.
-            drafted = pending.filled_with(
-                PaymentDraft(
-                    amount_minor=amount, concept=payment_words.concept_in(command.sentence)
-                )
-            )
+            drafted = pending.filled_with(PaymentDraft(amount_minor=amount, concept=concept))
             return PaymentAnswer(
                 outcome=PaymentOutcome.NEEDS_CLARIFICATION.value,
                 text=payment_writer.several_candidates(tuple(c.display_name for c in named)),
@@ -589,10 +640,19 @@ def _paid(paid: PaymentReceipt) -> PaymentAnswer:
 
 
 def _refusal(reason: str) -> PaymentAnswer:
+    """A refusal of the *request*, which is never a payment that already happened.
+
+    The fall-through used to be `no_longer_live()` — "ese pago ya no está pendiente, comprueba tus
+    movimientos" — and a `PaymentRefusedError` cannot mean that: it is raised for a balance that
+    did not cover the payment, or for a 4xx this service has no name for. Nothing was ever pending
+    in either case, so the sentence sent somebody looking through their movements for a payment
+    that was never made. An expired or already-paid intent arrives as `IntentGoneError`, which has
+    its own handlers and keeps that sentence.
+    """
     text = (
         payment_writer.insufficient_funds()
         if reason == INSUFFICIENT_FUNDS
-        else payment_writer.no_longer_live()
+        else payment_writer.nothing_was_sent()
     )
     return PaymentAnswer(outcome=PaymentOutcome.REFUSED.value, text=text, reason=reason)
 

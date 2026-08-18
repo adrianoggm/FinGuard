@@ -25,7 +25,7 @@ from finguard_orchestrator.application.commands.pay import (
     PreparePaymentCommand,
     PreparePaymentHandler,
 )
-from finguard_orchestrator.domain.enums import PaymentOutcome, PlanningOutcome
+from finguard_orchestrator.domain.enums import PaymentOutcome, PlanningOutcome, Rail
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview
@@ -122,6 +122,25 @@ async def test_the_amount_completes_a_pending_payment_without_a_model() -> None:
     assert reader.sentences == [], "an amount from a closed grammar went to a model"
     assert [r.amount_minor for r in gateway.prepared] == [1_500]
     assert gateway.prepared[0].recipient_name == "Marta Solis Vega"
+    assert answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
+
+
+async def test_an_elliptical_second_payment_builds_a_fresh_request_without_a_model() -> None:
+    """After a successful Bizum, the router supplies only its rail in a fresh draft.
+
+    The new sentence must provide both mutable fields again: neither Marta nor the previous
+    amount may leak into this payment.
+    """
+    answer, reader, gateway = await prepare(
+        "y ahora otro de 14 a Aitor",
+        pending=PaymentDraft(rail=Rail.BIZUM),
+    )
+
+    assert reader.sentences == []
+    assert len(gateway.prepared) == 1
+    assert gateway.prepared[0].recipient_name == "Aitor Beltran Diaz"
+    assert gateway.prepared[0].amount_minor == 1_400
+    assert gateway.prepared[0].concept is None
     assert answer.outcome == PaymentOutcome.AWAITING_CONFIRMATION.value
 
 
@@ -311,6 +330,16 @@ async def test_the_concept_arrives_on_the_same_turn_as_the_amount() -> None:
     assert reader.sentences == []
     assert gateway.prepared[0].concept == "comida"
     assert "comida" in answer.text
+
+
+async def test_a_place_and_instruction_suffix_are_kept_out_of_each_others_slots() -> None:
+    _, reader, gateway = await prepare(
+        "50 euros con concepto viaje a Málaga por bizum ahora mismo",
+        pending=PaymentDraft(recipient_name="Marta Solis Vega"),
+    )
+
+    assert reader.sentences == []
+    assert gateway.prepared[0].concept == "viaje a Málaga"
 
 
 async def test_the_concept_survives_an_ambiguous_name() -> None:

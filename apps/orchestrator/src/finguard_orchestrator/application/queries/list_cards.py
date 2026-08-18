@@ -2,6 +2,9 @@
 
 `since` is computed at the edge from the window the caller asked for, like `today` on every other
 path: a handler that reads the clock cannot be replayed.
+
+`today` and the zone come with it because banking bins the charges by day and has to be told whose
+day. Carrying `since` alone left that decision to whichever clock the far side happened to read.
 """
 
 from dataclasses import dataclass, field
@@ -36,6 +39,8 @@ class WalletResult:
 class ListCardsQuery(Query[WalletResult]):
     account_id: UUID
     since: date
+    today: date
+    reporting_timezone: str
 
 
 class ListCardsHandler:
@@ -43,7 +48,12 @@ class ListCardsHandler:
         self._cards = cards
 
     async def handle(self, query: ListCardsQuery) -> WalletResult:
-        wallet = await self._cards.all_of(query.account_id, since=query.since)
+        wallet = await self._cards.all_of(
+            query.account_id,
+            since=query.since,
+            today=query.today,
+            timezone=query.reporting_timezone,
+        )
         return WalletResult(
             since=wallet.since.isoformat(),
             cards=[
@@ -89,6 +99,8 @@ class GetCardChargesQuery(Query[ChargesResult]):
     account_id: UUID
     card_id: UUID
     since: date
+    today: date
+    reporting_timezone: str
     limit: int
 
 
@@ -98,7 +110,12 @@ class GetCardChargesHandler:
 
     async def handle(self, query: GetCardChargesQuery) -> ChargesResult:
         found = await self._cards.charges_on(
-            query.account_id, query.card_id, since=query.since, limit=query.limit
+            query.account_id,
+            query.card_id,
+            since=query.since,
+            today=query.today,
+            timezone=query.reporting_timezone,
+            limit=query.limit,
         )
         return ChargesResult(
             card_id=str(query.card_id),

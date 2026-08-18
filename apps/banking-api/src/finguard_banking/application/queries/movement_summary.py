@@ -6,10 +6,11 @@ query as a domain object, which is fine: it is input, not an answer.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from finguard_banking.application.bus.query_bus import Query
+from finguard_banking.domain.enums import CounterpartyType, ReceiptCategory, TransactionType
 from finguard_banking.domain.models.financial_query import FinancialQuery
 from finguard_banking.domain.models.financial_query_result import FinancialQueryResult
 from finguard_banking.domain.ports.financial_query_repository import FinancialQueryRepository
@@ -36,6 +37,10 @@ class SummaryMovement:
     category_is_custom: bool = False
     category_source: str = "NONE"
     is_internal: bool = False
+    transaction_type: TransactionType | None = None
+    counterparty_name: str | None = None
+    counterparty_type: CounterpartyType = CounterpartyType.UNKNOWN
+    receipt_category: ReceiptCategory | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +56,8 @@ class MovementSummaryResult:
     currency: str
     total_minor: int
     movement_count: int
+    period_start: date
+    period_end: date
     groups: list[SummaryGroup] = field(default_factory=list)
     movements: list[SummaryMovement] = field(default_factory=list)
     trace: SummaryTrace | None = None
@@ -72,15 +79,23 @@ class MovementSummaryHandler:
         self._queries = queries
 
     async def handle(self, query: MovementSummaryQuery) -> MovementSummaryResult:
-        return _to_result(await self._queries.run(query.plan))
+        return _to_result(
+            await self._queries.run(query.plan),
+            query.plan.date_range.start,
+            query.plan.date_range.end,
+        )
 
 
-def _to_result(result: FinancialQueryResult) -> MovementSummaryResult:
+def _to_result(
+    result: FinancialQueryResult, period_start: date, period_end: date
+) -> MovementSummaryResult:
     return MovementSummaryResult(
         account_id=result.account_id,
         currency=result.currency,
         total_minor=result.total.amount_minor,
         movement_count=result.movement_count,
+        period_start=period_start,
+        period_end=period_end,
         groups=[
             SummaryGroup(
                 key=group.key,
@@ -99,6 +114,10 @@ def _to_result(result: FinancialQueryResult) -> MovementSummaryResult:
                 category_is_custom=movement.category_is_custom,
                 category_source=movement.category_source,
                 is_internal=movement.is_internal,
+                transaction_type=movement.transaction_type,
+                counterparty_name=movement.counterparty_name,
+                counterparty_type=movement.counterparty_type,
+                receipt_category=movement.receipt_category,
                 amount_minor=movement.amount.amount_minor,
                 direction=movement.direction,
             )

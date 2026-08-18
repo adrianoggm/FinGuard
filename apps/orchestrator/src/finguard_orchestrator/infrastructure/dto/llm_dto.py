@@ -12,20 +12,31 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORY_LENGTH,
+    MAX_ENTITY_ALIAS_LENGTH,
+    MAX_ENTITY_ALIASES,
+    MAX_GROUP_RANK,
+    MAX_MERCHANT_LENGTH,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
+    MAX_REMEMBERED_TURNS,
+    MAX_SELECTED_TRANSACTIONS,
+    MAX_TURN_NOTE,
+    MAX_TURN_SENTENCE,
 )
 from finguard_orchestrator.domain.enums import (
     Action,
+    CounterpartyType,
     Direction,
     GroupBy,
     Metric,
     Period,
     Rail,
+    TransactionType,
 )
 from finguard_orchestrator.domain.models.conversation import Slot, Workflow
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
 class _Payload(BaseModel):
@@ -100,9 +111,23 @@ class PlanPayload(_Payload):
     start: date | None = None
     end: date | None = None
     categories: list[str] = []
+    excluded_categories: list[str] = []
     merchants: list[str] = []
+    merchant_terms: list[str] = []
+    excluded_merchants: list[str] = []
+    counterparties: list[str] = []
+    excluded_counterparties: list[str] = []
+    counterparty_types: list[CounterpartyType] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
+    group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_RANK)
+    include_internal: bool = False
+    internal_only: bool = False
+    across_accounts: bool = False
+    only_account_id: UUID | None = None
+    only_account_ids: list[UUID] = []
+    transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
+    transaction_types: list[TransactionType] = []
     # Which kind of query this is. AGGREGATE totals or counts movements; RANK_MOVEMENTS picks one
     # out by size, and then `rank` says which position while the grouping and the metric mean
     # nothing. The tag decides, not the fields: a payload carrying both a rank and a grouping is a
@@ -131,6 +156,7 @@ class PaymentDraftPayload(_Payload):
     amount_minor: int | None = None
     currency: str = "EUR"
     concept: str | None = None
+    rail: Rail = Rail.BIZUM
 
 
 class SpokenContactResponse(_Payload):
@@ -151,9 +177,39 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     ),
     Workflow.UNSUPPORTED_CAPABILITY: frozenset(),
     Workflow.PAYMENT_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.RECIPIENT, Slot.RECIPIENT_CHOICE}),
+    # Two questions and no more: which of the holder's accounts, and how much.
+    Workflow.TRANSFER_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.ACCOUNT}),
     Workflow.PAYMENT_CONFIRMATION: frozenset({Slot.CONFIRMATION}),
     None: frozenset(),
 }
+
+
+class AccountAliasPayload(_Payload):
+    alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
+    account_id: UUID
+    display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+
+
+class CounterpartyAliasPayload(_Payload):
+    alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
+    counterparty_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+    counterparty_type: CounterpartyType
+
+
+class TurnPayload(_Payload):
+    """One past exchange, round-tripped so the next turn has a thread to read against.
+
+    Bounded on both axes — how many travel and how long each may be — because there are no sessions
+    here and the log rides every request. `sentence` is the one field a holder authored; it is
+    fenced as data before it reaches any prompt and nothing branches on it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(default="", max_length=MAX_TURN_SENTENCE)
+    outcome: str = Field(min_length=1, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$")
+    plan: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
+    question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
 
 
 class ConversationPayload(_Payload):
@@ -180,12 +236,59 @@ class ConversationPayload(_Payload):
     # What the last turn asked for, when it asked for anything. This is what makes "de este"
     # readable: the slot says which field the sentence is filling.
     awaiting: Slot | None = None
+    # What the last turn asked for, when it left nothing open. Memory rather than a workflow, which
+    # is why it has no per-state rule below: `awaiting` is constrained because a window slot on a
+    # payment would let a reply meant for a period complete a Bizum, and this decides one thing —
+    # whether the same question has now been asked twice.
+    last_asked: Slot | None = None
+    # Whether the last turn said how much money there is. Memory, like the two below, and it is
+    # what makes "¿y en la hucha?" a balance question after a balance and a spending question after
+    # a spending one — the same sentence, two meanings, decided by the turn before.
+    answered_the_balance: bool = False
+    # The category explicitly highlighted by the last answer. It is an identifier from banking,
+    # not prose, and the client only echoes it so a later "esa categoría" can be grounded.
+    referenced_category: str | None = Field(
+        default=None, max_length=40, pattern=r"^[A-Z][A-Z0-9_]*$"
+    )
+    # A typed row reference emitted by a category, merchant or account breakdown. The key is bank
+    # data, never free prose inferred by the client, and both halves are validated as one value.
+    referenced_group_by: GroupBy | None = None
+    referenced_group_key: str | None = Field(
+        default=None, min_length=1, max_length=MAX_MERCHANT_LENGTH
+    )
+    # Exact evidence rows shown by the preceding answer. UUIDs are harmless selectors: banking
+    # still scopes every query to the authenticated holder.
+    referenced_transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
+    account_aliases: list["AccountAliasPayload"] = Field(default=[], max_length=MAX_ENTITY_ALIASES)
+    counterparty_aliases: list["CounterpartyAliasPayload"] = Field(
+        default=[], max_length=MAX_ENTITY_ALIASES
+    )
+    # The rail of the payment that just completed. It is deliberately tiny and short-lived: it
+    # only grounds an immediate "y ahora otro de 14 a Aitor", never a recipient or an amount.
+    recent_payment_rail: Rail | None = None
+    # What happened, oldest first. Every field above it is a projection of the turn immediately
+    # before, taken by whichever branch ran; this is the turn itself, and it is what lets an
+    # ellipsis three deep still resolve. Bounded, because it travels on every request.
+    turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
+    prior_plan: PlanPayload | None = None
     # The validated query banking could not execute. Kept separately from `last_plan`: a failed
     # read is retryable context, not an answer a later "y este mes" should inherit from.
     retry_plan: PlanPayload | None = None
+    # A derived relationship connects two plans. These triples are memory, not an active workflow,
+    # are all-or-nothing: one missing operand is not a calculation this service emitted.
+    last_ratio_kind: RatioKind | None = None
+    last_ratio_part: PlanPayload | None = None
+    last_ratio_whole: PlanPayload | None = None
+    pending_ratio_kind: RatioKind | None = None
+    pending_ratio_part: PlanPayload | None = None
+    pending_ratio_whole: PlanPayload | None = None
+    # A comparison has two ordered operands and no independently selectable metric: both plans
+    # carry the same one. The pair is all-or-nothing for the same reason as ratio memory.
+    last_comparison_earlier: PlanPayload | None = None
+    last_comparison_latest: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
     # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
@@ -196,6 +299,11 @@ class ConversationPayload(_Payload):
     payment: PaymentDraftPayload | None = None
     suspended: bool = False
     candidates: list[SpokenContactResponse] = []
+    # TRANSFER_IN_PROGRESS: the account it is going to, once one is settled, and the amount, once
+    # one is said. Named apart from the payment fields so the validator can keep the two states from
+    # borrowing each other's — a transfer has nobody to name and a payment has no account.
+    transfer_to: UUID | None = None
+    transfer_amount_minor: int | None = Field(default=None, ge=1, le=MAX_PAYMENT_MINOR)
     # PAYMENT_CONFIRMATION: the intent the bank is holding.
     #
     # A UUID, not a string. It was a string that `uuid.UUID(...)` parsed inside the mapper, so
@@ -233,6 +341,8 @@ class ConversationPayload(_Payload):
             Workflow.FINANCIAL_CLARIFICATION: ("draft",),
             Workflow.UNSUPPORTED_CAPABILITY: ("capability",),
             Workflow.PAYMENT_IN_PROGRESS: ("payment",),
+            # Neither field is required: the state exists precisely while one of them is missing.
+            Workflow.TRANSFER_IN_PROGRESS: (),
             Workflow.PAYMENT_CONFIRMATION: ("intent_id", "recipient", "amount_minor"),
             None: (),
         }
@@ -242,6 +352,7 @@ class ConversationPayload(_Payload):
             Workflow.FINANCIAL_CLARIFICATION: frozenset({"draft"}),
             Workflow.UNSUPPORTED_CAPABILITY: frozenset({"capability"}),
             Workflow.PAYMENT_IN_PROGRESS: frozenset({"payment", "candidates", "suspended"}),
+            Workflow.TRANSFER_IN_PROGRESS: frozenset({"transfer_to", "transfer_amount_minor"}),
             Workflow.PAYMENT_CONFIRMATION: frozenset(
                 {
                     "intent_id",
@@ -266,6 +377,38 @@ class ConversationPayload(_Payload):
 
         if self.awaiting is not None and self.awaiting not in _SLOTS_OF[self.workflow]:
             raise ValueError(f"{self.workflow or 'an idle state'} never asks for {self.awaiting}")
+        for prefix in ("last_ratio", "pending_ratio"):
+            values = (
+                getattr(self, f"{prefix}_kind"),
+                getattr(self, f"{prefix}_part"),
+                getattr(self, f"{prefix}_whole"),
+            )
+            if any(value is not None for value in values) and any(
+                value is None for value in values
+            ):
+                raise ValueError(f"{prefix} needs its kind and both operands")
+        comparison = (self.last_comparison_earlier, self.last_comparison_latest)
+        if any(value is not None for value in comparison) and any(
+            value is None for value in comparison
+        ):
+            raise ValueError("last_comparison needs both ordered operands")
+        group_reference = (self.referenced_group_by, self.referenced_group_key)
+        if any(value is not None for value in group_reference) and any(
+            value is None for value in group_reference
+        ):
+            raise ValueError("a referenced group needs both its dimension and key")
+        if self.referenced_group_by not in {
+            None,
+            GroupBy.CATEGORY,
+            GroupBy.MERCHANT,
+            GroupBy.COUNTERPARTY,
+            GroupBy.ACCOUNT,
+        }:
+            raise ValueError(
+                "only category, merchant, counterparty and account rows can be referenced"
+            )
+        if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
+            raise ValueError("referenced transaction ids must be unique")
         return self
 
 
@@ -305,6 +448,10 @@ class SpokenMovementResponse(_Payload):
     direction: str
     merchant_name: str | None = None
     category: str | None = None
+    transaction_type: str | None = None
+    counterparty_name: str | None = None
+    counterparty_type: str = "UNKNOWN"
+    receipt_category: str | None = None
 
 
 class QuestionResponse(_Payload):
@@ -336,6 +483,9 @@ class QuestionResponse(_Payload):
     # Filled only by a question about who can be paid. The identifier is what lets a client offer
     # a choice and send back *which* contact instead of a name to be interpreted a second time.
     contacts: list[SpokenContactResponse] = []
+    # Independent read-only requests asked in one turn. Each part keeps its own plan and evidence;
+    # only the parent carries the conversation left behind after all parts have run.
+    parts: list["QuestionResponse"] = []
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

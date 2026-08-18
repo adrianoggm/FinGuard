@@ -25,6 +25,8 @@ function state(over: Partial<ConversationState>): ConversationState {
   return {
     workflow: null,
     awaiting: null,
+    last_asked: null,
+    answered_the_balance: false,
     last_plan: null,
     retry_plan: null,
     draft: null,
@@ -32,6 +34,8 @@ function state(over: Partial<ConversationState>): ConversationState {
     payment: null,
     suspended: false,
     candidates: [],
+    transfer_to: null,
+    transfer_amount_minor: null,
     intent_id: null,
     recipient: null,
     amount_minor: null,

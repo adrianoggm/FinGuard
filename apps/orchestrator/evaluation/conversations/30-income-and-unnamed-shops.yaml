@@ -1,0 +1,63 @@
+episodes:
+  - name: income_from_sources_the_vocabulary_does_not_name
+    why: >
+      Las 1113 vueltas medidas preguntaban casi todas por lo que sale, y las 18 frases del ancla del
+      juez lo hacían todas: `direction` y `metric` eran columnas constantes, de modo que un veredicto
+      sobre ellas no separaba a un planificador de otro. "La beca" y "la mutua" no están en el
+      vocabulario cerrado de categorías y ningún lector determinista las reclama, así que la pregunta
+      se cede — y lo que la frase sí dice es que el dinero entra, que es lo que `explicit_facts`
+      impone sobre el plan que vuelva. En medio, una elipsis nuestra tiene que conservar esa entrada:
+      heredar el gasto sobre "¿y el año pasado?" daría una cifra real de la pregunta contraria.
+    metrics: [wrong_tool, lost_context, unnecessary_model_calls, unsafe_routing]
+    turns:
+      - say: ¿cuánto me han ingresado de la beca este año?
+        route: QUERY
+        ran: [{window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE}]
+      - say: ¿y el año pasado?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2025-01-01..2025-12-31', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM}]
+      - say: ¿cuántos ingresos me han entrado este mes?
+        route: QUERY
+        ran: [{window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: COUNT}]
+      - say: ¿cuánto cobré de la mutua el mes pasado?
+        route: QUERY
+        ran: [{window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE}]
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        no_model: true
+      - say: gracias
+        route: COURTESY
+        no_model: true
+
+  - name: shops_the_closed_vocabulary_cannot_name
+    why: >
+      Netflix y Amazon no son categorías, y no hay lectura determinista de un nombre de comercio que
+      el libro no tenga: las tres primeras se ceden, y lo único nuestro en ellas es el periodo y, en
+      la tercera, que "cuántas compras" cuenta. "¿Y en Amazon?" no dice periodo ninguno, así que aquí
+      no se le exige — lo que el plan tiene que cambiar es el comercio, y eso está escrito en
+      `planning/conversations.yaml`, donde hay un planificador de verdad al que exigírselo. Lo mismo
+      vale para si "cómo se reparte" tiene que volver agrupado: este fichero mide por dónde va la
+      pregunta, no si el plan que vuelve es el mejor. La última vuelta sí es nuestra, y es la que
+      importa: la nómina y su mes tienen que sobrevivir a una elipsis sobre una pregunta de entrada.
+    metrics: [wrong_tool, lost_context, unnecessary_model_calls, unsafe_routing]
+    turns:
+      - say: ¿cuánto me he gastado en Netflix este año?
+        route: QUERY
+        ran: [{window: THIS_YEAR, categories: [], merchants: [], group_by: NONE}]
+      - say: ¿y en Amazon?
+        route: QUERY
+        ran: [{categories: [], merchants: [], group_by: NONE}]
+      - say: ¿cuántas compras le he hecho a Amazon este año?
+        route: QUERY
+        ran: [{window: THIS_YEAR, categories: [], merchants: [], group_by: NONE, metric: COUNT}]
+      - say: ¿cómo se reparte mi sueldo este mes?
+        route: QUERY
+        ran: [{window: THIS_MONTH, direction: INCOME, categories: ['SALARY'], merchants: []}]
+      - say: ¿y el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: [{window: LAST_MONTH, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM}]
+      - say: vale, gracias
+        route: COURTESY
+        no_model: true

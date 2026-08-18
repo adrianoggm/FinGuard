@@ -112,6 +112,22 @@ def test_asking_how_the_previous_answer_was_classified_is_not_the_catalogue() ->
     assert route("¿en qué categoría has clasificado el cine?") is Intent.EXPLAIN_PREVIOUS
 
 
+def test_asking_where_the_user_spent_most_is_a_new_query_not_an_explanation() -> None:
+    assert (
+        route("Vale en que categoria es la que he gastado mas a lo largo de este año?")
+        is Intent.FINANCIAL_QUERY
+    )
+
+
+def test_a_frustrated_user_is_not_forced_into_a_financial_slot() -> None:
+    assert route("Que te pasa ?") is Intent.CORRECTION
+    assert intent_router.is_frustration("Que te pasa ?")
+
+
+def test_a_clipped_other_account_still_routes_to_the_internal_transfer() -> None:
+    assert route("Quiero mover dinreo de una cuenta a otr, ¿es posible?") is Intent.OWN_TRANSFER
+
+
 @pytest.mark.parametrize(
     "sentence",
     [
@@ -120,6 +136,13 @@ def test_asking_how_the_previous_answer_was_classified_is_not_the_catalogue() ->
         "¿de dónde sale ese número?",
         "¿qué consulta has hecho?",
         "¿cómo has calculado eso?",
+        "¿De dónde has sacado esa cifra?",
+        "¿Qué has consultado para llegar a ese dato?",
+        "¿En qué te basas para decirme eso?",
+        "¿Qué registros has mirado para darme esa cantidad?",
+        "¿Cómo has llegado a esa cifra en concreto?",
+        "¿En qeu te basas para dar esa cifra?",
+        "¿Dond sale esa cantidad exactamnte?",
         "no entiendo el desglose",
         # The sentence from the real conversation, verbatim. The first version of this router missed
         # it, so it reached the planner and came back asking which period — a question about the
@@ -190,6 +213,28 @@ def test_a_correction_with_new_information_is_not_bare(sentence: str) -> None:
 @pytest.mark.parametrize(
     "sentence",
     [
+        "La respuesta que me has dado no es correcta",
+        "Creo que hay un error en la respuesta, ¿puedes revisarla?",
+        "La respuesa no me convence, explícamelo de otra manera",
+    ],
+)
+def test_rejecting_the_answer_without_a_replacement_opens_a_correction_slot(
+    sentence: str,
+) -> None:
+    assert route(sentence) is Intent.CORRECTION
+    assert intent_router.is_bare_correction(sentence) is True
+
+
+def test_an_answer_rejection_that_supplies_the_replacement_is_not_bare() -> None:
+    sentence = "La respuesta no es correcta, me refería al mes pasado"
+
+    assert route(sentence) is Intent.CORRECTION
+    assert intent_router.is_bare_correction(sentence) is False
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
         "¿cuánto gasté en gasolina el mes pasado?",
         "¿en qué me he gastado más este mes?",
         "¿cuántas veces fui al súper?",
@@ -243,10 +288,37 @@ def test_a_payment_wins_over_a_complaint() -> None:
         "¿de cuánto dispongo?",
         "¿cuánto tengo disponible?",
         "saldo",
+        "Cuanto tiengo en mi huch",
+        "Cuanto tngo",
+        # The question word mistyped, which is the half that carried no misspellings at all while
+        # the verb beside it carried three written out by hand.
+        "cunato tengo",
+        "cunato me queda",
+        "cuanot dinero tengo",
     ],
 )
 def test_a_question_about_the_balance_is_its_own_intent(sentence: str) -> None:
     assert route(sentence) is Intent.ACCOUNT_BALANCE
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # One *substitution* from "cuanto", and a different question: when the salary arrives is
+        # not how much money there is, and answering it with a figure would be the balance defect
+        # pointing the other way.
+        "¿cuándo cobro la nómina?",
+        "¿cuándo me llega la nómina?",
+    ],
+)
+def test_a_transposition_is_forgiven_and_a_substitution_is_not(sentence: str) -> None:
+    """Why the slip this tolerates is the one a keyboard makes rather than any one edit.
+
+    Spanish almost never turns two swapped neighbours into another word — "cunato" and "cuanot" are
+    nothing — while a single substitution reaches "cuando" from "cuanto" and "mucha" from "hucha".
+    A widening that cannot tell those apart would answer a question about *when* with a balance.
+    """
+    assert route(sentence) is not Intent.ACCOUNT_BALANCE
 
 
 @pytest.mark.parametrize(
@@ -269,6 +341,40 @@ def test_a_question_about_movements_is_not_a_balance(sentence: str) -> None:
     """A false positive here is expensive: it would answer "¿cuánto gasté?" with the balance, which
     is a real figure about something else — the same class of error the balance bug itself is."""
     assert route(sentence) is not Intent.ACCOUNT_BALANCE
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "muéstrame los movimientos de mis cuentas",
+        "¿cuánto gasté entre mis cuentas este mes?",
+        "¿cuánto ingresé en mis cuentas?",
+    ],
+)
+def test_account_words_inside_a_ledger_question_do_not_turn_it_into_a_balance(
+    sentence: str,
+) -> None:
+    assert route(sentence) is Intent.FINANCIAL_QUERY
+
+
+def test_asking_which_accounts_spent_most_is_not_an_account_catalogue() -> None:
+    assert route("¿Cuáles son las cuentas con más gastos?") is Intent.FINANCIAL_QUERY
+
+
+def test_a_ledger_origin_is_not_an_explanation_of_the_previous_answer() -> None:
+    assert route("¿De dónde viene el ingreso de Marta?") is Intent.FINANCIAL_QUERY
+
+
+def test_an_error_in_a_charge_is_not_a_correction_of_the_assistant() -> None:
+    assert route("Creo que hay un error en el cargo de Netflix") is Intent.FINANCIAL_QUERY
+
+
+def test_a_category_filter_is_not_the_category_catalogue() -> None:
+    assert route("Dame el gasto por categorías del mes pasado") is Intent.FINANCIAL_QUERY
+
+
+def test_a_payment_to_somebody_in_the_agenda_is_not_a_contact_list() -> None:
+    assert route("Envía 20 euros a una persona de mi agenda") is Intent.PAYMENT
 
 
 # --- who can I pay -------------------------------------------------------------------

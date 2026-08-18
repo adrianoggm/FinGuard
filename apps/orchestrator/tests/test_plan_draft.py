@@ -148,3 +148,22 @@ def test_the_grouping_and_the_shops_survive() -> None:
     assert plan.merchants == ("Mercadona", "Carrefour")
     assert plan.group_by is GroupBy.MERCHANT
     assert plan.metric is Metric.COUNT
+
+
+def test_negative_filters_survive_completion_and_cannot_contradict_inclusions() -> None:
+    drafted = FinancialPlanDraft(
+        direction=Direction.EXPENSE,
+        excluded_categories=("HOUSING_RENT",),
+        excluded_merchants=("Mercadona",),
+    )
+
+    plan = drafted.with_window(RelativePeriod(period=Period.THIS_YEAR))
+
+    assert plan.excluded_categories == ("HOUSING_RENT",)
+    assert plan.excluded_merchants == ("Mercadona",)
+    with pytest.raises(InvalidValueError):
+        FinancialPlanDraft(
+            direction=Direction.EXPENSE,
+            categories=("HOUSING_RENT",),
+            excluded_categories=("HOUSING_RENT",),
+        )

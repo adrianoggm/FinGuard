@@ -22,15 +22,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   Conversation,
+  applyVoiceEvent,
   awaitingConfirmation,
   pendingIntent,
   quickReplies,
   recipientChoices,
   settled,
+  voiceButtonAction,
+  voiceEventIdentity,
   withChoice,
   type Thread,
 } from "./Conversation";
-import type { Answer, ConversationState, PlanContext } from "./api";
+import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -48,6 +51,8 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
   return {
     workflow: null,
     awaiting: null,
+    last_asked: null,
+    answered_the_balance: false,
     last_plan: null,
     retry_plan: null,
     draft: null,
@@ -55,6 +60,8 @@ function state(fields: Partial<ConversationState> = {}): ConversationState {
     payment: null,
     suspended: false,
     candidates: [],
+    transfer_to: null,
+    transfer_amount_minor: null,
     intent_id: null,
     recipient: null,
     amount_minor: null,
@@ -80,6 +87,7 @@ function answer(fields: Partial<Answer> = {}): Answer {
     groups: [],
     movements: [],
     suggestions: [],
+    parts: [],
     ...fields,
   };
 }
@@ -91,6 +99,12 @@ function thread(fields: Partial<Thread> = {}): Thread {
 const noop = () => {};
 
 describe("the state the service sent", () => {
+  it("keeps voice opt-in without changing the server-rendered conversation", () => {
+    const markup = renderToStaticMarkup(createElement(Conversation, { thread: thread(), onThread: noop, onClose: noop, onSettled: noop }));
+    expect(markup).toContain('aria-label="Conversación"');
+    if (!voiceEnabled) expect(markup).not.toContain('aria-label="Control de voz"');
+  });
+
   it("is stored as it arrived", () => {
     // Verbatim, not merged: the service decided what this turn leaves open, and combining it with
     // what came before is exactly the inference this replaced.
@@ -151,7 +165,125 @@ describe("the state the service sent", () => {
   });
 });
 
+describe("voice button controls", () => {
+  it("reuses the existing client for barge-in without cancelling or closing it", async () => {
+    const calls: string[] = [];
+    const client = {
+      start: async () => { calls.push("start"); },
+      stopCapture: () => { calls.push("stopCapture"); },
+      cancel: () => { calls.push("cancel"); },
+      close: async () => { calls.push("close"); },
+    };
+
+    const first = await voiceButtonAction("processing", client);
+    const second = await voiceButtonAction("speaking", client);
+
+    expect(first).toBe("barge-in");
+    expect(second).toBe("barge-in");
+    expect(calls).toEqual(["start", "start"]);
+    expect(calls).not.toContain("cancel");
+    expect(calls).not.toContain("close");
+  });
+
+  it("keeps listening as the capture confirmation action", async () => {
+    const calls: string[] = [];
+    const client = {
+      start: async () => { calls.push("start"); },
+      stopCapture: () => { calls.push("stopCapture"); },
+      cancel: () => { calls.push("cancel"); },
+      close: async () => { calls.push("close"); },
+    };
+
+    await voiceButtonAction("listening", client);
+
+    expect(calls).toEqual(["stopCapture"]);
+  });
+});
+
+describe("voice event synchronisation", () => {
+  const event = (type: string, sequence: number, fields: Record<string, unknown> = {}) => ({
+    type,
+    sessionId: "session-1",
+    turnId: "turn-1",
+    sequence,
+    at: "2026-08-17T00:00:00.000Z",
+    ...fields,
+  });
+
+  it("retains transcript, structured answer and conversation across same-tick events", () => {
+    let current = thread();
+    current = applyVoiceEvent(
+      current,
+      event("transcript.final", 1, { text: "gastos por categoría" }),
+      noop,
+    ).thread!;
+    const structured = answer({
+      text: "Comida fue la categoría principal.",
+      groups: [{ key: "Comida", total_minor: 1200, movement_count: 2 }],
+    });
+    current = applyVoiceEvent(
+      current,
+      event("assistant.text.final", 2, { answer: structured }),
+      noop,
+    ).thread!;
+
+    expect(current.turns.map((turn) => turn.who)).toEqual(["user", "assistant"]);
+    expect((current.turns[1] as { who: "assistant"; answer: Answer }).answer.groups).toEqual(
+      structured.groups,
+    );
+    // Text and visual data are committed before playback finishes.
+    expect(applyVoiceEvent(current, event("audio.completed", 3), noop).thread).toBeUndefined();
+
+    const finalConversation = state({ last_plan: LAST_MONTH });
+    current = applyVoiceEvent(
+      current,
+      event("turn.completed", 4, { conversation: finalConversation }),
+      noop,
+    ).thread!;
+    expect(current.conversation).toBe(finalConversation);
+  });
+
+  it("maps stages and gives one-shot events a turn identity independent of sequence", () => {
+    expect(
+      applyVoiceEvent(thread(), event("assistant.stage", 1, { stage: "planning" }), noop).stage,
+    ).toBe("Pensando la consulta…");
+    expect(voiceEventIdentity(event("assistant.text.final", 2))).toBe(
+      voiceEventIdentity(event("assistant.text.final", 9)),
+    );
+  });
+});
+
 describe("what the client still works out for itself", () => {
+  it("renders every compound part with its own query", () => {
+    const compound = thread({
+      turns: [
+        {
+          who: "assistant",
+          answer: answer({
+            outcome: "COMPOUND",
+            parts: [
+              answer({ text: "Tienes 100,00 €.", plan: "saldo" }),
+              answer({ text: "Gastaste 25,00 €.", plan: "este mes, expense" }),
+            ],
+          }),
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: compound,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Tienes 100,00 €.");
+    expect(markup).toContain("Gastaste 25,00 €.");
+    expect(markup.match(/Ver la consulta/g)).toHaveLength(2);
+  });
+
   it("renders only the latest answer's structured recovery actions", () => {
     const retrying = thread({
       turns: [
@@ -330,5 +462,49 @@ describe("the one field this client writes", () => {
     const idle = thread();
 
     expect(withChoice(idle, "contact-2")).toBe(idle);
+  });
+});
+
+describe("financial breakdowns", () => {
+  it("validates the complete voice answer, including groups and parts", () => {
+    const payload = answer({
+      text: "Dos resultados",
+      groups: [{ key: "Comida", total_minor: 1200, movement_count: 2 }],
+      parts: [answer({ text: "Parte uno" })],
+    });
+    expect(validateVoiceAnswer(payload)).toBe(payload);
+    expect(() => validateVoiceAnswer({ ...payload, groups: [{ key: "incompleto" }] })).toThrow();
+    expect(() => validateVoiceAnswer({ ...payload, conversation: [] })).toThrow();
+    expect(() => validateVoiceAnswer({ ...payload, total_minor: Number.NaN })).toThrow();
+  });
+
+  it("renders a count by merchant as movement counts, not monetary totals", () => {
+    const countPlan = { ...LAST_MONTH, group_by: "MERCHANT", metric: "COUNT" };
+    const counted = thread({
+      turns: [
+        {
+          who: "assistant",
+          answer: answer({
+            text: "8 movimientos.",
+            currency: "EUR",
+            conversation: state({ last_plan: countPlan }),
+            groups: [{ key: "Mercadona", total_minor: 48_945, movement_count: 8 }],
+          }),
+        },
+      ],
+    });
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: counted,
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+
+    expect(markup).toContain("Mercadona");
+    expect(markup).toContain("8 movimientos");
+    expect(markup).not.toContain("489,45");
   });
 });

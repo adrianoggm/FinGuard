@@ -416,3 +416,465 @@ conversations:
           rank: 3
         must_keep: [window, categories]
         must_change: [rank]
+
+  # --- the sentences this service hands over, which nothing here used to score ----------------
+  #
+  # `tests/test_what_we_hand_to_the_planner.py` counts the turns the deterministic path cedes and
+  # asks whether anybody checks them. It found ninety-seven, and the answer for every one of these
+  # was no — while the corpus repeated "¿cuánto gasté este mes?" through eight different episodes,
+  # measuring only that it *reached* a model and nothing about what came back.
+  #
+  # They are the cheapest of that set to write, because each states its own window and the window
+  # is the field `explicit_facts` enforces after the merge. Everything else stays an implication.
+
+  - id: this_month_is_a_whole_question
+    why: >
+      Eight turns of the routing corpus are this sentence and none of them scored the plan. It
+      states its period outright, so the window is ours to demand; what it spends on is not.
+    turns:
+      - say: ¿cuánto gasté este mes?
+        expect_plan:
+          window: THIS_MONTH
+
+  - id: a_month_and_a_shop_named_in_one_breath
+    why: >
+      The most repeated sentence in the whole corpus after the one above — seven episodes open
+      with it. Which category "el supermercado" is remains the model's reading; the month does not.
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        expect_plan:
+          window: LAST_MONTH
+      - say: ¿y este mes?
+        expect_plan:
+          window: THIS_MONTH
+        must_keep: [categories]
+        must_change: [window]
+
+  - id: the_same_question_typed_badly_and_said_shorter
+    why: >
+      "Caunto he gastado este mes" was typed at the demo and "el súper" is how the same shop gets
+      named in half the corpus. Both were handed over unmeasured, and both state their window.
+    turns:
+      - say: Caunto he gastado este mes ?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿cuánto gasté el mes pasado en el súper?
+        expect_plan:
+          window: LAST_MONTH
+        must_change: [window]
+
+  - id: this_year_is_a_whole_question_too
+    why: The other named period a corpus turn opens with, and the one a year-long window gets wrong.
+    turns:
+      - say: ¿cuánto gasté este año?
+        expect_plan:
+          window: THIS_YEAR
+
+  - id: a_category_with_no_window_is_finished_by_the_next_turn
+    why: >
+      Three corpus turns are this sentence and it names no period, so demanding a plan would fail
+      for a model that asks — which is the right thing to do with it. What holds either way is that
+      the answer to the period keeps the category the first turn established.
+    turns:
+      - say: ¿cuánto gasté en gasolina?
+      - say: este mes
+        completes: true
+        expect_plan:
+          window: THIS_MONTH
+        must_keep: [categories]
+
+  - id: the_same_category_asked_as_a_follow_up
+    why: >
+      "¿Y cuánto gasté en gasolina?" arrives after another question, so it is the same sentence
+      with a thread behind it — and the thread is exactly what it must not inherit a category from.
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+      - say: ¿y cuánto gasté en gasolina?
+        must_keep: [window]
+        must_change: [categories]
+
+  - id: a_habit_asked_about_by_month
+    why: >
+      "Cada mes" is a grouping and not a window, which is the distinction this sentence exists to
+      hold: read as a period it becomes one month of a habit that only means anything across many.
+    turns:
+      - say: ¿cuánto paso a la hucha cada mes?
+      - say: ¿y el año pasado?
+        must_keep: [group_by]
+
+  - id: a_correction_that_names_only_the_period
+    why: >
+      Both of these are corrections the corpus hands over: one replaces the window and says nothing
+      about the category, the other names an account and no period at all.
+    turns:
+      - say: ¿cuánto gasté el mes pasado en restaurantes?
+      - say: quería decir el año pasado
+        must_keep: [categories]
+        must_change: [window]
+
+  # --- and the same set, chosen for what it is *not* ------------------------------------------
+  #
+  # The eight cases above are all "¿cuánto gasté…?", which is what the corpus repeats — and running
+  # the judge against the group they form showed what that costs: three of its six fields take one
+  # value across every case in it. Every plan is EXPENSE, every plan is SUM, every merchant list is
+  # empty. On a column like that a judge saying `right` to everything scores full marks, so the
+  # hosted judge's 72/0 on direction was the baseline and not a result.
+  #
+  # These are handed-over turns too, and they are here to break those three constants: money coming
+  # in, a count rather than a sum, a shop named outright, a movement rather than an aggregate, and
+  # one account instead of all of them. `scripts/judge_plans.py --baseline` prints the spread beside
+  # every run, so the day this stops being true is a day somebody sees.
+
+  - id: salary_is_money_arriving
+    why: >
+      The direction, which was EXPENSE in all seventy-four rows of the anchor. "He cobrado" is
+      income and the sentence says so, so `explicit_facts` owns it after the merge.
+    turns:
+      - say: Oye, ¿cuánto he cobrado de nómina este año?
+        expect_plan:
+          window: THIS_YEAR
+          direction: INCOME
+
+  - id: how_many_is_not_how_much
+    why: >
+      The metric, which was SUM everywhere. "Cuántos" is a count and answering it with an amount is
+      the reported defect that `COUNT_ANSWERED_AS_AMOUNT` exists to refuse.
+    turns:
+      - say: ¿cuántos movimientos tengo este mes?
+        expect_plan:
+          window: THIS_MONTH
+          metric: COUNT
+
+  - id: a_count_in_one_shop
+    why: >
+      Two constants at once: a count, and the only anchor sentence that names a merchant. Which
+      merchant string it becomes is the model's reading and stays an implication; that the window
+      it inherits survives a follow-up is not.
+    turns:
+      - say: ¿cuántas compras hice en Mercadona?
+        expect_plan:
+          metric: COUNT
+      - say: ¿y el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        must_keep: [merchants, metric]
+
+  - id: the_largest_bizum_is_one_movement
+    why: >
+      Not an aggregate at all. A superlative asks for a row, and the shape is the assertion —
+      answering it with a total is a real figure about a different question.
+    turns:
+      - say: ¿cuál es el bizum más alto que he hecho este año?
+        expect_plan:
+          window: THIS_YEAR
+        expect_shape: MOVEMENT
+        not_says: comparo
+
+  - id: show_me_the_movements
+    why: >
+      A list rather than a figure, and a counted window rather than a named one — "los últimos 4
+      meses" is the shape that used to come back as the previous five.
+    turns:
+      - say: Enséñame los movimientos de los ultimos 4 meses
+        expect_plan:
+          window: LAST_N_MONTHS:4
+        must_change: [window]
+
+  - id: one_account_and_not_all_of_them
+    why: >
+      The account scope, which no anchor row carried. What survives the follow-up cannot be
+      asserted here — this file's checker knows eight fields and the account subset is not one of
+      them, which is a gap worth naming rather than working around. The window is ours either way,
+      and the sentence still belongs in the group: a plan scoped to one account is a shape the
+      judge had never been shown.
+    turns:
+      - say: Cuanto gaste en la cuenta principal este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿y el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        must_change: [window]
+
+  # --- the eight that are left, and why there are only eight ----------------------------------
+  #
+  # Of the forty-eight distinct sentences still handed over, seventeen are "¿cuánto gasté…?" and
+  # about twenty are not questions at all — "sí", "a ver", "ajá", "déjalo", "1000". These are the
+  # rest, and counting them settles an argument the judge's anchor started: direction, metric and
+  # merchants are not constants because whoever wrote the anchor was careless. **They are constants
+  # because that is what this service cedes.** The deterministic readers already answer the incomes,
+  # the counts and the groupings, so what reaches a planner is a spending question with an awkward
+  # window, plus a pile of non-questions.
+  #
+  # Which makes the corpus growing a dependency of the judge rather than general advice: for a judge
+  # to be scored on INCOME, on COUNT or on a grouping, there have to be *conversations* whose
+  # questions this service is obliged to hand over in those shapes. Writing these eight raises the
+  # anchor and lowers UNMEASURED with one piece of work; it does not break the constant.
+
+  - id: a_person_who_is_not_in_the_contact_list
+    why: >
+      "Mi hermana" is a typed alias rather than a contact, so the counterparty is a reading and
+      stays an implication. The month is not, and the follow-up must not lose the person.
+    turns:
+      - say: ¿Cuánto le envié a mi hermana este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿Y con mi hermana?
+        must_keep: [window]
+
+  - id: the_salary_side_of_an_account
+    why: >
+      The one handed-over follow-up whose direction is not EXPENSE. "La nómina" is money arriving
+      and `explicit_facts` reads it, so the direction is ours to demand — and it has to *replace*
+      the direction of the question it follows rather than inherit it.
+    turns:
+      - say: ¿cuánto gasté este mes?
+      - say: ¿y en la nómina?
+        expect_plan:
+          direction: INCOME
+        must_keep: [window]
+        must_change: [direction]
+
+  - id: an_account_the_holder_does_not_have_is_still_a_question
+    why: >
+      There is no "cuenta de la empresa", and the answer to that is to say so — not to widen the
+      query back to every account, which is the shape a model reaches for when a filter fails.
+    turns:
+      - say: Cuanto gaste en la cuenta principal este mes?
+      - say: ¿y en la cuenta de la empresa?
+        must_keep: [window]
+
+  - id: another_one_over_a_counted_window
+    why: >
+      "Los 2 últimos meses" is a counted window and the sentence states it outright, which is the
+      field `explicit_facts` enforces after the merge. What "algún otro" refers to is not.
+    turns:
+      - say: ¿he recibido algún bizum de Marta Solis Vega este mes?
+      - say: ¿y de algún otro en los 2 últimos meses?
+        expect_plan:
+          window: LAST_N_MONTHS:2
+        must_change: [window]
+
+  - id: a_question_with_no_noun_in_it
+    why: >
+      "¿Qué tal va la cosa este mes?" names a period and nothing else, and it is a real question —
+      somebody asking how the month is going. Whatever it becomes, it may not become a month other
+      than this one.
+    turns:
+      - say: ¿qué tal va la cosa este mes?
+        expect_plan:
+          window: THIS_MONTH
+
+  - id: movements_asked_for_badly
+    why: >
+      Two typos and a courtesy in front of it, and it is still a request for movements rather than
+      for a total — the shape is the assertion, because answering a list with one figure is a real
+      number about a different question.
+    turns:
+      - say: Perdona que movimeintos he tenido ?
+        expect_shape: MOVEMENT
+
+  - id: a_balance_asked_with_a_slipped_space
+    why: >
+      "El estado actua lde mi hucha" is the balance, and the balance is not a plan at all — this
+      service answers it from the account summary. A planner producing a window for it has already
+      answered the wrong question.
+    turns:
+      - say: Oye cual es el estado actua lde mi hucha de ahorros
+        expect: BALANCE
+
+  - id: money_arriving_from_a_source_the_vocabulary_does_not_name
+    why: >
+      El ancla sobre la que se valida el juez estaba entera de gasto y de suma, así que `direction` y
+      `metric` no variaban y un acierto sobre ellas no distinguía a un planificador de otro. "La beca"
+      y "la mutua" no están en el vocabulario cerrado de categorías, de modo que la pregunta se cede;
+      lo que la frase dice es que el dinero entra y en qué periodo, y esos dos campos son nuestros
+      después del plan. Lo que queda a juicio es que el recuento no se quede pegado a la siguiente:
+      "cuánto cobré" pide un importe, y responderlo con "3" es una cifra real de otra pregunta.
+    turns:
+      - say: ¿cuánto me han ingresado de la beca este año?
+        expect_plan:
+          window: THIS_YEAR
+          direction: INCOME
+      - say: ¿cuántos ingresos me han entrado este mes?
+        expect_plan:
+          window: THIS_MONTH
+          direction: INCOME
+          metric: COUNT
+      - say: ¿cuánto cobré de la mutua el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+          direction: INCOME
+        must_change: [metric]
+
+  - id: shops_the_closed_vocabulary_cannot_name
+    why: >
+      Ningún lector determinista reclama un comercio que el libro no tenga, así que estas tres se
+      ceden enteras y el comercio es lo único que las separa. "¿Y en Amazon?" no nombra periodo: el
+      año tiene que sobrevivir y la tienda tiene que dejar de ser Netflix, porque un plan que herede
+      la tienda anterior contesta con el gasto de otra. Y "cómo se reparte" pide un desglose — un
+      total sin agrupar es una cifra correcta que no responde a lo que se preguntó.
+    turns:
+      - say: ¿cuánto me he gastado en Netflix este año?
+        expect_plan:
+          window: THIS_YEAR
+      - say: ¿y en Amazon?
+        must_keep: [window]
+        must_change: [merchants]
+      - say: ¿cuántas compras le he hecho a Amazon este año?
+        expect_plan:
+          window: THIS_YEAR
+          metric: COUNT
+        must_keep: [merchants]
+      - say: ¿cómo se reparte mi sueldo este mes?
+        expect_plan:
+          window: THIS_MONTH
+          direction: INCOME
+        must_change: [group_by, metric]
+      - say: ¿y el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        must_keep: [direction, categories, group_by]
+
+  # ---------------------------------------------------------------------------------------------
+  # The extension group, closed. Every sentence below is one this service hands to a planner and
+  # nobody had written an expectation for, so `judge_plans.py --group extension` had nothing to be
+  # right or wrong against. They are the sixteen real questions of that group; the twenty-two that
+  # remain are not questions — "sí", "a ver", "1000", "déjalo" — and a plan expectation is the wrong
+  # instrument for those, which is a different job and is not this one.
+  #
+  # Each was read out of the corpus turn it comes from, and each context conversation was replayed
+  # through the real stack before it was written down: an implication whose previous turn does not
+  # set the trap compares nothing and reads exactly like a check that passes.
+  # ---------------------------------------------------------------------------------------------
+
+  - id: eight_windows_that_may_not_be_inherited
+    why: >
+      Eight handed-over sentences that each name their own period, chained on purpose. Alone, each
+      only asserts that `explicit_facts` enforced what the sentence said; in a row, each also has to
+      beat the window it would otherwise inherit from the answer before it — which is the failure
+      this dataset exists for, since a real figure over the wrong month reads as correct. Nothing
+      else about them is asserted here: what "viajes" or "durante este año" becomes beyond the
+      period is the planner's judgement and there is no honest implication to state about it.
+    turns:
+      - say: pues dime cuánto gasté el mes pasado
+        expect_plan:
+          window: LAST_MONTH
+      - say: ¿cuánto llevo gastado este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿Cuánto gasté en restaurantes el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+      - say: ¿Cuánto gasté durante este año?
+        expect_plan:
+          window: THIS_YEAR
+      - say: Cuanto gaste en supermercados este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: Cuanto gaste en supermercados este ano?
+        expect_plan:
+          window: THIS_YEAR
+      - say: ¿Cuánto gasté en viajes este mes?
+        expect_plan:
+          window: THIS_MONTH
+      - say: ¿cuánto tengo y cuánto gasté el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+
+  - id: a_new_category_over_a_period_that_stays
+    why: >
+      "¿Cuánto gasté en restaurantes?" after a question about fuel names a category and no period.
+      The category has to replace the one before it and the month has to survive — the two halves
+      of the same turn, and a planner that gets one right and the other wrong still answers a
+      question nobody asked.
+    turns:
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+      - say: ¿cuánto gasté en restaurantes?
+        must_keep: [window]
+        must_change: [categories]
+
+  - id: a_no_that_is_correcting_and_not_cancelling
+    why: >
+      "No, en gasolina" opens with a refusal and is not one: it is a correction of the category of
+      the question just answered. Read as a cancellation it drops the thread; read as a new question
+      it loses the month. Both fields are stated as implications because the sentence names neither.
+    turns:
+      - say: ¿cuánto gasté en el supermercado el mes pasado?
+      - say: no, en gasolina
+        must_keep: [window]
+        must_change: [categories]
+
+  - id: an_average_may_not_answer_a_total
+    why: >
+      The metric is the whole turn. After "gasto medio por movimiento", "¿cuánto gasté en el
+      supermercado?" asks for the sum of the same category over the same window — so the window and
+      the category are what must *survive*, and the average is what must not. A held-over AVERAGE
+      here returns a real euro figure that is a per-movement mean offered as a total.
+    turns:
+      - say: ¿Cuál es mi gasto medio por movimiento en supermercados en los últimos 12 meses?
+      - say: ¿cuánto gasté en el supermercado?
+        must_keep: [window, categories]
+        must_change: [metric]
+
+  - id: an_average_and_a_period_both_replaced_at_once
+    why: >
+      The same average, and now the sentence states its own month as well. Two fields have to change
+      together and the category still has to survive; the interesting failure is the plan that
+      accepts the new window and keeps computing a mean.
+    turns:
+      - say: ¿Cuál es mi gasto medio por movimiento en supermercados en los últimos 12 meses?
+      - say: Vale, ¿cuánto gasté en supermercados este mes?
+        expect_plan:
+          window: THIS_MONTH
+        must_keep: [categories]
+        must_change: [metric]
+
+  - id: a_grouped_comparison_of_income_then_one_account_of_spending
+    why: >
+      The previous answer was income grouped by account across two years. The next question is
+      spending, this month, in one account — so the grouping and the direction both have to go. A
+      plan that keeps `group_by: ACCOUNT` answers with a table where a figure was asked for, and one
+      that keeps INCOME reports money arriving as money spent.
+    turns:
+      - say: Compara este año income de cada cuenta con el año anterior
+      - say: Ahora, ¿cuánto gasté en la hucha este mes?
+        expect_plan:
+          window: THIS_MONTH
+        must_change: [group_by, direction]
+
+  - id: a_colloquial_name_for_a_category
+    why: >
+      "El súper" is the supermarket, and the turn before it was the same month with no category at
+      all. So the period is stated and the category has to appear — a plan that leaves it off gives
+      the whole month's spending as what was spent on groceries.
+    turns:
+      - say: ¿cuánto gasté este mes?
+      - say: ¿Cuánto gasté en el súper este mes?
+        expect_plan:
+          window: THIS_MONTH
+        must_change: [categories]
+
+  - id: a_correction_that_names_an_account_and_no_period
+    why: >
+      "Quería saber lo de la hucha" corrects what the last answer was about without saying when. The
+      account is not a field this checker can name, so what is asserted is the half that can be: the
+      month may not move. A correction that also silently changes the period answers a question the
+      person did not ask twice over.
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+      - say: quería saber lo de la hucha
+        must_keep: [window]
+
+  - id: a_compound_question_after_an_absolute_month
+    why: >
+      Two readings in one sentence — a savings rate and a category total — after an answer about
+      June. The year is stated outright, so the absolute range behind it may not survive: this is
+      the `must_change` case that no rule in this file could express before, since every check here
+      once asked only what was kept.
+    turns:
+      - say: ¿cuánto gasté en junio?
+      - say: ¿Cuál fue mi tasa de ahorro este año y cuánto gasté en supermercado?
+        expect_plan:
+          window: THIS_YEAR
+        must_change: [window]

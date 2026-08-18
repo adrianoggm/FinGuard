@@ -15,7 +15,6 @@ that was neither yes nor no: those are turns in a conversation, not HTTP failure
 had to read status codes to continue talking would be a client that stops talking.
 """
 
-import uuid
 from typing import Annotated
 from uuid import UUID
 
@@ -28,7 +27,12 @@ from finguard_orchestrator.application.commands.pay import (
     PrepareOwnTransferCommand,
     PreparePaymentCommand,
 )
-from finguard_orchestrator.bootstrap.dependencies import get_command_bus, payments_enabled, requires
+from finguard_orchestrator.bootstrap.dependencies import (
+    attempt_key,
+    get_command_bus,
+    payments_enabled,
+    requires,
+)
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.dto.payment_dto import (
@@ -44,6 +48,9 @@ Commands = Annotated[CommandBus, Depends(get_command_bus)]
 MayPrepare = Annotated[Caller, Depends(requires(Scope.PAYMENTS_PREPARE))]
 MayConfirm = Annotated[Caller, Depends(requires(Scope.PAYMENTS_CONFIRM))]
 
+# The caller's name for this attempt, defaulted to a fresh one. See `attempt_key`.
+Attempt = Annotated[str, Depends(attempt_key)]
+
 payments_router = APIRouter(
     prefix="/v1/payments", tags=["payments"], dependencies=[Depends(payments_enabled)]
 )
@@ -51,20 +58,22 @@ payments_router = APIRouter(
 
 @payments_router.post("", summary="Read a payment from a sentence and preview it")
 async def prepare(
-    request: PaymentRequestBody, who: MayPrepare, commands: Commands
+    request: PaymentRequestBody,
+    who: MayPrepare,
+    commands: Commands,
+    attempt: Attempt,
 ) -> PaymentResponse:
     """Answers with what the user is being asked to approve, and moves nothing.
 
-    The idempotency key is generated here rather than required from the caller, unlike banking's own
-    endpoint. Preparing is free and expires on its own, so a duplicate intent costs nothing and no
-    chat client has to manage keys; what must never happen twice is the confirmation, and that is
-    keyed on the intent itself.
+    Send `Idempotency-Key` and a resend of this attempt is the same preview rather than a second
+    one. It is the header banking requires, and it is optional here only so a client written before
+    it keeps working — `attempt_key` says what that costs.
     """
     answer = await commands.dispatch(
         PreparePaymentCommand(
             sentence=request.sentence,
             account_id=who.account_id,
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=attempt,
         )
     )
     return payment_mapper.answer_to_dto(answer)
@@ -72,7 +81,10 @@ async def prepare(
 
 @payments_router.post("/chosen", summary="Prepare a payment built in a form")
 async def prepare_chosen(
-    request: ChosenPaymentRequest, who: MayPrepare, commands: Commands
+    request: ChosenPaymentRequest,
+    who: MayPrepare,
+    commands: Commands,
+    attempt: Attempt,
 ) -> PaymentResponse:
     """The form path: a contact picked from the list, an amount typed in a field.
 
@@ -90,7 +102,7 @@ async def prepare_chosen(
             recipient_name=request.recipient_name,
             amount_minor=request.amount_minor,
             currency=request.currency,
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=attempt,
         )
     )
     return payment_mapper.answer_to_dto(answer)
@@ -98,7 +110,10 @@ async def prepare_chosen(
 
 @payments_router.post("/between-accounts", summary="Move money between your own accounts")
 async def prepare_own_transfer(
-    request: OwnTransferRequest, who: MayPrepare, commands: Commands
+    request: OwnTransferRequest,
+    who: MayPrepare,
+    commands: Commands,
+    attempt: Attempt,
 ) -> PaymentResponse:
     """A preview, like every other payment, and confirmed through the same route.
 
@@ -118,7 +133,7 @@ async def prepare_own_transfer(
             to_account_id=request.to_account_id,
             amount_minor=request.amount_minor,
             currency=request.currency,
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=attempt,
         )
     )
     return payment_mapper.answer_to_dto(answer)

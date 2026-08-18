@@ -21,9 +21,21 @@ from finguard_banking.domain.constants import (
     MAX_PERIOD_DAYS,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
+    MAX_SELECTED_ACCOUNTS,
+    MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
 )
-from finguard_banking.domain.enums import AccountKind, Direction, GroupBy, Metric, Period, Rail
+from finguard_banking.domain.enums import (
+    AccountKind,
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    Rail,
+    ReceiptCategory,
+    TransactionType,
+)
 
 
 class _Payload(BaseModel):
@@ -36,6 +48,26 @@ class _Body(_Payload):
     """Inbound bodies reject anything they do not recognise."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+
+def known_zone(value: str | None) -> str | None:
+    """A zone this machine has, or a refusal.
+
+    Refused rather than ignored. Falling back silently is the dangerous outcome: the caller
+    believes it asked about Canarian days and is answered about peninsular ones, with a real
+    figure and no error.
+
+    A function rather than only a validator, because the card routes take the zone as a query
+    parameter instead of in a body. Two copies of "which zones exist" is how one endpoint ends up
+    stricter than the one beside it.
+    """
+    if value is None:
+        return None
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown time zone: {value!r}") from exc
+    return value
 
 
 class DateRangeRequest(_Body):
@@ -55,16 +87,7 @@ class RelativePeriodRequest(_Body):
     @field_validator("timezone")
     @classmethod
     def _known_zone(cls, value: str | None) -> str | None:
-        """Refused rather than ignored. Falling back silently is the dangerous outcome:
-        the caller believes it asked about Canarian days and is answered about peninsular
-        ones, with a real figure and no error."""
-        if value is None:
-            return None
-        try:
-            ZoneInfo(value)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise ValueError(f"unknown time zone: {value!r}") from exc
-        return value
+        return known_zone(value)
 
 
 class FinancialQueryRequest(_Body):
@@ -79,21 +102,33 @@ class FinancialQueryRequest(_Body):
     metric: Metric = Metric.SUM
     direction: Direction = Direction.ALL
     categories: tuple[str, ...] = ()
+    excluded_categories: tuple[str, ...] = ()
     # Shops, matched case-insensitively. Free text on purpose: the ledger's merchant names
     # are data, not vocabulary.
     merchants: tuple[str, ...] = ()
+    merchant_terms: tuple[str, ...] = ()
+    excluded_merchants: tuple[str, ...] = ()
+    counterparties: tuple[str, ...] = ()
+    excluded_counterparties: tuple[str, ...] = ()
+    counterparty_types: tuple[CounterpartyType, ...] = ()
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     group_by: GroupBy = GroupBy.NONE
     # Money the holder moved between their own accounts. Absent means excluded, which is what
     # makes "¿cuánto gasté?" mean money that left rather than money that moved.
     include_internal: bool = False
+    # Narrow to internal movements rather than merely adding them to ordinary movements.
+    internal_only: bool = False
     # Every account this session can see rather than the one in `accountId`. It cannot widen past
     # the holder: it drops the compiler's filter and leaves the view's, which is the scope rule.
     across_accounts: bool = False
     # Narrow to one account within what the session can already see. Never what gets declared —
     # that is `accountId`, the credential's — because declaring an account opens its holder scope.
     only_account_id: UUID | None = None
+    # Several explicitly selected accounts, still within the holder opened by accountId.
+    only_account_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_ACCOUNTS)
+    transaction_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_TRANSACTIONS)
+    transaction_types: tuple[TransactionType, ...] = ()
     supporting_limit: int = Field(
         default=DEFAULT_SUPPORTING_MOVEMENTS, ge=0, le=MAX_SUPPORTING_MOVEMENTS
     )
@@ -103,6 +138,12 @@ class FinancialQueryRequest(_Body):
     def _exactly_one_range(self) -> Self:
         if (self.date_range is None) == (self.period is None):
             raise ValueError("provide exactly one of dateRange or period")
+        if self.only_account_id is not None and self.only_account_ids:
+            raise ValueError("use onlyAccountId or onlyAccountIds, not both")
+        if self.internal_only and not self.include_internal:
+            raise ValueError("internalOnly requires includeInternal")
+        if len(set(self.transaction_types)) != len(self.transaction_types):
+            raise ValueError("transactionTypes cannot contain duplicates")
         return self
 
 
@@ -132,6 +173,10 @@ class MovementResponse(_Payload):
     # inside the household. Both are facts a screen needs to label a figure honestly.
     category_source: str = "NONE"
     is_internal: bool = False
+    transaction_type: TransactionType | None = None
+    counterparty_name: str | None = None
+    counterparty_type: CounterpartyType = CounterpartyType.UNKNOWN
+    receipt_category: ReceiptCategory | None = None
     amount_minor: int
     direction: str
 
@@ -151,7 +196,10 @@ class RankedMovementRequest(_Body):
     account_id: UUID
     direction: Direction = Direction.ALL
     categories: tuple[str, ...] = ()
+    excluded_categories: tuple[str, ...] = ()
     merchants: tuple[str, ...] = ()
+    merchant_terms: tuple[str, ...] = ()
+    excluded_merchants: tuple[str, ...] = ()
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     reporting_timezone: str | None = None
@@ -187,6 +235,8 @@ class FinancialQueryResponse(_Payload):
     currency: str
     total_minor: int
     movement_count: int
+    period_start: date
+    period_end: date
     groups: list[GroupResponse]
     supporting_movements: list[MovementResponse]
     trace: TraceResponse | None = None

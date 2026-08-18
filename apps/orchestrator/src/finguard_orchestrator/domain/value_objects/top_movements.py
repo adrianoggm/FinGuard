@@ -35,7 +35,10 @@ class TopMovements:
     period: RelativePeriod | None = None
     date_range: AbsoluteRange | None = None
     categories: tuple[str, ...] = field(default_factory=tuple)
+    excluded_categories: tuple[str, ...] = field(default_factory=tuple)
     merchants: tuple[str, ...] = field(default_factory=tuple)
+    merchant_terms: tuple[str, ...] = field(default_factory=tuple)
+    excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
     # 1 is the largest. Not zero-based: "el primero" is what a person says, and an off-by-one here
     # would answer "the largest" with the second largest.
     rank: int = 1
@@ -47,7 +50,13 @@ class TopMovements:
             raise InvalidValueError("rank must be a whole number")
         if not 1 <= self.rank <= MAX_RANK:
             raise InvalidValueError(f"rank must be between 1 and {MAX_RANK}, got {self.rank}")
-        check_filters(self.categories, self.merchants)
+        check_filters(
+            self.categories,
+            self.merchants,
+            self.excluded_categories,
+            self.excluded_merchants,
+            merchant_terms=self.merchant_terms,
+        )
 
     def next_rank(self) -> "TopMovements":
         """The next one down, which is what "¿y el siguiente?" asks for.

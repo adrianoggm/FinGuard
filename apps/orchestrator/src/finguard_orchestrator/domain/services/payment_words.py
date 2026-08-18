@@ -3,8 +3,9 @@
 The two slots a half-built payment can be missing, and both are decidable here — which is what makes
 "¿de cuánto?" and "¿a quién?" answerable in one turn instead of restarting the conversation.
 
-An **amount** is a closed grammar: digits, an optional decimal, a currency word or symbol. "15
-euros" is unambiguous in every dialect, and it is the exact sentence that broke the
+An **amount** is a closed grammar: digits with an optional decimal, or compositional Spanish
+cardinals such as "treinta y cinco" and "mil doscientos". "15 euros" is unambiguous in every
+dialect, and it is the exact sentence that broke the
 reported conversation — a sentence with money and no payment verb is not a payment, so it
 reached the financial planner and came back asking which month.
 
@@ -23,7 +24,7 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.enums import Rail
 from finguard_orchestrator.domain.models.contact import Contact
-from finguard_orchestrator.domain.services import spanish
+from finguard_orchestrator.domain.services import spanish, spanish_numbers
 
 # A figure with an optional thousands separator and an optional two-decimal part. The currency is
 # optional because "pues 20" is an answer to "¿de cuánto?" and carries no unit — but see the
@@ -35,23 +36,45 @@ _AMOUNT: Final = re.compile(
 # What looks like an amount and is not. A phone number is the dangerous one: read as an amount it
 # becomes an enormous payment in front of a confirmation prompt, where a distracted "sí" is the only
 # thing between it and the ledger. A date is the common one — "el 15 de julio" is not 15 euros.
+#
+# A length of time is the one this had never been asked about. "En los últimos 4 meses" came back
+# as four euros, found by a measurement that consulted this reader outside the slot it is normally
+# gated behind — so it costs nothing today and says something worth fixing anyway: what the reader
+# answers about is digits, and a digit in front of "meses" is a period.
+#
+# Adjacent only, and that is the whole care in it. Allowing a word between would swallow "le paso
+# 100 al mes", which is an amount and a common way to say one.
 _NOT_AN_AMOUNT: Final = re.compile(
     r"\+?\d[\d\s]{7,}"  # a phone number, with or without spaces
     r"|\bel\s+\d{1,2}\s+de\s+\w+"  # "el 15 de julio"
     r"|\b\d{1,2}/\d{1,2}"  # a date written with slashes
-    r"|\b\d{1,2}:\d{2}",  # a time
+    r"|\b\d{1,2}:\d{2}"  # a time
+    r"|\b\d{1,3}\s+(?:d[ií]as?|semanas?|mes|meses|a[nñ]os?|trimestres?|quincenas?)\b",
     re.IGNORECASE,
 )
 
 
-# The note, in the one form that says so out loud: "con concepto de X", "en concepto de X",
-# "concepto: X". It ends at the recipient, because "a Marta" is a different slot and "para" is how
-# the next clause usually starts.
+# The explicit word that introduces a note. The misspellings are a finite allow-list taken from
+# measured drift cases, never edit-distance matching: accepting an arbitrary near-match here could
+# put unrelated user text on a payment. What follows is parsed in stages because ``a`` may be a
+# recipient boundary (``comida a Marta``) or part of the note (``viaje a Malaga``).
 _CONCEPT: Final = re.compile(
-    r"(?:en|con)?\s*(?:el\s+)?concepto\s*(?:de\s+|a\s+|:\s*)?(.+?)"
-    r"(?=\s+(?:a|para|al)\s+\S|$)",
+    r"\b(?:concepto|conecpto|concepyo|concepot|conzepto)\b\s*"
+    r"(?:del\s+pago\s+(?:es|sea)\s+|(?:de|a|es|sea)\s+|:\s*)?"
+    r"(?P<concept>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
+
+# Phrases that qualify the instruction, not the ledger note. They are deliberately specific:
+# stripping every trailing ``por ...`` would corrupt perfectly valid concepts.
+_CONCEPT_SUFFIXES: Final = (
+    re.compile(r"\s+por\s+bi(?:zum+|zm|zaum)\b.*$", re.IGNORECASE),
+    re.compile(r"\s+por\s+favor(?:\s+lo\s+antes\s+posible)?\s*$", re.IGNORECASE),
+    re.compile(r"\s+(?:ahora\s+mismo|lo\s+antes\s+posible|est[aá]\s+bien)\s*$", re.IGNORECASE),
+    re.compile(r"\s*,\s*(?:gracias|oye|vale)\s*$", re.IGNORECASE),
+)
+
+_RECIPIENT_BOUNDARY: Final = re.compile(r"\s+(?:a|para|al)\s+", re.IGNORECASE)
 
 # Changing a recipient while a preview is open must be explicit. A contact name alone may be a
 # question or part of a concept; cancelling a held intent on that guess would be destructive. These
@@ -64,6 +87,11 @@ _RECIPIENT_CORRECTION: Final = re.compile(
     re.IGNORECASE,
 )
 
+# Natural replacement after a preview: "A Marta 500 euros". It is deliberately paired with an
+# explicit amount in `changes_recipient`; without that condition, the conversational filler
+# "a ver" would be mistaken for a recipient correction and discard a valid preview.
+_BARE_RECIPIENT_CORRECTION: Final = re.compile(r"^\s*a\s+\S", re.IGNORECASE)
+
 _CLEAR_CONCEPT: Final = re.compile(
     r"\b(?:quita|quitar|elimina|eliminar|borra|borrar)\s+(?:el\s+)?concepto\b"
     r"|\b(?:sin|ningun)\s+concepto\b",
@@ -73,6 +101,90 @@ _CLEAR_CONCEPT: Final = re.compile(
 # Words that appear inside Spanish names and inside every Spanish sentence. Matching a contact on
 # one of these would make "no sé qué hacer" name María del Carmen.
 _PARTICLES: Final = frozenset({"del", "las", "los", "san", "santa", "von", "van"})
+
+
+# Words a Spanish sentence ends with that are not part of anybody's name. Reported: "hazle un bixum
+# a aitor anda" was read as a payment to *"aitor anda"*, the question came back "¿de cuánto quieres
+# hacerle el bixum a aitor anda?", and the contact lookup then found nobody — two turns lost to a
+# word that means "go on".
+#
+# Stripped rather than tolerated in the lookup, because the name is echoed back at the holder. A
+# question naming somebody who does not exist reads as the assistant having misheard, which is
+# exactly what happened.
+_TRAILING_FILLER: Final = re.compile(
+    r"[\s,]+(?:anda|venga|va|vale|porfa|por\s+favor|ya|hombre|mujer|tio|tia"
+    r"|gracias|pues|eh|oye|please)\s*$",
+    re.IGNORECASE,
+)
+
+
+# The words that name a way of moving money. A closed set of three, and the only closed set in this
+# file that people cannot spell — "bizum" is a brand most holders have never had to type. It arrived
+# as `bixum`, `bisum` and `vizum` in three separate reported conversations, and each miss made the
+# whole payment path silently unreachable.
+#
+# Matched one edit apart rather than enumerated. `bi[xz]um` was the enumeration, and it was already
+# wrong twice: an open set cannot be listed, and every unlisted spelling costs a whole conversation.
+_RAIL_LEXICON: Final = ("bizum", "transferencia")
+_WORD: Final = re.compile(r"[a-z]+")
+
+
+def names_a_rail(sentence: str) -> bool:
+    """Whether the sentence names a way of moving money, however it was spelled."""
+    return any(
+        spanish.one_edit_apart(token, rail)
+        for token in _WORD.findall(spanish.folded(sentence))
+        for rail in _RAIL_LEXICON
+    )
+
+
+# What a whole turn may consist of and still be an answer rather than an order: the rail noun, and
+# at most an article or a discourse particle around it.
+_ONLY_A_PARTICLE: Final = frozenset(
+    {"pues", "y", "o", "un", "una", "el", "la", "lo", "de", "vale", "ok", "eso", "si"}
+)
+
+
+def is_only_a_rail_word(sentence: str) -> bool:
+    """Whether the whole turn is the name of a rail and nothing else.
+
+    The inversion this rule needed. "Pues bizum", offered as the answer to "¿de qué comercio o
+    categoría?", must belong to that question — and the previous test for it was to enumerate the
+    ways of *instructing*, which is an open set: every form missed ("que le hagas", "hagamos")
+    became a turn the open question swallowed, and one holder spent seven of them shouting.
+
+    So this enumerates the other side, which is closed and tiny. A turn that is a rail noun with an
+    article or a particle around it is a reply; a turn with anything else in it is not. The set of
+    Spanish ways to say "do it" is unbounded; the set of ways to say only "bizum" is not.
+    """
+    tokens = _WORD.findall(spanish.folded(sentence))
+    if not tokens:
+        return False
+    named = [
+        token
+        for token in tokens
+        if any(spanish.one_edit_apart(token, rail) for rail in _RAIL_LEXICON)
+    ]
+    if not named:
+        return False
+    return all(token in _ONLY_A_PARTICLE for token in tokens if token not in named)
+
+
+def without_trailing_filler(name: str) -> str:
+    """A read name with the conversational tail taken off.
+
+    Repeated, because "a Aitor anda por favor" has two of them. Never down to nothing: if every word
+    is in the list then the whole thing was filler and no name was read, and returning the original
+    lets the layer above refuse it as the non-name it is rather than crash on an empty string.
+    """
+    trimmed = name.strip()
+    while True:
+        shorter = _TRAILING_FILLER.sub("", trimmed)
+        if shorter == trimmed:
+            return trimmed or name.strip()
+        if not shorter.strip():
+            return trimmed
+        trimmed = shorter.strip()
 
 
 def amount_in(sentence: str) -> int | None:
@@ -89,7 +201,7 @@ def amount_in(sentence: str) -> int | None:
 
     match = _AMOUNT.search(sentence)
     if match is None:
-        return None
+        return spanish_numbers.money_in(sentence)
 
     units = int(match.group(1).replace(".", ""))
     cents = int((match.group(2) or "0").ljust(2, "0"))
@@ -102,7 +214,7 @@ def amount_in(sentence: str) -> int | None:
     return minor
 
 
-def concept_in(sentence: str) -> str | None:
+def concept_in(sentence: str, directory: tuple[Contact, ...] = ()) -> str | None:
     """The note this sentence names, or None.
 
     Read here because a continuation never reaches the model: "pues 15 euros con concepto de comida
@@ -120,7 +232,17 @@ def concept_in(sentence: str) -> str | None:
     match = _CONCEPT.search(sentence)
     if match is None:
         return None
-    written = match.group(1).strip(" .,;:\"'")
+    written = match.group("concept").strip(" .,;:\"'")
+    for suffix in _CONCEPT_SUFFIXES:
+        written = suffix.sub("", written).strip(" .,;:\"'")
+
+    if directory:
+        # Last boundary first: ``viaje a Malaga a Marta`` keeps the place and removes the payee.
+        for boundary in reversed(tuple(_RECIPIENT_BOUNDARY.finditer(written))):
+            recipient = written[boundary.end() :]
+            if contacts_in(recipient, directory):
+                written = written[: boundary.start()].strip(" .,;:\"'")
+                break
     if not written or len(written) > MAX_CONCEPT:
         # A note longer than the field is refused rather than cut: half a sentence is not what the
         # user wrote, and the model path can ask about it instead.
@@ -135,7 +257,10 @@ def clears_concept(sentence: str) -> bool:
 
 def changes_recipient(sentence: str) -> bool:
     """Whether a reply to a preview explicitly replaces who receives the payment."""
-    return _RECIPIENT_CORRECTION.search(spanish.folded(sentence)) is not None
+    folded = spanish.folded(sentence)
+    return _RECIPIENT_CORRECTION.search(folded) is not None or (
+        _BARE_RECIPIENT_CORRECTION.search(folded) is not None and amount_in(sentence) is not None
+    )
 
 
 def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact, ...]:
@@ -185,6 +310,33 @@ def contacts_in(sentence: str, directory: tuple[Contact, ...]) -> tuple[Contact,
     if best == 0:
         return ()
     return tuple(contact for points, contact in scored if points == best)
+
+
+def name_as_written(sentence: str, directory: tuple[Contact, ...]) -> str | None:
+    """How much of a matched contact's name this sentence spells, in the directory's own casing.
+
+    The ledger stores what the bank wrote on the movement, and the holder types a fraction of it.
+    Filtering by the full display name would find nothing for somebody who wrote "Marta", and
+    filtering by an invented choice between two contacts called Marta would find the wrong person —
+    so what comes back is exactly the part they wrote, which is the widest honest filter.
+
+    None when nothing in the directory is named, which is the answer that keeps a reader from
+    building a query about a person the sentence never mentioned.
+
+    Lives here rather than beside either reader that asks it. Both directions of the same question
+    need it — "¿me ha llegado un bizum de Marta?" and "le he mandado 20 € a Marta Solis Vega" — and
+    the second copy of a rule like this is the one that drifts.
+    """
+    folded = spanish.folded(sentence)
+    mentioned: list[str] = []
+    for contact in contacts_in(sentence, directory):
+        for original in contact.display_name.split():
+            word = spanish.folded(original)
+            named = re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", folded)
+            if len(word) > 2 and named:
+                if word not in {item.casefold() for item in mentioned}:
+                    mentioned.append(original)
+    return " ".join(mentioned) or None
 
 
 # Which rail a sentence names. A closed vocabulary of two, so it is read here rather than asked of

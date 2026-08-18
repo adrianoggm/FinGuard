@@ -85,7 +85,9 @@ async def test_a_card_comes_back_with_what_it_was_charged(
     await charge(connection, account, card, 25_00, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
     await charge(connection, account, card, 10_50, datetime(2026, 7, 12, 12, 0, tzinfo=UTC))
 
-    held = await cards(connection).all_of(account, since=date(2026, 7, 1), timezone=MADRID)
+    held = await cards(connection).all_of(
+        account, since=date(2026, 7, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
 
     assert len(held) == 1
     assert held[0].spent_minor == 35_50
@@ -98,7 +100,9 @@ async def test_a_card_with_nothing_on_it_still_appears(connection: asyncpg.Conne
     account = await create_account(connection)
     await add_card(connection, account)
 
-    held = await cards(connection).all_of(account, since=date(2026, 7, 1), timezone=MADRID)
+    held = await cards(connection).all_of(
+        account, since=date(2026, 7, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
 
     assert len(held) == 1
     assert held[0].spent_minor == 0
@@ -111,9 +115,34 @@ async def test_charges_before_the_window_do_not_count(connection: asyncpg.Connec
     await charge(connection, account, card, 99_00, datetime(2026, 5, 20, 12, 0, tzinfo=UTC))
     await charge(connection, account, card, 11_00, datetime(2026, 7, 20, 12, 0, tzinfo=UTC))
 
-    held = await cards(connection).all_of(account, since=date(2026, 7, 1), timezone=MADRID)
+    held = await cards(connection).all_of(
+        account, since=date(2026, 7, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
 
     assert held[0].spent_minor == 11_00
+
+
+async def test_charges_after_the_window_do_not_count_either(
+    connection: asyncpg.Connection,
+) -> None:
+    """The mirror of the test above, and the half that did not exist.
+
+    The SQL asked for `>= since` and nothing more, so the window had a start and no end: a charge
+    booked with a date ahead of the caller's own day was inside every window that reached it. Both
+    ends are the caller's now, and `until` is inclusive — the charge *on* the last day counts.
+    """
+    account = await create_account(connection)
+    card = await add_card(connection, account)
+    await charge(connection, account, card, 11_00, datetime(2026, 7, 20, 12, 0, tzinfo=UTC))
+    await charge(connection, account, card, 40_00, datetime(2026, 7, 31, 12, 0, tzinfo=UTC))
+    await charge(connection, account, card, 99_00, datetime(2026, 9, 2, 12, 0, tzinfo=UTC))
+
+    held = await cards(connection).all_of(
+        account, since=date(2026, 7, 1), until=date(2026, 7, 31), timezone=MADRID
+    )
+
+    assert held[0].spent_minor == 51_00
+    assert held[0].charge_count == 2
 
 
 async def test_the_window_is_resolved_in_the_reporting_zone(
@@ -128,8 +157,12 @@ async def test_the_window_is_resolved_in_the_reporting_zone(
     card = await add_card(connection, account)
     await charge(connection, account, card, 40_00, datetime(2026, 6, 30, 23, 30, tzinfo=UTC))
 
-    madrid = await cards(connection).all_of(account, since=date(2026, 7, 1), timezone=MADRID)
-    utc = await cards(connection).all_of(account, since=date(2026, 7, 1), timezone="UTC")
+    madrid = await cards(connection).all_of(
+        account, since=date(2026, 7, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
+    utc = await cards(connection).all_of(
+        account, since=date(2026, 7, 1), until=date(2026, 12, 31), timezone="UTC"
+    )
 
     assert madrid[0].spent_minor == 40_00, "in Madrid the charge is already July"
     assert utc[0].spent_minor == 0, "in UTC it is still June"
@@ -141,7 +174,9 @@ async def test_only_this_account_s_cards(connection: asyncpg.Connection) -> None
     await add_card(connection, mine, last_four="1111")
     await add_card(connection, theirs, last_four="2222")
 
-    held = await cards(connection).all_of(mine, since=date(2026, 1, 1), timezone=MADRID)
+    held = await cards(connection).all_of(
+        mine, since=date(2026, 1, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
 
     assert [card.last_four for card in held] == ["1111"]
 
@@ -152,7 +187,9 @@ async def test_a_blocked_card_is_listed_last(connection: asyncpg.Connection) -> 
     await add_card(connection, account, last_four="9999", brand="MASTERCARD", status="BLOCKED")
     await add_card(connection, account, last_four="1111", brand="VISA")
 
-    held = await cards(connection).all_of(account, since=date(2026, 1, 1), timezone=MADRID)
+    held = await cards(connection).all_of(
+        account, since=date(2026, 1, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
 
     assert [card.status for card in held] == ["ACTIVE", "BLOCKED"]
 
@@ -164,7 +201,9 @@ async def test_a_limit_of_none_is_not_a_limit_of_zero(connection: asyncpg.Connec
     await add_card(connection, account, last_four="1111", limit=None)
     await add_card(connection, account, last_four="2222", brand="MASTERCARD", limit=150_000)
 
-    held = await cards(connection).all_of(account, since=date(2026, 1, 1), timezone=MADRID)
+    held = await cards(connection).all_of(
+        account, since=date(2026, 1, 1), until=date(2026, 12, 31), timezone=MADRID
+    )
     limits = {card.last_four: card.spending_limit_minor for card in held}
 
     assert limits == {"1111": None, "2222": 150_000}

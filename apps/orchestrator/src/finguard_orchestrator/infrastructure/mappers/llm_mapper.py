@@ -102,9 +102,23 @@ def plan_to_domain(payload: PlanPayload) -> FinancialPlan:
         period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
         date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
         categories=tuple(payload.categories),
+        excluded_categories=tuple(payload.excluded_categories),
         merchants=tuple(payload.merchants),
+        merchant_terms=tuple(payload.merchant_terms),
+        excluded_merchants=tuple(payload.excluded_merchants),
+        counterparties=tuple(payload.counterparties),
+        excluded_counterparties=tuple(payload.excluded_counterparties),
+        counterparty_types=tuple(payload.counterparty_types),
         group_by=payload.group_by,
         metric=payload.metric,
+        group_limit=payload.group_limit,
+        include_internal=payload.include_internal,
+        internal_only=payload.internal_only,
+        across_accounts=payload.across_accounts,
+        only_account_id=payload.only_account_id,
+        only_account_ids=tuple(payload.only_account_ids),
+        transaction_ids=tuple(payload.transaction_ids),
+        transaction_types=tuple(payload.transaction_types),
     )
 
 
@@ -122,9 +136,23 @@ def draft_to_domain(payload: PlanPayload) -> FinancialPlanDraft:
         period=RelativePeriod(period=payload.period, n=payload.n) if payload.period else None,
         date_range=AbsoluteRange(start=payload.start, end=payload.end) if absolute else None,  # type: ignore[arg-type]
         categories=tuple(payload.categories),
+        excluded_categories=tuple(payload.excluded_categories),
         merchants=tuple(payload.merchants),
+        merchant_terms=tuple(payload.merchant_terms),
+        excluded_merchants=tuple(payload.excluded_merchants),
+        counterparties=tuple(payload.counterparties),
+        excluded_counterparties=tuple(payload.excluded_counterparties),
+        counterparty_types=tuple(payload.counterparty_types),
         group_by=payload.group_by,
         metric=payload.metric,
+        group_limit=payload.group_limit,
+        include_internal=payload.include_internal,
+        internal_only=payload.internal_only,
+        across_accounts=payload.across_accounts,
+        only_account_id=payload.only_account_id,
+        only_account_ids=tuple(payload.only_account_ids),
+        transaction_ids=tuple(payload.transaction_ids),
+        transaction_types=tuple(payload.transaction_types),
     )
 
 
@@ -137,9 +165,23 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
             "start": plan.start,
             "end": plan.end,
             "categories": plan.categories,
+            "excluded_categories": plan.excluded_categories,
             "merchants": plan.merchants,
+            "merchant_terms": plan.merchant_terms,
+            "excluded_merchants": plan.excluded_merchants,
+            "counterparties": plan.counterparties,
+            "excluded_counterparties": plan.excluded_counterparties,
+            "counterparty_types": plan.counterparty_types,
             "group_by": plan.group_by,
             "metric": plan.metric,
+            "group_limit": plan.group_limit,
+            "include_internal": plan.include_internal,
+            "internal_only": plan.internal_only,
+            "across_accounts": plan.across_accounts,
+            "only_account_id": plan.only_account_id,
+            "only_account_ids": plan.only_account_ids,
+            "transaction_ids": plan.transaction_ids,
+            "transaction_types": plan.transaction_types,
         }
     )
 
@@ -178,6 +220,10 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
                 direction=movement.direction,
                 merchant_name=movement.merchant_name,
                 category=movement.category,
+                transaction_type=movement.transaction_type,
+                counterparty_name=movement.counterparty_name,
+                counterparty_type=movement.counterparty_type,
+                receipt_category=movement.receipt_category,
             )
             for movement in result.movements
         ],

@@ -22,6 +22,7 @@ from finguard_banking.domain.errors import (
     InsufficientFundsError,
     IntentExpiredError,
     IntentNotConfirmableError,
+    KeyReusedForAnotherPaymentError,
 )
 from finguard_banking.domain.value_objects.destination import ToAccount, ToPhone
 from finguard_banking.domain.value_objects.iban import Iban
@@ -139,6 +140,65 @@ async def test_a_resent_prepare_is_the_same_intent(connection: asyncpg.Connectio
     )
 
     assert second.intent_id == first.intent_id
+
+
+async def test_the_same_key_for_a_different_amount_is_refused(
+    connection: asyncpg.Connection,
+) -> None:
+    """The other half of a key, and the dangerous one.
+
+    Replaying answered with the stored intent while the preview was built from the *current*
+    request, so a caller who corrected the amount and kept the key saw the new figure above an
+    identifier that pays the old one. Confirming that moves the old amount, and the approval binds
+    something other than what was shown — which is the single thing the two-step flow exists to
+    prevent.
+    """
+    account, contact = await funded(connection, 100_00)
+    await payments(connection).prepare(
+        account_id=account, to=bizum_to(contact), amount=Money(200_00, EUR), key="one-key"
+    )
+
+    with pytest.raises(KeyReusedForAnotherPaymentError):
+        await payments(connection).prepare(
+            account_id=account, to=bizum_to(contact), amount=Money(300_00, EUR), key="one-key"
+        )
+
+
+async def test_the_same_key_for_a_different_recipient_is_refused(
+    connection: asyncpg.Connection,
+) -> None:
+    """Worse than the amount, and the same mechanism: the preview names the new person and the
+    intent pays the old one."""
+    account, first = await funded(connection, 100_00)
+    other = await create_contact(connection, account, "Diego Ferrer Ruiz", "+34600444555")
+    await payments(connection).prepare(
+        account_id=account, to=bizum_to(first), amount=Money(30_00, EUR), key="one-key"
+    )
+
+    with pytest.raises(KeyReusedForAnotherPaymentError):
+        await payments(connection).prepare(
+            account_id=account,
+            to=ToPhone(contact_id=other, name="Diego Ferrer Ruiz", phone="+34600444555"),
+            amount=Money(30_00, EUR),
+            key="one-key",
+        )
+
+
+async def test_two_holders_may_hold_the_same_key(connection: asyncpg.Connection) -> None:
+    """Keys are scoped per account, as the unique constraint already says. Two people whose clients
+    happen to mint the same string are not one intention, and refusing the second would make one
+    holder's choice of key affect another's payment."""
+    mine, my_contact = await funded(connection, 100_00)
+    theirs, their_contact = await funded(connection, 100_00)
+    await payments(connection).prepare(
+        account_id=mine, to=bizum_to(my_contact), amount=Money(30_00, EUR), key="collision"
+    )
+
+    other = await payments(connection).prepare(
+        account_id=theirs, to=bizum_to(their_contact), amount=Money(80_00, EUR), key="collision"
+    )
+
+    assert other.amount == Money(80_00, EUR)
 
 
 async def test_confirming_twice_pays_once(connection: asyncpg.Connection) -> None:

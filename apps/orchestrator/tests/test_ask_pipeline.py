@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.conversation import (
+    IDLE,
     Conversation,
     FinancialClarification,
     PaymentInProgress,
@@ -42,6 +43,21 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+
+
+class NoCards:
+    """The card directory. Required like the balance and the address book, so no build can be
+    half-wired — a chat that cannot reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=__import__("datetime").date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 7, 15)
@@ -128,6 +144,16 @@ class FakeLedger:
         return self._answer
 
 
+class RecordingLedger(FakeLedger):
+    def __init__(self, answer: QueryAnswer) -> None:
+        super().__init__(answer)
+        self.plans: list[FinancialPlan] = []
+
+    async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
+        self.plans.append(plan)
+        return await super().run(plan, **kwargs)  # type: ignore[arg-type]
+
+
 class FakeAccounts:
     """The balance port. Present in every handler because it is a required dependency — a build
     that could be missing it is a build where "¿cuánto tengo?" silently reaches the planner."""
@@ -161,6 +187,7 @@ def chat(planner: object, ledger: object) -> AskFinancialQuestionHandler:
         ledger,  # type: ignore[arg-type]
         accounts=FakeAccounts(),
         contacts=FakeContacts(),
+        cards=NoCards(),  # type: ignore[arg-type]
     )
 
 
@@ -181,10 +208,8 @@ async def ask(result: PlanningResult, ledger: FakeLedger | None = None, **kwargs
 # --- the guard runs before the model ------------------------------------------------
 
 
-async def test_a_question_we_cannot_express_never_reaches_the_model() -> None:
-    """Cheapest possible refusal, and the only one that is a control rather than a
-    disposition. The model is not consulted, so it cannot produce a confident plan for a
-    question about a ratio."""
+async def test_a_supported_percentage_waits_for_its_only_missing_fact_without_the_model() -> None:
+    """Both operands are deterministic; only the shared period is missing."""
     planner = FakePlanner(PlanningResult.planned(plan()))
     ledger = FakeLedger(ANSWER)
     handler = chat(planner, ledger)
@@ -197,9 +222,11 @@ async def test_a_question_we_cannot_express_never_reaches_the_model() -> None:
         )
     )
 
-    assert planner.asked is None, "the model was asked about something we cannot express"
+    assert planner.asked is None
     assert ledger.account_id is None
-    assert result.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert result.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert result.conversation.pending_ratio is not None
+    assert result.conversation.last_asked is Slot.WINDOW
 
 
 async def test_a_plan_that_contradicts_the_question_never_reaches_the_ledger() -> None:
@@ -295,14 +322,46 @@ async def test_a_count_question_is_answered_with_a_count() -> None:
 async def test_a_count_breakdown_shows_counts_not_amounts() -> None:
     result = await ask(PlanningResult.planned(plan(metric=Metric.COUNT, group_by=GroupBy.CATEGORY)))
 
-    assert "GROCERIES: 2" in result.text
+    assert "supermercado: 2" in result.text
     assert "80,00" not in result.text
 
 
 async def test_a_sum_breakdown_shows_amounts() -> None:
     result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.CATEGORY)))
 
-    assert "GROCERIES: 80,00 € (2)" in result.text
+    assert "supermercado: 80,00 € (2)" in result.text
+
+
+async def test_a_breakdown_is_read_in_words_and_not_in_ledger_keys() -> None:
+    """Somebody asking where their money goes read `HOUSING_RENT`, `TRANSPORT_FUEL` and
+    `TRANSFER_BIZUM` down the side of their own answer. The glossary existed and `filter_of` was
+    already using it; this was the one place that printed the key."""
+    result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.CATEGORY)))
+
+    assert "GROCERIES" not in result.text and "HEALTH" not in result.text
+
+
+async def test_a_merchant_breakdown_keeps_the_name_the_ledger_gave_it() -> None:
+    """Only categories are translated. A merchant key is already a name, and putting "Mercadona"
+    through a category glossary would be looking up a word that is not in it."""
+    result = await ask(PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.MERCHANT)))
+
+    assert "GROCERIES" in result.text or "HEALTH" in result.text
+
+
+async def test_an_answer_remembers_its_highlighted_merchant_and_evidence_rows() -> None:
+    transaction_id = uuid.UUID(int=41)
+    movement = replace(ANSWER.movements[0], transaction_id=str(transaction_id))
+    ledger = FakeLedger(replace(ANSWER, movements=(movement,)))
+
+    result = await ask(
+        PlanningResult.planned(plan(metric=Metric.SUM, group_by=GroupBy.MERCHANT)),
+        ledger,
+    )
+
+    assert result.conversation.referenced_group_by is GroupBy.MERCHANT
+    assert result.conversation.referenced_group_key == "GROCERIES"
+    assert result.conversation.referenced_transaction_ids == (transaction_id,)
 
 
 # --- every outcome reaches the user as something different --------------------------
@@ -495,6 +554,167 @@ async def test_an_empty_answer_explains_the_filters_and_offers_supported_relaxat
     assert ledger.plan.period == LAST_MONTH
 
 
+async def test_a_shop_named_in_a_follow_up_does_not_inherit_the_old_category() -> None:
+    """A real figure about a different question, which is the failure this service is built around.
+
+    "¿Cuántas compras hice en Mercadona?" is five words — exactly the length the ellipsis branch
+    allows — so it patched the previous query and kept its categories, and a question about a shop
+    came back counting restaurant purchases. Length was never what tells an ellipsis from a
+    complete question: "¿y en gasolina?" introduces nothing this path does not know, and this one
+    introduces the one filter it cannot represent.
+    """
+    for sentence in (
+        "¿cuántas compras hice en Mercadona?",
+        # Lower case too. The rule was the capital letter at first, which is the sentence saying
+        # "this is a name" — but it left everybody who types without shift answering about the
+        # wrong category, and the check underneath never needed the capital: it asks the
+        # vocabularies whether they claim the word, and none of them claims a shop.
+        "cuantas compras hice en mercadona",
+    ):
+        ledger = RecordingLedger(ANSWER)
+        planner = FakePlanner(PlanningResult.planned(plan(metric=Metric.COUNT)))
+
+        await chat(planner, ledger).handle(
+            AskFinancialQuestionQuery(
+                sentence=sentence,
+                account_id=ACCOUNT,
+                today=TODAY,
+                conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+            )
+        )
+
+        assert planner.asked is not None, sentence
+        assert ledger.plans[-1].categories == (), sentence
+        # Declining is only half the answer, and this is the half nothing else checks. The turn
+        # names a shop so that a planner can read it — and a planner that is handed the sentence
+        # without the query behind it has to rebuild the window from nothing, which is how
+        # "¿cuántas compras hice en Mercadona?" would come back about the wrong month instead of
+        # the wrong category. What this service owes the model is the thread; the merchant is the
+        # model's part.
+        assert planner.previous is not None, sentence
+        assert planner.previous.period == LAST_MONTH, sentence
+
+
+async def test_a_shop_named_beside_a_new_window_is_not_dropped() -> None:
+    """The same hole, one branch further up. "A turn containing only a new window" patches the
+    query on screen, and its test for "only" is eight words — so a sentence naming a shop *and* a
+    window is short enough to be read as the window alone, and the shop disappears into an answer
+    about whatever the previous turn was filtered by."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté en Mercadona el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+        )
+    )
+
+    assert planner.asked is not None, "a shop is not a window, and this path has no field for one"
+    assert ledger.plans[-1].categories != ("RESTAURANTS",)
+
+
+async def test_counting_a_kind_the_vocabulary_knows_keeps_the_window() -> None:
+    """The two reasons a follow-up declines are not the same reason.
+
+    Declining protects the turn that introduces something this path cannot represent — a shop. A
+    category is not that: it is a filter, and replacing one filter is what the follow-up does all
+    day. Treating them alike sent "¿cuántos bizums tengo?" to the planner with the month dropped,
+    two turns after the same question about compras had kept it."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántos bizums tengo?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("GROCERIES",))),
+        )
+    )
+
+    assert planner.asked is None, "a named category is a filter, not a question this cannot read"
+    assert ledger.plans[-1].period == LAST_MONTH, "the window the conversation was in"
+    assert ledger.plans[-1].categories == ("TRANSFER_BIZUM",)
+    assert ledger.plans[-1].metric is Metric.COUNT
+
+
+async def test_a_follow_up_that_names_nothing_new_is_still_an_ellipsis() -> None:
+    """The other half. The rule reads a name in a filter slot, not any capital and not any length,
+    so an ellipsis that introduces nothing still patches the query in view without a model."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuántas compras hice?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=plan(categories=("RESTAURANTS",))),
+        )
+    )
+
+    assert planner.asked is None
+    assert ledger.plans[-1].categories == ("RESTAURANTS",)
+    assert ledger.plans[-1].metric is Metric.COUNT
+
+
+async def test_merchant_suggestions_drop_an_incompatible_period_average_metric() -> None:
+    empty = QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+    ledger = RecordingLedger(empty)
+    previous = plan(group_by=GroupBy.MONTH, metric=Metric.PERIOD_AVERAGE)
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="Acme",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert len(ledger.plans) == 3
+    assert ledger.plans[0].metric is Metric.PERIOD_AVERAGE
+    assert ledger.plans[1].group_by is GroupBy.MERCHANT
+    assert ledger.plans[1].metric is Metric.SUM
+    # And the third is the retraction: this ledger has no shops at all, so "Acme" matched none and
+    # resembled none, and a word that is no shop leaves the question the user was in unchanged.
+    assert ledger.plans[2].merchants == ()
+    assert ledger.plans[2].metric is Metric.PERIOD_AVERAGE
+    assert ledger.plans[2].group_by is GroupBy.MONTH
+
+
+async def test_a_bare_word_that_is_no_shop_leaves_the_question_alone() -> None:
+    """The guess is checked before it is believed.
+
+    `_a_bare_shop_name` decides by what a word is *not* — no category, no account, no window, no
+    verb — which is a rule that can never abstain. Reported by the corpus once the plans were
+    asserted: "gracais", "déjalo", "nada" and twelve more became shop filters, and two outlived
+    their turn, so "¿cuánto gasté el mes pasado?" ran a turn later filtered by "nada".
+
+    Nothing here reads the word. The ledger says whether it is a shop, on a query the empty answer
+    was already spending."""
+    ledger = RecordingLedger(QueryAnswer(currency="EUR", total_minor=0, movement_count=0))
+    previous = plan(categories=("GROCERIES",))
+
+    result = await chat(FakePlanner(PlanningResult.planned(previous)), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="ah vale",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[0].merchants == ("ah vale",), "it still guesses first"
+    assert ledger.plans[-1].merchants == (), "and retracts to the question the user was asking"
+    assert ledger.plans[-1].categories == ("GROCERIES",), "which keeps everything else it had"
+
+
 async def test_a_financial_aside_suspends_a_half_built_payment_instead_of_erasing_it() -> None:
     """The financial answer is useful, but it is a change of subject. The Bizum survives visibly
     paused so a later bare amount cannot complete it without the user explicitly resuming it."""
@@ -555,6 +775,63 @@ async def test_listing_categories_does_not_close_the_clarification_that_needed_o
     )
 
     assert result.conversation.active == clarification
+
+
+async def test_a_new_question_is_not_the_answer_to_the_open_one() -> None:
+    """A state that takes every sentence, which is the shape this service keeps being wrong in.
+
+    The draft is waiting for a window and a whole new financial question names one too, so
+    "¿cuánto gasté el mes pasado?" asked with "¿qué movimientos he tenido entre mis cuentas?" still
+    open completed *that* draft: the holder asked what they spent and was told what they had moved
+    into their own accounts, as a real figure with the right month on it. In the fund episode it
+    came back restricted to the fund as well.
+
+    The draft is waiting for one missing field. A sentence that states a question of its own is not
+    that field."""
+    ledger = RecordingLedger(ANSWER)
+    clarification = FinancialClarification(
+        draft=FinancialPlanDraft(
+            direction=Direction.ALL, internal_only=True, include_internal=True
+        ),
+        awaiting=Slot.WINDOW,
+    )
+
+    await chat(FakePlanner(PlanningResult.planned(plan())), ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté el mes pasado?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=clarification),
+        )
+    )
+
+    assert ledger.plans[-1].internal_only is False, "spending is not movement between own accounts"
+
+
+async def test_a_window_on_its_own_is_still_the_answer() -> None:
+    """The other half. Declining protects the turn that asks something else; a reply that names the
+    missing field and nothing more is exactly what the clarification asked for."""
+    ledger = RecordingLedger(ANSWER)
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    clarification = FinancialClarification(
+        draft=FinancialPlanDraft(
+            direction=Direction.ALL, internal_only=True, include_internal=True
+        ),
+        awaiting=Slot.WINDOW,
+    )
+
+    await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="el mes pasado",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=Conversation(active=clarification),
+        )
+    )
+
+    assert planner.asked is None, "a bare window still completes the draft without a model"
+    assert ledger.plans[-1].internal_only is True
+    assert ledger.plans[-1].period == LAST_MONTH
 
 
 async def test_a_category_name_completes_the_clarification_without_a_model() -> None:
@@ -652,9 +929,10 @@ async def test_a_decline_stops_the_stream_without_querying() -> None:
 # --- context -----------------------------------------------------------------------
 
 
-async def test_the_previous_plan_reaches_the_planner() -> None:
+async def test_a_known_category_follow_up_uses_the_previous_plan_without_the_model() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
-    handler = chat(planner, FakeLedger(ANSWER))
+    ledger = FakeLedger(ANSWER)
+    handler = chat(planner, ledger)
     context = plan(categories=("GROCERIES",))
 
     await handler.handle(
@@ -666,7 +944,11 @@ async def test_the_previous_plan_reaches_the_planner() -> None:
         )
     )
 
-    assert planner.previous == context
+    assert planner.asked is None
+    assert planner.previous is None
+    assert ledger.plan is not None
+    assert ledger.plan.period == context.period
+    assert ledger.plan.categories == ("TRANSPORT_FUEL",)
 
 
 async def test_an_answer_carries_the_context_of_the_next_question() -> None:
@@ -797,9 +1079,14 @@ async def test_an_ordinary_follow_up_still_inherits() -> None:
     planner = FakePlanner(PlanningResult.planned(plan()))
     before = plan(categories=("RESTAURANTS",))
 
-    await chat(planner, FakeLedger(ANSWER)).handle(spoken("¿y este mes?", before))
+    ledger = FakeLedger(ANSWER)
+    await chat(planner, ledger).handle(spoken("¿y este mes?", before))
 
-    assert planner.previous == before
+    assert planner.asked is None, "an explicit window does not need to be reinterpreted"
+    assert ledger.plan is not None
+    assert ledger.plan.categories == before.categories
+    assert ledger.plan.period is not None
+    assert ledger.plan.period.period is Period.THIS_MONTH
 
 
 # --- finishing a clarification ------------------------------------------------------
@@ -968,3 +1255,20 @@ async def test_an_average_is_not_told_about_forecasts() -> None:
 
     assert "medias" in result.text
     assert "previsiones" not in result.text
+
+
+async def test_a_refusal_the_planner_found_keeps_the_balance_thread() -> None:
+    """The guard's own refusal preserves it, and this is the other path to the same state.
+
+    A capability can be missed by the guard's patterns and caught by the planner — that is what
+    `_next_state` maps back to an `UnsupportedCapability` for. Both must leave the same
+    conversation behind, or the same sentence ends the user's thread or not depending on which
+    layer happened to notice.
+
+    Found by mutation: reverting this branch failed nothing.
+    """
+    was = IDLE.answering_the_balance()
+
+    result = await ask(PlanningResult.unsupported("AVERAGE"), conversation=was)
+
+    assert result.conversation.answered_the_balance

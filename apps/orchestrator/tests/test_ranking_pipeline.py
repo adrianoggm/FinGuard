@@ -24,6 +24,23 @@ from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnsw
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
+
+class NoCards:
+    """The card directory, required like the balance and the address book so no build can be
+    half-wired. A chat that could not reach the wallet answered "eso no puedo calcularlo todavía"
+    about a screen the user can open."""
+
+    async def all_of(self, account_id, **kwargs):
+        from datetime import date
+
+        from finguard_orchestrator.domain.models.card import Wallet
+
+        return Wallet(since=date(2026, 7, 7))
+
+    async def charges_on(self, account_id, card_id, **kwargs):
+        return ()
+
+
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
 THIS_YEAR = RelativePeriod(period=Period.THIS_YEAR)
@@ -105,7 +122,7 @@ class FakeContacts:
 
 async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: object):
     handler = AskFinancialQuestionHandler(
-        planner, ledger, accounts=FakeAccounts(), contacts=FakeContacts()
+        planner, ledger, accounts=FakeAccounts(), contacts=FakeContacts(), cards=NoCards()
     )
     return await handler.handle(
         AskFinancialQuestionQuery(
@@ -134,6 +151,59 @@ async def test_the_largest_expense_is_answered_with_the_movement() -> None:
     assert "14 de marzo" in result.text
     assert ledger.aggregates == [], "a maximum was answered with an aggregate"
     assert [r.rank for r in ledger.rankings] == [1]
+
+
+async def test_three_largest_expenses_are_read_as_concrete_ranked_movements() -> None:
+    planner = FakePlanner()
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    result = await ask("Muéstrame mis tres mayores gastos de este año", planner, ledger)
+
+    assert planner.asked is None
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3]
+    assert result.movement_count == 3
+    assert [movement.merchant_name for movement in result.movements] == [
+        "Cepsa",
+        "Repsol",
+        "Broadway",
+    ]
+    assert "Tus 3 mayores gastos" in result.text
+    assert "1. Cepsa" in result.text
+    assert "3. Broadway" in result.text
+    assert result.currency is None
+    assert result.total_minor is None, "amounts in EUR and USD cannot be added"
+    remembered = result.conversation.last_plan
+    assert isinstance(remembered, TopMovements)
+    assert remembered.rank == 3
+    assert remembered.categories == ()
+    assert remembered.period == THIS_YEAR
+
+
+async def test_an_incomplete_top_list_remembers_the_last_real_position() -> None:
+    planner = FakePlanner()
+    ledger = FakeLedger(CEPSA, REPSOL)
+
+    first = await ask("Dime mis tres mayores gastos de este año", planner, ledger)
+    second = await ask(
+        "¿Y el siguiente?",
+        planner,
+        ledger,
+        conversation=first.conversation,
+    )
+
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3, 3]
+    assert "He encontrado 2 gastos" in first.text
+    assert "no hay 3" in first.text
+    assert "no hay" in second.text.lower()
+
+
+async def test_top_three_expenses_is_an_equivalent_natural_form() -> None:
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    result = await ask("Top 3 gastos de este año", FakePlanner(), ledger)
+
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3]
+    assert result.movement_count == 3
 
 
 async def test_the_ranking_becomes_the_memory_of_the_conversation() -> None:

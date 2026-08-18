@@ -68,8 +68,12 @@ nobody asked, which is worse than a question.
 
 "awaiting" matters as much as the question. The reply is often two words — "de este", "el \
 pasado" — and it can only be read against the field it answers.
-UNSUPPORTED — the query cannot be expressed at all. There is no average, no comparison \
-between two periods, and no forecast: only what already happened.
+UNSUPPORTED — the query cannot be expressed at all. Comparisons between complete calendar \
+periods or explicit past date ranges are handled before this planner; ambiguous ranges are not. \
+There is no forecast: only what already happened. Averages are supported.
+AVERAGE is the mean amount per matching movement. PERIOD_AVERAGE is the mean spend per \
+calendar period and must use groupBy DAY, WEEK or MONTH for its divisor. CUMULATIVE is a \
+running total and also requires DAY, WEEK or MONTH.
 
 ## Which kind of question: "action"
 
@@ -101,6 +105,10 @@ These four distinctions each cost a wrong number when missed:
 today those two share only about half their days.
 - LAST_N_DAYS includes today: "the last 7 days" is today plus the 6 before it.
 - THIS_WEEK is Monday to today. LAST_WEEK is a full Monday to Sunday.
+- THIS_QUARTER, THIS_SEMESTER and THIS_FORTNIGHT run from the start of the current \
+calendar block to TODAY. Their LAST_* forms are the previous complete block.
+- THIS_WEEKEND is Saturday to TODAY and is valid only on Saturday or Sunday. \
+LAST_WEEKEND is the preceding complete Saturday-Sunday block.
 
 A named month or year ("durante enero", "en 2025") is not a window name: use \
 "{absolute}" with an explicit range.
@@ -154,11 +162,24 @@ When one *is* asked for, these are the words that choose it:
 - MERCHANT — comercios, tiendas, establecimientos, sitios, "¿en qué comercio?". It \
 breaks the total down across **all** of them and cannot narrow to one, so a sentence \
 naming a shop is the clarification case above and not a grouping.
+- ACCOUNT — cuentas, cada cuenta, "desglose por cuenta". It breaks the same query down \
+across all accounts owned by the holder.
 
 "Semana a semana" and "mes a mes" are groupings, not windows: the window is still \
 whatever period the sentence names.
 
 metric is SUM for "cuánto" and COUNT for "cuántas veces" or "cuántos movimientos".
+Use AVERAGE for "media por movimiento", "importe medio" or "ticket medio": its divisor is \
+matching movements. Use PERIOD_AVERAGE for "gasto medio mensual", "de media a la semana" or \
+"gasto medio por día", paired with groupBy MONTH, WEEK or DAY: its divisor is calendar periods, \
+including periods with no movements. Use CUMULATIVE for "gasto acumulado", "cuánto llevaba \
+gastado" or a running total, paired with groupBy MONTH, WEEK or DAY. Use FREQUENCY for \
+questions about cadence such as \
+"cada cuánto", "qué día suelen" or "cuándo habitualmente": derive it from movement dates, \
+never from amounts. Use RECURRENCE when the user asks which expenses, charges or payments are \
+recurring, fixed or periodic. It discovers patterns by counterparty and is different from \
+FREQUENCY, which describes one named stream. If two named categories are compared or requested \
+"por separado", include both categories and use groupBy CATEGORY.
 
 ## Examples
 
@@ -205,12 +226,12 @@ pasado o los últimos 30 días.", "awaiting": "WINDOW", "action": "AGGREGATE", "
 "isFollowUp": false, "changed": [], "groupBy": "NONE", "metric": \
 "SUM"}}
 
-"¿Cuál es mi gasto medio mensual?"
-{{"outcome": "UNSUPPORTED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
-"period": "", "n": 0, "from": "", "to": "", \
+"¿Cuál es mi gasto medio mensual este año?"
+{{"outcome": "PLANNED", "question": "", "awaiting": "", "action": "AGGREGATE", "rank": 0, \
+"period": "THIS_YEAR", "n": 0, "from": "", "to": "", \
 "direction": "EXPENSE", "categories": ["{no_category}"], "merchants": [], \
-"isFollowUp": false, "changed": [], "groupBy": "NONE", \
-"metric": "SUM"}}
+"isFollowUp": false, "changed": [], "groupBy": "MONTH", \
+"metric": "PERIOD_AVERAGE"}}
 
 {previous}## The sentence
 

@@ -19,8 +19,15 @@ from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
 
-def request(amount_minor: int = 2_000, recipient: str = "Marta") -> PaymentRequest:
-    return PaymentRequest(recipient_name=recipient, amount_minor=amount_minor, currency="EUR")
+def request(
+    amount_minor: int = 2_000, recipient: str = "Marta", concept: str | None = None
+) -> PaymentRequest:
+    return PaymentRequest(
+        recipient_name=recipient,
+        amount_minor=amount_minor,
+        currency="EUR",
+        concept=concept,
+    )
 
 
 @pytest.mark.parametrize(
@@ -34,6 +41,8 @@ def request(amount_minor: int = 2_000, recipient: str = "Marta") -> PaymentReque
         ("envía 20,50 euros a Marta", 2_050),
         ("transfiere 1.200 euros a Marta", 120_000),
         ("manda 1.200,75 euros a Marta", 120_075),
+        ("mándale veinte euros a Marta", 2_000),
+        ("envía treinta y cinco euros a Marta", 3_500),
     ],
 )
 def test_an_amount_written_in_the_sentence_is_grounded(sentence: str, amount_minor: int) -> None:
@@ -49,8 +58,8 @@ def test_an_amount_written_in_the_sentence_is_grounded(sentence: str, amount_min
         # Nothing numeric at all. "Lo de siempre" is a real thing to say and the honest answer is
         # to ask, not to guess what "siempre" was.
         ("hazle un bizum a Marta de lo de siempre", 2_000),
-        # Written out. It produces a question rather than a figure — see the module docstring.
-        ("mándale veinte euros a Marta", 2_000),
+        # The words say twenty, not two hundred. The deterministic parser is the authority.
+        ("mándale veinte euros a Marta", 20_000),
     ],
 )
 def test_an_amount_that_is_not_in_the_sentence_is_refused(sentence: str, amount_minor: int) -> None:
@@ -65,6 +74,23 @@ def test_a_recipient_who_is_not_in_the_sentence_is_refused() -> None:
     )
 
     assert reason == "RECIPIENT_INVENTED"
+
+
+def test_a_concept_that_is_not_in_the_sentence_is_refused() -> None:
+    reason = payment_grounding.ungrounded_reason(
+        "hazle un bizum de 20 euros a Marta", request(concept="cena")
+    )
+
+    assert reason == "CONCEPT_INVENTED"
+
+
+def test_a_concept_written_by_the_user_is_grounded() -> None:
+    assert (
+        payment_grounding.ungrounded_reason(
+            "hazle un bizum de 20 euros a Marta con concepto cena", request(concept="cena")
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -110,6 +136,7 @@ def test_the_rules_are_named_in_the_registry() -> None:
     assert payment_grounding.RULES == {
         "AMOUNT_INVENTED",
         "RECIPIENT_INVENTED",
+        "CONCEPT_INVENTED",
         "CURRENCY_UNSUPPORTED",
     }
 

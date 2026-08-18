@@ -1,0 +1,73 @@
+# Reading transfers between the holder's own accounts.
+#
+# These queries used to be either refused or widened to every ledger movement. The conversation
+# exercises the typed internal-only scope, destination accounts, fund contributions, ellipsis and
+# common transposition typos without involving a model.
+
+episodes:
+  - name: own_account_transfers_are_a_conversation
+    why: >
+      Asking for internal movements without a period should need only that period. Once supplied,
+      account destinations and investment contributions remain narrow across natural follow-ups.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: Perdona, ¿qué movimeintos he tenido entre mis cuentas?
+        route: CLARIFY
+        no_model: true
+      - say: En los últimos 3 meses
+        route: QUERY
+        no_model: true
+        says: entre tus cuentas
+        ran: {window: 'LAST_N_MONTHS:3', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], internal_only: True, include_internal: True}
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], internal_only: True, include_internal: True}
+      - say: ¿Cuánto he movido a la hucha este año?
+        route: QUERY
+        no_model: true
+        says: hacia la cuenta consultada
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha'], internal_only: True, include_internal: True}
+      - say: Caunto he invertido en el ultimo año?
+        route: QUERY
+        no_model: true
+        says: hacia la cuenta consultada
+        ran: {window: 'LAST_N_MONTHS:12', direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: ¿Y este mes?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: gracias
+        route: COURTESY
+
+  - name: contributions_are_not_salary_or_ordinary_spending
+    why: >
+      Different natural phrasings for money put into an investment all select incoming internal
+      movements into the asset account, then allow an ordinary spending question to change topic.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto he gastado en inversiones este mes?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: ¿Qué aportaciones hice al fondo este año?
+        route: QUERY
+        no_model: true
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: ¿Cuál fue el importe medio mensual?
+        route: QUERY
+        no_model: true
+        says: importe medio mensual
+        ran: {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: [], accounts: ['Fondo indexado'], internal_only: True, include_internal: True}
+      - say: Vale, ¿cuánto gasté en supermercados este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿Y en restaurantes?
+        route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY

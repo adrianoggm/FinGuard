@@ -128,6 +128,43 @@ def test_the_echoed_state_arrives_as_a_conversation() -> None:
     assert active.awaiting is Slot.YEAR
 
 
+ASKING_WITH_NOTHING_READ = AskFinancialQuestionResult(
+    outcome="NEEDS_CLARIFICATION",
+    text="¿De qué periodo?",
+    question="¿De qué periodo?",
+    # No workflow, because there is no draft to put in one. The slot is all that survives, and it
+    # has to survive across the wire or the same question can be asked forever.
+    conversation=Conversation(last_asked=Slot.WINDOW),
+)
+
+
+def test_a_question_with_nothing_behind_it_still_says_what_it_asked() -> None:
+    """The state that has no workflow. `awaiting` is null here — correctly, nothing is open — so
+    `last_asked` is the only thing carrying the question, and dropping it on either crossing puts
+    the loop back."""
+    client, _ = client_for(ASKING_WITH_NOTHING_READ)
+
+    body = client.post("/v1/questions", json={"question": "¿qué tal va la cosa?"}).json()
+
+    assert body["conversation"]["workflow"] is None
+    assert body["conversation"]["awaiting"] is None
+    assert body["conversation"]["last_asked"] == Slot.WINDOW.value
+
+
+def test_it_comes_back_as_the_slot_the_last_turn_asked_for() -> None:
+    client, asking = client_for(ASKING_WITH_NOTHING_READ)
+    handed_out = client.post("/v1/questions", json={"question": "¿qué tal?"}).json()
+
+    client.post(
+        "/v1/questions",
+        json={"question": "pues eso", "conversation": handed_out["conversation"]},
+    )
+
+    assert asking.received is not None
+    assert asking.received.conversation.active is None
+    assert asking.received.conversation.last_asked is Slot.WINDOW
+
+
 def test_an_answer_leaves_nothing_open_and_remembers_the_plan() -> None:
     """Two facts in one object, which is what replaced two independent fields: no workflow is
     active, and the plan is there for the next follow-up to inherit from."""

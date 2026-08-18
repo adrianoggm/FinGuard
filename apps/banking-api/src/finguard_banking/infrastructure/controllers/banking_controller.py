@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
+from pydantic import AfterValidator
 
 from finguard_banking.application import (
     CategoriseMovementCommand,
@@ -28,6 +29,7 @@ from finguard_banking.bootstrap.dependencies import (
     get_command_bus,
     get_query_bus,
     reporting_today,
+    reporting_zone,
 )
 from finguard_banking.domain import constants
 from finguard_banking.domain.constants import MAX_CARD_WINDOW_DAYS, MAX_SUPPORTING_MOVEMENTS
@@ -43,6 +45,7 @@ from finguard_banking.infrastructure.dto.banking_dto import (
     HoldingsResponse,
     RankedMovementRequest,
     RankedMovementResponse,
+    known_zone,
 )
 from finguard_banking.infrastructure.mappers import http_mapper
 
@@ -50,6 +53,13 @@ Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
 DatabaseAnswers = Annotated[bool, Depends(database_answers)]
 Today = Annotated[date, Depends(reporting_today)]
+DeploymentZone = Annotated[str, Depends(reporting_zone)]
+
+# What day the caller is having, and what its day is measured in. The same pair a relative period
+# carries in a query body, spelled as query parameters because a card window is a GET — and here
+# for the same reason: neither describes a window alone.
+Reference = Annotated[date | None, Query()]
+CallerZone = Annotated[str | None, Query(max_length=64), AfterValidator(known_zone)]
 
 health_router = APIRouter(tags=["health"])
 accounts_router = APIRouter(prefix="/v1/accounts", tags=["accounts"])
@@ -81,16 +91,37 @@ async def read_cards(
     account_id: UUID,
     queries: Queries,
     today: Today,
+    zone: DeploymentZone,
     days: Annotated[int, Query(ge=1, le=MAX_CARD_WINDOW_DAYS)] = 30,
+    reference: Reference = None,
+    timezone: CallerZone = None,
 ) -> CardsResponse:
-    """Each card with what has been charged to it in the window, computed in the reporting zone.
+    """Each card with what has been charged to it in the window, computed in the caller's zone.
 
     A rolling window rather than "this month", and the answer says which date it starts from. A
     month is what a caller assumes when nothing says otherwise, and a figure labelled as a month
     that is really thirty days is wrong on the 1st by everything that happened on the 31st.
+
+    `days` counts days, both ends included. It used to subtract `days` from the reference and hand
+    the result over as the start, which is one too many: with the reference day inside the window as
+    well, "the last 30 days" spanned thirty-one dates, and the extra one was the far end — on the
+    1st of a month, the whole of the previous month's last day, in a figure labelled as thirty days.
+
+    `reference` and `timezone` are the caller's day and the zone it was measured in, exactly as on
+    the query endpoint, and when they arrive they win. This route used to resolve "thirty days ago"
+    against *this* deployment's clock and bin the charges in a zone hardcoded one layer down, so a
+    holder in the Canaries read the chat on their day and their card charges on Madrid's.
     """
-    since = today - timedelta(days=days)
-    result = await queries.ask(ListCardsQuery(account_id=account_id, since=since))
+    until = reference or today
+    since = until - timedelta(days=days - 1)
+    result = await queries.ask(
+        ListCardsQuery(
+            account_id=account_id,
+            since=since,
+            until=until,
+            reporting_timezone=timezone or zone,
+        )
+    )
     return http_mapper.cards_to_dto(result)
 
 
@@ -102,8 +133,11 @@ async def read_card_charges(
     card_id: UUID,
     queries: Queries,
     today: Today,
+    zone: DeploymentZone,
     days: Annotated[int, Query(ge=1, le=MAX_CARD_WINDOW_DAYS)] = 30,
     limit: Annotated[int, Query(ge=1, le=MAX_SUPPORTING_MOVEMENTS)] = 50,
+    reference: Reference = None,
+    timezone: CallerZone = None,
 ) -> CardChargesResponse:
     """The charges behind a card's total, newest first.
 
@@ -118,8 +152,10 @@ async def read_card_charges(
         ListCardChargesQuery(
             account_id=account_id,
             card_id=card_id,
-            since=today - timedelta(days=days),
+            since=(reference or today) - timedelta(days=days - 1),
+            until=reference or today,
             limit=limit,
+            reporting_timezone=timezone or zone,
         )
     )
     return http_mapper.card_charges_to_dto(result)
