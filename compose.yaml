@@ -170,9 +170,11 @@ services:
       # means building with the extra and mounting a voice.
       VOICE_GATEWAY_STT_MODE: ${VOICE_STT_MODE:-fake}
       VOICE_GATEWAY_TTS_MODE: ${VOICE_TTS_MODE:-fake}
-    # 8080 on the host: 8000 and 8001 are the orchestrator and banking.
+    # 8002 on the host, beside banking's 8001. Not 8080: it is the most contested port on a
+    # development machine — Docker Desktop's own Kubernetes forwarding had it on this one — and
+    # the container's port stays 8000 either way.
     ports:
-      - "127.0.0.1:${VOICE_GATEWAY_PORT:-8080}:8000"
+      - "127.0.0.1:${VOICE_GATEWAY_PORT:-8002}:8000"
     depends_on:
       orchestrator:
         condition: service_healthy

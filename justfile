@@ -27,7 +27,7 @@ component name:
 # Skeleton: database + backend APIs. The skin (web, mobile) stays out
 back:
     docker compose --profile core up -d --wait --build --remove-orphans
-# Skeleton plus the real-time voice gateway on 8080. Fake speech providers by default: the
+# Skeleton plus the real-time voice gateway on 8002. Fake speech providers by default: the
 # measured local ones run on the host, where the GPU and the models are.
 voice:
     docker compose --profile voice up -d --wait --build --remove-orphans
@@ -105,10 +105,10 @@ serve-banking:
 # orchestrator with autoreload. Needs port 8000 free
 serve-orchestrator:
     uv run --directory apps/orchestrator uvicorn finguard_orchestrator.bootstrap.main:app --reload --port 8000
-# voice-gateway with autoreload on 8080. Fake providers unless VOICE_GATEWAY_* says otherwise;
+# voice-gateway with autoreload on 8002. Fake providers unless VOICE_GATEWAY_* says otherwise;
 # apps/voice-gateway/.env.defaults documents every setting.
 serve-voice:
-    uv run --directory apps/voice-gateway uvicorn finguard_voice_gateway.main:app --reload --port 8080
+    uv run --directory apps/voice-gateway uvicorn finguard_voice_gateway.main:app --reload --port 8002
 # The active LLM policy. The default is the compose operator token; pass another
 # explicitly when running against a different local configuration.
 llm-policy token="demo-token-operator":
