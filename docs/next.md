@@ -384,6 +384,18 @@ Ollama `ministral-3:14b`, banking over the seeded PostgreSQL dataset and Piper
 the real run separately rejects provider and banking error outcomes so transport completion cannot
 masquerade as a valid financial answer.
 
+**What closing the phase found.** The service existed and the repository did not know about it: no
+CI job, no compose service, no line in any `just` recipe. Wiring those three found three defects
+that had been invisible for exactly that reason — the gateway had never been through the formatter
+its own `pyproject.toml` declares (8 files), `mypy` failed on the optional `piper` import because
+only its sibling `faster_whisper` had been given a waiver, and
+`test_timeout_keeps_slot_until_native_finishes` failed on Windows every single time. That last one
+was worth the trip: the adapter was innocent — the semaphore stayed at zero and the engine was
+called once, exactly as the invariant claims — and the test had given one 10 ms deadline two
+contradictory jobs, so the second call lost a single-worker thread handoff and reported an early
+release that never happened. A test that fails on the platform this is developed on, in a suite
+nothing ran, is the argument for the CI entry rather than a footnote to it.
+
 One workstation constraint remains operational rather than architectural: CTranslate2 can see the
 RTX 3060, but CUDA inference on this host lacks `libcublas.so.12`, so the accepted measurement uses
 CPU `int8` STT. Browser-observed first-frame latency is recorded; proving the exact instant a sound
