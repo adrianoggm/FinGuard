@@ -3,7 +3,8 @@ name: finguard
 # Profiles:
 #   core  skeleton: database + backend APIs
 #   poc   everything that exists: core + skin (web, and later a mobile app)
-#   voice / a2a / events  arrive in their own iterations
+#   voice  core + the real-time voice gateway (phase 6)
+#   a2a / events  arrive in their own iterations
 #
 # A single component needs no profile: docker compose up postgres
 # Everything is published on 127.0.0.1 only: the credentials are for development
@@ -12,7 +13,7 @@ name: finguard
 services:
   postgres:
     image: postgres:18-alpine
-    profiles: ["core", "poc"]
+    profiles: ["core", "poc", "voice"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-finguard}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
@@ -36,7 +37,7 @@ services:
     build:
       context: .
       dockerfile: apps/banking-api/Dockerfile
-    profiles: ["core", "poc"]
+    profiles: ["core", "poc", "voice"]
     environment:
       BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
       # Read-only role for the query engine (§8.6)
@@ -62,7 +63,7 @@ services:
         # so "which build am I talking to" is one request rather than an inference.
         BUILD_SHA: ${FINGUARD_SHA:-unknown}
         BUILD_REF: ${FINGUARD_REF:-unknown}
-    profiles: ["core", "poc"]
+    profiles: ["core", "poc", "voice"]
     # The same file the host reads, so a credential lives in exactly one place whichever way
     # the service is started. The Dockerfile deliberately does not COPY it — a secret baked
     # into an image is a secret in every registry that image reaches — so without this,
@@ -138,6 +139,42 @@ services:
       - "127.0.0.1:${ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
       banking-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ADR-010: a channel adapter, not a second financial assistant. It may reach the orchestrator
+  # and nothing else — no banking, no database, no financial types — so it has no credential of
+  # its own: the caller's token travels through it to the orchestrator.
+  voice-gateway:
+    build:
+      context: apps/voice-gateway
+      dockerfile: Dockerfile
+      args:
+        # The image is CPU-oriented. Faster Whisper is an optional extra, off by default because
+        # it pulls CTranslate2 and downloads a model on first use; the fake provider is what makes
+        # the compose stack start in seconds.
+        INSTALL_LOCAL_STT: ${VOICE_INSTALL_LOCAL_STT:-0}
+    profiles: ["voice"]
+    environment:
+      # The assistant by service name on this network, not the loopback default, which inside a
+      # container is the container.
+      VOICE_GATEWAY_ASSISTANT_MODE: orchestrator_http
+      VOICE_GATEWAY_ORCHESTRATOR_BASE_URL: http://orchestrator:8000
+      # Fake speech by default. Local providers are measured on the host where the GPU and the
+      # models are — see apps/voice-gateway/evaluation/RESULTS.md — and switching them on here
+      # means building with the extra and mounting a voice.
+      VOICE_GATEWAY_STT_MODE: ${VOICE_STT_MODE:-fake}
+      VOICE_GATEWAY_TTS_MODE: ${VOICE_TTS_MODE:-fake}
+    # 8080 on the host: 8000 and 8001 are the orchestrator and banking.
+    ports:
+      - "127.0.0.1:${VOICE_GATEWAY_PORT:-8080}:8000"
+    depends_on:
+      orchestrator:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
