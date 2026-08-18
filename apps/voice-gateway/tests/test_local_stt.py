@@ -81,6 +81,7 @@ def test_faster_whisper_boundary_passes_ndarray_and_options() -> None:
         "beam_size": 3,
         "vad_filter": True,
         "initial_prompt": "bizum",
+        "condition_on_previous_text": False,
     }
 
 
