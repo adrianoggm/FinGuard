@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     stt_language: str = "es"
     stt_beam_size: int = 5
     stt_vad_filter: bool = True
+    # Words the decoder would otherwise never guess: the rail names, and anything else this
+    # product says out loud that a general Spanish model has never seen. Product vocabulary,
+    # so a setting. Contact names could be appended per holder; that needs the directory here,
+    # which the gateway deliberately does not have.
+    stt_initial_prompt: str = (
+        "Banca en español. Vocabulario: bizum, bizums, transferencia, traspaso, nómina, "
+        "recibo, suscripción, saldo, movimientos, hucha, fondo indexado, Mercadona, Alcampo. "
+        "Nombres: Marta, Aitor, Elena, Diego, Nuria, Sergio, Carmen, Laura."
+    )
     stt_timeout_seconds: float = 45.0
     stt_max_concurrency: int = 1
     stt_warmup: bool = False
