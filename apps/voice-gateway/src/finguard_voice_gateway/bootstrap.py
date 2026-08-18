@@ -28,10 +28,14 @@ class Services:
 def build_services(settings: Settings | None = None) -> Services:
     effective = settings or Settings()
     stt: SpeechToText = (
-        LocalSpeechToText(effective) if effective.stt_mode == "local" else FakeSpeechToText()
+        LocalSpeechToText(effective)
+        if effective.stt_mode == "local"
+        else FakeSpeechToText(effective)
     )
     tts: TextToSpeech = (
-        LocalTextToSpeech(effective) if effective.tts_mode == "local" else FakeTextToSpeech()
+        LocalTextToSpeech(effective)
+        if effective.tts_mode == "local"
+        else FakeTextToSpeech(effective)
     )
     if effective.assistant_mode == "orchestrator_http":
         client = httpx.AsyncClient(
