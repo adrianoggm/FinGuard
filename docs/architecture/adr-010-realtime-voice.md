@@ -1,7 +1,10 @@
 # ADR-010 — Real-time voice is a channel adapter
 
-**Status:** accepted, planned
+**Status:** accepted, implemented and measured locally
 **Date:** 2026-08-17
+**Implemented:** 2026-08-18. Latency by stage in
+[the voice latency report](../../apps/voice-gateway/evaluation/RESULTS.md). The gateway is a compose
+service in the `voice` profile and its suite runs in CI beside the other two services.
 **Numbering:** 009 is holdings and layered categorisation. 001–007 are in vision.md.
 
 ## Context
