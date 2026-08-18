@@ -161,8 +161,15 @@ async def test_timeout_keeps_slot_until_native_finishes() -> None:
     entered = threading.Event()
     release = threading.Event()
     engine = Engine(entered=entered, release=release)
+    # One timeout has two jobs here and they pull in opposite directions: it must fire for the
+    # first call and must not fire for the second. The second one waits twice — for the slot, and
+    # then for the single executor thread to be handed its job, because `max_workers` follows
+    # `stt_max_concurrency` and that thread is still returning call #1. At 10 ms the handoff lost
+    # that race on Windows every time, and the test failed reporting the adapter had released the
+    # slot early when the evidence says it had not. Production waits 45 s; the bar here only has
+    # to clear a thread handoff by a wide margin.
     stt = LocalSpeechToText(
-        settings(stt_timeout_seconds=0.01, stt_max_concurrency=1), factory_for(engine)
+        settings(stt_timeout_seconds=0.2, stt_max_concurrency=1), factory_for(engine)
     )
     try:
         first = asyncio.create_task(stt.transcribe(b"\x00\x00", cancelled=lambda: False))
