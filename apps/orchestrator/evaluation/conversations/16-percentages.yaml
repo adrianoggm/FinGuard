@@ -1,0 +1,50 @@
+# Percentages are two exact ledger reads plus deterministic arithmetic. The model neither chooses
+# an operand nor performs the division, and the pair remains available to short follow-ups.
+
+episodes:
+  - name: proportions_savings_and_changes_form_one_natural_conversation
+    why: >
+      A user should be able to ask for a useful proportion directly, change its period without
+      repeating both operands, request a savings rate, and turn an ordinary comparison into a
+      percentage. Every figure comes from two typed queries over the same account scope.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: ¿Qué porcentaje de mi nómina se va en alquiler este año?
+        route: QUERY
+        no_model: true
+        says: representa
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+        says: representa
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: ['HOUSING_RENT'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: INCOME, categories: ['SALARY'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Qué porcentaje de mis gastos fue supermercado este mes?
+        route: QUERY
+        no_model: true
+        says: gastos totales
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Qué parte de mis ingresos se va en restaurantes?
+        route: CLARIFY
+        no_model: true
+      - say: Este año
+        route: QUERY
+        no_model: true
+        says: representa
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Cuál fue mi tasa de ahorro este año?
+        route: QUERY
+        no_model: true
+        says: tasa de ahorro
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: Compara mis gastos de julio con junio
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y en porcentaje?
+        route: QUERY
+        no_model: true
+        says: no cambió
+        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: gracias
+        route: COURTESY

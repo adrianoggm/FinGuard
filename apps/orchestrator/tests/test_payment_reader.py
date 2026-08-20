@@ -78,6 +78,33 @@ async def test_a_payment_is_read_from_the_sentence() -> None:
     assert reading.request.currency == "EUR"
 
 
+async def test_a_payment_amount_written_in_words_is_grounded() -> None:
+    engine, _ = reader(READ)
+
+    reading = await engine.read("mándale veinte euros a Marta")
+
+    assert reading.outcome is PlanningOutcome.PLANNED
+    assert reading.request is not None
+    assert reading.request.amount_minor == 2_000
+
+
+async def test_written_words_recover_a_model_that_still_asks_for_figures() -> None:
+    engine, _ = reader(
+        {
+            **READ,
+            "outcome": "NEEDS_CLARIFICATION",
+            "question": "¿Me lo dices en cifras?",
+            "amountMinor": 0,
+        }
+    )
+
+    reading = await engine.read("mándale veinte euros a Marta")
+
+    assert reading.outcome is PlanningOutcome.PLANNED
+    assert reading.request is not None
+    assert reading.request.amount_minor == 2_000
+
+
 async def test_the_decoder_is_constrained() -> None:
     """The schema travels with the request, so an invalid shape is unreachable, not caught."""
     engine, provider = reader(READ)
@@ -178,7 +205,7 @@ async def test_an_amount_of_zero_is_a_missing_amount_rather_than_a_bad_one() -> 
     """
     engine, _ = reader({**READ, "amountMinor": 0})
 
-    reading = await engine.read(SENTENCE)
+    reading = await engine.read("hazle un bizum a Marta")
 
     assert reading.outcome is PlanningOutcome.NEEDS_CLARIFICATION
     assert reading.request is None

@@ -1,0 +1,49 @@
+[project]
+name = "finguard-voice-gateway"
+version = "0.1.0"
+description = "Real-time voice channel adapter for FinGuard"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "pydantic-settings>=2.7",
+    "uvicorn[standard]>=0.34",
+]
+
+[project.optional-dependencies]
+local-stt = ["faster-whisper>=1.1,<2"]
+local-tts = ["piper-tts>=1.6,<2"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "httpx>=0.28", "ruff>=0.9", "mypy>=1.14", "numpy>=2", "websockets>=13"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finguard_voice_gateway"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "ASYNC"]
+ignore = ["N815"]  # Wire protocol fields intentionally use the ADR's camelCase names.
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+# The two speech providers are optional extras, so the environment that typechecks this
+# service does not have them installed — and the one that runs it may. `ignore_missing_imports`
+# is inert when the package is present, which a per-line `# type: ignore` is not: under
+# `strict` that ignore becomes an unused-ignore error the moment somebody installs the extra.
+[[tool.mypy.overrides]]
+module = ["faster_whisper.*", "piper.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

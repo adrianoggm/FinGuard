@@ -12,11 +12,12 @@ is camelCase and that a date range is spelled from/to.
 """
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 import httpx2 as httpx
 
+from finguard_orchestrator.domain.enums import CounterpartyType, ReceiptCategory, TransactionType
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
@@ -143,6 +144,27 @@ class HttpFinancialQuery:
             return False
 
 
+# Every field `RankedMovementRequest` declares, and the only ones sent. Written out rather than
+# derived, because deriving it would mean importing banking — the duplication between these two
+# services is deliberate and the drift is supposed to surface as a 422. What is new is that it now
+# surfaces in a test instead of in somebody's conversation.
+RANKED_FIELDS: Final = frozenset(
+    {
+        "accountId",
+        "direction",
+        "categories",
+        "excludedCategories",
+        "merchants",
+        "merchantTerms",
+        "excludedMerchants",
+        "dateRange",
+        "period",
+        "reportingTimezone",
+        "rank",
+    }
+)
+
+
 def ranked_body(
     ranking: TopMovements,
     *,
@@ -154,8 +176,23 @@ def ranked_body(
 
     It reuses `to_body` for the filters and the window — the same fields, resolved the same way,
     including the reference date that makes both services agree on which days a period covers — and
-    then drops the three the ranking endpoint does not take. Dropping is safer than rebuilding: a
-    second copy of the window logic is a second chance for the two services to disagree.
+    then keeps only what the ranking endpoint accepts. Reusing is still right: a second copy of the
+    window logic is a second chance for the two services to disagree.
+
+    **An allow-list, and the deny-list it replaced is why.** This used to pop three names with a
+    comment calling them "the three the ranking endpoint does not take". `to_body` then grew
+    `includeInternal` and `acrossAccounts`, nobody came back here, and banking — which forbids
+    extra inputs — started 422ing every ranking. The user saw "la consulta que he construido no es
+    válida" for "¿cuál es el gasto más caro que he realizado?", which is a question this service
+    added a whole endpoint to answer.
+
+    Nothing caught it: the corpus drives a stubbed bank, so the one thing being got wrong was the
+    real contract. That is item 5 of docs/next.md arriving as promised — "drift arrives as a 422 at
+    runtime, which is better than a wrong number and still an error found by a user."
+
+    A deny-list is wrong here for a structural reason rather than a stylistic one: it has to be
+    updated when *the other* function changes, and nothing links the two. An allow-list is wrong
+    only when this endpoint changes, which is the change a reader is already looking at.
     """
     body = to_body(
         FinancialPlan(
@@ -163,17 +200,18 @@ def ranked_body(
             period=ranking.period,
             date_range=ranking.date_range,
             categories=ranking.categories,
+            excluded_categories=ranking.excluded_categories,
             merchants=ranking.merchants,
+            merchant_terms=ranking.merchant_terms,
+            excluded_merchants=ranking.excluded_merchants,
         ),
         account_id=account_id,
         today=today,
         supporting_movements=0,
         reporting_timezone=reporting_timezone,
     )
-    for absent in ("groupBy", "metric", "supportingLimit"):
-        body.pop(absent, None)
     body["rank"] = ranking.rank
-    return body
+    return {name: value for name, value in body.items() if name in RANKED_FIELDS}
 
 
 def to_body(
@@ -191,11 +229,29 @@ def to_body(
         "groupBy": plan.group_by.value,
         "metric": plan.metric.value,
         "categories": list(plan.categories),
+        "excludedCategories": list(plan.excluded_categories),
         "merchants": list(plan.merchants),
+        "merchantTerms": list(plan.merchant_terms),
+        "excludedMerchants": list(plan.excluded_merchants),
+        "counterparties": list(plan.counterparties),
+        "excludedCounterparties": list(plan.excluded_counterparties),
+        "counterpartyTypes": [item.value for item in plan.counterparty_types],
+        "transactionTypes": [item.value for item in plan.transaction_types],
         "supportingLimit": supporting_movements,
         "includeInternal": plan.include_internal,
+        "internalOnly": plan.internal_only,
         "acrossAccounts": plan.across_accounts,
         **({"onlyAccountId": str(plan.only_account_id)} if plan.only_account_id else {}),
+        **(
+            {"onlyAccountIds": [str(account_id) for account_id in plan.only_account_ids]}
+            if plan.only_account_ids
+            else {}
+        ),
+        **(
+            {"transactionIds": [str(item) for item in plan.transaction_ids]}
+            if plan.transaction_ids
+            else {}
+        ),
     }
 
     if plan.period is not None:
@@ -244,6 +300,8 @@ def from_body(body: Any, *, account_id: UUID | None = None) -> QueryAnswer:
         currency=body["currency"],
         total_minor=body["totalMinor"],
         movement_count=body["movementCount"],
+        period_start=(date.fromisoformat(body["periodStart"]) if body.get("periodStart") else None),
+        period_end=date.fromisoformat(body["periodEnd"]) if body.get("periodEnd") else None,
         groups=tuple(
             Group(
                 key=group["key"],
@@ -268,6 +326,9 @@ def movement_from_body(movement: Any, *, currency: str | None = None) -> Movemen
     amount is denominated in. A supporting movement leaves it absent, because the aggregate beside
     it already says so once.
     """
+    transaction_type = movement.get("transactionType")
+    counterparty_type = movement.get("counterpartyType") or "UNKNOWN"
+    receipt_category = movement.get("receiptCategory")
     return Movement(
         occurred_at=_moment(movement["occurredAt"]),
         description=movement["description"],
@@ -280,6 +341,10 @@ def movement_from_body(movement: Any, *, currency: str | None = None) -> Movemen
         is_internal=bool(movement.get("isInternal", False)),
         category=movement.get("category"),
         currency=currency,
+        transaction_type=TransactionType(transaction_type) if transaction_type else None,
+        counterparty_name=movement.get("counterpartyName"),
+        counterparty_type=CounterpartyType(counterparty_type),
+        receipt_category=ReceiptCategory(receipt_category) if receipt_category else None,
     )
 
 

@@ -1,5 +1,10 @@
 # What comes next, and why in this order
 
+> **Actualización (2026-08):** el roadmap funcional y su matriz de verdad están en
+> [conversational-capabilities.md](conversational-capabilities.md). Este documento conserva el
+> orden histórico de endurecimiento de las fases 3 y 4; no debe utilizarse como lista actual de
+> capacidades conversacionales pendientes.
+
 Phase 3 is implemented and measured, and **not signed off**: two known risks let it
 answer confidently and wrongly, so `/v1/questions` ships disabled by default. This is the
 ordered list of what is still open, written down so the order survives the conversation
@@ -216,6 +221,26 @@ payment", so it is not an extra — it is that phase's first requirement, arrivi
 double entry, receipt, audit trail. Six of the fourteen demo steps, and the contacts table
 the demo needs to show a recipient.
 
+**Known follow-ups carried out of phase 5.** The end-to-end payment path is complete, but the
+branch deliberately records six non-blocking defects for the next iteration. They are tracked as
+GitHub issues so that “done” does not make them disappear:
+
+- [#6](https://github.com/adrianoggm/FinGuard/issues/6) — use the holder's timezone consistently
+  in card routes.
+- [#7](https://github.com/adrianoggm/FinGuard/issues/7) — apply movement classifications to card
+  charges.
+- [#8](https://github.com/adrianoggm/FinGuard/issues/8) — populate `system_category` in the
+  production classification path.
+- [#9](https://github.com/adrianoggm/FinGuard/issues/9) — make payment preparation idempotent
+  across client retries.
+- [#10](https://github.com/adrianoggm/FinGuard/issues/10) — resolve unrecognised month names
+  before the bare “hoy” fallback.
+- [#11](https://github.com/adrianoggm/FinGuard/issues/11) — prevent clarification loops without
+  an active draft workflow.
+
+The next branch should close these issues with regression coverage before treating the phase as
+fully hardened.
+
 **Done, end to end through both containers.** One chat box takes "hazle un bizum de 20 euros a
 Marta Solis" and answers *Vas a enviar 20,00€ a Marta Solis Vega (+34600333444). Te quedarían
 10.350,42€. ¿Confirmas?*; "sí" books a double-entry transaction and answers with the receipt;
@@ -256,17 +281,132 @@ the dataset never exercised the lifecycle it was supposed to represent. Every te
 the same. Both now create PENDING, add entries, and book, so 1,621 transactions pass through
 the state machine each time the database is built.
 
-## 9. Phase 4 — visualisation
+## 9. Phase 4 — visualisation and «Mis métricas»
 
-Vega-Lite specs, validated, in the chat. Two demo steps and a lot of visible impact for
-relatively little code, which is why it can wait until the parts other things depend on
-are done — and why it should not be dropped if time runs short.
+**This is what comes next.** The accepted design is
+[ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md).
 
-Note that demo step 7 is "the user asks for a weekly comparison". Comparison is a field
-in the vision's IR (§9.2) that the implementation never built, so today it reaches the
-model as an unsupported request and is refused three times in five. Either phase 4 brings
-comparisons or the demo script loses a step; deciding that late is how a script gets
-rewritten the night before.
+The entry that used to sit here said "Vega-Lite specs, validated, in the chat" and warned that
+comparisons were unbuilt and would cost the demo its weekly-comparison step. That warning expired
+in the best way: comparisons, ratios, cumulative totals, frequency, recurrence and group rankings
+are all **active** capabilities now — see
+[conversational-capabilities.md](conversational-capabilities.md). What is missing is not the
+arithmetic. It is that every one of those is read out as prose and a table, and the web client
+still draws CSS bars over a fixed endpoint because
+[Finances.tsx](../apps/web/src/Finances.tsx) declined to buy a charting library ahead of this
+decision.
+
+**The design turns on separating two things that were being confused.** A closed mapping from plan
+to chart shape — temporal means a line, category means bars, everything else means nothing — is
+trivially safe and is the wrong product: a holder wants a share, a stack, a top three, two periods
+on one axis. A model emitting a finished chart is expressive and adds a second place a figure can
+be invented, because `"value": 1840` inside a spec renders in the same typeface as a number the
+ledger produced.
+
+These are not the same risk. **What a chart looks like** is a product question; **where its numbers
+come from** is the only safety property. So:
+
+```text
+plan (verified) → typed result → ChartSpec: encodings that NAME result fields
+                                            ↓ presenter, in infrastructure
+                                          Vega-Lite bound to those rows at the edge
+```
+
+A spec with a numeric literal in a data position is rejected, and that one property is what pays
+for an open vocabulary. Marks, stacking, ordering, limits, multiple views, whatever the grammar
+expresses and the result can supply. The worst a badly chosen encoding can do is read poorly.
+
+Three sources decide the shape: a **derived default** with no model call so an ordinary turn is
+charted for free; the **holder's words** as an encoding patch the model emits and code merges —
+the same division of labour that fixed follow-ups in item 4; and the **screen**, where it is
+retitled and reshaped. Two of the three reformulations the old roadmap promised already work:
+«muéstralo por semanas» and «compara con junio» patch the plan, and the chart follows for nothing.
+
+**«Mis métricas» saves the structure, and the structure is the plan.** The orchestrator gets its
+first persistence — an `assistant` schema in the existing PostgreSQL, its own migrations, banking
+untouched:
+
+```text
+saved_metric(id, holder_id, title, plan_json, encoding_json, created_at)
+```
+
+No rows, no totals. A relative period stays relative, so a metric saved in August is October's
+month in October. Opening the screen re-executes each plan through the path a question takes.
+
+**The invariant the feature turns on: a stored plan is untrusted input.** `holder_id` from the
+credential on every read, row-level security on the table, and the plan's account scope re-checked
+at execution rather than trusted because it was checked when it was saved. Without that, "save a
+metric" is a route to reading rows a live question would refuse.
+
+Its gates, in the shape the rest of this file uses — zero for what code can guarantee:
+
+| property | bar |
+| --- | --- |
+| Specs with a numeric literal in a data position | **0** on the whole corpus |
+| Specs invalid against the schema, or naming an absent field | **0** |
+| Charts disagreeing with the figure in the answer text | **0**, the same reconciliation as evidence |
+| Answers with ≥2 rows that offer no chart | **0** — the bar against becoming restrictive again |
+| Charts of a single row | **0**, they restate the number above them |
+| Saved metrics readable by another holder | **0**, mirroring cross-account containment |
+
+Steps 1–4 of the delivery order in the ADR ship a chart in the chat without any of the persistence;
+if time runs short, that is the half to keep.
+
+## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
+
+The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate
+channel adapter rather than a second financial assistant:
+
+```text
+browser audio → voice-gateway → transcript → orchestrator → answer → voice-gateway → audio
+```
+
+`voice-gateway` owns streaming audio, session state, transcription, synthesis and cancellation. It
+may call only the orchestrator; it does not read banking, interpret a financial sentence or rebuild
+the conversation from prose. The orchestrator's typed `conversation` payload travels through the
+gateway unchanged.
+
+The vertical slice is complete:
+
+1. Versioned WebSocket events and a deterministic session state machine — done.
+2. `apps/voice-gateway` with fake STT, fake TTS and protocol tests — done.
+3. Authenticated HTTP/SSE connection to the existing orchestrator — done.
+4. Browser microphone capture and audio playback — done.
+5. Measured local STT and TTS adapters — done.
+6. Barge-in, cancellation fencing and backpressure — done.
+7. Synchronised text, audio and visual results — done.
+8. P50/P95 instrumentation and local end-to-end validation — done; see the
+   [voice latency report](../apps/voice-gateway/evaluation/RESULTS.md).
+
+The measured local path is real audio through Faster Whisper `small`, the orchestrator backed by
+Ollama `ministral-3:14b`, banking over the seeded PostgreSQL dataset and Piper
+`es_ES-davefx-medium` back to PCM audio. Fake providers remain the deterministic protocol suite;
+the real run separately rejects provider and banking error outcomes so transport completion cannot
+masquerade as a valid financial answer.
+
+**What closing the phase found.** The service existed and the repository did not know about it: no
+CI job, no compose service, no line in any `just` recipe. Wiring those three found three defects
+that had been invisible for exactly that reason — the gateway had never been through the formatter
+its own `pyproject.toml` declares (8 files), `mypy` failed on the optional `piper` import because
+only its sibling `faster_whisper` had been given a waiver, and
+`test_timeout_keeps_slot_until_native_finishes` failed on Windows every single time. That last one
+was worth the trip: the adapter was innocent — the semaphore stayed at zero and the engine was
+called once, exactly as the invariant claims — and the test had given one 10 ms deadline two
+contradictory jobs, so the second call lost a single-worker thread handoff and reported an early
+release that never happened. A test that fails on the platform this is developed on, in a suite
+nothing ran, is the argument for the CI entry rather than a footnote to it.
+
+One workstation constraint remains operational rather than architectural: CTranslate2 can see the
+RTX 3060, but CUDA inference on this host lacks `libcublas.so.12`, so the accepted measurement uses
+CPU `int8` STT. Browser-observed first-frame latency is recorded; proving the exact instant a sound
+device becomes audible remains outside the server-side runner.
+
+The first release may prepare a payment and speak its preview, but it cannot confirm one by voice.
+Recognition turning noise into “sí” is not evidence that a holder authorised moving money; the
+existing explicit control in the web client remains the confirmation boundary.
+
+The implementation did start with contract fixtures and fakes, so the protocol stayed independent
+of Faster Whisper and Piper and both remain replaceable outbound adapters.
 
 ---
 
@@ -376,11 +516,18 @@ Correct, agreed, and not load-bearing for a date:
 - **`PlanPayload` as a real union.** A period plus a lone `start` currently ignores the
   orphan instead of refusing it. Exactly one of period or both range ends, `n` only for
   the counted periods, no duplicate categories, question non-empty after `strip()`.
-- **No `assert` on production invariants.** Four of them, and they vanish under `-O`.
+- ~~**No `assert` on production invariants.**~~ Done for the four that mattered: the end of
+  the question pipeline, the retry path, continuing a payment, and a draft becoming a
+  request. Twenty-eight remain and stay — every one narrows a type immediately after the
+  branch that established it, so under `-O` they fail on the next line with a worse message
+  rather than continuing with a wrong value. The four that were converted are the ones
+  where `-O` changed the outcome instead of the error.
 - **Presenters per channel.** `answer_writer` mixes Spanish, currency formatting and how
   many groups to read out. §4.4 argues for the split; I would make it when the second
   consumer exists — voice in phase 6, A2A in phase 7 — because an abstraction shaped by
-  one case is a guess and by two is a design.
+  one case is a guess and by two is a design. **Voice arrived, so this now lands in item 9:**
+  the chart is the third consumer and the Vega-Lite emission is a presenter by construction,
+  because `ChartSpec` is not allowed to know a protocol.
 - **Reused HTTP clients** in the FastAPI lifespan, with separate connect/read/pool
   timeouts and a semaphore so two inferences never contend for one GPU. The benchmark
   proved that last one the hard way: two jobs sharing an 8 GB card timed out the models

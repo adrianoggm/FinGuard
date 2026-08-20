@@ -16,9 +16,16 @@
  * is a cost basis rather than a valuation.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-import { confirm, transferBetweenAccounts, type Answer, type Holding, type Summary } from "./api";
+import {
+  confirm,
+  newAttempt,
+  transferBetweenAccounts,
+  type Answer,
+  type Holding,
+  type Summary,
+} from "./api";
 import { accountGlyph, accountName, minorUnits, money } from "./format";
 
 const AWAITING = "AWAITING_CONFIRMATION";
@@ -32,6 +39,10 @@ export function Transfer({ summary, onPaid }: Props) {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // How many transfers this screen has completed. It exists only to renew the key below: once one
+  // is paid, the same account and the same amount is a *second* transfer, and replaying the first
+  // would hand back an intent the bank has already consumed.
+  const [completed, setCompleted] = useState(0);
 
   const holdings = summary?.holdings ?? [];
   // Where the money comes from is the account the credential names, so it cannot also be where it
@@ -39,12 +50,17 @@ export function Transfer({ summary, onPaid }: Props) {
   const source = holdings.find((holding) => holding.booked_minor === summary?.booked_minor);
   const destinations = holdings.filter((holding) => holding.account_id !== source?.account_id);
   const amount = minorUnits(typed);
+  // A name for this attempt: kept while the destination and the amount stand, so pressing again
+  // after a timeout is the same preview and not a second one, and renewed the moment either
+  // changes — the bank refuses a key reused for a different payment rather than answering with the
+  // earlier one. `useMemo` is exactly that rule: recompute when the inputs change, keep otherwise.
+  const attempt = useMemo(newAttempt, [target?.account_id, amount, completed]);
 
   async function prepare() {
     if (!target || amount === null || busy) return;
     setBusy(true);
     try {
-      setAnswer(await transferBetweenAccounts(target.account_id, amount, target.currency));
+      setAnswer(await transferBetweenAccounts(target.account_id, amount, target.currency, attempt));
       setError(null);
     } catch {
       setError("No he podido preparar el traspaso.");
@@ -59,6 +75,7 @@ export function Transfer({ summary, onPaid }: Props) {
     try {
       const settled = await confirm(answer.intent_id, reply);
       setAnswer(settled);
+      setCompleted((done) => done + 1);
       if (settled.outcome === PAID) onPaid();
     } catch {
       setError("No he podido confirmar el traspaso.");

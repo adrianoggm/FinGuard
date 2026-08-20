@@ -1,0 +1,265 @@
+# Corrections: the user says the last answer was wrong.
+#
+# Two shapes, and they need different handling. A bare rejection — "no es eso" — contains no
+# financial information at all, so sending it to a model asks one to derive a query from a
+# complaint. A correction that carries its replacement is one turn, and asking "¿qué debería
+# cambiar?" back would be asking about something the sentence just said.
+#
+# What every episode here checks is that the conversation *continues*. A correction is the moment a
+# user is most likely to give up, and answering one by starting over is the same as refusing it.
+
+episodes:
+  - name: a_bare_rejection_then_the_replacement
+    why: >
+      "No es eso" holds the validated plan so the next turn names one replacement instead of
+      restating every good field. Which is a claim about the query that runs, so the query is what
+      the turns state: the replacement must land and everything unnamed must survive.
+    metrics: [correction_recovery]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES], excluded_categories: [], excluded_merchants: []}
+      - say: no es eso
+        route: CLARIFY
+        awaiting: CORRECTION
+        no_model: true
+      - say: en gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      # The discriminating one. A sentence naming only a year determines no category at all, so
+      # TRANSPORT_FUEL here can only have come from the plan behind the correction.
+      - say: ¿y este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: vale gracias
+        route: COURTESY
+      - say: ¿cuánto tengo?
+        route: BALANCE
+
+  - name: a_correction_that_carries_its_replacement
+    why: >
+      "Me refería a gasolina" rejects and replaces at once, and it is one turn.
+    metrics: [correction_recovery]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [GROCERIES], excluded_categories: [], excluded_merchants: []}
+      - say: me refería a gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en restaurantes?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
+      - say: no me has entendido
+        route: CLARIFY
+        awaiting: CORRECTION
+      # A sentence naming only a year, so the category can only be the one that survived the
+      # rejection — and a correction that started over would show up here as an empty filter.
+      #
+      # The window is the explicit range rather than the name LAST_YEAR, because a complete calendar
+      # year is resolved to its dates: the same rule that makes "en 2025" a range. Written out here
+      # rather than smoothed over, since which of the two representations runs is exactly the kind
+      # of thing an episode asserting only `route` could never have told anybody.
+      - say: quería decir el año pasado
+        route: QUERY
+        ran: {window: '2025-01-01..2025-12-31', categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
+      - say: ahora sí
+        route: QUERY
+        ran: [{window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: ['ahora sí'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: ['ahora sí'], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MERCHANT, metric: SUM}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+
+  - name: three_corrections_in_a_row
+    why: >
+      Somebody who cannot make themselves understood. Each rejection has to hold what survived, and
+      the third must not be answered with the loop message — nothing was asked twice.
+    metrics: [correction_recovery, unnecessary_clarification]
+    turns:
+      - say: ¿cuánto gasté?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: no es eso
+        route: CLARIFY
+      - say: el mes pasado
+        route: QUERY
+        ran: {window: LAST_MONTH, excluded_categories: [], excluded_merchants: []}
+      - say: no era eso
+        route: CLARIFY
+      - say: en gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: te has equivocado
+        route: CLARIFY
+      # Replaced, not added. A third correction that accumulated filters would run both categories
+      # here and answer about neither of the two things the user asked for.
+      - say: en restaurantes
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [RESTAURANTS], excluded_categories: [], excluded_merchants: []}
+      - say: eso es
+        route: COURTESY
+
+  - name: a_correction_after_a_balance
+    why: >
+      A balance is not a plan, so there is nothing to patch. The rejection must not hold an empty
+      draft the next turn tries to complete.
+    metrics: [correction_recovery]
+    turns:
+      - say: ¿cuánto dinero tengo?
+        route: BALANCE
+      - say: no es eso
+        not_says: "¿Qué debería cambiar"
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: quería saber lo de la hucha
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        says: "5.485,50"
+      - say: eso es
+        route: COURTESY
+      - say: gracias
+        route: COURTESY
+
+  - name: a_rejection_before_there_is_anything_to_reject
+    why: >
+      Gated on a previous answer. On the very first turn there is no plan to patch, and pretending
+      there is would hold a draft nobody built.
+    metrics: [correction_recovery]
+    turns:
+      - say: no es eso
+        not_says: "¿Qué debería cambiar"
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: hola
+        route: COURTESY
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: no es eso
+        route: CLARIFY
+        awaiting: CORRECTION
+      - say: en gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: vale
+        route: COURTESY
+
+  - name: a_correction_in_the_middle_of_a_payment
+    why: >
+      A complaint with a payment order in it is a payment: the preview and the confirmation are
+      still in front of it, and the other reading drops a real payment into a path that cannot make
+      one.
+    metrics: [correction_recovery, unsafe_action]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: no me has entendido, hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+      - say: no era eso
+        route: CLARIFY
+      - say: en gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: vale
+        route: COURTESY
+
+  - name: a_correction_of_the_window_only
+    why: >
+      The fields the correction does not name stay authoritative. This is the merge, driven from a
+      correction rather than from a follow-up.
+    metrics: [correction_recovery, context_retention]
+    turns:
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: no, me refería a este año
+        route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en restaurantes?
+        route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: no es eso
+        route: CLARIFY
+      # A whole question after a rejection, naming no category. It used to keep restaurants from
+      # three turns earlier, so "¿cuánto gasté este año?" answered with restaurant spending — the
+      # narrower question, with a real figure on it. The merge this episode is about is the one
+      # above: a correction that names a window keeps the category it does not name.
+      - say: ¿cuánto gasté este año?
+        route: QUERY
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+
+  - name: a_correction_then_an_aside_then_the_replacement
+    why: >
+      The realistic middle: rejected, then a look at the category list, then the answer. The aside
+      must not close the question the rejection opened.
+    metrics: [correction_recovery, context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el súper?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['GROCERIES'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: no es eso
+        route: CLARIFY
+        awaiting: CORRECTION
+      - say: dime las categorías disponibles
+        route: CATEGORIES
+        no_model: true
+      - say: ¿quién eres?
+        route: IDENTITY
+        no_model: true
+      - say: en gasolina
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: perfecto
+        route: COURTESY
+
+  - name: a_correction_about_who_rather_than_what
+    why: >
+      "No, a la otra Marta" corrects a recipient rather than a filter, and it belongs to the payment
+      rather than to the planner.
+    metrics: [correction_recovery, unsafe_action]
+    turns:
+      - say: ¿a quién puedo pagar?
+        route: CONTACTS
+      - say: hazle un bizum de 20 € a Marta
+        route: PAYMENT
+        awaiting: RECIPIENT_CHOICE
+      - say: a Marta Ruiz Gomez
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: "no"
+        route: PAYMENT
+      - say: hazle un bizum de 20 € a Marta Solis Vega
+        route: PAYMENT
+        awaiting: CONFIRMATION
+      - say: sí
+        route: PAYMENT
+        says: Hecho
+
+  - name: a_rejection_of_a_refusal
+    why: >
+      Being told "no puedo" and complaining about it. The refusal is a decision this product made
+      and a complaint does not overturn it — but the conversation after it is ordinary.
+    metrics: [correction_recovery]
+    turns:
+      - say: ¿cuál es mi gasto medio en gasolina?
+        route: CLARIFY
+      - say: no me has entendido
+        not_says: medias
+        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+        route: QUERY
+        ran: {window: LAST_MONTH, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      # June, and still about petrol. It used to be July with no category at all: "el mes anterior"
+      # was a phrase only the year had a reader for, so the turn went to the planner, which
+      # answered the month it was already looking at and dropped the filter on the way.
+      - say: ¿y el mes anterior?
+        route: QUERY
+        no_model: true
+        ran: {window: '2026-06-01..2026-06-30', categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: []}
+      - say: vale
+        route: COURTESY
+      - say: gracias
+        route: COURTESY

@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Callable
 from datetime import date
 from typing import Annotated
@@ -7,6 +8,7 @@ from fastapi import Depends, Header, Request
 from finguard_orchestrator.application import AskFinancialQuestionHandler, CommandBus, QueryBus
 from finguard_orchestrator.domain.errors import FeatureDisabledError
 from finguard_orchestrator.domain.ports.caller_identity import CallerIdentityPort
+from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 
@@ -92,6 +94,17 @@ def payments_available(request: Request) -> bool:
     return enabled
 
 
+def turn_interpreter(request: Request) -> TurnInterpreterPort:
+    """Whatever reads a turn on this deployment.
+
+    Which one is a startup decision, and the point of the port is that the routes cannot tell:
+    deterministic today, the same rules with a model shadowing them when the shadow is switched on,
+    a model deciding once the numbers say so. One place chooses; nothing downstream changes.
+    """
+    interpreter: TurnInterpreterPort = request.app.state.turn_interpreter
+    return interpreter
+
+
 def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> date:
     """What day it is *for this holder*.
 
@@ -105,6 +118,28 @@ def reporting_today(who: Annotated[Caller, Depends(authenticated_caller)]) -> da
     zone travels to banking beside the date.
     """
     return who.today_in()
+
+
+def attempt_key(
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)] = None,
+) -> str:
+    """The caller's name for this attempt, or a fresh one.
+
+    Inventing it was the defect. A key minted per request differs between a request and its retry,
+    which is the same as having no key: a client that resent a request whose answer it never saw
+    got a second intent for one intention. No money moves — confirming is keyed on the intent — but
+    the holder is left holding two previews of a payment they meant once, and only one of them can
+    be the one they approve.
+
+    Optional, unlike banking's, which requires one: this is the surface a browser talks to and a
+    client written before the header existed has to keep working. What sending none costs is
+    exactly the orphan above. What sending the same one for a *different* payment costs is a 409
+    from banking, which is the guard that makes handing this over safe at all.
+
+    A dependency rather than a helper each route calls, so a route that forgets it forgets it
+    visibly, and so the header appears in the schema.
+    """
+    return idempotency_key or str(uuid.uuid4())
 
 
 def requires(scope: Scope) -> Callable[[Caller], Caller]:

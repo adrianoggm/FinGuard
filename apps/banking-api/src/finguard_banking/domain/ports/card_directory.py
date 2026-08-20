@@ -7,18 +7,32 @@ from finguard_banking.domain.models.card import Card, CardCharge
 
 @runtime_checkable
 class CardDirectoryPort(Protocol):
-    """The cards an account holds, each with what has been charged to it since a date.
+    """The cards an account holds, each with what has been charged to it in a window.
 
-    `since` and the zone are parameters rather than a clock this reads, for the same reason they are
-    everywhere else here: a read that asks the database what time it is cannot be replayed, and a
-    window is a date *and* a zone — a charge at 00:30 on the 1st belongs to a different month in
-    Madrid than in UTC.
+    `since`, `until` and the zone are parameters rather than a clock this reads, for the same reason
+    they are everywhere else here: a read that asks the database what time it is cannot be replayed,
+    and a window is a date *and* a zone — a charge at 00:30 on the 1st belongs to a different month
+    in Madrid than in UTC.
+
+    **Both ends, and `until` is inclusive.** There used to be only a lower one, so the window ran
+    from a date to whenever the reader happened to be: a charge booked with a date in the future
+    counted towards a total labelled as the last thirty days, and the card screen and the chat
+    disagreed about the same money — the query compiler has always bounded its ranges at both ends.
     """
 
-    async def all_of(self, account_id: UUID, *, since: date, timezone: str) -> tuple[Card, ...]: ...
+    async def all_of(
+        self, account_id: UUID, *, since: date, until: date, timezone: str
+    ) -> tuple[Card, ...]: ...
 
     async def charges_on(
-        self, account_id: UUID, card_id: UUID, *, since: date, timezone: str, limit: int
+        self,
+        account_id: UUID,
+        card_id: UUID,
+        *,
+        since: date,
+        until: date,
+        timezone: str,
+        limit: int,
     ) -> tuple[CardCharge, ...]: ...
 
     """What was bought with one card.

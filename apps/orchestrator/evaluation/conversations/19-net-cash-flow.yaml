@@ -1,0 +1,35 @@
+# Net cash flow is two grounded reads and subtraction in deterministic code. Income and expenses
+# stay visible, and a short period follow-up must patch both reads rather than inherit only one.
+
+episodes:
+  - name: net_cash_flow_survives_clarification_and_short_follow_up
+    why: >
+      The user can ask naturally for income minus expenses, supply a missing period, and move the
+      same compound question to another period without restating either side or invoking a model.
+    metrics: [wrong_tool, context_retention, unnecessary_clarification, unnecessary_model_call]
+    turns:
+      - say: Dime mis ingresos menos gastos
+        route: CLARIFY
+        no_model: true
+      - say: Este año
+        route: QUERY
+        no_model: true
+        says: flujo neto
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y el mes pasado?
+        route: QUERY
+        no_model: true
+        says: ingresaste
+        ran: [{window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Cuál fue el balance entre ingresos y gastos este mes?
+        route: QUERY
+        no_model: true
+        says: gastaste
+        ran: [{window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_MONTH, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: ¿Y cuál fue mi tasa de ahorro este año?
+        route: QUERY
+        no_model: true
+        says: tasa de ahorro
+        ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: THIS_YEAR, direction: INCOME, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}]
+      - say: gracias
+        route: COURTESY

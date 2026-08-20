@@ -24,11 +24,14 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, type Answer, type ConversationState } from "./api";
+import { ask, createVoiceClient, newAttempt, validateVoiceAnswer, type Answer, type ConversationState } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
+import { voiceEnabled } from "./api";
+import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
+  transcribing: "Transcribiendo lo que has dicho…",
   reading: "Leyendo lo que has pedido…",
   planning: "Pensando la consulta…",
   planned: "Consulta lista",
@@ -65,6 +68,85 @@ type Props = {
   onSettled: () => void;
 };
 
+type VoiceControlClient = Pick<VoiceClient, "start" | "stopCapture" | "cancel" | "close">;
+
+type VoiceUiUpdate = {
+  thread?: Thread;
+  stage?: string | null;
+  clearVoiceError?: boolean;
+};
+
+const ONE_SHOT_VOICE_EVENTS = new Set([
+  "transcript.final",
+  "assistant.text.final",
+  "turn.completed",
+  "response.cancelled",
+]);
+
+export function voiceEventIdentity(event: VoiceEvent): string {
+  const suffix = ONE_SHOT_VOICE_EVENTS.has(event.type)
+    ? event.turnId ?? "session"
+    : `${event.turnId ?? "session"}:${event.sequence}`;
+  return `${event.type}:${suffix}`;
+}
+
+/** Pure state transition shared by the callback and its same-tick event tests. */
+export function applyVoiceEvent(
+  current: Thread,
+  event: VoiceEvent,
+  onSettled: () => void,
+): VoiceUiUpdate {
+  if (event.type === "assistant.stage") {
+    return { stage: STAGES[String(event.stage)] ?? null };
+  }
+  if (event.type === "transcript.final") {
+    const text = typeof event.text === "string" ? event.text : "";
+    return text
+      ? { thread: { ...current, turns: [...current.turns, { who: "user", text }] }, clearVoiceError: true }
+      : { clearVoiceError: true };
+  }
+  if (event.type === "assistant.text.final") {
+    const answer = validateVoiceAnswer(event.answer);
+    const turns = [...current.turns, { who: "assistant" as const, answer }];
+    return { thread: settled(current, turns, answer, onSettled), stage: null };
+  }
+  if (event.type === "turn.completed") {
+    const conversation = event.conversation;
+    if (
+      conversation !== null &&
+      (typeof conversation !== "object" || Array.isArray(conversation))
+    ) {
+      throw new Error("Conversación de voz inválida.");
+    }
+    return conversation === null
+      ? { stage: null }
+      : { thread: { ...current, conversation: conversation as ConversationState }, stage: null };
+  }
+  return {};
+}
+
+/** Apply the action represented by the voice button to the current session. */
+export async function voiceButtonAction(
+  status: VoiceStatus,
+  client: VoiceControlClient,
+): Promise<"stopped" | "barge-in" | "cancelled"> {
+  if (status === "listening") {
+    client.stopCapture();
+    return "stopped";
+  }
+  if (status === "processing" || status === "speaking") {
+    // VoiceClient.start() reuses the open session and performs the fencing/cancellation handshake.
+    await client.start();
+    return "barge-in";
+  }
+  if (status === "connecting") {
+    client.cancel();
+    await client.close();
+    return "cancelled";
+  }
+  return "cancelled";
+}
+
 export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const [draft, setDraft] = useState("");
   const [stage, setStage] = useState<string | null>(null);
@@ -72,6 +154,61 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const choices = recipientChoices(thread);
   const replies = quickReplies(thread);
+  // The sentence being attempted, and the name this attempt goes by. A sentence can be a payment —
+  // "hazle un bizum de 20 a Marta" prepares one — so retyping it after a request that never came
+  // back must reach the same intent rather than making a second. Cleared once the turn is answered,
+  // because saying the same thing again after an answer is a second payment and means to be.
+  const attempt = useRef<{ text: string; key: string } | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voice = useRef<VoiceClient | null>(null);
+  const threadRef = useRef(thread);
+  const seenVoiceEvents = useRef(new Set<string>());
+  threadRef.current = thread;
+
+  useEffect(() => () => { void voice.current?.close(); }, []);
+
+  async function toggleVoice() {
+    if (voice.current && voiceStatus !== "idle" && voiceStatus !== "error") {
+      const action = await voiceButtonAction(voiceStatus, voice.current);
+      if (action === "cancelled") {
+        voice.current = null;
+        setVoiceStatus("idle");
+      }
+      return;
+    }
+    setVoiceError(null);
+    const client = createVoiceClient({
+      onStatus: (status, error) => { setVoiceStatus(status); if (error) setVoiceError(error); },
+      onFinished: () => { voice.current = null; },
+      onEvent: (event: VoiceEvent) => {
+        const key = voiceEventIdentity(event);
+        if (seenVoiceEvents.current.has(key)) return;
+        seenVoiceEvents.current.add(key);
+        try {
+          const update = applyVoiceEvent(threadRef.current, event, onSettled);
+          if (update.clearVoiceError) setVoiceError(null);
+          if ("stage" in update) setStage(update.stage ?? null);
+          if (update.thread) {
+            // Update synchronously: WebSocket can deliver transcript and answer before
+            // React renders the first onThread call.
+            threadRef.current = update.thread;
+            onThread(update.thread);
+          }
+        } catch (error) {
+          setVoiceError(error instanceof Error ? error.message : "Respuesta de voz inválida.");
+        }
+      },
+    });
+    if (!client) return;
+    voice.current = client;
+    try { await client.start(); } catch { voice.current = null; }
+  }
+
+  function keyFor(text: string): string {
+    if (attempt.current?.text !== text) attempt.current = { text, key: newAttempt() };
+    return attempt.current.key;
+  }
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
@@ -100,10 +237,11 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
       // idle conversation (paid, cancelled or refused). Calling the bare payment endpoint here
       // returned no conversation state, so `settled` correctly retained the old preview and left
       // the buttons pointing at an intent the bank had already consumed.
-      for await (const step of ask(text, before.conversation)) {
+      for await (const step of ask(text, before.conversation, keyFor(text))) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {
           turns.push({ who: "assistant", answer: step });
+          attempt.current = null;
           onThread(settled(before, [...turns], step, onSettled));
         }
       }
@@ -127,6 +265,13 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
           ✕
         </button>
       </header>
+      {voiceEnabled && <div className="voice-controls" aria-label="Control de voz">
+        <button type="button" className="voice-button" onClick={() => void toggleVoice()} aria-pressed={voiceStatus !== "idle" && voiceStatus !== "error"} aria-label={voiceStatus === "processing" || voiceStatus === "speaking" ? "Interrumpir y hablar" : undefined}>
+          {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "🎙️ Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "⏹ Detener voz"}
+        </button>
+        <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
+        {voiceError && <small className="voice-error">{voiceError}</small>}
+      </div>}
 
       <div className="turns">
         {thread.turns.length === 0 && <Suggestions onPick={send} />}
@@ -308,9 +453,13 @@ export function PaymentPanel({ state }: { state: ConversationState | null | unde
 
   if (state.workflow === "PAYMENT_CONFIRMATION" && state.amount_minor !== null) {
     const transfer = state.rail === "TRANSFER";
+    // Three rails, three labels. The chat gained the ability to confirm a move between the holder's
+    // own accounts, and this said "Bizum a Fondo indexado" over it — the sentence above the panel
+    // was right and the panel called it a payment to somebody else. Reported.
+    const label = transfer ? "Transferencia a" : state.rail === "INTERNAL" ? "Traspaso a" : "Bizum a";
     return (
       <dl className="preview-detail">
-        <dt>{transfer ? "Transferencia a" : "Bizum a"}</dt>
+        <dt>{label}</dt>
         <dd>{state.recipient ?? "—"}</dd>
         {transfer && state.recipient_iban && (
           <>
@@ -350,10 +499,33 @@ function Bubble({ turn }: { turn: Turn }) {
   if (turn.who === "error") return <p className="bubble failed">{turn.text}</p>;
 
   const { answer } = turn;
+  const parts = answer.parts ?? [];
   return (
     <div className={answer.outcome === AWAITING ? "bubble theirs preview" : "bubble theirs"}>
-      <p>{answer.text}</p>
+      {parts.length > 0 ? (
+        <>
+          <p>He resuelto {parts.length === 2 ? "las dos consultas" : `${parts.length} consultas`}:</p>
+          {parts.map((part, index) => (
+            <section className="compound-part" key={index}>
+              <p>{part.text}</p>
+              <AnswerEvidence answer={part} />
+            </section>
+          ))}
+        </>
+      ) : (
+        <>
+          <p>{answer.text}</p>
+          <AnswerEvidence answer={answer} />
+        </>
+      )}
       <PaymentPanel state={answer.conversation} />
+    </div>
+  );
+}
+
+function AnswerEvidence({ answer }: { answer: Answer }) {
+  return (
+    <>
       {answer.plan && (
         <details>
           <summary>Ver la consulta</summary>
@@ -400,12 +572,12 @@ function Bubble({ turn }: { turn: Turn }) {
           {answer.groups.map((group) => (
             <li key={group.key}>
               <span>{group.key}</span>
-              <span>{money(group.total_minor, answer.currency ?? "EUR")}</span>
+              <span>{groupFigure(answer, group)}</span>
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </>
   );
 }
 
@@ -420,6 +592,30 @@ function Bubble({ turn }: { turn: Turn }) {
 function isBreakdown(answer: Answer): boolean {
   if (answer.groups.length === 0) return false;
   return !(answer.groups.length === 1 && answer.groups[0]?.key === "total");
+}
+
+/** Render each row in the same unit the question asked for. */
+function groupFigure(answer: Answer, group: Answer["groups"][number]): string {
+  const metric = answer.conversation?.last_plan?.metric;
+  if (metric === "COUNT") {
+    const noun = group.movement_count === 1 ? "movimiento" : "movimientos";
+    return `${group.movement_count} ${noun}`;
+  }
+  if (metric === "AVERAGE") {
+    const divisor = group.movement_count;
+    const average = divisor > 0 ? roundedMean(group.total_minor, divisor) : 0;
+    return `media ${money(average, answer.currency ?? "EUR")} (${group.movement_count})`;
+  }
+  return money(group.total_minor, answer.currency ?? "EUR");
+}
+
+/** Integer cents, rounded half away from zero like the orchestrator. */
+function roundedMean(total: number, count: number): number {
+  const absolute = Math.abs(total);
+  const units = Math.floor(absolute / count);
+  const remainder = absolute % count;
+  const rounded = units + (remainder * 2 >= count ? 1 : 0);
+  return total < 0 ? -rounded : rounded;
 }
 
 function message(failure: unknown): string {

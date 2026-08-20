@@ -31,3 +31,62 @@ def folded(text: str) -> str:
     """
     stripped = unicodedata.normalize("NFD", text.casefold())
     return "".join(character for character in stripped if not unicodedata.combining(character))
+
+
+def transposed(word: str) -> tuple[str, ...]:
+    """`word`, plus every swap of two of its neighbouring letters.
+
+    The slip a keyboard makes — two fingers arriving in the wrong order — and the one misspelling
+    Spanish almost never turns into a different word. That is what makes it safe where a whole edit
+    is not: "cunato" and "cuanot" are nothing at all, while one *substitution* from "cuanto" is
+    "cuando", which is a different question, and one from "hucha" is "mucha", which is in every
+    other sentence.
+
+    Derived rather than enumerated, for the reason every list in this service ends up derived: the
+    spelling somebody misses is the one nobody thought to write down. "Cunato tengo" was answered
+    by the financial planner for as long as the balance pattern spelled out `cu[áa]nto` — a
+    question this service holds the answer to, sent to a model because two letters arrived swapped.
+
+    For closed vocabularies and short words. The caller joins these into an alternation, so a word
+    of n letters costs n patterns.
+    """
+    return (word, *(word[:i] + word[i + 1] + word[i] + word[i + 2 :] for i in range(len(word) - 1)))
+
+
+def one_edit_apart(typed: str, word: str) -> bool:
+    """Whether `typed` is `word` with at most one letter wrong.
+
+    Substitution, insertion, deletion or a transposition of two neighbours — the four things a
+    thumb does on a phone. Damerau-Levenshtein bounded at one, which needs no table: the strings
+    differ in length by at most one, so a single scan to the first difference and a comparison of
+    the remainders decides it.
+
+    **For closed lexicons only.** Written for the words that route money: "bizum" is a word most
+    people have never had to type, and it arrived as bixum, bisum and vizum in three different
+    reported conversations. Enumerating the misspellings is enumerating an open set — every one that
+    was missed made the whole payment path silently unreachable, which is the worst shape a defect
+    can have. One edit against a three-word lexicon closes the class instead of the instance.
+
+    Length four is the floor because below it a single edit reaches too far: at three letters almost
+    everything is one edit from everything, and the caller's vocabulary would start matching prose.
+    """
+    if len(word) < 4:
+        return typed == word
+    if typed == word:
+        return True
+    if abs(len(typed) - len(word)) > 1:
+        return False
+    ahead = next((i for i, (a, b) in enumerate(zip(typed, word, strict=False)) if a != b), None)
+    if ahead is None:
+        # One is a prefix of the other, and their lengths differ by one at most.
+        return True
+    if len(typed) == len(word):
+        # A substitution, or two neighbours swapped.
+        rest = slice(ahead + 1, None)
+        swapped = (
+            typed[ahead] == word[ahead + 1 : ahead + 2]
+            and typed[ahead + 1 : ahead + 2] == word[ahead : ahead + 1]
+        )
+        return typed[rest] == word[rest] or (swapped and typed[ahead + 2 :] == word[ahead + 2 :])
+    longer, shorter = (typed, word) if len(typed) > len(word) else (word, typed)
+    return longer[ahead + 1 :] == shorter[ahead:]

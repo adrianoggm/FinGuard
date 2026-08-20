@@ -1,0 +1,22 @@
+# Real speech both ways, layered over compose.yaml:
+#   docker compose -f compose.yaml -f compose.voice-real.yaml --profile voice up -d --wait --build
+#
+# A separate file rather than `NAME=value docker compose ...` in a recipe: that is Bourne syntax and
+# `just` hands recipes to PowerShell on the machine this is developed on, where it is a parse error.
+# The build args and the modes belong together anyway — a local mode without its extra fails at
+# startup, which is the pair this file keeps.
+services:
+  voice-gateway:
+    build:
+      args:
+        INSTALL_LOCAL_STT: "1"
+        INSTALL_LOCAL_TTS: "1"
+    environment:
+      VOICE_GATEWAY_STT_MODE: local
+      VOICE_GATEWAY_TTS_MODE: local
+      # `medium`, not the `small` of the phase-6 measurement. Measured on the same sentence: small
+      # heard "hazle un bizum a Aitor de 23 euros" as "hazle un bizuma y torde 23 euros" and the
+      # assistant could only ask who; medium got every word including the name. It costs about
+      # three seconds of CPU for three seconds of speech, against under one for small — the whole
+      # turn is 3.4 s p50 here because a payment is answered by rules and never reaches a model.
+      VOICE_GATEWAY_STT_MODEL: medium

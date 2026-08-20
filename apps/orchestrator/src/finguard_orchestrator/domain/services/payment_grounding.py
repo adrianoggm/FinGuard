@@ -21,6 +21,7 @@ import unicodedata
 from collections.abc import Callable
 from typing import Final
 
+from finguard_orchestrator.domain.services import payment_words
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
 
@@ -48,7 +49,11 @@ def _minor_units(written: str) -> int | None:
 
 def _amounts_in(sentence: str) -> set[int]:
     found = (_minor_units(match.group()) for match in _NUMBER.finditer(sentence))
-    return {amount for amount in found if amount is not None}
+    amounts = {amount for amount in found if amount is not None}
+    written = payment_words.amount_in(sentence)
+    if written is not None:
+        amounts.add(written)
+    return amounts
 
 
 def _folded(text: str) -> str:
@@ -60,12 +65,7 @@ def _folded(text: str) -> str:
 
 
 def _amount_invented(sentence: str, request: PaymentRequest) -> bool:
-    """The amount has to be written in the sentence, in figures.
-
-    A written-out amount ("veinte euros") is therefore not grounded, and the outcome is a question
-    rather than a figure. That is the right side to fail on: a model reading "veinte" as 200 would
-    be presenting a payment nobody asked for, and asking costs one turn.
-    """
+    """The amount has to be independently readable from the sentence."""
     return request.amount_minor not in _amounts_in(sentence)
 
 
@@ -86,9 +86,20 @@ def _currency_unsupported(sentence: str, request: PaymentRequest) -> bool:
     return request.currency != SUPPORTED_CURRENCY
 
 
+def _concept_invented(sentence: str, request: PaymentRequest) -> bool:
+    """A model-provided note must occur in the user's own text.
+
+    Exact explicit-concept parsing happens in the handler, where the contact directory can
+    disambiguate ``a Marta`` from ``a Malaga``. This guard owns the cheaper invariant: a note that
+    does not occur anywhere in the instruction cannot be allowed onto the confirmation preview.
+    """
+    return request.concept is not None and _folded(request.concept) not in _folded(sentence)
+
+
 _RULES: Final[tuple[tuple[str, Callable[[str, PaymentRequest], bool]], ...]] = (
     ("AMOUNT_INVENTED", _amount_invented),
     ("RECIPIENT_INVENTED", _recipient_invented),
+    ("CONCEPT_INVENTED", _concept_invented),
     ("CURRENCY_UNSUPPORTED", _currency_unsupported),
 )
 

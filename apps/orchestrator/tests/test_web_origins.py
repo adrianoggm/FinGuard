@@ -71,6 +71,33 @@ def test_the_credential_header_is_allowed_through() -> None:
     assert "authorization" in response.headers["access-control-allow-headers"].lower()
 
 
+@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream", "/v1/payments"])
+def test_every_header_the_client_sends_survives_a_preflight(route: str) -> None:
+    """The failure this catches took the whole chat down while every route answered `curl` fine.
+
+    `Idempotency-Key` was added to the client so a resent payment is one intent instead of two. It
+    was not added here — and a header the routes read but CORS does not list is not one the browser
+    quietly drops: the preflight is refused and the request is never sent at all. Every message came
+    back "no puedo hablar con el orquestador" from a service that was up and healthy.
+
+    Parametrised over the routes the browser posts to, because the chat prepares payments too: a
+    header allowed on one and not the others is the same outage on a narrower path.
+    """
+    response = client.options(
+        route,
+        headers={
+            "Origin": ALLOWED,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
+        },
+    )
+
+    assert response.status_code == 200, "the browser would never send the request"
+    allowed = response.headers["access-control-allow-headers"].lower()
+    for sent in ("authorization", "content-type", "idempotency-key"):
+        assert sent in allowed
+
+
 def test_an_answer_carries_the_origin_back() -> None:
     """The preflight is not enough: the actual response needs the header too, or the browser
     discards a 200 that arrived perfectly well."""

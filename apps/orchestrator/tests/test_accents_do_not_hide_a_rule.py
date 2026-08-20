@@ -21,7 +21,12 @@ private copy in each) and neither of the two rule sets used it.
 import pytest
 
 from finguard_orchestrator.domain.enums import Direction, Metric, Period
-from finguard_orchestrator.domain.services import capability_guard, plan_verifier, spanish
+from finguard_orchestrator.domain.services import (
+    capability_guard,
+    payment_router,
+    plan_verifier,
+    spanish,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
 SPENT_ON_GROCERIES = FinancialPlan(
@@ -74,6 +79,11 @@ def test_every_family_is_caught_with_or_without_accents(sentence: str, family: s
     assert capability_guard.unsupported_reason(sentence) == family
 
 
+@pytest.mark.parametrize("sentence", ["si no contamos el alquiler", "quitando el alquiler"])
+def test_a_precise_category_exclusion_is_no_longer_refused(sentence: str) -> None:
+    assert capability_guard.unsupported_reason(sentence) is None
+
+
 @pytest.mark.parametrize(
     "sentence",
     [
@@ -87,3 +97,61 @@ def test_every_family_is_caught_with_or_without_accents(sentence: str, family: s
 )
 def test_folding_does_not_widen_a_rule_into_a_false_refusal(sentence: str) -> None:
     assert capability_guard.unsupported_reason(sentence) is None
+
+
+def test_account_exclusion_is_not_mistaken_for_an_unsupported_category_exclusion() -> None:
+    assert capability_guard.unsupported_reason("todas menos la cuenta del fondo") is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # What the habit cost, in the rule set that decides whether to start a payment. `envies`
+        # was the one form nobody spelled twice, so "que le envíes 20 euros" fell through to
+        # `_ASKING` — the "que" it starts with — and was a question for as long as it existed.
+        "que le envies 20 euros a Marta",
+        "que le envíes 20 euros a Marta",
+        "mandale 20 euros a Marta",
+        "mándale 20 euros a Marta",
+        "pagale 20 euros a Marta",
+        "págale 20 euros a Marta",
+        "transfierele 20 euros a Marta",
+        "transfiérele 20 euros a Marta",
+        "devuelvele los 20 euros a Marta",
+        "devuélvele los 20 euros a Marta",
+    ],
+)
+def test_an_order_to_pay_survives_the_accents_it_was_typed_with(sentence: str) -> None:
+    """Both spellings of every order form, for the reason the family test above spells them out:
+    a pattern still carrying an accent class passes one of the two and fails the other."""
+    assert payment_router.is_payment(sentence) is True
+    assert payment_router.is_explicit_order(sentence) is True
+
+
+def test_a_transposition_is_derived_rather_than_remembered() -> None:
+    """The other half of the same idea, for the slip that is not an accent.
+
+    A pattern that spells its misspellings out is a list somebody has to extend, and the spelling
+    they miss is the one nobody thought of: the balance question carried `tiengo`, `tieno` and
+    `tngo` for the verb and nothing at all for "cuánto", so "cunato tengo" was planned as a query.
+    """
+    assert spanish.transposed("cuanto") == (
+        "cuanto",
+        "ucanto",
+        "caunto",
+        "cunato",
+        "cuatno",
+        "cuanot",
+    )
+
+
+def test_a_transposition_never_reaches_the_word_next_door() -> None:
+    """Why this and not `one_edit_apart`, which the closed lexicons already use.
+
+    One edit from "cuanto" is "cuando" and one from "hucha" is "mucha" — a different question and
+    a word in every other sentence. Swapping two neighbours reaches neither, which is what makes it
+    safe to apply to a question word rather than only to a lexicon of three.
+    """
+    assert "cuando" not in spanish.transposed("cuanto")
+    assert "mucha" not in spanish.transposed("hucha")
+    assert spanish.one_edit_apart("cuando", "cuanto") is True

@@ -13,14 +13,26 @@ The text is Spanish because it is product data, which is the one exception rule 
 makes.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Final
 
-from finguard_orchestrator.domain.enums import Direction, Metric
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    ReceiptCategory,
+    TransactionType,
+)
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
+from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.services import category_words
+from finguard_orchestrator.domain.services import (
+    category_words,
+    frequency_analyzer,
+    recurrence_analyzer,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
@@ -35,8 +47,26 @@ _WINDOWS = {
     "LAST_WEEK": "la semana pasada",
     "THIS_MONTH": "en lo que va de mes",
     "LAST_MONTH": "el mes pasado",
+    "THIS_QUARTER": "en lo que va de trimestre",
+    "LAST_QUARTER": "el trimestre pasado",
+    "THIS_SEMESTER": "en lo que va de semestre",
+    "LAST_SEMESTER": "el semestre pasado",
+    "THIS_FORTNIGHT": "en lo que va de quincena",
+    "LAST_FORTNIGHT": "la quincena pasada",
+    "THIS_WEEKEND": "este fin de semana",
+    "LAST_WEEKEND": "el fin de semana pasado",
     "THIS_YEAR": "en lo que va de año",
 }
+
+_WEEKDAYS: Final = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábados",
+    "domingos",
+)
 
 
 def money(amount_minor: int, currency: str | None) -> str:
@@ -65,7 +95,12 @@ def money(amount_minor: int, currency: str | None) -> str:
     return f"{sign}{grouped},{cents:02d}{symbol}"
 
 
-def balance(summary: AccountSummary, named: tuple[str, ...] = ()) -> str:
+def balance(
+    summary: AccountSummary,
+    named: tuple[str, ...] = (),
+    *,
+    selected: tuple[Holding, ...] | None = None,
+) -> str:
     """How much money there is, in words.
 
     `named` is what `account_words` read out of the sentence — the kinds of account it mentioned,
@@ -75,13 +110,22 @@ def balance(summary: AccountSummary, named: tuple[str, ...] = ()) -> str:
         # One account, or a banking that has not been deployed yet. The sentence this service
         # always gave, unchanged, rather than a degraded version of the new one.
         return _one_account(summary)
-    wanted = [h for h in summary.holdings if h.kind in named] if named else list(summary.holdings)
-    if named and not wanted:
+    wanted = (
+        list(selected)
+        if selected is not None
+        else ([h for h in summary.holdings if h.kind in named] if named else list(summary.holdings))
+    )
+    if (named or selected is not None) and not wanted:
         return _no_such_account(summary)
-    return _across(wanted, everything=not named)
+    return _across(wanted, everything=not named and selected is None)
 
 
-def leading_figure(summary: AccountSummary, named: tuple[str, ...] = ()) -> int | None:
+def leading_figure(
+    summary: AccountSummary,
+    named: tuple[str, ...] = (),
+    *,
+    selected: tuple[Holding, ...] | None = None,
+) -> int | None:
     """The number `balance()` leads with, as data beside the prose.
 
     Its own function and not the handler's own arithmetic, because the two would then be two
@@ -95,6 +139,8 @@ def leading_figure(summary: AccountSummary, named: tuple[str, ...] = ()) -> int 
     """
     if not summary.holdings:
         return summary.available_minor
+    if selected is not None:
+        return _total_of(list(selected)) if selected else None
     if not named:
         return _total_of(list(summary.holdings))
     wanted = [holding for holding in summary.holdings if holding.kind in named]
@@ -153,7 +199,7 @@ def _with_amounts(holdings: list[Holding]) -> str:
     """ "2.270,42 € en Cuenta corriente y 5.485,50 € en Hucha", through the same enumeration the
     rest of this module uses — Spanish joins the last item with "y", and a comma there reads as
     one more item."""
-    return _listed(tuple(f"{money(h.booked_minor, h.currency)} en {_name_of(h)}" for h in holdings))
+    return listed(tuple(f"{money(h.booked_minor, h.currency)} en {_name_of(h)}" for h in holdings))
 
 
 def _across(holdings: list[Holding], *, everything: bool) -> str:
@@ -203,14 +249,16 @@ def _invested_clause(invested: list[Holding]) -> str:
 def which_account(candidates: list[Holding]) -> str:
     """Two accounts of one kind, so the word did not pick one.
 
-    The only question this service asks about an account, and the reason is that the alternatives
-    are both worse. A breakdown answers an ambiguous *question* well — it shows every account and
-    lets the reader take what they meant — but this is an instruction, and there is nothing to show
-    somebody who asked to move money: either it moves or it does not. Picking the first would move
-    money into an account they did not name.
+    It asks for the missing word and no more, which it can only do because the turn leaves a
+    `TransferInProgress` behind. For one release it asked for the whole instruction again: the path
+    held no state, so a reply naming only the account arrived with the amount already gone and "¿a
+    cuál lo muevo?" answered with "a Hucha" reached the financial planner, which asked which period.
+
+    The names are listed because they are what the reply has to contain, and a holder with two
+    piggy banks does not necessarily remember what they called them.
     """
-    names = _listed(tuple(_name_of(holding) for holding in candidates))
-    return f"Tienes más de una cuenta de ese tipo: {names}. ¿A cuál lo muevo?"
+    names = listed(tuple(_name_of(holding) for holding in candidates))
+    return f"¿A cuál de tus cuentas lo muevo? Tienes {names}."
 
 
 def how_much_to_move(target: Holding) -> str:
@@ -237,6 +285,10 @@ def no_such_account_to_move_to(summary: AccountSummary) -> str:
     return f"No tienes ninguna cuenta de ese tipo. Tienes: {have}."
 
 
+def unknown_named_account_to_move_to(candidates: list[Holding]) -> str:
+    return f"No encuentro una cuenta con ese nombre. {which_account(candidates)}"
+
+
 def _no_such_account(summary: AccountSummary) -> str:
     """A kind the holder does not have. Answering with the total instead would be answering a
     question they did not ask, and they would have no way to tell."""
@@ -258,6 +310,56 @@ def contacts(found: tuple[Contact, ...]) -> str:
     return f"Tienes {plural} para enviar dinero: {names}."
 
 
+def cards(wallet: Wallet) -> str:
+    """The wallet, and what each card has taken since the window opened.
+
+    Both questions from the reported conversation are answered by one sentence, because both were
+    already one query: "¿qué tarjetas tengo de crédito?" and "¿cuánto he gastado con cada tarjeta
+    este mes?" differ only in which column of `Card` the reader cares about, and the row carries
+    both. The first used to come back "eso no puedo calcularlo todavía" and the second came back
+    with the account total, 868,97 €, wearing the label of an answer about cards.
+
+    The amount is included unconditionally rather than only when asked. A card with a figure beside
+    it answers the second question for somebody who asked the first, and the alternative is two
+    almost-identical sentences and a rule deciding between them — which is the kind of rule that
+    ends up answering the wrong one.
+
+    No currency symbol, and that is this module's own rule rather than an oversight: banking's card
+    contract does not carry one — `CardResponse` has eleven fields and none of them is a currency —
+    so there is nothing to print. `money` prints a bare figure when the currency is unknown for the
+    reason written there: "82,40" is a number somebody asks about and "82,40 €" on a dollar account
+    is a number they believe.
+
+    ponytail: the gap is banking's, and the ranked adapter already solved the same one by attaching
+    the answer's currency to each row. The upgrade is for the card views to carry it, not for this
+    to assume euros.
+
+    Kind rather than brand, because "de crédito" is what people filter by and Visa is not an
+    answer to it. The last four digits are what tells two cards of the same kind apart, which is
+    the same job the phone number does for two contacts named Marta.
+    """
+    if not wallet.cards:
+        return "No tienes tarjetas asociadas a esta cuenta."
+    lines = [
+        f"· {card.display_name} ({_KINDS.get(card.kind, card.kind.lower())} ··{card.last_four}): "
+        f"{money(card.spent_minor, None)} en {card.charge_count} "
+        f"{'cargo' if card.charge_count == 1 else 'cargos'}"
+        for card in wallet.cards
+    ]
+    plural = "estas tarjetas" if len(wallet.cards) > 1 else "esta tarjeta"
+    # Through this module's own month table rather than `strftime`. `%-d` is a GNU extension that
+    # does not exist on Windows, and `%B` answers in whatever locale the process happens to have —
+    # two ways for a date to come out wrong that a nine-element tuple does not have.
+    since = f"{wallet.since.day} de {_MONTHS[wallet.since.month - 1]}"
+    opening = f"Tienes {plural}, con lo gastado desde el {since}:"
+    return "\n".join([opening, *lines])
+
+
+# The card kinds, in the words a person uses to ask for one. `kind` is the ledger's vocabulary and
+# "DEBIT" is not something anybody types.
+_KINDS: Final[dict[str, str]] = {"DEBIT": "débito", "CREDIT": "crédito", "PREPAID": "prepago"}
+
+
 def filter_of(plan: FinancialPlan | TopMovements) -> str:
     """What the figure is a figure *of*, in words, or "" when the question named no filter.
 
@@ -274,18 +376,62 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     "supermercado" is what the user said. A category nobody wrote words for falls back to its
     identifier — worse than a name, much better than an invented one.
     """
-    if plan.merchants:
-        return f" en {_listed(plan.merchants)}"
-    if plan.categories:
-        return f" en {_listed(tuple(category_words.name_of(c) for c in plan.categories))}"
-    return ""
+    transaction_types = getattr(plan, "transaction_types", ())
+    direct_debits_only = transaction_types == (TransactionType.DIRECT_DEBIT,)
+    counterparties = getattr(plan, "counterparties", ())
+    excluded_counterparties = getattr(plan, "excluded_counterparties", ())
+    if counterparties:
+        included = f" con {listed(counterparties)}"
+    elif plan.merchants:
+        included = f" en {listed(plan.merchants)}"
+    elif isinstance(plan, FinancialPlan) and plan.merchant_terms:
+        included = f" en comercios cuyo nombre contiene {listed(plan.merchant_terms)}"
+    elif plan.categories:
+        included = f" en {listed(tuple(category_words.name_of(c) for c in plan.categories))}"
+    elif direct_debits_only:
+        included = " entre tus recibos domiciliados"
+    else:
+        included = ""
+    excluded_names = (
+        *tuple(category_words.name_of(category) for category in plan.excluded_categories),
+        *plan.excluded_merchants,
+        *excluded_counterparties,
+    )
+    if not excluded_names:
+        return included
+    return (
+        f"{included}, sin {listed(excluded_names)}"
+        if included
+        else f" sin {listed(excluded_names)}"
+    )
 
 
-def _listed(names: tuple[str, ...]) -> str:
-    """Spanish enumeration: "a", "a y b", "a, b y c"."""
+def listed(names: tuple[str, ...]) -> str:
+    """Spanish enumeration: "a", "a y b", "a, b y c".
+
+    Public because the handler needs it too, to offer the shops a misspelt merchant might have
+    meant. Spanish joins the last item with "y" and a comma there reads as one more item — a rule
+    worth having in one place rather than in every sentence that lists something.
+    """
     if len(names) == 1:
         return names[0]
     return f"{', '.join(names[:-1])} y {names[-1]}"
+
+
+def month_name(year: int, month: int) -> str:
+    """A calendar month in the language used by conversational comparisons."""
+    if not 1 <= month <= 12:
+        return f"{year}-{month:02d}"
+    return f"{_MONTHS[month - 1]} de {year}"
+
+
+def month_group_name(key: str) -> str:
+    """Turn banking's stable YYYY-MM group key into a month a person would say."""
+    try:
+        year, month = (int(part) for part in key.split("-", maxsplit=1))
+    except (TypeError, ValueError):
+        return key
+    return month_name(year, month)
 
 
 # Spanish months, for naming the day a movement happened. Written out rather than taken from the
@@ -352,6 +498,71 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
     return f"{_position(ranking.rank)} fue de {amount}: {what}, el {when}."
 
 
+def ranked_many(movements: tuple[Movement, ...], ranking: TopMovements, *, requested: int) -> str:
+    """Several concrete ranking rows, each already selected by banking."""
+    about = f"{filter_of(ranking)} {window_of(ranking)}"
+    if not movements:
+        return f"No he encontrado movimientos{about} para construir ese ranking."
+    noun = "gasto" if ranking.direction is Direction.EXPENSE else "ingreso"
+    if len(movements) == requested:
+        head = f"Tus {requested} mayores {noun}s{about} fueron:"
+    else:
+        head = (
+            f"He encontrado {len(movements)} {noun}s{about}; "
+            f"no hay {requested} para completar el ranking:"
+        )
+    lines = []
+    for position, movement in enumerate(movements, start=1):
+        amount = money(movement.amount_minor, movement.currency)
+        what = movement.merchant_name or movement.description
+        lines.append(f"  {position}. {what}: {amount}, el {_spoken_date(movement.occurred_at)}")
+    return f"{head}\n" + "\n".join(lines)
+
+
+def recent_movements(count: int) -> str:
+    if count == 0:
+        return "No he encontrado movimientos recientes en tus cuentas."
+    noun = "movimiento" if count == 1 else "movimientos"
+    return f"Estos son tus últimos {count} {noun}."
+
+
+def movement_example(movement: Movement | None, currency: str) -> str:
+    if movement is None:
+        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
+    amount = abs(movement.amount_minor)
+    if movement.direction == Direction.EXPENSE.value:
+        amount = -amount
+    what = movement.merchant_name or movement.description
+    return (
+        f"Por ejemplo: {what}, {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}."
+    )
+
+
+def movement_examples(movements: tuple[Movement, ...], currency: str) -> str:
+    """One or several concrete rows, respecting the number the user asked to see."""
+    if not movements:
+        return "No hay ningún movimiento que pueda mostrarte como ejemplo."
+    if len(movements) == 1:
+        return movement_example(movements[0], currency)
+    lines = []
+    for movement in movements:
+        amount = abs(movement.amount_minor)
+        if movement.direction == Direction.EXPENSE.value:
+            amount = -amount
+        what = movement.merchant_name or movement.description
+        lines.append(
+            f"  · {what}: {money(amount, currency)}, el {_spoken_date(movement.occurred_at)}"
+        )
+    return "Por ejemplo:\n" + "\n".join(lines)
+
+
+def movement_date(occurred_at: datetime | str) -> str:
+    """The date of the ranked movement a pronoun points at."""
+    if isinstance(occurred_at, str):
+        occurred_at = datetime.fromisoformat(occurred_at)
+    return f"Fue el {_spoken_date(occurred_at)}."
+
+
 def _position(rank: int) -> str:
     return _ORDINALS.get(rank, f"El número {rank}")
 
@@ -373,8 +584,14 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
     if name in _WINDOWS:
         return _WINDOWS[name]
     count = plan.period.n or 0
-    unit = "días" if name == "LAST_N_DAYS" else "meses"
-    return f"en los últimos {count} {unit}"
+    day = name == "LAST_N_DAYS"
+    if count == 1:
+        # "En los últimos 1 meses" was on screen under every answer about the last month, which is
+        # the sort of thing that makes a person stop trusting the figure above it. Spanish does not
+        # pluralise one, and the singular is also what they said: nobody asks for "the last 1
+        # months".
+        return "en el último día" if day else "en el último mes"
+    return f"en los últimos {count} {'días' if day else 'meses'}"
 
 
 def describe(plan: FinancialPlan | TopMovements) -> str:
@@ -386,25 +603,93 @@ def describe(plan: FinancialPlan | TopMovements) -> str:
     oracle.
     """
     parts = [window_of(plan), plan.direction.value.lower()]
+    if isinstance(plan, FinancialPlan) and plan.internal_only:
+        parts.append("solo traspasos entre cuentas")
+    if isinstance(plan, FinancialPlan) and plan.transaction_types == (
+        TransactionType.DIRECT_DEBIT,
+    ):
+        parts.append("solo recibos domiciliados")
     if isinstance(plan, TopMovements):
         # The rank is the whole point of a ranking, so a description without it would show the same
         # line for "el más caro" and "el segundo más caro".
         parts.append(f"nº {plan.rank} por importe")
     if plan.categories:
         parts.append("/".join(plan.categories).lower())
+    if plan.excluded_categories:
+        parts.append(
+            "sin "
+            + "/".join(category_words.name_of(category) for category in plan.excluded_categories)
+        )
     if plan.merchants:
         # Shown because a typo is the failure mode here: "Mercadonna" returns an empty answer,
         # and a reader who sees the name that was searched for can tell that from "you spent
         # nothing there".
         parts.append("/".join(plan.merchants))
+    if isinstance(plan, FinancialPlan) and plan.merchant_terms:
+        parts.append("comercio contiene " + "/".join(plan.merchant_terms))
+    if plan.excluded_merchants:
+        parts.append("sin " + "/".join(plan.excluded_merchants))
     if isinstance(plan, FinancialPlan):
+        if plan.counterparties:
+            parts.append("/".join(plan.counterparties))
+        if plan.excluded_counterparties:
+            parts.append("sin " + "/".join(plan.excluded_counterparties))
+        if plan.counterparty_types:
+            parts.append("tipo " + "/".join(item.value.lower() for item in plan.counterparty_types))
         # The grouping and the metric belong to an aggregate. A ranking has neither, and its rank is
         # appended above — where the reader is looking for what makes the two lines different.
         if plan.group_by.value != "NONE":
             parts.append(f"por {plan.group_by.value.lower()}")
-        if plan.metric.value != "SUM":
+        if plan.group_limit is not None:
+            parts.append(f"top {plan.group_limit}")
+        if plan.metric is Metric.PERIOD_AVERAGE:
+            parts.append("media por periodo")
+        elif plan.metric is Metric.CUMULATIVE:
+            parts.append("acumulado")
+        elif plan.metric is Metric.FREQUENCY:
+            parts.append("frecuencia")
+        elif plan.metric is Metric.RECURRENCE:
+            parts.append("gastos recurrentes")
+        elif plan.metric.value != "SUM":
             parts.append(plan.metric.value.lower())
     return ", ".join(parts)
+
+
+def _listed(names: tuple[str, ...]) -> str:
+    """Names joined the way Spanish joins them: commas, and "y" before the last."""
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} y {names[-1]}"
+
+
+def how_many_payees(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """How many distinct payees, and who they are.
+
+    The number of groups rather than the number of movements, which is the whole point: thirty-six
+    charges from four shops is four subscriptions, and answering "36" to "¿cuántas suscripciones
+    tengo?" is a true figure for a question nobody asked.
+
+    It says "te han cobrado" and never "activas", however the question was phrased. What the ledger
+    knows is who charged this holder inside a window; whether a subscription is still live is not in
+    it, and a sentence claiming otherwise would be inventing the one fact the holder is asking for.
+    """
+    kind = category_words.name_of(plan.categories[0]) if plan.categories else "gastos"
+    window = window_of(plan)
+    payees = tuple(group.key for group in answer.groups if group.key)
+    if not payees:
+        return f"No te han cobrado nada en {kind} {window}."
+    count = len(payees)
+    noun = kind if count > 1 else _singular(kind)
+    # No adjective. "Distintas" would need to agree with a noun whose gender varies by category, and
+    # a gender table is more code than the names that follow already make unambiguous.
+    return f"Te han cobrado {count} {noun} {window}: {_listed(payees)}."
+
+
+def _singular(kind: str) -> str:
+    """Enough Spanish to not write "1 suscripciones". Only the plural this vocabulary produces."""
+    if kind.endswith("ones"):
+        return kind[:-4] + "ón"
+    return kind[:-1] if kind.endswith("s") else kind
 
 
 def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
@@ -418,6 +703,9 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     """
     window = window_of(plan)
     counting = plan.metric is Metric.COUNT
+    averaging = plan.metric is Metric.AVERAGE
+    averaging_periods = plan.metric is Metric.PERIOD_AVERAGE
+    accumulating = plan.metric is Metric.CUMULATIVE
     # What the figure is of. Empty for a question that named no filter, which is most of them.
     about = filter_of(plan)
 
@@ -425,19 +713,84 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
         # The second is usually a plan that was wrong, and saying so lets the user
         # correct it instead of believing a zero.
-        if plan.categories and plan.merchants:
+        if plan.categories and (plan.merchants or plan.merchant_terms or plan.counterparties):
             next_step = "buscar sin categoría, buscar sin comercio o ampliar el periodo"
         elif plan.categories:
             next_step = "buscar sin categoría o ampliar el periodo"
-        elif plan.merchants:
+        elif plan.merchants or plan.merchant_terms or plan.counterparties:
             next_step = "buscar sin comercio o ampliar el periodo"
         else:
             next_step = "ampliar el periodo o consultar las categorías disponibles"
         return f"No he encontrado movimientos{about} {window}. Puedes {next_step}."
 
     noun = "movimiento" if answer.movement_count == 1 else "movimientos"
-    if counting:
+    ranked_groups = answer.groups[: plan.group_limit] if plan.group_limit is not None else None
+    if plan.group_limit is not None:
+        count = len(ranked_groups or ())
+        dimension = {
+            GroupBy.CATEGORY: "categoría" if count == 1 else "categorías",
+            GroupBy.MERCHANT: "comercio" if count == 1 else "comercios",
+            GroupBy.COUNTERPARTY: "contraparte" if count == 1 else "contrapartes",
+            GroupBy.ACCOUNT: "cuenta" if count == 1 else "cuentas",
+        }[plan.group_by]
+        criterion = {
+            Metric.COUNT: "más operaciones",
+            Metric.AVERAGE: "mayor importe medio por movimiento",
+        }.get(plan.metric, "mayor importe total")
+        if count == 1:
+            article = "El" if plan.group_by is GroupBy.MERCHANT else "La"
+            head = f"{article} {dimension} con {criterion}{about} {window} es:"
+        else:
+            head = f"Tus {count} {dimension} con {criterion}{about} {window} son:"
+    elif plan.group_by is GroupBy.ACCOUNT and len(answer.groups) == 1:
+        account = answer.groups[0]
+        if answer.movement_count == 1:
+            return (
+                f"El movimiento encontrado {window} está en "
+                f"{account.key}: {_figure(account, answer, plan.metric)}."
+            )
+        return (
+            f"Todos los {answer.movement_count} {noun} encontrados {window} están en "
+            f"{account.key}: {_figure(account, answer, plan.metric)}."
+        )
+    elif plan.group_by is GroupBy.ACCOUNT:
+        head = f"El desglose por cuenta {window} es:"
+    elif counting:
         head = f"{answer.movement_count} {noun}{about} {window}."
+    elif averaging:
+        average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
+        head = (
+            f"El importe medio por movimiento{about} {window} fue de {average}, "
+            f"calculado sobre {answer.movement_count} {noun}."
+        )
+    elif averaging_periods:
+        periods = _period_count(answer, plan)
+        average = money(_rounded_mean(answer.total_minor, periods), answer.currency)
+        concept = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe",
+        }[plan.direction]
+        unit = {
+            GroupBy.DAY: ("día", "días"),
+            GroupBy.WEEK: ("semana", "semanas"),
+            GroupBy.MONTH: ("mes", "meses"),
+        }[plan.group_by]
+        period_noun = unit[0] if periods == 1 else unit[1]
+        head = (
+            f"El {concept} medio por {unit[0]}{about} {window} fue de {average}, "
+            f"calculado sobre {periods} {period_noun}, incluidos los periodos sin movimientos."
+        )
+    elif accumulating:
+        concept = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe neto",
+        }[plan.direction]
+        head = (
+            f"El {concept} acumulado{about} {window} terminó en "
+            f"{money(answer.total_minor, answer.currency)}. Evolución:"
+        )
     else:
         total = money(answer.total_minor, answer.currency)
         head = f"{total}{about} {window}, en {answer.movement_count} {noun}."
@@ -445,14 +798,162 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     if not _is_breakdown(answer):
         return head
 
-    shown = answer.groups[:MAX_SPOKEN_GROUPS]
-    lines = "\n".join(f"  · {group.key}: {_figure(group, answer, counting)}" for group in shown)
-    rest = len(answer.groups) - len(shown)
+    visible = ranked_groups if ranked_groups is not None else answer.groups
+    shown = visible[:MAX_SPOKEN_GROUPS]
+    lines = "\n".join(
+        f"  · {_group_name(group.key, plan)}: {_figure(group, answer, plan.metric)}"
+        for group in shown
+    )
+    rest = len(visible) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
     return f"{head}\n{lines}{tail}"
 
 
-def when(answer: QueryAnswer, plan: FinancialPlan) -> str:
+def internal_transfers(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Describe money that moved inside the holder's accounts without calling it spending."""
+    window = window_of(plan)
+    if answer.is_empty:
+        return f"No he encontrado traspasos entre tus cuentas {window}."
+    noun = "traspaso" if answer.movement_count == 1 else "traspasos"
+    if plan.metric is Metric.COUNT:
+        return f"Hiciste {answer.movement_count} {noun} {window}."
+    if plan.metric is Metric.AVERAGE:
+        average = money(_rounded_mean(answer.total_minor, answer.movement_count), answer.currency)
+        return f"El importe medio de tus {noun} {window} fue de {average}."
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        average = money(
+            _rounded_mean(answer.total_minor, _period_count(answer, plan)), answer.currency
+        )
+        unit = {
+            GroupBy.DAY: "diario",
+            GroupBy.WEEK: "semanal",
+            GroupBy.MONTH: "mensual",
+        }[plan.group_by]
+        return f"El importe medio {unit} de tus traspasos {window} fue de {average}."
+    amount = money(answer.total_minor, answer.currency)
+    selected = plan.only_account_id is not None or bool(plan.only_account_ids)
+    if plan.direction is Direction.INCOME and selected:
+        return (
+            f"Moviste {amount} hacia la cuenta consultada {window}, "
+            f"en {answer.movement_count} {noun}."
+        )
+    if selected:
+        return (
+            f"Moviste {amount} desde la cuenta consultada {window}, "
+            f"en {answer.movement_count} {noun}."
+        )
+    return f"Moviste {amount} entre tus cuentas {window}, en {answer.movement_count} {noun}."
+
+
+def grouped_period_comparison(
+    earlier_answer: QueryAnswer,
+    latest_answer: QueryAnswer,
+    earlier_plan: FinancialPlan,
+    latest_plan: FinancialPlan,
+    *,
+    earlier_window: str,
+    latest_window: str,
+) -> str | None:
+    """Compare the same account rows across two windows instead of collapsing their totals."""
+    if latest_plan.group_by is not GroupBy.ACCOUNT or earlier_plan.group_by is not GroupBy.ACCOUNT:
+        return None
+    earlier = {group.key: group for group in earlier_answer.groups if group.key != "total"}
+    latest = {group.key: group for group in latest_answer.groups if group.key != "total"}
+    keys = tuple(dict.fromkeys((*latest, *earlier)))
+    if not keys:
+        return None
+
+    lines: list[str] = []
+    for key in keys:
+        earlier_group = earlier.get(key, Group(key, 0, 0))
+        latest_group = latest.get(key, Group(key, 0, 0))
+        earlier_value = _group_comparison_value(earlier_group, earlier_plan.metric)
+        latest_value = _group_comparison_value(latest_group, latest_plan.metric)
+        earlier_figure = _group_comparison_figure(
+            earlier_group, earlier_plan.metric, earlier_answer.currency
+        )
+        latest_figure = _group_comparison_figure(
+            latest_group, latest_plan.metric, latest_answer.currency
+        )
+        difference = abs(latest_value - earlier_value)
+        if difference == 0:
+            change = "sin cambios"
+        else:
+            sign = "+" if latest_value > earlier_value else "−"
+            difference_figure = comparison_difference(
+                difference, latest_answer.currency, latest_plan.metric
+            )
+            change = f"{sign}{difference_figure}"
+        lines.append(
+            f"  · {key}: {latest_window}, {latest_figure}; "
+            f"{earlier_window}, {earlier_figure}; {change}."
+        )
+
+    concept = comparison_concept(latest_plan)
+    return f"Comparación del {concept} por cuenta:\n" + "\n".join(lines)
+
+
+def _group_comparison_value(group: Group, metric: Metric) -> int:
+    if metric is Metric.COUNT:
+        return group.movement_count
+    if metric is Metric.AVERAGE:
+        return _rounded_mean(group.total_minor, group.movement_count)
+    return group.total_minor
+
+
+def _group_comparison_figure(group: Group, metric: Metric, currency: str) -> str:
+    value = _group_comparison_value(group, metric)
+    if metric is Metric.COUNT:
+        noun = "movimiento" if value == 1 else "movimientos"
+        return f"{value} {noun}"
+    if metric is Metric.AVERAGE and group.movement_count == 0:
+        return "sin movimientos"
+    return money(value, currency)
+
+
+def compare_averages(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Answer a category comparison with category means, never their combined mean."""
+    usable = [group for group in answer.groups if group.movement_count > 0]
+    if answer.is_empty or len(usable) < 2:
+        return write(answer, plan)
+
+    figures = [(group, _rounded_mean(group.total_minor, group.movement_count)) for group in usable]
+    details = "; ".join(
+        f"{_group_name(group.key, plan)}: {money(average, answer.currency)} "
+        f"({group.movement_count} {'movimiento' if group.movement_count == 1 else 'movimientos'})"
+        for group, average in figures
+    )
+    highest = max(figures, key=lambda item: item[1])
+    lowest = min(figures, key=lambda item: item[1])
+    if highest[1] == lowest[1]:
+        conclusion = "Todas tuvieron la misma media."
+    else:
+        conclusion = (
+            f"La más alta fue la de {_group_name(highest[0].key, plan)} y la más baja, "
+            f"la de {_group_name(lowest[0].key, plan)}."
+        )
+    return f"Las medias por movimiento {window_of(plan)} fueron: {details}. {conclusion}"
+
+
+def top_category(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """Name the leading category instead of making the user infer it from a breakdown."""
+    if answer.is_empty or not answer.groups:
+        return write(answer, plan)
+    leading = answer.groups[0]
+    category = _group_name(leading.key, plan)
+    amount = money(leading.total_minor, answer.currency)
+    movements = (
+        "1 movimiento" if leading.movement_count == 1 else f"{leading.movement_count} movimientos"
+    )
+    return (
+        f"La categoría en la que más gastaste {window_of(plan)} fue {category}: "
+        f"{amount}, en {movements}."
+    )
+
+
+def when(
+    answer: QueryAnswer, plan: FinancialPlan, *, reporting_timezone: str = "Europe/Madrid"
+) -> str:
     """The same figures, answering *when* instead of how much.
 
     From a real conversation:
@@ -469,41 +970,265 @@ def when(answer: QueryAnswer, plan: FinancialPlan) -> str:
     months are not monthly, and only ten of them came back, so inferring "between the 6th and the
     25th" from a sample would be a shape invented out of whatever the limit happened to include.
 
-    ponytail: monthly is the only recurrence this recognises, by counting months. Weekly,
-    fortnightly and "every other Tuesday" need a domain concept for recurrence rather than a wider
-    heuristic here — this one is right because it is arithmetic on complete evidence, and a
-    fourth branch guessing at cadence would not be.
+    The calculation lives in `frequency_analyzer`: this writer only turns its typed result into
+    Spanish. Monthly patterns require consecutive months; other cadences use the integer median of
+    every interval, never a sample or a model estimate.
     """
     window = window_of(plan)
     about = filter_of(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window}."
 
-    count = answer.movement_count
+    pattern = frequency_analyzer.analyse(answer, reporting_timezone=reporting_timezone)
+    count = pattern.count
     noun = "vez" if count == 1 else "veces"
-    # `movements` is capped by the deployment's evidence limit, so fewer than the count means this
-    # is a sample and any pattern read off it is a fact about the limit.
-    complete = len(answer.movements) == count
-    months = {(m.occurred_at.year, m.occurred_at.month) for m in answer.movements}
+    if not pattern.complete:
+        return (
+            f"{count} {noun}{about} {window}, pero son demasiados movimientos para calcular "
+            "la frecuencia sin extrapolar. Prueba con un periodo más corto."
+        )
+    if count == 1:
+        return f"Sólo ocurrió una vez{about} {window}; todavía no hay intervalos que comparar."
+    if pattern.monthly:
+        assert pattern.day_of_month_min is not None and pattern.day_of_month_max is not None
+        on = (
+            f"normalmente el día {pattern.day_of_month_min}"
+            if pattern.day_of_month_min == pattern.day_of_month_max
+            else (
+                f"normalmente entre el día {pattern.day_of_month_min} "
+                f"y el {pattern.day_of_month_max}"
+            )
+        )
+        return f"{count} {noun}{about} {window}: una al mes, {on}."
 
-    if complete and count >= 2 and len(months) == count:
-        days = sorted({m.occurred_at.day for m in answer.movements})
-        on = f"el día {days[0]}" if len(days) == 1 else f"entre el día {days[0]} y el {days[-1]}"
-        return f"{count} {noun}{about} {window}, una al mes, {on}."
-    if complete:
-        return f"{count} {noun}{about} {window}. Tienes las fechas debajo."
+    interval = pattern.median_interval_days
+    assert interval is not None
+    if count == 2:
+        cadence = f"separadas por {interval} días"
+    elif interval == 0:
+        cadence = "habitualmente varias veces en un mismo día"
+    elif interval == 1:
+        cadence = "aproximadamente cada día"
+    else:
+        cadence = f"aproximadamente cada {interval} días"
+    weekday = (
+        f", sobre todo los {_WEEKDAYS[pattern.usual_weekday]}"
+        if pattern.usual_weekday is not None
+        else ""
+    )
+    return f"{count} {noun}{about} {window}: {cadence}{weekday}."
+
+
+def recurring_expenses(
+    answer: QueryAnswer, plan: FinancialPlan, *, reporting_timezone: str = "Europe/Madrid"
+) -> str:
+    """Describe only periodic patterns supported by the complete bounded movement set."""
+    window = window_of(plan)
+    about = filter_of(plan)
+    if answer.is_empty:
+        return f"No he encontrado movimientos{about} {window} con los que buscar recurrencias."
+
+    analysis = recurrence_analyzer.analyse(answer, reporting_timezone=reporting_timezone)
+    if not analysis.complete:
+        return (
+            f"Hay {analysis.movement_count} movimientos{about} {window}, demasiados para detectar "
+            "gastos recurrentes sin extrapolar. Prueba con un periodo más corto o una categoría."
+        )
+    if not analysis.candidates:
+        return (
+            f"No he encontrado ningún gasto con un patrón periódico suficientemente regular"
+            f"{about} {window}."
+        )
+
+    shown = analysis.candidates[:MAX_SPOKEN_GROUPS]
+    lines = "\n".join(
+        f"  · {candidate.counterparty}: {_recurrence_cadence(candidate)}, "
+        f"{_recurrence_kind(candidate)}, {_recurrence_amount(candidate, answer.currency)}; "
+        f"{candidate.occurrences} cargos, {money(candidate.total_minor, answer.currency)} en total"
+        for candidate in shown
+    )
+    rest = len(analysis.candidates) - len(shown)
+    tail = f"\n  · y {rest} más" if rest else ""
+    noun = "patrón" if len(analysis.candidates) == 1 else "patrones"
     return (
-        f"{count} {noun}{about} {window} — demasiados para verte un patrón. "
-        f"Prueba con un periodo más corto."
+        f"He detectado {len(analysis.candidates)} {noun} de gasto recurrente{about} {window}:\n"
+        f"{lines}{tail}"
     )
 
 
-def _figure(group: Group, answer: QueryAnswer, counting: bool) -> str:
+def _recurrence_cadence(candidate: recurrence_analyzer.RecurringExpense) -> str:
+    if candidate.cadence == "MONTHLY":
+        assert candidate.day_of_month_min is not None
+        assert candidate.day_of_month_max is not None
+        if candidate.day_of_month_min == candidate.day_of_month_max:
+            return f"mensual, normalmente el día {candidate.day_of_month_min}"
+        return (
+            "mensual, normalmente entre los días "
+            f"{candidate.day_of_month_min} y {candidate.day_of_month_max}"
+        )
+    return {
+        "WEEKLY": "semanal",
+        "FORTNIGHTLY": "quincenal",
+        "QUARTERLY": "trimestral",
+    }[candidate.cadence]
+
+
+def _recurrence_amount(candidate: recurrence_analyzer.RecurringExpense, currency: str) -> str:
+    amount = money(candidate.average_minor, currency)
+    return f"{amount} por cargo" if candidate.stable_amount else f"una media de {amount} por cargo"
+
+
+def _recurrence_kind(candidate: recurrence_analyzer.RecurringExpense) -> str:
+    """Name the banking rail without promoting a card charge to a direct debit."""
+    receipt_names = {
+        ReceiptCategory.RENT: "recibo domiciliado de alquiler",
+        ReceiptCategory.SUBSCRIPTION: "recibo domiciliado de suscripción",
+        ReceiptCategory.UTILITIES: "recibo domiciliado de suministros",
+        ReceiptCategory.INSURANCE: "recibo domiciliado de seguro",
+        ReceiptCategory.LOAN: "recibo domiciliado de préstamo",
+        ReceiptCategory.TAX: "recibo domiciliado de impuestos",
+        ReceiptCategory.OTHER: "recibo domiciliado",
+    }
+    if candidate.receipt_category is not None:
+        return receipt_names[candidate.receipt_category]
+    if candidate.transaction_type is TransactionType.DIRECT_DEBIT:
+        return "recibo domiciliado"
+    if candidate.category == "SUBSCRIPTIONS":
+        return (
+            "suscripción con tarjeta"
+            if candidate.transaction_type is TransactionType.CARD_PAYMENT
+            else "suscripción"
+        )
+    if candidate.category == "HOUSING_RENT":
+        return "alquiler periódico"
+    return "cargo periódico"
+
+
+def _rounded_mean(total_minor: int, count: int) -> int:
+    """Mean in minor units, rounded half away from zero without using a float."""
+    if count <= 0:
+        return 0
+    units, remainder = divmod(abs(total_minor), count)
+    rounded = units + int(remainder * 2 >= count)
+    return -rounded if total_minor < 0 else rounded
+
+
+def comparison_value(answer: QueryAnswer, plan: FinancialPlan) -> int:
+    """The scalar a comparison must relate, in the unit the question requested.
+
+    Aggregate answers deliberately carry both money and movement count. Picking
+    `total_minor` unconditionally turns "where did I make more purchases?" into "where
+    did I spend more money?" while still returning a plausible number. Keep the choice
+    here beside the arithmetic used by the ordinary answer so both paths agree.
+    """
+    if plan.metric is Metric.COUNT:
+        return answer.movement_count
+    if plan.metric is Metric.AVERAGE:
+        return _rounded_mean(answer.total_minor, answer.movement_count)
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        return _rounded_mean(answer.total_minor, _period_count(answer, plan))
+    return answer.total_minor
+
+
+def comparison_figure(answer: QueryAnswer, plan: FinancialPlan) -> str:
+    """One side of a comparison, formatted in its real unit."""
+    if plan.metric is Metric.AVERAGE and answer.is_empty:
+        return "sin movimientos"
+    value = comparison_value(answer, plan)
+    if plan.metric is Metric.COUNT:
+        noun = "movimiento" if value == 1 else "movimientos"
+        return f"{value} {noun}"
+    return money(value, answer.currency)
+
+
+def comparison_difference(value: int, currency: str, metric: Metric) -> str:
+    """An absolute delta in the same unit as both comparison operands."""
+    if metric is Metric.COUNT:
+        noun = "movimiento" if value == 1 else "movimientos"
+        return f"{value} {noun}"
+    return money(value, currency)
+
+
+def comparison_concept(plan: FinancialPlan) -> str:
+    """The noun phrase whose value is being compared."""
+    if plan.metric is Metric.COUNT:
+        return "número de movimientos"
+    if plan.metric is Metric.AVERAGE:
+        return "importe medio por movimiento"
+    if plan.metric is Metric.PERIOD_AVERAGE:
+        unit = {
+            GroupBy.DAY: "diario",
+            GroupBy.WEEK: "semanal",
+            GroupBy.MONTH: "mensual",
+        }[plan.group_by]
+        concept = {
+            Direction.EXPENSE: "gasto",
+            Direction.INCOME: "ingreso",
+            Direction.ALL: "importe",
+        }[plan.direction]
+        return f"{concept} medio {unit}"
+    return {
+        Direction.EXPENSE: "gasto",
+        Direction.INCOME: "ingreso",
+        Direction.ALL: "importe",
+    }[plan.direction]
+
+
+def _period_count(answer: QueryAnswer, plan: FinancialPlan) -> int:
+    """Calendar buckets touched by the exact range banking executed, including empty ones."""
+    group_by = plan.group_by
+    if (
+        group_by is GroupBy.MONTH
+        and plan.period is not None
+        and plan.period.period is Period.LAST_N_MONTHS
+        and plan.period.n is not None
+    ):
+        # A rolling twelve-month window touches thirteen YYYY-MM labels when both endpoint months
+        # are partial. The requested duration is still twelve months, so its monthly mean has
+        # twelve equal units rather than thirteen uneven calendar fragments.
+        return plan.period.n
+    start = answer.period_start
+    end = answer.period_end
+    if start is None or end is None:
+        # Compatibility for in-memory ports and older recordings. A real HTTP answer carries the
+        # exact resolved bounds; grouped rows are the safest fallback available without them.
+        return max(1, len(answer.groups))
+    if group_by is GroupBy.DAY:
+        return (end - start).days + 1
+    if group_by is GroupBy.WEEK:
+        first_monday = start - timedelta(days=start.weekday())
+        return (end - first_monday).days // 7 + 1
+    if group_by is GroupBy.MONTH:
+        return (end.year - start.year) * 12 + end.month - start.month + 1
+    return 1
+
+
+def _figure(group: Group, answer: QueryAnswer, metric: Metric) -> str:
     """A breakdown of a count is counts. Amounts under a "how many" question would be
     the same mistake again, one row at a time."""
-    if counting:
+    if metric is Metric.COUNT:
         return f"{group.movement_count}"
+    if metric is Metric.AVERAGE:
+        average = _rounded_mean(group.total_minor, group.movement_count)
+        return f"media {money(average, answer.currency)} ({group.movement_count})"
+    if metric is Metric.CUMULATIVE:
+        return f"{money(group.total_minor, answer.currency)} acumulados ({group.movement_count})"
     return f"{money(group.total_minor, answer.currency)} ({group.movement_count})"
+
+
+def _group_name(key: str, plan: FinancialPlan) -> str:
+    """What to call a row of a breakdown.
+
+    A category key is the ledger's vocabulary and it reached the screen raw: somebody asking where
+    their money goes read `HOUSING_RENT`, `TRANSPORT_FUEL` and `TRANSFER_BIZUM` down the side of
+    their own answer. The translation existed and `filter_of` was already using it two hundred
+    lines up — this was the one place that printed the key instead.
+
+    Only for categories. A merchant key is already a name and a month key is already a date; both
+    are the ledger writing something a person reads, and putting either through a category glossary
+    would be looking up a word that is not in it.
+    """
+    return category_words.name_of(key) if plan.group_by is GroupBy.CATEGORY else key
 
 
 def _is_breakdown(answer: QueryAnswer) -> bool:

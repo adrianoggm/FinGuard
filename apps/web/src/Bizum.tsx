@@ -12,9 +12,16 @@
  * something the service has to interrogate.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { confirm, contacts as fetchContacts, payChosen, type Answer, type Contact } from "./api";
+import {
+  confirm,
+  contacts as fetchContacts,
+  newAttempt,
+  payChosen,
+  type Answer,
+  type Contact,
+} from "./api";
 import { initials, minorUnits, money } from "./format";
 
 const AWAITING = "AWAITING_CONFIRMATION";
@@ -29,6 +36,10 @@ export function Bizum({ onPaid }: Props) {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // How many payments this screen has completed. It exists only to renew the key below: once one
+  // is paid, the same recipient and the same amount is a *second* payment, and replaying the first
+  // would hand back an intent the bank has already consumed.
+  const [completed, setCompleted] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -41,12 +52,16 @@ export function Bizum({ onPaid }: Props) {
   }, []);
 
   const amount = minorUnits(typed);
+  // A name for this attempt: kept while the recipient and the amount stand, so pressing again after
+  // a timeout is the same preview and not a second one, and renewed the moment either changes — the
+  // bank refuses a key reused for a different payment rather than answering with the earlier one.
+  const attempt = useMemo(newAttempt, [chosen?.contact_id, amount, completed]);
 
   async function prepare() {
     if (!chosen || amount === null || busy) return;
     setBusy(true);
     try {
-      setAnswer(await payChosen(chosen.display_name, amount));
+      setAnswer(await payChosen(chosen.display_name, amount, attempt));
       setError(null);
     } catch {
       setError("No he podido preparar el pago.");
@@ -61,6 +76,7 @@ export function Bizum({ onPaid }: Props) {
     try {
       const settled = await confirm(answer.intent_id, reply);
       setAnswer(settled);
+      setCompleted((done) => done + 1);
       if (settled.outcome === PAID) onPaid();
     } catch {
       setError("No he podido confirmar el pago.");

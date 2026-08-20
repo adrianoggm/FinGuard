@@ -3,7 +3,8 @@ name: finguard
 # Profiles:
 #   core  skeleton: database + backend APIs
 #   poc   everything that exists: core + skin (web, and later a mobile app)
-#   voice / a2a / events  arrive in their own iterations
+#   voice  core + the real-time voice gateway (phase 6)
+#   a2a / events  arrive in their own iterations
 #
 # A single component needs no profile: docker compose up postgres
 # Everything is published on 127.0.0.1 only: the credentials are for development
@@ -12,7 +13,7 @@ name: finguard
 services:
   postgres:
     image: postgres:18-alpine
-    profiles: ["core", "poc"]
+    profiles: ["core", "poc", "voice"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-finguard}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finguard}
@@ -36,7 +37,7 @@ services:
     build:
       context: .
       dockerfile: apps/banking-api/Dockerfile
-    profiles: ["core", "poc"]
+    profiles: ["core", "poc", "voice"]
     environment:
       BANKING_DATABASE_URL: postgresql://finguard_banking:finguard_banking@postgres:5432/finguard_banking
       # Read-only role for the query engine (§8.6)
@@ -62,7 +63,20 @@ services:
         # so "which build am I talking to" is one request rather than an inference.
         BUILD_SHA: ${FINGUARD_SHA:-unknown}
         BUILD_REF: ${FINGUARD_REF:-unknown}
-    profiles: ["core", "poc"]
+    profiles: ["core", "poc", "voice"]
+    # The same file the host reads, so a credential lives in exactly one place whichever way
+    # the service is started. The Dockerfile deliberately does not COPY it — a secret baked
+    # into an image is a secret in every registry that image reaches — so without this,
+    # `uv run` saw the key and `just up` did not.
+    #
+    # Optional, because the file is gitignored and a fresh clone has none. `required: true`
+    # is compose's default and would refuse to start the demo for a provider nobody is using.
+    #
+    # Read *before* `environment:` below, which is the order that matters: the service names
+    # on this network are not something a developer's .env should be able to override.
+    env_file:
+      - path: ./apps/orchestrator/.env
+        required: false
     environment:
       # Which models exist, which provider serves each one and what happens when one
       # fails come from this file, not from code. Mounted read-only so it can change
@@ -82,6 +96,9 @@ services:
       ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
       ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
       ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
+      # The deterministic router remains authoritative wherever it recognises a turn. A model only
+      # widens its generic catch-all, and cannot create a payment or an own-account transfer.
+      ORCHESTRATOR_TURN_INTERPRETER: hybrid
       # Identity, first layer of the security stack (§12.1). A development token table,
       # not the design: §12.2 asks for OAuth with short-lived tokens. What matters is
       # that the account now comes from the credential, so a caller cannot name one.
@@ -130,5 +147,59 @@ services:
       retries: 5
       start_period: 10s
 
+  # ADR-010: a channel adapter, not a second financial assistant. It may reach the orchestrator
+  # and nothing else — no banking, no database, no financial types — so it has no credential of
+  # its own: the caller's token travels through it to the orchestrator.
+  voice-gateway:
+    build:
+      context: apps/voice-gateway
+      dockerfile: Dockerfile
+      args:
+        # The image is CPU-oriented. Faster Whisper is an optional extra, off by default because
+        # it pulls CTranslate2 and downloads a model on first use; the fake provider is what makes
+        # the compose stack start in seconds.
+        INSTALL_LOCAL_STT: ${VOICE_INSTALL_LOCAL_STT:-0}
+        INSTALL_LOCAL_TTS: ${VOICE_INSTALL_LOCAL_TTS:-0}
+    profiles: ["voice"]
+    environment:
+      # The assistant by service name on this network, not the loopback default, which inside a
+      # container is the container.
+      VOICE_GATEWAY_ASSISTANT_MODE: orchestrator_http
+      VOICE_GATEWAY_ORCHESTRATOR_BASE_URL: http://orchestrator:8000
+      # Fake speech by default. Local providers are measured on the host where the GPU and the
+      # models are — see apps/voice-gateway/evaluation/RESULTS.md — and switching them on here
+      # means building with the extra and mounting a voice.
+      # The page that may call this, exactly, and never a wildcard: the caller's token is in a
+      # header. Same origins the orchestrator lists, because it is the same client.
+      VOICE_GATEWAY_WEB_ORIGINS: '["http://127.0.0.1:3000","http://localhost:3000","http://127.0.0.1:5173","http://localhost:5173"]'
+      VOICE_GATEWAY_STT_MODE: ${VOICE_STT_MODE:-fake}
+      VOICE_GATEWAY_TTS_MODE: ${VOICE_TTS_MODE:-fake}
+      # The voice lives in the model volume, not in the image: `just voice-models` downloads it.
+      VOICE_GATEWAY_TTS_MODEL_PATH: /models/piper/es_ES-davefx-medium.onnx
+      VOICE_GATEWAY_TTS_WARMUP: "true"
+      # Unconditionally true because the gateway only warms up in local mode: a missing model or a
+      # broken runtime then fails the healthcheck instead of the holder's first sentence.
+      VOICE_GATEWAY_STT_WARMUP: "true"
+      # Named models are downloaded on first use. Without a cache that is half a gigabyte every
+      # time the container is recreated, which turns `just voice` into a download.
+      HF_HOME: /models/huggingface
+    volumes:
+      - voice-models:/models
+    # 8002 on the host, beside banking's 8001. Not 8080: it is the most contested port on a
+    # development machine — Docker Desktop's own Kubernetes forwarding had it on this one — and
+    # the container's port stays 8000 either way.
+    ports:
+      - "127.0.0.1:${VOICE_GATEWAY_PORT:-8002}:8000"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres-data:
+  voice-models:

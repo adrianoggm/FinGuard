@@ -7,8 +7,33 @@ cd apps/orchestrator && uv run python scripts/evaluate_planning.py \
     --model qwen3.5:9b --repeat 3          # to see the spread
 ```
 
-235 cases across three files, thirteen functional groups, reference date pinned to
-2026-07-15, sampling seed pinned. See [GROUPS.md](GROUPS.md).
+## Metamorphic locality
+
+The exact-plan sets answer whether each isolated question is right. The metamorphic set answers a
+different failure mode: whether changing one phrase also changes something the user left alone.
+Both score the shipping planning pipeline: provider output is enriched with explicit deterministic
+facts and then verified. Negative filters deliberately live in that enrichment layer and are not
+fields the model's constrained JSON Schema can emit.
+
+```bash
+just evaluate-metamorphic qwen3.5:9b
+just evaluate-metamorphic openai/gpt-oss-120b groq 2
+just evaluate-metamorphic @cf/qwen/qwen3-30b-a3b-fp8 cloudflare
+```
+
+The recipe arguments are `model`, `provider` and `rpm`, in that order. `ollama` is local and is
+still the default. `groq` and `cloudflare` read their credentials from `apps/orchestrator/.env`,
+probe the endpoint before evaluating and print an explicit warning because every corpus sentence
+leaves the machine. Provider failures stop the run with exit code 2 instead of becoming a score.
+
+Its cases pair `importe`/`cantidad`/`media`, alternative calendar windows and additive exclusions.
+Each variant declares the only allowed changed fields. The report counts a pair as wrong when the
+requested field stays fixed or any undeclared field moves. Dataset locality itself is enforced in
+the unit suite, so a contradictory expected pair cannot make the model look wrong.
+
+The core benchmark remains 235 cases across three files and thirteen functional groups; the
+metamorphic dataset adds 15 relational cases. Their reference date and the local sampling seed are
+pinned. See [GROUPS.md](GROUPS.md).
 
 ## The two models we work with
 

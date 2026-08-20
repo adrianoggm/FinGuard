@@ -1,0 +1,193 @@
+# The same question, said the way somebody else says it.
+#
+# Every sentence in a group means the same thing, so every one of them has to reach the same place.
+# What this measures is not accuracy but *robustness*: how far a sentence can drift from the ones
+# this service was built against before dispatch stops working.
+#
+# The complaint it exists to put a number on: "anything slightly different from what was tested
+# does not work well, which makes it fragile". Until this file, nothing here could say whether that
+# was true.
+#
+# --- where the sentences come from, and why not from us ----------------------------------------
+#
+# The first version of this corpus was hand-written, by somebody who had spent a day inside this
+# vocabulary, and it scored 100 %. That number was worthless: the phrasings that came to mind were
+# the ones already known to work. An author who knows the answers cannot write the exam.
+#
+# So the sentences were generated instead, by a model given only what the customer *wants* -- never
+# a word about intents, routers or the shapes this service matches on. Same twelve meanings, same
+# eight variants each, written by something with no stake in them passing. That corpus initially
+# scored 39 %, and every one of the 59 failures fell into FINANCIAL_QUERY, the catch-all: the router recognises
+# the short imperative form and loses the sentence the moment it carries politeness or a
+# subordinate clause. The current router reaches 95/96; the remaining damaged internal-transfer
+# phrase has no ownership marker and is intentionally left to semantic interpretation.
+#
+# Two dead ends worth recording, because both produced numbers that meant nothing:
+#
+#   * The meanings were first phrased in the third person -- "preguntar cuánto gastó el usuario" --
+#     and the model wrote "¿cuánto has gastado tú?", a question to the assistant about its own
+#     money. Two thirds of that batch asked something else entirely, so the 29 % it scored measured
+#     the prompt, not the service.
+#   * A local 9B could not write the corpus at all: it leaked its reasoning into the array, emitted
+#     placeholders like "cards_typed_with_typo_1", and for one whole group wrote eight sentences
+#     about a different subject. Generated is not the same as usable, and every batch here was read
+#     start to finish before it was kept.
+#
+# Generation is not reproducible -- temperature 0.8, and the model is somebody else's -- so the
+# output is written down here and versioned. The measurement repeats exactly even though the
+# writing of it never will. Regenerating is allowed and is a *new* corpus, with a new floor, not a
+# reshuffle of this one: a corpus that gets rewritten whenever it is inconvenient measures nothing
+# either.
+#
+# Provenance: llama-3.3-70b-versatile via Groq, 2026-08-06, prompt in the generator's docstring.
+# Typos are the model's own -- two per group were asked for, as somebody typing fast on a phone.
+#
+# `intent` is the router's answer, not the tool that ends up replying. The two differ on purpose in
+# places (a balance follow-up stays FINANCIAL_QUERY until the handler narrows it) and this file
+# measures the first decision, because it is the one that cannot be recovered from: a turn that
+# lands in the catch-all is handed to a planner that has no plan for it.
+
+groups:
+  - means: how much did I spend last month
+    intent: FINANCIAL_QUERY
+    says:
+      - "Me gustaría saber cuánto he gastado el mes pasado."
+      - "¿Cuánto he tirado el mes pasado?"
+      - "Quiero ver cuánto dinero he gastado en el último mes."
+      - "Estoy curioso por saber mi gasto total del mes anterior."
+      - "¿Puedes decirme cúanto e gastado el mes pasado?"
+      - "Necesito saber cuánto he gastado, ¿puedes decírmelo?"
+      - "Me parece que he gastado mucho el mes pasado, ¿cuánto exactamente?"
+      - "¿Cúanto he gastao el mes pasao?"
+
+  - means: what is my balance
+    intent: ACCOUNT_BALANCE
+    says:
+      - "¿Cuánto dinero tengo ahora mismo en mi cuenta?"
+      - "Quiero saber cuánto dinero tengo en este momento."
+      - "Me gustaría saber mi saldo actual, por favor."
+      - "Tengo que saber cuantp dinero tengo ahorra ahora mismo."
+      - "¿Cuál es mi saldo actual en el banco?"
+      - "Necesito saber cuánto dinero tengo en mi cuenta bancaria en este instante."
+      - "Quiero ver cuanto dinero tieno en mi cuenta, por favor."
+      - "Me interesa saber cuánto dinero dispongo en mi cuenta en este momento."
+
+  - means: which accounts do I have
+    intent: ACCOUNT_BALANCE
+    says:
+      - "Quiero saber qué cuentas tengo abiertas en el banco."
+      - "Me gustaría conocer el listado de mis cuentas bancarias actuales."
+      - "¿Cuáles son las cuentas que tengo abiertas en este momento?"
+      - "Tengo que revisar mis cuentas, ¿cuáles son las que están activas?"
+      - "¿Puedes decirme què cuentas tengo abiertoas en el banco?"
+      - "Necesito saber cuántas cuentas bancarias tengo y cuáles son."
+      - "Me interesa saber quales son mis cuentas bancarias actuales, por favor."
+      - "¿Podías decirme què cuentas bancarais tengo abiertas en este banco?"
+
+  - means: who can I send money to
+    intent: LIST_CONTACTS
+    says:
+      - "Quiero saber a qué personas de mi agenda puedo enviarles dinero."
+      - "Me gustaría conocer la lista de contactos a los que puedo transferir dinero."
+      - "¿A quién de mi agenda puedo mandarles dinero?"
+      - "Estoy intentando enviar dinero a alguien de mi lista de contactos, ¿a quién puedo enviarlo?"
+      - "Necesito saber qué contactos de mi agenda están disponibles para recibir dinero que yo les envíe."
+      - "Quieo saber a quien de mi agend puedo envirles dinreo."
+      - "¿Puedo tener una lista de las personas de mi agenda a las que puedo hacer una transferencia de dinero?"
+      - "Estoy tratando de enviarle dinero a alguien, ¿puedo saber a quie de mi agenda puedo hacerlo?"
+
+  - means: which cards do I have and what have they taken
+    intent: LIST_CARDS
+    says:
+      - "Me gustaría saber qué tarjetas tengo y cuánto he gastado con cada una."
+      - "Quiero ver mis tarjetas y el gasto total de cada una, por favor."
+      - "Tengo varias tarjetas, ¿podrías decirme cuánto he gastado con cada una de ellas?"
+      - "Me interesa conocer el detalle de mis tarjetas y los gastos asociados a cada una."
+      - "¿Puedes decirme qué tarjetas tengo activas y cuánto se ha gastado con cada una, por favor?"
+      - "Estoy intentando hacer un seguimiento de mis gastos, ¿qué tarjetas tengo y cuánto he gastado con cada una?"
+      - "Quiero saber mis tarjtas y cuantp he gastado con cada una, gracias."
+      - "¿Podrías informarme sobre las tarjetas que tengo y el gasto total de cada una, estoy un poco liado con mis finanzas?"
+
+  - means: what can you do
+    intent: IDENTITY_OR_HELP
+    says:
+      - "Quiero saber qué es este asistente y en qué me puede ayudar con mi cuenta."
+      - "Me gustaría conocer el propósito de este asistente y cómo puede ayudarme a gestionar mi dinero."
+      - "¿En qué me puede ayudar este asistente, exactamente, con mis finanzas personales?"
+      - "Estoy curioso, ¿qué hace este asistente y cómo puede echarme una mano con mis asuntos bancarios?"
+      - "Quería preguntar, ¿cuál es el objetivo de este asistente y en qué puedo aprovechar su ayuda con mi dinero?"
+      - "Oye, ¿podrías decirme qué es este asistente y en qué me puede ayudar con mis operaciones bancarias, tio?"
+      - "Quiero saber qe es este asistente y en qe me puede ayudar con mi cuenta corriente, gracias."
+      - "Bueno, mira, me gustaria saber que hace este asistente y como me puede ayudar con mis ahorros, vale?"
+
+  - means: which categories exist
+    intent: LIST_CATEGORIES
+    says:
+      - "Me gustaría saber qué categorías de gasto hay en la app para poder filtrar mis gastos."
+      - "¿Cuáles son las categorías de gasto que puedo seleccionar para organizar mi dinero en la aplicación?"
+      - "Estoy intentando ordenar mis gastos en la app y me pregunto qué categorías de gasto tengo disponibles."
+      - "Quiero filtrar mis gastos por categorías, ¿podrías decirme cuáles están disponibles en la app?"
+      - "Me interesa saber cuáles son las categorías de gasto que puedo utilizar para clasificar mis gastos en la aplicación."
+      - "¿Puedes decirme què categorias de gastp tengo en la app para poder filtrar mis gastos con facilidad?"
+      - "Estoy tratando de hacer un seguimiento de mis gastos en la app y necesito saber qué categorías de gasto puedo seleccionar para ello, ¿cuáles son?"
+      - "Quería saber quales son las categorias de gasto que puedo usar en la app para filtrar mis gastos de manera efectiva"
+
+  - means: send twenty euros to Marta
+    intent: PAYMENT
+    says:
+      - "Quiero enviar 20 euros a Marta por bizum."
+      - "Voy a hacer una transferencia de 20 euros a Marta con bizum."
+      - "Mira, necesito mandarle 20 euros a Marta por bizum, ¿puedes ayudarme?"
+      - "Tengo que enviar 20 euros a Marta, puedo hacerlo por bizum, ¿verdad?"
+      - "Quiero hacer una transferencia de 20 euros a Marta por bizum, por favor."
+      - "Necesito mandar 20 euris a Marta por bizum, es urgente."
+      - "Voy a transferir 20 euros a Marta mediante bizum, gracias."
+      - "Quiero mandrle 20 euros a Marta por bizum, ¿cómo lo hago?"
+
+  - means: move money between my own accounts
+    intent: OWN_TRANSFER
+    says:
+      - "Quiero transferir dinero de una de mis cuentas a otra."
+      - "Me gustaría mover fondos entre mis cuentas propias."
+      - "Tengo que pasar dinero de una cuenta mía a otra cuenta que también es mía."
+      - "Estoy intentando hacer una transferencia entre mis cuentas, ¿cómo lo hago?"
+      - "Necesito trasvasar dinero de una cuenta a otra, ambas mías."
+      - "Quiero hacer una transferencia de una cuenta a otra cuenta que tengo yo, vale."
+      - "Quiero mover dinreo de una cuenta a otr, ¿es posible?"
+      - "Voy a intentar transferir dinero de una cuenta a otra cuenta que es mia, espero que funcione."
+
+  - means: the last answer was wrong
+    intent: CORRECTION
+    says:
+      - "Me parece que la respuesta que me has dado no es la correcta, ¿podrías volver a explicarme?"
+      - "La verdad, no creo que la respuesta que acabo de recibir sea la adecuada para mi situación."
+      - "Eh, creo que hay un error en la respuesta que me has dado, ¿podrías revisarla?"
+      - "Me da la sensacion de que no me has entendido bien, la respuesta no es la que esperaba."
+      - "La respuesa que me has dado no me ha resuelto el problema, ¿puedes intentarlo de nuevo?"
+      - "No estoy seguro de que la respuesta sea la correcta, ¿podrias darme mas informacion?"
+      - "La respuesta que me has dado no me convence, ¿podrias explicarmelo de otra manera, por favor?"
+      - "Me he quedado un poco perdido con la respuesta que me has dado, ¿podrias repetirla o explicarla de otro modo?"
+
+  - means: how did you work that out
+    intent: EXPLAIN_PREVIOUS
+    says:
+      - "Quiero saber de dónde has sacado esa cifra que me has dado."
+      - "Me gustaría saber, por favor, de dónde sale esa cantidad que me has proporcionado."
+      - "¿De dónde viene esa cantidad que me acabas de dar, si no es mucha molestia?"
+      - "Estoy un poco perdido, ¿podrías decirme de dónde sale esa cifra que me has dado?"
+      - "Me parece un poco raro, ¿de dónde has sacado esa cantidad que me has dicho?"
+      - "Quiero saber de dónde has sacdo esa cifra que me has dado, por favor."
+      - "¿De dónde sale esa cantidad que me has proporcionado, si puedes decírmelo?"
+      - "Me da que voy a tener que preguntar, de dónde has sacao esa cifra que me has dado exactamente?"
+
+  - means: manners and nothing else
+    intent: COURTESY
+    says:
+      - "Hola, gracias por atenderme."
+      - "Me alegra saludarte, gracias."
+      - "Gracias, un placer, adiós."
+      - "Buenos días, gracias por todo, adiós."
+      - "Un saludo y muchsas gracias, adios."
+      - "Gracias por la ayuda, hasta luego, gracias."
+      - "Estoy agradecido, gracias, adiós ya."
+      - "Muchas gracias, fue un placer, adiós, grazias"

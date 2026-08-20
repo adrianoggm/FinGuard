@@ -11,7 +11,15 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.enums import (
+    CounterpartyType,
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    ReceiptCategory,
+    TransactionType,
+)
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -20,6 +28,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.banking.http_financial_query import (
+    RANKED_FIELDS,
     HttpFinancialQuery,
     from_body,
     movement_from_body,
@@ -56,6 +65,26 @@ def test_a_named_period_travels_as_a_period() -> None:
     }
     # No stray key: banking forbids extras, so an n that does not apply is a 422.
     assert "dateRange" not in body
+
+
+@pytest.mark.parametrize(
+    "period",
+    [
+        Period.THIS_QUARTER,
+        Period.LAST_QUARTER,
+        Period.THIS_SEMESTER,
+        Period.LAST_SEMESTER,
+        Period.THIS_FORTNIGHT,
+        Period.LAST_FORTNIGHT,
+        Period.THIS_WEEKEND,
+        Period.LAST_WEEKEND,
+    ],
+)
+def test_natural_period_names_cross_the_hand_written_contract(period: Period) -> None:
+    body = body_for(FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period)))
+
+    assert body["period"]["period"] == period.value
+    assert "n" not in body["period"]
 
 
 def test_a_counted_period_carries_its_count() -> None:
@@ -105,6 +134,47 @@ def test_the_body_is_camel_case() -> None:
     assert body["categories"] == ["GROCERIES"]
 
 
+def test_an_internal_only_plan_reaches_banking_without_becoming_an_ordinary_query() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.INCOME,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            include_internal=True,
+            internal_only=True,
+        )
+    )
+
+    assert body["includeInternal"] is True
+    assert body["internalOnly"] is True
+
+
+def test_a_direct_debit_filter_reaches_banking() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            transaction_types=(TransactionType.DIRECT_DEBIT,),
+        )
+    )
+
+    assert body["transactionTypes"] == ["DIRECT_DEBIT"]
+
+
+def test_a_cumulative_plan_reaches_banking_as_calendar_bucket_sums() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            group_by=GroupBy.MONTH,
+            metric=Metric.CUMULATIVE,
+        )
+    )
+
+    assert body["metric"] == "CUMULATIVE"
+    assert body["groupBy"] == "MONTH"
+    assert "groupLimit" not in body
+
+
 # --- response to model -------------------------------------------------------------
 
 
@@ -125,6 +195,10 @@ def test_a_response_becomes_the_assistants_own_model() -> None:
                     "category": "GROCERIES",
                     "amountMinor": -4210,
                     "direction": "EXPENSE",
+                    "transactionType": "DIRECT_DEBIT",
+                    "counterpartyName": "Mercadona Energía",
+                    "counterpartyType": "BILLER",
+                    "receiptCategory": "UTILITIES",
                 }
             ],
         }
@@ -134,6 +208,10 @@ def test_a_response_becomes_the_assistants_own_model() -> None:
     assert answer.total_minor == 142580
     assert answer.groups[0].key == "GROCERIES"
     assert answer.movements[0].merchant_name == "Mercadona"
+    assert answer.movements[0].transaction_type is TransactionType.DIRECT_DEBIT
+    assert answer.movements[0].counterparty_name == "Mercadona Energía"
+    assert answer.movements[0].counterparty_type is CounterpartyType.BILLER
+    assert answer.movements[0].receipt_category is ReceiptCategory.UTILITIES
     # Z parsed as UTC rather than dropped on the floor.
     assert answer.movements[0].occurred_at == datetime(2026, 7, 3, 10, 12, tzinfo=UTC)
     assert not answer.is_empty
@@ -249,3 +327,132 @@ def test_the_movement_of_a_ranking_is_read_whole() -> None:
     assert read.category == "TRANSPORT_FUEL"
     assert read.direction == "EXPENSE"
     assert read.occurred_at.date() == date(2026, 3, 14)
+
+
+# --- the ranked endpoint takes fewer fields than a query, and drift is silent -----------------
+
+
+def test_the_ranked_body_carries_only_what_banking_accepts() -> None:
+    """Banking's `RankedMovementRequest` forbids extra inputs, so one field too many is a 422 for
+    every ranking question — not a degraded answer, no answer at all.
+
+    That is what happened. `ranked_body` used to name the fields to *drop*, `to_body` later grew
+    `includeInternal` and `acrossAccounts`, and nothing linked the two. "¿Cuál es el gasto más caro
+    que he realizado?" came back "la consulta que he construido no es válida" — a question this
+    service added an endpoint to answer.
+
+    The corpus could not catch it: it drives a stubbed bank, so the real contract is the one thing
+    it never exercises. This is the cheapest stand-in until `packages/contracts` exists — it fails
+    the moment a field is added to `to_body` and not considered here, which is the exact mistake.
+    """
+    body = ranked_body(
+        TopMovements(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            rank=3,
+        ),
+        account_id=ACCOUNT,
+        today=date(2026, 8, 6),
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert set(body) <= RANKED_FIELDS, f"banking would refuse: {sorted(set(body) - RANKED_FIELDS)}"
+    assert body["rank"] == 3
+    # The window still travels with its reference date, which is what keeps the two services
+    # agreeing about which days "this year" covers.
+    assert body["period"]["reference"] == "2026-08-06"
+
+
+def test_a_query_body_carries_more_than_a_ranking_can() -> None:
+    """The guard above only means something while the two shapes genuinely differ. If `to_body`
+    ever stopped emitting the fields the ranked endpoint refuses, the subset assertion would pass
+    for the wrong reason and stop protecting anything."""
+    body = to_body(
+        FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period=Period.THIS_YEAR)),
+        account_id=ACCOUNT,
+        today=date(2026, 8, 6),
+        supporting_movements=10,
+        reporting_timezone="Europe/Madrid",
+    )
+
+    assert set(body) - RANKED_FIELDS, "the two bodies are the same shape; this guard is now empty"
+
+
+def test_a_query_body_carries_an_explicit_account_subset() -> None:
+    selected = (uuid.UUID(int=2), uuid.UUID(int=3))
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.ALL,
+            period=RelativePeriod(period=Period.THIS_MONTH),
+            only_account_ids=selected,
+        )
+    )
+
+    assert body["onlyAccountIds"] == [str(account_id) for account_id in selected]
+    assert "onlyAccountId" not in body
+
+
+def test_a_query_body_carries_an_exact_movement_selection() -> None:
+    selected = (uuid.UUID(int=7), uuid.UUID(int=8))
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.ALL,
+            period=RelativePeriod(period=Period.THIS_MONTH),
+            transaction_ids=selected,
+        )
+    )
+
+    assert body["transactionIds"] == [str(transaction_id) for transaction_id in selected]
+
+
+def test_a_query_body_carries_negative_filters() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            excluded_categories=("HOUSING_RENT",),
+            excluded_merchants=("Mercadona",),
+        )
+    )
+
+    assert body["excludedCategories"] == ["HOUSING_RENT"]
+    assert body["excludedMerchants"] == ["Mercadona"]
+
+
+def test_a_query_body_keeps_partial_merchant_terms_distinct_from_exact_names() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            merchant_terms=("apuest", "bet"),
+        )
+    )
+
+    assert body["merchantTerms"] == ["apuest", "bet"]
+    assert body["merchants"] == []
+
+
+def test_a_frequency_query_crosses_the_wire_without_becoming_a_sum() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            categories=("TRANSPORT_FUEL",),
+            metric=Metric.FREQUENCY,
+        )
+    )
+
+    assert body["metric"] == "FREQUENCY"
+
+
+def test_a_recurrence_query_crosses_the_wire_without_becoming_a_sum() -> None:
+    body = body_for(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(period=Period.THIS_YEAR),
+            categories=("SUBSCRIPTIONS", "HOUSING_RENT"),
+            metric=Metric.RECURRENCE,
+        )
+    )
+
+    assert body["metric"] == "RECURRENCE"

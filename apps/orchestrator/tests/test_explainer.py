@@ -37,7 +37,10 @@ def test_the_identity_says_what_it_cannot_do_too() -> None:
     assert "bizum" in said
     assert "medias" in said
     assert "transferencias" in said
-    assert "comparar dos periodos" in said
+    assert "Comparar dos semanas, meses o años" in said
+    assert "rangos de fechas explícitos" in said
+    assert "se acumulan" in said
+    assert "ticket medio" in said
 
 
 def test_explaining_restates_the_query_that_ran() -> None:

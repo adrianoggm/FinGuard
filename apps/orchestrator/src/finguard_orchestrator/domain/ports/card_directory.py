@@ -12,12 +12,25 @@ class CardDirectoryPort(Protocol):
     `since` is a decision, not a default: the screen says which window it is showing, so the window
     has to come from the screen. Raises rather than answering with an empty wallet — an account with
     no cards and an account we could not ask about look the same otherwise.
+
+    `today` and `timezone` are the holder's, and they travel with `since` because banking bins the
+    charges by day: a window resolved here and binned in another zone is a real total for the wrong
+    days. The adapter used to read its own clock instead, which is the deployment's, not theirs.
     """
 
-    async def all_of(self, account_id: UUID, *, since: date) -> Wallet: ...
+    async def all_of(
+        self, account_id: UUID, *, since: date, today: date, timezone: str
+    ) -> Wallet: ...
 
     async def charges_on(
-        self, account_id: UUID, card_id: UUID, *, since: date, limit: int
+        self,
+        account_id: UUID,
+        card_id: UUID,
+        *,
+        since: date,
+        today: date,
+        timezone: str,
+        limit: int,
     ) -> tuple[CardCharge, ...]: ...
 
     """The charges behind a card's total.

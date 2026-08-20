@@ -6,6 +6,7 @@ restricted role and its own views.
 
 from datetime import date, datetime
 from typing import Any
+from urllib.parse import urlencode
 from uuid import UUID
 
 import httpx2 as httpx
@@ -21,12 +22,8 @@ class HttpCards:
         self._base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
-    async def all_of(self, account_id: UUID, *, since: date) -> Wallet:
-        # Banking takes a number of days and resolves the date in its own reporting zone, which is
-        # the zone the charges are grouped in. Sending a date instead would mean two services
-        # deciding what "since" means, and they would eventually disagree by a day.
-        days = max(1, (date.today() - since).days)
-        url = f"{self._base_url}/v1/accounts/{account_id}/cards?days={days}"
+    async def all_of(self, account_id: UUID, *, since: date, today: date, timezone: str) -> Wallet:
+        url = f"{self._base_url}/v1/accounts/{account_id}/cards?{_window(since, today, timezone)}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.get(url)
@@ -67,12 +64,18 @@ class HttpCards:
             raise BankingUnavailableError(f"unreadable cards: {exc}") from exc
 
     async def charges_on(
-        self, account_id: UUID, card_id: UUID, *, since: date, limit: int
+        self,
+        account_id: UUID,
+        card_id: UUID,
+        *,
+        since: date,
+        today: date,
+        timezone: str,
+        limit: int,
     ) -> tuple[CardCharge, ...]:
-        days = max(1, (date.today() - since).days)
         url = (
             f"{self._base_url}/v1/accounts/{account_id}/cards/{card_id}/charges"
-            f"?days={days}&limit={limit}"
+            f"?{_window(since, today, timezone)}&limit={limit}"
         )
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -101,6 +104,33 @@ class HttpCards:
             # unreadable body is not, and a screen showing no charges for either reason looks
             # identical.
             raise BankingUnavailableError(f"unreadable charges: {exc}") from exc
+
+
+def _window(since: date, today: date, timezone: str) -> str:
+    """The window, spelled the way banking spells a relative period.
+
+    Three fields and not one, and the two extra are the fix. Banking takes a day count and resolves
+    it into a date, which it used to do against *its* clock and then bin the charges in a zone
+    hardcoded one layer below that — so a holder outside the deployment's zone read the chat on
+    their day and their cards on somebody else's. `reference` is the day this holder is having and
+    `timezone` is what that day is measured in; sending either alone asks the far side to guess the
+    other half, and its guess is a deployment setting.
+
+    **`+ 1`, because both ends of the window are inside it.** `since` and `today` are two dates and
+    the span between them is one more day than their difference — banking resolves the count back
+    into a date the same way, so sending the bare difference asked for a window starting one day
+    later than the one this side had computed, and the cards were read over a shorter period than
+    the chat beside them.
+
+    urlencode because a zone has a slash in it.
+    """
+    return urlencode(
+        {
+            "days": max(1, (today - since).days + 1),
+            "reference": today.isoformat(),
+            "timezone": timezone,
+        }
+    )
 
 
 def _moment(written: str) -> datetime:

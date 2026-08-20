@@ -82,6 +82,30 @@ See [`config/llm.toml`](config/llm.toml) for the annotated file used in developm
 
 Known limit: the policy lives in this process, so with several replicas each would have its own. `/admin/*` asks for no credentials yet, which is why nothing is published beyond `localhost`.
 
+## Conversational routing
+
+A turn is analysed as an intent, a relationship to the conversation (new request, slot answer,
+follow-up or correction), and a focus. Two substantive clauses are treated as a compound request:
+neither is executed until the user chooses one of the returned `suggestions`.
+
+The `hybrid` interpreter keeps every deterministic match and asks the semantic reader only about a
+plausible catch-all. A model cannot create a payment or an own-account transfer, and explicit
+movement questions cannot be changed into a balance. If the financial planner violates its JSON
+schema, it receives one schema-only repair attempt; domain and safety rejections are never retried
+or coerced.
+
+The deterministic router currently preserves 95 of 96 independently generated paraphrases across
+twelve intent groups. The remaining phrase no longer says that either account belongs to the
+holder, so it deliberately stays in the semantic fallback instead of being promoted to an action.
+
+Payment amounts may be written as figures or Spanish cardinal words. Word amounts are parsed again
+outside the model and must match exactly before a preview can be produced. Explicit payment
+concepts are also recovered outside the model: known instruction suffixes are excluded, places such
+as `viaje a Málaga` keep their preposition, and a concept invented by the model is rejected.
+Balance questions,
+financial filters and own-account transfers can also use the holder's custom account display names;
+generic labels such as `Hucha` remain ambiguous when several accounts share that kind.
+
 ## Operational settings
 
 The values live in [`.env.defaults`](.env.defaults) — versioned, free of secrets, and the
@@ -111,6 +135,7 @@ somebody changes.
 | `ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS` | `120` | A ceiling for "something is wrong", not a latency target. A model that does not fit the GPU needs it raised |
 | `ORCHESTRATOR_BANKING_TIMEOUT_SECONDS` | `10` | |
 | `ORCHESTRATOR_SUPPORTING_MOVEMENTS` | `10` | Movements returned as evidence. Enough to show the figure is real, few enough that a chat reply is not a statement |
+| `ORCHESTRATOR_TURN_INTERPRETER` | `router` | `router`, `shadow`, conservative `hybrid`, or model authority. Compose opts into `hybrid` |
 | `ORCHESTRATOR_DISABLED_GUARDS` | *(none)* | Deterministic rules to switch off, by name. A name this build does not have stops the service |
 | `ORCHESTRATOR_QUESTIONS_ENABLED` | `false` | The financial endpoints. Off until the open risks clear an agreed bar |
 

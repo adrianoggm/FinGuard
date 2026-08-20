@@ -9,13 +9,47 @@
  * from an issuer and this becomes the one place that changes.
  */
 
+import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
+
 const BASE = (import.meta.env.VITE_ORCHESTRATOR_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 const TOKEN = import.meta.env.VITE_ORCHESTRATOR_TOKEN ?? "";
 
+export const voiceGatewayUrl = import.meta.env.VITE_VOICE_GATEWAY_URL ?? "";
+export const voiceEnabled = voiceGatewayUrl !== "" && TOKEN !== "";
+
+export type VoiceCallbacks = {
+  onEvent: (event: VoiceEvent) => void;
+  onStatus: (status: VoiceStatus, error?: string) => void;
+  onFinished?: () => void;
+};
+
+export function createVoiceClient(callbacks: VoiceCallbacks): VoiceClient | null {
+  if (!voiceEnabled) return null;
+  // Keep the credential in this module's closure. The UI receives a configured client, never the token.
+  return new VoiceClient({ gatewayUrl: voiceGatewayUrl, token: TOKEN, ...callbacks });
+}
+
 export const configured = TOKEN !== "";
 
-function headers(): Record<string, string> {
-  return { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+function headers(attempt?: string): Record<string, string> {
+  const common = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+  // Names this attempt so a resend of it is the same preview rather than a second one. The service
+  // mints one when it is absent, which is the same as having none: a key that differs between a
+  // request and its retry cannot tell them apart. Whoever knows what "one attempt" means has to be
+  // the one to say it, and that is the screen, not this module.
+  return attempt ? { ...common, "Idempotency-Key": attempt } : common;
+}
+
+/**
+ * A name for one attempt at one payment.
+ *
+ * Kept across a failure and renewed when the payment changes: resending after a timeout must not
+ * become a second intent, and reusing it for a different amount is refused by the bank with a 409
+ * rather than answered with the earlier preview. So a screen holds one per thing it is about to
+ * send, and takes a new one when what it is sending changes.
+ */
+export function newAttempt(): string {
+  return crypto.randomUUID();
 }
 
 export type Movement = {
@@ -32,6 +66,10 @@ export type Movement = {
   direction?: string;
   merchant_name: string | null;
   category: string | null;
+  transaction_type?: string | null;
+  counterparty_name?: string | null;
+  counterparty_type?: string;
+  receipt_category?: string | null;
   /** Present on the movement list, which is the only screen that can refile one. */
   transaction_id?: string | null;
   /** Whether the category is the holder's own rather than the bank's guess. */
@@ -97,9 +135,24 @@ export type PlanContext = {
   start: string | null;
   end: string | null;
   categories: string[];
+  excluded_categories?: string[];
   merchants: string[];
+  /** Explicit substring matching; exact merchant names remain in `merchants`. */
+  merchant_terms?: string[];
+  excluded_merchants?: string[];
+  counterparties?: string[];
+  excluded_counterparties?: string[];
+  counterparty_types?: ("MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN")[];
   group_by: string;
   metric: string;
+  group_limit?: number | null;
+  include_internal?: boolean;
+  internal_only?: boolean;
+  across_accounts?: boolean;
+  only_account_id?: string | null;
+  only_account_ids?: string[];
+  transaction_ids?: string[];
+  transaction_types?: string[];
 };
 
 /** A payment being built. Part of the conversation state, never held on its own. */
@@ -129,6 +182,7 @@ export type Workflow =
   | "FINANCIAL_CLARIFICATION"
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
+  | "TRANSFER_IN_PROGRESS"
   | "PAYMENT_CONFIRMATION";
 
 /** What the last turn asked the user for. */
@@ -140,7 +194,10 @@ export type Slot =
   | "AMOUNT"
   | "RECIPIENT"
   | "RECIPIENT_CHOICE"
-  | "CONFIRMATION";
+  | "CONFIRMATION"
+  // Which of the holder's accounts. Asked rarely: a question naming none is answered with a
+  // breakdown, because a breakdown is a better answer than a question.
+  | "ACCOUNT";
 
 /**
  * Where the conversation is, as the service sees it.
@@ -157,13 +214,55 @@ export type Slot =
 export type ConversationState = {
   workflow: Workflow | null;
   awaiting: Slot | null;
+  // What the last turn asked for even when it left no workflow behind. Round-tripped like the
+  // rest and never read here: it is how the service notices it has asked the same question twice
+  // and offers choices instead of a third open question.
+  last_asked: Slot | null;
+  // Whether the last turn said how much money there is. Round-tripped and never read here: it is
+  // how the service knows that "¿y en la hucha?" is about the balance rather than about spending.
+  answered_the_balance: boolean;
+  // Category explicitly highlighted by the previous answer; echoed without interpretation.
+  referenced_category?: string | null;
+  // Typed result row and exact movement evidence shown by the previous answer. The UI only
+  // round-trips these; the orchestrator alone decides what a later pronoun means.
+  referenced_group_by?: "CATEGORY" | "MERCHANT" | "COUNTERPARTY" | "ACCOUNT" | null;
+  referenced_group_key?: string | null;
+  referenced_transaction_ids?: string[];
+  // User-taught account names. Opaque conversational memory: the server revalidates each account
+  // identifier against the authenticated holder before applying it.
+  account_aliases?: { alias: string; account_id: string; display_name: string }[];
+  counterparty_aliases?: {
+    alias: string;
+    counterparty_name: string;
+    counterparty_type: "MERCHANT" | "PERSON" | "EMPLOYER" | "BILLER" | "ACCOUNT" | "BANK" | "UNKNOWN";
+  }[];
+  // One-turn reference used only to understand an immediate "otro" after a completed payment.
+  recent_payment_rail?: "BIZUM" | "TRANSFER" | null;
+  // What has been said, oldest first and bounded by the service. Every other field here describes
+  // the turn immediately before; this is the thread, and it is what lets an ellipsis several turns
+  // deep still resolve. Round-tripped like the rest and never read here — rendering the chat uses
+  // the messages this client already holds, not the service's copy of them.
+  turns?: { sentence: string; outcome: string; plan?: string | null; question?: string | null }[];
   last_plan: PlanContext | null;
+  prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
+  last_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
+  last_ratio_part?: PlanContext | null;
+  last_ratio_whole?: PlanContext | null;
+  pending_ratio_kind?: "SHARE" | "SAVINGS_RATE" | "PERCENT_CHANGE" | "NET_CASH_FLOW" | null;
+  pending_ratio_part?: PlanContext | null;
+  pending_ratio_whole?: PlanContext | null;
+  last_comparison_earlier?: PlanContext | null;
+  last_comparison_latest?: PlanContext | null;
   draft: PlanContext | null;
   capability: string | null;
   payment: PaymentDraft | null;
   suspended: boolean;
   candidates: Candidate[];
+  // TRANSFER_IN_PROGRESS: where the money is going and how much, whichever of the two the sentence
+  // supplied. Round-tripped so the reply that fills in the other one can be understood.
+  transfer_to: string | null;
+  transfer_amount_minor: number | null;
   intent_id: string | null;
   recipient: string | null;
   amount_minor: number | null;
@@ -176,7 +275,10 @@ export type ConversationState = {
   // person and the phone is already on `payment`, a transfer names the account. The IBAN arrives
   // whole and unmasked on purpose — approving a transfer means recognising twenty-four characters,
   // and four of them with dots between is not something anybody can check against a note.
-  rail: "BIZUM" | "TRANSFER" | null;
+  // INTERNAL is a move between the holder's own accounts, which the chat can now stage and confirm.
+  // It was missing here, so the preview panel fell through to the Bizum label and drew "Bizum a
+  // Fondo indexado" over a transfer.
+  rail: "BIZUM" | "TRANSFER" | "INTERNAL" | null;
   recipient_iban: string | null;
   // `rank` used to be here and left with the refusal it served. The service rejects fields it does
   // not know, so a stale one on this type is a 422 waiting for whoever fills it in.
@@ -198,7 +300,50 @@ export type Answer = {
   groups: { key: string; total_minor: number; movement_count: number }[];
   movements: Movement[];
   suggestions: string[];
+  /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
+  parts?: Answer[];
 };
+
+/** Narrow transport boundary for answers arriving through the voice gateway. */
+export function validateVoiceAnswer(value: unknown): Answer {
+  return validateVoiceAnswerAt(value, 0);
+}
+
+function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
+  if (depth > 2) throw new Error("Respuesta de voz inválida.");
+  if (!value || typeof value !== "object") throw new Error("Respuesta de voz inválida.");
+  const body = value as Record<string, unknown>;
+  const nullableString = (field: unknown) => field === null || typeof field === "string";
+  const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
+  const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  if (
+    typeof body.outcome !== "string" || typeof body.text !== "string" ||
+    !nullableString(body.question) || !nullableString(body.intent_id) ||
+    !nullableString(body.plan) ||
+    (body.conversation !== null &&
+      (typeof body.conversation !== "object" || Array.isArray(body.conversation))) ||
+    !nullableString(body.currency) || !nullableNumber(body.total_minor) ||
+    !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
+    !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
+    body.groups.some((group) => {
+      if (!group || typeof group !== "object") return true;
+      const item = group as Record<string, unknown>;
+      return typeof item.key !== "string" || !finiteNumber(item.total_minor) ||
+        !finiteNumber(item.movement_count);
+    }) || body.suggestions.some((item) => typeof item !== "string") ||
+    body.movements.some((movement) => {
+      if (!movement || typeof movement !== "object") return true;
+      const item = movement as Record<string, unknown>;
+      return typeof item.occurred_at !== "string" || typeof item.description !== "string" ||
+        !finiteNumber(item.amount_minor) || !nullableString(item.merchant_name) ||
+        !nullableString(item.category);
+    }) ||
+    (body.parts !== undefined && (!Array.isArray(body.parts) || body.parts.some((part) => {
+      try { validateVoiceAnswerAt(part, depth + 1); return false; } catch { return true; }
+    })))
+  ) throw new Error("Respuesta de voz inválida.");
+  return body as unknown as Answer;
+}
 
 export type Stage = { name: string };
 
@@ -249,10 +394,13 @@ export async function version(): Promise<{ sha: string; ref: string }> {
 export async function* ask(
   sentence: string,
   conversation: ConversationState | null = null,
+  attempt?: string,
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
-    headers: headers(),
+    // A question can be a payment — "hazle un bizum de 20 a Marta" prepares one — so this endpoint
+    // takes the key too, and a resent question leaves one intent behind instead of two.
+    headers: headers(attempt),
     // The plan behind the last answer travels with the question, and so does the half-built one
     // behind the last question back. The service remembers neither: the conversation is held by
     // whoever is having it, which is why both parameters exist at all.
@@ -382,7 +530,7 @@ export async function movements(options: {
   return read<Movements>(`/v1/account/movements?${query}`);
 }
 
-export type GroupBy = "CATEGORY" | "MONTH" | "WEEK" | "MERCHANT";
+export type GroupBy = "CATEGORY" | "MONTH" | "WEEK" | "MERCHANT" | "ACCOUNT";
 
 export async function breakdown(by: GroupBy, days: number): Promise<Breakdown> {
   return read<Breakdown>(`/v1/account/breakdown?by=${by}&days=${days}`);
@@ -405,10 +553,11 @@ export async function transferBetweenAccounts(
   toAccountId: string,
   amountMinor: number,
   currency = "EUR",
+  attempt?: string,
 ): Promise<Answer> {
   const response = await fetch(`${BASE}/v1/payments/between-accounts`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(attempt),
     body: JSON.stringify({
       to_account_id: toAccountId,
       amount_minor: amountMinor,
@@ -433,10 +582,14 @@ export async function transferBetweenAccounts(
   };
 }
 
-export async function payChosen(recipientName: string, amountMinor: number): Promise<Answer> {
+export async function payChosen(
+  recipientName: string,
+  amountMinor: number,
+  attempt?: string,
+): Promise<Answer> {
   const response = await fetch(`${BASE}/v1/payments/chosen`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(attempt),
     body: JSON.stringify({
       recipient_name: recipientName,
       amount_minor: amountMinor,

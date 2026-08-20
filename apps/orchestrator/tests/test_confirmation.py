@@ -91,3 +91,28 @@ def test_no_reply_is_ever_both() -> None:
     is exactly the kind of thing that is fine until somebody reorders two ifs."""
     for reply in ("sí", "no", "vale", "no, cancela", "sí pero mándale 30", ""):
         assert not (confirmation.is_confirmation(reply) and confirmation.is_refusal(reply))
+
+
+def test_politeness_alone_does_not_move_money() -> None:
+    """A bare "gracias" is somebody being polite, and it was in the yes vocabulary.
+
+    It went unnoticed while the only preview was a Bizum, because a Bizum was always answered before
+    anybody thanked anyone. A transfer preview is reached in the middle of an ordinary conversation,
+    and "mueve 200 € a la hucha" followed by "gracias" moved the money.
+
+    The corpus already said these words are courtesy — every "gracias" in it is asserted to reach
+    COURTESY — so this is two parts of the service agreeing rather than a new opinion.
+    """
+    assert not confirmation.is_confirmation("gracias")
+    assert not confirmation.is_confirmation("GRACIAS")
+    assert not confirmation.is_confirmation("gracias!!")
+    assert not confirmation.is_confirmation("por favor")
+
+
+def test_politeness_travelling_with_a_yes_is_still_a_yes() -> None:
+    """The half that must not break. Somebody who says "sí, gracias" has agreed, and refusing to
+    read that would ask the same question twice to somebody who answered it politely."""
+    assert confirmation.is_confirmation("sí gracias")
+    assert confirmation.is_confirmation("vale, gracias")
+    assert confirmation.is_confirmation("hazlo por favor")
+    assert confirmation.is_confirmation("de acuerdo")

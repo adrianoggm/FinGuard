@@ -84,6 +84,16 @@ class BankingUnavailableError(DomainError):
         super().__init__(f"banking unavailable: {reason}")
 
 
+class AccountScopeNotFoundError(DomainError):
+    """A query named a kind of the holder's account that the directory did not contain."""
+
+    code = "account_scope_not_found"
+
+    def __init__(self, kinds: tuple[str, ...]) -> None:
+        self.kinds = kinds
+        super().__init__(f"no holder account matches: {', '.join(kinds)}")
+
+
 class NotAuthenticatedError(DomainError):
     """No credential, or one this deployment does not know.
 
