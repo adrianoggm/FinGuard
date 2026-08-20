@@ -26,6 +26,44 @@
   box-sizing: border-box;
 }
 
+.visualization-chart {
+  width: 100%;
+  min-height: 14rem;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  color: var(--ink);
+}
+
+.chart-fallback {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.chart-kpi {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface);
+}
+
+.chart-kpi span {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visualization-chart,
+  .visualization-chart * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 body {
   margin: 0;
   color: var(--ink);
@@ -1134,6 +1172,11 @@ body {
   align-self: flex-start;
   background: var(--surface);
   border-bottom-left-radius: 0.35rem;
+}
+
+.bubble.has-visualization {
+  width: 100%;
+  max-width: 100%;
 }
 
 .bubble.theirs p {

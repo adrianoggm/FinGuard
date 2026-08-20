@@ -28,6 +28,7 @@ import { ask, createVoiceClient, newAttempt, validateVoiceAnswer, type Answer, t
 import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
+import { Chart } from "./Chart";
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
@@ -500,14 +501,24 @@ function Bubble({ turn }: { turn: Turn }) {
 
   const { answer } = turn;
   const parts = answer.parts ?? [];
+  const hasVisualization = Boolean(
+    answer.visualization || parts.some((part) => part.visualization),
+  );
+  const className = [
+    "bubble",
+    "theirs",
+    answer.outcome === AWAITING ? "preview" : "",
+    hasVisualization ? "has-visualization" : "",
+  ].filter(Boolean).join(" ");
   return (
-    <div className={answer.outcome === AWAITING ? "bubble theirs preview" : "bubble theirs"}>
+    <div className={className}>
       {parts.length > 0 ? (
         <>
           <p>He resuelto {parts.length === 2 ? "las dos consultas" : `${parts.length} consultas`}:</p>
           {parts.map((part, index) => (
             <section className="compound-part" key={index}>
               <p>{part.text}</p>
+              <Chart visualization={part.visualization ?? null} currency={part.currency} />
               <AnswerEvidence answer={part} />
             </section>
           ))}
@@ -515,6 +526,7 @@ function Bubble({ turn }: { turn: Turn }) {
       ) : (
         <>
           <p>{answer.text}</p>
+          <Chart visualization={answer.visualization ?? null} currency={answer.currency} />
           <AnswerEvidence answer={answer} />
         </>
       )}
@@ -568,6 +580,8 @@ function AnswerEvidence({ answer }: { answer: Answer }) {
         </details>
       )}
       {isBreakdown(answer) && (
+        <details>
+          <summary>{answer.visualization ? "Ver los datos" : "Ver el desglose"}</summary>
         <ul className="groups">
           {answer.groups.map((group) => (
             <li key={group.key}>
@@ -576,6 +590,7 @@ function AnswerEvidence({ answer }: { answer: Answer }) {
             </li>
           ))}
         </ul>
+        </details>
       )}
     </>
   );
@@ -595,27 +610,18 @@ function isBreakdown(answer: Answer): boolean {
 }
 
 /** Render each row in the same unit the question asked for. */
-function groupFigure(answer: Answer, group: Answer["groups"][number]): string {
+export function groupFigure(answer: Answer, group: Answer["groups"][number]): string {
   const metric = answer.conversation?.last_plan?.metric;
   if (metric === "COUNT") {
     const noun = group.movement_count === 1 ? "movimiento" : "movimientos";
     return `${group.movement_count} ${noun}`;
   }
   if (metric === "AVERAGE") {
-    const divisor = group.movement_count;
-    const average = divisor > 0 ? roundedMean(group.total_minor, divisor) : 0;
-    return `media ${money(average, answer.currency ?? "EUR")} (${group.movement_count})`;
+    return group.value_minor === null || group.value_minor === undefined
+      ? `media no disponible (${group.movement_count})`
+      : `media ${money(group.value_minor, answer.currency ?? "EUR")} (${group.movement_count})`;
   }
-  return money(group.total_minor, answer.currency ?? "EUR");
-}
-
-/** Integer cents, rounded half away from zero like the orchestrator. */
-function roundedMean(total: number, count: number): number {
-  const absolute = Math.abs(total);
-  const units = Math.floor(absolute / count);
-  const remainder = absolute % count;
-  const rounded = units + (remainder * 2 >= count ? 1 : 0);
-  return total < 0 ? -rounded : rounded;
+  return money(group.value_minor ?? group.total_minor, answer.currency ?? "EUR");
 }
 
 function message(failure: unknown): string {

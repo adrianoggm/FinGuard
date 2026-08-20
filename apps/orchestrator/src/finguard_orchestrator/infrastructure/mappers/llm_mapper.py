@@ -20,6 +20,12 @@ from finguard_orchestrator.application import (
     SpokenPlan,
     WalletResult,
 )
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    Visualization,
+    derive_chart,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -33,10 +39,12 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     ChargePayload,
     ChargesResponse,
+    ChartVisualizationResponse,
     ContactPayload,
     ContactsResponse,
     GroupPayload,
     HoldingPayload,
+    KpiVisualizationResponse,
     MessageResponse,
     ModelResponse,
     MovementsResponse,
@@ -47,9 +55,11 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
+    VisualizationResponse,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def _model_to_dto(row: ModelRow) -> ModelResponse:
@@ -186,7 +196,121 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
     )
 
 
+def _visualization_to_dto(
+    result: AskFinancialQuestionResult,
+) -> VisualizationResponse | None:
+    dataset = result.visual_dataset
+    if dataset is None or not dataset.rows:
+        return None
+
+    rows: list[dict[str, object]] = []
+    for row in dataset.rows:
+        serialized: dict[str, object] = {
+            "dimension": row.dimension,
+            "value_minor": row.value_minor,
+        }
+        if row.series is not None:
+            serialized["series"] = row.series
+        if row.occurred_at is not None:
+            serialized["occurred_at"] = row.occurred_at
+        rows.append(serialized)
+
+    fields = frozenset.intersection(*(frozenset(row) for row in rows))
+    if len(rows) == 1:
+        if not result.explicit_visualization:
+            return None
+        return KpiVisualizationResponse(
+            unit="count" if dataset.metric == "COUNT" else "money",
+            data=rows,
+        )
+
+    spec = _chart_for_dataset(result, fields, len(rows))
+    if spec is None or not spec.valid_for(fields):
+        return None
+    spec = ChartSpec(
+        mark=spec.mark,
+        encodings=spec.encodings,
+        title=dataset.title,
+        stack=spec.stack,
+        sort=spec.sort,
+        responsive=spec.responsive,
+    )
+    presented = present(Visualization(spec=spec, data=tuple(rows)))
+    return ChartVisualizationResponse(
+        spec=presented["spec"],
+        data=presented["data"],
+    )
+
+
+def _chart_for_dataset(
+    result: AskFinancialQuestionResult,
+    fields: frozenset[str],
+    row_count: int,
+) -> ChartSpec | None:
+    dataset = result.visual_dataset
+    if dataset is None:
+        return None
+
+    if dataset.metric == "RECURRENCE":
+        if not {"occurred_at", "dimension", "value_minor"} <= fields:
+            return None
+        encodings: tuple[ChartEncoding, ...] = (
+            ChartEncoding("x", "occurred_at", "temporal", "Fecha"),
+            ChartEncoding("y", "dimension", "nominal", "Recurrente"),
+            ChartEncoding("tooltip", "occurred_at", "temporal"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+        )
+        if "series" in fields:
+            encodings += (ChartEncoding("color", "series", "nominal", "Cadencia"),)
+        return ChartSpec(mark="point", encodings=encodings)
+
+    if dataset.metric == "FREQUENCY":
+        return ChartSpec(
+            mark="bar",
+            encodings=(
+                ChartEncoding("x", "dimension", "nominal", "Día"),
+                ChartEncoding("y", "value_minor", "quantitative", "Movimientos"),
+                ChartEncoding("tooltip", "dimension", "nominal"),
+                ChartEncoding("tooltip", "value_minor", "quantitative"),
+            ),
+            sort="input",
+        )
+
+    if dataset.metric == "RATIO_SHARE":
+        return ChartSpec(
+            mark="bar",
+            encodings=(
+                ChartEncoding("x", "value_minor", "quantitative", "Porcentaje"),
+                ChartEncoding("color", "dimension", "nominal", "Parte"),
+                ChartEncoding("tooltip", "dimension", "nominal"),
+                ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+            ),
+            stack="normalize",
+        )
+
+    group_by = result.plan_context.group_by if result.plan_context is not None else "NONE"
+    metric = result.plan_context.metric if result.plan_context is not None else dataset.metric
+    spec = derive_chart(
+        group_by=group_by,
+        metric=metric,
+        rows=row_count,
+        fields=fields,
+        dimension_field="dimension",
+        value_field="value_minor",
+    )
+    if spec is None or "series" not in fields:
+        return spec
+    return ChartSpec(
+        mark=spec.mark,
+        encodings=spec.encodings + (ChartEncoding("color", "series", "nominal", "Serie"),),
+        stack=spec.stack,
+        sort=spec.sort,
+        responsive=spec.responsive,
+    )
+
+
 def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
+    visualization = _visualization_to_dto(result)
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,
@@ -209,6 +333,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
                 key=group.key,
                 total_minor=group.total_minor,
                 movement_count=group.movement_count,
+                value_minor=group.value_minor,
             )
             for group in result.groups
         ],
@@ -227,6 +352,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
             )
             for movement in result.movements
         ],
+        visualization=visualization,
         suggestions=result.suggestions,
     )
 

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Final, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from finguard_orchestrator.application.bus.query_bus import Query
 from finguard_orchestrator.domain.constants import (
@@ -57,7 +58,7 @@ from finguard_orchestrator.domain.models.conversation import (
     workflow_of,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
-from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
+from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
@@ -76,6 +77,7 @@ from finguard_orchestrator.domain.services import (
     explainer,
     explicit_facts,
     financial_relationships,
+    frequency_analyzer,
     incoming_payment_words,
     intent_router,
     merchant_words,
@@ -84,6 +86,7 @@ from finguard_orchestrator.domain.services import (
     plan_verifier,
     query_recovery,
     ratio_writer,
+    recurrence_analyzer,
     spanish,
     spanish_numbers,
     window_words,
@@ -315,6 +318,23 @@ class SpokenGroup:
     key: str
     total_minor: int
     movement_count: int
+    # Backend-derived value for the requested metric (never recomputed by clients).
+    value_minor: int | None = None
+
+
+@dataclass(frozen=True)
+class VisualRow:
+    dimension: str
+    value_minor: int
+    series: str | None = None
+    occurred_at: str | None = None
+
+
+@dataclass(frozen=True)
+class VisualDataset:
+    rows: tuple[VisualRow, ...]
+    metric: str
+    title: str = "Resultados"
 
 
 @dataclass(frozen=True)
@@ -421,6 +441,8 @@ class AskFinancialQuestionResult:
     # can draw one button per contact instead of parsing names out of a paragraph.
     contacts: list[SpokenContact] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
+    explicit_visualization: bool = False
+    visual_dataset: VisualDataset | None = None
 
 
 @dataclass(frozen=True)
@@ -2519,6 +2541,14 @@ class AskFinancialQuestionHandler:
                 )
                 for group in counted.groups
             ],
+            visual_dataset=VisualDataset(
+                rows=tuple(
+                    VisualRow(dimension=group.key, value_minor=group.movement_count)
+                    for group in counted.groups
+                ),
+                metric=Metric.COUNT.value,
+                title=answer_writer.describe(scoped),
+            ),
         )
 
     async def _group_reference(
@@ -2715,6 +2745,32 @@ class AskFinancialQuestionHandler:
             remembered_comparison,
             referenced_category=referenced_category,
         )
+        if grouped_text is not None:
+            comparison_visual_rows = (
+                *(
+                    VisualRow(
+                        dimension=group.key,
+                        value_minor=_visual_metric_value(latest, group),
+                        series=latest_window,
+                    )
+                    for group in latest_answer.groups
+                    if group.key != "total"
+                ),
+                *(
+                    VisualRow(
+                        dimension=group.key,
+                        value_minor=_visual_metric_value(earlier, group),
+                        series=earlier_window,
+                    )
+                    for group in earlier_answer.groups
+                    if group.key != "total"
+                ),
+            )
+        else:
+            comparison_visual_rows = (
+                VisualRow(dimension=latest_window, value_minor=latest_value),
+                VisualRow(dimension=earlier_window, value_minor=earlier_value),
+            )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=(
@@ -2725,6 +2781,7 @@ class AskFinancialQuestionHandler:
                 )
             ),
             plan=(f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"),
+            plan_context=_spoken(latest),
             # Keep the compared pair as validated query memory. This makes a direct comparison
             # behave like two consecutive questions: a later "compáralos otra vez" or a repair can
             # still point at the same two windows without reconstructing either from prose.
@@ -2746,6 +2803,7 @@ class AskFinancialQuestionHandler:
                             f"{group.key} · {latest_window}",
                             group.total_minor,
                             group.movement_count,
+                            _visual_metric_value(latest, group),
                         )
                         for group in latest_answer.groups
                         if group.key != "total"
@@ -2755,6 +2813,7 @@ class AskFinancialQuestionHandler:
                             f"{group.key} · {earlier_window}",
                             group.total_minor,
                             group.movement_count,
+                            _visual_metric_value(earlier, group),
                         )
                         for group in earlier_answer.groups
                         if group.key != "total"
@@ -2770,6 +2829,7 @@ class AskFinancialQuestionHandler:
                             else latest_answer.total_minor
                         ),
                         latest_answer.movement_count,
+                        latest_value,
                     ),
                     SpokenGroup(
                         earlier_window,
@@ -2779,10 +2839,18 @@ class AskFinancialQuestionHandler:
                             else earlier_answer.total_minor
                         ),
                         earlier_answer.movement_count,
+                        earlier_value,
                     ),
                 ]
             ),
             movements=[_spoken_movement(movement) for movement in movements],
+            visual_dataset=VisualDataset(
+                rows=comparison_visual_rows,
+                metric="COMPARISON",
+                title=(
+                    f"{answer_writer.describe(latest)} frente a {answer_writer.describe(earlier)}"
+                ),
+            ),
         )
 
     async def _scoped_ratio_draft(
@@ -2867,6 +2935,46 @@ class AskFinancialQuestionHandler:
             if ratio.kind is RatioKind.NET_CASH_FLOW
             else None
         )
+        ratio_visual_dataset: VisualDataset | None = None
+        if (
+            ratio.kind is RatioKind.SHARE
+            and 0 <= part_answer.total_minor <= whole_answer.total_minor
+        ):
+            ratio_visual_dataset = VisualDataset(
+                rows=(
+                    VisualRow(dimension="Parte", value_minor=part_answer.total_minor),
+                    VisualRow(
+                        dimension="Resto",
+                        value_minor=whole_answer.total_minor - part_answer.total_minor,
+                    ),
+                ),
+                metric="RATIO_SHARE",
+                title=answer_writer.describe(scoped_part),
+            )
+        elif ratio.kind in {RatioKind.NET_CASH_FLOW, RatioKind.SAVINGS_RATE}:
+            ratio_visual_dataset = VisualDataset(
+                rows=(
+                    VisualRow(dimension="Ingresos", value_minor=whole_answer.total_minor),
+                    VisualRow(dimension="Gastos", value_minor=part_answer.total_minor),
+                ),
+                metric="RATIO",
+                title=(
+                    f"{answer_writer.describe(scoped_part)} respecto a "
+                    f"{answer_writer.describe(scoped_whole)}"
+                ),
+            )
+        elif ratio.kind is RatioKind.PERCENT_CHANGE:
+            ratio_visual_dataset = VisualDataset(
+                rows=(
+                    VisualRow(dimension="Actual", value_minor=part_answer.total_minor),
+                    VisualRow(dimension="Anterior", value_minor=whole_answer.total_minor),
+                ),
+                metric="RATIO",
+                title=(
+                    f"{answer_writer.describe(scoped_part)} respecto a "
+                    f"{answer_writer.describe(scoped_whole)}"
+                ),
+            )
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
             text=ratio_writer.write(part_answer, whole_answer, executed),
@@ -2874,6 +2982,7 @@ class AskFinancialQuestionHandler:
                 f"{answer_writer.describe(scoped_part)} respecto a "
                 f"{answer_writer.describe(scoped_whole)}"
             ),
+            plan_context=_spoken(scoped_whole),
             conversation=query.conversation.answered_ratio(executed),
             currency=part_answer.currency,
             total_minor=net_cash_flow,
@@ -2887,6 +2996,7 @@ class AskFinancialQuestionHandler:
                 else []
             ),
             movements=[_spoken_movement(movement) for movement in movements],
+            visual_dataset=ratio_visual_dataset,
         )
 
     async def _compare_salary_history(
@@ -2998,6 +3108,7 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=text,
             plan=f"{answer_writer.describe(current)} frente a las doce n\u00f3minas anteriores",
+            plan_context=_spoken(current),
             # This is an answer about the payroll already in view. Keep that plan in view so
             # "compruebalo con el mes anterior" is anchored to its month, not to today's month.
             conversation=query.conversation,
@@ -3018,6 +3129,20 @@ class AskFinancialQuestionHandler:
                 ],
             ],
             movements=[_spoken_movement(movement) for movement in movements],
+            visual_dataset=VisualDataset(
+                rows=(
+                    VisualRow(dimension=current_label, value_minor=current_answer.total_minor),
+                    *(
+                        VisualRow(
+                            dimension=answer_writer.month_group_name(group.key),
+                            value_minor=group.total_minor,
+                        )
+                        for group in previous_months
+                    ),
+                ),
+                metric=Metric.SUM.value,
+                title=answer_writer.describe(current),
+            ),
         )
 
     async def _answer_with_month_fallback(
@@ -6076,6 +6201,123 @@ def _evidence_ids(movements: tuple[Movement, ...] | list[Movement]) -> tuple[UUI
     return tuple(found)
 
 
+_WEEKDAY_LABELS = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+
+
+def _visual_metric_value(plan: FinancialPlan, group: Group) -> int:
+    """Return the measured value the plan asked for, rounded once at the backend."""
+    if plan.metric is Metric.COUNT:
+        return group.movement_count
+    if plan.metric is Metric.AVERAGE:
+        if group.movement_count <= 0:
+            return 0
+        units, remainder = divmod(abs(group.total_minor), group.movement_count)
+        rounded = units + int(remainder * 2 >= group.movement_count)
+        return -rounded if group.total_minor < 0 else rounded
+    return group.total_minor
+
+
+def _asks_for_visualization(sentence: str) -> bool:
+    folded = spanish.folded(sentence)
+    return bool(
+        re.search(
+            r"\b(?:grafico|grafica|visualiza|representa|en una linea|en barras)\b",
+            folded,
+        )
+    )
+
+
+def _local_visual_date(movement: Movement, reporting_timezone: str) -> str:
+    occurred_at = movement.occurred_at
+    if occurred_at.tzinfo is None:
+        return occurred_at.date().isoformat()
+    return occurred_at.astimezone(ZoneInfo(reporting_timezone)).date().isoformat()
+
+
+def _visual_dataset(
+    plan: FinancialPlan,
+    answer: QueryAnswer,
+    visible_groups: tuple[Group, ...],
+    *,
+    reporting_timezone: str,
+) -> VisualDataset | None:
+    """Build rows while the typed financial result still owns their semantics."""
+    if plan.metric is Metric.FREQUENCY:
+        frequency = frequency_analyzer.analyse(
+            answer,
+            reporting_timezone=reporting_timezone,
+        )
+        if not frequency.complete or frequency.count < 2:
+            return None
+        counts = [0] * len(_WEEKDAY_LABELS)
+        for movement in answer.movements:
+            occurred_at = movement.occurred_at
+            local = (
+                occurred_at
+                if occurred_at.tzinfo is None
+                else occurred_at.astimezone(ZoneInfo(reporting_timezone))
+            )
+            counts[local.weekday()] += 1
+        return VisualDataset(
+            rows=tuple(
+                VisualRow(dimension=label, value_minor=counts[index])
+                for index, label in enumerate(_WEEKDAY_LABELS)
+            ),
+            metric=Metric.FREQUENCY.value,
+            title=answer_writer.describe(plan),
+        )
+
+    if plan.metric is Metric.RECURRENCE:
+        recurrence = recurrence_analyzer.analyse(
+            answer,
+            reporting_timezone=reporting_timezone,
+        )
+        if not recurrence.complete or not recurrence.candidates:
+            return None
+        candidates = {
+            spanish.folded(candidate.counterparty): candidate for candidate in recurrence.candidates
+        }
+        rows: list[VisualRow] = []
+        for movement in answer.movements:
+            label = (
+                movement.counterparty_name or movement.merchant_name or movement.description
+            ).strip()
+            candidate = candidates.get(spanish.folded(label))
+            if candidate is None:
+                continue
+            rows.append(
+                VisualRow(
+                    dimension=candidate.counterparty,
+                    value_minor=abs(movement.amount_minor),
+                    series=candidate.cadence,
+                    occurred_at=_local_visual_date(movement, reporting_timezone),
+                )
+            )
+        return (
+            VisualDataset(
+                rows=tuple(rows),
+                metric=Metric.RECURRENCE.value,
+                title=answer_writer.describe(plan),
+            )
+            if len(rows) >= 2
+            else None
+        )
+
+    if not visible_groups:
+        return None
+    return VisualDataset(
+        rows=tuple(
+            VisualRow(
+                dimension=group.key,
+                value_minor=_visual_metric_value(plan, group),
+            )
+            for group in visible_groups
+        ),
+        metric=plan.metric.value,
+        title=answer_writer.describe(plan),
+    )
+
+
 def _answered(
     plan: FinancialPlan,
     answer: QueryAnswer,
@@ -6163,10 +6405,12 @@ def _answered(
         if plan.group_limit is not None
         else answer.movement_count
     )
+
     return AskFinancialQuestionResult(
         outcome=PlanningOutcome.PLANNED.value,
         text=text,
         plan=answer_writer.describe(plan),
+        plan_context=_spoken(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
         conversation=was.answered(
@@ -6179,7 +6423,22 @@ def _answered(
         currency=answer.currency,
         total_minor=visible_total,
         movement_count=visible_movement_count,
-        groups=[SpokenGroup(g.key, g.total_minor, g.movement_count) for g in visible_groups],
+        groups=[
+            SpokenGroup(
+                g.key,
+                g.total_minor,
+                g.movement_count,
+                _visual_metric_value(plan, g),
+            )
+            for g in visible_groups
+        ],
         movements=[_spoken_movement(movement) for movement in visible_movements],
         suggestions=query_recovery.empty_suggestions(plan) if answer.is_empty else [],
+        explicit_visualization=_asks_for_visualization(sentence),
+        visual_dataset=_visual_dataset(
+            plan,
+            answer,
+            visible_groups,
+            reporting_timezone=reporting_timezone,
+        ),
     )
