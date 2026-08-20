@@ -6,6 +6,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 """
 
 from datetime import date
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -437,6 +438,7 @@ class SpokenGroupResponse(_Payload):
     key: str
     total_minor: int
     movement_count: int
+    value_minor: int | None = None
 
 
 class SpokenMovementResponse(_Payload):
@@ -452,6 +454,25 @@ class SpokenMovementResponse(_Payload):
     counterparty_name: str | None = None
     counterparty_type: str = "UNKNOWN"
     receipt_category: str | None = None
+
+
+class ChartVisualizationResponse(_Payload):
+    kind: Literal["chart"] = "chart"
+    spec: dict[str, object]
+    data: list[dict[str, object]]
+
+
+class KpiVisualizationResponse(_Payload):
+    kind: Literal["kpi"] = "kpi"
+    value_field: Literal["value_minor"] = "value_minor"
+    unit: Literal["money", "count"]
+    data: list[dict[str, object]]
+
+
+VisualizationResponse = Annotated[
+    ChartVisualizationResponse | KpiVisualizationResponse,
+    Field(discriminator="kind"),
+]
 
 
 class QuestionResponse(_Payload):
@@ -477,6 +498,7 @@ class QuestionResponse(_Payload):
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
+    visualization: VisualizationResponse | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []
