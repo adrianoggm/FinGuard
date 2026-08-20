@@ -297,12 +297,27 @@ export type Answer = {
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
-  groups: { key: string; total_minor: number; movement_count: number }[];
+  groups: {
+    key: string;
+    total_minor: number;
+    movement_count: number;
+    value_minor?: number | null;
+  }[];
   movements: Movement[];
+  visualization?: Visualization | null;
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
 };
+
+export type Visualization =
+  | { kind: "chart"; spec: Record<string, unknown>; data: Record<string, unknown>[] }
+  | {
+      kind: "kpi";
+      value_field: "value_minor";
+      unit: "money" | "count";
+      data: Record<string, unknown>[];
+    };
 
 /** Narrow transport boundary for answers arriving through the voice gateway. */
 export function validateVoiceAnswer(value: unknown): Answer {
@@ -316,6 +331,39 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
   const nullableString = (field: unknown) => field === null || typeof field === "string";
   const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
   const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  const validVisualization = (field: unknown) => {
+    if (field === undefined || field === null) return true;
+    if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+    const item = field as Record<string, unknown>;
+    if (item.kind === "kpi") {
+      if (
+        item.value_field !== "value_minor" ||
+        (item.unit !== "money" && item.unit !== "count") ||
+        !Array.isArray(item.data) || item.data.length !== 1
+      ) return false;
+      const row = item.data[0];
+      return !!row && typeof row === "object" && !Array.isArray(row) &&
+        finiteNumber((row as Record<string, unknown>).value_minor);
+    }
+    const spec = item.spec as Record<string, unknown> | undefined;
+    if (
+      item.kind !== "chart" || !spec || typeof spec !== "object" ||
+      typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
+      !Array.isArray(item.data) ||
+      !item.data.every((row) => !!row && typeof row === "object" && !Array.isArray(row))
+    ) return false;
+    const channels = Object.values(spec.encoding as Record<string, unknown>);
+    const encodedFields = channels.flatMap((channel) =>
+      (Array.isArray(channel) ? channel : [channel]).flatMap((encoding) => {
+        if (!encoding || typeof encoding !== "object" || Array.isArray(encoding)) return [];
+        const encoded = encoding as Record<string, unknown>;
+        return typeof encoded.field === "string" ? [encoded.field] : [];
+      })
+    );
+    return item.data.every((row) =>
+      encodedFields.every((encodedField) => encodedField in (row as Record<string, unknown>))
+    );
+  };
   if (
     typeof body.outcome !== "string" || typeof body.text !== "string" ||
     !nullableString(body.question) || !nullableString(body.intent_id) ||
@@ -325,11 +373,13 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     !nullableString(body.currency) || !nullableNumber(body.total_minor) ||
     !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
     !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
+    !validVisualization(body.visualization) ||
     body.groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
       return typeof item.key !== "string" || !finiteNumber(item.total_minor) ||
-        !finiteNumber(item.movement_count);
+        !finiteNumber(item.movement_count) ||
+        (item.value_minor !== undefined && !nullableNumber(item.value_minor));
     }) || body.suggestions.some((item) => typeof item !== "string") ||
     body.movements.some((movement) => {
       if (!movement || typeof movement !== "object") return true;

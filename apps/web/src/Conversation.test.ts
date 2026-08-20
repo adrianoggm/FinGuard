@@ -24,6 +24,7 @@ import {
   Conversation,
   applyVoiceEvent,
   awaitingConfirmation,
+  groupFigure,
   pendingIntent,
   quickReplies,
   recipientChoices,
@@ -34,6 +35,7 @@ import {
   type Thread,
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
+import { Chart } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -466,6 +468,47 @@ describe("the one field this client writes", () => {
 });
 
 describe("financial breakdowns", () => {
+  it("validates presented Vega specs with encoding and separate data", () => {
+    const payload = answer({ visualization: {
+      kind: "chart", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
+      data: [{ key: "lunes", value_minor: 1 }],
+    } });
+    expect(validateVoiceAnswer(payload).visualization).toBeDefined();
+  });
+  it("rejects a chart whose encoding names a field absent from its rows", () => {
+    const payload = answer({ visualization: {
+      kind: "chart",
+      spec: {
+        mark: { type: "line" },
+        encoding: { x: { field: "missing", type: "temporal" } },
+      },
+      data: [{ key: "lunes", value_minor: 1 }],
+    } });
+    expect(() => validateVoiceAnswer(payload)).toThrow("Respuesta de voz inválida.");
+  });
+  it("accepts a KPI bound to its backend value", () => {
+    const payload = answer({ visualization: {
+      kind: "kpi",
+      value_field: "value_minor",
+      unit: "money",
+      data: [{ dimension: "total", value_minor: 1234 }],
+    } });
+    expect(validateVoiceAnswer(payload).visualization?.kind).toBe("kpi");
+    const markup = renderToStaticMarkup(createElement(Chart, {
+      visualization: payload.visualization ?? null,
+      currency: payload.currency,
+    }));
+    expect(markup).toContain("12,34");
+    expect(markup).not.toContain("canvas");
+  });
+  it("formats an average from value_minor without recalculating total over count", () => {
+    const payload = answer({
+      currency: "EUR",
+      groups: [{ key: "Comida", total_minor: 100, movement_count: 4, value_minor: 30 }],
+      conversation: state({ last_plan: { ...LAST_MONTH, metric: "AVERAGE" } }),
+    });
+    expect(groupFigure(payload, payload.groups[0]!)).toContain("0,30");
+  });
   it("validates the complete voice answer, including groups and parts", () => {
     const payload = answer({
       text: "Dos resultados",
