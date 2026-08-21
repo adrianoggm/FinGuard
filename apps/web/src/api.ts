@@ -323,6 +323,7 @@ export type Answer = {
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
+  save_candidate?: { chart_id: string; definition_token: string } | null;
 };
 
 export type Visualization =
@@ -416,6 +417,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
 }
 
 export type Stage = { name: string };
+export type MetricSource = { chart_id: string; definition_token: string };
 
 export class ApiError extends Error {
   constructor(
@@ -466,6 +468,7 @@ export async function* ask(
   conversation: ConversationState | null = null,
   attempt?: string,
   channel: "TEXT" | "VOICE" = "TEXT",
+  metricSources: MetricSource[] = [],
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -477,7 +480,12 @@ export async function* ask(
     // whoever is having it, which is why both parameters exist at all.
     // One object, stored and returned. The service decides what the next state is; this only
     // carries it there and back.
-    body: JSON.stringify({ question: sentence, conversation, channel }),
+    body: JSON.stringify({
+      question: sentence,
+      conversation,
+      channel,
+      metric_sources: channel === "TEXT" ? metricSources : [],
+    }),
   });
   if (!response.ok || !response.body) await readError(response);
 
@@ -560,6 +568,56 @@ export type Breakdown = {
   movement_count: number;
   groups: Group[];
 };
+
+export type SavedMetric = {
+  id: string;
+  title: string;
+  position: number;
+  version: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MetricAnswer = SavedMetric & { answer: Answer };
+
+export async function metrics(): Promise<SavedMetric[]> {
+  return (await read<{ metrics: SavedMetric[] }>("/v1/metrics")).metrics;
+}
+
+export async function openMetric(id: string): Promise<MetricAnswer> {
+  return read<MetricAnswer>(`/v1/metrics/${id}`);
+}
+
+export async function deleteMetric(id: string): Promise<void> {
+  const response = await fetch(`${BASE}/v1/metrics/${id}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!response.ok) await readError(response);
+}
+
+export async function renameMetric(id: string, title: string, version: number): Promise<SavedMetric> {
+  const response = await fetch(`${BASE}/v1/metrics/${id}`, {
+    method: "PATCH", headers: { ...headers(), "If-Match": String(version) }, body: JSON.stringify({ title }),
+  });
+  if (!response.ok) await readError(response);
+  return (await response.json()) as SavedMetric;
+}
+
+export async function reorderMetrics(ids: string[]): Promise<void> {
+  const response = await fetch(`${BASE}/v1/metrics/order`, { method: "PUT", headers: headers(), body: JSON.stringify(ids) });
+  if (!response.ok) await readError(response);
+}
+
+export async function saveMetric(title: string, definitionToken: string): Promise<SavedMetric> {
+  const response = await fetch(`${BASE}/v1/metrics`, {
+    method: "POST",
+    headers: headers(newAttempt()),
+    body: JSON.stringify({ title, definition_token: definitionToken }),
+  });
+  if (!response.ok) await readError(response);
+  return (await response.json()) as SavedMetric;
+}
 
 async function read<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE}${path}`, { headers: headers() });

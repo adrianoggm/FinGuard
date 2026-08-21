@@ -197,6 +197,13 @@ body {
   margin-bottom: 1rem;
 }
 
+.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.metric-list { list-style: none; margin: 0; padding: 0; }
+.metric-list li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
+.metric-actions, .metric-edit { display: flex; align-items: center; gap: 10px; }
+.metric-edit input, .metric-save input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.link { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
+
 .card h2 {
   margin: 0 0 0.75rem;
   font-size: 0.95rem;

@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, createVoiceClient, newAttempt, validateVoiceAnswer, type Answer, type ConversationState } from "./api";
+import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState, type MetricSource } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
@@ -40,11 +40,25 @@ export function applyVisualizationUpdateToTurns(turns: Turn[], answer: Answer): 
   if (!turns.some((turn) => turn.who === "assistant" && contains(turn.answer))) return turns;
   const apply = (candidate: Answer): Answer => {
     if (candidate.visualization?.kind === "chart" && candidate.visualization.chart_id === update.target_chart_id) {
-      return { ...candidate, visualization: { ...candidate.visualization, spec: update.spec } };
+      return {
+        ...candidate,
+        visualization: { ...candidate.visualization, spec: update.spec },
+        save_candidate: answer.save_candidate ?? candidate.save_candidate,
+      };
     }
     return { ...candidate, parts: candidate.parts?.map(apply) };
   };
   return turns.map((turn) => turn.who === "assistant" ? { ...turn, answer: apply(turn.answer) } : turn);
+}
+
+export function metricSources(turns: Turn[]): MetricSource[] {
+  const found = new Map<string, MetricSource>();
+  const collect = (answer: Answer) => {
+    if (answer.save_candidate) found.set(answer.save_candidate.chart_id, answer.save_candidate);
+    answer.parts?.forEach(collect);
+  };
+  for (const turn of turns) if (turn.who === "assistant") collect(turn.answer);
+  return [...found.values()];
 }
 
 /** The stage names the service emits, in words somebody can read. */
@@ -256,7 +270,13 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
       // idle conversation (paid, cancelled or refused). Calling the bare payment endpoint here
       // returned no conversation state, so `settled` correctly retained the old preview and left
       // the buttons pointing at an intent the bank had already consumed.
-      for await (const step of ask(text, before.conversation, keyFor(text))) {
+      for await (const step of ask(
+        text,
+        before.conversation,
+        keyFor(text),
+        "TEXT",
+        metricSources(before.turns),
+      )) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {
           const updatedTurns = applyVisualizationUpdateToTurns(turns, step);
@@ -547,12 +567,32 @@ function Bubble({ turn }: { turn: Turn }) {
         <>
           <p>{answer.text}</p>
           <Chart visualization={answer.visualization ?? null} currency={answer.currency} />
+          {answer.save_candidate && <SaveMetricControl token={answer.save_candidate.definition_token} />}
           <AnswerEvidence answer={answer} />
         </>
       )}
       <PaymentPanel state={answer.conversation} />
     </div>
   );
+}
+
+function SaveMetricControl({ token }: { token: string }) {
+  const [title, setTitle] = useState("");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const submit = () => {
+    if (!title.trim()) return;
+    setState("saving");
+    void saveMetric(title.trim(), token).then(() => setState("saved")).catch(() => setState("error"));
+  };
+  if (state === "saved") return <p className="metric-feedback">Métrica guardada</p>;
+  return <div className="metric-save">
+    <input aria-label="Nombre de la métrica" value={title} maxLength={80}
+      onChange={(event) => setTitle(event.target.value)} placeholder="Nombre de la métrica" />
+    <button className="chip" disabled={state === "saving" || !title.trim()} onClick={submit}>
+      {state === "saving" ? "Guardando…" : "Guardar métrica"}
+    </button>
+    {state === "error" && <span className="metric-feedback" role="alert">No se ha podido guardar.</span>}
+  </div>;
 }
 
 function AnswerEvidence({ answer }: { answer: Answer }) {
