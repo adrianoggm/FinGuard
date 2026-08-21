@@ -10,9 +10,15 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
-from typing import Any
+from typing import Any, Literal, cast
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
@@ -93,6 +99,103 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
     )
 
 
+def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext, ...]:
+    if payload is None:
+        return ()
+    result: list[VisualContext] = []
+    for item in payload.visual_contexts:
+        raw = item.spec
+        mark = raw.get("mark")
+        if not isinstance(mark, dict) or mark.get("type") not in {
+            "bar",
+            "line",
+            "area",
+            "point",
+            "arc",
+        }:
+            raise ValueError("unsupported visual mark")
+        mark_name = cast(
+            Literal["line", "area", "bar", "point", "donut"],
+            "donut" if mark.get("type") == "arc" else mark["type"],
+        )
+        raw_encoding = raw.get("encoding")
+        if not isinstance(raw_encoding, dict):
+            raise ValueError("visual context needs encoding")
+        encodings: list[ChartEncoding] = []
+        for channel, value in raw_encoding.items():
+            values = value if isinstance(value, list) else [value]
+            for encoded in values:
+                if not isinstance(encoded, dict) or not isinstance(encoded.get("field"), str):
+                    raise ValueError("invalid visual encoding")
+                encodings.append(
+                    ChartEncoding(
+                        cast(Literal["x", "y", "color", "tooltip", "theta"], channel),
+                        encoded["field"],
+                        cast(
+                            Literal["nominal", "quantitative", "temporal"],
+                            encoded.get("type", "nominal"),
+                        ),
+                        encoded.get("title") if isinstance(encoded.get("title"), str) else None,
+                    )
+                )
+        profile = VisualProfile(
+            tuple((field.name, field.type) for field in item.profile.fields),
+            item.profile.cardinality,
+            item.profile.metric,
+            item.profile.unit,
+            item.profile.positive,
+            item.profile.mutually_exclusive,
+            item.profile.verified_total,
+        )
+        title_value = raw.get("title")
+        title = title_value if isinstance(title_value, str) else None
+        sort_field_value = raw.get("sort_field")
+        sort_field = sort_field_value if isinstance(sort_field_value, str) else None
+        limit_value = raw.get("limit")
+        limit = limit_value if isinstance(limit_value, int) else None
+        spec = ChartSpec(
+            mark=mark_name,
+            encodings=tuple(encodings),
+            title=title,
+            stack=cast(Literal["zero", "normalize"] | None, raw.get("stack"))
+            if raw.get("stack") in {"zero", "normalize"}
+            else None,
+            sort=cast(Literal["ascending", "descending", "input"] | None, raw.get("sort"))
+            if raw.get("sort") in {"ascending", "descending", "input"}
+            else None,
+            sort_field=sort_field,
+            limit=limit,
+        )
+        result.append(VisualContext(item.chart_id, spec, profile))
+    return tuple(result)
+
+
+def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
+    encoding: dict[str, object] = {}
+    for item in spec.encodings:
+        value = {
+            "field": item.field,
+            "type": item.type,
+            **({"title": item.title} if item.title else {}),
+        }
+        if item.channel == "tooltip" and item.channel in encoding:
+            previous = encoding[item.channel]
+            encoding[item.channel] = [previous] if isinstance(previous, dict) else []
+            tooltip_values = cast(list[object], encoding[item.channel])
+            tooltip_values.append(value)
+        else:
+            encoding[item.channel] = value
+    return {
+        "mark": {"type": "arc", "innerRadius": 55} if spec.mark == "donut" else {"type": spec.mark},
+        "encoding": encoding,
+        **({"title": spec.title} if spec.title else {}),
+        **({"stack": spec.stack} if spec.stack else {}),
+        **({"sort": spec.sort} if spec.sort else {}),
+        **({"sort_field": spec.sort_field} if spec.sort_field else {}),
+        **({"limit": spec.limit} if spec.limit is not None else {}),
+    }
+
+
 def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
     """The last answered question, whichever kind it was.
 
@@ -163,6 +266,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             counterparty_aliases=_counterparty_aliases(payload) if payload else (),
             recent_payment_rail=payload.recent_payment_rail if payload else None,
             turns=_turns(payload) if payload else (),
+            visual_contexts=_visual_contexts(payload),
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -191,6 +295,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         counterparty_aliases=_counterparty_aliases(payload),
         recent_payment_rail=payload.recent_payment_rail,
         turns=_turns(payload),
+        visual_contexts=_visual_contexts(payload),
     )
 
 
@@ -330,6 +435,25 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                     "question": turn.question,
                 }
                 for turn in conversation.turns
+            ],
+            "visual_contexts": [
+                {
+                    "chart_id": context.chart_id,
+                    "spec": _context_spec_payload(context.spec),
+                    "profile": {
+                        "fields": [
+                            {"name": name, "type": field_type}
+                            for name, field_type in context.profile.fields
+                        ],
+                        "cardinality": context.profile.cardinality,
+                        "metric": context.profile.metric,
+                        "unit": context.profile.unit,
+                        "positive": context.profile.positive,
+                        "mutually_exclusive": context.profile.mutually_exclusive,
+                        "verified_total": context.profile.verified_total,
+                    },
+                }
+                for context in conversation.visual_contexts
             ],
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (

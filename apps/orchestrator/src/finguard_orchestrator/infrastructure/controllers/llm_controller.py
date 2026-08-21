@@ -13,6 +13,7 @@ once and sometimes many times.
 import json
 import uuid
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -65,6 +66,7 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -104,9 +106,16 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
+    VisualizationUpdate,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
+from finguard_orchestrator.infrastructure.visualization.interpreter import (
+    VisualIntent,
+    apply_visual_intent,
+    interpret_visual,
+)
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present_spec
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
@@ -122,6 +131,41 @@ Attempt = Annotated[str, Depends(attempt_key)]
 # free and would be three model calls once it is not.
 Reads = Annotated[TurnInterpreterPort, Depends(turn_interpreter)]
 Categories = Annotated[tuple[str, ...], Depends(known_categories)]
+
+
+def _visual_only_response(intent: VisualIntent, conversation: Conversation) -> QuestionResponse:
+    if intent.explanation:
+        return QuestionResponse(
+            outcome="VISUAL_INCOMPATIBLE",
+            text=intent.explanation,
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    context = conversation.visual_context(intent.target)
+    if context is None or intent.patch is None:
+        return QuestionResponse(
+            outcome="VISUAL_NEEDS_TARGET",
+            text="Indica qué gráfico quieres cambiar.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    try:
+        updated = apply_visual_intent(intent, context)
+    except ValueError:
+        return QuestionResponse(
+            outcome="VISUAL_INCOMPATIBLE",
+            text="No puedo aplicar ese cambio a este gráfico; prueba con barras.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    next_conversation = conversation.with_visual_spec(context.chart_id, updated.spec)
+    return QuestionResponse(
+        outcome="VISUAL_UPDATED",
+        text="He actualizado el gráfico.",
+        conversation=conversation_mapper.to_payload(next_conversation),
+        visualization_update=VisualizationUpdate(
+            target_chart_id=context.chart_id,
+            spec=present_spec(updated.spec),
+        ),
+    )
+
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -776,6 +820,7 @@ def _window_only_context(answered: Conversation) -> Conversation | None:
         ),
         account_aliases=answered.account_aliases,
         counterparty_aliases=answered.counterparty_aliases,
+        visual_contexts=answered.visual_contexts,
         # Filters are what this strips. The thread is not a filter, and a clause read without it is
         # the blindness the log exists to end.
         turns=answered.turns,
@@ -799,6 +844,7 @@ async def _compound_read_reply(
     shared_window: Conversation | None = None
     parts: list[QuestionResponse | None] = [None] * len(clauses)
     conversations: list[Conversation | None] = [None] * len(clauses)
+    visual_contexts_by_index: list[tuple[VisualContext, ...]] = [()] * len(clauses)
     final_outcome = "COMPOUND"
     final_question: str | None = None
     final_suggestions: list[str] = []
@@ -825,6 +871,18 @@ async def _compound_read_reply(
         current = result.conversation
         conversations[index] = current
         rendered = llm_mapper.question_to_dto(result)
+        if rendered.conversation is not None:
+            rendered_conversation = conversation_mapper.to_domain(rendered.conversation)
+            previous_visual_ids = {
+                context.chart_id for context in result.conversation.visual_contexts
+            }
+            current = replace(current, visual_contexts=rendered_conversation.visual_contexts)
+            conversations[index] = current
+            visual_contexts_by_index[index] = tuple(
+                context
+                for context in rendered_conversation.visual_contexts
+                if context.chart_id not in previous_visual_ids
+            )
         parts[index] = rendered.model_copy(update={"conversation": None, "parts": []})
         if rendered.outcome not in _COMPOUND_SUCCESS:
             final_outcome = rendered.outcome
@@ -847,6 +905,11 @@ async def _compound_read_reply(
         # Conversation follows the clause the user mentioned last, not the internal execution
         # order (which may have moved a trailing shared window to the front).
         current = completed_conversations[-1][1]
+    merged = current
+    for index in range(len(clauses)):
+        for context in visual_contexts_by_index[index]:
+            merged = merged.with_visual_context(context)
+    current = merged
     text = "\n".join(f"{index}. {part.text}" for index, part in completed_with_indexes)
     return QuestionResponse(
         outcome=final_outcome,
@@ -1178,6 +1241,12 @@ async def ask(
     key = attempt
     was = _conversation_of(request)
 
+    visual = interpret_visual(
+        request.question, was.visual_contexts, voice=request.channel == "VOICE"
+    )
+    if visual is not None:
+        return _visual_only_response(visual, was)
+
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
         # not a new instruction: the deterministic confirmation reader leaves the preview open.
@@ -1303,6 +1372,17 @@ async def ask_streaming(
     """
     key = attempt
     was = _conversation_of(request)
+
+    visual = interpret_visual(
+        request.question, was.visual_contexts, voice=request.channel == "VOICE"
+    )
+    if visual is not None:
+        answer = _visual_only_response(visual, was)
+
+        async def visual_events() -> AsyncIterator[str]:
+            yield _sse({"type": "answer", **answer.model_dump()})
+
+        return StreamingResponse(visual_events(), media_type="text/event-stream")
 
     if isinstance(was.active, PaymentConfirmation):
         # Here too, and for the reason every payment branch is duplicated: the browser types into

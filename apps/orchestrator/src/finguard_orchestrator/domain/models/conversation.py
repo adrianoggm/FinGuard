@@ -39,9 +39,11 @@ from finguard_orchestrator.domain.constants import (
     MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
+    MAX_VISUAL_CONTEXTS,
 )
 from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.chart import ChartSpec, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -338,8 +340,22 @@ class Conversation:
     # so unlike every field above it there is no branch deciding what survives — which is what the
     # fields above it kept getting wrong.
     turns: tuple[Turn, ...] = ()
+    # Structural chart contexts only; rows and financial values stay in the browser.
+    visual_contexts: tuple[VisualContext, ...] = ()
 
     def __post_init__(self) -> None:
+        import re
+
+        if len(self.visual_contexts) > MAX_VISUAL_CONTEXTS:
+            raise InvalidValueError("too many visual contexts")
+        ids = [item.chart_id for item in self.visual_contexts]
+        if len(set(ids)) != len(ids) or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value) for value in ids
+        ):
+            raise InvalidValueError("visual chart ids must be unique bounded identifiers")
+        for context in self.visual_contexts:
+            if not context.spec.valid_for(context.profile.field_names()):
+                raise InvalidValueError("visual context spec is incompatible with its profile")
         if (self.referenced_group_by is None) != (self.referenced_group_key is None):
             raise InvalidValueError("a referenced group needs both its dimension and key")
         if self.referenced_group_by not in {
@@ -375,6 +391,25 @@ class Conversation:
             raise InvalidValueError("counterparty aliases must be unique")
         if len(self.turns) > MAX_REMEMBERED_TURNS:
             raise InvalidValueError("too many remembered turns")
+
+    def with_visual_context(self, context: VisualContext) -> "Conversation":
+        """Remember a structural chart context, newest last, without any chart rows."""
+        contexts = tuple(item for item in self.visual_contexts if item.chart_id != context.chart_id)
+        return replace(self, visual_contexts=(*contexts, context)[-MAX_VISUAL_CONTEXTS:])
+
+    def visual_context(self, chart_id: str | None = None) -> VisualContext | None:
+        if not self.visual_contexts:
+            return None
+        if chart_id is None:
+            return self.visual_contexts[-1]
+        return next((item for item in self.visual_contexts if item.chart_id == chart_id), None)
+
+    def with_visual_spec(self, chart_id: str, spec: ChartSpec) -> "Conversation":
+        contexts = tuple(
+            replace(item, spec=spec) if item.chart_id == chart_id else item
+            for item in self.visual_contexts
+        )
+        return replace(self, visual_contexts=contexts)
 
     def with_turn(self, turn: Turn) -> "Conversation":
         """Record what this turn did, dropping the oldest once the log is full.

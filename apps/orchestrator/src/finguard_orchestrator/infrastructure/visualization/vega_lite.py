@@ -1,8 +1,8 @@
 """Vega-Lite presenter, kept outside the domain and free of financial calculations."""
 
-from typing import Any
+from typing import Any, cast
 
-from finguard_orchestrator.domain.models.chart import Visualization
+from finguard_orchestrator.domain.models.chart import ChartSpec, Visualization
 
 
 def present(visualization: Visualization) -> dict[str, Any]:
@@ -22,13 +22,36 @@ def present(visualization: Visualization) -> dict[str, Any]:
             encoding[item.channel] = encoded
     spec: dict[str, Any] = {
         "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-        "mark": {"type": visualization.spec.mark},
+        "mark": (
+            {"type": "arc", "innerRadius": 55}
+            if visualization.spec.mark == "donut"
+            else {"type": visualization.spec.mark}
+        ),
         "encoding": encoding,
         "width": "container",
         "height": 220,
     }
     if visualization.spec.title:
         spec["title"] = visualization.spec.title
+    if visualization.spec.limit is not None:
+        # Structural transform only: rows remain outside the spec and are never copied into it.
+        measure = next(
+            (
+                item.field
+                for item in visualization.spec.encodings
+                if item.type == "quantitative" and item.channel in {"x", "y", "theta"}
+            ),
+            None,
+        )
+        if measure is None:
+            raise ValueError("a limited chart needs a quantitative measure")
+        spec["transform"] = [
+            {
+                "window": [{"op": "rank", "as": "_rank"}],
+                "sort": [{"field": measure, "order": "descending"}],
+            },
+            {"filter": f"datum._rank <= {visualization.spec.limit}"},
+        ]
     if visualization.spec.stack:
         quantitative = next(
             item.channel
@@ -42,7 +65,18 @@ def present(visualization: Visualization) -> dict[str, Any]:
             for item in visualization.spec.encodings
             if item.type == "nominal" and item.channel in {"x", "y"}
         )
-        spec["encoding"][nominal]["sort"] = (
-            None if visualization.spec.sort == "input" else visualization.spec.sort
-        )
+        if visualization.spec.sort_field:
+            spec["encoding"][nominal]["sort"] = {
+                "field": visualization.spec.sort_field,
+                "order": None if visualization.spec.sort == "input" else visualization.spec.sort,
+            }
+        else:
+            spec["encoding"][nominal]["sort"] = (
+                None if visualization.spec.sort == "input" else visualization.spec.sort
+            )
     return {"spec": spec, "data": list(visualization.data)}
+
+
+def present_spec(spec: ChartSpec) -> dict[str, Any]:
+    """Present only a structural spec for a visual update (never rows)."""
+    return cast(dict[str, Any], present(Visualization(spec=spec, data=()))["spec"])
