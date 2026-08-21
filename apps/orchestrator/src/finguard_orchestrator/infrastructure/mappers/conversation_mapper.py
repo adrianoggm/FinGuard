@@ -22,6 +22,9 @@ from finguard_orchestrator.domain.models.chart import (
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
+    AccountCandidate,
+    AccountScopeClarification,
+    AccountSelection,
     ActiveWorkflow,
     Conversation,
     CounterpartyAlias,
@@ -214,6 +217,9 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
             merchants=tuple(payload.merchants),
             merchant_terms=tuple(payload.merchant_terms),
             excluded_merchants=tuple(payload.excluded_merchants),
+            across_accounts=payload.across_accounts,
+            only_account_id=payload.only_account_id,
+            only_account_ids=tuple(payload.only_account_ids),
             rank=payload.rank or 1,
         )
     return plan_to_domain(payload)
@@ -267,6 +273,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             recent_payment_rail=payload.recent_payment_rail if payload else None,
             turns=_turns(payload) if payload else (),
             visual_contexts=_visual_contexts(payload),
+            account_selection=_account_selection(payload) if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
@@ -296,6 +303,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         recent_payment_rail=payload.recent_payment_rail,
         turns=_turns(payload),
         visual_contexts=_visual_contexts(payload),
+        account_selection=_account_selection(payload),
     )
 
 
@@ -315,6 +323,15 @@ def _turns(payload: ConversationPayload) -> tuple[Turn, ...]:
 def _account_aliases(payload: ConversationPayload) -> tuple[AccountAlias, ...]:
     return tuple(
         AccountAlias(row.alias, row.account_id, row.display_name) for row in payload.account_aliases
+    )
+
+
+def _account_selection(payload: ConversationPayload) -> AccountSelection | None:
+    if payload.account_selection_mode is None:
+        return None
+    return AccountSelection(
+        mode=payload.account_selection_mode,
+        account_ids=tuple(payload.account_selection_ids),
     )
 
 
@@ -339,6 +356,17 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
             return FinancialClarification(
                 draft=draft_to_domain(payload.draft),
                 awaiting=payload.awaiting or Slot.WINDOW,
+            )
+        case Workflow.ACCOUNT_SCOPE:
+            assert payload.pending_plan is not None
+            return AccountScopeClarification(
+                pending=query_to_domain(payload.pending_plan),
+                candidates=tuple(
+                    AccountCandidate(row.account_id, row.display_name, row.kind)
+                    for row in payload.account_candidates
+                ),
+                requested_count=payload.pending_requested_count,
+                explicit_visualization=payload.pending_explicit_visualization,
             )
         case Workflow.UNSUPPORTED_CAPABILITY:
             assert payload.capability  # the payload's validator requires it
@@ -418,6 +446,14 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 }
                 for alias in conversation.account_aliases
             ],
+            "account_selection_mode": (
+                conversation.account_selection.mode if conversation.account_selection else None
+            ),
+            "account_selection_ids": (
+                list(conversation.account_selection.account_ids)
+                if conversation.account_selection
+                else []
+            ),
             "counterparty_aliases": [
                 {
                     "alias": alias.alias,
@@ -534,6 +570,20 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
     """The fields that belong to the active state, and only those."""
     if isinstance(active, FinancialClarification):
         return {"draft": plan_payload(active.draft)}
+    if isinstance(active, AccountScopeClarification):
+        return {
+            "pending_plan": plan_payload(active.pending),
+            "pending_requested_count": active.requested_count,
+            "pending_explicit_visualization": active.explicit_visualization,
+            "account_candidates": [
+                {
+                    "account_id": candidate.account_id,
+                    "display_name": candidate.display_name,
+                    "kind": candidate.kind,
+                }
+                for candidate in active.candidates
+            ],
+        }
     if isinstance(active, UnsupportedCapability):
         return {"capability": active.capability}
     if isinstance(active, PaymentInProgress):

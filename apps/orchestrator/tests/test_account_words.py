@@ -137,3 +137,16 @@ def test_a_substituted_letter_does_not_invent_an_account(sentence: str) -> None:
     """Why swaps and not any one edit. One substitution from "hucha" is "mucha", which is in every
     other Spanish sentence — and this vocabulary decides which accounts a figure is about."""
     assert account_words.named_in(sentence) == ()
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["Todas mis cuentas", "en todas las cuentas", "todas las cuentas"],
+)
+def test_all_accounts_requires_an_explicit_account_phrase(sentence: str) -> None:
+    assert account_words.asks_for_all_accounts(sentence)
+
+
+@pytest.mark.parametrize("sentence", ["globalmente", "en conjunto", "entre mis cuentas"])
+def test_all_accounts_does_not_guess_from_ambiguous_or_internal_language(sentence: str) -> None:
+    assert not account_words.asks_for_all_accounts(sentence)

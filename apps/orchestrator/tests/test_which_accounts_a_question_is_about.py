@@ -157,13 +157,27 @@ async def test_a_question_can_use_the_holders_custom_account_name() -> None:
     assert directory.asked_for == ACCOUNT
 
 
-async def test_an_unknown_custom_account_name_widens_instead_of_guessing() -> None:
+async def test_an_unknown_custom_account_name_asks_for_a_real_account() -> None:
     directory = Directory(*summary().holdings)
 
-    plan = await ran("¿cuánto gasté en la cuenta Viajes?", directory=directory)
+    ledger = Ledger()
+    handler = AskFinancialQuestionHandler(
+        Planner(SPENDING),
+        ledger,  # type: ignore[arg-type]
+        accounts=Bank(summary()),  # type: ignore[arg-type]
+        account_directory=directory,
+        contacts=None,
+        cards=NoCards(),  # type: ignore[arg-type]
+    )
+    result = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence="¿cuánto gasté en la cuenta Viajes?", account_id=ACCOUNT, today=TODAY
+        )
+    )
 
-    assert plan.only_account_id is None
-    assert plan.across_accounts is True
+    assert result.outcome == "NEEDS_CLARIFICATION"
+    assert result.suggestions == ["Cuenta corriente", "Hucha", "Todas mis cuentas"]
+    assert ledger.plan is None
 
 
 async def test_a_kind_the_holder_does_not_have_widens_rather_than_narrowing_to_nothing() -> None:

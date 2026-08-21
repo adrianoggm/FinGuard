@@ -31,6 +31,10 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
+    AccountCandidate,
+    AccountScopeClarification,
+    AccountSelection,
+    AccountSelectionMode,
     Conversation,
     FinancialClarification,
     PaymentConfirmation,
@@ -48,6 +52,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
@@ -296,6 +301,47 @@ def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
     back = there_and_back(IDLE.answered(scoped))
 
     assert back.last_plan == scoped
+
+
+@pytest.mark.parametrize("selection", [
+    AccountSelection(AccountSelectionMode.ALL),
+    AccountSelection(AccountSelectionMode.SELECTED, (uuid.UUID(int=7), uuid.UUID(int=8))),
+])
+def test_account_selection_survives_the_client_round_trip(selection: AccountSelection) -> None:
+    assert there_and_back(Conversation(account_selection=selection)).account_selection == selection
+
+
+def test_account_scope_clarification_with_ranked_many_survives_round_trip() -> None:
+    ranking = TopMovements(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_MONTH),
+        rank=1,
+    )
+    pending = AccountScopeClarification(
+        pending=ranking,
+        requested_count=10,
+        candidates=(
+            AccountCandidate(uuid.UUID(int=7), "Hucha", "SAVINGS"),
+            AccountCandidate(uuid.UUID(int=8), "Cuenta corriente", "CURRENT"),
+        ),
+        explicit_visualization=True,
+    )
+    back = there_and_back(IDLE.with_active(pending))
+    assert back.active == pending
+
+
+def test_account_scope_payload_rejects_count_for_aggregate_plan() -> None:
+    payload = mapper.to_payload(
+        IDLE.with_active(
+            AccountScopeClarification(
+                pending=LAST_MONTH,
+                candidates=(AccountCandidate(uuid.UUID(int=7), "Hucha", "SAVINGS"),),
+            )
+        )
+    ).model_dump(mode="json")
+    payload["pending_requested_count"] = 3
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(payload)
 
 
 def test_a_query_waiting_for_a_bank_retry_survives_without_becoming_an_answer() -> None:

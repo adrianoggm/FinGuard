@@ -161,6 +161,9 @@ RANKED_FIELDS: Final = frozenset(
         "period",
         "reportingTimezone",
         "rank",
+        "acrossAccounts",
+        "onlyAccountId",
+        "onlyAccountIds",
     }
 )
 
@@ -197,6 +200,9 @@ def ranked_body(
     body = to_body(
         FinancialPlan(
             direction=ranking.direction,
+            across_accounts=ranking.across_accounts,
+            only_account_id=ranking.only_account_id,
+            only_account_ids=ranking.only_account_ids,
             period=ranking.period,
             date_range=ranking.date_range,
             categories=ranking.categories,

@@ -180,6 +180,7 @@ export type Candidate = {
 /** Which workflow is under way, if any. */
 export type Workflow =
   | "FINANCIAL_CLARIFICATION"
+  | "ACCOUNT_SCOPE"
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
   | "TRANSFER_IN_PROGRESS"
@@ -231,6 +232,8 @@ export type ConversationState = {
   // User-taught account names. Opaque conversational memory: the server revalidates each account
   // identifier against the authenticated holder before applying it.
   account_aliases?: { alias: string; account_id: string; display_name: string }[];
+  account_selection_mode?: "ALL" | "SELECTED" | null;
+  account_selection_ids?: string[];
   counterparty_aliases?: {
     alias: string;
     counterparty_name: string;
@@ -269,6 +272,10 @@ export type ConversationState = {
   last_comparison_earlier?: PlanContext | null;
   last_comparison_latest?: PlanContext | null;
   draft: PlanContext | null;
+  pending_plan?: PlanContext | null;
+  pending_requested_count?: number | null;
+  pending_explicit_visualization?: boolean;
+  account_candidates?: { account_id: string; display_name: string; kind: string }[];
   capability: string | null;
   payment: PaymentDraft | null;
   suspended: boolean;

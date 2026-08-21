@@ -34,8 +34,10 @@ from uuid import UUID
 from finguard_orchestrator.domain.constants import (
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
+    MAX_GROUP_RANK,
     MAX_MERCHANT_LENGTH,
     MAX_REMEMBERED_TURNS,
+    MAX_SELECTED_ACCOUNTS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
@@ -126,6 +128,40 @@ class AccountAlias:
             raise InvalidValueError("aliased account name has an invalid length")
 
 
+class AccountSelectionMode(StrEnum):
+    ALL = "ALL"
+    SELECTED = "SELECTED"
+
+
+@dataclass(frozen=True)
+class AccountSelection:
+    """Persistent, holder-grounded account scope for subsequent questions."""
+
+    mode: AccountSelectionMode
+    account_ids: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.mode is AccountSelectionMode.ALL and self.account_ids:
+            raise InvalidValueError("ALL account selection cannot contain account ids")
+        if self.mode is AccountSelectionMode.SELECTED and not self.account_ids:
+            raise InvalidValueError("SELECTED account selection needs account ids")
+        if len(set(self.account_ids)) != len(self.account_ids):
+            raise InvalidValueError("account selection cannot contain duplicates")
+        if len(self.account_ids) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
+
+
+@dataclass(frozen=True)
+class AccountCandidate:
+    account_id: UUID
+    display_name: str
+    kind: str
+
+    def __post_init__(self) -> None:
+        if not self.display_name.strip() or not self.kind.strip():
+            raise InvalidValueError("account candidate needs display name and kind")
+
+
 @dataclass(frozen=True)
 class CounterpartyAlias:
     """A user phrase grounded to a real, typed other side of a ledger movement."""
@@ -156,6 +192,7 @@ class Workflow(StrEnum):
     # and the two questions it can ask are which account and how much.
     TRANSFER_IN_PROGRESS = "TRANSFER_IN_PROGRESS"
     PAYMENT_CONFIRMATION = "PAYMENT_CONFIRMATION"
+    ACCOUNT_SCOPE = "ACCOUNT_SCOPE"
 
 
 class Slot(StrEnum):
@@ -188,6 +225,30 @@ class FinancialClarification:
 
     draft: FinancialPlanDraft
     awaiting: Slot = Slot.WINDOW
+
+
+@dataclass(frozen=True)
+class AccountScopeClarification:
+    pending: PlannedQuery
+    candidates: tuple[AccountCandidate, ...]
+    requested_count: int | None = None
+    explicit_visualization: bool = False
+    awaiting: Slot = Slot.ACCOUNT
+
+    def __post_init__(self) -> None:
+        if not self.candidates:
+            raise InvalidValueError("account clarification needs candidates")
+        if len(self.candidates) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} account candidates")
+        candidate_ids = tuple(candidate.account_id for candidate in self.candidates)
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise InvalidValueError("account clarification candidates cannot repeat")
+        if self.requested_count is not None and self.requested_count < 2:
+            raise InvalidValueError("requested ranking count must be at least two")
+        if self.requested_count is not None and self.requested_count > MAX_GROUP_RANK:
+            raise InvalidValueError(f"requested ranking count cannot exceed {MAX_GROUP_RANK}")
+        if self.requested_count is not None and not isinstance(self.pending, TopMovements):
+            raise InvalidValueError("requested ranking count requires a movement ranking")
 
 
 @dataclass(frozen=True)
@@ -264,6 +325,7 @@ class PaymentConfirmation:
 
 type ActiveWorkflow = (
     FinancialClarification
+    | AccountScopeClarification
     | UnsupportedCapability
     | PaymentInProgress
     | TransferInProgress
@@ -281,6 +343,7 @@ class Conversation:
     """
 
     active: ActiveWorkflow | None = None
+    account_selection: AccountSelection | None = None
     # The last answered question, whichever kind it was. An aggregate and a ranking are both
     # things a follow-up inherits from — "¿y en gasolina?" narrows either — so this is the union
     # rather than a field per kind, which would let both be set and neither mean anything.
@@ -655,6 +718,8 @@ def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
     match active:
         case FinancialClarification():
             return Workflow.FINANCIAL_CLARIFICATION
+        case AccountScopeClarification():
+            return Workflow.ACCOUNT_SCOPE
         case UnsupportedCapability():
             return Workflow.UNSUPPORTED_CAPABILITY
         case PaymentInProgress():
@@ -682,6 +747,10 @@ IDLE = Conversation()
 __all__ = [
     "IDLE",
     "AccountAlias",
+    "AccountCandidate",
+    "AccountScopeClarification",
+    "AccountSelection",
+    "AccountSelectionMode",
     "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",
