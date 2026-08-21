@@ -511,6 +511,13 @@ class ConversationPayload(_Payload):
         return self
 
 
+class MetricSourcePayload(_Payload):
+    """Signed save authority for one chart already present in the conversation."""
+
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    definition_token: str = Field(min_length=1, max_length=20000)
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -531,6 +538,7 @@ class QuestionRequest(_Payload):
     # Absent on the first turn, and absent means a fresh conversation rather than an error.
     conversation: ConversationPayload | None = None
     channel: Literal["TEXT", "VOICE"] = "TEXT"
+    metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
 
 
 class SpokenGroupResponse(_Payload):
@@ -607,6 +615,11 @@ VisualizationResponse = Annotated[
 ]
 
 
+class SaveCandidate(_Payload):
+    chart_id: str
+    definition_token: str
+
+
 class QuestionResponse(_Payload):
     """The answer, and everything needed to disbelieve it.
 
@@ -641,6 +654,7 @@ class QuestionResponse(_Payload):
     # Independent read-only requests asked in one turn. Each part keeps its own plan and evidence;
     # only the parent carries the conversation left behind after all parts have run.
     parts: list["QuestionResponse"] = []
+    save_candidate: SaveCandidate | None = None
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

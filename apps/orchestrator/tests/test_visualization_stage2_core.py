@@ -7,6 +7,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     VisualDataset,
     VisualRow,
 )
+from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
@@ -17,9 +18,15 @@ from finguard_orchestrator.domain.models.chart import (
     merge_encoding_patch,
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
 from finguard_orchestrator.infrastructure.mappers.conversation_mapper import to_domain, to_payload
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
@@ -207,3 +214,31 @@ def test_controller_visual_response_updates_context_and_returns_presented_spec()
     assert response.visualization_update.spec["$schema"]
     assert response.visualization_update.spec["encoding"]
     assert response.conversation is not None
+
+
+def test_visual_update_rotates_the_save_candidate_with_the_new_spec() -> None:
+    spec, profile = _base()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ponlo en línea", conversation.visual_contexts)
+    assert intent is not None
+    definition = SavedMetricDefinition(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_MONTH),
+        ),
+        spec,
+    )
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+
+    response = _visual_only_response(
+        intent,
+        conversation,
+        source=definition,
+        holder_reference="holder",
+        metric_tokens=tokens,
+    )
+
+    assert response.save_candidate is not None
+    updated = tokens.verify(response.save_candidate.definition_token, "holder")
+    assert updated.chart.mark == "line"
+    assert updated.plan == definition.plan

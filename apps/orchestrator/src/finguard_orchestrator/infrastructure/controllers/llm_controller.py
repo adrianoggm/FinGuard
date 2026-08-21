@@ -51,6 +51,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_command_bus,
     get_query_bus,
     known_categories,
+    metrics_available,
     payments_available,
     questions_enabled,
     reporting_today,
@@ -77,6 +78,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Slot,
     slot_for,
 )
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
@@ -106,10 +108,16 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
+    SaveCandidate,
     VisualizationUpdate,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
+from finguard_orchestrator.infrastructure.metrics.codec import CodecError
+from finguard_orchestrator.infrastructure.security.metric_tokens import (
+    MetricTokenCodec,
+    MetricTokenError,
+)
 from finguard_orchestrator.infrastructure.visualization.interpreter import (
     VisualIntent,
     apply_visual_intent,
@@ -133,7 +141,51 @@ Reads = Annotated[TurnInterpreterPort, Depends(turn_interpreter)]
 Categories = Annotated[tuple[str, ...], Depends(known_categories)]
 
 
-def _visual_only_response(intent: VisualIntent, conversation: Conversation) -> QuestionResponse:
+def _metric_token_codec(request: Request) -> MetricTokenCodec:
+    codec = request.app.state.metric_tokens
+    if not isinstance(codec, MetricTokenCodec):
+        raise RuntimeError("invalid metrics token codec")
+    return codec
+
+
+MetricTokens = Annotated[MetricTokenCodec, Depends(_metric_token_codec)]
+MetricsOn = Annotated[bool, Depends(metrics_available)]
+
+
+def _saved_visual_source(
+    request: QuestionRequest,
+    intent: VisualIntent,
+    conversation: Conversation,
+    who: Caller,
+    metric_tokens: MetricTokenCodec,
+    metrics_on: bool,
+) -> SavedMetricDefinition | None:
+    if not metrics_on or request.channel != "TEXT" or intent.target is None:
+        return None
+    offered = next(
+        (item for item in request.metric_sources if item.chart_id == intent.target),
+        None,
+    )
+    context = conversation.visual_context(intent.target)
+    if offered is None or context is None:
+        return None
+    try:
+        definition = metric_tokens.verify(offered.definition_token, who.holder_reference)
+    except (MetricTokenError, CodecError):
+        return None
+    if not definition.chart.fields() <= context.profile.field_names():
+        return None
+    return definition
+
+
+def _visual_only_response(
+    intent: VisualIntent,
+    conversation: Conversation,
+    *,
+    source: SavedMetricDefinition | None = None,
+    holder_reference: str | None = None,
+    metric_tokens: MetricTokenCodec | None = None,
+) -> QuestionResponse:
     if intent.explanation:
         return QuestionResponse(
             outcome="VISUAL_INCOMPATIBLE",
@@ -147,8 +199,13 @@ def _visual_only_response(intent: VisualIntent, conversation: Conversation) -> Q
             text="Indica qué gráfico quieres cambiar.",
             conversation=conversation_mapper.to_payload(conversation),
         )
+    trusted_context = (
+        VisualContext(context.chart_id, source.chart, context.profile)
+        if source is not None
+        else context
+    )
     try:
-        updated = apply_visual_intent(intent, context)
+        updated = apply_visual_intent(intent, trusted_context)
     except ValueError:
         return QuestionResponse(
             outcome="VISUAL_INCOMPATIBLE",
@@ -156,6 +213,15 @@ def _visual_only_response(intent: VisualIntent, conversation: Conversation) -> Q
             conversation=conversation_mapper.to_payload(conversation),
         )
     next_conversation = conversation.with_visual_spec(context.chart_id, updated.spec)
+    candidate = None
+    if source is not None and holder_reference is not None and metric_tokens is not None:
+        candidate = SaveCandidate(
+            chart_id=context.chart_id,
+            definition_token=metric_tokens.issue(
+                holder_reference,
+                SavedMetricDefinition(source.plan, updated.spec),
+            ),
+        )
     return QuestionResponse(
         outcome="VISUAL_UPDATED",
         text="He actualizado el gráfico.",
@@ -164,6 +230,7 @@ def _visual_only_response(intent: VisualIntent, conversation: Conversation) -> Q
             target_chart_id=context.chart_id,
             spec=present_spec(updated.spec),
         ),
+        save_candidate=candidate,
     )
 
 
@@ -1225,6 +1292,8 @@ async def ask(
     payments_on: PaymentsOn,
     attempt: Attempt,
     reads: Reads,
+    metric_tokens: MetricTokens,
+    metrics_on: MetricsOn,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -1245,7 +1314,14 @@ async def ask(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
     if visual is not None:
-        return _visual_only_response(visual, was)
+        source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+        return _visual_only_response(
+            visual,
+            was,
+            source=source,
+            holder_reference=who.holder_reference if source is not None else None,
+            metric_tokens=metric_tokens if source is not None else None,
+        )
 
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
@@ -1337,7 +1413,11 @@ async def ask(
     )
     if result.outcome == Spoken.TRANSFER_READY.value:
         return await _as_own_transfer(result, who, commands, payments_on, key=key)
-    return llm_mapper.question_to_dto(result)
+    return llm_mapper.question_to_dto(
+        result,
+        holder_reference=who.holder_reference if metrics_on and request.channel == "TEXT" else None,
+        metric_tokens=metric_tokens if metrics_on and request.channel == "TEXT" else None,
+    )
 
 
 @assistant_router.post(
@@ -1358,6 +1438,8 @@ async def ask_streaming(
     queries: Queries,
     attempt: Attempt,
     reads: Reads,
+    metric_tokens: MetricTokens,
+    metrics_on: MetricsOn,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -1377,7 +1459,14 @@ async def ask_streaming(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
     if visual is not None:
-        answer = _visual_only_response(visual, was)
+        source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+        answer = _visual_only_response(
+            visual,
+            was,
+            source=source,
+            holder_reference=who.holder_reference if source is not None else None,
+            metric_tokens=metric_tokens if source is not None else None,
+        )
 
         async def visual_events() -> AsyncIterator[str]:
             yield _sse({"type": "answer", **answer.model_dump()})
@@ -1474,7 +1563,18 @@ async def ask_streaming(
                 staged = await _as_own_transfer(step, who, commands, payments_on, key=key)
                 payload = {"type": "answer", **staged.model_dump()}
             else:
-                payload = {"type": "answer", **llm_mapper.question_to_dto(step).model_dump()}
+                payload = {
+                    "type": "answer",
+                    **llm_mapper.question_to_dto(
+                        step,
+                        holder_reference=who.holder_reference
+                        if metrics_on and request.channel == "TEXT"
+                        else None,
+                        metric_tokens=metric_tokens
+                        if metrics_on and request.channel == "TEXT"
+                        else None,
+                    ).model_dump(),
+                }
             yield _sse(payload)
 
     return StreamingResponse(events(), media_type="text/event-stream")

@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -54,6 +55,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PlanPayload,
     PolicyResponse,
     QuestionResponse,
+    SaveCandidate,
     SpokenContactResponse,
     SpokenGroupResponse,
     SpokenMovementResponse,
@@ -62,6 +64,8 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+from finguard_orchestrator.infrastructure.metrics.codec import CodecError
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
@@ -230,14 +234,7 @@ def _visualization_to_dto(
     spec = _chart_for_dataset(result, fields, len(rows))
     if spec is None or not spec.valid_for(fields):
         return None
-    spec = ChartSpec(
-        mark=spec.mark,
-        encodings=spec.encodings,
-        title=dataset.title,
-        stack=spec.stack,
-        sort=spec.sort,
-        responsive=spec.responsive,
-    )
+    spec = replace(spec, title=dataset.title)
     presented = present(Visualization(spec=spec, data=tuple(rows)))
     chart_id = _chart_id(result, spec)
     return ChartVisualizationResponse(
@@ -264,14 +261,7 @@ def _remember_visual_context(
     spec = _chart_for_dataset(result, frozenset(row_fields), len(result.visual_dataset.rows))
     if spec is None:
         return result
-    spec = ChartSpec(
-        mark=spec.mark,
-        encodings=spec.encodings,
-        title=result.visual_dataset.title,
-        stack=spec.stack,
-        sort=spec.sort,
-        responsive=spec.responsive,
-    )
+    spec = replace(spec, title=result.visual_dataset.title)
     profile = VisualProfile.from_spec(
         spec,
         cardinality=len({row.dimension for row in result.visual_dataset.rows}),
@@ -362,9 +352,42 @@ def _chart_for_dataset(
     )
 
 
-def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
+def question_to_dto(
+    result: AskFinancialQuestionResult,
+    *,
+    holder_reference: str | None = None,
+    metric_tokens: MetricTokenCodec | None = None,
+) -> QuestionResponse:
     visualization = _visualization_to_dto(result)
     result = _remember_visual_context(result, visualization)
+    candidate = None
+    if (
+        isinstance(visualization, ChartVisualizationResponse)
+        and isinstance(result.metric_definition, FinancialPlan)
+        and holder_reference is not None
+        and metric_tokens is not None
+    ):
+        context = next(
+            (
+                item
+                for item in reversed(result.conversation.visual_contexts)
+                if item.chart_id == visualization.chart_id
+            ),
+            None,
+        )
+        if context is not None:
+            try:
+                token = metric_tokens.issue(
+                    holder_reference,
+                    SavedMetricDefinition(result.metric_definition, context.spec),
+                )
+            except CodecError:
+                pass
+            else:
+                candidate = SaveCandidate(
+                    chart_id=visualization.chart_id,
+                    definition_token=token,
+                )
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,
@@ -408,6 +431,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         ],
         visualization=visualization,
         suggestions=result.suggestions,
+        save_candidate=candidate,
     )
 
 

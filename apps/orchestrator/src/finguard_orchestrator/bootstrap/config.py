@@ -198,6 +198,11 @@ class Settings(BaseSettings):
     # zero. Both have identified work rather than needing a discovery.
     questions_enabled: bool
     payments_enabled: bool
+    metrics_enabled: bool = False
+    metrics_signing_keys: tuple[str, ...] = ()
+    metrics_signing_active: str = "default"
+    metrics_max_saved: int = Field(default=50, ge=1, le=50)
+    database_url: str | None = None
 
     # The commit this image was built from, stamped in by the build rather than read from git at
     # runtime — a container has no repository in it. "unknown" is honest for a build that did not
@@ -360,6 +365,8 @@ class Settings(BaseSettings):
                 if len(parts) == 5 and parts[4]
                 else [
                     Scope.QUESTIONS_READ.value,
+                    Scope.METRICS_READ.value,
+                    Scope.METRICS_WRITE.value,
                     Scope.ASSISTANT_USE.value,
                     # Relabelling your own movement moves no money and is undone by another
                     # request. A development credential that can read the account can file it.
