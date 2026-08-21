@@ -566,6 +566,9 @@ class SpokenMovementResponse(_Payload):
 class ChartVisualizationResponse(_Payload):
     kind: Literal["chart"] = "chart"
     chart_id: str
+    # Rows remain in minor units at the API boundary. The client uses this semantic unit only
+    # when presenting axes/tooltips, so persisted metric definitions never contain floats.
+    unit: Literal["money", "count", "ratio"] = "money"
     spec: dict[str, object]
     data: list[dict[str, object]]
 
