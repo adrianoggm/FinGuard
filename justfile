@@ -69,9 +69,16 @@ build:
 # psql console on the banking database
 db-shell:
     docker exec -it finguard-postgres-1 psql -U finguard_banking -d finguard_banking
-# Applies pending migrations. Only banking-api has a schema of its own so far
-migrate:
+# Applies both service-owned schemas.
+migrate: migrate-banking migrate-orchestrator
+
+# Applies only the ledger schema.
+migrate-banking:
     uv run --directory apps/banking-api alembic upgrade head
+
+# Applies only the assistant-owned schema in its one-shot container.
+migrate-orchestrator:
+    docker compose run --rm orchestrator-migrate
 # Undoes the last migration
 migrate-down:
     uv run --directory apps/banking-api alembic downgrade -1
