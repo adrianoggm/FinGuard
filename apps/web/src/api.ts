@@ -327,7 +327,13 @@ export type Answer = {
 };
 
 export type Visualization =
-  | { kind: "chart"; chart_id: string; spec: Record<string, unknown>; data: Record<string, unknown>[] }
+  | {
+      kind: "chart";
+      chart_id: string;
+      unit: "money" | "count" | "ratio";
+      spec: Record<string, unknown>;
+      data: Record<string, unknown>[];
+    }
   | {
       kind: "kpi";
       value_field: "value_minor";
@@ -364,6 +370,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     const spec = item.spec as Record<string, unknown> | undefined;
     if (
       item.kind !== "chart" || !spec || typeof spec !== "object" ||
+      (item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
       typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
       typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
       !Array.isArray(item.data) ||

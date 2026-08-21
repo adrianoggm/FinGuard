@@ -37,7 +37,7 @@ import {
   type Thread,
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
-import { Chart } from "./Chart";
+import { Chart, spanishNumberLocale, visualPresentation } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -470,10 +470,51 @@ describe("the one field this client writes", () => {
 });
 
 describe("financial breakdowns", () => {
+  it("presents minor-unit money, count and ratio semantics without mutating API rows", () => {
+    const moneyChart = visualPresentation({
+      kind: "chart", chart_id: "money", unit: "money",
+      spec: { encoding: { y: { field: "value_minor", type: "quantitative" }, tooltip: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 48945 }],
+    }, "EUR");
+    expect(moneyChart.data[0]?.value_minor).toBe(48945);
+    expect(moneyChart.data[0]?.__value_major).toBe(489.45);
+    expect(moneyChart.data[0]?.__value_display).toBe("489,45 €");
+    expect((moneyChart.spec.encoding as Record<string, Record<string, unknown>>).tooltip?.field).toBe("__value_display");
+    expect((moneyChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis?.format).toBe("$,.2f");
+    expect(spanishNumberLocale("EUR")).toMatchObject({
+      decimal: ",", thousands: ".", currency: ["", " €"],
+    });
+
+    const twelveEuros = visualPresentation({
+      kind: "chart", chart_id: "twelve-euros", unit: "money",
+      spec: { encoding: { y: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 1200 }],
+    }, "EUR");
+    expect(twelveEuros.data[0]?.__value_major).toBe(12);
+    expect(twelveEuros.data[0]?.__value_display).toBe("12,00 €");
+
+    const countChart = visualPresentation({
+      kind: "chart", chart_id: "count", unit: "count",
+      spec: { encoding: { y: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 12 }],
+    }, "EUR");
+    expect(countChart.data[0]?.value_minor).toBe(12);
+    expect(countChart.data[0]?.__value_major).toBeUndefined();
+    expect((countChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis?.format).toBe("d");
+
+    const ratioChart = visualPresentation({
+      kind: "chart", chart_id: "ratio", unit: "ratio",
+      spec: { encoding: { x: { field: "value_minor", type: "quantitative" }, tooltip: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 1200 }],
+    }, "EUR");
+    expect(ratioChart.data[0]?.__value_major).toBe(12);
+    expect((ratioChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).x?.axis?.format).toBe(".0%");
+  });
+
   it("updates historical chart turns, preserving data identity and nested parts", () => {
     const data = [{ key: "a", value_minor: 1 }];
     const old: Answer = { ...answer({
-      visualization: { kind: "chart", chart_id: "chart-old", spec: {}, data },
+      visualization: { kind: "chart", chart_id: "chart-old", unit: "money", spec: {}, data },
       save_candidate: { chart_id: "chart-old", definition_token: "before" },
     }) };
     const update: Answer = answer({
@@ -500,7 +541,7 @@ describe("financial breakdowns", () => {
   });
   it("validates presented Vega specs with encoding and separate data", () => {
     const payload = answer({ visualization: {
-      kind: "chart", chart_id: "chart-1", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
+      kind: "chart", chart_id: "chart-1", unit: "money", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
       data: [{ key: "lunes", value_minor: 1 }],
     } });
     expect(validateVoiceAnswer(payload).visualization).toBeDefined();
@@ -509,6 +550,7 @@ describe("financial breakdowns", () => {
     const payload = answer({ visualization: {
       kind: "chart",
       chart_id: "chart-1",
+      unit: "count",
       spec: {
         mark: { type: "line" },
         encoding: { x: { field: "missing", type: "temporal" } },
