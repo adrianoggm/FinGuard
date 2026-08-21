@@ -109,7 +109,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     QuestionRequest,
     QuestionResponse,
     SaveCandidate,
-    VisualizationUpdate,
+    VisualizationDerivation,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
@@ -206,17 +206,20 @@ def _visual_only_response(
     )
     try:
         updated = apply_visual_intent(intent, trusted_context)
+        rendered_spec = present_spec(updated.spec)
     except ValueError:
         return QuestionResponse(
             outcome="VISUAL_INCOMPATIBLE",
             text="No puedo aplicar ese cambio a este gráfico; prueba con barras.",
             conversation=conversation_mapper.to_payload(conversation),
         )
-    next_conversation = conversation.with_visual_spec(context.chart_id, updated.spec)
+    chart_id = "chart-" + uuid.uuid4().hex[:16]
+    derived_context = VisualContext(chart_id, updated.spec, trusted_context.profile)
+    next_conversation = conversation.with_visual_context(derived_context)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:
         candidate = SaveCandidate(
-            chart_id=context.chart_id,
+            chart_id=chart_id,
             definition_token=metric_tokens.issue(
                 holder_reference,
                 SavedMetricDefinition(source.plan, updated.spec),
@@ -224,11 +227,12 @@ def _visual_only_response(
         )
     return QuestionResponse(
         outcome="VISUAL_UPDATED",
-        text="He actualizado el gráfico.",
+        text="He creado una nueva versión del gráfico.",
         conversation=conversation_mapper.to_payload(next_conversation),
-        visualization_update=VisualizationUpdate(
-            target_chart_id=context.chart_id,
-            spec=present_spec(updated.spec),
+        visualization_derivation=VisualizationDerivation(
+            source_chart_id=context.chart_id,
+            chart_id=chart_id,
+            spec=rendered_spec,
         ),
         save_candidate=candidate,
     )

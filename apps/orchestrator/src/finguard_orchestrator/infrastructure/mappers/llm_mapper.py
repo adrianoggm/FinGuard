@@ -22,6 +22,7 @@ from finguard_orchestrator.application import (
     SpokenPlan,
     WalletResult,
 )
+from finguard_orchestrator.application.queries.ask_financial_question import VisualDataset
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
@@ -235,7 +236,7 @@ def _visualization_to_dto(
     spec = _chart_for_dataset(result, fields, len(rows))
     if spec is None or not spec.valid_for(fields):
         return None
-    spec = replace(spec, title=dataset.title)
+    spec = replace(spec, title=_visual_title(result, dataset))
     presented = present(Visualization(spec=spec, data=tuple(rows)))
     chart_id = _chart_id(result, spec)
     unit: Literal["money", "count", "ratio"] = (
@@ -257,6 +258,60 @@ def _chart_id(result: AskFinancialQuestionResult, spec: ChartSpec) -> str:
     return "chart-" + uuid4().hex[:16]
 
 
+def _visual_title(result: AskFinancialQuestionResult, dataset: VisualDataset) -> str:
+    """Return a short, stable Spanish title; never leak planner prose into Vega."""
+    context = result.plan_context
+    direction = {
+        "EXPENSE": "Gastos",
+        "INCOME": "Ingresos",
+        "ALL": "Movimientos",
+    }.get(context.direction if context is not None else "", "Importes")
+    grouping = context.group_by if context is not None else ""
+    dimension = {
+        "MONTH": "mes",
+        "WEEK": "semana",
+        "DAY": "día",
+        "CATEGORY": "categoría",
+        "MERCHANT": "comercio",
+        "COUNTERPARTY": "persona",
+        "ACCOUNT": "cuenta",
+    }.get(grouping, "periodo")
+    period = ""
+    if context is not None:
+        if context.period == "LAST_N_MONTHS" and context.n:
+            period = f"Últimos {context.n} meses"
+        elif context.period == "LAST_N_DAYS" and context.n:
+            period = f"Últimos {context.n} días"
+        elif context.period == "THIS_MONTH":
+            period = "Este mes"
+        elif context.period == "LAST_MONTH":
+            period = "Mes pasado"
+        elif context.period == "THIS_YEAR":
+            period = "Este año"
+    if dataset.metric == "FREQUENCY":
+        subject = "Frecuencia de movimientos"
+    elif dataset.metric == "COUNT":
+        subject = "Movimientos"
+    elif dataset.metric == "AVERAGE":
+        subject = {
+            "Gastos": "Gasto medio",
+            "Ingresos": "Ingreso medio",
+        }.get(direction, "Importe medio")
+    elif dataset.metric == "CUMULATIVE":
+        subject = {
+            "Gastos": "Gasto acumulado",
+            "Ingresos": "Ingreso acumulado",
+        }.get(direction, "Importe acumulado")
+    elif dataset.metric == "RECURRENCE":
+        subject = "Gastos recurrentes"
+    elif dataset.metric == "RATIO_SHARE":
+        subject = "Distribución"
+    else:
+        subject = direction
+    grouped = "" if dataset.metric == "RECURRENCE" else f" por {dimension}"
+    return f"{subject}{grouped}" + (f" · {period}" if period else "")
+
+
 def _remember_visual_context(
     result: AskFinancialQuestionResult, visualization: VisualizationResponse | None
 ) -> AskFinancialQuestionResult:
@@ -270,12 +325,18 @@ def _remember_visual_context(
     spec = _chart_for_dataset(result, frozenset(row_fields), len(result.visual_dataset.rows))
     if spec is None:
         return result
-    spec = replace(spec, title=result.visual_dataset.title)
+    spec = replace(spec, title=_visual_title(result, result.visual_dataset))
     profile = VisualProfile.from_spec(
         spec,
         cardinality=len({row.dimension for row in result.visual_dataset.rows}),
         metric=result.visual_dataset.metric,
-        unit="count" if result.visual_dataset.metric == "COUNT" else "money",
+        unit=(
+            "count"
+            if result.visual_dataset.metric in {"COUNT", "FREQUENCY"}
+            else "ratio"
+            if result.visual_dataset.metric == "RATIO_SHARE"
+            else "money"
+        ),
         positive=all(row.value_minor > 0 for row in result.visual_dataset.rows),
         mutually_exclusive=all(row.series is None for row in result.visual_dataset.rows),
         verified_total=(

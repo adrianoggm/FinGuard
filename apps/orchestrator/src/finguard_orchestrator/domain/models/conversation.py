@@ -43,7 +43,7 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.chart import ChartSpec, VisualContext
+from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -403,13 +403,6 @@ class Conversation:
         if chart_id is None:
             return self.visual_contexts[-1]
         return next((item for item in self.visual_contexts if item.chart_id == chart_id), None)
-
-    def with_visual_spec(self, chart_id: str, spec: ChartSpec) -> "Conversation":
-        contexts = tuple(
-            replace(item, spec=spec) if item.chart_id == chart_id else item
-            for item in self.visual_contexts
-        )
-        return replace(self, visual_contexts=contexts)
 
     def with_turn(self, turn: Turn) -> "Conversation":
         """Record what this turn did, dropping the oldest once the log is full.

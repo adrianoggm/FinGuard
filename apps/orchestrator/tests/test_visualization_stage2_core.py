@@ -24,11 +24,12 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
+from finguard_orchestrator.infrastructure.dto.llm_dto import VisualizationDerivation
 from finguard_orchestrator.infrastructure.mappers.conversation_mapper import to_domain, to_payload
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
-from finguard_orchestrator.infrastructure.visualization.vega_lite import present
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
 
 
 def _base() -> tuple[ChartSpec, VisualProfile]:
@@ -102,6 +103,89 @@ def test_limit_presenter_uses_valid_rank_window_and_measure_sort() -> None:
         {"field": "value_minor", "order": "descending"}
     ]
     assert rendered["spec"]["transform"][1] == {"filter": "datum._rank <= 3"}
+
+
+def test_temporal_bar_sort_is_presented_as_discrete_and_keeps_measure_sort() -> None:
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "dimension", "temporal", "Periodo"),
+            ChartEncoding("y", "value_minor", "quantitative", "Importe"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+    rendered = present_spec(spec)
+    assert rendered["encoding"]["x"]["type"] == "nominal"
+    assert rendered["encoding"]["x"]["sort"] == {
+        "field": "value_minor",
+        "order": "descending",
+    }
+
+
+def test_visual_derivation_dto_rejects_ids_reuse_and_embedded_rows() -> None:
+    structural = {
+        "mark": {"type": "bar"},
+        "encoding": {"x": {"field": "dimension", "type": "nominal"}},
+    }
+    with pytest.raises(ValueError):
+        VisualizationDerivation(source_chart_id="chart-a", chart_id="chart-a", spec=structural)
+    with pytest.raises(ValueError):
+        VisualizationDerivation(
+            source_chart_id="chart-a",
+            chart_id="chart-b",
+            spec={**structural, "data": {"values": [{"amount": 10}]}},
+        )
+
+
+def test_temporal_chart_supports_bar_then_value_sort_follow_ups() -> None:
+    spec = ChartSpec(
+        "line",
+        (
+            ChartEncoding("x", "dimension", "temporal", "Periodo"),
+            ChartEncoding("y", "value_minor", "quantitative", "Importe"),
+        ),
+    )
+    profile = VisualProfile.from_spec(spec, cardinality=13, metric="SUM", unit="money")
+    conversation = Conversation(visual_contexts=(VisualContext("chart-months", spec, profile),))
+
+    bars = interpret_visual("ponlo en barras", conversation.visual_contexts)
+    assert bars is not None
+    bars_response = _visual_only_response(bars, conversation)
+    assert bars_response.outcome == "VISUAL_UPDATED"
+    assert bars_response.conversation is not None
+    assert bars_response.visualization_derivation is not None
+    chart_b = bars_response.visualization_derivation.chart_id
+    assert bars_response.visualization_derivation.source_chart_id == "chart-months"
+    assert chart_b != "chart-months"
+
+    with_bars = to_domain(bars_response.conversation)
+    assert [item.chart_id for item in with_bars.visual_contexts] == ["chart-months", chart_b]
+    assert with_bars.visual_contexts[0].spec.mark == "line"
+    assert with_bars.visual_contexts[1].spec.mark == "bar"
+    ordered = interpret_visual("ahora ordénalo de mayor a menor", with_bars.visual_contexts)
+    assert ordered is not None
+    ordered_response = _visual_only_response(ordered, with_bars)
+    assert ordered_response.outcome == "VISUAL_UPDATED"
+    assert ordered_response.visualization_derivation is not None
+    chart_c = ordered_response.visualization_derivation.chart_id
+    assert ordered_response.visualization_derivation.source_chart_id == chart_b
+    assert len({"chart-months", chart_b, chart_c}) == 3
+    with_order = to_domain(ordered_response.conversation)
+    assert [item.chart_id for item in with_order.visual_contexts] == [
+        "chart-months",
+        chart_b,
+        chart_c,
+    ]
+    assert with_order.visual_contexts[0].spec.mark == "line"
+    assert with_order.visual_contexts[1].spec.sort is None
+    assert with_order.visual_contexts[2].spec.sort == "descending"
+    encoding = ordered_response.visualization_derivation.spec["encoding"]
+    assert encoding["x"]["type"] == "nominal"
+    assert encoding["x"]["sort"] == {"field": "value_minor", "order": "descending"}
+    wire = ordered_response.model_dump(mode="json")
+    assert "data" not in repr(wire["visualization_derivation"])
+    assert "values" not in repr(wire["visualization_derivation"])
 
 
 def test_context_ids_and_channels_are_bounded() -> None:
@@ -234,9 +318,11 @@ def test_controller_visual_response_updates_context_and_returns_presented_spec()
     assert intent is not None
     response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_UPDATED"
-    assert response.visualization_update is not None
-    assert response.visualization_update.spec["$schema"]
-    assert response.visualization_update.spec["encoding"]
+    assert response.visualization_derivation is not None
+    assert response.visualization_derivation.source_chart_id == "chart-1"
+    assert response.visualization_derivation.chart_id != "chart-1"
+    assert response.visualization_derivation.spec["$schema"]
+    assert response.visualization_derivation.spec["encoding"]
     assert response.conversation is not None
 
 
@@ -263,6 +349,9 @@ def test_visual_update_rotates_the_save_candidate_with_the_new_spec() -> None:
     )
 
     assert response.save_candidate is not None
+    assert response.visualization_derivation is not None
+    assert response.save_candidate.chart_id == response.visualization_derivation.chart_id
+    assert response.save_candidate.chart_id != "chart-1"
     updated = tokens.verify(response.save_candidate.definition_token, "holder")
     assert updated.chart.mark == "line"
     assert updated.plan == definition.plan
