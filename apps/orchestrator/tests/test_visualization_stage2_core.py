@@ -135,6 +135,7 @@ def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
     response = question_to_dto(result)
     assert response.visualization is not None
     assert response.visualization.kind == "chart"
+    assert response.visualization.unit == "money"  # type: ignore[union-attr]
     assert response.visualization.chart_id.startswith("chart-")  # type: ignore[union-attr]
     assert result.conversation.visual_contexts == ()  # result remains immutable
     assert response.conversation is not None
@@ -171,6 +172,29 @@ def test_identical_chart_answers_receive_distinct_ids() -> None:
     assert first is not None and second is not None
     assert first.kind == "chart" and second.kind == "chart"
     assert first.chart_id != second.chart_id
+
+
+def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> None:
+    count = question_to_dto(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="x",
+            visual_dataset=VisualDataset(
+                (VisualRow("lunes", 12), VisualRow("martes", 5)), "FREQUENCY"
+            ),
+        )
+    ).visualization
+    ratio = question_to_dto(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="x",
+            visual_dataset=VisualDataset(
+                (VisualRow("Parte", 1200), VisualRow("Resto", 8800)), "RATIO_SHARE"
+            ),
+        )
+    ).visualization
+    assert count is not None and count.unit == "count" and count.data[0]["value_minor"] == 12  # type: ignore[union-attr]
+    assert ratio is not None and ratio.unit == "ratio" and ratio.data[0]["value_minor"] == 1200  # type: ignore[union-attr]
 
 
 def test_breakdown_total_verification_requires_complete_total() -> None:

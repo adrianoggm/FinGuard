@@ -26,6 +26,7 @@ import {
   applyVisualizationUpdateToTurns,
   awaitingConfirmation,
   groupFigure,
+  metricSources,
   pendingIntent,
   quickReplies,
   recipientChoices,
@@ -471,8 +472,14 @@ describe("the one field this client writes", () => {
 describe("financial breakdowns", () => {
   it("updates historical chart turns, preserving data identity and nested parts", () => {
     const data = [{ key: "a", value_minor: 1 }];
-    const old: Answer = { ...answer({ visualization: { kind: "chart", chart_id: "chart-old", spec: {}, data } }) };
-    const update: Answer = answer({ visualization_update: { target_chart_id: "chart-old", spec: { mark: { type: "line" } } } });
+    const old: Answer = { ...answer({
+      visualization: { kind: "chart", chart_id: "chart-old", spec: {}, data },
+      save_candidate: { chart_id: "chart-old", definition_token: "before" },
+    }) };
+    const update: Answer = answer({
+      visualization_update: { target_chart_id: "chart-old", spec: { mark: { type: "line" } } },
+      save_candidate: { chart_id: "chart-old", definition_token: "after" },
+    });
     const turns: Thread["turns"] = [{
       who: "assistant",
       answer: answer({ parts: [old] }),
@@ -484,6 +491,10 @@ describe("financial breakdowns", () => {
     expect(nested?.data).toBe(data);
     if (nested?.kind !== "chart") throw new Error("expected chart");
     expect(nested.spec).toEqual({ mark: { type: "line" } });
+    expect(assistant.answer.parts?.[0]?.save_candidate?.definition_token).toBe("after");
+    expect(metricSources(next)).toEqual([
+      { chart_id: "chart-old", definition_token: "after" },
+    ]);
     const missing = answer({ visualization_update: { target_chart_id: "missing", spec: {} } });
     expect(applyVisualizationUpdateToTurns(turns, missing)).toBe(turns);
   });

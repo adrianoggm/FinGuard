@@ -54,6 +54,30 @@ services:
       retries: 5
       start_period: 10s
 
+  orchestrator-db-init:
+    image: postgres:18-alpine
+    profiles: ["core", "poc", "voice"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-finguard}
+    command: ["/bin/sh", "/scripts/reconcile-orchestrator.sh"]
+    volumes:
+      - ./infrastructure/postgres/reconcile-orchestrator.sh:/scripts/reconcile-orchestrator.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  orchestrator-migrate:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    profiles: ["core", "poc", "voice"]
+    environment:
+      DATABASE_URL: postgresql://finguard_orchestrator:finguard_orchestrator@postgres:5432/finguard_orchestrator
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      orchestrator-db-init:
+        condition: service_completed_successfully
+
   orchestrator:
     build:
       context: .
@@ -84,6 +108,9 @@ services:
       ORCHESTRATOR_LLM_CATALOGUE_FILE: /app/config/llm.toml
       # The ledger, by service name on the compose network.
       ORCHESTRATOR_BANKING_BASE_URL: http://banking-api:8001
+      ORCHESTRATOR_DATABASE_URL: postgresql://finguard_orchestrator:finguard_orchestrator@postgres:5432/finguard_orchestrator
+      ORCHESTRATOR_METRICS_ENABLED: "true"
+      ORCHESTRATOR_METRICS_SIGNING_KEYS: '["default:ZmluZ3VhcmQtbWV0cmljLWtleS0zMi1ieXRlcy1sb25n"]'
       # The local model runs on the host, not in a container: that is where the GPU is,
       # and 127.0.0.1 inside a container is the container. Nothing leaves the machine.
       ORCHESTRATOR_OLLAMA_BASE_URL: http://host.docker.internal:11434
@@ -128,7 +155,7 @@ services:
       # `payments:confirm` travel together there because the account holder is one person doing
       # two turns — the split exists so a credential *can* be issued with only the first, for an
       # integration that drafts payments somebody else approves.
-      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm"]'
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,metrics:read,metrics:write","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary:questions:read,metrics:read,metrics:write","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin,metrics:read,metrics:write","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm,metrics:read,metrics:write"]'
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
       # Stating it keeps the compose file working on both.
@@ -138,6 +165,8 @@ services:
     ports:
       - "127.0.0.1:${ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
+      orchestrator-migrate:
+        condition: service_completed_successfully
       banking-api:
         condition: service_healthy
     healthcheck:

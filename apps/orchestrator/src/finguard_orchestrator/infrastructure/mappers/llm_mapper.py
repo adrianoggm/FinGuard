@@ -5,6 +5,7 @@ here is already flat. This adds the wire format and nothing else.
 """
 
 from dataclasses import replace
+from typing import Literal
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.application import (
@@ -237,8 +238,16 @@ def _visualization_to_dto(
     spec = replace(spec, title=dataset.title)
     presented = present(Visualization(spec=spec, data=tuple(rows)))
     chart_id = _chart_id(result, spec)
+    unit: Literal["money", "count", "ratio"] = (
+        "count"
+        if dataset.metric in {"COUNT", "FREQUENCY"}
+        else "ratio"
+        if dataset.metric == "RATIO_SHARE"
+        else "money"
+    )
     return ChartVisualizationResponse(
         chart_id=chart_id,
+        unit=unit,
         spec=presented["spec"],
         data=presented["data"],
     )
