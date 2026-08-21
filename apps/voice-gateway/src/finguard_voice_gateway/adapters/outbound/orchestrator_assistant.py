@@ -91,7 +91,7 @@ class OrchestratorAssistantClient:
         idempotency_key: str,
         on_stage: AssistantStageCallback | None = None,
     ) -> AssistantReply:
-        payload: dict[str, object] = {"question": text}
+        payload: dict[str, object] = {"question": text, "channel": "VOICE"}
         if conversation is not None:
             payload["conversation"] = conversation
         try:

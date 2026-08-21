@@ -80,6 +80,7 @@ async def test_adapter_sends_real_payload_auth_and_stable_key() -> None:
     assert json.loads(transport.request.content) == {
         "question": "¿cuánto tengo?",
         "conversation": {"workflow": None},
+        "channel": "VOICE",
     }
     assert stages == [("reading", None)]
     assert reply.text == "saldo: 20 €"
@@ -117,7 +118,10 @@ async def test_adapter_maps_payment_confirmation_from_real_conversation() -> Non
             credential="secret",
             idempotency_key="key",
         )
-    assert json.loads(transport.request.content) == {"question": "prepara un pago"}  # type: ignore[union-attr]
+    assert json.loads(transport.request.content) == {  # type: ignore[union-attr]
+        "question": "prepara un pago",
+        "channel": "VOICE",
+    }
     assert reply.payment_confirmation_required
 
 
