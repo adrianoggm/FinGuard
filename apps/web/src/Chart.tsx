@@ -21,23 +21,60 @@ export function spanishNumberLocale(currency: string): Record<string, unknown> {
   };
 }
 
+export const spanishTimeLocale: Record<string, unknown> = {
+  dateTime: "%A, %e de %B de %Y, %X",
+  date: "%d/%m/%Y",
+  time: "%H:%M:%S",
+  periods: ["a. m.", "p. m."],
+  days: ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"],
+  shortDays: ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"],
+  months: [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+  ],
+  shortMonths: ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
+};
+
 export function visualPresentation(visualization: Extract<Visualization, { kind: "chart" }>, currency: string) {
   const moneyUnit = visualization.unit === "money" || visualization.unit === "ratio";
   const valueField = moneyUnit ? "__value_major" : "value_minor";
   const displayField = "__value_display";
-  const data = visualization.data.map((row) => {
+  const hasMonthlyDimension = visualization.data.some(
+    (row) => typeof row.dimension === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(row.dimension),
+  );
+  const monthLabel = new Intl.DateTimeFormat("es-ES", { month: "short", year: "numeric" });
+  const data = visualization.data.map<Record<string, unknown>>((row) => {
     const value = row.value_minor;
-    if (typeof value !== "number" || !moneyUnit) return row;
     return {
       ...row,
-      [valueField]: value / 100,
-      [displayField]: money(value, currency),
+      ...(hasMonthlyDimension && typeof row.dimension === "string" ? {
+        __dimension_display: monthLabel.format(new Date(
+          Number(row.dimension.slice(0, 4)),
+          Number(row.dimension.slice(5, 7)) - 1,
+          1,
+        )).replace(".", ""),
+      } : {}),
+      ...(typeof value === "number" && moneyUnit ? {
+        [valueField]: value / 100,
+        [displayField]: money(value, currency),
+      } : {}),
     };
   });
   const spec = structuredClone(visualization.spec) as Record<string, unknown>;
   const encoding = (spec.encoding ?? {}) as Record<string, unknown>;
   const quantitativeChannels = new Set(["x", "y"]);
   const rewrite = (channel: string, item: Encoding): Encoding => {
+    if (item.field === "dimension" && hasMonthlyDimension) {
+      if (channel === "tooltip" || item.type === "nominal") {
+        return { ...item, field: "__dimension_display", type: "nominal" };
+      }
+      if (item.type === "temporal" && quantitativeChannels.has(channel)) {
+        return {
+          ...item,
+          axis: { format: "%b %Y", labelAngle: -32, labelOverlap: true, labelLimit: 92 },
+        };
+      }
+    }
     if (item.field !== "value_minor") return item;
     const next: Encoding = { ...item, field: valueField };
     if (moneyUnit && channel === "tooltip") {
@@ -79,7 +116,8 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
         background: "transparent",
         font: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         view: { stroke: null },
-        axis: { labelColor: "#52635d", titleColor: "#173d34", gridColor: "#dfe9e4", domainColor: "#b8cbc3", tickColor: "#b8cbc3", labelFontSize: 11, titleFontSize: 12, titleFontWeight: 600 },
+        axis: { labelColor: "#52635d", titleColor: "#173d34", gridColor: "#dfe9e4", domainColor: "#b8cbc3", tickColor: "#b8cbc3", labelFontSize: 11, titleFontSize: 12, titleFontWeight: 600, labelOverlap: true, labelLimit: 92 },
+        axisX: { labelAngle: -32, labelPadding: 6 },
         legend: { labelColor: "#52635d", titleColor: "#173d34", labelFontSize: 11, titleFontSize: 12 },
         title: { color: "#173d34", fontSize: 15, fontWeight: 700, anchor: "start" },
         range: { category: ["#0f766e", "#2f9e82", "#70c3a8", "#e5a84b", "#d97757", "#64748b"] },
@@ -95,6 +133,7 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
         renderer: "svg",
         tooltip: true,
         formatLocale: spanishNumberLocale(currency ?? "EUR"),
+        timeFormatLocale: spanishTimeLocale,
       }))
       .then((result) => {
         if (cancelled) result.view.finalize();
