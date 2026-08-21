@@ -30,6 +30,23 @@ import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart } from "./Chart";
 
+export function applyVisualizationUpdateToTurns(turns: Turn[], answer: Answer): Turn[] {
+  const update = answer.visualization_update;
+  if (!update) return turns;
+  const contains = (candidate: Answer): boolean =>
+    (candidate.visualization?.kind === "chart" &&
+      candidate.visualization.chart_id === update.target_chart_id) ||
+    (candidate.parts?.some(contains) ?? false);
+  if (!turns.some((turn) => turn.who === "assistant" && contains(turn.answer))) return turns;
+  const apply = (candidate: Answer): Answer => {
+    if (candidate.visualization?.kind === "chart" && candidate.visualization.chart_id === update.target_chart_id) {
+      return { ...candidate, visualization: { ...candidate.visualization, spec: update.spec } };
+    }
+    return { ...candidate, parts: candidate.parts?.map(apply) };
+  };
+  return turns.map((turn) => turn.who === "assistant" ? { ...turn, answer: apply(turn.answer) } : turn);
+}
+
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
   transcribing: "Transcribiendo lo que has dicho…",
@@ -108,7 +125,8 @@ export function applyVoiceEvent(
   }
   if (event.type === "assistant.text.final") {
     const answer = validateVoiceAnswer(event.answer);
-    const turns = [...current.turns, { who: "assistant" as const, answer }];
+    const history = applyVisualizationUpdateToTurns(current.turns, answer);
+    const turns = [...history, { who: "assistant" as const, answer }];
     return { thread: settled(current, turns, answer, onSettled), stage: null };
   }
   if (event.type === "turn.completed") {
@@ -241,9 +259,11 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
       for await (const step of ask(text, before.conversation, keyFor(text))) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {
-          turns.push({ who: "assistant", answer: step });
+          const updatedTurns = applyVisualizationUpdateToTurns(turns, step);
+          const rendered = step;
+          turns.push({ who: "assistant", answer: rendered });
           attempt.current = null;
-          onThread(settled(before, [...turns], step, onSettled));
+          onThread(settled(before, updatedTurns.concat({ who: "assistant", answer: rendered }), rendered, onSettled));
         }
       }
     } catch (failure) {

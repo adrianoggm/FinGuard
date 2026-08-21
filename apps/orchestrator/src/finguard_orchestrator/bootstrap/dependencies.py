@@ -72,6 +72,19 @@ def payments_enabled(request: Request) -> None:
         raise FeatureDisabledError("payments are disabled; set ORCHESTRATOR_PAYMENTS_ENABLED=true")
 
 
+def metrics_enabled(request: Request) -> None:
+    if not request.app.state.metrics_enabled:
+        raise FeatureDisabledError(
+            "saved metrics are disabled; set ORCHESTRATOR_METRICS_ENABLED=true"
+        )
+
+
+def metrics_available(request: Request) -> bool:
+    """Whether question responses may offer a save action without refusing the question."""
+    enabled: bool = request.app.state.metrics_enabled
+    return enabled
+
+
 def known_categories(request: Request) -> tuple[str, ...]:
     """The categories a screen may offer.
 

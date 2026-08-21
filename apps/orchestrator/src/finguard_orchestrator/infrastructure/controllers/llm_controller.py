@@ -13,6 +13,7 @@ once and sometimes many times.
 import json
 import uuid
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -50,6 +51,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_command_bus,
     get_query_bus,
     known_categories,
+    metrics_available,
     payments_available,
     questions_enabled,
     reporting_today,
@@ -65,6 +67,7 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -75,6 +78,7 @@ from finguard_orchestrator.domain.models.conversation import (
     Slot,
     slot_for,
 )
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
@@ -104,9 +108,22 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PolicyRequest,
     QuestionRequest,
     QuestionResponse,
+    SaveCandidate,
+    VisualizationUpdate,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
+from finguard_orchestrator.infrastructure.metrics.codec import CodecError
+from finguard_orchestrator.infrastructure.security.metric_tokens import (
+    MetricTokenCodec,
+    MetricTokenError,
+)
+from finguard_orchestrator.infrastructure.visualization.interpreter import (
+    VisualIntent,
+    apply_visual_intent,
+    interpret_visual,
+)
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present_spec
 
 Queries = Annotated[QueryBus, Depends(get_query_bus)]
 Commands = Annotated[CommandBus, Depends(get_command_bus)]
@@ -122,6 +139,100 @@ Attempt = Annotated[str, Depends(attempt_key)]
 # free and would be three model calls once it is not.
 Reads = Annotated[TurnInterpreterPort, Depends(turn_interpreter)]
 Categories = Annotated[tuple[str, ...], Depends(known_categories)]
+
+
+def _metric_token_codec(request: Request) -> MetricTokenCodec:
+    codec = request.app.state.metric_tokens
+    if not isinstance(codec, MetricTokenCodec):
+        raise RuntimeError("invalid metrics token codec")
+    return codec
+
+
+MetricTokens = Annotated[MetricTokenCodec, Depends(_metric_token_codec)]
+MetricsOn = Annotated[bool, Depends(metrics_available)]
+
+
+def _saved_visual_source(
+    request: QuestionRequest,
+    intent: VisualIntent,
+    conversation: Conversation,
+    who: Caller,
+    metric_tokens: MetricTokenCodec,
+    metrics_on: bool,
+) -> SavedMetricDefinition | None:
+    if not metrics_on or request.channel != "TEXT" or intent.target is None:
+        return None
+    offered = next(
+        (item for item in request.metric_sources if item.chart_id == intent.target),
+        None,
+    )
+    context = conversation.visual_context(intent.target)
+    if offered is None or context is None:
+        return None
+    try:
+        definition = metric_tokens.verify(offered.definition_token, who.holder_reference)
+    except (MetricTokenError, CodecError):
+        return None
+    if not definition.chart.fields() <= context.profile.field_names():
+        return None
+    return definition
+
+
+def _visual_only_response(
+    intent: VisualIntent,
+    conversation: Conversation,
+    *,
+    source: SavedMetricDefinition | None = None,
+    holder_reference: str | None = None,
+    metric_tokens: MetricTokenCodec | None = None,
+) -> QuestionResponse:
+    if intent.explanation:
+        return QuestionResponse(
+            outcome="VISUAL_INCOMPATIBLE",
+            text=intent.explanation,
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    context = conversation.visual_context(intent.target)
+    if context is None or intent.patch is None:
+        return QuestionResponse(
+            outcome="VISUAL_NEEDS_TARGET",
+            text="Indica qué gráfico quieres cambiar.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    trusted_context = (
+        VisualContext(context.chart_id, source.chart, context.profile)
+        if source is not None
+        else context
+    )
+    try:
+        updated = apply_visual_intent(intent, trusted_context)
+    except ValueError:
+        return QuestionResponse(
+            outcome="VISUAL_INCOMPATIBLE",
+            text="No puedo aplicar ese cambio a este gráfico; prueba con barras.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    next_conversation = conversation.with_visual_spec(context.chart_id, updated.spec)
+    candidate = None
+    if source is not None and holder_reference is not None and metric_tokens is not None:
+        candidate = SaveCandidate(
+            chart_id=context.chart_id,
+            definition_token=metric_tokens.issue(
+                holder_reference,
+                SavedMetricDefinition(source.plan, updated.spec),
+            ),
+        )
+    return QuestionResponse(
+        outcome="VISUAL_UPDATED",
+        text="He actualizado el gráfico.",
+        conversation=conversation_mapper.to_payload(next_conversation),
+        visualization_update=VisualizationUpdate(
+            target_chart_id=context.chart_id,
+            spec=present_spec(updated.spec),
+        ),
+        save_candidate=candidate,
+    )
+
 
 assistant_router = APIRouter(tags=["assistant"])
 
@@ -776,6 +887,7 @@ def _window_only_context(answered: Conversation) -> Conversation | None:
         ),
         account_aliases=answered.account_aliases,
         counterparty_aliases=answered.counterparty_aliases,
+        visual_contexts=answered.visual_contexts,
         # Filters are what this strips. The thread is not a filter, and a clause read without it is
         # the blindness the log exists to end.
         turns=answered.turns,
@@ -799,6 +911,7 @@ async def _compound_read_reply(
     shared_window: Conversation | None = None
     parts: list[QuestionResponse | None] = [None] * len(clauses)
     conversations: list[Conversation | None] = [None] * len(clauses)
+    visual_contexts_by_index: list[tuple[VisualContext, ...]] = [()] * len(clauses)
     final_outcome = "COMPOUND"
     final_question: str | None = None
     final_suggestions: list[str] = []
@@ -825,6 +938,18 @@ async def _compound_read_reply(
         current = result.conversation
         conversations[index] = current
         rendered = llm_mapper.question_to_dto(result)
+        if rendered.conversation is not None:
+            rendered_conversation = conversation_mapper.to_domain(rendered.conversation)
+            previous_visual_ids = {
+                context.chart_id for context in result.conversation.visual_contexts
+            }
+            current = replace(current, visual_contexts=rendered_conversation.visual_contexts)
+            conversations[index] = current
+            visual_contexts_by_index[index] = tuple(
+                context
+                for context in rendered_conversation.visual_contexts
+                if context.chart_id not in previous_visual_ids
+            )
         parts[index] = rendered.model_copy(update={"conversation": None, "parts": []})
         if rendered.outcome not in _COMPOUND_SUCCESS:
             final_outcome = rendered.outcome
@@ -847,6 +972,11 @@ async def _compound_read_reply(
         # Conversation follows the clause the user mentioned last, not the internal execution
         # order (which may have moved a trailing shared window to the front).
         current = completed_conversations[-1][1]
+    merged = current
+    for index in range(len(clauses)):
+        for context in visual_contexts_by_index[index]:
+            merged = merged.with_visual_context(context)
+    current = merged
     text = "\n".join(f"{index}. {part.text}" for index, part in completed_with_indexes)
     return QuestionResponse(
         outcome=final_outcome,
@@ -1162,6 +1292,8 @@ async def ask(
     payments_on: PaymentsOn,
     attempt: Attempt,
     reads: Reads,
+    metric_tokens: MetricTokens,
+    metrics_on: MetricsOn,
 ) -> QuestionResponse:
     """Natural language in, a figure with its evidence out.
 
@@ -1177,6 +1309,19 @@ async def ask(
 
     key = attempt
     was = _conversation_of(request)
+
+    visual = interpret_visual(
+        request.question, was.visual_contexts, voice=request.channel == "VOICE"
+    )
+    if visual is not None:
+        source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+        return _visual_only_response(
+            visual,
+            was,
+            source=source,
+            holder_reference=who.holder_reference if source is not None else None,
+            metric_tokens=metric_tokens if source is not None else None,
+        )
 
     if isinstance(was.active, PaymentConfirmation):
         # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
@@ -1268,7 +1413,11 @@ async def ask(
     )
     if result.outcome == Spoken.TRANSFER_READY.value:
         return await _as_own_transfer(result, who, commands, payments_on, key=key)
-    return llm_mapper.question_to_dto(result)
+    return llm_mapper.question_to_dto(
+        result,
+        holder_reference=who.holder_reference if metrics_on and request.channel == "TEXT" else None,
+        metric_tokens=metric_tokens if metrics_on and request.channel == "TEXT" else None,
+    )
 
 
 @assistant_router.post(
@@ -1289,6 +1438,8 @@ async def ask_streaming(
     queries: Queries,
     attempt: Attempt,
     reads: Reads,
+    metric_tokens: MetricTokens,
+    metrics_on: MetricsOn,
 ) -> Response:
     """The same answer, emitted as it is produced.
 
@@ -1303,6 +1454,24 @@ async def ask_streaming(
     """
     key = attempt
     was = _conversation_of(request)
+
+    visual = interpret_visual(
+        request.question, was.visual_contexts, voice=request.channel == "VOICE"
+    )
+    if visual is not None:
+        source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+        answer = _visual_only_response(
+            visual,
+            was,
+            source=source,
+            holder_reference=who.holder_reference if source is not None else None,
+            metric_tokens=metric_tokens if source is not None else None,
+        )
+
+        async def visual_events() -> AsyncIterator[str]:
+            yield _sse({"type": "answer", **answer.model_dump()})
+
+        return StreamingResponse(visual_events(), media_type="text/event-stream")
 
     if isinstance(was.active, PaymentConfirmation):
         # Here too, and for the reason every payment branch is duplicated: the browser types into
@@ -1394,7 +1563,18 @@ async def ask_streaming(
                 staged = await _as_own_transfer(step, who, commands, payments_on, key=key)
                 payload = {"type": "answer", **staged.model_dump()}
             else:
-                payload = {"type": "answer", **llm_mapper.question_to_dto(step).model_dump()}
+                payload = {
+                    "type": "answer",
+                    **llm_mapper.question_to_dto(
+                        step,
+                        holder_reference=who.holder_reference
+                        if metrics_on and request.channel == "TEXT"
+                        else None,
+                        metric_tokens=metric_tokens
+                        if metrics_on and request.channel == "TEXT"
+                        else None,
+                    ).model_dump(),
+                }
             yield _sse(payload)
 
     return StreamingResponse(events(), media_type="text/event-stream")

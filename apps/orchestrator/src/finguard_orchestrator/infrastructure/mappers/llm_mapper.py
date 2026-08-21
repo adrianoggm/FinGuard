@@ -4,7 +4,8 @@ Queries and commands answer with Results, never with domain objects, so what arr
 here is already flat. This adds the wire format and nothing else.
 """
 
-from uuid import UUID
+from dataclasses import replace
+from uuid import UUID, uuid4
 
 from finguard_orchestrator.application import (
     AccountSummaryResult,
@@ -23,9 +24,12 @@ from finguard_orchestrator.application import (
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
+    VisualContext,
     Visualization,
+    VisualProfile,
     derive_chart,
 )
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -51,6 +55,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PlanPayload,
     PolicyResponse,
     QuestionResponse,
+    SaveCandidate,
     SpokenContactResponse,
     SpokenGroupResponse,
     SpokenMovementResponse,
@@ -59,6 +64,8 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+from finguard_orchestrator.infrastructure.metrics.codec import CodecError
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
@@ -227,18 +234,54 @@ def _visualization_to_dto(
     spec = _chart_for_dataset(result, fields, len(rows))
     if spec is None or not spec.valid_for(fields):
         return None
-    spec = ChartSpec(
-        mark=spec.mark,
-        encodings=spec.encodings,
-        title=dataset.title,
-        stack=spec.stack,
-        sort=spec.sort,
-        responsive=spec.responsive,
-    )
+    spec = replace(spec, title=dataset.title)
     presented = present(Visualization(spec=spec, data=tuple(rows)))
+    chart_id = _chart_id(result, spec)
     return ChartVisualizationResponse(
+        chart_id=chart_id,
         spec=presented["spec"],
         data=presented["data"],
+    )
+
+
+def _chart_id(result: AskFinancialQuestionResult, spec: ChartSpec) -> str:
+    return "chart-" + uuid4().hex[:16]
+
+
+def _remember_visual_context(
+    result: AskFinancialQuestionResult, visualization: VisualizationResponse | None
+) -> AskFinancialQuestionResult:
+    if not isinstance(visualization, ChartVisualizationResponse) or result.visual_dataset is None:
+        return result
+    row_fields = {"dimension", "value_minor"}
+    if any(row.series is not None for row in result.visual_dataset.rows):
+        row_fields.add("series")
+    if any(row.occurred_at is not None for row in result.visual_dataset.rows):
+        row_fields.add("occurred_at")
+    spec = _chart_for_dataset(result, frozenset(row_fields), len(result.visual_dataset.rows))
+    if spec is None:
+        return result
+    spec = replace(spec, title=result.visual_dataset.title)
+    profile = VisualProfile.from_spec(
+        spec,
+        cardinality=len({row.dimension for row in result.visual_dataset.rows}),
+        metric=result.visual_dataset.metric,
+        unit="count" if result.visual_dataset.metric == "COUNT" else "money",
+        positive=all(row.value_minor > 0 for row in result.visual_dataset.rows),
+        mutually_exclusive=all(row.series is None for row in result.visual_dataset.rows),
+        verified_total=(
+            result.visual_dataset.metric == "RATIO_SHARE"
+            or (
+                result.total_minor is not None
+                and sum(row.value_minor for row in result.visual_dataset.rows) == result.total_minor
+            )
+        ),
+    )
+    return replace(
+        result,
+        conversation=result.conversation.with_visual_context(
+            VisualContext(visualization.chart_id, spec, profile)
+        ),
     )
 
 
@@ -309,8 +352,42 @@ def _chart_for_dataset(
     )
 
 
-def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
+def question_to_dto(
+    result: AskFinancialQuestionResult,
+    *,
+    holder_reference: str | None = None,
+    metric_tokens: MetricTokenCodec | None = None,
+) -> QuestionResponse:
     visualization = _visualization_to_dto(result)
+    result = _remember_visual_context(result, visualization)
+    candidate = None
+    if (
+        isinstance(visualization, ChartVisualizationResponse)
+        and isinstance(result.metric_definition, FinancialPlan)
+        and holder_reference is not None
+        and metric_tokens is not None
+    ):
+        context = next(
+            (
+                item
+                for item in reversed(result.conversation.visual_contexts)
+                if item.chart_id == visualization.chart_id
+            ),
+            None,
+        )
+        if context is not None:
+            try:
+                token = metric_tokens.issue(
+                    holder_reference,
+                    SavedMetricDefinition(result.metric_definition, context.spec),
+                )
+            except CodecError:
+                pass
+            else:
+                candidate = SaveCandidate(
+                    chart_id=visualization.chart_id,
+                    definition_token=token,
+                )
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,
@@ -354,6 +431,7 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         ],
         visualization=visualization,
         suggestions=result.suggestions,
+        save_candidate=candidate,
     )
 
 

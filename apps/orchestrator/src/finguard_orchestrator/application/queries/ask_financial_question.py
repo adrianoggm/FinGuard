@@ -443,6 +443,8 @@ class AskFinancialQuestionResult:
     suggestions: list[str] = field(default_factory=list)
     explicit_visualization: bool = False
     visual_dataset: VisualDataset | None = None
+    # Internal, typed source for a save candidate. Never serialized as financial data.
+    metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -588,6 +590,10 @@ class AskFinancialQuestionHandler:
                             )
                         ),
                     )
+                    if step.metric_definition is None and isinstance(
+                        step.conversation.last_plan, FinancialPlan
+                    ):
+                        step = replace(step, metric_definition=step.conversation.last_plan)
                 yield step
         finally:
             logger.info(

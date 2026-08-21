@@ -243,6 +243,20 @@ export type ConversationState = {
   // deep still resolve. Round-tripped like the rest and never read here — rendering the chat uses
   // the messages this client already holds, not the service's copy of them.
   turns?: { sentence: string; outcome: string; plan?: string | null; question?: string | null }[];
+  // Opaque, value-free chart memory. The client echoes it; only the orchestrator interprets it.
+  visual_contexts?: {
+    chart_id: string;
+    spec: Record<string, unknown>;
+    profile: {
+      fields: { name: string; type: "nominal" | "quantitative" | "temporal" }[];
+      cardinality: number;
+      metric?: string | null;
+      unit?: "money" | "count" | "ratio" | "unknown" | null;
+      positive: boolean;
+      mutually_exclusive: boolean;
+      verified_total: boolean;
+    };
+  }[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
@@ -305,13 +319,14 @@ export type Answer = {
   }[];
   movements: Movement[];
   visualization?: Visualization | null;
+  visualization_update?: { target_chart_id: string; spec: Record<string, unknown> } | null;
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
 };
 
 export type Visualization =
-  | { kind: "chart"; spec: Record<string, unknown>; data: Record<string, unknown>[] }
+  | { kind: "chart"; chart_id: string; spec: Record<string, unknown>; data: Record<string, unknown>[] }
   | {
       kind: "kpi";
       value_field: "value_minor";
@@ -348,6 +363,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     const spec = item.spec as Record<string, unknown> | undefined;
     if (
       item.kind !== "chart" || !spec || typeof spec !== "object" ||
+      typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
       typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
       !Array.isArray(item.data) ||
       !item.data.every((row) => !!row && typeof row === "object" && !Array.isArray(row))
@@ -374,6 +390,10 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
     !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
     !validVisualization(body.visualization) ||
+    (body.visualization_update !== undefined && body.visualization_update !== null &&
+      (typeof body.visualization_update !== "object" ||
+       typeof (body.visualization_update as Record<string, unknown>).target_chart_id !== "string" ||
+       typeof (body.visualization_update as Record<string, unknown>).spec !== "object")) ||
     body.groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
@@ -445,6 +465,7 @@ export async function* ask(
   sentence: string,
   conversation: ConversationState | null = null,
   attempt?: string,
+  channel: "TEXT" | "VOICE" = "TEXT",
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -456,7 +477,7 @@ export async function* ask(
     // whoever is having it, which is why both parameters exist at all.
     // One object, stored and returned. The service decides what the next state is; this only
     // carries it there and back.
-    body: JSON.stringify({ question: sentence, conversation }),
+    body: JSON.stringify({ question: sentence, conversation, channel }),
   });
   if (!response.ok || !response.body) await readError(response);
 

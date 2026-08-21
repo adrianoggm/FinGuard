@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
+    MAX_VISUAL_CONTEXTS,
 )
 from finguard_orchestrator.domain.enums import (
     Action,
@@ -213,6 +214,102 @@ class TurnPayload(_Payload):
     question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
 
 
+class VisualFieldPayload(_Payload):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    type: Literal["nominal", "quantitative", "temporal"]
+
+
+class VisualProfilePayload(_Payload):
+    fields: list[VisualFieldPayload] = Field(max_length=32)
+    cardinality: int = Field(ge=0, le=10000)
+    metric: str | None = Field(default=None, max_length=32, pattern=r"^[A-Z][A-Z0-9_]*$")
+    unit: Literal["money", "count", "ratio", "unknown"] | None = None
+    positive: bool = False
+    mutually_exclusive: bool = False
+    verified_total: bool = False
+
+
+class VisualContextPayload(_Payload):
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    spec: dict[str, object]
+    profile: VisualProfilePayload
+
+    @model_validator(mode="after")
+    def _value_free_spec(self) -> "VisualContextPayload":
+        forbidden = {"data", "values", "datum", "value", "transform", "calculate"}
+
+        def walk(value: object) -> None:
+            if isinstance(value, dict):
+                if forbidden.intersection(value):
+                    raise ValueError("visual context must be value-free")
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(self.spec)
+        allowed = {
+            "$schema",
+            "mark",
+            "encoding",
+            "title",
+            "width",
+            "height",
+            "stack",
+            "sort",
+            "sort_field",
+            "limit",
+        }
+        if set(self.spec) - allowed:
+            raise ValueError("unknown visual spec key")
+        encoding = self.spec.get("encoding")
+        if not isinstance(encoding, dict) or not encoding:
+            raise ValueError("visual spec needs encoding")
+        fields: set[str] = set()
+        for channel, raw in encoding.items():
+            if channel not in {"x", "y", "color", "tooltip", "theta"}:
+                raise ValueError("unknown visual channel")
+            values = raw if isinstance(raw, list) else [raw]
+            if len(values) > 8:
+                raise ValueError("too many encodings")
+            for item in values:
+                if not isinstance(item, dict) or set(item) - {
+                    "field",
+                    "type",
+                    "title",
+                    "sort",
+                    "stack",
+                }:
+                    raise ValueError("unknown encoding key")
+                if not isinstance(item.get("field"), str) or item.get("type") not in {
+                    "nominal",
+                    "quantitative",
+                    "temporal",
+                }:
+                    raise ValueError("invalid encoding")
+                fields.add(item["field"])
+        profile_types = {item.name: item.type for item in self.profile.fields}
+        if not fields <= set(profile_types):
+            raise ValueError("encoding field absent from profile")
+        for raw in [
+            item
+            for value in encoding.values()
+            for item in (value if isinstance(value, list) else [value])
+        ]:
+            if raw["type"] != profile_types[raw["field"]]:
+                raise ValueError("encoding type differs from profile")
+        if self.spec.get("mark") not in (
+            {"type": "bar"},
+            {"type": "line"},
+            {"type": "area"},
+            {"type": "point"},
+            {"type": "arc", "innerRadius": 55},
+        ):
+            raise ValueError("unsupported visual mark")
+        return self
+
+
 class ConversationPayload(_Payload):
     """Where the conversation is, in one object.
 
@@ -271,6 +368,7 @@ class ConversationPayload(_Payload):
     # before, taken by whichever branch ran; this is the turn itself, and it is what lets an
     # ellipsis three deep still resolve. Bounded, because it travels on every request.
     turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
+    visual_contexts: list[VisualContextPayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
@@ -413,6 +511,13 @@ class ConversationPayload(_Payload):
         return self
 
 
+class MetricSourcePayload(_Payload):
+    """Signed save authority for one chart already present in the conversation."""
+
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    definition_token: str = Field(min_length=1, max_length=20000)
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -432,6 +537,8 @@ class QuestionRequest(_Payload):
     #
     # Absent on the first turn, and absent means a fresh conversation rather than an error.
     conversation: ConversationPayload | None = None
+    channel: Literal["TEXT", "VOICE"] = "TEXT"
+    metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
 
 
 class SpokenGroupResponse(_Payload):
@@ -458,6 +565,7 @@ class SpokenMovementResponse(_Payload):
 
 class ChartVisualizationResponse(_Payload):
     kind: Literal["chart"] = "chart"
+    chart_id: str
     spec: dict[str, object]
     data: list[dict[str, object]]
 
@@ -469,10 +577,47 @@ class KpiVisualizationResponse(_Payload):
     data: list[dict[str, object]]
 
 
+class VisualizationUpdate(_Payload):
+    target_chart_id: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    )
+    spec: dict[str, object]
+
+    @model_validator(mode="after")
+    def _strict_spec(self) -> "VisualizationUpdate":
+        if set(self.spec) - {
+            "$schema",
+            "mark",
+            "encoding",
+            "title",
+            "width",
+            "height",
+            "transform",
+        }:
+            raise ValueError("unknown visualization update key")
+        mark = self.spec.get("mark")
+        if not isinstance(mark, dict) or mark.get("type") not in {
+            "bar",
+            "line",
+            "area",
+            "point",
+            "arc",
+        }:
+            raise ValueError("invalid visualization update mark")
+        if not isinstance(self.spec.get("encoding"), dict):
+            raise ValueError("visualization update needs encoding")
+        return self
+
+
 VisualizationResponse = Annotated[
     ChartVisualizationResponse | KpiVisualizationResponse,
     Field(discriminator="kind"),
 ]
+
+
+class SaveCandidate(_Payload):
+    chart_id: str
+    definition_token: str
 
 
 class QuestionResponse(_Payload):
@@ -499,6 +644,7 @@ class QuestionResponse(_Payload):
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
     visualization: VisualizationResponse | None = None
+    visualization_update: VisualizationUpdate | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []
@@ -508,6 +654,7 @@ class QuestionResponse(_Payload):
     # Independent read-only requests asked in one turn. Each part keeps its own plan and evidence;
     # only the parent carries the conversation left behind after all parts have run.
     parts: list["QuestionResponse"] = []
+    save_candidate: SaveCandidate | None = None
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

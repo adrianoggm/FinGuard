@@ -106,6 +106,7 @@ MAX_REMEMBERED_TURNS = 6
 # them plus the rules have to fit in one prompt, and a sentence longer than this is not an ellipsis
 # needing context — it is a question that says what it wants.
 MAX_TURN_SENTENCE = 200
+MAX_VISUAL_CONTEXTS = 5
 
 # What we said the turn was about: the query in words, or the question asked back. Ours rather than
 # the holder's, and bounded anyway — the log is echoed by the caller, so every field in it is one
