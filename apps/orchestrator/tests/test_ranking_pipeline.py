@@ -14,14 +14,22 @@ follow-up is robust because there is nothing left to recognise except "and the n
 """
 
 import uuid
+from dataclasses import replace
 from datetime import date, datetime
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    _multiple_movement_ranking,
+)
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
@@ -177,6 +185,50 @@ async def test_three_largest_expenses_are_read_as_concrete_ranked_movements() ->
     assert remembered.rank == 3
     assert remembered.categories == ()
     assert remembered.period == THIS_YEAR
+
+
+async def test_unbounded_ordered_expenses_default_to_ten_rows_and_read_the_named_month() -> None:
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    result = await ask(
+        "Podrias decirme de abril que gastos he tenido de más grande a mas pequeño ?",
+        FakePlanner(),
+        ledger,
+    )
+
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3, 4]
+    assert result.movement_count == 3
+    assert result.conversation.last_plan is not None
+    remembered = result.conversation.last_plan
+    assert isinstance(remembered, TopMovements)
+    assert remembered.date_range == AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30))
+    assert "He encontrado 3 gastos en abril de 2026" in result.text
+    assert "no hay 10" in result.text
+
+
+async def test_unbounded_ordered_expenses_reads_all_ten_default_rows_in_rank_order() -> None:
+    rows = tuple(replace(CEPSA, merchant_name=f"Merchant {position}") for position in range(10))
+    ledger = FakeLedger(*rows)
+
+    result = await ask("Lista mis gastos de abril de mayor a menor", FakePlanner(), ledger)
+
+    assert [ranking.rank for ranking in ledger.rankings] == list(range(1, 11))
+    assert result.movement_count == 10
+    assert [movement.merchant_name for movement in result.movements] == [
+        f"Merchant {position}" for position in range(10)
+    ]
+
+
+def _movement_ranking_for(sentence: str) -> tuple[TopMovements, int] | None:
+    return _multiple_movement_ranking(
+        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+    )
+
+
+def test_ordered_movement_recognizer_rejects_singular_and_ascending_requests() -> None:
+    assert _movement_ranking_for("cuál fue el mayor gasto de abril") is None
+    assert _movement_ranking_for("lista mis gastos de menor a mayor") is None
+    assert _movement_ranking_for("ordena mis gastos de más pequeño a más grande") is None
 
 
 async def test_an_incomplete_top_list_remembers_the_last_real_position() -> None:

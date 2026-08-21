@@ -23,9 +23,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   Conversation,
   applyVoiceEvent,
-  applyVisualizationUpdateToTurns,
   awaitingConfirmation,
   groupFigure,
+  materializeVisualizationDerivation,
   metricSources,
   pendingIntent,
   quickReplies,
@@ -37,7 +37,7 @@ import {
   type Thread,
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
-import { Chart } from "./Chart";
+import { Chart, spanishNumberLocale, visualPresentation } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -107,6 +107,32 @@ describe("the state the service sent", () => {
     const markup = renderToStaticMarkup(createElement(Conversation, { thread: thread(), onThread: noop, onClose: noop, onSettled: noop }));
     expect(markup).toContain('aria-label="Conversación"');
     if (!voiceEnabled) expect(markup).not.toContain('aria-label="Control de voz"');
+  });
+
+  it("renders monthly data keys as readable Spanish labels", () => {
+    const groups = Array.from({ length: 13 }, (_, index) => {
+      const date = new Date(2025, index, 1);
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      return { key: `${date.getFullYear()}-${month}`, total_minor: 100, movement_count: 1 };
+    });
+    const markup = renderToStaticMarkup(createElement(Conversation, {
+      thread: thread({ turns: [{ who: "assistant", answer: answer({
+        groups,
+        visualization: {
+          kind: "chart",
+          chart_id: "chart-1",
+          unit: "money",
+          spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "temporal" } } },
+          data: groups.map((group) => ({ dimension: group.key, value_minor: group.total_minor })),
+        },
+      }) }] }),
+      onThread: noop,
+      onClose: noop,
+      onSettled: noop,
+    }));
+    expect(markup).toContain("enero de 2025");
+    expect(markup).toContain("enero de 2026");
+    expect(markup).not.toContain(">2025-01<");
   });
 
   it("is stored as it arrived", () => {
@@ -470,45 +496,165 @@ describe("the one field this client writes", () => {
 });
 
 describe("financial breakdowns", () => {
-  it("updates historical chart turns, preserving data identity and nested parts", () => {
+  it("presents minor-unit money, count and ratio semantics without mutating API rows", () => {
+    const moneyChart = visualPresentation({
+      kind: "chart", chart_id: "money", unit: "money",
+      spec: { encoding: { y: { field: "value_minor", type: "quantitative" }, tooltip: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 48945 }],
+    }, "EUR");
+    expect(moneyChart.data[0]?.value_minor).toBe(48945);
+    expect(moneyChart.data[0]?.__value_major).toBe(489.45);
+    expect(moneyChart.data[0]?.__value_display).toBe("489,45 €");
+    expect((moneyChart.spec.encoding as Record<string, Record<string, unknown>>).tooltip?.field).toBe("__value_display");
+    expect((moneyChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis?.format).toBe("$,.2f");
+    expect(spanishNumberLocale("EUR")).toMatchObject({
+      decimal: ",", thousands: ".", currency: ["", " €"],
+    });
+
+    const twelveEuros = visualPresentation({
+      kind: "chart", chart_id: "twelve-euros", unit: "money",
+      spec: { encoding: { y: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 1200 }],
+    }, "EUR");
+    expect(twelveEuros.data[0]?.__value_major).toBe(12);
+    expect(twelveEuros.data[0]?.__value_display).toBe("12,00 €");
+
+    const countChart = visualPresentation({
+      kind: "chart", chart_id: "count", unit: "count",
+      spec: { encoding: { y: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 12 }],
+    }, "EUR");
+    expect(countChart.data[0]?.value_minor).toBe(12);
+    expect(countChart.data[0]?.__value_major).toBeUndefined();
+    expect((countChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis?.format).toBe("d");
+
+    const ratioChart = visualPresentation({
+      kind: "chart", chart_id: "ratio", unit: "ratio",
+      spec: { encoding: { x: { field: "value_minor", type: "quantitative" }, tooltip: { field: "value_minor", type: "quantitative" } } },
+      data: [{ value_minor: 1200 }],
+    }, "EUR");
+    expect(ratioChart.data[0]?.__value_major).toBe(12);
+    expect((ratioChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).x?.axis?.format).toBe(".0%");
+
+    const sortedMonthly = visualPresentation({
+      kind: "chart", chart_id: "sorted-months", unit: "money",
+      spec: {
+        encoding: {
+          x: {
+            field: "dimension", type: "nominal",
+            sort: { field: "value_minor", order: "descending" },
+          },
+          y: { field: "value_minor", type: "quantitative" },
+          tooltip: { field: "dimension", type: "temporal" },
+        },
+      },
+      data: [{ dimension: "2025-08", value_minor: 21934 }],
+    }, "EUR");
+    expect(sortedMonthly.data[0]?.__dimension_display).toBe("ago 2025");
+    const monthlyEncoding = sortedMonthly.spec.encoding as Record<string, Record<string, unknown>>;
+    expect(monthlyEncoding.x?.field).toBe("__dimension_display");
+    expect(monthlyEncoding.x?.sort).toEqual({ field: "value_minor", order: "descending" });
+    expect(monthlyEncoding.tooltip?.field).toBe("__dimension_display");
+  });
+
+  it("materializes immutable A to B to C derivations, including a nested source", () => {
     const data = [{ key: "a", value_minor: 1 }];
-    const old: Answer = { ...answer({
-      visualization: { kind: "chart", chart_id: "chart-old", spec: {}, data },
-      save_candidate: { chart_id: "chart-old", definition_token: "before" },
+    const source: Answer = { ...answer({
+      currency: "EUR",
+      visualization: { kind: "chart", chart_id: "chart-a", unit: "money", spec: { mark: { type: "line" } }, data },
+      save_candidate: { chart_id: "chart-a", definition_token: "token-a" },
     }) };
-    const update: Answer = answer({
-      visualization_update: { target_chart_id: "chart-old", spec: { mark: { type: "line" } } },
-      save_candidate: { chart_id: "chart-old", definition_token: "after" },
+    const deriveB: Answer = answer({
+      visualization_derivation: {
+        source_chart_id: "chart-a", chart_id: "chart-b", spec: { mark: { type: "bar" } },
+      },
+      save_candidate: { chart_id: "chart-b", definition_token: "token-b" },
     });
     const turns: Thread["turns"] = [{
       who: "assistant",
-      answer: answer({ parts: [old] }),
+      answer: answer({ parts: [source] }),
     }];
-    const next = applyVisualizationUpdateToTurns(turns, update);
-    const assistant = next[0];
-    if (!assistant || assistant.who !== "assistant") throw new Error("expected assistant turn");
-    const nested = assistant.answer.parts?.[0]?.visualization;
-    expect(nested?.data).toBe(data);
-    if (nested?.kind !== "chart") throw new Error("expected chart");
-    expect(nested.spec).toEqual({ mark: { type: "line" } });
-    expect(assistant.answer.parts?.[0]?.save_candidate?.definition_token).toBe("after");
-    expect(metricSources(next)).toEqual([
-      { chart_id: "chart-old", definition_token: "after" },
+    const renderedB = materializeVisualizationDerivation(turns, deriveB);
+    if (renderedB.visualization?.kind !== "chart") throw new Error("expected chart B");
+    if (source.visualization?.kind !== "chart") throw new Error("expected chart A");
+    expect(renderedB.visualization.data).toBe(data);
+    expect(renderedB.currency).toBe("EUR");
+    expect(source.visualization.chart_id).toBe("chart-a");
+    expect(source.visualization.spec).toEqual({ mark: { type: "line" } });
+
+    const withB: Thread["turns"] = [...turns, { who: "assistant", answer: renderedB }];
+    const deriveC = answer({
+      visualization_derivation: {
+        source_chart_id: "chart-b", chart_id: "chart-c",
+        spec: { mark: { type: "bar" }, encoding: { x: { sort: "descending" } } },
+      },
+    });
+    const renderedC = materializeVisualizationDerivation(withB, deriveC);
+    if (renderedC.visualization?.kind !== "chart") throw new Error("expected chart C");
+    expect(renderedC.visualization.chart_id).toBe("chart-c");
+    expect(renderedC.visualization.data).toBe(data);
+    expect(renderedB.visualization.chart_id).toBe("chart-b");
+    expect(renderedB.visualization.spec).toEqual({ mark: { type: "bar" } });
+  });
+
+  it("fails legibly when a derivation source is absent without changing history", () => {
+    const turns: Thread["turns"] = [];
+    const missing = answer({ visualization_derivation: {
+      source_chart_id: "missing", chart_id: "new-chart", spec: {},
+    } });
+    expect(() => materializeVisualizationDerivation(turns, missing)).toThrow("visualization_source_missing");
+    expect(turns).toEqual([]);
+  });
+
+  it("sends metric sources in active context order and caps long derivation chains", () => {
+    const turns: Thread["turns"] = Array.from({ length: 7 }, (_, index) => ({
+      who: "assistant" as const,
+      answer: answer({ save_candidate: {
+        chart_id: `chart-${index}`, definition_token: `token-${index}`,
+      } }),
+    }));
+    const conversation = state({
+      visual_contexts: Array.from({ length: 5 }, (_, index) => ({
+        chart_id: `chart-${index + 2}`, spec: {},
+        profile: {
+          fields: [], cardinality: 0, positive: false,
+          mutually_exclusive: false, verified_total: false,
+        },
+      })),
+    });
+    expect(metricSources(turns, conversation).map((source) => source.chart_id)).toEqual([
+      "chart-2", "chart-3", "chart-4", "chart-5", "chart-6",
     ]);
-    const missing = answer({ visualization_update: { target_chart_id: "missing", spec: {} } });
-    expect(applyVisualizationUpdateToTurns(turns, missing)).toBe(turns);
+    expect((turns[0] as { who: "assistant"; answer: Answer }).answer.save_candidate?.definition_token)
+      .toBe("token-0");
   });
   it("validates presented Vega specs with encoding and separate data", () => {
     const payload = answer({ visualization: {
-      kind: "chart", chart_id: "chart-1", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
+      kind: "chart", chart_id: "chart-1", unit: "money", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
       data: [{ key: "lunes", value_minor: 1 }],
     } });
     expect(validateVoiceAnswer(payload).visualization).toBeDefined();
+  });
+  it("validates value-free additive visualization derivations", () => {
+    const derivation = {
+      source_chart_id: "chart-a",
+      chart_id: "chart-b",
+      spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+    };
+    expect(validateVoiceAnswer(answer({ visualization_derivation: derivation })).visualization_derivation)
+      .toEqual(derivation);
+    expect(() => validateVoiceAnswer(answer({ visualization_derivation: {
+      ...derivation, chart_id: "chart-a",
+    } }))).toThrow();
+    expect(() => validateVoiceAnswer(answer({ visualization_derivation: {
+      ...derivation, spec: { ...derivation.spec, data: { values: [{ amount: 10 }] } },
+    } }))).toThrow();
   });
   it("rejects a chart whose encoding names a field absent from its rows", () => {
     const payload = answer({ visualization: {
       kind: "chart",
       chart_id: "chart-1",
+      unit: "count",
       spec: {
         mark: { type: "line" },
         encoding: { x: { field: "missing", type: "temporal" } },

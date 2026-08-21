@@ -61,10 +61,15 @@ def present(visualization: Visualization) -> dict[str, Any]:
         spec["encoding"][quantitative]["stack"] = visualization.spec.stack
     if visualization.spec.sort:
         nominal = next(
-            item.channel
-            for item in visualization.spec.encodings
-            if item.type == "nominal" and item.channel in {"x", "y"}
+            (
+                item.channel
+                for item in visualization.spec.encodings
+                if item.type in {"nominal", "temporal"} and item.channel in {"x", "y"}
+            ),
+            None,
         )
+        if nominal is None:
+            raise ValueError("a sorted chart needs a categorical or temporal dimension")
         if visualization.spec.sort_field:
             spec["encoding"][nominal]["sort"] = {
                 "field": visualization.spec.sort_field,
@@ -79,4 +84,23 @@ def present(visualization: Visualization) -> dict[str, Any]:
 
 def present_spec(spec: ChartSpec) -> dict[str, Any]:
     """Present only a structural spec for a visual update (never rows)."""
-    return cast(dict[str, Any], present(Visualization(spec=spec, data=()))["spec"])
+    # Vega-Lite cannot sort a temporal scale by a measure through the nominal-only
+    # path below.  A bar follow-up is a discrete ranking even when its source
+    # dimension is a month, so expose that presentation detail without changing
+    # the signed ChartSpec/context (or the source rows).
+    presented = cast(dict[str, Any], present(Visualization(spec=spec, data=()))["spec"])
+    if spec.mark == "bar" and spec.sort_field:
+        encodings = cast(dict[str, Any], presented.get("encoding", {}))
+        dimension_channel = next(
+            (
+                item.channel
+                for item in spec.encodings
+                if item.channel in {"x", "y"} and item.type in {"temporal", "nominal"}
+            ),
+            None,
+        )
+        if dimension_channel is not None:
+            dimension = encodings.get(dimension_channel)
+            if isinstance(dimension, dict):
+                dimension["type"] = "nominal"
+    return presented

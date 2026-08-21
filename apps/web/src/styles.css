@@ -11,6 +11,7 @@
   --ink-soft: #5c6b66;
   --brand: #0d3b33;
   --brand-bright: #14806a;
+  --accent: #14806a;
   --surface: #f4f6f5;
   --card: #ffffff;
   --line: #e3e8e6;
@@ -30,8 +31,19 @@
   width: 100%;
   min-height: 14rem;
   margin: 0.75rem 0;
-  overflow-x: auto;
+  overflow: hidden;
+  border: 1px solid #e1ebe6;
+  border-radius: 1rem;
+  padding: 0.5rem;
+  background: linear-gradient(145deg, #ffffff 0%, #f5faf7 100%);
   color: var(--ink);
+}
+
+.visualization-chart .vega-embed,
+.visualization-chart .vega-embed > svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
 }
 
 .chart-fallback {
@@ -200,9 +212,16 @@ body {
 .card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .metric-list { list-style: none; margin: 0; padding: 0; }
 .metric-list li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
-.metric-actions, .metric-edit { display: flex; align-items: center; gap: 10px; }
+.metric-actions, .metric-edit { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .metric-edit input, .metric-save input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 .link { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
+.link:disabled { color: var(--ink-soft); cursor: not-allowed; opacity: 0.55; }
+
+@media (max-width: 30rem) {
+  .visualization-chart { min-height: 12rem; padding: 0.25rem; }
+  .metric-list li { align-items: flex-start; gap: 0.55rem; flex-direction: column; }
+  .metric-actions { width: 100%; justify-content: flex-start; gap: 0.7rem; }
+}
 
 .card h2 {
   margin: 0 0 0.75rem;

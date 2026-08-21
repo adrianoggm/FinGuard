@@ -3870,6 +3870,13 @@ _MULTIPLE_MOVEMENT_RANKING: Final = re.compile(
     r"|\btop\s*(?P<top_count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
     r"(?:gastos?|ingresos?|movimientos?|compras?|pagos?|cargos?)\b"
 )
+_ORDERED_MOVEMENT_LIST: Final = re.compile(
+    r"\b(?:gastos|ingresos|movimientos|compras|pagos|cargos)\b.{0,90}"
+    r"\bde\s+(?:mayor(?:es)?\s+a\s+menor(?:es)?"
+    r"|mas\s+altos?\s+a\s+mas\s+bajos?"
+    r"|mas\s+grandes?\s+a\s+mas\s+pequenos?"
+    r"|mas\s+caros?\s+a\s+mas\s+baratos?)\b"
+)
 _COMPARISON_DIFFERENCE: Final = re.compile(
     r"^(?:y\s+)?(?:cuanta|que)\s+diferencia(?:\s+hay)?(?:\s+entre\s+(?:las|esas)\s+dos)?$"
 )
@@ -5267,10 +5274,14 @@ def _multiple_movement_ranking(
     """Several individual movements, distinct from a ranking of aggregate groups."""
     folded = spanish.folded(query.sentence)
     found = _MULTIPLE_MOVEMENT_RANKING.search(folded)
-    if found is None:
+    ordered_list = _ORDERED_MOVEMENT_LIST.search(folded)
+    if found is None and ordered_list is None:
         return None
-    raw_count = found.group("count") or found.group("leading_count") or found.group("top_count")
-    count = int(raw_count) if raw_count.isdigit() else _GROUP_RANKING_NUMBERS[raw_count]
+    if found is None:
+        count = MAX_GROUP_RANK
+    else:
+        raw_count = found.group("count") or found.group("leading_count") or found.group("top_count")
+        count = int(raw_count) if raw_count.isdigit() else _GROUP_RANKING_NUMBERS[raw_count]
     if not 2 <= count <= MAX_GROUP_RANK:
         return None
     facts = explicit_facts.read(query.sentence, today=query.today)

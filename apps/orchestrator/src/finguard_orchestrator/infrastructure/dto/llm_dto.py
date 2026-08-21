@@ -580,14 +580,17 @@ class KpiVisualizationResponse(_Payload):
     data: list[dict[str, object]]
 
 
-class VisualizationUpdate(_Payload):
-    target_chart_id: str = Field(
+class VisualizationDerivation(_Payload):
+    source_chart_id: str = Field(
         min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
     )
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     spec: dict[str, object]
 
     @model_validator(mode="after")
-    def _strict_spec(self) -> "VisualizationUpdate":
+    def _strict_spec(self) -> "VisualizationDerivation":
+        if self.chart_id == self.source_chart_id:
+            raise ValueError("a visualization derivation needs a new chart id")
         if set(self.spec) - {
             "$schema",
             "mark",
@@ -606,10 +609,22 @@ class VisualizationUpdate(_Payload):
             "point",
             "arc",
         }:
-            raise ValueError("invalid visualization update mark")
+            raise ValueError("invalid visualization derivation mark")
         if not isinstance(self.spec.get("encoding"), dict):
-            raise ValueError("visualization update needs encoding")
+            raise ValueError("visualization derivation needs encoding")
+        if _contains_chart_values(self.spec):
+            raise ValueError("visualization derivations must not contain data or values")
         return self
+
+
+def _contains_chart_values(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key in {"data", "values"} or _contains_chart_values(item) for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_chart_values(item) for item in value)
+    return False
 
 
 VisualizationResponse = Annotated[
@@ -647,7 +662,7 @@ class QuestionResponse(_Payload):
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
     visualization: VisualizationResponse | None = None
-    visualization_update: VisualizationUpdate | None = None
+    visualization_derivation: VisualizationDerivation | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []

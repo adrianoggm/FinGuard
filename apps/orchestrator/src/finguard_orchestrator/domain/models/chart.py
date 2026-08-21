@@ -282,15 +282,16 @@ def derive_chart(
         return None
     temporal = group_by in {"DAY", "WEEK", "MONTH", "PERIOD", "DATE"}
     mark: Mark = "area" if metric == "CUMULATIVE" else ("line" if temporal else "bar")
+    measure_title = "Movimientos" if metric in {"COUNT", "FREQUENCY"} else "Importe"
     base = (
         (
             ChartEncoding("x", dimension_field, "temporal", "Periodo"),
-            ChartEncoding("y", value_field, "quantitative", "Valor"),
+            ChartEncoding("y", value_field, "quantitative", measure_title),
         )
         if temporal
         else (
             ChartEncoding("y", dimension_field, "nominal", "Grupo"),
-            ChartEncoding("x", value_field, "quantitative", "Valor"),
+            ChartEncoding("x", value_field, "quantitative", measure_title),
         )
     )
     return ChartSpec(

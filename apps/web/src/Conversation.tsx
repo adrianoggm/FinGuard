@@ -30,35 +30,62 @@ import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
 import { Chart } from "./Chart";
 
-export function applyVisualizationUpdateToTurns(turns: Turn[], answer: Answer): Turn[] {
-  const update = answer.visualization_update;
-  if (!update) return turns;
-  const contains = (candidate: Answer): boolean =>
-    (candidate.visualization?.kind === "chart" &&
-      candidate.visualization.chart_id === update.target_chart_id) ||
-    (candidate.parts?.some(contains) ?? false);
-  if (!turns.some((turn) => turn.who === "assistant" && contains(turn.answer))) return turns;
-  const apply = (candidate: Answer): Answer => {
-    if (candidate.visualization?.kind === "chart" && candidate.visualization.chart_id === update.target_chart_id) {
-      return {
-        ...candidate,
-        visualization: { ...candidate.visualization, spec: update.spec },
-        save_candidate: answer.save_candidate ?? candidate.save_candidate,
-      };
-    }
-    return { ...candidate, parts: candidate.parts?.map(apply) };
-  };
-  return turns.map((turn) => turn.who === "assistant" ? { ...turn, answer: apply(turn.answer) } : turn);
+type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
+
+function chartSource(
+  answer: Answer,
+  chartId: string,
+  inheritedCurrency: string | null = null,
+): { visualization: ChartVisualization; currency: string | null } | null {
+  const currency = answer.currency ?? inheritedCurrency;
+  if (answer.visualization?.kind === "chart" && answer.visualization.chart_id === chartId) {
+    return { visualization: answer.visualization, currency };
+  }
+  for (const part of answer.parts ?? []) {
+    const found = chartSource(part, chartId, currency);
+    if (found) return found;
+  }
+  return null;
 }
 
-export function metricSources(turns: Turn[]): MetricSource[] {
+/** Materialise an additive wire derivation without changing any earlier turn or source rows. */
+export function materializeVisualizationDerivation(turns: Turn[], answer: Answer): Answer {
+  const derivation = answer.visualization_derivation;
+  if (!derivation) return answer;
+  let source: ReturnType<typeof chartSource> = null;
+  for (let index = turns.length - 1; index >= 0 && !source; index -= 1) {
+    const turn = turns[index];
+    if (turn?.who === "assistant") source = chartSource(turn.answer, derivation.source_chart_id);
+  }
+  if (!source) throw new Error("visualization_source_missing");
+  return {
+    ...answer,
+    currency: answer.currency ?? source.currency,
+    visualization: {
+      ...source.visualization,
+      chart_id: derivation.chart_id,
+      spec: derivation.spec,
+      // Kept by reference deliberately: a visual derivation changes presentation, never evidence.
+      data: source.visualization.data,
+    },
+  };
+}
+
+export function metricSources(
+  turns: Turn[],
+  conversation: ConversationState | null = null,
+): MetricSource[] {
   const found = new Map<string, MetricSource>();
   const collect = (answer: Answer) => {
     if (answer.save_candidate) found.set(answer.save_candidate.chart_id, answer.save_candidate);
     answer.parts?.forEach(collect);
   };
   for (const turn of turns) if (turn.who === "assistant") collect(turn.answer);
-  return [...found.values()];
+  const active = conversation?.visual_contexts?.slice(-5) ?? [];
+  return active.flatMap((context) => {
+    const source = found.get(context.chart_id);
+    return source ? [source] : [];
+  });
 }
 
 /** The stage names the service emits, in words somebody can read. */
@@ -139,9 +166,9 @@ export function applyVoiceEvent(
   }
   if (event.type === "assistant.text.final") {
     const answer = validateVoiceAnswer(event.answer);
-    const history = applyVisualizationUpdateToTurns(current.turns, answer);
-    const turns = [...history, { who: "assistant" as const, answer }];
-    return { thread: settled(current, turns, answer, onSettled), stage: null };
+    const rendered = materializeVisualizationDerivation(current.turns, answer);
+    const turns = [...current.turns, { who: "assistant" as const, answer: rendered }];
+    return { thread: settled(current, turns, rendered, onSettled), stage: null };
   }
   if (event.type === "turn.completed") {
     const conversation = event.conversation;
@@ -275,15 +302,14 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
         before.conversation,
         keyFor(text),
         "TEXT",
-        metricSources(before.turns),
+        metricSources(before.turns, before.conversation),
       )) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {
-          const updatedTurns = applyVisualizationUpdateToTurns(turns, step);
-          const rendered = step;
+          const rendered = materializeVisualizationDerivation(turns, step);
           turns.push({ who: "assistant", answer: rendered });
           attempt.current = null;
-          onThread(settled(before, updatedTurns.concat({ who: "assistant", answer: rendered }), rendered, onSettled));
+          onThread(settled(before, turns, rendered, onSettled));
         }
       }
     } catch (failure) {
@@ -645,7 +671,7 @@ function AnswerEvidence({ answer }: { answer: Answer }) {
         <ul className="groups">
           {answer.groups.map((group) => (
             <li key={group.key}>
-              <span>{group.key}</span>
+              <span>{groupLabel(group.key)}</span>
               <span>{groupFigure(answer, group)}</span>
             </li>
           ))}
@@ -684,6 +710,27 @@ export function groupFigure(answer: Answer, group: Answer["groups"][number]): st
   return money(group.value_minor ?? group.total_minor, answer.currency ?? "EUR");
 }
 
+/** Make backend bucket keys useful in the auditable data disclosure. */
+export function groupLabel(key: string): string {
+  const month = /^(\d{4})-(\d{2})$/.exec(key);
+  if (month && Number(month[2]) >= 1 && Number(month[2]) <= 12) {
+    const date = new Date(Number(month[1]), Number(month[2]) - 1, 1);
+    return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(date);
+  }
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (day) {
+    const date = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+    if (
+      date.getFullYear() === Number(day[1]) &&
+      date.getMonth() === Number(day[2]) - 1 &&
+      date.getDate() === Number(day[3])
+    ) {
+      return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" }).format(date);
+    }
+  }
+  return key;
+}
+
 function message(failure: unknown): string {
   const code = failure instanceof Error ? failure.message : String(failure);
   // The service's codes, in words. Anything else keeps its code: inventing a friendly sentence for a
@@ -691,6 +738,9 @@ function message(failure: unknown): string {
   if (code === "not_authorised") return "Esta credencial no puede hacer eso.";
   if (code === "not_authenticated") return "No hay credencial. Revisa .env.local.";
   if (code === "feature_disabled") return "Esa parte está desactivada en este despliegue.";
+  if (code === "visualization_source_missing") {
+    return "No encuentro el gráfico original en esta conversación. Vuelve a generarlo para aplicar el cambio.";
+  }
   if (code.includes("Failed to fetch")) return "No puedo hablar con el orquestador.";
   return `No he podido responder (${code}).`;
 }

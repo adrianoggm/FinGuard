@@ -26,6 +26,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 LAST_MONTH = RelativePeriod(period=Period.LAST_MONTH)
 
@@ -44,6 +45,32 @@ def test_the_category_is_named_in_the_headline() -> None:
     said = answer_writer.write(answer(), plan(categories=("GROCERIES",)))
 
     assert said == "449,62 € en supermercado el mes pasado, en 8 movimientos."
+
+
+def test_a_natural_month_is_named_but_a_cross_year_range_stays_iso() -> None:
+    april = plan(period=None, date_range=AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30)))
+    cross_year = plan(period=None, date_range=AbsoluteRange(date(2025, 4, 1), date(2026, 4, 30)))
+
+    movement = Movement(
+        occurred_at=datetime(2026, 4, 4, 10, 0),
+        description="Compra",
+        amount_minor=100,
+        direction="EXPENSE",
+        merchant_name="Tienda",
+    )
+    april_text = answer_writer.ranked_many(
+        (movement,),
+        TopMovements(direction=Direction.EXPENSE, date_range=april.date_range),
+        requested=1,
+    )
+    cross_year_text = answer_writer.ranked_many(
+        (movement,),
+        TopMovements(direction=Direction.EXPENSE, date_range=cross_year.date_range),
+        requested=1,
+    )
+
+    assert april_text.startswith("Tus 1 mayores gastos en abril de 2026")
+    assert cross_year_text.startswith("Tus 1 mayores gastos del 2025-04-01 al 2026-04-30")
 
 
 def test_two_categories_are_both_named() -> None:

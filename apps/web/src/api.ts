@@ -319,7 +319,11 @@ export type Answer = {
   }[];
   movements: Movement[];
   visualization?: Visualization | null;
-  visualization_update?: { target_chart_id: string; spec: Record<string, unknown> } | null;
+  visualization_derivation?: {
+    source_chart_id: string;
+    chart_id: string;
+    spec: Record<string, unknown>;
+  } | null;
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
@@ -327,7 +331,13 @@ export type Answer = {
 };
 
 export type Visualization =
-  | { kind: "chart"; chart_id: string; spec: Record<string, unknown>; data: Record<string, unknown>[] }
+  | {
+      kind: "chart";
+      chart_id: string;
+      unit: "money" | "count" | "ratio";
+      spec: Record<string, unknown>;
+      data: Record<string, unknown>[];
+    }
   | {
       kind: "kpi";
       value_field: "value_minor";
@@ -347,6 +357,13 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
   const nullableString = (field: unknown) => field === null || typeof field === "string";
   const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
   const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  const containsChartValues = (field: unknown): boolean => {
+    if (Array.isArray(field)) return field.some(containsChartValues);
+    if (!field || typeof field !== "object") return false;
+    return Object.entries(field as Record<string, unknown>).some(
+      ([key, nested]) => key === "data" || key === "values" || containsChartValues(nested),
+    );
+  };
   const validVisualization = (field: unknown) => {
     if (field === undefined || field === null) return true;
     if (!field || typeof field !== "object" || Array.isArray(field)) return false;
@@ -364,6 +381,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     const spec = item.spec as Record<string, unknown> | undefined;
     if (
       item.kind !== "chart" || !spec || typeof spec !== "object" ||
+      (item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
       typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
       typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
       !Array.isArray(item.data) ||
@@ -381,6 +399,19 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
       encodedFields.every((encodedField) => encodedField in (row as Record<string, unknown>))
     );
   };
+  const validDerivation = (field: unknown) => {
+    if (field === undefined || field === null) return true;
+    if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+    const item = field as Record<string, unknown>;
+    const spec = item.spec as Record<string, unknown> | undefined;
+    const chartId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+    return typeof item.source_chart_id === "string" && chartId.test(item.source_chart_id) &&
+      typeof item.chart_id === "string" && chartId.test(item.chart_id) &&
+      item.source_chart_id !== item.chart_id && !!spec && typeof spec === "object" &&
+      !!spec.mark && typeof spec.mark === "object" && !Array.isArray(spec.mark) &&
+      !!spec.encoding && typeof spec.encoding === "object" && !Array.isArray(spec.encoding) &&
+      !containsChartValues(spec);
+  };
   if (
     typeof body.outcome !== "string" || typeof body.text !== "string" ||
     !nullableString(body.question) || !nullableString(body.intent_id) ||
@@ -391,10 +422,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
     !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
     !validVisualization(body.visualization) ||
-    (body.visualization_update !== undefined && body.visualization_update !== null &&
-      (typeof body.visualization_update !== "object" ||
-       typeof (body.visualization_update as Record<string, unknown>).target_chart_id !== "string" ||
-       typeof (body.visualization_update as Record<string, unknown>).spec !== "object")) ||
+    !validDerivation(body.visualization_derivation) ||
     body.groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
@@ -510,7 +538,7 @@ export async function* ask(
       if (!data) continue;
       const payload = JSON.parse(data);
       if (payload.type === "stage") yield { name: payload.name } as Stage;
-      else yield payload as Answer;
+      else yield validateVoiceAnswer(payload);
     }
   }
 }
