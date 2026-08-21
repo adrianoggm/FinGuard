@@ -23,6 +23,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   Conversation,
   applyVoiceEvent,
+  applyVisualizationUpdateToTurns,
   awaitingConfirmation,
   groupFigure,
   pendingIntent,
@@ -468,9 +469,27 @@ describe("the one field this client writes", () => {
 });
 
 describe("financial breakdowns", () => {
+  it("updates historical chart turns, preserving data identity and nested parts", () => {
+    const data = [{ key: "a", value_minor: 1 }];
+    const old: Answer = { ...answer({ visualization: { kind: "chart", chart_id: "chart-old", spec: {}, data } }) };
+    const update: Answer = answer({ visualization_update: { target_chart_id: "chart-old", spec: { mark: { type: "line" } } } });
+    const turns: Thread["turns"] = [{
+      who: "assistant",
+      answer: answer({ parts: [old] }),
+    }];
+    const next = applyVisualizationUpdateToTurns(turns, update);
+    const assistant = next[0];
+    if (!assistant || assistant.who !== "assistant") throw new Error("expected assistant turn");
+    const nested = assistant.answer.parts?.[0]?.visualization;
+    expect(nested?.data).toBe(data);
+    if (nested?.kind !== "chart") throw new Error("expected chart");
+    expect(nested.spec).toEqual({ mark: { type: "line" } });
+    const missing = answer({ visualization_update: { target_chart_id: "missing", spec: {} } });
+    expect(applyVisualizationUpdateToTurns(turns, missing)).toBe(turns);
+  });
   it("validates presented Vega specs with encoding and separate data", () => {
     const payload = answer({ visualization: {
-      kind: "chart", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
+      kind: "chart", chart_id: "chart-1", spec: { mark: { type: "line" }, encoding: { x: { field: "key", type: "temporal" } } },
       data: [{ key: "lunes", value_minor: 1 }],
     } });
     expect(validateVoiceAnswer(payload).visualization).toBeDefined();
@@ -478,6 +497,7 @@ describe("financial breakdowns", () => {
   it("rejects a chart whose encoding names a field absent from its rows", () => {
     const payload = answer({ visualization: {
       kind: "chart",
+      chart_id: "chart-1",
       spec: {
         mark: { type: "line" },
         encoding: { x: { field: "missing", type: "temporal" } },
