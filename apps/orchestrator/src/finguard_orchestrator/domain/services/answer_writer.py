@@ -493,14 +493,14 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
 
     if ranking.rank == 1:
         noun = "ingreso" if ranking.direction is Direction.INCOME else "gasto"
-        about = f"{filter_of(ranking)} {window_of(ranking)}"
+        about = f"{filter_of(ranking)} {_conversational_window_of(ranking)}"
         return f"Tu mayor {noun}{about} fue de {amount}: {what}, el {when}."
     return f"{_position(ranking.rank)} fue de {amount}: {what}, el {when}."
 
 
 def ranked_many(movements: tuple[Movement, ...], ranking: TopMovements, *, requested: int) -> str:
     """Several concrete ranking rows, each already selected by banking."""
-    about = f"{filter_of(ranking)} {window_of(ranking)}"
+    about = f"{filter_of(ranking)} {_conversational_window_of(ranking)}"
     if not movements:
         return f"No he encontrado movimientos{about} para construir ese ranking."
     noun = "gasto" if ranking.direction is Direction.EXPENSE else "ingreso"
@@ -592,6 +592,21 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
         # months".
         return "en el último día" if day else "en el último mes"
     return f"en los últimos {count} {'días' if day else 'meses'}"
+
+
+def _conversational_window_of(plan: FinancialPlan | TopMovements) -> str:
+    """Use a natural month label only in concrete movement-ranking answers."""
+    if plan.date_range is not None:
+        start = plan.date_range.start
+        end = plan.date_range.end
+        if (
+            start.day == 1
+            and (end + timedelta(days=1)).day == 1
+            and start.month == end.month
+            and start.year == end.year
+        ):
+            return f"en {month_name(start.year, start.month)}"
+    return window_of(plan)
 
 
 def describe(plan: FinancialPlan | TopMovements) -> str:
