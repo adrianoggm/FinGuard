@@ -45,6 +45,10 @@ from finguard_orchestrator.domain.errors import (
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     AccountAlias,
+    AccountCandidate,
+    AccountScopeClarification,
+    AccountSelection,
+    AccountSelectionMode,
     ActiveWorkflow,
     Conversation,
     CounterpartyAlias,
@@ -104,6 +108,16 @@ from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, 
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.observability import account_ref
+
+
+class AccountScopeRequiredError(Exception):
+    def __init__(
+        self, plan: PlannedQuery, candidates: tuple[AccountCandidate, ...], count: int | None = None
+    ):
+        self.plan = plan
+        self.candidates = candidates
+        self.count = count
+
 
 _COUNTERPARTY_LABELS: Final[dict[CounterpartyType, str]] = {
     CounterpartyType.MERCHANT: "comercio",
@@ -694,6 +708,31 @@ class AskFinancialQuestionHandler:
 
         intent = query.intent or await self._interpreter.interpret(query.sentence, conversation=was)
 
+        # Resolve account-scope choices only after the deterministic intent router has had a
+        # chance to claim courtesy, balance, payment and transfer turns.  Those intents are
+        # independent of a pending ledger choice and must never be swallowed by its chip parser.
+        account_choice = isinstance(
+            was.active, AccountScopeClarification
+        ) and _answers_account_scope(query.sentence, was.active)
+        if isinstance(was.active, AccountScopeClarification) and (
+            intent not in {
+            *_ASIDES,
+            Intent.PAYMENT,
+            Intent.OWN_TRANSFER,
+            Intent.LIST_CARDS,
+            }
+            or account_choice
+        ):
+            account_scope = was.active
+            if _starts_new_financial_scope(query.sentence, today=query.today):
+                query = replace(query, conversation=replace(was, active=None))
+                was = query.conversation
+            else:
+                resumed = await self._resume_account_scope(query, account_scope)
+                if resumed is not None:
+                    yield resumed
+                    return
+
         if was.retry_plan is not None and intent not in _ASIDES:
             # Any other sentence starts a different turn. It must not leave a stale retry behind
             # that a later bare "reintenta" could unexpectedly revive.
@@ -710,6 +749,11 @@ class AskFinancialQuestionHandler:
             # stepped aside so a later bare amount or name cannot resume it without warning.
             was = was.suspend()
             query = replace(query, conversation=was)
+
+        scope_followup = await self._scope_change_followup(query, previous)
+        if scope_followup is not None:
+            yield scope_followup
+            return
 
         # A complete two-read calculation is a new question even when a previous plan exists.
         # Generic recovery runs very early and used to read "balance entre ingresos y gastos" as
@@ -2155,10 +2199,187 @@ class AskFinancialQuestionHandler:
             return None
         return replace(previous, date_range=moved)
 
+    async def _scope_change_followup(
+        self, query: AskFinancialQuestionQuery, previous: PlannedQuery | None
+    ) -> AskFinancialQuestionResult | None:
+        """Change only the account scope of the last validated query.
+
+        Phrases such as ``ahora en todas mis cuentas`` contain no new period, so sending them
+        through planning loses the previous window.  They are a deterministic patch to the
+        already validated plan instead.
+        """
+        if previous is None or not _is_scope_change_followup(
+            query.sentence, today=query.today
+        ):
+            return None
+        scoped: PlannedQuery | AskFinancialQuestionResult
+        if account_words.asks_for_all_accounts(query.sentence):
+            scoped = replace(
+                previous, across_accounts=True, only_account_id=None, only_account_ids=()
+            )
+        elif isinstance(previous, TopMovements):
+            # The previous ranking may already carry its old scope.  Clear it before resolving
+            # the newly named account; otherwise `_scope_ranking` quite correctly treats the
+            # existing scope as authoritative and ignores the follow-up.
+            unscoped = replace(
+                previous, across_accounts=False, only_account_id=None, only_account_ids=()
+            )
+            scoped = await self._scope_ranking(query, unscoped)
+            if isinstance(scoped, AskFinancialQuestionResult):
+                return scoped
+        else:
+            try:
+                scoped = await self._scoped(previous, query, clarify=True)
+            except AccountScopeRequiredError as required:
+                return AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                    text="Elige una de estas cuentas: "
+                    + ", ".join(candidate.display_name for candidate in required.candidates)
+                    + ", o Todas mis cuentas.",
+                    suggestions=[candidate.display_name for candidate in required.candidates]
+                    + ["Todas mis cuentas"],
+                    conversation=query.conversation,
+                )
+            except BankingUnavailableError:
+                return AskFinancialQuestionResult(
+                    outcome="BANKING_UNAVAILABLE",
+                    text="No puedo comprobar tus cuentas para cambiar el alcance.",
+                    conversation=query.conversation,
+                )
+        if isinstance(scoped, TopMovements):
+            return await self._ranked(query, scoped)
+        return await self._answer(query, scoped)
+
+    async def _scope_ranking(
+        self,
+        query: AskFinancialQuestionQuery,
+        ranking: TopMovements,
+        *,
+        requested_count: int | None = None,
+    ) -> TopMovements | AskFinancialQuestionResult:
+        if ranking.across_accounts or ranking.only_account_id or ranking.only_account_ids:
+            return ranking
+        if account_words.asks_for_all_accounts(query.sentence):
+            return replace(ranking, across_accounts=True)
+        if self._account_directory is None:
+            return ranking
+        named = account_words.named_in(query.sentence)
+        if named:
+            try:
+                holdings = (
+                    await self._account_directory.all_of(query.account_id)
+                    if self._account_directory is not None
+                    else (
+                        await self._accounts.of(
+                            query.account_id,
+                            today=query.today,
+                            reporting_timezone=query.reporting_timezone,
+                        )
+                    ).holdings
+                )
+            except BankingUnavailableError:
+                return AskFinancialQuestionResult(
+                    outcome="BANKING_UNAVAILABLE",
+                    text="No puedo comprobar tus cuentas para consultar ese movimiento.",
+                    conversation=query.conversation,
+                )
+            chosen = tuple(h.account_id for h in holdings if h.kind in named)
+            if chosen:
+                return replace(
+                    ranking,
+                    only_account_id=chosen[0] if len(chosen) == 1 else None,
+                    only_account_ids=chosen if len(chosen) > 1 else (),
+                )
+        selection = query.conversation.account_selection
+        if selection is not None:
+            if selection.mode is AccountSelectionMode.ALL:
+                return replace(ranking, across_accounts=True)
+            if self._account_directory is not None:
+                holdings = await self._account_directory.all_of(query.account_id)
+                live = {holding.account_id: holding for holding in holdings}
+                if not set(selection.account_ids).issubset(live):
+                    candidates = tuple(
+                        AccountCandidate(h.account_id, h.display_name, h.kind)
+                        for h in holdings
+                        if h.display_name
+                    )
+                    return AskFinancialQuestionResult(
+                        outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                        text="La cuenta seleccionada ya no está disponible. Elige otra.",
+                        suggestions=[candidate.display_name for candidate in candidates]
+                        + ["Todas mis cuentas"],
+                        conversation=query.conversation.with_active(
+                            AccountScopeClarification(
+                                ranking,
+                                candidates,
+                                requested_count=requested_count,
+                                explicit_visualization=_asks_for_visualization(query.sentence),
+                            )
+                        ),
+                    )
+            return replace(
+                ranking,
+                only_account_id=(
+                    selection.account_ids[0] if len(selection.account_ids) == 1 else None
+                ),
+                only_account_ids=selection.account_ids if len(selection.account_ids) > 1 else (),
+            )
+        try:
+            holdings = (
+                await self._account_directory.all_of(query.account_id)
+                if self._account_directory is not None
+                else (
+                    await self._accounts.of(
+                        query.account_id,
+                        today=query.today,
+                        reporting_timezone=query.reporting_timezone,
+                    )
+                ).holdings
+            )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No puedo comprobar tus cuentas para consultar ese movimiento.",
+                conversation=query.conversation,
+            )
+        if len(holdings) <= 1:
+            if len(holdings) == 1:
+                return replace(ranking, only_account_id=holdings[0].account_id)
+            return ranking
+        candidates = tuple(
+            AccountCandidate(h.account_id, h.display_name, h.kind)
+            for h in holdings
+            if h.display_name
+        )
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+            text="¿En qué cuenta quieres consultarlo? Puedes elegir "
+            + ", ".join(candidate.display_name for candidate in candidates)
+            + " o Todas mis cuentas.",
+            question="¿En qué cuenta quieres consultarlo?",
+            suggestions=[candidate.display_name for candidate in candidates]
+            + ["Todas mis cuentas"],
+            conversation=query.conversation.with_active(
+                AccountScopeClarification(
+                    ranking,
+                    candidates,
+                    requested_count=requested_count,
+                    explicit_visualization=_asks_for_visualization(query.sentence),
+                )
+            ),
+        )
+
     async def _ranked(
         self, query: AskFinancialQuestionQuery, ranking: TopMovements
     ) -> AskFinancialQuestionResult:
         """One movement, named. The figure alone would send the user to the movement list."""
+        scoped = await self._scope_ranking(query, ranking)
+        if isinstance(scoped, AskFinancialQuestionResult):
+            return scoped
+        ranking = scoped
+        query = _remember_explicit_scope(query, ranking)
+        if self._account_directory is not None:
+            query = _remember_runtime_scope(query, ranking)
         for attempt in range(self._read_attempts):
             try:
                 found = await self._queries.ranked(
@@ -2193,7 +2414,14 @@ class AskFinancialQuestionHandler:
 
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
-            text=answer_writer.ranked(found, ranking),
+            text=(
+                answer_writer.ranked(found, ranking)
+                + (
+                    f"\n{_scope_note(ranking, query.sentence)}"
+                    if _scope_note(ranking, query.sentence)
+                    else ""
+                )
+            ),
             plan=answer_writer.describe(ranking),
             # Banking's, never this layer's. A hard-coded "EUR" here labelled a movement on a
             # dollar account as euros — the one kind of wrong answer a ledger-backed product
@@ -2215,6 +2443,13 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery, ranking: TopMovements, count: int
     ) -> AskFinancialQuestionResult:
         """Read a bounded top-N while keeping each row grounded in banking's ranking."""
+        scoped = await self._scope_ranking(query, ranking, requested_count=count)
+        if isinstance(scoped, AskFinancialQuestionResult):
+            return scoped
+        ranking = scoped
+        query = _remember_explicit_scope(query, ranking)
+        if self._account_directory is not None:
+            query = _remember_runtime_scope(query, ranking)
         found: list[Movement] = []
         for rank in range(1, count + 1):
             candidate = ranking.at_rank(rank)
@@ -2253,7 +2488,14 @@ class AskFinancialQuestionHandler:
         one_currency = next(iter(currencies)) if len(currencies) == 1 else None
         return AskFinancialQuestionResult(
             outcome=PlanningOutcome.PLANNED.value,
-            text=answer_writer.ranked_many(tuple(found), ranking, requested=count),
+            text=(
+                answer_writer.ranked_many(tuple(found), ranking, requested=count)
+                + (
+                    f"\n{_scope_note(ranking, query.sentence)}"
+                    if _scope_note(ranking, query.sentence)
+                    else ""
+                )
+            ),
             plan=f"{answer_writer.describe(ranking)}, top {count}",
             currency=one_currency,
             # A ranked list can span accounts. Different currencies must stay as separate rows;
@@ -3240,7 +3482,87 @@ class AskFinancialQuestionHandler:
         )
         return await self._answer(query, plan)
 
-    async def _scoped(self, plan: FinancialPlan, query: AskFinancialQuestionQuery) -> FinancialPlan:
+    async def _resume_account_scope(
+        self, query: AskFinancialQuestionQuery, pending: AccountScopeClarification
+    ) -> AskFinancialQuestionResult | None:
+        """Resolve an account choice against the live directory and run the pending plan."""
+        candidate_names = tuple(candidate.display_name for candidate in pending.candidates)
+        if (
+            _starts_new_financial_scope(query.sentence, today=query.today)
+            and not account_words.asks_for_all_accounts(query.sentence)
+            and not account_words.custom_chosen_among(query.sentence, candidate_names)
+            and not account_words.named_in(query.sentence)
+        ):
+            return None
+        if self._account_directory is None:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No puedo comprobar tus cuentas para aplicar esa selección.",
+                conversation=query.conversation,
+            )
+        try:
+            holdings = await self._account_directory.all_of(query.account_id)
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No puedo comprobar tus cuentas para aplicar esa selección.",
+                conversation=query.conversation,
+            )
+        valid = {holding.account_id: holding for holding in holdings}
+        candidates = {candidate.account_id for candidate in pending.candidates}
+        if account_words.asks_for_all_accounts(query.sentence):
+            selection = AccountSelection(AccountSelectionMode.ALL)
+            scoped = replace(
+                pending.pending, across_accounts=True, only_account_id=None, only_account_ids=()
+            )
+        else:
+            names = tuple(
+                valid[account_id].display_name for account_id in candidates if account_id in valid
+            )
+            custom = account_words.custom_chosen_among(query.sentence, names)
+            kinds = account_words.named_in(query.sentence)
+            chosen = [
+                holding
+                for holding in holdings
+                if holding.account_id in candidates
+                and (holding.display_name in custom or (not custom and holding.kind in kinds))
+            ]
+            if len(chosen) != 1:
+                return AskFinancialQuestionResult(
+                    outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                    text="Elige una de estas cuentas: "
+                    + ", ".join(names)
+                    + ", o Todas mis cuentas.",
+                    suggestions=[*names, "Todas mis cuentas"],
+                    conversation=query.conversation,
+                )
+            selection = AccountSelection(AccountSelectionMode.SELECTED, (chosen[0].account_id,))
+            scoped = replace(
+                pending.pending,
+                across_accounts=False,
+                only_account_id=chosen[0].account_id,
+                only_account_ids=(),
+            )
+        conversation = replace(
+            query.conversation,
+            active=None,
+            account_selection=selection,
+        )
+        resumed_query = replace(query, conversation=conversation)
+        if isinstance(scoped, TopMovements):
+            if pending.requested_count is not None:
+                result = await self._ranked_many(resumed_query, scoped, pending.requested_count)
+            else:
+                result = await self._ranked(resumed_query, scoped)
+        else:
+            result = await self._answer(resumed_query, scoped)
+        if pending.explicit_visualization:
+            result = replace(result, explicit_visualization=True)
+        return result
+
+    async def _scoped(
+        self, plan: FinancialPlan, query: AskFinancialQuestionQuery, *, clarify: bool = False
+    ) -> FinancialPlan:
         """Which of the holder's accounts the question is about.
 
         The same rule the balance answer already uses, applied to the ledger path: name an account
@@ -3332,14 +3654,87 @@ class AskFinancialQuestionHandler:
         asks_account_breakdown = explicit_facts.read(
             query.sentence, today=query.today
         ).asks_account_breakdown
+        # A learned counterparty alias is a complete, typed filter.  In legacy
+        # handlers without an AccountDirectory, do not force an unrelated account
+        # summary lookup merely to decide the account scope.
+        if entity_aliases and not named and not excluded and not explicit_custom:
+            return plan
         if plan.group_by is GroupBy.ACCOUNT and (
             asks_account_breakdown or (not named and not excluded and not explicit_custom)
         ):
             return _across_every_account(plan)
         if not named and not excluded and not explicit_custom:
+            if account_words.asks_for_all_accounts(query.sentence):
+                return _across_every_account(plan)
             if plan.only_account_id is not None or plan.only_account_ids:
                 return plan
-            return _across_every_account(plan)
+            # Persisted account scope belongs to the directory-backed workflow.  A legacy handler
+            # has no live directory to revalidate it against, so an unqualified follow-up keeps
+            # the historical all-visible-accounts meaning.
+            if self._account_directory is None:
+                return _across_every_account(plan)
+            persisted = query.conversation.account_selection
+            if persisted is not None:
+                if persisted.mode is AccountSelectionMode.ALL:
+                    return _across_every_account(plan)
+                if self._account_directory is not None:
+                    live = await self._account_directory.all_of(query.account_id)
+                    live_ids = {holding.account_id for holding in live}
+                    if not set(persisted.account_ids).issubset(live_ids):
+                        candidates = tuple(
+                            AccountCandidate(h.account_id, h.display_name, h.kind)
+                            for h in live
+                            if h.display_name
+                        )
+                        raise AccountScopeRequiredError(plan, candidates)
+                return replace(
+                    plan,
+                    group_by=GroupBy.NONE,
+                    across_accounts=False,
+                    only_account_id=(
+                        persisted.account_ids[0] if len(persisted.account_ids) == 1 else None
+                    ),
+                    only_account_ids=persisted.account_ids
+                    if len(persisted.account_ids) > 1
+                    else (),
+                )
+            # The directory-backed clarification is opt-in.  Legacy handlers deliberately
+            # provide an Accounts summary that may reject this path (and their credential already
+            # represents the complete visible scope), so do not probe it for an unqualified read.
+            try:
+                holdings = (
+                    await self._account_directory.all_of(query.account_id)
+                    if self._account_directory is not None
+                    else (
+                        await self._accounts.of(
+                            query.account_id,
+                            today=query.today,
+                            reporting_timezone=query.reporting_timezone,
+                        )
+                    ).holdings
+                )
+            except BankingUnavailableError:
+                raise
+            # Legacy account fixtures do not expose the new directory.  Their account
+            # summary is still useful for resolving explicit account kinds/names, but
+            # must never trigger the new multi-account clarification workflow.
+            if self._account_directory is None:
+                return _across_every_account(plan)
+            if len(holdings) == 0:
+                return _across_every_account(plan)
+            if len(holdings) == 1:
+                return replace(
+                    plan,
+                    across_accounts=False,
+                    only_account_id=holdings[0].account_id,
+                    only_account_ids=(),
+                )
+            candidates = tuple(
+                AccountCandidate(h.account_id, h.display_name, h.kind)
+                for h in holdings
+                if h.display_name
+            )
+            raise AccountScopeRequiredError(plan, candidates)
 
         if not named and self._account_directory is not None:
             try:
@@ -3348,6 +3743,8 @@ class AskFinancialQuestionHandler:
                 logger.warning(
                     "scope.accounts_unavailable account=%s", account_ref(query.account_id)
                 )
+                if clarify:
+                    raise
                 return _across_every_account(plan)
             names = tuple(holding.display_name for holding in holdings if holding.display_name)
             custom = account_words.custom_chosen_among(query.sentence, names)
@@ -3369,6 +3766,13 @@ class AskFinancialQuestionHandler:
                     only_account_id=None,
                     only_account_ids=tuple(holding.account_id for holding in wanted_custom),
                 )
+            if clarify:
+                candidates = tuple(
+                    AccountCandidate(h.account_id, h.display_name, h.kind)
+                    for h in holdings
+                    if h.display_name
+                )
+                raise AccountScopeRequiredError(plan, candidates)
             return _across_every_account(plan)
 
         try:
@@ -3477,13 +3881,58 @@ class AskFinancialQuestionHandler:
         # property of how the question was answered; the plan is what was *asked*, and that is what
         # gets described to the user and remembered for a follow-up.
         try:
-            scoped = await self._scoped(plan, query)
+            scoped = await self._scoped(plan, query, clarify=True)
+        except AccountScopeRequiredError as required:
+            names = [candidate.display_name for candidate in required.candidates]
+            return AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text="¿En qué cuenta quieres consultarlo? Puedes elegir "
+                + ", ".join(names)
+                + " o Todas mis cuentas.",
+                question="¿En qué cuenta quieres consultarlo?",
+                suggestions=[*names, "Todas mis cuentas"],
+                conversation=query.conversation.with_active(
+                    AccountScopeClarification(
+                        pending=required.plan,
+                        candidates=required.candidates,
+                        requested_count=required.count,
+                        explicit_visualization=_asks_for_visualization(query.sentence),
+                    )
+                ),
+            )
         except AccountScopeNotFoundError:
             return AskFinancialQuestionResult(
                 outcome=Spoken.GUIDANCE.value,
                 text="No tienes una cuenta de ese tipo en la que buscar traspasos.",
                 conversation=query.conversation,
             )
+        except BankingUnavailableError:
+            return AskFinancialQuestionResult(
+                outcome="BANKING_UNAVAILABLE",
+                text="No puedo comprobar tus cuentas antes de consultar ese periodo.",
+                conversation=query.conversation,
+            )
+        if self._account_directory is not None and (
+            account_words.asks_for_all_accounts(query.sentence)
+            or account_words.named_in(query.sentence)
+        ):
+            if scoped.across_accounts:
+                selection = AccountSelection(AccountSelectionMode.ALL)
+            elif scoped.only_account_id is not None:
+                selection = AccountSelection(
+                    AccountSelectionMode.SELECTED, (scoped.only_account_id,)
+                )
+            elif scoped.only_account_ids:
+                selection = AccountSelection(AccountSelectionMode.SELECTED, scoped.only_account_ids)
+            else:
+                selection = None
+            if selection is not None:
+                query = replace(
+                    query,
+                    conversation=replace(query.conversation, account_selection=selection),
+                )
+        if self._account_directory is not None:
+            query = _remember_runtime_scope(query, scoped)
         # The ordinary all-accounts default is execution policy, not conversational data. An
         # explicit account choice is different: losing it makes the very next ellipsis widen back
         # to every account. Keep only scopes the user actually selected (plus ACCOUNT breakdown,
@@ -3492,6 +3941,10 @@ class AskFinancialQuestionHandler:
             scoped
             if scoped.only_account_id is not None
             or scoped.only_account_ids
+            or (
+                scoped.across_accounts
+                and account_words.asks_for_all_accounts(query.sentence)
+            )
             or plan.group_by is GroupBy.ACCOUNT
             or plan.internal_only
             else plan
@@ -6364,6 +6817,9 @@ def _answered(
         text = answer_writer.compare_averages(answer, plan)
     else:
         text = answer_writer.write(answer, plan)
+    scope_note = _scope_note(plan, sentence)
+    if scope_note and "Consultado en " not in text:
+        text = f"{text}\n{scope_note}"
     referenced_category: str | None = None
     referenced_group_by: GroupBy | None = None
     referenced_group_key: str | None = None
@@ -6459,3 +6915,72 @@ def _answered(
             reporting_timezone=reporting_timezone,
         ),
     )
+
+
+def _scope_note(plan: FinancialPlan | TopMovements, sentence: str) -> str | None:
+    if account_words.asks_for_all_accounts(sentence) or plan.across_accounts:
+        return "Consultado en todas tus cuentas."
+    names = account_words.named_in(sentence)
+    labels = {"CURRENT": "cuenta corriente", "SAVINGS": "Hucha", "ASSET": "fondo"}
+    if len(names) == 1 and names[0] in labels:
+        return f"Consultado en {labels[names[0]]}."
+    if plan.only_account_id is not None or plan.only_account_ids:
+        return "Consultado en la cuenta seleccionada."
+    return None
+
+
+def _is_scope_change_followup(sentence: str, *, today: date) -> bool:
+    folded = spanish.folded(sentence).strip()
+    if not (folded.startswith("ahora") or folded.startswith("y ahora")):
+        return False
+    if _starts_new_financial_scope(sentence, today=today):
+        return False
+    return account_words.asks_for_all_accounts(sentence) or bool(account_words.named_in(sentence))
+
+
+def _answers_account_scope(sentence: str, pending: AccountScopeClarification) -> bool:
+    """Whether the short sentence is an account-choice chip, not a new financial question."""
+    folded = spanish.folded(sentence).strip(" \t\r\n¿?!.,;:")
+    if not folded or any(
+        word in folded.split() for word in ("cuanto", "cuánta", "saldo", "tengo", "dinero")
+    ):
+        return False
+    if account_words.asks_for_all_accounts(sentence):
+        return len(folded.split()) <= 5
+    names = tuple(candidate.display_name for candidate in pending.candidates)
+    if account_words.custom_chosen_among(sentence, names):
+        return len(folded.split()) <= 5
+    return bool(account_words.named_in(sentence)) and len(folded.split()) <= 4
+
+
+def _remember_explicit_scope(
+    query: AskFinancialQuestionQuery, plan: FinancialPlan | TopMovements
+) -> AskFinancialQuestionQuery:
+    if not (
+        account_words.asks_for_all_accounts(query.sentence)
+        or account_words.named_in(query.sentence)
+    ):
+        return query
+    if plan.across_accounts:
+        selection = AccountSelection(AccountSelectionMode.ALL)
+    elif plan.only_account_id is not None:
+        selection = AccountSelection(AccountSelectionMode.SELECTED, (plan.only_account_id,))
+    elif plan.only_account_ids:
+        selection = AccountSelection(AccountSelectionMode.SELECTED, plan.only_account_ids)
+    else:
+        return query
+    return replace(query, conversation=replace(query.conversation, account_selection=selection))
+
+
+def _remember_runtime_scope(
+    query: AskFinancialQuestionQuery, plan: FinancialPlan | TopMovements
+) -> AskFinancialQuestionQuery:
+    if plan.across_accounts:
+        selection = AccountSelection(AccountSelectionMode.ALL)
+    elif plan.only_account_id is not None:
+        selection = AccountSelection(AccountSelectionMode.SELECTED, (plan.only_account_id,))
+    elif plan.only_account_ids:
+        selection = AccountSelection(AccountSelectionMode.SELECTED, plan.only_account_ids)
+    else:
+        return query
+    return replace(query, conversation=replace(query.conversation, account_selection=selection))

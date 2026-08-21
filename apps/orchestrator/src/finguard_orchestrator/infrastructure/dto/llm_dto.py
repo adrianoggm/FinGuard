@@ -22,6 +22,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_RANK,
     MAX_RECIPIENT_NAME,
     MAX_REMEMBERED_TURNS,
+    MAX_SELECTED_ACCOUNTS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
@@ -37,7 +38,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
     TransactionType,
 )
-from finguard_orchestrator.domain.models.conversation import Slot, Workflow
+from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
@@ -190,6 +191,12 @@ class AccountAliasPayload(_Payload):
     alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
     account_id: UUID
     display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+
+
+class AccountCandidatePayload(_Payload):
+    account_id: UUID
+    display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+    kind: str = Field(min_length=1, max_length=32)
 
 
 class CounterpartyAliasPayload(_Payload):
@@ -358,6 +365,8 @@ class ConversationPayload(_Payload):
     # still scopes every query to the authenticated holder.
     referenced_transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
     account_aliases: list["AccountAliasPayload"] = Field(default=[], max_length=MAX_ENTITY_ALIASES)
+    account_selection_mode: AccountSelectionMode | None = None
+    account_selection_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_ACCOUNTS)
     counterparty_aliases: list["CounterpartyAliasPayload"] = Field(
         default=[], max_length=MAX_ENTITY_ALIASES
     )
@@ -390,6 +399,12 @@ class ConversationPayload(_Payload):
     last_comparison_latest: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
+    pending_plan: PlanPayload | None = None
+    pending_requested_count: int | None = Field(default=None, ge=2, le=MAX_GROUP_RANK)
+    pending_explicit_visualization: bool = False
+    account_candidates: list[AccountCandidatePayload] = Field(
+        default=[], max_length=MAX_SELECTED_ACCOUNTS
+    )
     # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
     # here left with the refusal it served — a ranking is a plan now, and `last_plan.rank` is what
     # "¿y el segundo?" patches.
@@ -438,6 +453,7 @@ class ConversationPayload(_Payload):
         """
         required: dict[Workflow | None, tuple[str, ...]] = {
             Workflow.FINANCIAL_CLARIFICATION: ("draft",),
+            Workflow.ACCOUNT_SCOPE: ("pending_plan", "account_candidates"),
             Workflow.UNSUPPORTED_CAPABILITY: ("capability",),
             Workflow.PAYMENT_IN_PROGRESS: ("payment",),
             # Neither field is required: the state exists precisely while one of them is missing.
@@ -449,6 +465,14 @@ class ConversationPayload(_Payload):
         # improvising a combination this service never sends.
         owned: dict[Workflow | None, frozenset[str]] = {
             Workflow.FINANCIAL_CLARIFICATION: frozenset({"draft"}),
+            Workflow.ACCOUNT_SCOPE: frozenset(
+                {
+                    "pending_plan",
+                    "pending_requested_count",
+                    "pending_explicit_visualization",
+                    "account_candidates",
+                }
+            ),
             Workflow.UNSUPPORTED_CAPABILITY: frozenset({"capability"}),
             Workflow.PAYMENT_IN_PROGRESS: frozenset({"payment", "candidates", "suspended"}),
             Workflow.TRANSFER_IN_PROGRESS: frozenset({"transfer_to", "transfer_amount_minor"}),
@@ -473,6 +497,20 @@ class ConversationPayload(_Payload):
         for name in every - owned[self.workflow]:
             if getattr(self, name):
                 raise ValueError(f"{name} does not belong to {self.workflow or 'an idle'} state")
+
+        if self.pending_requested_count is not None:
+            if self.pending_plan is None or self.pending_plan.action is not Action.RANK_MOVEMENTS:
+                raise ValueError("pendingRequestedCount requires a movement-ranking plan")
+
+        if self.account_selection_mode is None and self.account_selection_ids:
+            raise ValueError("accountSelectionIds require accountSelectionMode")
+        if self.account_selection_mode is AccountSelectionMode.ALL and self.account_selection_ids:
+            raise ValueError("ALL account selection cannot contain ids")
+        if (
+            self.account_selection_mode is AccountSelectionMode.SELECTED
+            and not self.account_selection_ids
+        ):
+            raise ValueError("SELECTED account selection needs ids")
 
         if self.awaiting is not None and self.awaiting not in _SLOTS_OF[self.workflow]:
             raise ValueError(f"{self.workflow or 'an idle state'} never asks for {self.awaiting}")
