@@ -630,6 +630,11 @@ class VisualizationDerivation(_Payload):
     )
     chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     spec: dict[str, object]
+    # Rows the derived plot draws, for the same reason the chart carries one -- and here it is
+    # load-bearing rather than convenient. A derivation is merged onto the source it names, so
+    # without its own value the source's limit survives a change that lifted it: "Ver todos" would
+    # draw all eighteen rows under a caveat still claiming eight.
+    limit: int | None = None
 
     @model_validator(mode="after")
     def _strict_spec(self) -> "VisualizationDerivation":

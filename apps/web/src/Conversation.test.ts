@@ -35,6 +35,7 @@ import {
   voiceEventIdentity,
   withChoice,
   type Thread,
+  type Turn,
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
 import { compile } from "vega-lite";
@@ -654,6 +655,43 @@ describe("financial breakdowns", () => {
     expect(validateVoiceAnswer(answered(8)).visualization?.kind).toBe("chart");
     expect(() => validateVoiceAnswer(answered(0))).toThrow();
     expect(() => validateVoiceAnswer(answered(2.5))).toThrow();
+  });
+
+  it("takes the row limit from the derivation and never from the chart it came from", () => {
+    const rows = Array.from({ length: 18 }, (_, index) => ({
+      dimension: `Comercio ${index}`,
+      value_minor: 1800 - index,
+    }));
+    const spec = {
+      mark: { type: "bar" },
+      encoding: {
+        y: { field: "dimension", type: "nominal" },
+        x: { field: "value_minor", type: "quantitative" },
+      },
+    };
+    const source = answer({
+      currency: "EUR",
+      visualization: {
+        kind: "chart", chart_id: "chart-a", unit: "money", spec, data: rows, limit: 8,
+      },
+    });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+
+    // "Ver todos" is the derivation whose whole point is that the limit is gone. Inheriting the
+    // source's would leave a caveat claiming eight rows under a plot drawing all eighteen.
+    const lifted = materializeVisualizationDerivation(turns, answer({
+      visualization_derivation: { source_chart_id: "chart-a", chart_id: "chart-b", spec, limit: null },
+    }));
+    expect(lifted.visualization?.kind).toBe("chart");
+    expect(chartSample(lifted.visualization ?? null)).toBeNull();
+
+    // And a derivation that sets its own limit is believed over the source's.
+    const narrowed = materializeVisualizationDerivation(turns, answer({
+      visualization_derivation: { source_chart_id: "chart-a", chart_id: "chart-c", spec, limit: 5 },
+    }));
+    expect(chartSample(narrowed.visualization ?? null)).toBe("Se muestran los 5 mayores de 18.");
+    // The evidence is still the source's, by reference.
+    expect(narrowed.visualization?.data).toBe(rows);
   });
 
   it("materializes immutable A to B to C derivations, including a nested source", () => {

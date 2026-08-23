@@ -330,6 +330,8 @@ export type Answer = {
     source_chart_id: string;
     chart_id: string;
     spec: Record<string, unknown>;
+    /** Rows the derived plot draws. Replaces the source's, which may have been the point. */
+    limit?: number | null;
   } | null;
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
@@ -428,6 +430,8 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
       item.source_chart_id !== item.chart_id && !!spec && typeof spec === "object" &&
       !!spec.mark && typeof spec.mark === "object" && !Array.isArray(spec.mark) &&
       !!spec.encoding && typeof spec.encoding === "object" && !Array.isArray(spec.encoding) &&
+      (item.limit === undefined || item.limit === null ||
+        (Number.isSafeInteger(item.limit) && (item.limit as number) >= 1)) &&
       !containsChartValues(spec);
   };
   if (
