@@ -17,7 +17,7 @@ from uuid import UUID
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
     MAX_CATEGORY_LENGTH,
-    MAX_GROUP_RANK,
+    MAX_GROUP_ROWS,
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
     MAX_PERIOD_DAYS,
@@ -160,8 +160,8 @@ class FinancialPlan:
         if self.group_limit is not None:
             if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
                 raise InvalidValueError("groupLimit requires a non-temporal grouping")
-            if not 1 <= self.group_limit <= MAX_GROUP_RANK:
-                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_RANK}")
+            if not 1 <= self.group_limit <= MAX_GROUP_ROWS:
+                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_ROWS}")
         check_filters(
             self.categories,
             self.merchants,
@@ -246,8 +246,8 @@ class FinancialPlanDraft:
         if self.group_limit is not None:
             if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
                 raise InvalidValueError("groupLimit requires a non-temporal grouping")
-            if not 1 <= self.group_limit <= MAX_GROUP_RANK:
-                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_RANK}")
+            if not 1 <= self.group_limit <= MAX_GROUP_ROWS:
+                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_ROWS}")
         # The window is the one invariant a draft relaxes. Everything else is checked exactly as
         # the plan checks it, because a draft crosses the wire and comes back: leaving the
         # filters until `with_window` meant a bad category was accepted at the edge and only

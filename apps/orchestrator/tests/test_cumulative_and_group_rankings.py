@@ -7,6 +7,7 @@ import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.application.queries import ask_financial_question
+from finguard_orchestrator.domain import constants
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
@@ -246,4 +247,60 @@ def test_cumulative_and_group_rankings_reject_meaningless_shapes() -> None:
             direction=Direction.EXPENSE,
             period=RelativePeriod(Period.THIS_YEAR),
             group_limit=3,
+        )
+
+
+def _ranking_for(sentence: str) -> FinancialPlan | None:
+    return ask_financial_question._group_ranking_plan(
+        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+    )
+
+
+def test_a_ranking_shows_the_number_of_rows_it_was_asked_for() -> None:
+    """The number the sentence says wins, and asking for too many is not a failure.
+
+    Both of these used to be wrong, in opposite directions. "top 25 gastos por categoría" put the
+    count in a different half of the sentence from the dimension, missed the pattern that wanted
+    them glued together, and fell through to the default of five: a question about twenty-five
+    answered with five rows and not a word about it. "top 25 comercios" did match, and then
+    ``FinancialPlan`` raised on it, because the row ceiling was the same constant that keeps a
+    spoken list of individual movements short.
+    """
+    unglued = _ranking_for("dame mis top 25 gastos por categoria")
+    assert unglued is not None and unglued.group_by is GroupBy.CATEGORY
+    assert unglued.group_limit == 25
+
+    glued = _ranking_for("dame una comparativa de mis top 25 comercios")
+    assert glued is not None and glued.group_by is GroupBy.MERCHANT
+    assert glued.group_limit == 25
+
+    # Clamped rather than refused: the slice yields whatever exists, so an account with twelve
+    # merchants answers "top 250" with twelve and hides nothing.
+    assert (plan := _ranking_for("mis top 250 comercios")) is not None
+    assert plan.group_limit == 100
+
+    # The phrasings the suite already covered read exactly as before.
+    assert (three := _ranking_for("Los tres comercios donde mas gaste este anyo")) is not None
+    assert three.group_limit == 3
+    # And a plain breakdown still asks for no ranking at all.
+    assert _ranking_for("cuanto gasto por comercio") is None
+
+
+def test_the_row_ceiling_is_not_the_spoken_ranking_ceiling() -> None:
+    """A hundred aggregate rows is a chart; a hundred read-aloud movements is a list dump."""
+    assert constants.MAX_GROUP_ROWS == 100
+    assert constants.MAX_GROUP_RANK == 10
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+        group_limit=constants.MAX_GROUP_ROWS,
+    )
+    assert plan.group_limit == 100
+    with pytest.raises(InvalidValueError, match="groupLimit must be between 1 and 100"):
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_YEAR),
+            group_by=GroupBy.MERCHANT,
+            group_limit=constants.MAX_GROUP_ROWS + 1,
         )

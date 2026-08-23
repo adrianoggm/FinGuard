@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from finguard_orchestrator.application.bus.query_bus import Query
 from finguard_orchestrator.domain.constants import (
     MAX_GROUP_RANK,
+    MAX_GROUP_ROWS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
     RECURRING_EXPENSE_CATEGORIES,
@@ -4297,6 +4298,14 @@ _GROUP_RANKING_COUNT: Final = re.compile(
     r"\b(?:top\s*)?(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
     r"(?:categorias?|comercios?|tiendas?|establecimientos?|cuentas?)\b"
 )
+# The same count when the sentence does not glue it to the dimension: "top 25 gastos por categoria"
+# names the number and the dimension in different halves. Read only after the pattern above misses,
+# and only from inside `_group_ranking_plan`, which has already established that a dimension was
+# named -- so a bare number cannot be taken for one here. Without it the sentence fell through to
+# the default of five, which answers a question about twenty-five with five rows and says nothing.
+_GROUP_RANKING_TOP_COUNT: Final = re.compile(
+    r"\btop\s*(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b"
+)
 _GROUP_RANKING_NUMBERS: Final = {
     "dos": 2,
     "tres": 3,
@@ -5631,7 +5640,7 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
     else:
         metric = Metric.SUM
 
-    count_match = _GROUP_RANKING_COUNT.search(folded)
+    count_match = _GROUP_RANKING_COUNT.search(folded) or _GROUP_RANKING_TOP_COUNT.search(folded)
     if count_match is None:
         if ranking_follow_up:
             assert previous_ranking is not None
@@ -5640,7 +5649,12 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
             group_limit = 5
     else:
         raw_count = count_match.group("count")
-        group_limit = int(raw_count) if raw_count.isdigit() else _GROUP_RANKING_NUMBERS[raw_count]
+        asked = int(raw_count) if raw_count.isdigit() else _GROUP_RANKING_NUMBERS[raw_count]
+        # Clamped, not refused. Asking for more rows than exist is not a mistake -- "top 25
+        # comercios" on an account with twelve of them is twelve -- and the plan used to raise
+        # InvalidValueError above the ceiling, which turned an answerable question into a failure
+        # somewhere the sentence could no longer explain itself.
+        group_limit = max(1, min(asked, MAX_GROUP_ROWS))
 
     facts = explicit_facts.read(query.sentence, today=query.today)
     contextual = ranking_follow_up or not _starts_new_financial_scope(
