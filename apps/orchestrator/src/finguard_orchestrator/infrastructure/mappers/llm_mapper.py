@@ -426,6 +426,29 @@ def _chart_for_dataset(
     )
 
 
+def _chart_suggestions(spec: ChartSpec) -> list[str]:
+    """Visual follow-ups this chart will accept, written the way the interpreter reads them.
+
+    Deterministic ones only. `interpret_visual` is a regex over an allow-list, so every line here is
+    a change the service is certain it can make. A chip that gets refused is worse than no chip: it
+    teaches somebody that the chips lie, and then the ones that work go untried too.
+
+    Filters are the obvious omission and they are omitted on purpose. `excluded_categories` and
+    `excluded_merchants` exist on the plan and banking honours them, but not one conversation in the
+    evaluation corpus populates either, so whether the planner turns "quita Vivienda" into an
+    exclusion is unverified. That suggestion needs an evaluation case before it needs a chip.
+    """
+    suggestions = []
+    if spec.limit is not None:
+        suggestions.append("Ver todos")
+    suggestions.append("Ponlo en línea" if spec.mark == "bar" else "Ponlo en barras")
+    temporal = any(item.type == "temporal" for item in spec.encodings if item.channel in {"x", "y"})
+    # Sorting a series by its measure shuffles time, which is not a reordering of anything.
+    if not temporal and spec.sort != "ascending":
+        suggestions.append("Ordena de menor a mayor")
+    return suggestions
+
+
 def question_to_dto(
     result: AskFinancialQuestionResult,
     *,
@@ -434,6 +457,17 @@ def question_to_dto(
 ) -> QuestionResponse:
     visualization = _visualization_to_dto(result)
     result = _remember_visual_context(result, visualization)
+    chart_id = (
+        visualization.chart_id if isinstance(visualization, ChartVisualizationResponse) else None
+    )
+    context = next(
+        (
+            item
+            for item in reversed(result.conversation.visual_contexts)
+            if item.chart_id == chart_id
+        ),
+        None,
+    )
     candidate = None
     # What makes an answer worth keeping is that it came from a plan and produced a figure. It used
     # to be that it came with a chart, which meant "cuanto he gastado este mes" -- one number, and
@@ -446,19 +480,6 @@ def question_to_dto(
         and holder_reference is not None
         and metric_tokens is not None
     ):
-        chart_id = (
-            visualization.chart_id
-            if isinstance(visualization, ChartVisualizationResponse)
-            else None
-        )
-        context = next(
-            (
-                item
-                for item in reversed(result.conversation.visual_contexts)
-                if item.chart_id == chart_id
-            ),
-            None,
-        )
         # No chart is not the same as a chart the conversation has forgotten: the first saves a
         # figure, the second would save a spec that is no longer the one on screen.
         if context is not None or chart_id is None:
@@ -515,7 +536,9 @@ def question_to_dto(
             for movement in result.movements
         ],
         visualization=visualization,
-        suggestions=result.suggestions,
+        # Never over the planner's own: those recover a question that did not land, and a chip about
+        # bar charts does not belong next to "¿de qué periodo?".
+        suggestions=result.suggestions or (_chart_suggestions(context.spec) if context else []),
         save_candidate=candidate,
     )
 
