@@ -80,6 +80,13 @@
   font-size: 0.85rem;
 }
 
+/* Sits under the plot, in the same voice as the caveat under the movements. */
+.chart-sample {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
 .chart-kpi {
   display: flex;
   align-items: baseline;

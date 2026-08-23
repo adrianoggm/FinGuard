@@ -154,6 +154,21 @@ export function chartTitle(visualization: Visualization | null): string | null {
   return typeof title === "string" && title.trim() ? title : null;
 }
 
+/**
+ * What the chart is leaving out, in words, and only when it is leaving something out.
+ *
+ * Same rule as the caveat under the movements: a chart drawing every row it was given says
+ * nothing, because a caveat that is false makes the true ones unbelievable. A plot cut to the rows
+ * that fit is a sample of a total the sentence above it states in full, and that has to be said —
+ * the rows themselves are all still one tap away under "Ver los datos".
+ */
+export function chartSample(visualization: Visualization | null): string | null {
+  if (visualization?.kind !== "chart") return null;
+  const limit = visualization.limit;
+  if (typeof limit !== "number" || limit >= visualization.data.length) return null;
+  return `Se muestran los ${limit} mayores de ${visualization.data.length}.`;
+}
+
 export function Chart({ visualization, currency }: Props): JSX.Element | null {
   const host = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
@@ -236,6 +251,7 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
   // The label used to be the same six words on every chart in the thread, which tells a screen
   // reader that there is a chart and nothing about which one.
   const title = chartTitle(visualization);
+  const sample = chartSample(visualization);
   return (
     <figure className="chart-figure">
       {title && <figcaption className="chart-title">{title}</figcaption>}
@@ -245,6 +261,7 @@ export function Chart({ visualization, currency }: Props): JSX.Element | null {
         role="img"
         aria-label={title ?? "Gráfico de los resultados"}
       />
+      {sample && <p className="chart-sample">{sample}</p>}
     </figure>
   );
 }

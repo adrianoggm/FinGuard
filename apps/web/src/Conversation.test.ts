@@ -38,7 +38,7 @@ import {
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
 import { compile } from "vega-lite";
-import { Chart, chartTitle, spanishNumberLocale, visualPresentation } from "./Chart";
+import { Chart, chartSample, chartTitle, spanishNumberLocale, visualPresentation } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -620,6 +620,40 @@ describe("financial breakdowns", () => {
         data: { values: presented.data },
       } as never)).not.toThrow();
     }
+  });
+
+  it("owns up to a sample only when the plot is actually hiding rows", () => {
+    const rows = Array.from({ length: 27 }, (_, index) => ({
+      dimension: `Comercio ${index}`,
+      value_minor: 2700 - index,
+    }));
+    const chart = (limit: number | null) => ({
+      kind: "chart" as const, chart_id: "by-merchant", unit: "money" as const,
+      spec: {
+        mark: { type: "bar" },
+        encoding: {
+          y: { field: "dimension", type: "nominal" },
+          x: { field: "value_minor", type: "quantitative" },
+        },
+      },
+      data: rows, limit,
+    });
+    expect(chartSample(chart(8))).toBe("Se muestran los 8 mayores de 27.");
+    // Nothing hidden, nothing said: a caveat that is false is worse than none, because it makes
+    // the true ones unbelievable. Same rule the movements caveat already follows.
+    expect(chartSample(chart(null))).toBeNull();
+    expect(chartSample(chart(27))).toBeNull();
+    expect(chartSample({ ...chart(8), data: rows.slice(0, 5) })).toBeNull();
+    expect(chartSample({ kind: "kpi", value_field: "value_minor", unit: "money", data: [] })).toBeNull();
+
+    // And a limit the service could not have meant is refused at the boundary rather than drawn.
+    const answered = (limit: unknown) => ({
+      ...answer({ visualization: chart(8) }),
+      visualization: { ...chart(8), limit },
+    });
+    expect(validateVoiceAnswer(answered(8)).visualization?.kind).toBe("chart");
+    expect(() => validateVoiceAnswer(answered(0))).toThrow();
+    expect(() => validateVoiceAnswer(answered(2.5))).toThrow();
   });
 
   it("materializes immutable A to B to C derivations, including a nested source", () => {
