@@ -245,6 +245,21 @@ body {
 .metric-list li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
 .metric-actions, .metric-edit { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .metric-edit input, .metric-save input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+
+/* One row under the chart: the name, then the button. It had no layout rule at all, so the input
+   and the button sat against each other with whatever whitespace the markup happened to leave. */
+.metric-save {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.metric-save input { flex: 1 1 8rem; font-family: inherit; font-size: 0.85rem; }
+
+.metric-feedback { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--ink-soft); }
+.metric-feedback.saved { color: var(--accent); font-weight: 600; }
 .link { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
 .link:disabled { color: var(--ink-soft); cursor: not-allowed; opacity: 0.55; }
 
