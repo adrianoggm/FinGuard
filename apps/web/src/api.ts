@@ -334,7 +334,11 @@ export type Answer = {
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
-  save_candidate?: { chart_id: string; definition_token: string } | null;
+  /**
+   * Authority to keep this answer in "Mis métricas". `chart_id` is null when the answer is a
+   * figure rather than a chart, which is still a metric and cannot be the target of a restyle.
+   */
+  save_candidate?: { chart_id: string | null; definition_token: string } | null;
 };
 
 export type Visualization =
@@ -344,6 +348,8 @@ export type Visualization =
       unit: "money" | "count" | "ratio";
       spec: Record<string, unknown>;
       data: Record<string, unknown>[];
+      /** Rows the plot draws, when it draws fewer than `data` holds. Null when it draws them all. */
+      limit?: number | null;
     }
   | {
       kind: "kpi";
@@ -392,7 +398,12 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
       typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
       typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
       !Array.isArray(item.data) ||
-      !item.data.every((row) => !!row && typeof row === "object" && !Array.isArray(row))
+      !item.data.every((row) => !!row && typeof row === "object" && !Array.isArray(row)) ||
+      // How many rows the plot draws. It decides whether the chart admits to showing a sample, so
+      // a nonsensical one is refused rather than shrugged at: a zero would draw nothing under a
+      // caveat, and a fraction would be a count that is not one.
+      (item.limit !== undefined && item.limit !== null &&
+        (!Number.isSafeInteger(item.limit) || (item.limit as number) < 1))
     ) return false;
     const channels = Object.values(spec.encoding as Record<string, unknown>);
     const encodedFields = channels.flatMap((channel) =>

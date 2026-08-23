@@ -173,6 +173,9 @@ def _saved_visual_source(
         definition = metric_tokens.verify(offered.definition_token, who.holder_reference)
     except (MetricTokenError, CodecError):
         return None
+    # A metric saved as a figure has no chart, so there is nothing here for a restyle to trust.
+    if definition.chart is None:
+        return None
     if not definition.chart.fields() <= context.profile.field_names():
         return None
     return definition
@@ -199,9 +202,11 @@ def _visual_only_response(
             text="Indica qué gráfico quieres cambiar.",
             conversation=conversation_mapper.to_payload(conversation),
         )
+    # `_saved_visual_source` only ever offers a definition that has a chart; this states it rather
+    # than assuming it, so a chart-less metric falls back to the conversation's own context.
     trusted_context = (
         VisualContext(context.chart_id, source.chart, context.profile)
-        if source is not None
+        if source is not None and source.chart is not None
         else context
     )
     try:

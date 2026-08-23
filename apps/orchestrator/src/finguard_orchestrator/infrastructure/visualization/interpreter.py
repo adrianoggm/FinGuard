@@ -36,6 +36,11 @@ _TARGET = re.compile(
     r"\b(?:(?:el\s+)?(?:ultimo|last)|(?:el\s+)?primer(?:o|a)?|"
     r"(?:el\s+)?segund(?:o|a)?)\s+grafic(?:o|a)\b"
 )
+# Undo the row limit: draw every row the chart was given. Anchored to the whole sentence on purpose,
+# and deliberately narrow. "todos" is a word financial questions are full of -- "todos mis
+# movimientos" is a query, not a restyle -- so this matches only a sentence that is nothing but the
+# request, which is the shape of the suggestion the answer offers. Anything longer stays a question.
+_VISUAL_ALL = re.compile(r"(?:ver|mostrar|muestra(?:me)?|ensename)?\s*(?:todos|todas)|sin\s+limite")
 
 
 def _fold(sentence: str) -> str:
@@ -51,7 +56,8 @@ def interpret_visual(
 ) -> VisualIntent | None:
     folded = _fold(sentence)
     financial = _FINANCIAL.search(folded)
-    visual_signal = _VISUAL.search(folded)
+    show_every_row = _VISUAL_ALL.fullmatch(folded.strip(" ¿?¡!.,")) is not None
+    visual_signal = _VISUAL.search(folded) or show_every_row
     if financial:
         # In a financial sentence, "top N" is a query limit (for example "top 2 categories by
         # average ticket"), not a request to trim the already rendered rows. Only an actual style
@@ -80,6 +86,11 @@ def interpret_visual(
             if len(contexts) < 2:
                 return VisualIntent(None, None, "No existe un segundo gráfico anterior.")
             target = contexts[1].chart_id
+    if show_every_row:
+        # The one patch that clears rather than sets. `EncodingPatch.clear` exists for exactly this
+        # and nothing produced it until now, so the limit the chart applies by default was one the
+        # conversation could impose and never lift.
+        return VisualIntent(EncodingPatch.clear("limit"), target)
     mark = None
     if re.search(r"\b(?:barra|barras)\b", folded):
         mark = "bar"

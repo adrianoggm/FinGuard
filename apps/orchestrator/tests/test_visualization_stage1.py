@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -7,6 +7,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     VisualDataset,
     VisualRow,
 )
+from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     ChartEncoding,
@@ -14,7 +15,12 @@ from finguard_orchestrator.domain.models.chart import (
     Visualization,
     derive_chart,
 )
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
@@ -232,3 +238,41 @@ def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
     assert visualization.limit == ROWS_THAT_FIT
     # Every row still travels: the limit hides rows from the plot, never from the evidence.
     assert len(visualization.data) == 30
+
+
+def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> None:
+    """What makes an answer keepable is a plan and a figure, not a chart.
+
+    "Cuanto he gastado este mes" is one number, so it has no chart -- and it is the most obvious
+    metric anybody would save. The offer used to be gated on a `ChartVisualizationResponse`, which
+    made it the single answer with no way to keep it.
+    """
+    tokens = MetricTokenCodec({"active": b"z" * 32}, "active")
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    figure = replace(
+        _result(None),
+        total_minor=48945,
+        movement_count=12,
+        metric_definition=plan,
+    )
+
+    response = question_to_dto(figure, holder_reference="holder", metric_tokens=tokens)
+
+    assert response.visualization is None
+    assert response.save_candidate is not None
+    # Null rather than invented: there is no chart, so nothing a restyle could target.
+    assert response.save_candidate.chart_id is None
+    saved = tokens.verify(response.save_candidate.definition_token, "holder")
+    assert saved.plan == plan
+    assert saved.chart is None
+
+
+def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
+    """A payment preview carries the last plan too, and it is not a metric."""
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    tokens = MetricTokenCodec({"active": b"z" * 32}, "active")
+    without_figure = replace(_result(None), metric_definition=plan)
+
+    response = question_to_dto(without_figure, holder_reference="holder", metric_tokens=tokens)
+
+    assert response.save_candidate is None

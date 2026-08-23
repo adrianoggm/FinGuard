@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
@@ -26,7 +28,10 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
 from finguard_orchestrator.infrastructure.dto.llm_dto import VisualizationDerivation
 from finguard_orchestrator.infrastructure.mappers.conversation_mapper import to_domain, to_payload
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+    _chart_suggestions,
+    question_to_dto,
+)
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
@@ -355,3 +360,71 @@ def test_visual_update_rotates_the_save_candidate_with_the_new_spec() -> None:
     updated = tokens.verify(response.save_candidate.definition_token, "holder")
     assert updated.chart.mark == "line"
     assert updated.plan == definition.plan
+
+
+def _limited() -> tuple[ChartSpec, VisualProfile]:
+    spec, profile = _base()
+    return replace(spec, sort="descending", limit=8), profile
+
+
+def test_a_limit_the_conversation_imposes_can_also_be_lifted() -> None:
+    """`EncodingPatch.clear` existed for this and nothing produced it.
+
+    The chart cuts a wide breakdown to the rows that fit, so until now that was a limit the
+    conversation could impose and never undo: every patch the interpreter built set a property, and
+    none cleared one.
+    """
+    spec, profile = _limited()
+    contexts = (VisualContext("chart-1", spec, profile),)
+
+    intent = interpret_visual("Ver todos", contexts)
+    assert intent is not None and intent.patch is not None
+    assert intent.patch.changed == frozenset({"limit"})
+    assert intent.target == "chart-1"
+    assert merge_encoding_patch(spec, intent.patch, profile).limit is None
+
+    for phrasing in ("ver todos", "todos", "sin límite", "muéstrame todas"):
+        lifted = interpret_visual(phrasing, contexts)
+        assert lifted is not None and lifted.patch is not None, phrasing
+
+
+def test_asking_for_everything_is_only_a_restyle_when_that_is_all_it_says() -> None:
+    """ "Todos" is a word financial questions are full of, so the pattern is anchored.
+
+    A sentence that asks for every movement is a query. Reading it as a restyle would answer a
+    question about the ledger by redrawing the last chart, which is the worst kind of wrong: it
+    looks like it worked.
+    """
+    spec, profile = _limited()
+    contexts = (VisualContext("chart-1", spec, profile),)
+    for question in (
+        "enséñame todos mis movimientos",
+        "todos mis gastos de agosto",
+        "quiero ver todos los movimientos de la cuenta",
+    ):
+        assert interpret_visual(question, contexts) is None, question
+
+
+def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
+    """Every chip round-trips through the interpreter that has to read it back."""
+    spec, profile = _limited()
+    contexts = (VisualContext("chart-1", spec, profile),)
+    suggestions = _chart_suggestions(spec)
+    assert "Ver todos" in suggestions
+    assert "Ponlo en línea" in suggestions
+    assert "Ordena de menor a mayor" in suggestions
+    for chip in suggestions:
+        intent = interpret_visual(chip, contexts)
+        assert intent is not None and intent.patch is not None, chip
+        merge_encoding_patch(spec, intent.patch, profile)
+
+    # Nothing to lift when nothing was cut, and a series is not reordered by its measure.
+    assert "Ver todos" not in _chart_suggestions(replace(spec, limit=None))
+    temporal = ChartSpec(
+        "line",
+        (
+            ChartEncoding("x", "dimension", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+    assert _chart_suggestions(temporal) == ["Ponlo en barras"]

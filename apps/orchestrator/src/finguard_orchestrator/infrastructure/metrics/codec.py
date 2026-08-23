@@ -39,7 +39,10 @@ def encode_definition(definition: SavedMetricDefinition) -> dict[str, Any]:
     return {
         "version": VERSION,
         "plan": encode_plan(definition.plan),
-        "chart": encode_chart(definition.chart),
+        # Omitted rather than null when the metric is a figure without a chart. Every definition
+        # written before this one carries the key, and `_object` accepts a subset of the keys it
+        # allows, so both shapes decode without a version bump.
+        **({"chart": encode_chart(definition.chart)} if definition.chart is not None else {}),
     }
 
 
@@ -47,7 +50,8 @@ def decode_definition(value: object) -> SavedMetricDefinition:
     obj = _object(value, {"version", "plan", "chart"})
     _version(obj)
     plan = decode_plan(obj["plan"])
-    chart = decode_chart(obj["chart"])
+    raw_chart = obj.get("chart")
+    chart = decode_chart(raw_chart) if raw_chart is not None else None
     return SavedMetricDefinition(plan=plan, chart=chart)
 
 
