@@ -77,7 +77,12 @@ export function metricSources(
 ): MetricSource[] {
   const found = new Map<string, MetricSource>();
   const collect = (answer: Answer) => {
-    if (answer.save_candidate) found.set(answer.save_candidate.chart_id, answer.save_candidate);
+    const candidate = answer.save_candidate;
+    // A candidate without a chart is a figure worth keeping and nothing a restyle can target, so
+    // it is never offered back as a visual source.
+    if (candidate?.chart_id) {
+      found.set(candidate.chart_id, { ...candidate, chart_id: candidate.chart_id });
+    }
     answer.parts?.forEach(collect);
   };
   for (const turn of turns) if (turn.who === "assistant") collect(turn.answer);

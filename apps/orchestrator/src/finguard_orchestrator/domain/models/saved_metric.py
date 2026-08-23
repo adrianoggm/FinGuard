@@ -16,8 +16,16 @@ SavedPlan = FinancialPlan
 
 @dataclass(frozen=True)
 class SavedMetricDefinition:
+    """A question worth asking again, and optionally the chart that drew its answer.
+
+    ``chart`` is nullable because the chart is presentation and the plan is the metric. A single
+    figure -- "cuanto he gastado este mes" -- is the most obvious thing anybody would keep, and it
+    was the one thing that could not be kept: the save offer was gated on there being a chart to
+    hang it from, and one row is a number rather than a chart.
+    """
+
     plan: SavedPlan
-    chart: ChartSpec
+    chart: ChartSpec | None = None
 
 
 @dataclass(frozen=True)

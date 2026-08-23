@@ -435,33 +435,44 @@ def question_to_dto(
     visualization = _visualization_to_dto(result)
     result = _remember_visual_context(result, visualization)
     candidate = None
+    # What makes an answer worth keeping is that it came from a plan and produced a figure. It used
+    # to be that it came with a chart, which meant "cuanto he gastado este mes" -- one number, and
+    # the most obvious metric anybody would save -- was the one answer with no way to save it. The
+    # figure is also what keeps a payment preview out: those carry the last plan too.
+    answered_a_figure = result.total_minor is not None or result.movement_count is not None
     if (
-        isinstance(visualization, ChartVisualizationResponse)
-        and isinstance(result.metric_definition, FinancialPlan)
+        isinstance(result.metric_definition, FinancialPlan)
+        and answered_a_figure
         and holder_reference is not None
         and metric_tokens is not None
     ):
+        chart_id = (
+            visualization.chart_id
+            if isinstance(visualization, ChartVisualizationResponse)
+            else None
+        )
         context = next(
             (
                 item
                 for item in reversed(result.conversation.visual_contexts)
-                if item.chart_id == visualization.chart_id
+                if item.chart_id == chart_id
             ),
             None,
         )
-        if context is not None:
+        # No chart is not the same as a chart the conversation has forgotten: the first saves a
+        # figure, the second would save a spec that is no longer the one on screen.
+        if context is not None or chart_id is None:
             try:
                 token = metric_tokens.issue(
                     holder_reference,
-                    SavedMetricDefinition(result.metric_definition, context.spec),
+                    SavedMetricDefinition(
+                        result.metric_definition, context.spec if context else None
+                    ),
                 )
             except CodecError:
                 pass
             else:
-                candidate = SaveCandidate(
-                    chart_id=visualization.chart_id,
-                    definition_token=token,
-                )
+                candidate = SaveCandidate(chart_id=chart_id, definition_token=token)
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,

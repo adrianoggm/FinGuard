@@ -334,7 +334,11 @@ export type Answer = {
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
-  save_candidate?: { chart_id: string; definition_token: string } | null;
+  /**
+   * Authority to keep this answer in "Mis métricas". `chart_id` is null when the answer is a
+   * figure rather than a chart, which is still a metric and cannot be the target of a restyle.
+   */
+  save_candidate?: { chart_id: string | null; definition_token: string } | null;
 };
 
 export type Visualization =

@@ -27,22 +27,41 @@ def financial_metric_executor(
             reporting_timezone=caller.reporting_timezone,
         )
         value = "movement_count" if plan.metric.value == "COUNT" else "total_minor"
-        available_fields = {"dimension", "key", "value_minor", "total_minor", "movement_count"}
-        if not definition.chart.fields() <= available_fields:
-            raise ValueError("saved chart references unavailable banking fields")
-        rows = []
-        for group in answer.groups:
-            source = {
-                "dimension": group.key,
-                "key": group.key,
-                "value_minor": getattr(group, value),
-                "total_minor": group.total_minor,
-                "movement_count": group.movement_count,
+        counted = plan.metric.value == "COUNT"
+        figure = answer.movement_count if counted else answer.total_minor
+        visualization: dict[str, Any]
+        if definition.chart is None:
+            # A metric saved without a chart is a figure, and the figure is what reopening it shows.
+            # The client already renders this shape, so nothing downstream learns a new case.
+            visualization = {
+                "kind": "kpi",
+                "value_field": "value_minor",
+                "unit": "count" if counted else "money",
+                "data": [{"dimension": "total", "value_minor": figure}],
             }
-            rows.append(
-                {field: source[field] for field in definition.chart.fields() if field in source}
-            )
-        presented = present(Visualization(definition.chart, tuple(rows)))
+        else:
+            available_fields = {"dimension", "key", "value_minor", "total_minor", "movement_count"}
+            if not definition.chart.fields() <= available_fields:
+                raise ValueError("saved chart references unavailable banking fields")
+            rows = []
+            for group in answer.groups:
+                source = {
+                    "dimension": group.key,
+                    "key": group.key,
+                    "value_minor": getattr(group, value),
+                    "total_minor": group.total_minor,
+                    "movement_count": group.movement_count,
+                }
+                rows.append(
+                    {field: source[field] for field in definition.chart.fields() if field in source}
+                )
+            presented = present(Visualization(definition.chart, tuple(rows)))
+            visualization = {
+                "kind": "chart",
+                "chart_id": "saved-metric",
+                "spec": presented["spec"],
+                "data": presented["data"],
+            }
         return {
             "outcome": "ANSWERED",
             "text": "Métrica actualizada",
@@ -57,12 +76,7 @@ def financial_metric_executor(
                 for group in answer.groups
             ],
             "currency": answer.currency,
-            "visualization": {
-                "kind": "chart",
-                "chart_id": "saved-metric",
-                "spec": presented["spec"],
-                "data": presented["data"],
-            },
+            "visualization": visualization,
         }
 
     return execute

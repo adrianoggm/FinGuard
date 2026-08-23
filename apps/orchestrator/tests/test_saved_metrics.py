@@ -159,6 +159,48 @@ async def test_opening_a_metric_executes_banking_fresh() -> None:
     assert first["visualization"]["data"] != second["visualization"]["data"]  # type: ignore[index]
 
 
+@pytest.mark.asyncio
+async def test_a_metric_saved_as_a_figure_reopens_as_a_figure() -> None:
+    """A metric with no chart is a plan, and reopening it re-runs the plan like any other.
+
+    The visualisation it comes back with is the KPI shape the client already renders, so nothing
+    downstream learns a new case -- and it is still executed rather than remembered: the figure
+    moves between the two calls because banking answered twice.
+    """
+    banking = ChangingBanking()
+    execute = financial_metric_executor(banking)  # type: ignore[arg-type]
+    caller = Caller("holder", UUID("08aba04f-2b30-4639-88a6-eac741153ce0"))
+    figure = SavedMetricDefinition(
+        FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    )
+
+    first = await execute(figure, caller)
+    second = await execute(figure, caller)
+
+    assert banking.calls == 2
+    assert first["visualization"] == {
+        "kind": "kpi",
+        "value_field": "value_minor",
+        "unit": "money",
+        "data": [{"dimension": "total", "value_minor": 100}],
+    }
+    assert second["visualization"]["data"] == [  # type: ignore[index]
+        {"dimension": "total", "value_minor": 200}
+    ]
+
+    # A counted metric reopens in movements rather than in money.
+    counted = SavedMetricDefinition(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_MONTH),
+            metric=Metric.COUNT,
+        )
+    )
+    third = await execute(counted, caller)
+    assert third["visualization"]["unit"] == "count"  # type: ignore[index]
+    assert third["visualization"]["data"] == [{"dimension": "total", "value_minor": 3}]  # type: ignore[index]
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_postgres_repository_enforces_holder_rls_and_jsonb_roundtrip() -> None:

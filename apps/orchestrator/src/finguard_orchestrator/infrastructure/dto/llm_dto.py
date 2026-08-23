@@ -678,8 +678,15 @@ VisualizationResponse = Annotated[
 
 
 class SaveCandidate(_Payload):
-    chart_id: str
+    """Authority to keep this answer as a metric, and the chart it was drawn as if it was one.
+
+    ``chart_id`` is nullable because a figure without a chart is still a metric. It is also what a
+    visual follow-up matches against, so a null one simply never matches -- which is right, since
+    there is no chart to restyle.
+    """
+
     definition_token: str
+    chart_id: str | None = None
 
 
 class QuestionResponse(_Payload):
