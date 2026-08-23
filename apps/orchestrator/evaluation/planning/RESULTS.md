@@ -32,8 +32,32 @@ requested field stays fixed or any undeclared field moves. Dataset locality itse
 the unit suite, so a contradictory expected pair cannot make the model look wrong.
 
 The core benchmark remains 235 cases across three files and thirteen functional groups; the
-metamorphic dataset adds 15 relational cases. Their reference date and the local sampling seed are
+metamorphic dataset adds 19 relational cases. Their reference date and the local sampling seed are
 pinned. See [GROUPS.md](GROUPS.md).
+
+### An exclusion on its own is not a follow-up the planner survives
+
+Four cases were added to ask a question the corpus had never asked: can somebody take one group out
+of a breakdown that is already on screen. Every exclusion above arrives in the same sentence as its
+question ("¿cuánto gasté el mes pasado sin contar el alquiler?"). These say only the exclusion, with
+the breakdown as `previous` — which is the shape of a follow-up, and the shape a suggestion chip
+under a chart would have.
+
+`qwen3.5:9b`, three runs, zero spread:
+
+| case | previous | said | got |
+| --- | --- | --- | --- |
+| `exclusion_breakdown_without_rent` | LAST\_MONTH, groupBy CATEGORY | Sin el alquiler | window today, groupBy NONE — **unsafe** |
+| `exclusion_breakdown_except_mercadona` | LAST\_MONTH, groupBy MERCHANT | Excepto Mercadona | `NEEDS_CLARIFICATION: ¿de qué periodo?` |
+
+The second is merely inconvenient. The first is the failure this file exists to catch: it is not a
+clarification, it is a plan. The window and the grouping are both dropped, the window defaults to
+today, and a figure for today would have been shown under a chart of last month by category.
+
+So the visual suggestions a chart offers stay visual — marks, sorting, the row limit — and none of
+them is a filter. The plan fields are there and banking honours them; what is missing is a planner
+that keeps the previous window when the sentence is nothing but a filter. Until that holds, a chip
+that says "Sin el alquiler" is a button that shows a wrong number.
 
 ## The two models we work with
 
