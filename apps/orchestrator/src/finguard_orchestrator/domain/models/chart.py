@@ -268,6 +268,13 @@ class Visualization:
     data: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
 
+# Rows a chart draws when nobody said a number. A discrete dimension is one band per row, and at
+# the band height the web uses this is about the height the plot had when it was a fixed box — so it
+# is "what fits" rather than a preference. It is a presentation limit: the rows are all still there,
+# the table under the chart lists every one of them, and the caveat on the chart says so.
+ROWS_THAT_FIT = 8
+
+
 def derive_chart(
     *,
     group_by: str,
@@ -276,6 +283,7 @@ def derive_chart(
     fields: frozenset[str],
     dimension_field: str = "key",
     value_field: str | None = None,
+    plan_limited: bool = False,
 ) -> ChartSpec | None:
     value_field = value_field or ("movement_count" if metric == "COUNT" else "total_minor")
     if rows < 2 or dimension_field not in fields or value_field not in fields:
@@ -302,4 +310,10 @@ def derive_chart(
             ChartEncoding("tooltip", value_field, "quantitative"),
         ),
         sort="descending" if not temporal else None,
+        # Only when nobody said a number, and never on a temporal axis, where trimming rows would
+        # drop months out of the middle of a series rather than tail off a ranking. If the plan
+        # already cut -- somebody asked for their top 25 -- the chart does not cut again: cutting
+        # twice would answer a question about twenty-five with eight, and a saved metric would
+        # carry a limit nobody asked for.
+        limit=None if temporal or plan_limited or rows <= ROWS_THAT_FIT else ROWS_THAT_FIT,
     )

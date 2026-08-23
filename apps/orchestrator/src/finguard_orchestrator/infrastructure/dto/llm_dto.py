@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.constants import (
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
     MAX_GROUP_RANK,
+    MAX_GROUP_ROWS,
     MAX_MERCHANT_LENGTH,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
@@ -123,7 +124,7 @@ class PlanPayload(_Payload):
     counterparty_types: list[CounterpartyType] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
-    group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_RANK)
+    group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_ROWS)
     include_internal: bool = False
     internal_only: bool = False
     across_accounts: bool = False
@@ -609,6 +610,11 @@ class ChartVisualizationResponse(_Payload):
     unit: Literal["money", "count", "ratio"] = "money"
     spec: dict[str, object]
     data: list[dict[str, object]]
+    # How many rows the chart draws, when it draws fewer than it was given. The number is already
+    # inside `spec` as a rank filter, but reading it back out of a Vega transform string is not a
+    # contract -- and the client needs it to say, under the chart, that it is showing a sample. Null
+    # means every row is drawn, which is also the only case where saying nothing is honest.
+    limit: int | None = None
 
 
 class KpiVisualizationResponse(_Payload):

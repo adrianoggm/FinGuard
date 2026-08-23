@@ -28,7 +28,7 @@ import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, ty
 import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
-import { Chart } from "./Chart";
+import { Chart, chartTitle } from "./Chart";
 
 type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
 
@@ -585,6 +585,14 @@ function Bubble({ turn }: { turn: Turn }) {
             <section className="compound-part" key={index}>
               <p>{part.text}</p>
               <Chart visualization={part.visualization ?? null} currency={part.currency} />
+              {/* Each part carries its own save authority and always did; this end was dropping it,
+                  so a chart asked for in a compound question was the one chart nobody could keep. */}
+              {part.save_candidate && (
+                <SaveMetricControl
+                  token={part.save_candidate.definition_token}
+                  suggestion={chartTitle(part.visualization ?? null)}
+                />
+              )}
               <AnswerEvidence answer={part} />
             </section>
           ))}
@@ -593,7 +601,12 @@ function Bubble({ turn }: { turn: Turn }) {
         <>
           <p>{answer.text}</p>
           <Chart visualization={answer.visualization ?? null} currency={answer.currency} />
-          {answer.save_candidate && <SaveMetricControl token={answer.save_candidate.definition_token} />}
+          {answer.save_candidate && (
+            <SaveMetricControl
+              token={answer.save_candidate.definition_token}
+              suggestion={chartTitle(answer.visualization ?? null)}
+            />
+          )}
           <AnswerEvidence answer={answer} />
         </>
       )}
@@ -602,15 +615,24 @@ function Bubble({ turn }: { turn: Turn }) {
   );
 }
 
-function SaveMetricControl({ token }: { token: string }) {
-  const [title, setTitle] = useState("");
+/**
+ * Keep this chart in "Mis métricas".
+ *
+ * The name is prefilled with the title the service already wrote for the chart, because that is
+ * what the metric is: an empty box asked somebody to name a thing that was named on screen half a
+ * centimetre above the box. It stays editable — a prefilled name is a suggestion, not a decision.
+ */
+function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: string | null }) {
+  const [title, setTitle] = useState(suggestion ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const submit = () => {
     if (!title.trim()) return;
     setState("saving");
     void saveMetric(title.trim(), token).then(() => setState("saved")).catch(() => setState("error"));
   };
-  if (state === "saved") return <p className="metric-feedback">Métrica guardada</p>;
+  if (state === "saved") {
+    return <p className="metric-feedback saved">Guardada en «Mis métricas», en Finanzas.</p>;
+  }
   return <div className="metric-save">
     <input aria-label="Nombre de la métrica" value={title} maxLength={80}
       onChange={(event) => setTitle(event.target.value)} placeholder="Nombre de la métrica" />

@@ -37,7 +37,8 @@ import {
   type Thread,
 } from "./Conversation";
 import { validateVoiceAnswer, voiceEnabled, type Answer, type ConversationState, type PlanContext } from "./api";
-import { Chart, spanishNumberLocale, visualPresentation } from "./Chart";
+import { compile } from "vega-lite";
+import { Chart, chartTitle, spanishNumberLocale, visualPresentation } from "./Chart";
 
 const LAST_MONTH: PlanContext = {
   direction: "EXPENSE",
@@ -506,7 +507,7 @@ describe("financial breakdowns", () => {
     expect(moneyChart.data[0]?.__value_major).toBe(489.45);
     expect(moneyChart.data[0]?.__value_display).toBe("489,45 €");
     expect((moneyChart.spec.encoding as Record<string, Record<string, unknown>>).tooltip?.field).toBe("__value_display");
-    expect((moneyChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis?.format).toBe("$,.2f");
+    expect((moneyChart.spec.encoding as Record<string, Record<string, Record<string, unknown>>>).y?.axis?.format).toBe("$,.0f");
     expect(spanishNumberLocale("EUR")).toMatchObject({
       decimal: ",", thousands: ".", currency: ["", " €"],
     });
@@ -555,6 +556,70 @@ describe("financial breakdowns", () => {
     expect(monthlyEncoding.x?.field).toBe("__dimension_display");
     expect(monthlyEncoding.x?.sort).toEqual({ field: "value_minor", order: "descending" });
     expect(monthlyEncoding.tooltip?.field).toBe("__dimension_display");
+  });
+
+  it("hands the title to the app and sizes a discrete plot by its own rows", () => {
+    const horizontal = visualPresentation({
+      kind: "chart", chart_id: "by-category", unit: "money",
+      spec: {
+        title: "Gastos por categoría",
+        encoding: {
+          y: { field: "dimension", type: "nominal" },
+          x: { field: "value_minor", type: "quantitative" },
+        },
+      },
+      data: [{ dimension: "Comida", value_minor: 1200 }],
+    }, "EUR");
+    // Vega never typesets the title; the app does, from the untouched source spec.
+    expect(horizontal.spec.title).toBeUndefined();
+    expect(chartTitle({
+      kind: "chart", chart_id: "by-category", unit: "money",
+      spec: { title: "Gastos por categoría" }, data: [],
+    })).toBe("Gastos por categoría");
+    expect(horizontal.spec.height).toEqual({ step: 26 });
+    const horizontalEncoding = horizontal.spec.encoding as Record<string, Record<string, Record<string, unknown>>>;
+    // The group runs down the side, so nothing on it is rotated — and the money on x keeps its own
+    // axis rather than inheriting a rotation meant for labels.
+    expect(horizontalEncoding.y?.axis?.labelAngle).toBeUndefined();
+    expect(horizontalEncoding.x?.axis?.format).toBe("$,.0f");
+
+    const vertical = visualPresentation({
+      kind: "chart", chart_id: "by-day", unit: "count",
+      spec: {
+        encoding: {
+          x: { field: "dimension", type: "nominal" },
+          y: { field: "value_minor", type: "quantitative" },
+        },
+      },
+      data: [{ dimension: "lunes", value_minor: 3 }],
+    }, "EUR");
+    const verticalEncoding = vertical.spec.encoding as Record<string, Record<string, Record<string, unknown>>>;
+    expect(verticalEncoding.x?.axis?.labelAngle).toBe(-32);
+    expect(vertical.spec.height).toBeUndefined();
+
+    // A normalised share is one stacked bar: no discrete axis, so it is not given a row height.
+    const share = visualPresentation({
+      kind: "chart", chart_id: "share", unit: "ratio",
+      spec: {
+        encoding: {
+          x: { field: "value_minor", type: "quantitative" },
+          color: { field: "dimension", type: "nominal" },
+        },
+      },
+      data: [{ dimension: "Comida", value_minor: 4000 }],
+    }, "EUR");
+    expect(share.spec.height).toBe(56);
+    expect(chartTitle({ kind: "kpi", value_field: "value_minor", unit: "money", data: [] })).toBeNull();
+
+    // Structure is not the same as a spec Vega will accept. Compiling is the cheap way to find
+    // out, and it is the compiler the app itself embeds.
+    for (const presented of [horizontal, vertical, share]) {
+      expect(() => compile({
+        ...(presented.spec as Record<string, unknown>),
+        mark: { type: "bar" },
+        data: { values: presented.data },
+      } as never)).not.toThrow();
+    }
   });
 
   it("materializes immutable A to B to C derivations, including a nested source", () => {

@@ -8,6 +8,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     VisualRow,
 )
 from finguard_orchestrator.domain.models.chart import (
+    ROWS_THAT_FIT,
     ChartEncoding,
     ChartSpec,
     Visualization,
@@ -185,3 +186,49 @@ def test_frequency_keeps_weekday_input_order_and_recurrence_is_a_timeline() -> N
     assert recurrence.visualization.kind == "chart"
     assert recurrence.visualization.spec["mark"] == {"type": "point"}
     assert recurrence.visualization.spec["encoding"]["x"]["field"] == "occurred_at"  # type: ignore[index]
+
+
+def _spec(group_by: str, rows: int, *, plan_limited: bool = False) -> ChartSpec:
+    spec = derive_chart(
+        group_by=group_by,
+        metric="SUM",
+        rows=rows,
+        fields=frozenset({"dimension", "value_minor"}),
+        dimension_field="dimension",
+        value_field="value_minor",
+        plan_limited=plan_limited,
+    )
+    assert spec is not None
+    return spec
+
+
+def test_a_wide_breakdown_draws_what_fits_and_yields_to_a_number_somebody_said() -> None:
+    """The default is what fits; anything explicit beats it.
+
+    Thirty merchants in a plot sized by its own rows is thirty threads, so a breakdown nobody put a
+    number on draws the rows that fit. But cutting is a presentation decision, and it has to lose to
+    every other kind: a plan that already ranked its rows has answered this question, and cutting
+    again would answer "mis top 25 comercios" with eight -- and persist an eight nobody asked for
+    into the saved metric, since the spec is what gets signed.
+    """
+    assert _spec("MERCHANT", 30).limit == ROWS_THAT_FIT
+    assert _spec("MERCHANT", 30, plan_limited=True).limit is None
+    # Nothing to cut: fewer rows than fit says nothing rather than claiming a sample.
+    assert _spec("MERCHANT", ROWS_THAT_FIT).limit is None
+    # A temporal axis is never trimmed. A ranking tails off; a series would lose months out of its
+    # middle and still look like a series.
+    assert _spec("MONTH", 30).limit is None
+
+
+def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
+    """The number is in the Vega transform already, but a client should not have to parse that."""
+    rows = tuple(
+        VisualRow(dimension=f"Comercio {position}", value_minor=1000 - position)
+        for position in range(30)
+    )
+    result = _result(rows, group_by="MERCHANT")
+    visualization = question_to_dto(result).visualization
+    assert visualization is not None and visualization.kind == "chart"
+    assert visualization.limit == ROWS_THAT_FIT
+    # Every row still travels: the limit hides rows from the plot, never from the evidence.
+    assert len(visualization.data) == 30

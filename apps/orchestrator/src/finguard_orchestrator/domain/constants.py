@@ -88,9 +88,18 @@ MAX_PERIOD_DAYS = 366
 # that one rejects.
 MAX_RANK = 100
 
-# A spoken ranking of grouped results. Banking returns at least this many groups in metric order;
-# keeping the conversational ceiling small prevents a "top 200" request from becoming a list dump.
+# A spoken ranking of individual movements. This one becomes a list somebody listens to, so the
+# ceiling stays small: "los 40 mayores gastos" read out loud is not an answer.
 MAX_GROUP_RANK = 10
+
+# Aggregate rows one answer may show. Ten was this number too, and it was the wrong ceiling for it:
+# "mis top 25 comercios" is twenty-five aggregate rows, not a list dump, and the list-dump risk the
+# number above guards is individual movements. Nothing is asked of banking to allow it: group_limit
+# is applied by slicing here, after banking has returned its groups bounded by its own MAX_GROUPS,
+# and the sentence stays short either way, because answer_writer enumerates MAX_SPOKEN_GROUPS of
+# them and no more. A hundred is where ChartSpec.limit already stops, so a number said to the
+# planner and a number said to a chart now mean the same thing.
+MAX_GROUP_ROWS = 100
 MAX_ENTITY_ALIASES = 12
 MAX_ENTITY_ALIAS_LENGTH = 48
 
