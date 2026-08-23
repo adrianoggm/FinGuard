@@ -17,6 +17,18 @@
   --line: #e3e8e6;
   --out: #b3261e;
   --in: #0f7a4f;
+  /*
+   * Chart marks. Six slots in a fixed order, never cycled, and read by `Chart.tsx` so a chart and
+   * the screen around it are painted from one palette. Slot 1 is the brand teal. --out and --in are
+   * deliberately not in the list: they mean money leaving and money arriving, and a series that
+   * borrows one of them says something about the data that is not true.
+   */
+  --chart-1: #0f8a6d;
+  --chart-2: #b45309;
+  --chart-3: #3b5bdb;
+  --chart-4: #cc79a7;
+  --chart-5: #4d7c0f;
+  --chart-6: #6d28d9;
   --radius: 1.25rem;
   --shadow: 0 0.5rem 1.5rem rgb(13 27 24 / 8%);
   font-family:
@@ -27,15 +39,32 @@
   box-sizing: border-box;
 }
 
+/*
+ * A chart is a card, drawn the way every other card in this app is drawn: flat --card, the shared
+ * hairline, the same corner. It used to have its own gradient and its own border colour, which is
+ * how a chart inside a chat bubble ended up reading as something pasted in from another product.
+ */
+.chart-figure {
+  margin: 0.75rem 0 0;
+}
+
+.chart-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--brand);
+}
+
 .visualization-chart {
   width: 100%;
-  min-height: 14rem;
-  margin: 0.75rem 0;
-  overflow: hidden;
-  border: 1px solid #e1ebe6;
+  min-height: 8rem;
+  /* Never `hidden`: a wide chart scrolls rather than losing its last label to a crop. */
+  overflow-x: auto;
+  border: 1px solid var(--line);
   border-radius: 1rem;
-  padding: 0.5rem;
-  background: linear-gradient(145deg, #ffffff 0%, #f5faf7 100%);
+  padding: 0.5rem 0.5rem 0.25rem;
+  background: var(--card);
   color: var(--ink);
 }
 
@@ -60,7 +89,9 @@
   padding: 0.9rem 1rem;
   border: 1px solid var(--line);
   border-radius: 0.9rem;
-  background: var(--surface);
+  /* --card, not --surface: inside an assistant bubble --surface is the bubble, so the tile had no
+     edge of its own. */
+  background: var(--card);
 }
 
 .chart-kpi span {
@@ -218,7 +249,7 @@ body {
 .link:disabled { color: var(--ink-soft); cursor: not-allowed; opacity: 0.55; }
 
 @media (max-width: 30rem) {
-  .visualization-chart { min-height: 12rem; padding: 0.25rem; }
+  .visualization-chart { padding: 0.25rem 0.25rem 0; }
   .metric-list li { align-items: flex-start; gap: 0.55rem; flex-direction: column; }
   .metric-actions { width: 100%; justify-content: flex-start; gap: 0.7rem; }
 }
