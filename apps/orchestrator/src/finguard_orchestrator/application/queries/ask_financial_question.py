@@ -715,11 +715,12 @@ class AskFinancialQuestionHandler:
             was.active, AccountScopeClarification
         ) and _answers_account_scope(query.sentence, was.active)
         if isinstance(was.active, AccountScopeClarification) and (
-            intent not in {
-            *_ASIDES,
-            Intent.PAYMENT,
-            Intent.OWN_TRANSFER,
-            Intent.LIST_CARDS,
+            intent
+            not in {
+                *_ASIDES,
+                Intent.PAYMENT,
+                Intent.OWN_TRANSFER,
+                Intent.LIST_CARDS,
             }
             or account_choice
         ):
@@ -2208,9 +2209,7 @@ class AskFinancialQuestionHandler:
         through planning loses the previous window.  They are a deterministic patch to the
         already validated plan instead.
         """
-        if previous is None or not _is_scope_change_followup(
-            query.sentence, today=query.today
-        ):
+        if previous is None or not _is_scope_change_followup(query.sentence, today=query.today):
             return None
         scoped: PlannedQuery | AskFinancialQuestionResult
         if account_words.asks_for_all_accounts(query.sentence):
@@ -3941,10 +3940,7 @@ class AskFinancialQuestionHandler:
             scoped
             if scoped.only_account_id is not None
             or scoped.only_account_ids
-            or (
-                scoped.across_accounts
-                and account_words.asks_for_all_accounts(query.sentence)
-            )
+            or (scoped.across_accounts and account_words.asks_for_all_accounts(query.sentence))
             or plan.group_by is GroupBy.ACCOUNT
             or plan.internal_only
             else plan
