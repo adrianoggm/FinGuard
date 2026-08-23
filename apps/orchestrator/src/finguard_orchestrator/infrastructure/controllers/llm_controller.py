@@ -238,6 +238,7 @@ def _visual_only_response(
             source_chart_id=context.chart_id,
             chart_id=chart_id,
             spec=rendered_spec,
+            limit=updated.spec.limit,
         ),
         save_candidate=candidate,
     )

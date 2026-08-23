@@ -257,7 +257,7 @@ def turn_violations(
         broken.append("SAYS_WHAT_IT_MUST_NOT")
 
     state = body.get("conversation") or {}
-    half_built = state.get("draft") or state.get("payment")
+    half_built = state.get("draft") or state.get("payment") or state.get("pending_plan")
     if outcome == "NEEDS_CLARIFICATION" and not half_built:
         # Without something on the way out the client has nothing to echo, so the next turn is a
         # fresh question however well it is phrased. This is the defect, at its source.
@@ -266,6 +266,13 @@ def turn_violations(
         # window and a bizum missing its amount are the same failure seen from two sides. The rule
         # was written when only the query path could ask, and payment clarifications then failed it
         # for carrying the right draft under the other name.
+        #
+        # `pending_plan` is the third name and the same story: account scope asks which of the
+        # holder's accounts a bare question was about, and keeps the plan it is holding under a
+        # field of its own. It carried 94 of the 115 violations this corpus reported, all of them
+        # false — the state was on the wire the whole time. If a fourth workflow learns to ask,
+        # this is the line it will fail at, and adding its field is the fix rather than the
+        # symptom.
         broken.append("QUESTION_WITHOUT_A_DRAFT")
 
     if turn.get("completes") and asked_before and outcome == "NEEDS_CLARIFICATION":

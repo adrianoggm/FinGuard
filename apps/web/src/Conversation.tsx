@@ -65,6 +65,10 @@ export function materializeVisualizationDerivation(turns: Turn[], answer: Answer
       ...source.visualization,
       chart_id: derivation.chart_id,
       spec: derivation.spec,
+      // Never inherited. The derived spec may be the one that lifted the limit -- that is what
+      // "Ver todos" is -- and carrying the source's over would leave a caveat claiming eight rows
+      // under a plot drawing all eighteen.
+      limit: derivation.limit ?? null,
       // Kept by reference deliberately: a visual derivation changes presentation, never evidence.
       data: source.visualization.data,
     },

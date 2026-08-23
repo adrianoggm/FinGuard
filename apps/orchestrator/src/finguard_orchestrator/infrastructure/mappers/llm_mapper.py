@@ -433,10 +433,14 @@ def _chart_suggestions(spec: ChartSpec) -> list[str]:
     a change the service is certain it can make. A chip that gets refused is worse than no chip: it
     teaches somebody that the chips lie, and then the ones that work go untried too.
 
-    Filters are the obvious omission and they are omitted on purpose. `excluded_categories` and
-    `excluded_merchants` exist on the plan and banking honours them, but not one conversation in the
-    evaluation corpus populates either, so whether the planner turns "quita Vivienda" into an
-    exclusion is unverified. That suggestion needs an evaluation case before it needs a chip.
+    Filters are the obvious omission and they are omitted on measurement, not on suspicion.
+    `excluded_categories` and `excluded_merchants` are on the plan and banking honours them, and the
+    planner reads them correctly when the exclusion arrives in the same sentence as the question.
+    A chip is the other shape: the sentence is nothing but the filter, with the chart's plan behind
+    it. `evaluation/planning/metamorphic.yaml` now asks exactly that, and over three runs with no
+    spread "Sin el alquiler" after a breakdown of last month by category drops both the window and
+    the grouping and plans for today -- a figure, not a clarification. A chip for it is a button
+    that shows a wrong number, so there is no chip until the planner keeps the window.
     """
     suggestions = []
     if spec.limit is not None:
