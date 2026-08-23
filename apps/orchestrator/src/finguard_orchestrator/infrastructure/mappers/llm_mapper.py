@@ -251,6 +251,7 @@ def _visualization_to_dto(
         unit=unit,
         spec=presented["spec"],
         data=presented["data"],
+        limit=spec.limit,
     )
 
 
@@ -403,6 +404,8 @@ def _chart_for_dataset(
 
     group_by = result.plan_context.group_by if result.plan_context is not None else "NONE"
     metric = result.plan_context.metric if result.plan_context is not None else dataset.metric
+    # A plan that already cut its rows has answered the question of how many to show.
+    ranked = result.plan_context is not None and result.plan_context.group_limit is not None
     spec = derive_chart(
         group_by=group_by,
         metric=metric,
@@ -410,6 +413,7 @@ def _chart_for_dataset(
         fields=fields,
         dimension_field="dimension",
         value_field="value_minor",
+        plan_limited=ranked,
     )
     if spec is None or "series" not in fields:
         return spec
