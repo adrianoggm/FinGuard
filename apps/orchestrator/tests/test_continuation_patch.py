@@ -4,12 +4,19 @@ from uuid import UUID
 import pytest
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
-from finguard_orchestrator.domain.services.continuation_patch import PatchStatus, apply
+from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.services.continuation_patch import (
+    GroundedContinuation,
+    PatchStatus,
+    apply,
+    read,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.plan_patch import PatchField
 
 TODAY = date(2026, 8, 25)
 
@@ -34,7 +41,22 @@ def plan() -> FinancialPlan:
         ("Excepto Mercadona", PatchStatus.APPLIED),
         ("No, durante todo 2025", PatchStatus.APPLIED),
         ("No, durante 2025 en Amazon", PatchStatus.AMBIGUOUS),
+        ("No, durante 2025 Amazon", PatchStatus.AMBIGUOUS),
+        ("Y en 2025 Amazon", PatchStatus.AMBIGUOUS),
+        ("No, durante 2025 Marta", PatchStatus.AMBIGUOUS),
+        ("No, el mes pasado Amazon", PatchStatus.AMBIGUOUS),
+        ("Y este mes Mercadona", PatchStatus.AMBIGUOUS),
+        ("No, en abril Amazon", PatchStatus.AMBIGUOUS),
+        ("No, durante abril Marta", PatchStatus.AMBIGUOUS),
+        ("No, durante 2025 por Amazon", PatchStatus.AMBIGUOUS),
+        ("No, durante 2025 completo Amazon", PatchStatus.AMBIGUOUS),
         ("No, en 2025", PatchStatus.APPLIED),
+        ("No, el mes pasado", PatchStatus.APPLIED),
+        ("Y este mes", PatchStatus.APPLIED),
+        ("No, en abril", PatchStatus.APPLIED),
+        ("No, durante abril", PatchStatus.APPLIED),
+        ("No, durante 2025 completo", PatchStatus.APPLIED),
+        ("No, me refería a este año", PatchStatus.APPLIED),
         ("No, durante 2025 en ocio", PatchStatus.AMBIGUOUS),
         ("No, durante 2025 en Hucha", PatchStatus.AMBIGUOUS),
         ("No, durante 2025 ingresos", PatchStatus.AMBIGUOUS),
@@ -45,8 +67,24 @@ def plan() -> FinancialPlan:
     ],
 )
 def test_table_driven(sentence: str, status: PatchStatus) -> None:
-    result = apply(sentence, plan(), today=TODAY)
+    result = read(sentence, today=TODAY)
     assert result.status is status
+
+
+def test_canonical_reader_does_not_need_a_base_plan() -> None:
+    result = read("Sin el alquiler", today=TODAY)
+
+    assert result.status is PatchStatus.APPLIED
+    assert result.patch is not None
+    assert result.changed == frozenset({PatchField.EXCLUDED_CATEGORIES})
+    assert result.patch.apply_to(plan()).excluded_categories == ("HOUSING_RENT",)
+
+
+def test_status_and_patch_must_agree() -> None:
+    with pytest.raises(InvalidValueError):
+        GroundedContinuation(PatchStatus.APPLIED)
+    with pytest.raises(InvalidValueError):
+        GroundedContinuation(PatchStatus.AMBIGUOUS, read("Sin alquiler").patch)
 
 
 def test_patch_preserves_sensitive_scope_and_is_idempotent() -> None:
@@ -70,7 +108,7 @@ def test_exclude_category_keeps_window_and_scope() -> None:
     assert result.plan.group_by is GroupBy.NONE
     assert result.plan.excluded_categories == ("HOUSING_RENT",)
     assert result.plan.categories == ("FOOD",)
-    assert result.changed == frozenset({"exclusions"})
+    assert result.changed == frozenset({PatchField.EXCLUDED_CATEGORIES})
 
 
 def test_exclude_merchant_keeps_window_and_scope() -> None:
@@ -96,7 +134,7 @@ def test_year_correction_is_absolute_and_retains_every_filter() -> None:
     assert result.plan.transaction_ids == previous.transaction_ids
     assert result.plan.internal_only is previous.internal_only
     assert result.plan.include_internal is previous.include_internal
-    assert result.changed == frozenset({"window"})
+    assert result.changed == frozenset({PatchField.WINDOW})
 
 
 def test_metric_continuation_changes_only_metric() -> None:

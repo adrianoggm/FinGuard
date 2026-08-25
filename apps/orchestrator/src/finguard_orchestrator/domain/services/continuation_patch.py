@@ -11,8 +11,15 @@ from datetime import date
 from enum import StrEnum
 
 from finguard_orchestrator.domain.enums import GroupBy
-from finguard_orchestrator.domain.services import account_words, explicit_facts, spanish
+from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.services import (
+    account_words,
+    category_words,
+    explicit_facts,
+    spanish,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.plan_patch import PatchField, PlanPatch
 
 
 class PatchStatus(StrEnum):
@@ -22,18 +29,38 @@ class PatchStatus(StrEnum):
 
 
 @dataclass(frozen=True)
-class GroundedContinuationPatch:
+class GroundedContinuation:
     status: PatchStatus
-    plan: FinancialPlan | None = None
-    changed: frozenset[str] = frozenset()
+    patch: PlanPatch | None = None
+
+    def __post_init__(self) -> None:
+        if (self.status is PatchStatus.APPLIED) != (self.patch is not None):
+            raise InvalidValueError("APPLIED requires a patch, and only APPLIED may carry one")
 
     @classmethod
-    def not_applicable(cls) -> "GroundedContinuationPatch":
+    def not_applicable(cls) -> "GroundedContinuation":
         return cls(PatchStatus.NOT_APPLICABLE)
 
     @classmethod
-    def ambiguous(cls) -> "GroundedContinuationPatch":
+    def ambiguous(cls) -> "GroundedContinuation":
         return cls(PatchStatus.AMBIGUOUS)
+
+    @property
+    def changed(self) -> frozenset[PatchField]:
+        return self.patch.fields if self.patch else frozenset()
+
+
+@dataclass(frozen=True)
+class GroundedContinuationPatch:
+    """Compatibility result for callers that still ask this module to apply a patch."""
+
+    status: PatchStatus
+    patch: PlanPatch | None = None
+    plan: FinancialPlan | None = None
+
+    @property
+    def changed(self) -> frozenset[PatchField]:
+        return self.patch.fields if self.patch else frozenset()
 
 
 # Short anaphora and correction markers are the evidence that this is an ellipsis.  A complete
@@ -45,55 +72,167 @@ _CONTINUATION = re.compile(
 _UNSUPPORTED_SCOPE = re.compile(
     r"\b(?:cuanto|cuanta|cuantos|cuantas|que|cual|donde|quien|quienes|gaste|gastado|pague|compras?)\b"
 )
-_NON_TEMPORAL_EN = re.compile(r"\ben\s+(?P<word>[a-záéíóúüñ]+)")
-_TEMPORAL_EN = {
-    "2025",
-    "2026",
+_LEXICAL_TOKEN = re.compile(r"[a-z0-9]+")
+_WINDOW_PATCH_WORDS = {
     "abril",
+    "a",
+    "agosto",
+    "ahora",
+    "al",
+    "ano",
+    "anos",
+    "anterior",
+    "anteriores",
+    "ayer",
+    "categoria",
+    "categorias",
+    "comercio",
+    "comercios",
+    "completa",
+    "completo",
+    "cuantas",
+    "cuantos",
+    "cuenta",
+    "cuentas",
+    "de",
+    "del",
+    "desde",
+    "dia",
+    "dias",
+    "diciembre",
+    "durante",
+    "el",
+    "en",
     "enero",
+    "entera",
+    "entero",
+    "entre",
+    "esa",
+    "ese",
+    "esta",
+    "este",
+    "estos",
+    "fin",
     "febrero",
+    "grupo",
+    "grupos",
+    "hasta",
+    "hoy",
+    "la",
+    "las",
+    "llevamos",
+    "lo",
+    "los",
     "marzo",
     "mayo",
+    "media",
+    "me",
+    "mejor",
+    "mes",
+    "meses",
+    "movimiento",
+    "movimientos",
+    "no",
+    "noviembre",
+    "octubre",
+    "operacion",
+    "operaciones",
+    "pasada",
+    "pasado",
+    "pasadas",
+    "pasados",
+    "periodo",
+    "pero",
+    "por",
+    "promedio",
+    "primera",
+    "primer",
+    "quincena",
+    "referia",
+    "realidad",
+    "salvo",
+    "segunda",
+    "segundo",
+    "semana",
+    "semanas",
+    "septiembre",
+    "sin",
+    "todo",
+    "toda",
+    "total",
+    "trimestre",
+    "ultimo",
+    "ultima",
+    "ultimos",
+    "ultimas",
+    "va",
+    "y",
+    "e",
+    "excepto",
+    "quitando",
     "junio",
     "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-    "último",
-    "última",
-    "pasado",
-    "pasada",
-    "año",
-    "mes",
+    # Number words accepted by the window reader. Digits are accepted separately.
+    "un",
+    "una",
+    "uno",
+    "dos",
+    "tres",
+    "cuatro",
+    "cinco",
+    "seis",
+    "siete",
+    "ocho",
+    "nueve",
+    "diez",
+    "once",
+    "doce",
+    "trece",
+    "catorce",
+    "quince",
+    "veinte",
+    "treinta",
 }
 
 
-def apply(
+def _has_unclaimed_window_token(
+    folded: str,
+    excluded_categories: tuple[str, ...],
+    excluded_merchants: tuple[str, ...],
+) -> bool:
+    """Fail closed when a grounded window leaves an entity-like word unexplained."""
+    claimed = set(_WINDOW_PATCH_WORDS)
+    for category in excluded_categories:
+        description = category_words.words_for(category) or ""
+        claimed.update(_LEXICAL_TOKEN.findall(spanish.folded(description)))
+        claimed.update(_LEXICAL_TOKEN.findall(spanish.folded(category_words.name_of(category))))
+    for merchant in excluded_merchants:
+        claimed.update(_LEXICAL_TOKEN.findall(spanish.folded(merchant)))
+    return any(
+        not token.isdigit() and token not in claimed for token in _LEXICAL_TOKEN.findall(folded)
+    )
+
+
+def read(
     sentence: str,
-    previous: FinancialPlan | None,
     *,
     today: date | None = None,
-) -> GroundedContinuationPatch:
-    """Apply only explicit window/metric/group/filter facts to ``previous``.
+) -> GroundedContinuation:
+    """Read a closed-vocabulary continuation without consulting conversational state.
 
     ``AMBIGUOUS`` is returned for a continuation-shaped sentence whose recognized facts are
-    insufficient or mixed with a fresh question.  In both non-applied cases the caller must retain
-    its existing safe mechanism; this function never returns a broadened plan.
+    insufficient or mixed with a fresh question. The caller decides whether a base exists.
     """
-    if previous is None:
-        return GroundedContinuationPatch.not_applicable()
     folded = spanish.folded(sentence).strip(" ¿?¡!.,;:")
     if not _CONTINUATION.search(folded):
-        return GroundedContinuationPatch.not_applicable()
+        return GroundedContinuation.not_applicable()
 
     facts = explicit_facts.read(sentence, today=today)
     # Widening is deliberately owned by the normal merge path: enforce() is monotone and
     # cannot remove an inherited filter, so treating this as a grounded patch would silently
     # preserve a category the user explicitly asked to clear.
     if facts.widens:
-        return GroundedContinuationPatch.ambiguous()
+        return GroundedContinuation.ambiguous()
     # A period correction may not smuggle in a new dimension. Those facts belong to the planner.
     if (
         facts.direction is not None
@@ -103,12 +242,11 @@ def apply(
         or account_words.named_in(sentence)
         or account_words.explicitly_names_a_custom_account(sentence)
     ):
-        return GroundedContinuationPatch.ambiguous()
-    # Keep the temporal preposition, but fail closed on residual entities ("en Amazon", "en ocio").
-    if facts.window is not None:
-        for match in _NON_TEMPORAL_EN.finditer(folded):
-            if match.group("word") not in _TEMPORAL_EN:
-                return GroundedContinuationPatch.ambiguous()
+        return GroundedContinuation.ambiguous()
+    if facts.window is not None and _has_unclaimed_window_token(
+        folded, facts.excluded_categories, facts.excluded_merchants
+    ):
+        return GroundedContinuation.ambiguous()
     if facts.group_by is None and re.search(r"\bpor\s+meses\b", folded):
         facts = replace(facts, group_by=GroupBy.MONTH)
     # A bare metric question ("y cuántos movimientos") is still a closed-vocabulary
@@ -119,20 +257,36 @@ def apply(
         and facts.group_by is None
         and facts.metric is None
     ):
-        return GroundedContinuationPatch.ambiguous()
-    changed: set[str] = set()
-    if facts.window is not None:
-        changed.add("window")
-    if facts.metric is not None:
-        changed.add("metric")
-    if facts.group_by is not None:
-        changed.add("groupBy")
-    if facts.excluded_categories or facts.excluded_merchants or facts.widens:
-        changed.add("exclusions")
-    if not changed:
-        return GroundedContinuationPatch.ambiguous()
+        return GroundedContinuation.ambiguous()
+    if not any(
+        (
+            facts.window,
+            facts.metric,
+            facts.group_by,
+            facts.excluded_categories,
+            facts.excluded_merchants,
+        )
+    ):
+        return GroundedContinuation.ambiguous()
+    patch = PlanPatch(
+        window=facts.window,
+        metric=facts.metric,
+        group_by=facts.group_by,
+        excluded_categories=facts.excluded_categories,
+        excluded_merchants=facts.excluded_merchants,
+    )
+    return GroundedContinuation(PatchStatus.APPLIED, patch)
 
-    # enforce() uses an atomic period/date_range pair and dataclass replacement, so account,
-    # entities, internal flags and transaction ids remain byte-for-byte unchanged.
-    patched = explicit_facts.enforce(previous, facts)
-    return GroundedContinuationPatch(PatchStatus.APPLIED, patched, frozenset(changed))
+
+def apply(
+    sentence: str,
+    previous: FinancialPlan | None,
+    *,
+    today: date | None = None,
+) -> GroundedContinuationPatch:
+    """Compatibility wrapper around ``read`` and the immutable patch operation."""
+    if previous is None:
+        return GroundedContinuationPatch(PatchStatus.NOT_APPLICABLE)
+    continuation = read(sentence, today=today)
+    plan = continuation.patch.apply_to(previous) if continuation.patch is not None else None
+    return GroundedContinuationPatch(continuation.status, continuation.patch, plan)

@@ -794,6 +794,20 @@ conversations:
         must_keep: [window]
         must_change: [categories]
 
+  - id: a_category_follow_up_after_a_balance_has_no_spending_base
+    why: >
+      A balance is the answer in focus even though the last successful movement query remains in
+      conversation memory. "¿Y en restaurantes?" is therefore handed to the planner without that
+      spending plan as a continuation base: if it can answer, restaurants must replace fuel; if it
+      asks for a period, it must not silently revive the old month merely because it is mirrored in
+      `last_plan`.
+    turns:
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+      - say: ¿cuánto tengo?
+        expect: BALANCE
+      - say: ¿y en restaurantes?
+        must_change: [categories]
+
   - id: a_no_that_is_correcting_and_not_cancelling
     why: >
       "No, en gasolina" opens with a refusal and is not one: it is a correction of the category of

@@ -1418,7 +1418,7 @@ async def ask(
             # The reading this route already made. Handed down rather than made again — see the
             # field. Everything above decided *not* to pay on the strength of it, and the handler
             # deciding otherwise from a second reading is the disagreement this removes.
-            intent=read_as,
+            analysis=analysis,
         )
     )
     if result.outcome == Spoken.TRANSFER_READY.value:
@@ -1559,7 +1559,7 @@ async def ask_streaming(
         # conversation never used.
         reporting_timezone=who.reporting_timezone,
         conversation=was,
-        intent=read_as,
+        analysis=analysis,
     )
 
     async def events() -> AsyncIterator[str]:

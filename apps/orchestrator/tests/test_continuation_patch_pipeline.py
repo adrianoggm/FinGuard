@@ -7,7 +7,14 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
 )
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period, PlanningOutcome
+from finguard_orchestrator.domain.enums import (
+    Direction,
+    GroupBy,
+    Metric,
+    Period,
+    PlanningOutcome,
+)
+from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -15,6 +22,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
 
 
 class FakeAccounts:
@@ -40,9 +48,11 @@ class PlannerSpy:
     def __init__(self, result: PlanningResult) -> None:
         self.result = result
         self.calls: list[str] = []
+        self.arguments: list[dict[str, object]] = []
 
     async def plan(self, sentence: str, **kwargs: object) -> PlanningResult:
         self.calls.append(sentence)
+        self.arguments.append(kwargs)
         return self.result
 
 
@@ -68,6 +78,26 @@ def previous_plan() -> FinancialPlan:
         categories=("FOOD",),
         group_by=GroupBy.CATEGORY,
         only_account_id=ACCOUNT,
+    )
+
+
+def ratio_conversation() -> Conversation:
+    part = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("HOUSING_RENT",),
+        only_account_id=ACCOUNT,
+    )
+    return Conversation(
+        last_plan=part,
+        last_ratio=RatioPlan(
+            part=part,
+            whole=FinancialPlan(
+                direction=Direction.INCOME,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+            kind=RatioKind.SHARE,
+        ),
     )
 
 
@@ -115,6 +145,120 @@ async def test_autocontained_question_uses_planner() -> None:
     result = await ask(make_handler(planner, ledger), "Cuánto gasté en ocio durante 2025")
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == ["Cuánto gasté en ocio durante 2025"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sentence",
+    ["No, durante 2025 en Amazon", "Cuánto gasté durante 2025"],
+)
+async def test_non_grounded_statuses_fall_through_to_planner(sentence: str) -> None:
+    planner = PlannerSpy(PlanningResult.planned(previous_plan()))
+    ledger = LedgerSpy()
+
+    result = await ask(
+        make_handler(planner, ledger),
+        sentence,
+        Conversation(last_plan=previous_plan()),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == [sentence]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sentence", "expected_window"),
+    [
+        ("De junio me refiero", AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30))),
+        (
+            "Ahora en la segunda quincena de julio",
+            AbsoluteRange(date(2026, 7, 16), date(2026, 7, 31)),
+        ),
+    ],
+)
+async def test_natural_window_follow_ups_stay_on_the_deterministic_path(
+    sentence: str, expected_window: AbsoluteRange
+) -> None:
+    planner = PlannerSpy(PlanningResult.planned(previous_plan()))
+    ledger = LedgerSpy()
+
+    result = await ask(
+        make_handler(planner, ledger),
+        sentence,
+        Conversation(last_plan=previous_plan()),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == []
+    assert ledger.plans[-1].date_range == expected_window
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sentence", "conversation"),
+    [
+        (
+            "Y por meses",
+            Conversation(answered_the_balance=True, last_plan=previous_plan()),
+        ),
+        (
+            "Sin alquiler",
+            ratio_conversation(),
+        ),
+    ],
+)
+async def test_special_focus_never_reuses_the_mirrored_single_plan(
+    sentence: str, conversation: Conversation
+) -> None:
+    planner = PlannerSpy(PlanningResult.planned(previous_plan()))
+
+    await ask(make_handler(planner, LedgerSpy()), sentence, conversation)
+
+    assert planner.calls == [sentence]
+    assert planner.arguments[-1]["previous"] is None
+
+
+@pytest.mark.asyncio
+async def test_temporal_group_follow_up_clears_the_previous_ranking_limit() -> None:
+    ranked = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+        group_limit=5,
+    )
+    planner = PlannerSpy(PlanningResult.planned(ranked))
+    ledger = LedgerSpy()
+
+    await ask(
+        make_handler(planner, ledger),
+        "Y por meses",
+        Conversation(last_plan=ranked),
+    )
+
+    assert planner.calls == []
+    assert ledger.plans[-1].group_by is GroupBy.MONTH
+    assert ledger.plans[-1].group_limit is None
+
+
+@pytest.mark.asyncio
+async def test_incompatible_grounded_patch_falls_through_instead_of_raising() -> None:
+    cumulative = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.MONTH,
+        metric=Metric.CUMULATIVE,
+    )
+    planner = PlannerSpy(PlanningResult.planned(previous_plan()))
+
+    result = await ask(
+        make_handler(planner, LedgerSpy()),
+        "Y por categorías",
+        Conversation(last_plan=cumulative),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == ["Y por categorías"]
 
 
 @pytest.mark.asyncio
