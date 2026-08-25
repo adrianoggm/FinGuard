@@ -76,6 +76,7 @@ from finguard_orchestrator.domain.services import (
     answer_writer,
     capability_guard,
     category_words,
+    continuation_patch,
     courtesy,
     cumulative_calculator,
     entity_alias_words,
@@ -1403,7 +1404,16 @@ class AskFinancialQuestionHandler:
             planning_previous = None
 
         yield Stage("planning")
-        if force_follow_up:
+        grounded = continuation_patch.apply(
+            query.sentence,
+            planning_previous if isinstance(planning_previous, FinancialPlan) else None,
+            today=query.today,
+        )
+        if grounded.status is continuation_patch.PatchStatus.APPLIED and grounded.plan is not None:
+            # Closed-vocabulary continuation: retain the validated plan and still run the
+            # ordinary facts, verifier, and answer path below.
+            planned = PlanningResult.planned(grounded.plan)
+        elif force_follow_up:
             planned = await self._planner.plan(
                 query.sentence,
                 today=query.today,
