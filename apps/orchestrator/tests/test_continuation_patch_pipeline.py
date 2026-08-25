@@ -61,10 +61,15 @@ class PlannerSpy:
 class LedgerSpy:
     def __init__(self) -> None:
         self.plans: list[FinancialPlan] = []
+        self.rankings: list[TopMovements] = []
 
     async def run(self, plan: FinancialPlan, **kwargs: object) -> QueryAnswer:
         self.plans.append(plan)
         return QueryAnswer(currency="EUR", total_minor=100, movement_count=1)
+
+    async def ranked(self, ranking: TopMovements, **kwargs: object) -> None:
+        self.rankings.append(ranking)
+        return None
 
 
 def make_handler(planner: PlannerSpy, ledger: LedgerSpy) -> AskFinancialQuestionHandler:
@@ -101,6 +106,10 @@ def ratio_conversation() -> Conversation:
             kind=RatioKind.SHARE,
         ),
     )
+
+
+def balance_focus_conversation(mirrored: FinancialPlan | TopMovements) -> Conversation:
+    return Conversation(last_plan=mirrored, answered_the_balance=True)
 
 
 async def ask(handler: AskFinancialQuestionHandler, sentence: str, conversation=None):
@@ -342,3 +351,74 @@ async def test_comparison_focus_blocks_shifting_only_the_latest_mirror() -> None
     assert ledger.plans[0].categories == planned.categories
     assert ledger.plans[0].date_range == AbsoluteRange(date(2025, 1, 1), date(2025, 12, 31))
     assert ledger.plans[0].date_range != AbsoluteRange(date(2025, 7, 1), date(2025, 7, 31))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sentence", "mirrored"),
+    [
+        (
+            "cual fue mi gasto mas grande",
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+        ),
+        (
+            "y por numero de operaciones",
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_MONTH),
+                group_by=GroupBy.MERCHANT,
+                group_limit=3,
+            ),
+        ),
+    ],
+)
+async def test_balance_focus_does_not_execute_query_mirrors_in_the_pipeline(
+    sentence: str, mirrored: FinancialPlan
+) -> None:
+    planned = previous_plan()
+    planner = PlannerSpy(PlanningResult.planned(planned))
+    ledger = LedgerSpy()
+
+    result = await ask(
+        make_handler(planner, ledger),
+        sentence,
+        balance_focus_conversation(mirrored),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == [sentence]
+    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].period == planned.period
+    assert ledger.plans[0].categories == planned.categories
+    assert ledger.plans[0].group_by is planned.group_by
+    assert ledger.plans[0].group_limit is None
+    assert ledger.rankings == []
+
+
+@pytest.mark.asyncio
+async def test_self_contained_ranking_still_executes_with_a_balance_focus() -> None:
+    mirrored = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("SALARY",),
+    )
+    planner = PlannerSpy(PlanningResult.planned(previous_plan()))
+    ledger = LedgerSpy()
+
+    result = await ask(
+        make_handler(planner, ledger),
+        "cual fue mi gasto mas grande de abril",
+        balance_focus_conversation(mirrored),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == []
+    assert ledger.plans == []
+    assert len(ledger.rankings) == 1
+    assert ledger.rankings[0].direction is Direction.EXPENSE
+    assert ledger.rankings[0].date_range == AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30))
+    assert ledger.rankings[0].categories == ()
