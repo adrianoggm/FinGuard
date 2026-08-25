@@ -64,6 +64,7 @@ from finguard_orchestrator.domain.models.conversation import (
     workflow_of,
 )
 from finguard_orchestrator.domain.models.planning_context import (
+    BalanceFocus,
     ComparisonFocus,
     ContinuationBase,
     ContinuationSource,
@@ -5660,22 +5661,54 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     return None
 
 
+_READER_RETURN_FROM_BALANCE: Final = re.compile(
+    r"^(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
+    r"|volviendo\s+a\s+(?:la\s+consulta\s+anterior|lo\s+de\s+antes))"
+    r"\s*[,;:]\s*(?P<request>\S(?:.*\S)?)$"
+)
+
+
+@dataclass(frozen=True)
+class _QueryForReader:
+    plan: PlannedQuery | None
+    wording: str
+    returned_from_balance: bool = False
+
+
+def _query_for_reader(query: AskFinancialQuestionQuery) -> _QueryForReader:
+    """Select query memory for readers, including an explicit return from a balance aside."""
+    focus = focus_of(query.conversation)
+    if isinstance(focus, QueryFocus):
+        return _QueryForReader(focus.current, query.sentence)
+    if isinstance(focus, BalanceFocus) and focus.suspended_query is not None:
+        returned = _READER_RETURN_FROM_BALANCE.fullmatch(spanish.folded(query.sentence))
+        if returned is not None:
+            return _QueryForReader(
+                focus.suspended_query,
+                returned.group("request"),
+                returned_from_balance=True,
+            )
+    return _QueryForReader(None, query.sentence)
+
+
 def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements | None:
     """Turn a superlative into a ranking while retaining the prior window and filters."""
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    if facts.asks_top_category or not _RANKING_REQUEST.search(spanish.folded(query.sentence)):
+    selected = _query_for_reader(query)
+    facts = explicit_facts.read(selected.wording, today=query.today)
+    if facts.asks_top_category or not _RANKING_REQUEST.search(spanish.folded(selected.wording)):
         return None
     previous = (
         None
-        if _starts_new_financial_scope(query.sentence, today=query.today)
-        else query.conversation.last_plan
+        if not selected.returned_from_balance
+        and _starts_new_financial_scope(selected.wording, today=query.today)
+        else selected.plan
     )
     window = facts.window or (
         previous.period or previous.date_range if previous is not None else None
     )
     if window is None:
         return None
-    folded = spanish.folded(query.sentence)
+    folded = spanish.folded(selected.wording)
     if re.search(r"\bingres|\bcobr|\bnomina|\bsueldo|\bsalario", folded):
         direction = Direction.INCOME
     elif re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
@@ -5684,7 +5717,7 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
         direction = previous.direction
     else:
         direction = Direction.ALL
-    named = category_words.precisely_named_in(query.sentence)
+    named = category_words.precisely_named_in(selected.wording)
     return TopMovements(
         direction=direction,
         period=window if isinstance(window, RelativePeriod) else None,
@@ -5704,23 +5737,25 @@ def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements |
 
 def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Focus the previous query on an account named as a short conversational reply."""
+    context = _query_for_reader(query)
     previous = (
         None
-        if _starts_new_financial_scope(query.sentence, today=query.today)
-        else query.conversation.last_plan
+        if not context.returned_from_balance
+        and _starts_new_financial_scope(context.wording, today=query.today)
+        else context.plan
     )
-    if not isinstance(previous, FinancialPlan) or not account_words.named_in(query.sentence):
+    if not isinstance(previous, FinancialPlan) or not account_words.named_in(context.wording):
         return None
-    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    folded = spanish.folded(context.wording).strip(" ¿?¡!.,")
     if not _SALARY_ACCOUNT_FOLLOW_UP.fullmatch(folded) and not _ACCOUNT_SELECTION_FOLLOW_UP.search(
         folded
     ):
         if len(folded.split()) > 4:
             return None
-        if window_words.window_in(query.sentence, today=query.today) is not None:
+        if window_words.window_in(context.wording, today=query.today) is not None:
             return None
     selected = replace(previous, group_by=GroupBy.NONE)
-    window = window_words.window_in(query.sentence, today=query.today)
+    window = window_words.window_in(context.wording, today=query.today)
     if window is None:
         return selected
     return replace(
@@ -5732,9 +5767,10 @@ def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan |
 
 def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Rank aggregate groups by the exact metric named in the sentence."""
-    folded = spanish.folded(query.sentence)
+    selected = _query_for_reader(query)
+    folded = spanish.folded(selected.wording)
     dimension_match = _GROUP_RANKING_DIMENSION.search(folded)
-    previous = query.conversation.last_plan
+    previous = selected.plan
     previous_ranking = (
         previous
         if isinstance(previous, FinancialPlan) and previous.group_limit is not None
@@ -5783,15 +5819,17 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         # somewhere the sentence could no longer explain itself.
         group_limit = max(1, min(asked, MAX_GROUP_ROWS))
 
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    contextual = ranking_follow_up or not _starts_new_financial_scope(
-        query.sentence, today=query.today
+    facts = explicit_facts.read(selected.wording, today=query.today)
+    contextual = (
+        ranking_follow_up
+        or selected.returned_from_balance
+        or not _starts_new_financial_scope(selected.wording, today=query.today)
     )
     base = previous_ranking if contextual else None
     window = facts.window or (
         base.period or base.date_range if base is not None else RelativePeriod(Period.THIS_YEAR)
     )
-    named = category_words.precisely_named_in(query.sentence)
+    named = category_words.precisely_named_in(selected.wording)
     if re.search(r"\bingres|\bcobr|\bnomina", folded):
         direction = Direction.INCOME
     elif base is not None and ranking_follow_up:

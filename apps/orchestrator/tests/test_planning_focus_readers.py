@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import date
 from typing import cast
 from uuid import UUID
@@ -7,9 +8,13 @@ import pytest
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+    _account_follow_up_plan,
+    _contextual_ranking_plan,
+    _group_ranking_plan,
+    _query_for_reader,
     _stored_percentage_pair,
 )
-from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.conversation import Conversation, FinancialClarification
 from finguard_orchestrator.domain.models.planning_context import ContinuationSource
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -59,6 +64,283 @@ def comparison() -> ComparisonPlan:
             date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
         ),
     )
+
+
+def conversation_with_special_focus(
+    special: str, mirrored: FinancialPlan | TopMovements
+) -> Conversation:
+    fields: dict[str, object] = {"last_plan": mirrored}
+    if special == "balance":
+        fields["answered_the_balance"] = True
+    elif special == "ratio":
+        fields["last_ratio"] = ratio()
+    elif special == "pending_ratio":
+        fields["pending_ratio"] = RatioDraft(
+            part=FinancialPlanDraft(direction=Direction.EXPENSE),
+            whole=FinancialPlanDraft(direction=Direction.INCOME),
+            kind=RatioKind.SHARE,
+        )
+    else:
+        fields["last_comparison"] = comparison()
+    return Conversation(**fields)  # type: ignore[arg-type]
+
+
+def test_contextual_ranking_reads_only_the_current_query_focus() -> None:
+    current = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("FOOD",),
+    )
+    unrelated_prior = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        categories=("SALARY",),
+    )
+
+    result = _contextual_ranking_plan(
+        query(
+            "cual fue mi gasto mas grande",
+            Conversation(last_plan=current, prior_plan=unrelated_prior),
+        )
+    )
+
+    assert result is not None
+    assert result.period == current.period
+    assert result.direction is current.direction
+    assert result.categories == current.categories
+
+
+def test_account_follow_up_reads_only_the_current_query_focus() -> None:
+    current = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+    )
+    unrelated_prior = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+
+    result = _account_follow_up_plan(
+        query("en la cuenta nomina", Conversation(last_plan=current, prior_plan=unrelated_prior))
+    )
+
+    assert result is not None
+    assert result.period == current.period
+    assert result.direction is current.direction
+    assert result.group_by is GroupBy.NONE
+
+
+def test_group_ranking_follow_up_reads_only_the_current_query_focus() -> None:
+    current = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("FOOD",),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.AVERAGE,
+        group_limit=3,
+    )
+    unrelated_prior = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.THIS_YEAR),
+        group_by=GroupBy.CATEGORY,
+        metric=Metric.SUM,
+        group_limit=9,
+    )
+
+    result = _group_ranking_plan(
+        query(
+            "y por numero de operaciones",
+            Conversation(last_plan=current, prior_plan=unrelated_prior),
+        )
+    )
+
+    assert result is not None
+    assert result.period == current.period
+    assert result.categories == current.categories
+    assert result.group_by is current.group_by
+    assert result.metric is Metric.COUNT
+    assert result.group_limit == current.group_limit
+
+
+@pytest.mark.parametrize("special", ["balance", "ratio", "pending_ratio", "comparison"])
+@pytest.mark.parametrize(
+    ("reader", "sentence", "mirrored"),
+    [
+        (
+            _contextual_ranking_plan,
+            "cual fue mi gasto mas grande",
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+        ),
+        (
+            _account_follow_up_plan,
+            "en la cuenta nomina",
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+        ),
+        (
+            _group_ranking_plan,
+            "y por numero de operaciones",
+            FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(Period.LAST_MONTH),
+                group_by=GroupBy.MERCHANT,
+                group_limit=3,
+            ),
+        ),
+    ],
+)
+def test_special_focus_blocks_all_three_query_mirror_readers(
+    special: str,
+    reader: Callable[[AskFinancialQuestionQuery], FinancialPlan | TopMovements | None],
+    sentence: str,
+    mirrored: FinancialPlan,
+) -> None:
+    result = reader(query(sentence, conversation_with_special_focus(special, mirrored)))
+
+    assert result is None
+
+
+@pytest.mark.parametrize("special", ["balance", "ratio", "pending_ratio", "comparison"])
+def test_self_contained_rankings_ignore_special_focus_mirrors(special: str) -> None:
+    mirrored = FinancialPlan(
+        direction=Direction.INCOME,
+        period=RelativePeriod(Period.LAST_MONTH),
+        categories=("SALARY",),
+    )
+    conversation = conversation_with_special_focus(special, mirrored)
+
+    movement = _contextual_ranking_plan(
+        query("cual fue mi gasto mas grande de abril", conversation)
+    )
+    grouped = _group_ranking_plan(query("top 3 categorias por operaciones este ano", conversation))
+
+    assert movement is not None
+    assert movement.direction is Direction.EXPENSE
+    assert movement.date_range == AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30))
+    assert movement.categories == ()
+    assert grouped is not None
+    assert grouped.direction is Direction.EXPENSE
+    assert grouped.period == RelativePeriod(Period.THIS_YEAR)
+    assert grouped.group_by is GroupBy.CATEGORY
+    assert grouped.metric is Metric.COUNT
+    assert grouped.group_limit == 3
+
+
+@pytest.mark.parametrize(
+    ("sentence", "expected_wording"),
+    [
+        (
+            "Vuelve a la consulta anterior, cual fue mi gasto mas grande",
+            "cual fue mi gasto mas grande",
+        ),
+        ("Volvamos a lo anterior; en la cuenta nomina", "en la cuenta nomina"),
+        ("Volviendo a lo de antes: y por numero de operaciones", "y por numero de operaciones"),
+    ],
+)
+def test_explicit_balance_return_selects_the_suspended_query(
+    sentence: str, expected_wording: str
+) -> None:
+    suspended = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+
+    selected = _query_for_reader(
+        query(sentence, Conversation(last_plan=suspended, answered_the_balance=True))
+    )
+
+    assert selected.plan is suspended
+    assert selected.wording == expected_wording
+    assert selected.returned_from_balance
+
+
+def test_account_reader_can_return_explicitly_from_a_balance_aside() -> None:
+    suspended = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+    )
+
+    result = _account_follow_up_plan(
+        query(
+            "Volviendo a la consulta anterior: en la cuenta nomina",
+            Conversation(last_plan=suspended, answered_the_balance=True),
+        )
+    )
+
+    assert result is not None
+    assert result.period == suspended.period
+    assert result.direction is suspended.direction
+    assert result.group_by is GroupBy.NONE
+
+
+def test_group_ranking_reader_can_return_explicitly_from_a_balance_aside() -> None:
+    suspended = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.AVERAGE,
+        group_limit=3,
+    )
+
+    result = _group_ranking_plan(
+        query(
+            "Vuelve a la consulta anterior; y por numero de operaciones",
+            Conversation(last_plan=suspended, answered_the_balance=True),
+        )
+    )
+
+    assert result is not None
+    assert result.period == suspended.period
+    assert result.group_by is suspended.group_by
+    assert result.metric is Metric.COUNT
+    assert result.group_limit == suspended.group_limit
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Vuelve a la consulta anterior cual fue mi gasto mas grande",
+        "Vuelve a la consulta anterior,",
+        "Por favor, vuelve a la consulta anterior: cual fue mi gasto mas grande",
+        "cual fue mi gasto mas grande, volviendo a lo de antes",
+    ],
+)
+def test_balance_return_requires_anchored_prefix_separator_and_request(sentence: str) -> None:
+    suspended = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+
+    selected = _query_for_reader(
+        query(sentence, Conversation(last_plan=suspended, answered_the_balance=True))
+    )
+
+    assert selected.plan is None
+    assert selected.wording == sentence
+    assert not selected.returned_from_balance
+
+
+@pytest.mark.parametrize("special", ["ratio", "pending_ratio", "comparison"])
+def test_explicit_return_never_authorizes_non_balance_focus(special: str) -> None:
+    mirrored = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+    sentence = "Volviendo a lo de antes: cual fue mi gasto mas grande"
+
+    selected = _query_for_reader(
+        query(sentence, conversation_with_special_focus(special, mirrored))
+    )
+
+    assert selected.plan is None
+    assert not selected.returned_from_balance
 
 
 @pytest.mark.parametrize("special", ["balance", "ratio", "comparison"])
