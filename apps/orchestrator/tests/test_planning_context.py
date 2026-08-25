@@ -4,10 +4,12 @@ from typing import cast
 import pytest
 
 from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import Conversation, PlannedQuery
 from finguard_orchestrator.domain.models.planning_context import (
     BalanceFocus,
     ComparisonFocus,
+    ContinuationBase,
     ContinuationSource,
     PendingRatioFocus,
     QueryFocus,
@@ -67,8 +69,11 @@ def test_context_exposes_query_memory_when_no_special_focus_exists() -> None:
         today=date(2026, 8, 25),
         reporting_timezone="Atlantic/Canary",
         analysis=TurnAnalysis(Intent.CORRECTION, TurnRelation.CORRECTION, TurnFocus.LAST_ANSWER),
-        continuation_plan=plan,
-        force_follow_up=True,
+        continuation=ContinuationBase(
+            plan,
+            ContinuationSource.LAST_ANSWER,
+            force_follow_up=True,
+        ),
     )
 
     assert context.today == date(2026, 8, 25)
@@ -108,7 +113,65 @@ def test_last_answer_base_is_hidden_behind_a_stronger_focus(special: str) -> Non
         analysis=TurnAnalysis(
             Intent.FINANCIAL_QUERY, TurnRelation.FOLLOW_UP, TurnFocus.LAST_ANSWER
         ),
-        continuation_plan=plan,
+        continuation=ContinuationBase(plan, ContinuationSource.LAST_ANSWER),
     )
 
     assert context.continuation is None
+
+
+def test_last_answer_continuation_requires_the_exact_focused_plan() -> None:
+    focused = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+    equal_copy = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+
+    context = planning_context(
+        Conversation(last_plan=focused),
+        today=date(2026, 8, 25),
+        reporting_timezone="Europe/Madrid",
+        analysis=TurnAnalysis(
+            Intent.FINANCIAL_QUERY, TurnRelation.FOLLOW_UP, TurnFocus.LAST_ANSWER
+        ),
+        continuation=ContinuationBase(equal_copy, ContinuationSource.LAST_ANSWER),
+    )
+
+    assert equal_copy == focused and equal_copy is not focused
+    assert context.continuation is None
+
+
+def test_active_clarification_must_be_a_forced_follow_up() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+
+    with pytest.raises(InvalidValueError, match="must force"):
+        ContinuationBase(plan, ContinuationSource.ACTIVE_CLARIFICATION)
+
+
+def test_active_clarification_is_not_hidden_by_a_special_focus() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+    continuation = ContinuationBase(
+        plan,
+        ContinuationSource.ACTIVE_CLARIFICATION,
+        force_follow_up=True,
+    )
+
+    context = planning_context(
+        Conversation(answered_the_balance=True, last_plan=plan),
+        today=date(2026, 8, 25),
+        reporting_timezone="Europe/Madrid",
+        analysis=TurnAnalysis(
+            Intent.CORRECTION, TurnRelation.CORRECTION, TurnFocus.ACTIVE_WORKFLOW
+        ),
+        continuation=continuation,
+    )
+
+    assert context.continuation is continuation

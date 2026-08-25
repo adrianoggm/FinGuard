@@ -17,12 +17,14 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind, RatioPlan
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
 class FakeAccounts:
@@ -282,3 +284,61 @@ async def test_handle_materializes_same_final_answer_as_stream() -> None:
     handled = await handler.handle(query)
     streamed = [step async for step in handler.stream(query) if hasattr(step, "outcome")][-1]
     assert handled == streamed
+
+
+@pytest.mark.asyncio
+async def test_balance_focus_blocks_a_ranking_mirror_in_the_pipeline() -> None:
+    mirrored_ranking = TopMovements(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        rank=1,
+    )
+    planner = PlannerSpy(PlanningResult.planned(previous_plan()))
+    ledger = LedgerSpy()
+
+    result = await ask(
+        make_handler(planner, ledger),
+        "y el segundo",
+        Conversation(answered_the_balance=True, last_plan=mirrored_ranking),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == ["y el segundo"]
+    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert ledger.plans == [previous_plan()]
+
+
+@pytest.mark.asyncio
+async def test_comparison_focus_blocks_shifting_only_the_latest_mirror() -> None:
+    earlier = FinancialPlan(
+        direction=Direction.EXPENSE,
+        date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)),
+        only_account_id=ACCOUNT,
+    )
+    latest = FinancialPlan(
+        direction=Direction.EXPENSE,
+        date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
+        only_account_id=ACCOUNT,
+    )
+    comparison = ComparisonPlan(earlier=earlier, latest=latest)
+    planned = previous_plan()
+    planner = PlannerSpy(PlanningResult.planned(planned))
+    ledger = LedgerSpy()
+
+    result = await ask(
+        make_handler(planner, ledger),
+        "y el año anterior",
+        Conversation(
+            last_plan=latest,
+            prior_plan=earlier,
+            last_comparison=comparison,
+        ),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert planner.calls == ["y el año anterior"]
+    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].categories == planned.categories
+    assert ledger.plans[0].date_range == AbsoluteRange(date(2025, 1, 1), date(2025, 12, 31))
+    assert ledger.plans[0].date_range != AbsoluteRange(date(2025, 7, 1), date(2025, 7, 31))

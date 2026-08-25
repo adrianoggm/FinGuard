@@ -65,6 +65,7 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_context import (
     ComparisonFocus,
+    ContinuationBase,
     ContinuationSource,
     PendingRatioFocus,
     QueryFocus,
@@ -718,8 +719,11 @@ class AskFinancialQuestionHandler:
             )
             return
         previous = was.last_plan
-        planning_previous = previous if isinstance(previous, FinancialPlan) else None
-        force_follow_up = False
+        continuation = (
+            ContinuationBase(previous, ContinuationSource.LAST_ANSWER)
+            if isinstance(previous, FinancialPlan)
+            else None
+        )
 
         learned_alias = await self._learn_counterparty_alias(query)
         if learned_alias is None:
@@ -760,6 +764,16 @@ class AskFinancialQuestionHandler:
                 today=query.today,
             )
         intent = analysis.intent
+        if intent is Intent.CORRECTION:
+            continuation = (
+                ContinuationBase(
+                    previous,
+                    ContinuationSource.LAST_ANSWER,
+                    force_follow_up=True,
+                )
+                if isinstance(previous, FinancialPlan)
+                else None
+            )
 
         # Resolve account-scope choices only after the deterministic intent router has had a
         # chance to claim courtesy, balance, payment and transfer turns.  Those intents are
@@ -1277,15 +1291,9 @@ class AskFinancialQuestionHandler:
                     ),
                 )
                 return
-            if isinstance(previous, FinancialPlan):
-                # The correction supplies a replacement. It is a patch even if its wording looks
-                # like a complete sentence; the fields it does not correct remain authoritative.
-                planning_previous = previous
-                force_follow_up = True
-            else:
-                # Ranking patches have a different shape. Until they are expressible, re-read the
-                # correction rather than pretending an aggregate context can represent one.
-                planning_previous = None
+            # The correction supplies a replacement. Its forced continuation was selected as soon
+            # as the intent became known, before any deterministic branch could return. Ranking
+            # patches have a different shape and therefore selected no continuation there.
 
         deeper = self._next_in_ranking(query)
         if deeper is not None:
@@ -1446,28 +1454,23 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, finished)
             return
 
-        pending_base = self._pending_patch_base(query)
-        if pending_base is not None:
-            planning_previous = pending_base
-            force_follow_up = True
+        pending_continuation = self._pending_continuation(query)
+        if pending_continuation is not None:
+            continuation = pending_continuation
 
-        if not force_follow_up and _starts_new_financial_scope(query.sentence, today=query.today):
-            planning_previous = None
+        if (
+            continuation is not None
+            and not continuation.force_follow_up
+            and _starts_new_financial_scope(query.sentence, today=query.today)
+        ):
+            continuation = None
 
         context = planning_context(
             was,
             today=query.today,
             reporting_timezone=query.reporting_timezone,
             analysis=analysis,
-            continuation_plan=(
-                planning_previous if isinstance(planning_previous, FinancialPlan) else None
-            ),
-            continuation_source=(
-                ContinuationSource.ACTIVE_CLARIFICATION
-                if pending_base is not None
-                else ContinuationSource.LAST_ANSWER
-            ),
-            force_follow_up=force_follow_up,
+            continuation=continuation,
         )
 
         yield Stage("planning")
@@ -2201,7 +2204,7 @@ class AskFinancialQuestionHandler:
             return None
         return finished
 
-    def _pending_patch_base(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
 
         A compound reply such as "este año, pero cuéntalas" supplies the missing window and also
@@ -2219,7 +2222,11 @@ class AskFinancialQuestionHandler:
         draft = active.draft
         complete = draft.into_plan()
         if complete is not None:
-            return complete
+            return ContinuationBase(
+                complete,
+                ContinuationSource.ACTIVE_CLARIFICATION,
+                force_follow_up=True,
+            )
 
         window = window_words.window_in(
             query.sentence, asked_for=active.awaiting, today=query.today
@@ -2227,7 +2234,11 @@ class AskFinancialQuestionHandler:
         if window is None:
             return None
         try:
-            return draft.with_window(window)
+            return ContinuationBase(
+                draft.with_window(window),
+                ContinuationSource.ACTIVE_CLARIFICATION,
+                force_follow_up=True,
+            )
         except InvalidValueError:
             return None
 
@@ -2243,7 +2254,8 @@ class AskFinancialQuestionHandler:
         so "¿y el tercero?" after the largest expense came back with the second — the recogniser
         saw an ordinal and the position it saw was thrown away.
         """
-        previous = query.conversation.last_plan
+        focus = focus_of(query.conversation)
+        previous = focus.current if isinstance(focus, QueryFocus) else None
         if not isinstance(previous, TopMovements):
             return None
         ordinal = capability_guard.ordinal_in(query.sentence)
@@ -2270,7 +2282,8 @@ class AskFinancialQuestionHandler:
         covers, and this service deliberately does not know — banking owns the calendar, and two
         implementations of it is the two-clocks bug in a different costume.
         """
-        previous = query.conversation.last_plan
+        focus = focus_of(query.conversation)
+        previous = focus.current if isinstance(focus, QueryFocus) else None
         if previous is None or previous.date_range is None:
             return None
         moved = window_words.a_year_earlier(query.sentence, previous.date_range)
@@ -4877,11 +4890,13 @@ def _stored_percentage_pair(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
     """The two compatible windows behind a bare "en porcentaje"."""
-    stored = query.conversation.last_comparison
-    if stored is not None:
-        return stored
-    latest = query.conversation.last_plan
-    earlier = query.conversation.prior_plan
+    focus = focus_of(query.conversation)
+    if isinstance(focus, ComparisonFocus):
+        return focus.value
+    if not isinstance(focus, QueryFocus):
+        return None
+    latest = focus.current
+    earlier = focus.previous
     if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
         return None
     if _same_window(latest, earlier) or latest.metric is not earlier.metric:

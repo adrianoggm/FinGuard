@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import (
     AccountSelection,
     Conversation,
@@ -62,6 +63,10 @@ class ContinuationBase:
     source: ContinuationSource
     force_follow_up: bool = False
 
+    def __post_init__(self) -> None:
+        if self.source is ContinuationSource.ACTIVE_CLARIFICATION and not self.force_follow_up:
+            raise InvalidValueError("an active clarification must force the follow-up")
+
 
 @dataclass(frozen=True)
 class PlanningContext:
@@ -96,20 +101,13 @@ def planning_context(
     today: date,
     reporting_timezone: str,
     analysis: TurnAnalysis,
-    continuation_plan: FinancialPlan | None,
-    continuation_source: ContinuationSource = ContinuationSource.LAST_ANSWER,
-    force_follow_up: bool = False,
+    continuation: ContinuationBase | None,
 ) -> PlanningContext:
     """Project only the typed facts planning needs; never expose mutable wire state."""
     focus = focus_of(conversation)
-    can_continue = continuation_plan is not None and (
-        continuation_source is ContinuationSource.ACTIVE_CLARIFICATION
-        or (isinstance(focus, QueryFocus) and focus.current is continuation_plan)
-    )
-    continuation = (
-        ContinuationBase(continuation_plan, continuation_source, force_follow_up)
-        if can_continue and continuation_plan is not None
-        else None
+    can_continue = continuation is not None and (
+        continuation.source is ContinuationSource.ACTIVE_CLARIFICATION
+        or (isinstance(focus, QueryFocus) and focus.current is continuation.plan)
     )
     return PlanningContext(
         today=today,
@@ -117,7 +115,7 @@ def planning_context(
         intent=analysis.intent,
         relation=analysis.relation,
         focus=focus,
-        continuation=continuation,
+        continuation=continuation if can_continue else None,
         awaiting=conversation.awaiting or conversation.last_asked,
         account_selection=conversation.account_selection,
     )
