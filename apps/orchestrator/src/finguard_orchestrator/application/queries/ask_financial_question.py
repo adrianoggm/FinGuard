@@ -20,6 +20,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from finguard_orchestrator.application.bus.query_bus import Query
+from finguard_orchestrator.application.contextual_query_planner import LegacyPlannerInContext
 from finguard_orchestrator.domain.constants import (
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
@@ -62,12 +63,28 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     workflow_of,
 )
+from finguard_orchestrator.domain.models.planning_context import (
+    ComparisonFocus,
+    ContinuationBase,
+    ContinuationSource,
+    PendingRatioFocus,
+    QueryFocus,
+    RatioFocus,
+    focus_of,
+    planning_context,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.turn_analysis import (
+    TurnAnalysis,
+    TurnFocus,
+    TurnRelation,
+)
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
+from finguard_orchestrator.domain.ports.contextual_query_planner import ContextualQueryPlannerPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
@@ -76,6 +93,7 @@ from finguard_orchestrator.domain.services import (
     answer_writer,
     capability_guard,
     category_words,
+    continuation_patch,
     courtesy,
     cumulative_calculator,
     entity_alias_words,
@@ -94,6 +112,7 @@ from finguard_orchestrator.domain.services import (
     recurrence_analyzer,
     spanish,
     spanish_numbers,
+    turn_analyzer,
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
@@ -488,6 +507,29 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # here. That keeps the handler usable on its own — every test and the corpus call it that way —
     # without letting a second reading exist on the path a user is actually on.
     intent: Intent | None = None
+    analysis: TurnAnalysis | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            self.intent is not None
+            and self.analysis is not None
+            and self.intent is not self.analysis.intent
+        ):
+            raise InvalidValueError("intent and turn analysis disagree")
+
+
+def _legacy_turn_analysis(intent: Intent, conversation: Conversation) -> TurnAnalysis:
+    """Supply relation/focus for direct callers that predate the edge analysis handoff."""
+    if conversation.awaiting is not None or conversation.last_asked is not None:
+        relation = TurnRelation.ANSWER_TO_SLOT
+        focus = TurnFocus.ACTIVE_WORKFLOW
+    elif intent is Intent.CORRECTION:
+        relation = TurnRelation.CORRECTION
+        focus = TurnFocus.LAST_ANSWER
+    else:
+        relation = TurnRelation.NEW_REQUEST
+        focus = TurnFocus.NEW_REQUEST
+    return TurnAnalysis(intent=intent, relation=relation, focus=focus)
 
 
 @dataclass(frozen=True)
@@ -535,7 +577,7 @@ class AskFinancialQuestionHandler:
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
     ) -> None:
-        self._planner = planner
+        self._planner: ContextualQueryPlannerPort = LegacyPlannerInContext(planner)
         self._queries = queries
         self._policy = policy
         self._read_attempts = read_attempts
@@ -677,8 +719,11 @@ class AskFinancialQuestionHandler:
             )
             return
         previous = was.last_plan
-        planning_previous = previous if isinstance(previous, FinancialPlan) else None
-        force_follow_up = False
+        continuation = (
+            ContinuationBase(previous, ContinuationSource.LAST_ANSWER)
+            if isinstance(previous, FinancialPlan)
+            else None
+        )
 
         learned_alias = await self._learn_counterparty_alias(query)
         if learned_alias is None:
@@ -707,7 +752,28 @@ class AskFinancialQuestionHandler:
             yield replace(restored, text=f"He vuelto a la consulta anterior. {restored.text}")
             return
 
-        intent = query.intent or await self._interpreter.interpret(query.sentence, conversation=was)
+        if query.analysis is not None:
+            analysis = query.analysis
+        elif query.intent is not None:
+            analysis = _legacy_turn_analysis(query.intent, was)
+        else:
+            analysis = await turn_analyzer.analyze(
+                query.sentence,
+                conversation=was,
+                interpreter=self._interpreter,
+                today=query.today,
+            )
+        intent = analysis.intent
+        if intent is Intent.CORRECTION:
+            continuation = (
+                ContinuationBase(
+                    previous,
+                    ContinuationSource.LAST_ANSWER,
+                    force_follow_up=True,
+                )
+                if isinstance(previous, FinancialPlan)
+                else None
+            )
 
         # Resolve account-scope choices only after the deterministic intent router has had a
         # chance to claim courtesy, balance, payment and transfer turns.  Those intents are
@@ -1225,15 +1291,9 @@ class AskFinancialQuestionHandler:
                     ),
                 )
                 return
-            if isinstance(previous, FinancialPlan):
-                # The correction supplies a replacement. It is a patch even if its wording looks
-                # like a complete sentence; the fields it does not correct remain authoritative.
-                planning_previous = previous
-                force_follow_up = True
-            else:
-                # Ranking patches have a different shape. Until they are expressible, re-read the
-                # correction rather than pretending an aggregate context can represent one.
-                planning_previous = None
+            # The correction supplies a replacement. Its forced continuation was selected as soon
+            # as the intent became known, before any deterministic branch could return. Ranking
+            # patches have a different shape and therefore selected no continuation there.
 
         deeper = self._next_in_ranking(query)
         if deeper is not None:
@@ -1394,30 +1454,48 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, finished)
             return
 
-        pending_base = self._pending_patch_base(query)
-        if pending_base is not None:
-            planning_previous = pending_base
-            force_follow_up = True
+        pending_continuation = self._pending_continuation(query)
+        if pending_continuation is not None:
+            continuation = pending_continuation
 
-        if not force_follow_up and _starts_new_financial_scope(query.sentence, today=query.today):
-            planning_previous = None
+        if (
+            continuation is not None
+            and not continuation.force_follow_up
+            and _starts_new_financial_scope(query.sentence, today=query.today)
+        ):
+            continuation = None
+
+        context = planning_context(
+            was,
+            today=query.today,
+            reporting_timezone=query.reporting_timezone,
+            analysis=analysis,
+            continuation=continuation,
+        )
 
         yield Stage("planning")
-        if force_follow_up:
-            planned = await self._planner.plan(
-                query.sentence,
-                today=query.today,
-                previous=planning_previous,
-                force_follow_up=True,
-            )
+        grounded = continuation_patch.read(query.sentence, today=context.today)
+        grounded_plan: FinancialPlan | None = None
+        if (
+            grounded.status is continuation_patch.PatchStatus.APPLIED
+            and grounded.patch is not None
+            and context.continuation is not None
+        ):
+            try:
+                grounded_plan = grounded.patch.apply_to(context.continuation.plan)
+            except InvalidValueError:
+                # A syntactically grounded patch can still violate a plan invariant (for example,
+                # a cumulative metric grouped by category). Fall through to the planner instead
+                # of turning a conservative recogniser into a 500.
+                grounded_plan = None
+        if grounded_plan is not None:
+            # Closed-vocabulary continuation: retain the validated plan and still run the
+            # ordinary facts, verifier, and answer path below.
+            planned = PlanningResult.planned(grounded_plan)
         else:
             planned = await self._planner.plan(
                 query.sentence,
-                today=query.today,
-                # The follow-up merge is expressed over an aggregate's fields, so a ranking is not
-                # context the prompt can inherit from. An ordinal follow-up is handled above, before
-                # the model, which is the case that matters.
-                previous=planning_previous,
+                context=context,
             )
 
         if not planned.is_answerable:
@@ -1457,8 +1535,10 @@ class AskFinancialQuestionHandler:
                     "inherited": _window_of(previous),
                 },
             )
-        correcting = force_follow_up or facts.corrects
-        if correcting and planning_previous is not None and isinstance(checked, FinancialPlan):
+        correcting = (
+            context.continuation is not None and context.continuation.force_follow_up
+        ) or facts.corrects
+        if correcting and context.continuation is not None and isinstance(checked, FinancialPlan):
             # A correction patches. The same turn that lost the window also lost the category the
             # correction never mentioned, and an empty list from a model cannot be told apart from
             # a filter it simply did not copy.
@@ -1467,7 +1547,7 @@ class AskFinancialQuestionHandler:
             # rejects *and* replaces, which the router deliberately does not treat as a bare
             # correction — that path is for a rejection with nothing behind it. The sentence is
             # still a patch, and its unmentioned fields still have to survive.
-            checked = explicit_facts.restored_filters(checked, planning_previous, facts)
+            checked = explicit_facts.restored_filters(checked, context.continuation.plan, facts)
 
         broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
         if broken is not None:
@@ -2124,7 +2204,7 @@ class AskFinancialQuestionHandler:
             return None
         return finished
 
-    def _pending_patch_base(self, query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    def _pending_continuation(self, query: AskFinancialQuestionQuery) -> ContinuationBase | None:
         """The validated fields behind an active clarification, completed as far as this turn can.
 
         A compound reply such as "este año, pero cuéntalas" supplies the missing window and also
@@ -2142,7 +2222,11 @@ class AskFinancialQuestionHandler:
         draft = active.draft
         complete = draft.into_plan()
         if complete is not None:
-            return complete
+            return ContinuationBase(
+                complete,
+                ContinuationSource.ACTIVE_CLARIFICATION,
+                force_follow_up=True,
+            )
 
         window = window_words.window_in(
             query.sentence, asked_for=active.awaiting, today=query.today
@@ -2150,7 +2234,11 @@ class AskFinancialQuestionHandler:
         if window is None:
             return None
         try:
-            return draft.with_window(window)
+            return ContinuationBase(
+                draft.with_window(window),
+                ContinuationSource.ACTIVE_CLARIFICATION,
+                force_follow_up=True,
+            )
         except InvalidValueError:
             return None
 
@@ -2166,7 +2254,8 @@ class AskFinancialQuestionHandler:
         so "¿y el tercero?" after the largest expense came back with the second — the recogniser
         saw an ordinal and the position it saw was thrown away.
         """
-        previous = query.conversation.last_plan
+        focus = focus_of(query.conversation)
+        previous = focus.current if isinstance(focus, QueryFocus) else None
         if not isinstance(previous, TopMovements):
             return None
         ordinal = capability_guard.ordinal_in(query.sentence)
@@ -2193,7 +2282,8 @@ class AskFinancialQuestionHandler:
         covers, and this service deliberately does not know — banking owns the calendar, and two
         implementations of it is the two-clocks bug in a different costume.
         """
-        previous = query.conversation.last_plan
+        focus = focus_of(query.conversation)
+        previous = focus.current if isinstance(focus, QueryFocus) else None
         if previous is None or previous.date_range is None:
             return None
         moved = window_words.a_year_earlier(query.sentence, previous.date_range)
@@ -4411,11 +4501,13 @@ def _period_comparison_plans(
     """Resolve a comparison pronoun only when the stored plans differ solely by window."""
     if not _PERIOD_COMPARISON_REFERENCE.fullmatch(_clean_turn(query.sentence)):
         return None
-    stored = query.conversation.last_comparison
-    if stored is not None:
-        return stored
-    latest = query.conversation.last_plan
-    earlier = query.conversation.prior_plan
+    focus = focus_of(query.conversation)
+    if isinstance(focus, ComparisonFocus):
+        return focus.value
+    if not isinstance(focus, QueryFocus):
+        return None
+    latest = focus.current
+    earlier = focus.previous
     if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
         return None
     if (latest.period, latest.date_range) == (earlier.period, earlier.date_range):
@@ -4462,7 +4554,8 @@ def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft |
     folded = spanish.folded(query.sentence)
     cleaned = _clean_turn(query.sentence)
 
-    pending = query.conversation.pending_ratio
+    focus = focus_of(query.conversation)
+    pending = focus.value if isinstance(focus, PendingRatioFocus) else None
     if (
         pending is not None
         and facts.window is not None
@@ -4471,7 +4564,7 @@ def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft |
     ):
         return pending.with_window(facts.window)
 
-    previous_ratio = query.conversation.last_ratio
+    previous_ratio = focus.value if isinstance(focus, RatioFocus) else None
     if (
         previous_ratio is not None
         and previous_ratio.kind is not RatioKind.PERCENT_CHANGE
@@ -4797,11 +4890,13 @@ def _stored_percentage_pair(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
     """The two compatible windows behind a bare "en porcentaje"."""
-    stored = query.conversation.last_comparison
-    if stored is not None:
-        return stored
-    latest = query.conversation.last_plan
-    earlier = query.conversation.prior_plan
+    focus = focus_of(query.conversation)
+    if isinstance(focus, ComparisonFocus):
+        return focus.value
+    if not isinstance(focus, QueryFocus):
+        return None
+    latest = focus.current
+    earlier = focus.previous
     if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
         return None
     if _same_window(latest, earlier) or latest.metric is not earlier.metric:
@@ -5321,7 +5416,29 @@ def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
 
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Patch explicit filters and calculations onto the last validated financial query."""
-    previous = query.conversation.last_plan
+    focus = focus_of(query.conversation)
+    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
+    folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
+    facts = explicit_facts.read(query.sentence, today=query.today)
+    if isinstance(focus, QueryFocus):
+        previous = focus.current
+    elif (
+        isinstance(focus, ComparisonFocus)
+        and facts.window is not None
+        and facts.metric is None
+        and facts.group_by is None
+        and facts.direction is None
+        and not facts.names_a_category
+        and not facts.excluded_categories
+        and not facts.excluded_merchants
+        and continuation_patch.read(query.sentence, today=query.today).status
+        is not continuation_patch.PatchStatus.AMBIGUOUS
+    ):
+        # A window-only turn after a comparison selects one view of the same measure. This is a
+        # comparison operation, not permission for generic patches to mutate one operand.
+        previous = focus.value.latest
+    else:
+        previous = None
     if not isinstance(previous, FinancialPlan):
         return None
 
@@ -5352,10 +5469,6 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     # a bare window over a plan that happens to be internal.
     if _internal_movement_request(query) is not None or _account_follow_up_plan(query) is not None:
         return None
-
-    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
-    folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
-    facts = explicit_facts.read(query.sentence, today=query.today)
 
     if (
         previous.metric is Metric.CUMULATIVE
@@ -5389,13 +5502,25 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     if (
         facts.group_by
         in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
+        and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
         and len(folded.split()) <= 7
         and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
     ):
         # "Sepáralo por comercio" changes only the presentation dimension of the query in view.
         # Sending that three-word patch to a model made it re-create the window and filters, which
         # is both slower and an opportunity to silently widen the result.
-        return explicit_facts.enforce(replace(previous, group_by=facts.group_by), facts)
+        return explicit_facts.enforce(
+            replace(
+                previous,
+                group_by=facts.group_by,
+                group_limit=(
+                    None
+                    if facts.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+                    else previous.group_limit
+                ),
+            ),
+            facts,
+        )
 
     if facts.excluded_categories or facts.excluded_merchants:
         # A negative filter patches the validated query in view. No model needs to re-emit the
@@ -5418,6 +5543,8 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
     if (
         facts.window is not None
         and not facts.names_a_category
+        and continuation_patch.read(query.sentence, today=query.today).status
+        is not continuation_patch.PatchStatus.AMBIGUOUS
         and facts.metric is None
         and facts.direction is None
         and len(folded.split()) <= 8
