@@ -12,9 +12,17 @@ from typing import Any
 
 import pytest
 
+from finguard_orchestrator.application.contextual_query_planner import LegacyPlannerInContext
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.models.planning_context import (
+    ContinuationBase,
+    ContinuationSource,
+    PlanningContext,
+)
+from finguard_orchestrator.domain.models.turn_analysis import TurnRelation
 from finguard_orchestrator.domain.services import window_words
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -457,6 +465,54 @@ async def test_a_forced_patch_merges_even_when_the_model_calls_it_a_new_question
     assert result.plan.period == RelativePeriod(Period.THIS_YEAR)
     assert result.plan.categories == ("HOUSING_RENT",)
     assert result.plan.metric is Metric.COUNT
+
+
+async def test_context_adapter_preserves_the_legacy_prompt_and_result() -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("HOUSING_RENT",),
+    )
+    body = json.dumps(
+        {
+            **FULL,
+            "period": "THIS_YEAR",
+            "metric": "COUNT",
+            "isFollowUp": False,
+            "changed": ["metric"],
+        }
+    )
+    legacy_provider = SequenceProvider([body])
+    contextual_provider = SequenceProvider([body])
+    legacy = planner_for(legacy_provider)
+    contextual = LegacyPlannerInContext(planner_for(contextual_provider))
+
+    expected = await legacy.plan(
+        "¿cuántas veces este año?",
+        today=TODAY,
+        previous=previous,
+        force_follow_up=True,
+    )
+    actual = await contextual.plan(
+        "¿cuántas veces este año?",
+        context=PlanningContext(
+            today=TODAY,
+            reporting_timezone="Europe/Madrid",
+            intent=Intent.FINANCIAL_QUERY,
+            relation=TurnRelation.ANSWER_TO_SLOT,
+            focus=None,
+            continuation=ContinuationBase(
+                previous,
+                ContinuationSource.ACTIVE_CLARIFICATION,
+                force_follow_up=True,
+            ),
+            awaiting=None,
+            account_selection=None,
+        ),
+    )
+
+    assert actual == expected
+    assert contextual_provider.prompts == legacy_provider.prompts
 
 
 async def test_a_plan_with_no_window_asks_for_the_period() -> None:

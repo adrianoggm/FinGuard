@@ -145,14 +145,17 @@ async def test_autocontained_question_uses_planner() -> None:
     result = await ask(make_handler(planner, ledger), "Cuánto gasté en ocio durante 2025")
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == ["Cuánto gasté en ocio durante 2025"]
+    assert planner.arguments == [{"today": TODAY, "previous": None}]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "sentence",
-    ["No, durante 2025 en Amazon", "Cuánto gasté durante 2025"],
+    ("sentence", "inherits_previous"),
+    [("No, durante 2025 en Amazon", True), ("Cuánto gasté durante 2025", False)],
 )
-async def test_non_grounded_statuses_fall_through_to_planner(sentence: str) -> None:
+async def test_non_grounded_statuses_fall_through_to_planner(
+    sentence: str, *, inherits_previous: bool
+) -> None:
     planner = PlannerSpy(PlanningResult.planned(previous_plan()))
     ledger = LedgerSpy()
 
@@ -164,6 +167,12 @@ async def test_non_grounded_statuses_fall_through_to_planner(sentence: str) -> N
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == [sentence]
+    expected = (
+        {"today": TODAY, "previous": previous_plan()}
+        if inherits_previous
+        else {"today": TODAY, "previous": None}
+    )
+    assert planner.arguments == [expected]
 
 
 @pytest.mark.asyncio
@@ -216,7 +225,7 @@ async def test_special_focus_never_reuses_the_mirrored_single_plan(
     await ask(make_handler(planner, LedgerSpy()), sentence, conversation)
 
     assert planner.calls == [sentence]
-    assert planner.arguments[-1]["previous"] is None
+    assert planner.arguments[-1] == {"today": TODAY, "previous": None}
 
 
 @pytest.mark.asyncio

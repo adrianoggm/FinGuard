@@ -20,6 +20,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from finguard_orchestrator.application.bus.query_bus import Query
+from finguard_orchestrator.application.contextual_query_planner import LegacyPlannerInContext
 from finguard_orchestrator.domain.constants import (
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
@@ -82,6 +83,7 @@ from finguard_orchestrator.domain.ports.account_directory import AccountDirector
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
+from finguard_orchestrator.domain.ports.contextual_query_planner import ContextualQueryPlannerPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
 from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
@@ -574,7 +576,7 @@ class AskFinancialQuestionHandler:
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
     ) -> None:
-        self._planner = planner
+        self._planner: ContextualQueryPlannerPort = LegacyPlannerInContext(planner)
         self._queries = queries
         self._policy = policy
         self._read_attempts = read_attempts
@@ -1487,21 +1489,10 @@ class AskFinancialQuestionHandler:
             # Closed-vocabulary continuation: retain the validated plan and still run the
             # ordinary facts, verifier, and answer path below.
             planned = PlanningResult.planned(grounded_plan)
-        elif context.continuation is not None and context.continuation.force_follow_up:
-            planned = await self._planner.plan(
-                query.sentence,
-                today=context.today,
-                previous=context.continuation.plan,
-                force_follow_up=True,
-            )
         else:
             planned = await self._planner.plan(
                 query.sentence,
-                today=context.today,
-                # The follow-up merge is expressed over an aggregate's fields, so a ranking is not
-                # context the prompt can inherit from. An ordinal follow-up is handled above, before
-                # the model, which is the case that matters.
-                previous=(context.continuation.plan if context.continuation else None),
+                context=context,
             )
 
         if not planned.is_answerable:
@@ -1541,8 +1532,10 @@ class AskFinancialQuestionHandler:
                     "inherited": _window_of(previous),
                 },
             )
-        correcting = force_follow_up or facts.corrects
-        if correcting and planning_previous is not None and isinstance(checked, FinancialPlan):
+        correcting = (
+            context.continuation is not None and context.continuation.force_follow_up
+        ) or facts.corrects
+        if correcting and context.continuation is not None and isinstance(checked, FinancialPlan):
             # A correction patches. The same turn that lost the window also lost the category the
             # correction never mentioned, and an empty list from a model cannot be told apart from
             # a filter it simply did not copy.
@@ -1551,7 +1544,7 @@ class AskFinancialQuestionHandler:
             # rejects *and* replaces, which the router deliberately does not treat as a bare
             # correction — that path is for a rejection with nothing behind it. The sentence is
             # still a patch, and its unmentioned fields still have to survive.
-            checked = explicit_facts.restored_filters(checked, planning_previous, facts)
+            checked = explicit_facts.restored_filters(checked, context.continuation.plan, facts)
 
         broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
         if broken is not None:
