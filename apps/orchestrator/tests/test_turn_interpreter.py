@@ -21,11 +21,12 @@ a model is *good enough* is the corpus, which knows the right answer for 879 tur
 
 import logging
 import uuid
+from dataclasses import replace
 
 import pytest
 from support import episodes
 
-from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
     FinancialClarification,
@@ -35,20 +36,28 @@ from finguard_orchestrator.domain.models.conversation import (
     TransferInProgress,
     Turn,
 )
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+)
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import intent_router, turn_interpreters
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
+from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.interpreting import turn_prompt
 from finguard_orchestrator.infrastructure.interpreting.llm_turn_interpreter import (
     SCHEMA,
     LlmTurnInterpreter,
 )
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 IDLE = Conversation()
 ANSWERED = Conversation(
@@ -56,6 +65,94 @@ ANSWERED = Conversation(
         direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH)
     )
 )
+
+
+def test_second_read_uses_authorized_typed_reference_only() -> None:
+    plan = ANSWERED.last_plan
+    assert plan is not None
+    canonical = answered_with_result(
+        ANSWERED,
+        ResultReference(source_query=plan, group_by=GroupBy.MERCHANT, group_key="Mercadona"),
+    )
+    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", canonical) is False
+    assert (
+        turn_interpreters._worth_a_second_read(
+            "¿y esa categoría?",
+            replace(
+                canonical,
+                result_reference=None,
+                referenced_group_by=None,
+                referenced_group_key=None,
+            ),
+        )
+        is True
+    )
+
+
+def test_singleton_category_without_explicit_reference_allows_second_read() -> None:
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.LAST_MONTH),
+        categories=("GROCERIES",),
+    )
+    conversation = Conversation(last_plan=plan)
+    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", conversation) is True
+
+
+def test_second_read_after_legacy_reference_round_trip_matches_canonical() -> None:
+    plan = ANSWERED.last_plan
+    assert plan is not None
+    canonical = answered_with_result(
+        ANSWERED, ResultReference(plan, group_by=GroupBy.CATEGORY, group_key="GROCERIES")
+    )
+    payload = conversation_mapper.to_payload(canonical)
+    echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
+    legacy = conversation_mapper.to_domain(echoed)
+    assert legacy.result_reference is None
+    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", canonical) is False
+    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", legacy) is False
+
+
+@pytest.mark.parametrize("kind", ["ratio", "pending_ratio", "comparison", "balance"])
+def test_stale_result_memory_does_not_suppress_second_read(kind: str) -> None:
+    window = RelativePeriod(Period.THIS_YEAR)
+    if kind == "ratio":
+        value = RatioPlan(
+            FinancialPlan(Direction.EXPENSE, period=window),
+            FinancialPlan(Direction.INCOME, period=window),
+            RatioKind.SHARE,
+        )
+        conversation = Conversation(
+            last_ratio=value, referenced_group_by=GroupBy.CATEGORY, referenced_group_key="GROCERIES"
+        )
+    elif kind == "pending_ratio":
+        value = RatioDraft(
+            FinancialPlanDraft(direction=Direction.EXPENSE),
+            FinancialPlanDraft(direction=Direction.INCOME),
+            RatioKind.SHARE,
+        )
+        conversation = Conversation(
+            pending_ratio=value,
+            referenced_group_by=GroupBy.CATEGORY,
+            referenced_group_key="GROCERIES",
+        )
+    elif kind == "comparison":
+        earlier = FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH))
+        latest = FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+        value = ComparisonPlan(earlier, latest)
+        conversation = Conversation(
+            last_comparison=value,
+            referenced_group_by=GroupBy.CATEGORY,
+            referenced_group_key="GROCERIES",
+        )
+    else:
+        conversation = Conversation(
+            last_plan=ANSWERED.last_plan,
+            answered_the_balance=True,
+            referenced_group_by=GroupBy.CATEGORY,
+            referenced_group_key="GROCERIES",
+        )
+    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", conversation) is True
 
 
 class Says:

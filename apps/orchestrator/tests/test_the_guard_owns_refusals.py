@@ -617,6 +617,9 @@ async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> 
     assert answer.text.startswith("El siguiente es restaurantes: 10,00 €")
     assert answer.conversation.referenced_group_by is GroupBy.CATEGORY
     assert answer.conversation.referenced_group_key == "RESTAURANTS"
+    assert answer.conversation.result_reference is not None
+    assert answer.conversation.result_reference.source_query is answer.conversation.last_plan
+    assert answer.conversation.result_reference.category == "RESTAURANTS"
 
     selected = await asked(
         "¿Cuánto gasté en esa categoría?",
@@ -629,6 +632,59 @@ async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> 
     assert selected.outcome == PlanningOutcome.PLANNED.value
     assert ledger.plan is not None
     assert ledger.plan.categories == ("RESTAURANTS",)
+
+
+async def test_next_merchant_keeps_the_category_scope_and_visible_evidence() -> None:
+    evidence = (uuid.UUID(int=71), uuid.UUID(int=72))
+
+    class MerchantBreakdownLedger(Ledger):
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plan = plan
+            movements = tuple(
+                Movement(
+                    occurred_at=datetime(2026, 8, 5 - index, 10, 0, tzinfo=UTC),
+                    description=merchant,
+                    amount_minor=-amount,
+                    direction="EXPENSE",
+                    merchant_name=merchant,
+                    category="GROCERIES",
+                    currency="EUR",
+                    transaction_id=str(transaction_id),
+                )
+                for index, (merchant, amount, transaction_id) in enumerate(
+                    zip(("Mercadona", "Carrefour"), (6_000, 1_000), evidence, strict=True)
+                )
+            )
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=7_000,
+                movement_count=2,
+                groups=(Group("Mercadona", 6_000, 1), Group("Carrefour", 1_000, 1)),
+                movements=movements,
+            )
+
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MERCHANT,
+    )
+    ledger = MerchantBreakdownLedger()
+
+    answer = await asked(
+        "¿Y después de eso?",
+        GivesUp(),
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    reference = answer.conversation.result_reference
+    assert reference is not None
+    assert reference.source_query is answer.conversation.last_plan
+    assert reference.category == "GROCERIES"
+    assert reference.group_by is GroupBy.MERCHANT
+    assert reference.group_key == "Carrefour"
+    assert reference.transaction_ids == evidence
 
 
 async def test_a_pronoun_can_ask_for_the_ranked_movements_date() -> None:

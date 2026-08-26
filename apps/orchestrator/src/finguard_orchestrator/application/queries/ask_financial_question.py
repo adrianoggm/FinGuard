@@ -2991,18 +2991,22 @@ class AskFinancialQuestionHandler:
             reporting_timezone=query.reporting_timezone,
         )
         if not difference and len(groups) >= 2:
+            # Re-read the typed reference projected by ``_answered``.  In particular, do not
+            # reconstruct evidence from the legacy wire fields: those may be stale or incomplete.
+            reference = result_reference_of(result.conversation, focus_of(result.conversation))
+            assert reference is not None
+            assert reference.source_query is plan
+            reference = replace(
+                reference,
+                category=(
+                    groups[1].key if plan.group_by is GroupBy.CATEGORY else reference.category
+                ),
+                group_by=plan.group_by,
+                group_key=groups[1].key,
+            )
             result = replace(
                 result,
-                conversation=focused_on_result(
-                    result.conversation,
-                    ResultReference(
-                        source_query=plan,
-                        category=(groups[1].key if plan.group_by is GroupBy.CATEGORY else None),
-                        group_by=plan.group_by,
-                        group_key=groups[1].key,
-                        transaction_ids=result.conversation.referenced_transaction_ids,
-                    ),
-                ),
+                conversation=focused_on_result(result.conversation, reference),
             )
         return replace(result, text=text)
 

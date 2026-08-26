@@ -16,6 +16,8 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import focus_of
+from finguard_orchestrator.domain.models.result_reference import result_reference_of
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import intent_router, spanish
 from finguard_orchestrator.domain.services.intent_router import Intent
@@ -158,9 +160,14 @@ def _worth_a_second_read(sentence: str, conversation: Conversation) -> bool:
     is no context for a model to recover.
     """
     folded = spanish.folded(sentence)
-    if _GROUNDED_RESULT_REFERENCE.search(folded) is not None and (
-        conversation.referenced_group_by is not None
-        or bool(conversation.referenced_transaction_ids)
+    reference = result_reference_of(conversation, focus_of(conversation))
+    if (
+        _GROUNDED_RESULT_REFERENCE.search(folded) is not None
+        and reference is not None
+        and (
+            (reference.group_by is not None and reference.group_key is not None)
+            or bool(reference.transaction_ids)
+        )
     ):
         # The previous answer already supplies the missing noun. A model cannot improve on a typed
         # category/merchant/account row or an exact UUID set; it can only redirect the intent.
