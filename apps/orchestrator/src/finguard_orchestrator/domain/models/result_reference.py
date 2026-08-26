@@ -30,6 +30,19 @@ _REFERENCEABLE_GROUPS = {
 }
 
 
+def _legacy_projection(
+    reference: "ResultReference",
+) -> tuple[str | None, GroupBy | None, str | None, tuple[UUID, ...]]:
+    category = reference.category
+    group_by = reference.group_by
+    group_key = reference.group_key
+    if category is not None and group_by is None:
+        group_by, group_key = GroupBy.CATEGORY, category
+    if group_by is GroupBy.CATEGORY and category is None:
+        category = group_key
+    return category, group_by, group_key, reference.transaction_ids
+
+
 @dataclass(frozen=True)
 class ResultReference:
     """The row and evidence selected from one immutable source query."""
@@ -78,25 +91,29 @@ class ResultReference:
 
 def answered_with_result(conversation: Conversation, reference: ResultReference) -> Conversation:
     """Remember one answer and atomically project its result reference to the legacy wire."""
-    return conversation.answered(
+    category, group_by, group_key, transaction_ids = _legacy_projection(reference)
+    answered = conversation.answered(
         reference.source_query,
-        referenced_category=reference.category,
-        referenced_group_by=reference.group_by,
-        referenced_group_key=reference.group_key,
-        referenced_transaction_ids=reference.transaction_ids,
+        referenced_category=category,
+        referenced_group_by=group_by,
+        referenced_group_key=group_key,
+        referenced_transaction_ids=transaction_ids,
     )
+    return replace(answered, result_reference=reference)
 
 
 def focused_on_result(conversation: Conversation, reference: ResultReference) -> Conversation:
     """Select another visible row without changing the query or its other conversation state."""
     if conversation.last_plan is not reference.source_query:
         raise InvalidValueError("a result can only be focused on its exact source query")
+    category, group_by, group_key, transaction_ids = _legacy_projection(reference)
     return replace(
         conversation,
-        referenced_category=reference.category,
-        referenced_group_by=reference.group_by,
-        referenced_group_key=reference.group_key,
-        referenced_transaction_ids=reference.transaction_ids,
+        referenced_category=category,
+        referenced_group_by=group_by,
+        referenced_group_key=group_key,
+        referenced_transaction_ids=transaction_ids,
+        result_reference=reference,
     )
 
 
@@ -125,6 +142,9 @@ def result_reference_of(
 
     if conversation.last_plan is not source_query:
         return None
+
+    if conversation.result_reference is not None:
+        return conversation.result_reference
 
     group_by = conversation.referenced_group_by
     group_key = conversation.referenced_group_key

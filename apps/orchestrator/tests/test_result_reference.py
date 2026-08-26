@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from typing import cast
 from uuid import UUID
@@ -33,6 +34,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
+from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 ACCOUNT = UUID(int=1)
@@ -91,7 +93,6 @@ def test_answered_with_result_is_byte_equivalent_to_the_legacy_wire_projection()
         group_key="Mercadona",
         transaction_ids=evidence,
     )
-
     canonical = answered_with_result(Conversation(), reference)
     legacy = Conversation().answered(
         SOURCE,
@@ -100,11 +101,105 @@ def test_answered_with_result_is_byte_equivalent_to_the_legacy_wire_projection()
         referenced_group_key="Mercadona",
         referenced_transaction_ids=evidence,
     )
-
     assert canonical.last_plan is SOURCE
     assert conversation_mapper.to_payload(canonical).model_dump_json() == (
         conversation_mapper.to_payload(legacy).model_dump_json()
     )
+
+
+def test_canonical_reference_is_stored_and_exact_object_is_returned() -> None:
+    reference = ResultReference(SOURCE, category="GROCERIES")
+    conversation = answered_with_result(Conversation(), reference)
+    assert conversation.result_reference is reference
+    assert result_reference_of(conversation, focus_of(conversation)) is reference
+
+
+def test_canonical_reference_rejects_wrong_source_or_projection() -> None:
+    reference = ResultReference(SOURCE, category="GROCERIES")
+    with pytest.raises(InvalidValueError):
+        Conversation(
+            last_plan=FinancialPlan(direction=SOURCE.direction, period=SOURCE.period),
+            result_reference=reference,
+        )
+    with pytest.raises(InvalidValueError):
+        Conversation(last_plan=SOURCE, result_reference=reference, referenced_category="OTHER")
+
+
+def test_answered_clears_previous_canonical_reference() -> None:
+    reference = ResultReference(SOURCE, category="GROCERIES")
+    current = answered_with_result(Conversation(), reference)
+    next_plan = FinancialPlan(direction=SOURCE.direction, period=RelativePeriod(Period.LAST_MONTH))
+    answered = current.answered(next_plan)
+    assert answered.result_reference is None
+
+
+def test_focused_reference_preserves_source_and_evidence() -> None:
+    evidence = (UUID(int=8),)
+    reference = ResultReference(
+        SOURCE, group_by=GroupBy.CATEGORY, group_key="GROCERIES", transaction_ids=evidence
+    )
+    focused = focused_on_result(answered_with_result(Conversation(), reference), reference)
+    assert focused.result_reference is reference
+    assert result_reference_of(focused, focus_of(focused)) is reference
+
+
+def test_with_references_on_canonical_clears_and_reconstructs() -> None:
+    reference = ResultReference(SOURCE, category="GROCERIES")
+    current = answered_with_result(Conversation(), reference).with_references(
+        group_by=GroupBy.MERCHANT, group_key="OTHER"
+    )
+    assert current.result_reference is None
+    assert result_reference_of(current, focus_of(current)).group_key == "OTHER"
+
+
+def test_focused_category_only_projects_legacy_category_key() -> None:
+    reference = ResultReference(SOURCE, category="GROCERIES")
+    focused = focused_on_result(answered_with_result(Conversation(), reference), reference)
+    assert focused.referenced_group_by is GroupBy.CATEGORY
+    assert focused.referenced_group_key == "GROCERIES"
+    assert focused.result_reference is reference
+
+
+def test_canonical_and_legacy_conversations_compare_equal() -> None:
+    reference = ResultReference(SOURCE, category="GROCERIES")
+    canonical = answered_with_result(Conversation(), reference)
+    legacy = replace(canonical, result_reference=None)
+    assert canonical == legacy
+
+
+def test_canonical_reference_is_reconstructed_semantically_after_wire_round_trip() -> None:
+    reference = ResultReference(
+        SOURCE,
+        category="GROCERIES",
+        group_by=GroupBy.MERCHANT,
+        group_key="Mercadona",
+        transaction_ids=(UUID(int=8),),
+    )
+    canonical = answered_with_result(Conversation(), reference)
+    payload = conversation_mapper.to_payload(canonical)
+    echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
+    hydrated = conversation_mapper.to_domain(echoed)
+
+    assert hydrated.result_reference is None
+    rebuilt = result_reference_of(hydrated, focus_of(hydrated))
+    assert rebuilt is not None
+    assert rebuilt.source_query is hydrated.last_plan
+    assert replace(rebuilt, source_query=SOURCE) == reference
+
+
+def test_canonical_reference_rejects_a_non_projected_legacy_category_row() -> None:
+    reference = ResultReference(
+        SOURCE,
+        group_by=GroupBy.CATEGORY,
+        group_key="GROCERIES",
+    )
+    with pytest.raises(InvalidValueError):
+        Conversation(
+            last_plan=SOURCE,
+            referenced_group_by=GroupBy.CATEGORY,
+            referenced_group_key="GROCERIES",
+            result_reference=reference,
+        )
 
 
 def test_answered_with_an_empty_result_clears_all_previous_reference_fields() -> None:

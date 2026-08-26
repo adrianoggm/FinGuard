@@ -27,8 +27,9 @@ about a year. With `awaiting` on the state, "de este" becomes answerable — the
 the sentence is filling, so the reply no longer has to be a self-contained phrase.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -55,6 +56,9 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+
+if TYPE_CHECKING:
+    from finguard_orchestrator.domain.models.result_reference import ResultReference
 
 # What a sentence can turn into and a follow-up can inherit from. Declared here as well as on
 # the planning result because both need the pair named, and importing one from the other would
@@ -368,6 +372,9 @@ class Conversation:
     # Exact ledger rows displayed as evidence by the last aggregate answer. This lets a later
     # "esos movimientos" select what was actually on screen instead of rerunning the broad query.
     referenced_transaction_ids: tuple[UUID, ...] = ()
+    # Canonical, source-bound referent. Legacy fields above remain as the wire-compatible
+    # projection until the later migration phases remove them.
+    result_reference: "ResultReference | None" = field(default=None, compare=False)
     # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
     # a clarification records its slot on the workflow, and a question asked with nothing
     # half-built behind it leaves no workflow to record it on. Without this, that question can be
@@ -440,6 +447,24 @@ class Conversation:
             raise InvalidValueError("referenced transaction ids must be unique")
         if len(self.referenced_transaction_ids) > MAX_SELECTED_TRANSACTIONS:
             raise InvalidValueError("too many referenced transaction ids")
+        if self.result_reference is not None:
+            if self.result_reference.source_query is not self.last_plan:
+                raise InvalidValueError("a result reference must belong to the last answered query")
+            canonical_category = self.result_reference.category
+            canonical_group_by = self.result_reference.group_by
+            canonical_group_key = self.result_reference.group_key
+            if canonical_group_by is None and canonical_category is not None:
+                canonical_group_by = GroupBy.CATEGORY
+                canonical_group_key = canonical_category
+            if canonical_group_by is GroupBy.CATEGORY and canonical_category is None:
+                canonical_category = self.result_reference.group_key
+            if not (
+                canonical_category == self.referenced_category
+                and canonical_group_by is self.referenced_group_by
+                and canonical_group_key == self.referenced_group_key
+                and self.result_reference.transaction_ids == self.referenced_transaction_ids
+            ):
+                raise InvalidValueError("canonical result reference and legacy projection disagree")
         folded_aliases = tuple(alias.alias.casefold().strip() for alias in self.account_aliases)
         if len(self.account_aliases) > MAX_ENTITY_ALIASES:
             raise InvalidValueError("too many account aliases")
@@ -616,6 +641,7 @@ class Conversation:
             referenced_group_by=None,
             referenced_group_key=None,
             referenced_transaction_ids=(),
+            result_reference=None,
         )
 
     def answered(
@@ -672,6 +698,7 @@ class Conversation:
             referenced_transaction_ids=(
                 self.referenced_transaction_ids if transaction_ids is None else transaction_ids
             ),
+            result_reference=None,
         )
 
     def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
