@@ -76,6 +76,7 @@ from finguard_orchestrator.domain.models.planning_context import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import result_reference_of
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
     TurnFocus,
@@ -2700,14 +2701,21 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery
     ) -> FinancialPlan | None:
         """Turn a pronoun into the bank-backed row or evidence set already in view."""
-        previous = query.conversation.last_plan
-        folded = spanish.folded(query.sentence)
-        facts = explicit_facts.read(query.sentence, today=query.today)
+        selected_query = _query_for_reader(query)
+        focus = focus_of(query.conversation)
+        reference = result_reference_of(
+            query.conversation,
+            focus,
+            returned_from_balance=selected_query.returned_from_balance,
+        )
+        if reference is None or selected_query.plan is not reference.source_query:
+            return None
+        previous = reference.source_query
+        folded = spanish.folded(selected_query.wording)
+        facts = explicit_facts.read(selected_query.wording, today=query.today)
 
         if _MOVEMENT_SET_REFERENCE.search(folded):
-            selected = query.conversation.referenced_transaction_ids
-            if not selected and isinstance(previous, FinancialPlan):
-                selected = previous.transaction_ids
+            selected = reference.transaction_ids
             if not selected:
                 return None
             if isinstance(previous, TopMovements):
@@ -2739,19 +2747,18 @@ class AskFinancialQuestionHandler:
         if not isinstance(previous, FinancialPlan):
             return None
 
-        dimension = query.conversation.referenced_group_by
-        key = query.conversation.referenced_group_key
-        if dimension is None or key is None:
-            return None
-        if dimension is GroupBy.CATEGORY and _CATEGORY_REFERENCE.search(folded):
-            if category_words.words_for(key) is None:
+        if _CATEGORY_REFERENCE.search(folded):
+            category = reference.category
+            if category is None or category_words.words_for(category) is None:
                 return None
             return explicit_facts.enforce(
                 replace(
                     previous,
-                    categories=(key,),
+                    categories=(category,),
                     excluded_categories=tuple(
-                        category for category in previous.excluded_categories if category != key
+                        excluded
+                        for excluded in previous.excluded_categories
+                        if excluded != category
                     ),
                     merchants=(),
                     excluded_merchants=(),
@@ -2761,6 +2768,11 @@ class AskFinancialQuestionHandler:
                 ),
                 facts,
             )
+
+        dimension = reference.group_by
+        key = reference.group_key
+        if dimension is None or key is None:
+            return None
         if dimension is GroupBy.MERCHANT and _MERCHANT_REFERENCE.search(folded):
             return explicit_facts.enforce(
                 replace(
@@ -5488,9 +5500,17 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         return explicit_facts.enforce(replace(previous, group_by=facts.group_by), facts)
 
     if _CATEGORY_REFERENCE.search(folded):
-        referenced = query.conversation.referenced_category
-        if referenced is None and len(previous.categories) == 1:
-            referenced = previous.categories[0]
+        reference = result_reference_of(query.conversation, focus)
+        referenced = reference.category if reference is not None else None
+        if (
+            referenced is None
+            and isinstance(focus, ComparisonFocus)
+            and len(focus.value.latest.categories) == 1
+            and focus.value.latest.categories == focus.value.earlier.categories
+        ):
+            # This is common query scope, not a row referent borrowed from one comparison
+            # operand. ResultReference remains unavailable for comparison focus.
+            referenced = focus.value.latest.categories[0]
         if referenced is None or category_words.words_for(referenced) is None:
             return None
         return explicit_facts.enforce(

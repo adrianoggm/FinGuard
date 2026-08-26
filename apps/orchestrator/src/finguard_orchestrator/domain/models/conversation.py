@@ -633,6 +633,11 @@ class Conversation:
         aside for it. It survives; a financial clarification or refusal does not, because the new
         answer supersedes it.
         """
+        if referenced_category is not None and referenced_group_by is None:
+            referenced_group_by = GroupBy.CATEGORY
+            referenced_group_key = referenced_category
+        elif referenced_group_by is GroupBy.CATEGORY:
+            referenced_category = referenced_group_key
         return replace(
             self._answering(),
             last_plan=plan,
@@ -652,11 +657,16 @@ class Conversation:
         transaction_ids: tuple[UUID, ...] | None = None,
     ) -> "Conversation":
         """Focus an already answered result without changing the query behind it."""
+        grounded_category = (
+            self.referenced_category
+            if self.referenced_category is not None
+            and self.last_plan is not None
+            and self.last_plan.categories == (self.referenced_category,)
+            else None
+        )
         return replace(
             self,
-            referenced_category=(
-                group_key if group_by is GroupBy.CATEGORY else self.referenced_category
-            ),
+            referenced_category=(group_key if group_by is GroupBy.CATEGORY else grounded_category),
             referenced_group_by=group_by,
             referenced_group_key=group_key,
             referenced_transaction_ids=(
