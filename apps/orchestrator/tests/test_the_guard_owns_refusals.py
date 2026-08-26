@@ -605,16 +605,30 @@ async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> 
         group_by=GroupBy.CATEGORY,
     )
 
+    planner = GivesUp()
+    ledger = ComparisonLedger()
     answer = await asked(
         "¿Y después de eso?",
-        GivesUp(),
-        ComparisonLedger(),
+        planner,
+        ledger,
         Conversation(last_plan=previous),
     )
 
     assert answer.text.startswith("El siguiente es restaurantes: 10,00 €")
     assert answer.conversation.referenced_group_by is GroupBy.CATEGORY
     assert answer.conversation.referenced_group_key == "RESTAURANTS"
+
+    selected = await asked(
+        "¿Cuánto gasté en esa categoría?",
+        planner,
+        ledger,
+        answer.conversation,
+    )
+
+    assert planner.asked == 0
+    assert selected.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plan is not None
+    assert ledger.plan.categories == ("RESTAURANTS",)
 
 
 async def test_a_pronoun_can_ask_for_the_ranked_movements_date() -> None:

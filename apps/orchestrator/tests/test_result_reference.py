@@ -22,6 +22,8 @@ from finguard_orchestrator.domain.models.planning_context import (
 )
 from finguard_orchestrator.domain.models.result_reference import (
     ResultReference,
+    answered_with_result,
+    focused_on_result,
     result_reference_of,
 )
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -31,6 +33,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 
 ACCOUNT = UUID(int=1)
 TODAY = date(2026, 8, 26)
@@ -77,6 +80,104 @@ def test_result_reference_is_an_immutable_source_bound_value() -> None:
     assert result.category == "GROCERIES"
     with pytest.raises(AttributeError):
         result.group_key = "LEISURE"  # type: ignore[misc]
+
+
+def test_answered_with_result_is_byte_equivalent_to_the_legacy_wire_projection() -> None:
+    evidence = (UUID(int=11), UUID(int=12))
+    reference = ResultReference(
+        SOURCE,
+        category="GROCERIES",
+        group_by=GroupBy.MERCHANT,
+        group_key="Mercadona",
+        transaction_ids=evidence,
+    )
+
+    canonical = answered_with_result(Conversation(), reference)
+    legacy = Conversation().answered(
+        SOURCE,
+        referenced_category="GROCERIES",
+        referenced_group_by=GroupBy.MERCHANT,
+        referenced_group_key="Mercadona",
+        referenced_transaction_ids=evidence,
+    )
+
+    assert canonical.last_plan is SOURCE
+    assert conversation_mapper.to_payload(canonical).model_dump_json() == (
+        conversation_mapper.to_payload(legacy).model_dump_json()
+    )
+
+
+def test_answered_with_an_empty_result_clears_all_previous_reference_fields() -> None:
+    previous = referenced(group_by=GroupBy.MERCHANT, group_key="Mercadona")
+    next_source = FinancialPlan(Direction.INCOME, period=RelativePeriod(Period.LAST_MONTH))
+
+    current = answered_with_result(previous, ResultReference(next_source))
+
+    assert current.last_plan is next_source
+    assert current.referenced_category is None
+    assert current.referenced_group_by is None
+    assert current.referenced_group_key is None
+    assert current.referenced_transaction_ids == ()
+
+
+def test_focused_result_requires_the_identical_source_and_keeps_visible_evidence() -> None:
+    evidence = (UUID(int=11), UUID(int=12))
+    answered = answered_with_result(
+        Conversation(), ResultReference(SOURCE, transaction_ids=evidence)
+    )
+    focused = focused_on_result(
+        answered,
+        ResultReference(
+            SOURCE,
+            category="GROCERIES",
+            group_by=GroupBy.MERCHANT,
+            group_key="Mercadona",
+            transaction_ids=evidence,
+        ),
+    )
+
+    assert focused.last_plan is SOURCE
+    assert focused.referenced_group_key == "Mercadona"
+    assert focused.referenced_transaction_ids == evidence
+    with pytest.raises(InvalidValueError):
+        focused_on_result(focused, ResultReference(replace_source(SOURCE)))
+
+
+def replace_source(source: FinancialPlan) -> FinancialPlan:
+    """Return an equal plan with distinct identity for the source-identity invariant."""
+    return FinancialPlan(
+        direction=source.direction,
+        period=source.period,
+        categories=source.categories,
+        group_by=source.group_by,
+    )
+
+
+@pytest.mark.parametrize(
+    ("group_by", "group_key", "category"),
+    [
+        (GroupBy.CATEGORY, "GROCERIES", "GROCERIES"),
+        (GroupBy.MERCHANT, "Mercadona", "GROCERIES"),
+        (GroupBy.COUNTERPARTY, "Marta", "GROCERIES"),
+        (GroupBy.ACCOUNT, "Cuenta diaria", "GROCERIES"),
+    ],
+)
+def test_referenceable_group_matrix_is_grounded_by_the_source_query(
+    group_by: GroupBy, group_key: str, category: str
+) -> None:
+    reference = ResultReference(SOURCE, category, group_by, group_key)
+
+    assert reference.source_query is SOURCE
+
+
+def test_a_non_category_row_rejects_a_category_not_grounded_by_its_source() -> None:
+    with pytest.raises(InvalidValueError):
+        ResultReference(
+            SOURCE,
+            category="LEISURE",
+            group_by=GroupBy.MERCHANT,
+            group_key="Amazon",
+        )
 
 
 @pytest.mark.parametrize(

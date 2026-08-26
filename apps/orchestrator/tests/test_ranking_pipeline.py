@@ -187,6 +187,28 @@ async def test_three_largest_expenses_are_read_as_concrete_ranked_movements() ->
     assert remembered.period == THIS_YEAR
 
 
+async def test_top_list_pronoun_reuses_only_the_visible_ranked_rows_without_the_model() -> None:
+    selected = tuple(uuid.UUID(int=index) for index in range(1, 4))
+    rows = tuple(
+        replace(movement, transaction_id=str(transaction_id))
+        for movement, transaction_id in zip((CEPSA, REPSOL, BROADWAY), selected, strict=True)
+    )
+    planner = FakePlanner()
+    ledger = FakeLedger(*rows)
+    ranked = await ask("MuÃ©strame mis tres mayores gastos de este aÃ±o", planner, ledger)
+
+    result = await ask(
+        "Â¿CuÃ¡nto suman esos movimientos?",
+        planner,
+        ledger,
+        conversation=ranked.conversation,
+    )
+
+    assert planner.asked is None
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.aggregates[-1].transaction_ids == selected
+
+
 async def test_unbounded_ordered_expenses_default_to_ten_rows_and_read_the_named_month() -> None:
     ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
 

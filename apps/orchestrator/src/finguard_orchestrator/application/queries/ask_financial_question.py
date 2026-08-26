@@ -76,7 +76,12 @@ from finguard_orchestrator.domain.models.planning_context import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.models.result_reference import result_reference_of
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+    focused_on_result,
+    result_reference_of,
+)
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
     TurnFocus,
@@ -2528,9 +2533,12 @@ class AskFinancialQuestionHandler:
             suggestions=query_recovery.empty_suggestions(ranking) if found is None else [],
             # Remembered even when nothing was found: "¿y el segundo?" after "no hay quinto" is a
             # reasonable thing to say, and the question it refers to is this one.
-            conversation=query.conversation.answered(
-                ranking,
-                referenced_transaction_ids=_evidence_ids([found]) if found is not None else (),
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(
+                    source_query=ranking,
+                    transaction_ids=_evidence_ids([found]) if found is not None else (),
+                ),
             ),
         )
 
@@ -2603,9 +2611,12 @@ class AskFinancialQuestionHandler:
             movement_count=len(found),
             movements=[_spoken_movement(movement) for movement in found],
             suggestions=query_recovery.empty_suggestions(ranking) if not found else [],
-            conversation=query.conversation.answered(
-                remembered,
-                referenced_transaction_ids=_evidence_ids(found),
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(
+                    source_query=remembered,
+                    transaction_ids=_evidence_ids(found),
+                ),
             ),
         )
 
@@ -2650,8 +2661,12 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.recent_movements(len(movements)),
             plan=f"últimos {limit} movimientos, todas tus cuentas",
-            conversation=query.conversation.answered(
-                remembered, referenced_transaction_ids=selected_ids
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(
+                    source_query=remembered,
+                    transaction_ids=selected_ids,
+                ),
             ),
             currency=answer.currency,
             movement_count=len(movements),
@@ -2882,7 +2897,10 @@ class AskFinancialQuestionHandler:
             text=answer_writer.how_many_payees(counted, scoped),
             plan=answer_writer.describe(scoped),
             plan_context=_spoken(scoped),
-            conversation=query.conversation.answered(scoped),
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(source_query=scoped),
+            ),
             currency=counted.currency,
             # The figure the question asked for. It is the size of the list, not the money in it —
             # a total here would put the wrong number in the field a client draws large.
@@ -2975,9 +2993,15 @@ class AskFinancialQuestionHandler:
         if not difference and len(groups) >= 2:
             result = replace(
                 result,
-                conversation=result.conversation.with_references(
-                    group_by=plan.group_by,
-                    group_key=groups[1].key,
+                conversation=focused_on_result(
+                    result.conversation,
+                    ResultReference(
+                        source_query=plan,
+                        category=(groups[1].key if plan.group_by is GroupBy.CATEGORY else None),
+                        group_by=plan.group_by,
+                        group_key=groups[1].key,
+                        transaction_ids=result.conversation.referenced_transaction_ids,
+                    ),
                 ),
             )
         return replace(result, text=text)
@@ -7092,12 +7116,15 @@ def _answered(
         plan_context=_spoken(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
-        conversation=was.answered(
-            plan,
-            referenced_category=referenced_category,
-            referenced_group_by=referenced_group_by,
-            referenced_group_key=referenced_group_key,
-            referenced_transaction_ids=_evidence_ids(visible_movements),
+        conversation=answered_with_result(
+            was,
+            ResultReference(
+                source_query=plan,
+                category=referenced_category,
+                group_by=referenced_group_by,
+                group_key=referenced_group_key,
+                transaction_ids=_evidence_ids(visible_movements),
+            ),
         ),
         currency=answer.currency,
         total_minor=visible_total,

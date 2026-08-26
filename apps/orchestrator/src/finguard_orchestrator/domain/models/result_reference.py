@@ -5,7 +5,7 @@ read-side projection: consumers cannot accidentally combine a row from one answe
 the query currently in focus.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
@@ -65,6 +65,39 @@ class ResultReference:
             and self.category != self.group_key
         ):
             raise InvalidValueError("the selected category and category row disagree")
+        if (
+            self.category is not None
+            and self.group_by not in {None, GroupBy.CATEGORY}
+            and (
+                not isinstance(self.source_query, FinancialPlan)
+                or self.category not in self.source_query.categories
+            )
+        ):
+            raise InvalidValueError("the selected category is not grounded by its source query")
+
+
+def answered_with_result(conversation: Conversation, reference: ResultReference) -> Conversation:
+    """Remember one answer and atomically project its result reference to the legacy wire."""
+    return conversation.answered(
+        reference.source_query,
+        referenced_category=reference.category,
+        referenced_group_by=reference.group_by,
+        referenced_group_key=reference.group_key,
+        referenced_transaction_ids=reference.transaction_ids,
+    )
+
+
+def focused_on_result(conversation: Conversation, reference: ResultReference) -> Conversation:
+    """Select another visible row without changing the query or its other conversation state."""
+    if conversation.last_plan is not reference.source_query:
+        raise InvalidValueError("a result can only be focused on its exact source query")
+    return replace(
+        conversation,
+        referenced_category=reference.category,
+        referenced_group_by=reference.group_by,
+        referenced_group_key=reference.group_key,
+        referenced_transaction_ids=reference.transaction_ids,
+    )
 
 
 def result_reference_of(
