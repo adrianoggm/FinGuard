@@ -76,6 +76,12 @@ from finguard_orchestrator.domain.models.planning_context import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+    focused_on_result,
+    result_reference_of,
+)
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
     TurnFocus,
@@ -819,7 +825,7 @@ class AskFinancialQuestionHandler:
             was = was.suspend()
             query = replace(query, conversation=was)
 
-        scope_followup = await self._scope_change_followup(query, previous)
+        scope_followup = await self._scope_change_followup(query)
         if scope_followup is not None:
             yield scope_followup
             return
@@ -2293,7 +2299,7 @@ class AskFinancialQuestionHandler:
         return replace(previous, date_range=moved)
 
     async def _scope_change_followup(
-        self, query: AskFinancialQuestionQuery, previous: PlannedQuery | None
+        self, query: AskFinancialQuestionQuery
     ) -> AskFinancialQuestionResult | None:
         """Change only the account scope of the last validated query.
 
@@ -2301,10 +2307,13 @@ class AskFinancialQuestionHandler:
         through planning loses the previous window.  They are a deterministic patch to the
         already validated plan instead.
         """
-        if previous is None or not _is_scope_change_followup(query.sentence, today=query.today):
+        selected = _query_for_reader(query)
+        previous = selected.plan
+        if previous is None or not _is_scope_change_followup(selected.wording, today=query.today):
             return None
+        reader_query = replace(query, sentence=selected.wording)
         scoped: PlannedQuery | AskFinancialQuestionResult
-        if account_words.asks_for_all_accounts(query.sentence):
+        if account_words.asks_for_all_accounts(selected.wording):
             scoped = replace(
                 previous, across_accounts=True, only_account_id=None, only_account_ids=()
             )
@@ -2315,12 +2324,12 @@ class AskFinancialQuestionHandler:
             unscoped = replace(
                 previous, across_accounts=False, only_account_id=None, only_account_ids=()
             )
-            scoped = await self._scope_ranking(query, unscoped)
+            scoped = await self._scope_ranking(reader_query, unscoped)
             if isinstance(scoped, AskFinancialQuestionResult):
                 return scoped
         else:
             try:
-                scoped = await self._scoped(previous, query, clarify=True)
+                scoped = await self._scoped(previous, reader_query, clarify=True)
             except AccountScopeRequiredError as required:
                 return AskFinancialQuestionResult(
                     outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
@@ -2524,9 +2533,12 @@ class AskFinancialQuestionHandler:
             suggestions=query_recovery.empty_suggestions(ranking) if found is None else [],
             # Remembered even when nothing was found: "¿y el segundo?" after "no hay quinto" is a
             # reasonable thing to say, and the question it refers to is this one.
-            conversation=query.conversation.answered(
-                ranking,
-                referenced_transaction_ids=_evidence_ids([found]) if found is not None else (),
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(
+                    source_query=ranking,
+                    transaction_ids=_evidence_ids([found]) if found is not None else (),
+                ),
             ),
         )
 
@@ -2599,9 +2611,12 @@ class AskFinancialQuestionHandler:
             movement_count=len(found),
             movements=[_spoken_movement(movement) for movement in found],
             suggestions=query_recovery.empty_suggestions(ranking) if not found else [],
-            conversation=query.conversation.answered(
-                remembered,
-                referenced_transaction_ids=_evidence_ids(found),
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(
+                    source_query=remembered,
+                    transaction_ids=_evidence_ids(found),
+                ),
             ),
         )
 
@@ -2646,8 +2661,12 @@ class AskFinancialQuestionHandler:
             outcome=PlanningOutcome.PLANNED.value,
             text=answer_writer.recent_movements(len(movements)),
             plan=f"últimos {limit} movimientos, todas tus cuentas",
-            conversation=query.conversation.answered(
-                remembered, referenced_transaction_ids=selected_ids
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(
+                    source_query=remembered,
+                    transaction_ids=selected_ids,
+                ),
             ),
             currency=answer.currency,
             movement_count=len(movements),
@@ -2697,14 +2716,21 @@ class AskFinancialQuestionHandler:
         self, query: AskFinancialQuestionQuery
     ) -> FinancialPlan | None:
         """Turn a pronoun into the bank-backed row or evidence set already in view."""
-        previous = query.conversation.last_plan
-        folded = spanish.folded(query.sentence)
-        facts = explicit_facts.read(query.sentence, today=query.today)
+        selected_query = _query_for_reader(query)
+        focus = focus_of(query.conversation)
+        reference = result_reference_of(
+            query.conversation,
+            focus,
+            returned_from_balance=selected_query.returned_from_balance,
+        )
+        if reference is None or selected_query.plan is not reference.source_query:
+            return None
+        previous = reference.source_query
+        folded = spanish.folded(selected_query.wording)
+        facts = explicit_facts.read(selected_query.wording, today=query.today)
 
         if _MOVEMENT_SET_REFERENCE.search(folded):
-            selected = query.conversation.referenced_transaction_ids
-            if not selected and isinstance(previous, FinancialPlan):
-                selected = previous.transaction_ids
+            selected = reference.transaction_ids
             if not selected:
                 return None
             if isinstance(previous, TopMovements):
@@ -2736,19 +2762,18 @@ class AskFinancialQuestionHandler:
         if not isinstance(previous, FinancialPlan):
             return None
 
-        dimension = query.conversation.referenced_group_by
-        key = query.conversation.referenced_group_key
-        if dimension is None or key is None:
-            return None
-        if dimension is GroupBy.CATEGORY and _CATEGORY_REFERENCE.search(folded):
-            if category_words.words_for(key) is None:
+        if _CATEGORY_REFERENCE.search(folded):
+            category = reference.category
+            if category is None or category_words.words_for(category) is None:
                 return None
             return explicit_facts.enforce(
                 replace(
                     previous,
-                    categories=(key,),
+                    categories=(category,),
                     excluded_categories=tuple(
-                        category for category in previous.excluded_categories if category != key
+                        excluded
+                        for excluded in previous.excluded_categories
+                        if excluded != category
                     ),
                     merchants=(),
                     excluded_merchants=(),
@@ -2758,6 +2783,11 @@ class AskFinancialQuestionHandler:
                 ),
                 facts,
             )
+
+        dimension = reference.group_by
+        key = reference.group_key
+        if dimension is None or key is None:
+            return None
         if dimension is GroupBy.MERCHANT and _MERCHANT_REFERENCE.search(folded):
             return explicit_facts.enforce(
                 replace(
@@ -2867,7 +2897,10 @@ class AskFinancialQuestionHandler:
             text=answer_writer.how_many_payees(counted, scoped),
             plan=answer_writer.describe(scoped),
             plan_context=_spoken(scoped),
-            conversation=query.conversation.answered(scoped),
+            conversation=answered_with_result(
+                query.conversation,
+                ResultReference(source_query=scoped),
+            ),
             currency=counted.currency,
             # The figure the question asked for. It is the size of the list, not the money in it —
             # a total here would put the wrong number in the field a client draws large.
@@ -2960,9 +2993,15 @@ class AskFinancialQuestionHandler:
         if not difference and len(groups) >= 2:
             result = replace(
                 result,
-                conversation=result.conversation.with_references(
-                    group_by=plan.group_by,
-                    group_key=groups[1].key,
+                conversation=focused_on_result(
+                    result.conversation,
+                    ResultReference(
+                        source_query=plan,
+                        category=(groups[1].key if plan.group_by is GroupBy.CATEGORY else None),
+                        group_by=plan.group_by,
+                        group_key=groups[1].key,
+                        transaction_ids=result.conversation.referenced_transaction_ids,
+                    ),
                 ),
             )
         return replace(result, text=text)
@@ -4381,9 +4420,14 @@ _GROUP_RANKING_SIGNAL: Final = re.compile(
     r"mas\s+(?:gast|pag|compr)\w*|"
     r"mayor(?:es)?\s+(?:gasto|importe|ticket|media|promedio)|con\s+mas)\b"
 )
-_GROUP_RANKING_CRITERION: Final = re.compile(
-    r"\b(?:ticket\s+medio|importe\s+medio|media|promedio|operaciones|movimientos|compras|pagos|"
-    r"importe|gasto)\b"
+_GROUP_RANKING_FOLLOW_UP_PREFIX: Final = re.compile(
+    r"^(?:(?:vale|bueno|y|ahora|mejor)(?:\s+|\s*[,;:]\s*))*"
+    r"(?P<request>por\s+.+)$"
+)
+_GROUP_RANKING_FOLLOW_UP_REQUEST: Final = re.compile(
+    r"^por\s+(?:(?:numero|cantidad)\s+de\s+)?"
+    r"(?:ticket\s+medio|importe\s+medio|media|promedio|operaciones|movimientos|compras|pagos|"
+    r"importe|gasto|total)$"
 )
 _GROUP_RANKING_COUNT: Final = re.compile(
     r"\b(?:top\s*)?(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
@@ -5480,9 +5524,17 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         return explicit_facts.enforce(replace(previous, group_by=facts.group_by), facts)
 
     if _CATEGORY_REFERENCE.search(folded):
-        referenced = query.conversation.referenced_category
-        if referenced is None and len(previous.categories) == 1:
-            referenced = previous.categories[0]
+        reference = result_reference_of(query.conversation, focus)
+        referenced = reference.category if reference is not None else None
+        if (
+            referenced is None
+            and isinstance(focus, ComparisonFocus)
+            and len(focus.value.latest.categories) == 1
+            and focus.value.latest.categories == focus.value.earlier.categories
+        ):
+            # This is common query scope, not a row referent borrowed from one comparison
+            # operand. ResultReference remains unavailable for comparison focus.
+            referenced = focus.value.latest.categories[0]
         if referenced is None or category_words.words_for(referenced) is None:
             return None
         return explicit_facts.enforce(
@@ -5662,7 +5714,8 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
 
 
 _READER_RETURN_FROM_BALANCE: Final = re.compile(
-    r"^(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
+    r"^(?:(?:vale|bueno|y)(?:\s+|\s*[,;:]\s*))?"
+    r"(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
     r"|volviendo\s+a\s+(?:la\s+consulta\s+anterior|lo\s+de\s+antes))"
     r"\s*[,;:]\s*(?P<request>\S(?:.*\S)?)$"
 )
@@ -5776,10 +5829,12 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         if isinstance(previous, FinancialPlan) and previous.group_limit is not None
         else None
     )
+    follow_up_match = _GROUP_RANKING_FOLLOW_UP_PREFIX.fullmatch(folded.strip(" ¿?¡!.,;:"))
+    follow_up_request = follow_up_match.group("request") if follow_up_match is not None else None
     ranking_follow_up = (
         previous_ranking is not None
-        and _GROUP_RANKING_CRITERION.search(folded) is not None
-        and folded.strip(" ¿?¡!.,").startswith(("y ", "ahora ", "mejor ", "por "))
+        and follow_up_request is not None
+        and _GROUP_RANKING_FOLLOW_UP_REQUEST.fullmatch(follow_up_request) is not None
     )
     if dimension_match is None and not ranking_follow_up:
         return None
@@ -7061,12 +7116,15 @@ def _answered(
         plan_context=_spoken(plan),
         # Answered: nothing is left open, and this plan becomes the memory the next follow-up
         # inherits from.
-        conversation=was.answered(
-            plan,
-            referenced_category=referenced_category,
-            referenced_group_by=referenced_group_by,
-            referenced_group_key=referenced_group_key,
-            referenced_transaction_ids=_evidence_ids(visible_movements),
+        conversation=answered_with_result(
+            was,
+            ResultReference(
+                source_query=plan,
+                category=referenced_category,
+                group_by=referenced_group_by,
+                group_key=referenced_group_key,
+                transaction_ids=_evidence_ids(visible_movements),
+            ),
         ),
         currency=answer.currency,
         total_minor=visible_total,

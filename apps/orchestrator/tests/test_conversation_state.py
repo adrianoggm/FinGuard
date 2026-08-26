@@ -280,7 +280,7 @@ _TRANSITIONS: tuple[tuple[str, Callable[[Conversation], Conversation], set[str]]
     (
         "with_references",
         lambda c: c.with_references(group_by=GroupBy.MERCHANT, group_key="Mercadona"),
-        {"referenced_group_by", "referenced_group_key"},
+        {"referenced_category", "referenced_group_by", "referenced_group_key"},
     ),
     (
         "waiting_for_ratio",

@@ -16,7 +16,14 @@ from finguard_orchestrator.domain.models.conversation import (
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.services.intent_router import Intent
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    FinancialPlanDraft,
+    RelativePeriod,
+)
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 OWNER = uuid.UUID("11111111-1111-1111-1111-111111111111")
@@ -59,6 +66,15 @@ class Accounts:
         return AccountSummary("EUR", 100_000, 100_000, datetime(2026, 8, 21), holdings=HOLDINGS)
 
 
+class CountingAccounts(Accounts):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def of(self, *_: object, **__: object) -> AccountSummary:
+        self.calls += 1
+        return await super().of()
+
+
 class Directory:
     async def all_of(self, *_: object, **__: object) -> tuple[Holding, ...]:
         return HOLDINGS
@@ -93,12 +109,12 @@ class Cards:
 
 
 def service(
-    ledger: Ledger, directory: object = Directory()
+    ledger: Ledger, directory: object = Directory(), accounts: object = Accounts()
 ) -> AskFinancialQuestionHandler:
     return AskFinancialQuestionHandler(
         Planner(),
         ledger,
-        accounts=Accounts(),
+        accounts=accounts,  # type: ignore[arg-type]
         account_directory=directory,  # type: ignore[arg-type]
         contacts=Contacts(),
         cards=Cards(),
@@ -300,6 +316,83 @@ async def test_scope_change_followup_also_retargets_a_previous_ranking() -> None
     assert ledger.plans[-1].period == ranking.period
 
 
+def special_focus_conversation(kind: str, mirrored: FinancialPlan) -> Conversation:
+    fields: dict[str, object] = {"last_plan": mirrored}
+    if kind == "ratio":
+        fields["last_ratio"] = RatioPlan(
+            part=mirrored,
+            whole=FinancialPlan(
+                direction=Direction.INCOME,
+                period=mirrored.period,
+            ),
+            kind=RatioKind.SHARE,
+        )
+    elif kind == "pending_ratio":
+        fields["pending_ratio"] = RatioDraft(
+            part=FinancialPlanDraft(direction=Direction.EXPENSE),
+            whole=FinancialPlanDraft(direction=Direction.INCOME),
+            kind=RatioKind.SHARE,
+        )
+    else:
+        fields["last_comparison"] = ComparisonPlan(
+            earlier=FinancialPlan(
+                direction=Direction.EXPENSE,
+                date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)),
+            ),
+            latest=FinancialPlan(
+                direction=Direction.EXPENSE,
+                date_range=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
+            ),
+        )
+    return Conversation(**fields)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["ratio", "pending_ratio", "comparison"])
+async def test_scope_change_does_not_retarget_a_special_focus_query_mirror(kind: str) -> None:
+    ledger = Ledger()
+    handler = service(ledger)
+    mirrored = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        categories=("FOOD",),
+        only_account_id=SAVINGS,
+    )
+
+    result = await ask(
+        handler,
+        "Ahora en todas mis cuentas",
+        special_focus_conversation(kind, mirrored),
+    )
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert len(ledger.plans) == 1
+    assert ledger.plans[0].period == RelativePeriod(Period.THIS_MONTH)
+    assert ledger.plans[0].categories == ()
+
+
+@pytest.mark.asyncio
+async def test_scope_change_after_a_balance_stays_on_the_balance_path() -> None:
+    ledger = Ledger()
+    accounts = CountingAccounts()
+    handler = service(ledger, accounts=accounts)
+    suspended = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=12),
+        only_account_id=SAVINGS,
+    )
+
+    result = await ask(
+        handler,
+        "Ahora en todas mis cuentas",
+        Conversation(last_plan=suspended, answered_the_balance=True),
+    )
+
+    assert result.outcome == "BALANCE"
+    assert accounts.calls == 1
+    assert ledger.plans == []
+
+
 @pytest.mark.asyncio
 async def test_graph_intent_survives_account_scope_choice() -> None:
     ledger = Ledger()
@@ -320,7 +413,10 @@ async def test_preclassified_balance_intent_still_consumes_exact_account_chip() 
     clarification = await ask(handler, "Representa en un gráfico mis gastos este mes")
     result = await handler.handle(
         AskFinancialQuestionQuery(
-            "Todas mis cuentas", OWNER, TODAY, conversation=clarification.conversation,
+            "Todas mis cuentas",
+            OWNER,
+            TODAY,
+            conversation=clarification.conversation,
             intent=Intent.ACCOUNT_BALANCE,
         )
     )

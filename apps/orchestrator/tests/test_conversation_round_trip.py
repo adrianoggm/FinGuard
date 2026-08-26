@@ -44,6 +44,8 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     Workflow,
 )
+from finguard_orchestrator.domain.models.planning_context import focus_of
+from finguard_orchestrator.domain.models.result_reference import result_reference_of
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -138,6 +140,7 @@ def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
     evidence = (uuid.UUID(int=21), uuid.UUID(int=22))
     out = IDLE.answered(
         LAST_MONTH,
+        referenced_category="GROCERIES",
         referenced_group_by=GroupBy.MERCHANT,
         referenced_group_key="Mercadona",
         referenced_transaction_ids=evidence,
@@ -147,7 +150,21 @@ def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
 
     assert back.referenced_group_by is GroupBy.MERCHANT
     assert back.referenced_group_key == "Mercadona"
+    assert back.referenced_category == "GROCERIES"
     assert back.referenced_transaction_ids == evidence
+
+
+def test_the_typed_result_projection_is_equivalent_after_the_legacy_wire_round_trip() -> None:
+    out = IDLE.answered(
+        LAST_MONTH,
+        referenced_group_by=GroupBy.CATEGORY,
+        referenced_group_key="GROCERIES",
+        referenced_transaction_ids=(uuid.UUID(int=21), uuid.UUID(int=22)),
+    )
+
+    back = there_and_back(out)
+
+    assert result_reference_of(back, focus_of(back)) == result_reference_of(out, focus_of(out))
 
 
 def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
@@ -303,10 +320,13 @@ def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
     assert back.last_plan == scoped
 
 
-@pytest.mark.parametrize("selection", [
-    AccountSelection(AccountSelectionMode.ALL),
-    AccountSelection(AccountSelectionMode.SELECTED, (uuid.UUID(int=7), uuid.UUID(int=8))),
-])
+@pytest.mark.parametrize(
+    "selection",
+    [
+        AccountSelection(AccountSelectionMode.ALL),
+        AccountSelection(AccountSelectionMode.SELECTED, (uuid.UUID(int=7), uuid.UUID(int=8))),
+    ],
+)
 def test_account_selection_survives_the_client_round_trip(selection: AccountSelection) -> None:
     assert there_and_back(Conversation(account_selection=selection)).account_selection == selection
 
