@@ -819,7 +819,7 @@ class AskFinancialQuestionHandler:
             was = was.suspend()
             query = replace(query, conversation=was)
 
-        scope_followup = await self._scope_change_followup(query, previous)
+        scope_followup = await self._scope_change_followup(query)
         if scope_followup is not None:
             yield scope_followup
             return
@@ -2293,7 +2293,7 @@ class AskFinancialQuestionHandler:
         return replace(previous, date_range=moved)
 
     async def _scope_change_followup(
-        self, query: AskFinancialQuestionQuery, previous: PlannedQuery | None
+        self, query: AskFinancialQuestionQuery
     ) -> AskFinancialQuestionResult | None:
         """Change only the account scope of the last validated query.
 
@@ -2301,10 +2301,13 @@ class AskFinancialQuestionHandler:
         through planning loses the previous window.  They are a deterministic patch to the
         already validated plan instead.
         """
-        if previous is None or not _is_scope_change_followup(query.sentence, today=query.today):
+        selected = _query_for_reader(query)
+        previous = selected.plan
+        if previous is None or not _is_scope_change_followup(selected.wording, today=query.today):
             return None
+        reader_query = replace(query, sentence=selected.wording)
         scoped: PlannedQuery | AskFinancialQuestionResult
-        if account_words.asks_for_all_accounts(query.sentence):
+        if account_words.asks_for_all_accounts(selected.wording):
             scoped = replace(
                 previous, across_accounts=True, only_account_id=None, only_account_ids=()
             )
@@ -2315,12 +2318,12 @@ class AskFinancialQuestionHandler:
             unscoped = replace(
                 previous, across_accounts=False, only_account_id=None, only_account_ids=()
             )
-            scoped = await self._scope_ranking(query, unscoped)
+            scoped = await self._scope_ranking(reader_query, unscoped)
             if isinstance(scoped, AskFinancialQuestionResult):
                 return scoped
         else:
             try:
-                scoped = await self._scoped(previous, query, clarify=True)
+                scoped = await self._scoped(previous, reader_query, clarify=True)
             except AccountScopeRequiredError as required:
                 return AskFinancialQuestionResult(
                     outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
@@ -4381,9 +4384,14 @@ _GROUP_RANKING_SIGNAL: Final = re.compile(
     r"mas\s+(?:gast|pag|compr)\w*|"
     r"mayor(?:es)?\s+(?:gasto|importe|ticket|media|promedio)|con\s+mas)\b"
 )
-_GROUP_RANKING_CRITERION: Final = re.compile(
-    r"\b(?:ticket\s+medio|importe\s+medio|media|promedio|operaciones|movimientos|compras|pagos|"
-    r"importe|gasto)\b"
+_GROUP_RANKING_FOLLOW_UP_PREFIX: Final = re.compile(
+    r"^(?:(?:vale|bueno|y|ahora|mejor)(?:\s+|\s*[,;:]\s*))*"
+    r"(?P<request>por\s+.+)$"
+)
+_GROUP_RANKING_FOLLOW_UP_REQUEST: Final = re.compile(
+    r"^por\s+(?:(?:numero|cantidad)\s+de\s+)?"
+    r"(?:ticket\s+medio|importe\s+medio|media|promedio|operaciones|movimientos|compras|pagos|"
+    r"importe|gasto|total)$"
 )
 _GROUP_RANKING_COUNT: Final = re.compile(
     r"\b(?:top\s*)?(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
@@ -5662,7 +5670,8 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
 
 
 _READER_RETURN_FROM_BALANCE: Final = re.compile(
-    r"^(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
+    r"^(?:(?:vale|bueno|y)(?:\s+|\s*[,;:]\s*))?"
+    r"(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
     r"|volviendo\s+a\s+(?:la\s+consulta\s+anterior|lo\s+de\s+antes))"
     r"\s*[,;:]\s*(?P<request>\S(?:.*\S)?)$"
 )
@@ -5776,10 +5785,12 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
         if isinstance(previous, FinancialPlan) and previous.group_limit is not None
         else None
     )
+    follow_up_match = _GROUP_RANKING_FOLLOW_UP_PREFIX.fullmatch(folded.strip(" ¿?¡!.,;:"))
+    follow_up_request = follow_up_match.group("request") if follow_up_match is not None else None
     ranking_follow_up = (
         previous_ranking is not None
-        and _GROUP_RANKING_CRITERION.search(folded) is not None
-        and folded.strip(" ¿?¡!.,").startswith(("y ", "ahora ", "mejor ", "por "))
+        and follow_up_request is not None
+        and _GROUP_RANKING_FOLLOW_UP_REQUEST.fullmatch(follow_up_request) is not None
     )
     if dimension_match is None and not ranking_follow_up:
         return None

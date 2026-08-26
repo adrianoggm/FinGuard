@@ -260,6 +260,30 @@ def test_explicit_balance_return_selects_the_suspended_query(
     assert selected.returned_from_balance
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Vale, vuelve a la consulta anterior: en la cuenta nomina",
+        "Vale,volvamos a lo anterior; en la cuenta nomina",
+        "Bueno: volvamos a lo anterior; en la cuenta nomina",
+        "Y,volviendo a lo de antes: en la cuenta nomina",
+    ],
+)
+def test_balance_return_accepts_a_closed_discourse_prefix(sentence: str) -> None:
+    suspended = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+    )
+
+    selected = _query_for_reader(
+        query(sentence, Conversation(last_plan=suspended, answered_the_balance=True))
+    )
+
+    assert selected.plan is suspended
+    assert selected.wording == "en la cuenta nomina"
+    assert selected.returned_from_balance
+
+
 def test_account_reader_can_return_explicitly_from_a_balance_aside() -> None:
     suspended = FinancialPlan(
         direction=Direction.EXPENSE,
@@ -306,10 +330,64 @@ def test_group_ranking_reader_can_return_explicitly_from_a_balance_aside() -> No
 @pytest.mark.parametrize(
     "sentence",
     [
+        "vale, por numero de operaciones",
+        "vale,por numero de operaciones",
+        "bueno: por numero de operaciones",
+        "bueno:por numero de operaciones",
+        "y por numero de operaciones",
+        "y,por numero de operaciones",
+        "y ahora por numero de operaciones",
+        "vale, y por numero de operaciones",
+        "ahora, por numero de operaciones",
+        "mejor; por numero de operaciones",
+    ],
+)
+def test_group_ranking_accepts_only_closed_positive_criterion_followups(sentence: str) -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.MERCHANT,
+        metric=Metric.SUM,
+        group_limit=3,
+    )
+
+    result = _group_ranking_plan(query(sentence, Conversation(last_plan=previous)))
+
+    assert result is not None
+    assert result.metric is Metric.COUNT
+    assert result.group_by is previous.group_by
+    assert result.group_limit == previous.group_limit
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "no por numero de operaciones",
+        "y no por numero de operaciones",
+        "vale, no por numero de operaciones",
+        "ahora no quiero por numero de operaciones",
+    ],
+)
+def test_group_ranking_rejects_a_negated_criterion(sentence: str) -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.MERCHANT,
+        group_limit=3,
+    )
+
+    assert _group_ranking_plan(query(sentence, Conversation(last_plan=previous))) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
         "Vuelve a la consulta anterior cual fue mi gasto mas grande",
         "Vuelve a la consulta anterior,",
         "Por favor, vuelve a la consulta anterior: cual fue mi gasto mas grande",
         "cual fue mi gasto mas grande, volviendo a lo de antes",
+        "No, vuelve a la consulta anterior: cual fue mi gasto mas grande",
+        "Y no, vuelve a la consulta anterior: cual fue mi gasto mas grande",
     ],
 )
 def test_balance_return_requires_anchored_prefix_separator_and_request(sentence: str) -> None:
