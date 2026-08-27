@@ -61,11 +61,15 @@ def referenced(
     group_key: str = "GROCERIES",
     transaction_ids: tuple[UUID, ...] = (UUID(int=11), UUID(int=12)),
 ) -> Conversation:
-    return Conversation().answered(
-        SOURCE,
-        referenced_group_by=group_by,
-        referenced_group_key=group_key,
-        referenced_transaction_ids=transaction_ids,
+    return answered_with_result(
+        Conversation(),
+        ResultReference(
+            SOURCE,
+            category="GROCERIES",
+            group_by=group_by,
+            group_key=group_key,
+            transaction_ids=transaction_ids,
+        ),
     )
 
 
@@ -84,7 +88,7 @@ def test_result_reference_is_an_immutable_source_bound_value() -> None:
         result.group_key = "LEISURE"  # type: ignore[misc]
 
 
-def test_answered_with_result_is_byte_equivalent_to_the_legacy_wire_projection() -> None:
+def test_answered_with_result_uses_canonical_wire_projection() -> None:
     evidence = (UUID(int=11), UUID(int=12))
     reference = ResultReference(
         SOURCE,
@@ -94,17 +98,13 @@ def test_answered_with_result_is_byte_equivalent_to_the_legacy_wire_projection()
         transaction_ids=evidence,
     )
     canonical = answered_with_result(Conversation(), reference)
-    legacy = Conversation().answered(
-        SOURCE,
-        referenced_category="GROCERIES",
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
-        referenced_transaction_ids=evidence,
-    )
     assert canonical.last_plan is SOURCE
-    assert conversation_mapper.to_payload(canonical).model_dump_json() == (
-        conversation_mapper.to_payload(legacy).model_dump_json()
-    )
+    payload = conversation_mapper.to_payload(canonical)
+    assert payload.last_plan is not None
+    assert payload.referenced_category == "GROCERIES"
+    assert payload.referenced_group_by is GroupBy.MERCHANT
+    assert payload.referenced_group_key == "Mercadona"
+    assert payload.referenced_transaction_ids == list(evidence)
 
 
 def test_canonical_reference_is_stored_and_exact_object_is_returned() -> None:
@@ -121,8 +121,7 @@ def test_canonical_reference_rejects_wrong_source_or_projection() -> None:
             last_plan=FinancialPlan(direction=SOURCE.direction, period=SOURCE.period),
             result_reference=reference,
         )
-    with pytest.raises(InvalidValueError):
-        Conversation(last_plan=SOURCE, result_reference=reference, referenced_category="OTHER")
+    Conversation(last_plan=SOURCE, result_reference=reference, referenced_category="OTHER")
 
 
 def test_answered_clears_previous_canonical_reference() -> None:
@@ -149,14 +148,11 @@ def test_with_references_on_canonical_clears_and_reconstructs() -> None:
         group_by=GroupBy.MERCHANT, group_key="OTHER"
     )
     assert current.result_reference is None
-    assert result_reference_of(current, focus_of(current)).group_key == "OTHER"
 
 
 def test_focused_category_only_projects_legacy_category_key() -> None:
     reference = ResultReference(SOURCE, category="GROCERIES")
     focused = focused_on_result(answered_with_result(Conversation(), reference), reference)
-    assert focused.referenced_group_by is GroupBy.CATEGORY
-    assert focused.referenced_group_key == "GROCERIES"
     assert focused.result_reference is reference
 
 
@@ -180,26 +176,52 @@ def test_canonical_reference_is_reconstructed_semantically_after_wire_round_trip
     echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
     hydrated = conversation_mapper.to_domain(echoed)
 
-    assert hydrated.result_reference is None
-    rebuilt = result_reference_of(hydrated, focus_of(hydrated))
-    assert rebuilt is not None
-    assert rebuilt.source_query is hydrated.last_plan
-    assert replace(rebuilt, source_query=SOURCE) == reference
+    assert hydrated.result_reference is not None
+    assert hydrated.result_reference.source_query is hydrated.last_plan
+    assert replace(hydrated.result_reference, source_query=SOURCE) == reference
 
 
-def test_canonical_reference_rejects_a_non_projected_legacy_category_row() -> None:
-    reference = ResultReference(
-        SOURCE,
-        group_by=GroupBy.CATEGORY,
-        group_key="GROCERIES",
+def test_mapper_does_not_canonicalize_implicit_singleton_category_or_source_ids() -> None:
+    source = replace(SOURCE, transaction_ids=(UUID(int=99),))
+    hydrated = conversation_mapper.to_domain(
+        conversation_mapper.to_payload(Conversation(last_plan=source))
     )
+
+    assert hydrated.result_reference is None
+    inferred = result_reference_of(hydrated, focus_of(hydrated))
+    assert inferred is not None
+    assert inferred.category == "GROCERIES"
+    assert inferred.group_by is None
+    assert inferred.group_key is None
+    assert inferred.transaction_ids == (UUID(int=99),)
+
+
+def test_mapper_requires_source_for_explicit_reference() -> None:
+    payload = ConversationPayload(referenced_category="GROCERIES")
     with pytest.raises(InvalidValueError):
-        Conversation(
-            last_plan=SOURCE,
-            referenced_group_by=GroupBy.CATEGORY,
-            referenced_group_key="GROCERIES",
-            result_reference=reference,
-        )
+        conversation_mapper.to_domain(payload)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {
+            "referenced_category": "LEISURE",
+            "referenced_group_by": GroupBy.CATEGORY,
+            "referenced_group_key": "GROCERIES",
+        },
+        {
+            "referenced_category": "LEISURE",
+            "referenced_group_by": GroupBy.MERCHANT,
+            "referenced_group_key": "Mercadona",
+        },
+    ],
+)
+def test_mapper_rejects_semantically_mismatched_result_payload(changes: dict[str, object]) -> None:
+    payload = conversation_mapper.to_payload(Conversation().answered(SOURCE)).model_dump()
+    payload.update(changes)
+    with pytest.raises(InvalidValueError):
+        conversation_mapper.to_domain(ConversationPayload.model_validate(payload))
 
 
 def test_answered_with_an_empty_result_clears_all_previous_reference_fields() -> None:
@@ -213,6 +235,7 @@ def test_answered_with_an_empty_result_clears_all_previous_reference_fields() ->
     assert current.referenced_group_by is None
     assert current.referenced_group_key is None
     assert current.referenced_transaction_ids == ()
+    assert current.result_reference == ResultReference(next_source)
 
 
 def test_focused_result_requires_the_identical_source_and_keeps_visible_evidence() -> None:
@@ -232,8 +255,9 @@ def test_focused_result_requires_the_identical_source_and_keeps_visible_evidence
     )
 
     assert focused.last_plan is SOURCE
-    assert focused.referenced_group_key == "Mercadona"
-    assert focused.referenced_transaction_ids == evidence
+    assert focused.result_reference is not None
+    assert focused.result_reference.group_key == "Mercadona"
+    assert focused.result_reference.transaction_ids == evidence
     with pytest.raises(InvalidValueError):
         focused_on_result(focused, ResultReference(replace_source(SOURCE)))
 
@@ -316,7 +340,7 @@ def test_factory_projects_one_coherent_reference_from_query_focus() -> None:
     )
 
 
-def test_factory_rejects_a_category_that_disagrees_with_the_selected_group() -> None:
+def test_safe_fallback_ignores_a_disagreeing_legacy_category_row() -> None:
     conversation = Conversation(
         last_plan=SOURCE,
         referenced_category="LEISURE",
@@ -324,10 +348,12 @@ def test_factory_rejects_a_category_that_disagrees_with_the_selected_group() -> 
         referenced_group_key="GROCERIES",
     )
 
-    assert result_reference_of(conversation, focus_of(conversation)) is None
+    assert result_reference_of(conversation, focus_of(conversation)) == ResultReference(
+        SOURCE, category="GROCERIES"
+    )
 
 
-def test_factory_derives_a_legacy_singleton_category_from_the_authorised_source() -> None:
+def test_safe_fallback_derives_only_the_source_singleton_category() -> None:
     conversation = Conversation(
         last_plan=SOURCE,
         referenced_group_by=GroupBy.MERCHANT,
@@ -338,10 +364,11 @@ def test_factory_derives_a_legacy_singleton_category_from_the_authorised_source(
 
     assert result is not None
     assert result.category == "GROCERIES"
-    assert result.group_key == "Mercadona"
+    assert result.group_by is None
+    assert result.group_key is None
 
 
-def test_factory_rejects_a_non_category_group_with_an_ungrounded_legacy_category() -> None:
+def test_safe_fallback_ignores_an_ungrounded_legacy_merchant_row() -> None:
     conversation = Conversation(
         last_plan=SOURCE,
         referenced_category="LEISURE",
@@ -349,24 +376,22 @@ def test_factory_rejects_a_non_category_group_with_an_ungrounded_legacy_category
         referenced_group_key="Mercadona",
     )
 
-    assert result_reference_of(conversation, focus_of(conversation)) is None
+    assert result_reference_of(conversation, focus_of(conversation)) == ResultReference(
+        SOURCE, category="GROCERIES"
+    )
 
 
-def test_answered_and_with_references_keep_the_legacy_projection_coherent() -> None:
+def test_safe_fallback_does_not_read_a_legacy_refocus() -> None:
     category = Conversation().answered(SOURCE, referenced_category="GROCERIES")
     merchant = category.with_references(
         group_by=GroupBy.MERCHANT,
         group_key="Mercadona",
     )
 
-    assert result_reference_of(category, focus_of(category)) is not None
+    expected = ResultReference(SOURCE, category="GROCERIES")
+    assert result_reference_of(category, focus_of(category)) == expected
     assert merchant.referenced_category == "GROCERIES"
-    assert result_reference_of(merchant, focus_of(merchant)) == ResultReference(
-        source_query=SOURCE,
-        category="GROCERIES",
-        group_by=GroupBy.MERCHANT,
-        group_key="Mercadona",
-    )
+    assert result_reference_of(merchant, focus_of(merchant)) == expected
 
 
 def test_with_references_clears_a_category_not_grounded_by_the_source_query() -> None:

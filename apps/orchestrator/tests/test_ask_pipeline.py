@@ -37,6 +37,10 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -359,9 +363,11 @@ async def test_an_answer_remembers_its_highlighted_merchant_and_evidence_rows() 
         ledger,
     )
 
-    assert result.conversation.referenced_group_by is GroupBy.MERCHANT
-    assert result.conversation.referenced_group_key == "GROCERIES"
-    assert result.conversation.referenced_transaction_ids == (transaction_id,)
+    reference = result.conversation.result_reference
+    assert reference is not None
+    assert reference.group_by is GroupBy.MERCHANT
+    assert reference.group_key == "GROCERIES"
+    assert reference.transaction_ids == (transaction_id,)
 
 
 # --- every outcome reaches the user as something different --------------------------
@@ -904,11 +910,15 @@ async def test_the_stream_ends_with_the_same_answer_the_handler_returns() -> Non
 
 
 async def test_result_reference_follow_up_is_identical_in_stream_and_direct_paths() -> None:
-    source = plan(group_by=GroupBy.CATEGORY)
-    conversation = IDLE.answered(
-        source,
-        referenced_group_by=GroupBy.CATEGORY,
-        referenced_group_key="GROCERIES",
+    source = plan(categories=("GROCERIES",), group_by=GroupBy.CATEGORY)
+    conversation = answered_with_result(
+        IDLE,
+        ResultReference(
+            source_query=source,
+            category="GROCERIES",
+            group_by=GroupBy.CATEGORY,
+            group_key="GROCERIES",
+        ),
     )
     query = AskFinancialQuestionQuery(
         sentence="Y esa categoría?",
@@ -960,8 +970,10 @@ async def test_category_filter_and_highlighted_merchant_remain_distinct_referenc
         )
     )
 
-    assert first.conversation.referenced_category == "GROCERIES"
-    assert first.conversation.referenced_group_key == "Mercadona"
+    reference = first.conversation.result_reference
+    assert reference is not None
+    assert reference.category == "GROCERIES"
+    assert reference.group_key == "Mercadona"
     assert category_ledger.plan is not None
     assert category_ledger.plan.categories == ("GROCERIES",)
     assert category_ledger.plan.merchants == ()

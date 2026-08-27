@@ -11,6 +11,7 @@ than reinterpreted into half a state.
 """
 
 import uuid
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -45,7 +46,11 @@ from finguard_orchestrator.domain.models.conversation import (
     Workflow,
 )
 from finguard_orchestrator.domain.models.planning_context import focus_of
-from finguard_orchestrator.domain.models.result_reference import result_reference_of
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+    result_reference_of,
+)
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -84,6 +89,10 @@ def there_and_back(conversation: Conversation) -> Conversation:
 
 def test_an_idle_conversation_survives() -> None:
     assert there_and_back(IDLE) == IDLE
+
+
+def test_an_absent_payload_is_an_idle_conversation() -> None:
+    assert mapper.to_domain(None) == IDLE
 
 
 def test_the_memory_of_the_last_answer_survives() -> None:
@@ -129,42 +138,87 @@ def test_a_group_ranking_limit_survives_the_client_round_trip() -> None:
 
 
 def test_a_highlighted_category_survives_the_client_round_trip() -> None:
-    out = IDLE.answered(LAST_MONTH, referenced_category="GROCERIES")
+    reference = ResultReference(
+        source_query=LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.CATEGORY,
+        group_key="GROCERIES",
+    )
+    out = answered_with_result(IDLE, reference)
 
     back = there_and_back(out)
+    projected = mapper.to_payload(back)
 
-    assert back.referenced_category == "GROCERIES"
+    assert back.result_reference == reference
+    assert projected.referenced_category == "GROCERIES"
 
 
 def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
     evidence = (uuid.UUID(int=21), uuid.UUID(int=22))
-    out = IDLE.answered(
-        LAST_MONTH,
-        referenced_category="GROCERIES",
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
-        referenced_transaction_ids=evidence,
+    reference = ResultReference(
+        source_query=LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.MERCHANT,
+        group_key="Mercadona",
+        transaction_ids=evidence,
     )
+    out = answered_with_result(IDLE, reference)
 
     back = there_and_back(out)
+    projected = mapper.to_payload(back)
 
-    assert back.referenced_group_by is GroupBy.MERCHANT
-    assert back.referenced_group_key == "Mercadona"
-    assert back.referenced_category == "GROCERIES"
-    assert back.referenced_transaction_ids == evidence
+    assert back.result_reference == reference
+    assert projected.referenced_group_by is GroupBy.MERCHANT
+    assert projected.referenced_group_key == "Mercadona"
+    assert projected.referenced_category == "GROCERIES"
+    assert projected.referenced_transaction_ids == list(evidence)
 
 
 def test_the_typed_result_projection_is_equivalent_after_the_legacy_wire_round_trip() -> None:
-    out = IDLE.answered(
-        LAST_MONTH,
-        referenced_group_by=GroupBy.CATEGORY,
-        referenced_group_key="GROCERIES",
-        referenced_transaction_ids=(uuid.UUID(int=21), uuid.UUID(int=22)),
+    reference = ResultReference(
+        source_query=LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.CATEGORY,
+        group_key="GROCERIES",
+        transaction_ids=(uuid.UUID(int=21), uuid.UUID(int=22)),
     )
+    out = answered_with_result(IDLE, reference)
 
     back = there_and_back(out)
+    projected = mapper.to_payload(back)
 
-    assert result_reference_of(back, focus_of(back)) == result_reference_of(out, focus_of(out))
+    assert back.result_reference == reference
+    assert result_reference_of(back, focus_of(back)) == reference
+    assert projected.referenced_group_by is GroupBy.CATEGORY
+    assert projected.referenced_group_key == "GROCERIES"
+    assert projected.referenced_transaction_ids == [uuid.UUID(int=21), uuid.UUID(int=22)]
+
+
+def test_a_legacy_category_row_without_repeated_category_is_canonicalized() -> None:
+    unfiltered = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.CATEGORY,
+    )
+    payload = mapper.to_payload(IDLE.answered(unfiltered)).model_copy(
+        update={
+            "referenced_category": None,
+            "referenced_group_by": GroupBy.CATEGORY,
+            "referenced_group_key": "GROCERIES",
+        }
+    )
+
+    back = mapper.to_domain(payload)
+
+    assert back.result_reference is not None
+    assert back.result_reference.source_query is back.last_plan
+    assert back.result_reference.category is None
+    assert back.result_reference.group_by is GroupBy.CATEGORY
+    assert back.result_reference.group_key == "GROCERIES"
+    projected = mapper.to_payload(back)
+    assert projected.referenced_category == "GROCERIES"
+    assert projected.referenced_group_by is GroupBy.CATEGORY
+    assert projected.referenced_group_key == "GROCERIES"
 
 
 def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
@@ -265,6 +319,78 @@ def test_a_percentage_waiting_only_for_its_window_survives() -> None:
 
     assert back.pending_ratio == ratio
     assert back.last_asked is Slot.WINDOW
+
+
+@pytest.mark.parametrize("special", ["ratio", "pending_ratio", "comparison", "balance"])
+def test_special_focus_discards_incoming_legacy_reference(special: str) -> None:
+    evidence = (uuid.UUID(int=31),)
+    reference_fields = {
+        "referenced_category": "GROCERIES",
+        "referenced_group_by": GroupBy.MERCHANT,
+        "referenced_group_key": "Mercadona",
+        "referenced_transaction_ids": evidence,
+    }
+    if special == "ratio":
+        part = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("GROCERIES",),
+        )
+        ratio = RatioPlan(
+            part=part,
+            whole=FinancialPlan(
+                direction=Direction.INCOME,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+            kind=RatioKind.SHARE,
+        )
+        conversation = replace(IDLE.answered_ratio(ratio), **reference_fields)
+    elif special == "pending_ratio":
+        draft = RatioDraft(
+            part=FinancialPlanDraft(direction=Direction.EXPENSE),
+            whole=FinancialPlanDraft(direction=Direction.INCOME),
+            kind=RatioKind.SHARE,
+        )
+        conversation = replace(
+            IDLE.answered(LAST_MONTH).waiting_for_ratio(draft), **reference_fields
+        )
+    elif special == "comparison":
+        earlier = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("GROCERIES",),
+        )
+        latest = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_MONTH),
+            categories=("GROCERIES",),
+        )
+        comparison = ComparisonPlan.between(earlier, latest)
+        assert comparison is not None
+        conversation = replace(IDLE.answered_comparison(comparison), **reference_fields)
+    else:
+        conversation = replace(
+            IDLE.answered(LAST_MONTH),
+            answered_the_balance=True,
+            **reference_fields,
+        )
+
+    raw = mapper.to_payload(conversation).model_dump()
+    raw.update(reference_fields)
+    payload = ConversationPayload.model_validate(raw)
+
+    back = mapper.to_domain(payload)
+    projected = mapper.to_payload(back)
+
+    assert back.result_reference is None
+    assert back.referenced_category is None
+    assert back.referenced_group_by is None
+    assert back.referenced_group_key is None
+    assert back.referenced_transaction_ids == ()
+    assert projected.referenced_category is None
+    assert projected.referenced_group_by is None
+    assert projected.referenced_group_key is None
+    assert projected.referenced_transaction_ids == []
 
 
 @pytest.mark.parametrize("missing", ["kind", "part", "whole"])

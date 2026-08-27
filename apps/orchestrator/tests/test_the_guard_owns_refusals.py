@@ -36,6 +36,10 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+)
 from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -371,7 +375,9 @@ async def test_a_breakdown_by_account_keeps_exactly_the_five_rows_just_shown() -
     assert isinstance(listed.conversation.last_plan, FinancialPlan)
     selected = listed.conversation.last_plan.transaction_ids
     assert selected == tuple(uuid.UUID(int=day) for day in range(5, 0, -1))
-    assert listed.conversation.referenced_transaction_ids == selected
+    reference = listed.conversation.result_reference
+    assert reference is not None
+    assert reference.transaction_ids == selected
 
     broken_down = await asked("Sepáralos por cuenta", planner, ledger, listed.conversation)
 
@@ -386,7 +392,9 @@ async def test_those_movements_select_the_exact_rows_that_were_shown() -> None:
     planner = GivesUp()
     ledger = ListingLedger()
     listed = await asked("Muéstrame los cinco últimos movimientos", planner, ledger)
-    selected = listed.conversation.referenced_transaction_ids
+    reference = listed.conversation.result_reference
+    assert reference is not None
+    selected = reference.transaction_ids
 
     answer = await asked("¿Cuánto suman esos movimientos?", planner, ledger, listed.conversation)
 
@@ -405,10 +413,9 @@ async def test_that_merchant_reuses_the_highlighted_breakdown_row() -> None:
         period=RelativePeriod(Period.THIS_YEAR),
         group_by=GroupBy.MERCHANT,
     )
-    conversation = Conversation(
-        last_plan=previous,
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
+    conversation = answered_with_result(
+        Conversation(last_plan=previous),
+        ResultReference(source_query=previous, group_by=GroupBy.MERCHANT, group_key="Mercadona"),
     )
 
     await asked("¿Cuánto gasté en ese comercio?", planner, ledger, conversation)
@@ -428,10 +435,9 @@ async def test_that_account_reuses_the_highlighted_breakdown_row() -> None:
         group_by=GroupBy.ACCOUNT,
         across_accounts=True,
     )
-    conversation = Conversation(
-        last_plan=previous,
-        referenced_group_by=GroupBy.ACCOUNT,
-        referenced_group_key="Hucha",
+    conversation = answered_with_result(
+        Conversation(last_plan=previous),
+        ResultReference(source_query=previous, group_by=GroupBy.ACCOUNT, group_key="Hucha"),
     )
 
     await asked("¿Cuántos ingresos tuvo esa cuenta?", planner, ledger, conversation)
@@ -615,8 +621,12 @@ async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> 
     )
 
     assert answer.text.startswith("El siguiente es restaurantes: 10,00 €")
-    assert answer.conversation.referenced_group_by is GroupBy.CATEGORY
-    assert answer.conversation.referenced_group_key == "RESTAURANTS"
+    assert answer.conversation.result_reference is not None
+    assert answer.conversation.result_reference.group_by is GroupBy.CATEGORY
+    assert answer.conversation.result_reference.group_key == "RESTAURANTS"
+    assert answer.conversation.result_reference is not None
+    assert answer.conversation.result_reference.source_query is answer.conversation.last_plan
+    assert answer.conversation.result_reference.category == "RESTAURANTS"
 
     selected = await asked(
         "¿Cuánto gasté en esa categoría?",
@@ -629,6 +639,59 @@ async def test_after_that_names_the_second_group_in_the_previous_breakdown() -> 
     assert selected.outcome == PlanningOutcome.PLANNED.value
     assert ledger.plan is not None
     assert ledger.plan.categories == ("RESTAURANTS",)
+
+
+async def test_next_merchant_keeps_the_category_scope_and_visible_evidence() -> None:
+    evidence = (uuid.UUID(int=71), uuid.UUID(int=72))
+
+    class MerchantBreakdownLedger(Ledger):
+        async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+            self.plan = plan
+            movements = tuple(
+                Movement(
+                    occurred_at=datetime(2026, 8, 5 - index, 10, 0, tzinfo=UTC),
+                    description=merchant,
+                    amount_minor=-amount,
+                    direction="EXPENSE",
+                    merchant_name=merchant,
+                    category="GROCERIES",
+                    currency="EUR",
+                    transaction_id=str(transaction_id),
+                )
+                for index, (merchant, amount, transaction_id) in enumerate(
+                    zip(("Mercadona", "Carrefour"), (6_000, 1_000), evidence, strict=True)
+                )
+            )
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=7_000,
+                movement_count=2,
+                groups=(Group("Mercadona", 6_000, 1), Group("Carrefour", 1_000, 1)),
+                movements=movements,
+            )
+
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        categories=("GROCERIES",),
+        group_by=GroupBy.MERCHANT,
+    )
+    ledger = MerchantBreakdownLedger()
+
+    answer = await asked(
+        "¿Y después de eso?",
+        GivesUp(),
+        ledger,
+        Conversation(last_plan=previous),
+    )
+
+    reference = answer.conversation.result_reference
+    assert reference is not None
+    assert reference.source_query is answer.conversation.last_plan
+    assert reference.category == "GROCERIES"
+    assert reference.group_by is GroupBy.MERCHANT
+    assert reference.group_key == "Carrefour"
+    assert reference.transaction_ids == evidence
 
 
 async def test_a_pronoun_can_ask_for_the_ranked_movements_date() -> None:
@@ -1415,8 +1478,9 @@ async def test_the_reported_highest_category_is_planned_without_the_model() -> N
     assert ledger.plan.group_by is GroupBy.CATEGORY
     assert ledger.plan.metric is Metric.SUM
     assert "categoría" in result.text.lower()
-    assert result.conversation.referenced_group_by is GroupBy.CATEGORY
-    assert result.conversation.referenced_group_key == "GROCERIES"
+    assert result.conversation.result_reference is not None
+    assert result.conversation.result_reference.group_by is GroupBy.CATEGORY
+    assert result.conversation.result_reference.group_key == "GROCERIES"
 
 
 async def test_the_highlighted_category_can_be_reused_by_pronoun() -> None:
@@ -1428,7 +1492,9 @@ async def test_the_highlighted_category_can_be_reused_by_pronoun() -> None:
         planner,
         ledger,
     )
-    assert first.conversation.referenced_category == "GROCERIES"
+    reference = first.conversation.result_reference
+    assert reference is not None
+    assert reference.category == "GROCERIES"
 
     second = await asked(
         "Y esa categor\u00eda el mes pasado?",
@@ -1442,7 +1508,8 @@ async def test_the_highlighted_category_can_be_reused_by_pronoun() -> None:
     assert ledger.plan.categories == ("GROCERIES",)
     assert ledger.plan.period == RelativePeriod(Period.LAST_MONTH)
     assert ledger.plan.group_by is GroupBy.NONE
-    assert second.conversation.referenced_category == "GROCERIES"
+    assert second.conversation.result_reference is not None
+    assert second.conversation.result_reference.category == "GROCERIES"
 
 
 async def test_frustration_acknowledges_the_failure_without_opening_an_unrelated_slot() -> None:

@@ -447,24 +447,6 @@ class Conversation:
             raise InvalidValueError("referenced transaction ids must be unique")
         if len(self.referenced_transaction_ids) > MAX_SELECTED_TRANSACTIONS:
             raise InvalidValueError("too many referenced transaction ids")
-        if self.result_reference is not None:
-            if self.result_reference.source_query is not self.last_plan:
-                raise InvalidValueError("a result reference must belong to the last answered query")
-            canonical_category = self.result_reference.category
-            canonical_group_by = self.result_reference.group_by
-            canonical_group_key = self.result_reference.group_key
-            if canonical_group_by is None and canonical_category is not None:
-                canonical_group_by = GroupBy.CATEGORY
-                canonical_group_key = canonical_category
-            if canonical_group_by is GroupBy.CATEGORY and canonical_category is None:
-                canonical_category = self.result_reference.group_key
-            if not (
-                canonical_category == self.referenced_category
-                and canonical_group_by is self.referenced_group_by
-                and canonical_group_key == self.referenced_group_key
-                and self.result_reference.transaction_ids == self.referenced_transaction_ids
-            ):
-                raise InvalidValueError("canonical result reference and legacy projection disagree")
         folded_aliases = tuple(alias.alias.casefold().strip() for alias in self.account_aliases)
         if len(self.account_aliases) > MAX_ENTITY_ALIASES:
             raise InvalidValueError("too many account aliases")
@@ -479,6 +461,11 @@ class Conversation:
             raise InvalidValueError("counterparty aliases must be unique")
         if len(self.turns) > MAX_REMEMBERED_TURNS:
             raise InvalidValueError("too many remembered turns")
+        if (
+            self.result_reference is not None
+            and self.result_reference.source_query is not self.last_plan
+        ):
+            raise InvalidValueError("a result reference needs its exact source query")
 
     def with_visual_context(self, context: VisualContext) -> "Conversation":
         """Remember a structural chart context, newest last, without any chart rows."""
