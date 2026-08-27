@@ -14,6 +14,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
@@ -41,8 +42,6 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.result_reference import (
     ResultReference,
-    legacy_projection_of,
-    result_reference_from_legacy,
 )
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -250,7 +249,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         last_ratio = _ratio_plan(payload)
         pending_ratio = _ratio_draft(payload)
         last_comparison = _comparison_plan(payload)
-        result_reference, ref_category, ref_group_by, ref_group_key, ref_ids = _reference_state(
+        result_reference = _reference_state(
             payload, last_plan, last_ratio, pending_ratio, last_comparison
         )
         return Conversation(
@@ -266,10 +265,6 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # let the same question be asked forever.
             last_asked=payload.last_asked,
             answered_the_balance=payload.answered_the_balance,
-            referenced_category=ref_category,
-            referenced_group_by=ref_group_by,
-            referenced_group_key=ref_group_key,
-            referenced_transaction_ids=ref_ids,
             last_ratio=last_ratio,
             pending_ratio=pending_ratio,
             last_comparison=last_comparison,
@@ -289,7 +284,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     last_ratio = _ratio_plan(payload)
     pending_ratio = _ratio_draft(payload)
     last_comparison = _comparison_plan(payload)
-    result_reference, ref_category, ref_group_by, ref_group_key, ref_ids = _reference_state(
+    result_reference = _reference_state(
         payload, last_plan, last_ratio, pending_ratio, last_comparison
     )
     return Conversation(
@@ -299,10 +294,6 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
-        referenced_category=ref_category,
-        referenced_group_by=ref_group_by,
-        referenced_group_key=ref_group_key,
-        referenced_transaction_ids=ref_ids,
         last_ratio=last_ratio,
         pending_ratio=pending_ratio,
         last_comparison=last_comparison,
@@ -322,44 +313,23 @@ def _reference_state(
     last_ratio: RatioPlan | None,
     pending_ratio: RatioDraft | None,
     last_comparison: ComparisonPlan | None,
-) -> tuple[
-    ResultReference | None,
-    str | None,
-    GroupBy | None,
-    str | None,
-    tuple[UUID, ...],
-]:
-    legacy = _normalized_legacy_reference(payload)
+) -> ResultReference | None:
     if (
         last_ratio is not None
         or pending_ratio is not None
         or last_comparison is not None
         or payload.answered_the_balance
     ):
-        return None, *legacy
-    reference = result_reference_from_legacy(
-        last_plan,
-        category=payload.referenced_category,
-        group_by=payload.referenced_group_by,
-        group_key=payload.referenced_group_key,
-        transaction_ids=tuple(payload.referenced_transaction_ids),
-    )
-    if reference is None:
-        return None, *legacy
-    category, group_by, group_key, ids = legacy_projection_of(reference)
-    return reference, category, group_by, group_key, ids
-
-
-def _normalized_legacy_reference(
-    payload: ConversationPayload,
-) -> tuple[str | None, GroupBy | None, str | None, tuple[UUID, ...]]:
+        return None
     category = payload.referenced_category
     group_by = payload.referenced_group_by
     group_key = payload.referenced_group_key
-    if category is not None and group_by is None:
-        group_by = GroupBy.CATEGORY
-        group_key = category
-    return category, group_by, group_key, tuple(payload.referenced_transaction_ids)
+    ids = tuple(payload.referenced_transaction_ids)
+    if category is None and group_by is None and group_key is None and not ids:
+        return None
+    if last_plan is None:
+        raise InvalidValueError("an explicit result reference needs an answered query")
+    return ResultReference(last_plan, category, group_by, group_key, ids)
 
 
 def _turns(payload: ConversationPayload) -> tuple[Turn, ...]:
@@ -483,15 +453,8 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     itself now: a half-filled PAYMENT_CONFIRMATION is refused, and constructing one on the way to
     filling it would make this function raise on its own correct output.
     """
-    projected = (
-        legacy_projection_of(conversation.result_reference)
-        if conversation.result_reference
-        else (
-            conversation.referenced_category,
-            conversation.referenced_group_by,
-            conversation.referenced_group_key,
-            conversation.referenced_transaction_ids,
-        )
+    referenced_category, referenced_group_by, referenced_group_key, referenced_transaction_ids = (
+        _legacy_projection_of(conversation.result_reference)
     )
     return ConversationPayload.model_validate(
         {
@@ -499,10 +462,10 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
-            "referenced_category": projected[0],
-            "referenced_group_by": projected[1],
-            "referenced_group_key": projected[2],
-            "referenced_transaction_ids": list(projected[3]),
+            "referenced_category": referenced_category,
+            "referenced_group_by": referenced_group_by,
+            "referenced_group_key": referenced_group_key,
+            "referenced_transaction_ids": referenced_transaction_ids,
             "account_aliases": [
                 {
                     "alias": alias.alias,
@@ -596,6 +559,22 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             **_active_payload(conversation.active),
         }
     )
+
+
+def _legacy_projection_of(
+    reference: ResultReference | None,
+) -> tuple[str | None, GroupBy | None, str | None, list[UUID]]:
+    """Project only a canonical reference; stale/absent values become an empty legacy wire."""
+    if reference is None:
+        return None, None, None, []
+    category = reference.category
+    group_by = reference.group_by
+    group_key = reference.group_key
+    if category is not None and group_by is None:
+        group_by, group_key = GroupBy.CATEGORY, category
+    elif group_by is GroupBy.CATEGORY and category is None:
+        category = group_key
+    return category, group_by, group_key, list(reference.transaction_ids)
 
 
 def _ratio_plan(payload: ConversationPayload) -> RatioPlan | None:

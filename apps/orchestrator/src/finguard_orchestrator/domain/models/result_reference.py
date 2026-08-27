@@ -30,19 +30,6 @@ _REFERENCEABLE_GROUPS = {
 }
 
 
-def legacy_projection_of(
-    reference: "ResultReference",
-) -> tuple[str | None, GroupBy | None, str | None, tuple[UUID, ...]]:
-    category = reference.category
-    group_by = reference.group_by
-    group_key = reference.group_key
-    if category is not None and group_by is None:
-        group_by, group_key = GroupBy.CATEGORY, category
-    if group_by is GroupBy.CATEGORY and category is None:
-        category = group_key
-    return category, group_by, group_key, reference.transaction_ids
-
-
 @dataclass(frozen=True)
 class ResultReference:
     """The row and evidence selected from one immutable source query."""
@@ -89,41 +76,9 @@ class ResultReference:
             raise InvalidValueError("the selected category is not grounded by its source query")
 
 
-def result_reference_from_legacy(
-    source_query: PlannedQuery | None,
-    *,
-    category: str | None = None,
-    group_by: GroupBy | None = None,
-    group_key: str | None = None,
-    transaction_ids: tuple[UUID, ...] = (),
-) -> ResultReference | None:
-    """Rebuild canonical state only from explicitly supplied legacy fields."""
-    if (
-        not any(value is not None for value in (category, group_by, group_key))
-        and not transaction_ids
-    ):
-        return None
-    if source_query is None:
-        raise InvalidValueError("an explicit result reference needs a source query")
-    return ResultReference(
-        source_query=source_query,
-        category=category,
-        group_by=group_by,
-        group_key=group_key,
-        transaction_ids=transaction_ids,
-    )
-
-
 def answered_with_result(conversation: Conversation, reference: ResultReference) -> Conversation:
-    """Remember one answer and atomically project its result reference to the legacy wire."""
-    category, group_by, group_key, transaction_ids = legacy_projection_of(reference)
-    answered = conversation.answered(
-        reference.source_query,
-        referenced_category=category,
-        referenced_group_by=group_by,
-        referenced_group_key=group_key,
-        referenced_transaction_ids=transaction_ids,
-    )
+    """Remember one answer; the canonical reference is the sole projection."""
+    answered = conversation.answered(reference.source_query)
     return replace(answered, result_reference=reference)
 
 
@@ -131,15 +86,7 @@ def focused_on_result(conversation: Conversation, reference: ResultReference) ->
     """Select another visible row without changing the query or its other conversation state."""
     if conversation.last_plan is not reference.source_query:
         raise InvalidValueError("a result can only be focused on its exact source query")
-    category, group_by, group_key, transaction_ids = legacy_projection_of(reference)
-    return replace(
-        conversation,
-        referenced_category=category,
-        referenced_group_by=group_by,
-        referenced_group_key=group_key,
-        referenced_transaction_ids=transaction_ids,
-        result_reference=reference,
-    )
+    return replace(conversation, result_reference=reference)
 
 
 def result_reference_of(
@@ -148,7 +95,7 @@ def result_reference_of(
     *,
     returned_from_balance: bool = False,
 ) -> ResultReference | None:
-    """Project legacy memory only when ``focus`` authorises its source query.
+    """Return canonical memory only when ``focus`` authorises its source query.
 
     Ratios, pending ratios and comparisons deliberately have no projection: their legacy
     ``last_plan`` is merely one operand.  A balance keeps the previous query suspended, but
@@ -171,33 +118,12 @@ def result_reference_of(
     if conversation.result_reference is not None:
         return conversation.result_reference
 
-    group_by = conversation.referenced_group_by
-    group_key = conversation.referenced_group_key
-    category = conversation.referenced_category
-    if (
-        category is None
-        and isinstance(source_query, FinancialPlan)
-        and len(source_query.categories) == 1
-    ):
-        category = source_query.categories[0]
-    if group_by is GroupBy.CATEGORY and category is not None and category != group_key:
-        return None
-    if (
-        category is not None
-        and group_by not in {None, GroupBy.CATEGORY}
-        and (not isinstance(source_query, FinancialPlan) or category not in source_query.categories)
-    ):
-        return None
-
-    transaction_ids = conversation.referenced_transaction_ids
-    if not transaction_ids and isinstance(source_query, FinancialPlan):
-        transaction_ids = source_query.transaction_ids
-    if category is None and group_by is None and not transaction_ids:
-        return None
-    return ResultReference(
-        source_query=source_query,
-        category=category,
-        group_by=group_by,
-        group_key=group_key,
-        transaction_ids=transaction_ids,
-    )
+    if isinstance(source_query, FinancialPlan):
+        category = source_query.categories[0] if len(source_query.categories) == 1 else None
+        if category is not None or source_query.transaction_ids:
+            return ResultReference(
+                source_query=source_query,
+                category=category,
+                transaction_ids=source_query.transaction_ids,
+            )
+    return None
