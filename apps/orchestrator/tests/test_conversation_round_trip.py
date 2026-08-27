@@ -11,6 +11,7 @@ than reinterpreted into half a state.
 """
 
 import uuid
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -84,6 +85,10 @@ def there_and_back(conversation: Conversation) -> Conversation:
 
 def test_an_idle_conversation_survives() -> None:
     assert there_and_back(IDLE) == IDLE
+
+
+def test_an_absent_payload_is_an_idle_conversation() -> None:
+    assert mapper.to_domain(None) == IDLE
 
 
 def test_the_memory_of_the_last_answer_survives() -> None:
@@ -165,6 +170,31 @@ def test_the_typed_result_projection_is_equivalent_after_the_legacy_wire_round_t
     back = there_and_back(out)
 
     assert result_reference_of(back, focus_of(back)) == result_reference_of(out, focus_of(out))
+
+
+def test_a_legacy_category_row_without_repeated_category_is_canonicalized() -> None:
+    unfiltered = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.CATEGORY,
+    )
+    payload = mapper.to_payload(IDLE.answered(unfiltered)).model_copy(
+        update={
+            "referenced_category": None,
+            "referenced_group_by": GroupBy.CATEGORY,
+            "referenced_group_key": "GROCERIES",
+        }
+    )
+
+    back = mapper.to_domain(payload)
+
+    assert back.result_reference is not None
+    assert back.result_reference.source_query is back.last_plan
+    assert back.result_reference.category is None
+    assert back.result_reference.group_by is GroupBy.CATEGORY
+    assert back.result_reference.group_key == "GROCERIES"
+    assert back.referenced_category == "GROCERIES"
+    assert mapper.to_payload(back).referenced_category == "GROCERIES"
 
 
 def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
@@ -265,6 +295,69 @@ def test_a_percentage_waiting_only_for_its_window_survives() -> None:
 
     assert back.pending_ratio == ratio
     assert back.last_asked is Slot.WINDOW
+
+
+@pytest.mark.parametrize("special", ["ratio", "pending_ratio", "comparison", "balance"])
+def test_special_focus_keeps_legacy_reference_without_canonicalizing(special: str) -> None:
+    evidence = (uuid.UUID(int=31),)
+    reference_fields = {
+        "referenced_category": "GROCERIES",
+        "referenced_group_by": GroupBy.MERCHANT,
+        "referenced_group_key": "Mercadona",
+        "referenced_transaction_ids": evidence,
+    }
+    if special == "ratio":
+        part = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("GROCERIES",),
+        )
+        ratio = RatioPlan(
+            part=part,
+            whole=FinancialPlan(
+                direction=Direction.INCOME,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+            kind=RatioKind.SHARE,
+        )
+        conversation = replace(IDLE.answered_ratio(ratio), **reference_fields)
+    elif special == "pending_ratio":
+        draft = RatioDraft(
+            part=FinancialPlanDraft(direction=Direction.EXPENSE),
+            whole=FinancialPlanDraft(direction=Direction.INCOME),
+            kind=RatioKind.SHARE,
+        )
+        conversation = replace(
+            IDLE.answered(LAST_MONTH).waiting_for_ratio(draft), **reference_fields
+        )
+    elif special == "comparison":
+        earlier = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("GROCERIES",),
+        )
+        latest = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_MONTH),
+            categories=("GROCERIES",),
+        )
+        comparison = ComparisonPlan.between(earlier, latest)
+        assert comparison is not None
+        conversation = replace(IDLE.answered_comparison(comparison), **reference_fields)
+    else:
+        conversation = replace(
+            IDLE.answered(LAST_MONTH),
+            answered_the_balance=True,
+            **reference_fields,
+        )
+
+    back = there_and_back(conversation)
+
+    assert back.result_reference is None
+    assert back.referenced_category == "GROCERIES"
+    assert back.referenced_group_by is GroupBy.MERCHANT
+    assert back.referenced_group_key == "Mercadona"
+    assert back.referenced_transaction_ids == evidence
 
 
 @pytest.mark.parametrize("missing", ["kind", "part", "whole"])

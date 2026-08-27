@@ -30,7 +30,7 @@ _REFERENCEABLE_GROUPS = {
 }
 
 
-def _legacy_projection(
+def legacy_projection_of(
     reference: "ResultReference",
 ) -> tuple[str | None, GroupBy | None, str | None, tuple[UUID, ...]]:
     category = reference.category
@@ -89,9 +89,34 @@ class ResultReference:
             raise InvalidValueError("the selected category is not grounded by its source query")
 
 
+def result_reference_from_legacy(
+    source_query: PlannedQuery | None,
+    *,
+    category: str | None = None,
+    group_by: GroupBy | None = None,
+    group_key: str | None = None,
+    transaction_ids: tuple[UUID, ...] = (),
+) -> ResultReference | None:
+    """Rebuild canonical state only from explicitly supplied legacy fields."""
+    if (
+        not any(value is not None for value in (category, group_by, group_key))
+        and not transaction_ids
+    ):
+        return None
+    if source_query is None:
+        raise InvalidValueError("an explicit result reference needs a source query")
+    return ResultReference(
+        source_query=source_query,
+        category=category,
+        group_by=group_by,
+        group_key=group_key,
+        transaction_ids=transaction_ids,
+    )
+
+
 def answered_with_result(conversation: Conversation, reference: ResultReference) -> Conversation:
     """Remember one answer and atomically project its result reference to the legacy wire."""
-    category, group_by, group_key, transaction_ids = _legacy_projection(reference)
+    category, group_by, group_key, transaction_ids = legacy_projection_of(reference)
     answered = conversation.answered(
         reference.source_query,
         referenced_category=category,
@@ -106,7 +131,7 @@ def focused_on_result(conversation: Conversation, reference: ResultReference) ->
     """Select another visible row without changing the query or its other conversation state."""
     if conversation.last_plan is not reference.source_query:
         raise InvalidValueError("a result can only be focused on its exact source query")
-    category, group_by, group_key, transaction_ids = _legacy_projection(reference)
+    category, group_by, group_key, transaction_ids = legacy_projection_of(reference)
     return replace(
         conversation,
         referenced_category=category,

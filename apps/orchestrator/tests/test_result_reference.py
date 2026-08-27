@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.result_reference import (
     ResultReference,
     answered_with_result,
     focused_on_result,
+    result_reference_from_legacy,
     result_reference_of,
 )
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -180,11 +181,62 @@ def test_canonical_reference_is_reconstructed_semantically_after_wire_round_trip
     echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
     hydrated = conversation_mapper.to_domain(echoed)
 
-    assert hydrated.result_reference is None
-    rebuilt = result_reference_of(hydrated, focus_of(hydrated))
-    assert rebuilt is not None
-    assert rebuilt.source_query is hydrated.last_plan
-    assert replace(rebuilt, source_query=SOURCE) == reference
+    assert hydrated.result_reference is not None
+    assert hydrated.result_reference.source_query is hydrated.last_plan
+    assert replace(hydrated.result_reference, source_query=SOURCE) == reference
+
+
+def test_legacy_factory_does_not_infer_singleton_category_or_source_ids() -> None:
+    source = replace(SOURCE, transaction_ids=(UUID(int=99),))
+    assert result_reference_from_legacy(source) is None
+
+
+def test_legacy_factory_requires_source_for_explicit_reference() -> None:
+    with pytest.raises(InvalidValueError):
+        result_reference_from_legacy(None, category="GROCERIES")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {
+            "category": "GROCERIES",
+            "group_by": GroupBy.CATEGORY,
+            "group_key": "GROCERIES",
+            "transaction_ids": (UUID(int=7),),
+        },
+        {"group_by": GroupBy.CATEGORY, "group_key": "GROCERIES"},
+        {"transaction_ids": (UUID(int=7),)},
+        {"category": "GROCERIES", "group_by": GroupBy.MERCHANT, "group_key": "Mercadona"},
+    ],
+)
+def test_legacy_factory_preserves_explicit_canonical_fields(kwargs: dict[str, object]) -> None:
+    result = result_reference_from_legacy(SOURCE, **kwargs)  # type: ignore[arg-type]
+    assert result is not None
+    for key, value in kwargs.items():
+        assert getattr(result, key) == value
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {
+            "referenced_category": "LEISURE",
+            "referenced_group_by": GroupBy.CATEGORY,
+            "referenced_group_key": "GROCERIES",
+        },
+        {
+            "referenced_category": "LEISURE",
+            "referenced_group_by": GroupBy.MERCHANT,
+            "referenced_group_key": "Mercadona",
+        },
+    ],
+)
+def test_mapper_rejects_semantically_mismatched_result_payload(changes: dict[str, object]) -> None:
+    payload = conversation_mapper.to_payload(Conversation().answered(SOURCE)).model_dump()
+    payload.update(changes)
+    with pytest.raises(InvalidValueError):
+        conversation_mapper.to_domain(ConversationPayload.model_validate(payload))
 
 
 def test_canonical_reference_rejects_a_non_projected_legacy_category_row() -> None:

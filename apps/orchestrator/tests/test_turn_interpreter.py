@@ -99,7 +99,7 @@ def test_singleton_category_without_explicit_reference_allows_second_read() -> N
     assert turn_interpreters._worth_a_second_read("¿y esa categoría?", conversation) is True
 
 
-def test_second_read_after_legacy_reference_round_trip_matches_canonical() -> None:
+def test_second_read_after_wire_round_trip_uses_rehydrated_canonical_reference() -> None:
     plan = ANSWERED.last_plan
     assert plan is not None
     canonical = answered_with_result(
@@ -107,10 +107,11 @@ def test_second_read_after_legacy_reference_round_trip_matches_canonical() -> No
     )
     payload = conversation_mapper.to_payload(canonical)
     echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
-    legacy = conversation_mapper.to_domain(echoed)
-    assert legacy.result_reference is None
+    rehydrated = conversation_mapper.to_domain(echoed)
+    assert rehydrated.result_reference is not None
+    assert rehydrated.result_reference.source_query is rehydrated.last_plan
     assert turn_interpreters._worth_a_second_read("¿y esa categoría?", canonical) is False
-    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", legacy) is False
+    assert turn_interpreters._worth_a_second_read("¿y esa categoría?", rehydrated) is False
 
 
 @pytest.mark.parametrize("kind", ["ratio", "pending_ratio", "comparison", "balance"])

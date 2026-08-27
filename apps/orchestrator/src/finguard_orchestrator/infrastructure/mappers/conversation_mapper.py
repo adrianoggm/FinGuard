@@ -11,6 +11,7 @@ layers in with an apology.
 """
 
 from typing import Any, Literal, cast
+from uuid import UUID
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
 from finguard_orchestrator.domain.models.chart import (
@@ -37,6 +38,11 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     Workflow,
     workflow_of,
+)
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    legacy_projection_of,
+    result_reference_from_legacy,
 )
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -237,9 +243,18 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     nobody could have been in is a client bug or an attempt, and silently reinterpreting it as "no
     conversation" tells whoever sent it nothing while discarding whatever was really under way.
     """
-    if payload is None or payload.workflow is None:
+    if payload is None:
+        return Conversation()
+    if payload.workflow is None:
+        last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
+        last_ratio = _ratio_plan(payload)
+        pending_ratio = _ratio_draft(payload)
+        last_comparison = _comparison_plan(payload)
+        result_reference, ref_category, ref_group_by, ref_group_key, ref_ids = _reference_state(
+            payload, last_plan, last_ratio, pending_ratio, last_comparison
+        )
         return Conversation(
-            last_plan=query_to_domain(payload.last_plan) if payload and payload.last_plan else None,
+            last_plan=last_plan,
             prior_plan=(
                 query_to_domain(payload.prior_plan) if payload and payload.prior_plan else None
             ),
@@ -249,29 +264,20 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # The branch this field exists for. A question asked with nothing half-built behind it
             # comes back exactly here — no workflow — and dropping the slot on the way in is what
             # let the same question be asked forever.
-            last_asked=payload.last_asked if payload else None,
-            answered_the_balance=bool(payload and payload.answered_the_balance),
-            referenced_category=payload.referenced_category if payload else None,
-            referenced_group_by=(
-                payload.referenced_group_by
-                if payload and payload.referenced_group_by is not None
-                else (GroupBy.CATEGORY if payload and payload.referenced_category else None)
-            ),
-            referenced_group_key=(
-                payload.referenced_group_key
-                if payload and payload.referenced_group_key is not None
-                else (payload.referenced_category if payload else None)
-            ),
-            referenced_transaction_ids=(
-                tuple(payload.referenced_transaction_ids) if payload else ()
-            ),
-            last_ratio=_ratio_plan(payload) if payload else None,
-            pending_ratio=_ratio_draft(payload) if payload else None,
-            last_comparison=_comparison_plan(payload) if payload else None,
-            account_aliases=_account_aliases(payload) if payload else (),
-            counterparty_aliases=_counterparty_aliases(payload) if payload else (),
-            recent_payment_rail=payload.recent_payment_rail if payload else None,
-            turns=_turns(payload) if payload else (),
+            last_asked=payload.last_asked,
+            answered_the_balance=payload.answered_the_balance,
+            referenced_category=ref_category,
+            referenced_group_by=ref_group_by,
+            referenced_group_key=ref_group_key,
+            referenced_transaction_ids=ref_ids,
+            last_ratio=last_ratio,
+            pending_ratio=pending_ratio,
+            last_comparison=last_comparison,
+            result_reference=result_reference,
+            account_aliases=_account_aliases(payload),
+            counterparty_aliases=_counterparty_aliases(payload),
+            recent_payment_rail=payload.recent_payment_rail,
+            turns=_turns(payload),
             visual_contexts=_visual_contexts(payload),
             account_selection=_account_selection(payload) if payload else None,
         )
@@ -280,6 +286,12 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     prior_plan = query_to_domain(payload.prior_plan) if payload.prior_plan else None
     retry_plan = query_to_domain(payload.retry_plan) if payload.retry_plan else None
     active = _active(payload)
+    last_ratio = _ratio_plan(payload)
+    pending_ratio = _ratio_draft(payload)
+    last_comparison = _comparison_plan(payload)
+    result_reference, ref_category, ref_group_by, ref_group_key, ref_ids = _reference_state(
+        payload, last_plan, last_ratio, pending_ratio, last_comparison
+    )
     return Conversation(
         active=active,
         last_plan=last_plan,
@@ -287,17 +299,14 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
-        referenced_category=payload.referenced_category,
-        referenced_group_by=(
-            payload.referenced_group_by
-            if payload.referenced_group_by is not None
-            else (GroupBy.CATEGORY if payload.referenced_category else None)
-        ),
-        referenced_group_key=payload.referenced_group_key or payload.referenced_category,
-        referenced_transaction_ids=tuple(payload.referenced_transaction_ids),
-        last_ratio=_ratio_plan(payload),
-        pending_ratio=_ratio_draft(payload),
-        last_comparison=_comparison_plan(payload),
+        referenced_category=ref_category,
+        referenced_group_by=ref_group_by,
+        referenced_group_key=ref_group_key,
+        referenced_transaction_ids=ref_ids,
+        last_ratio=last_ratio,
+        pending_ratio=pending_ratio,
+        last_comparison=last_comparison,
+        result_reference=result_reference,
         account_aliases=_account_aliases(payload),
         counterparty_aliases=_counterparty_aliases(payload),
         recent_payment_rail=payload.recent_payment_rail,
@@ -305,6 +314,52 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         visual_contexts=_visual_contexts(payload),
         account_selection=_account_selection(payload),
     )
+
+
+def _reference_state(
+    payload: ConversationPayload,
+    last_plan: FinancialPlan | TopMovements | None,
+    last_ratio: RatioPlan | None,
+    pending_ratio: RatioDraft | None,
+    last_comparison: ComparisonPlan | None,
+) -> tuple[
+    ResultReference | None,
+    str | None,
+    GroupBy | None,
+    str | None,
+    tuple[UUID, ...],
+]:
+    legacy = _normalized_legacy_reference(payload)
+    if (
+        last_ratio is not None
+        or pending_ratio is not None
+        or last_comparison is not None
+        or payload.answered_the_balance
+    ):
+        return None, *legacy
+    reference = result_reference_from_legacy(
+        last_plan,
+        category=payload.referenced_category,
+        group_by=payload.referenced_group_by,
+        group_key=payload.referenced_group_key,
+        transaction_ids=tuple(payload.referenced_transaction_ids),
+    )
+    if reference is None:
+        return None, *legacy
+    category, group_by, group_key, ids = legacy_projection_of(reference)
+    return reference, category, group_by, group_key, ids
+
+
+def _normalized_legacy_reference(
+    payload: ConversationPayload,
+) -> tuple[str | None, GroupBy | None, str | None, tuple[UUID, ...]]:
+    category = payload.referenced_category
+    group_by = payload.referenced_group_by
+    group_key = payload.referenced_group_key
+    if category is not None and group_by is None:
+        group_by = GroupBy.CATEGORY
+        group_key = category
+    return category, group_by, group_key, tuple(payload.referenced_transaction_ids)
 
 
 def _turns(payload: ConversationPayload) -> tuple[Turn, ...]:
@@ -428,16 +483,26 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     itself now: a half-filled PAYMENT_CONFIRMATION is refused, and constructing one on the way to
     filling it would make this function raise on its own correct output.
     """
+    projected = (
+        legacy_projection_of(conversation.result_reference)
+        if conversation.result_reference
+        else (
+            conversation.referenced_category,
+            conversation.referenced_group_by,
+            conversation.referenced_group_key,
+            conversation.referenced_transaction_ids,
+        )
+    )
     return ConversationPayload.model_validate(
         {
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
-            "referenced_category": conversation.referenced_category,
-            "referenced_group_by": conversation.referenced_group_by,
-            "referenced_group_key": conversation.referenced_group_key,
-            "referenced_transaction_ids": list(conversation.referenced_transaction_ids),
+            "referenced_category": projected[0],
+            "referenced_group_by": projected[1],
+            "referenced_group_key": projected[2],
+            "referenced_transaction_ids": list(projected[3]),
             "account_aliases": [
                 {
                     "alias": alias.alias,
