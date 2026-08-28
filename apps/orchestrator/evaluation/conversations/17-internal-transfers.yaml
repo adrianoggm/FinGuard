@@ -41,13 +41,15 @@ episodes:
         route: COURTESY
 
   - name: contributions_are_not_salary_or_ordinary_spending
-    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
-    # wrongly, and writing the wrong scope into its expectations would record the defect as
-    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
-    #
-    # The last clause of `why` below is the whole point of the episode, and it is what breaks:
-    # turns 5 and 6 are answered restricted to Fondo indexado, so the holder asks what they spent
-    # on supermarkets and restaurants and gets it from inside an index fund.
+    # scope: legacy — debt, not a choice, and a *different* defect from the three that came off this
+    # list. Turns 1-2 no longer narrow anything: the fund they run in is derived and is no longer
+    # persisted. Turn 3 says «al fondo» out loud, which is a scope the holder stated and is kept as
+    # designed — and turns 5-6 then inherit it, so the last clause of `why` still breaks: the
+    # holder asks what they spent on supermarkets and on restaurants and is answered from inside an
+    # index fund. The remaining defect is how long a *stated* selection lives, not where it came
+    # from: a sentence stating a complete financial question of its own carries no account and gets
+    # the previous one anyway. Reproduced with and without the fix to `_remember_explicit_scope`.
+    # See LEGACY_SCOPE in tests/test_conversation_corpus.py.
     scope: legacy
     why: >
       Different natural phrasings for money put into an investment all select incoming internal
