@@ -473,8 +473,22 @@ class Conversation:
 
         Read off the state rather than off the question's wording, which is the point: the sentence
         is written by a model, and "de este" only means something against the slot.
+
+        `AccountScopeClarification` was missing from this list for as long as the state existed. It
+        declares `awaiting = Slot.ACCOUNT` on itself, so the field was right and only this reader
+        was wrong — and since it is the one reader, the slot never reached the wire and never
+        reached anything counting repeats. That mattered more than the other four put together:
+        the account question is what a holder with more than one account is asked before any
+        figure, so it is the clarification this service emits most often and the one most likely
+        to be asked twice.
         """
-        if isinstance(self.active, FinancialClarification | PaymentInProgress | TransferInProgress):
+        if isinstance(
+            self.active,
+            FinancialClarification
+            | AccountScopeClarification
+            | PaymentInProgress
+            | TransferInProgress,
+        ):
             return self.active.awaiting
         if isinstance(self.active, PaymentConfirmation):
             return Slot.CONFIRMATION

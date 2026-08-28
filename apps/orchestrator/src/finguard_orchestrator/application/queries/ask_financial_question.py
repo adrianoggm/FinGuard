@@ -4063,6 +4063,13 @@ class AskFinancialQuestionHandler:
         No `AccountScopeClarification` here on purpose. A path that never registered the pending
         plan cannot resume it, and offering to resume something that is not stored is worse than
         asking the whole question again.
+
+        Which is exactly why `asking` is here. The three sites that build the clarification record
+        the slot on the workflow and `awaiting` reads it there; this path leaves no workflow, so
+        `last_asked` is the only thing that can remember the question — the case that comment on
+        `last_asked` was written for, in a second path that had never used it. Without it the
+        backstop asked "¿en qué cuenta?" and left behind a conversation claiming nothing had been
+        asked, so a comparison or a ratio could re-ask it every turn and no counter would see it.
         """
         names = [candidate.display_name for candidate in required.candidates]
         return AskFinancialQuestionResult(
@@ -4072,7 +4079,7 @@ class AskFinancialQuestionHandler:
             + " o Todas mis cuentas.",
             question="¿En qué cuenta quieres consultarlo?",
             suggestions=[*names, "Todas mis cuentas"],
-            conversation=was,
+            conversation=was.asking(Slot.ACCOUNT),
         )
 
     async def _answer(

@@ -60,7 +60,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
-from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
+from finguard_orchestrator.infrastructure.dto.llm_dto import _SLOTS_OF, ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
 LAST_MONTH = FinancialPlan(
@@ -464,6 +464,19 @@ def test_account_scope_clarification_with_ranked_many_survives_round_trip() -> N
     )
     back = there_and_back(IDLE.with_active(pending))
     assert back.active == pending
+
+
+def test_every_workflow_says_which_slots_it_can_be_waiting_on() -> None:
+    """`_SLOTS_OF` is subscripted, not `.get`, so a workflow with no row is a `KeyError` — an HTTP
+    500 on the way out, for a conversation this service itself produced.
+
+    ACCOUNT_SCOPE had no row for as long as the state existed, and the only reason nobody saw it
+    is that the check short-circuits on a null slot and that state never reported one. The two
+    defects hid each other: the missing slot kept the missing row unreachable, and the missing row
+    was waiting to turn the slot into a crash the moment it became honest. This closes the pair, so
+    the next state added has to declare its questions instead of finding out in production.
+    """
+    assert set(_SLOTS_OF) == {*Workflow, None}
 
 
 def test_account_scope_payload_rejects_count_for_aggregate_plan() -> None:

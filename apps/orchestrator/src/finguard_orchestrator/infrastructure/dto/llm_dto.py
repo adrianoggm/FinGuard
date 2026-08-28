@@ -179,6 +179,14 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     Workflow.FINANCIAL_CLARIFICATION: frozenset(
         {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION, Slot.ACCOUNT}
     ),
+    # One question and no more: which of the holder's accounts. The entry was missing entirely
+    # rather than empty, and the difference is a 500: this dict is subscripted, not `.get`, so an
+    # absent workflow is a `KeyError` and not a rejected payload. It stayed latent because the
+    # check short-circuits on a null slot and this state never set one — so the moment the slot
+    # became honest, the commonest clarification in the service stopped being able to cross the
+    # wire. Every member of `Workflow` needs a row here; a test asserts that so the next state
+    # added cannot repeat it.
+    Workflow.ACCOUNT_SCOPE: frozenset({Slot.ACCOUNT}),
     Workflow.UNSUPPORTED_CAPABILITY: frozenset(),
     Workflow.PAYMENT_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.RECIPIENT, Slot.RECIPIENT_CHOICE}),
     # Two questions and no more: which of the holder's accounts, and how much.

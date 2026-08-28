@@ -118,6 +118,105 @@ def test_a_structural_failure_is_counted_and_not_excused() -> None:
     assert "INVALID_STRUCTURE" in e2e.violations(body)
 
 
+# --- a run that measured nothing is a failure -----------------------------------------
+#
+# The defect this half of the file exists for. On 2026-08-28 the three read sets reported 0
+# violations over 235 cases and not one case had reached an answering outcome: every property in
+# `violations` is guarded on an answer existing, so a set of clarifications cannot break any of
+# them. Zero violations and zero answers printed identically and the suite stayed green for a week.
+
+
+def test_a_set_where_nothing_answered_did_not_run() -> None:
+    """The exact shape of the vacuous pass: 235 cases, 0 violations, 0 answers."""
+    empty = e2e.vacuity("dev", answered=0, figures=0, expected=102)
+
+    assert empty, "0 answers out of 102 must not read as a pass"
+
+
+def test_the_floor_is_a_fraction_and_not_a_zero_check() -> None:
+    """One answer out of 102 is nearly as blind as none, so the guard cannot be `> 0`."""
+    assert e2e.vacuity("dev", answered=1, figures=1, expected=102)
+    assert e2e.vacuity("dev", answered=50, figures=50, expected=102)
+    assert e2e.vacuity("dev", answered=51, figures=51, expected=102) == []
+
+
+def test_the_floor_sits_below_the_worst_model_ever_measured() -> None:
+    """`../evaluation/planning/RESULTS.md` puts the shipped model at 95.8 / 87.3 / 77.8 outcome
+    accuracy and the worst of its eleven models at 50.0 %. The guard must clear none of those, or it
+    is an accuracy gate wearing a vacuity guard's name and will be ignored the first time it flakes.
+    """
+    for expected, worst in ((102, 0.778), (66, 0.778), (17, 0.778)):
+        assert e2e.vacuity("set", int(expected * worst), int(expected * worst), expected) == []
+
+
+def test_answers_with_no_figures_are_silence_one_field_lower() -> None:
+    """An answering outcome carrying no figure passes every property in `violations` for want of
+    anything to check. A whole set of them is the same hole, so it is the second prong."""
+    assert e2e.vacuity("dev", answered=102, figures=0, expected=102)
+
+
+def test_a_set_that_requires_no_answer_cannot_measure_anything() -> None:
+    """Otherwise the floor is 0 and the guard is unfireable — the disease, not the cure."""
+    assert e2e.vacuity("dev", answered=0, figures=0, expected=0)
+
+
+def test_an_ungrouped_answer_is_not_a_reconciled_one() -> None:
+    """Gate 1's *Evidence reconciliation* row cannot be filled from a violation count: no failures
+    over no inspected breakdowns is the vacuous zero again. `reconcilable` is what makes the
+    difference visible."""
+    assert not e2e.reconcilable(answered(groups=[]))
+    assert not e2e.reconcilable(answered(groups=[{"key": "total", "total_minor": 1, "count": 1}]))
+    assert e2e.reconcilable(
+        answered(groups=[{"key": "GROCERIES", "total_minor": 1, "movement_count": 1}])
+    )
+
+
+# --- the account scope, settled in the harness ----------------------------------------
+
+
+def test_the_settled_opening_is_the_one_the_corpus_uses() -> None:
+    """One idea of "scope already settled" in the repository rather than two. `opening()` in
+    `tests/support/episodes.py` is the other place it appears, and they must not drift."""
+    from support import episodes
+
+    settled = episodes.Episode(name="n", why="w", turns=(), scope=episodes.SETTLED)
+
+    assert e2e.SETTLED == episodes.opening(settled)
+
+
+def test_only_plan_expecting_cases_walk_the_real_path() -> None:
+    """An `unsupported` sentence is refused before any account matters and a `clarification` case is
+    already about a different missing slot, so neither can reach the account question."""
+    cases = [{"id": f"c{n}", "expect": "plan"} for n in range(24)]
+    cases += [{"id": "u1", "expect": "unsupported"}, {"id": "q1", "expect": "clarification"}]
+
+    walking = e2e.unsettled(cases)
+
+    assert walking == {"c0", "c8", "c16"}
+    assert not walking & {"u1", "q1"}
+
+
+def test_every_read_case_declares_an_expectation_the_floor_can_count() -> None:
+    """The vacuity floor is a fraction of the cases that say `expect: plan`, so a mistyped `expect`
+    silently shrinks the denominator and weakens the guard. That is the same disease in the cure,
+    and this is the only thing standing between `expct:` and a floor of zero."""
+    import yaml
+
+    for name in ("dev", "validation", "adversarial"):
+        cases = yaml.safe_load((e2e.PLANNING / f"{name}.yaml").read_text(encoding="utf-8"))["cases"]
+        for case in cases:
+            assert case.get("expect") in e2e.EXPECTATIONS, f"{name}/{case.get('id')}: {case}"
+        assert e2e.expecting_a_plan(cases), f"{name} requires no answer of anything"
+
+
+def test_the_smallest_set_still_gets_two_real_cases() -> None:
+    """The stride is derived from adversarial's 17 plan-expecting cases: one case is not coverage
+    because a single flake leaves the path unmeasured, and 17 // 2 = 8 is what survives that."""
+    adversarial = [{"id": f"a{n}", "expect": "plan"} for n in range(17)]
+
+    assert len(e2e.unsettled(adversarial)) >= 2
+
+
 # --- the conversational contract ------------------------------------------------------
 #
 # `turn_violations` is the half that needs history, and until now it could only ask what a turn
