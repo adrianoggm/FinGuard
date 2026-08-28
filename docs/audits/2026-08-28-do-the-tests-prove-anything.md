@@ -103,8 +103,26 @@ Why the obvious candidate misses it: `tests/test_percentages.py:230`
 `test_negative_net_cash_flow_is_explained_without_hiding_either_side` asserts
 `result.total_minor == -50_000` — the raw integer, where the sign does survive — and then
 asserts the *text* contains `"gastaste 500,00 € más de lo que ingresaste"`, which words the
-negative positively. The rendered string never carries a minus, so the sign branch of
-`money()` is never observed.
+negative positively — so the assertion straddles the minus without ever touching it.
+
+> **Correction, 2026-08-28, after the fix.** The two sentences that stood here claimed the
+> rendered string never carries a minus, and that the sign branch is therefore unobserved. Both
+> are wrong, and the error mattered: it downgraded a live-path hole to a formatting nicety, and
+> the session manager repeated the downgrade to the product owner. `ratio_writer._net_cash_flow`
+> (`domain/services/ratio_writer.py:78`) renders `money(net, currency)` where
+> `net = income.total_minor - expenses.total_minor`, inside a function that branches on
+> `elif net < 0`. The sentence this very test exercises reads *"Tu flujo neto en lo que va de mes
+> fue de **-500,00 €**"*. So the sign is rendered, on a path a user reads, and dropping it turns
+> an overspend into a surplus. A second, weaker path: `answer_writer._one_account:178,181` passes
+> `AccountSummary.available_minor` through unguarded, and nothing constrains that to be positive.
+> The other derived-figure call sites *are* guarded — `ask_financial_question.py:3023` orders its
+> operands, `:3510` and `ratio_writer:70` wrap in `abs()` — which is what made the wrong reading
+> plausible. Closed by `fe3e31b`, which added the seventeen direct assertions this section asked
+> for; mutation 1c now fails eight of them.
+>
+> The methodological lesson is the one this audit exists to teach: checking that a function is
+> correct in isolation says nothing about whether a caller can reach its broken branch. Trace the
+> callers, or say you did not.
 
 Confirmed structurally: `grep -rn "money(-" apps/orchestrator/tests` and
 `grep -rn '"-[0-9]' apps/orchestrator/tests` both return nothing. **No test in the suite
