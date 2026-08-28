@@ -514,6 +514,7 @@ def question_to_dto(
         ],
         currency=result.currency,
         total_minor=result.total_minor,
+        difference_minor=result.difference_minor,
         movement_count=result.movement_count,
         groups=[
             SpokenGroupResponse(
