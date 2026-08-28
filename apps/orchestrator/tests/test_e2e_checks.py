@@ -208,6 +208,152 @@ def test_a_group_whose_figure_is_null_or_prose_is_the_same_fault() -> None:
         assert e2e.violations(body) == ["GROUP_WITHOUT_A_FIGURE"], broken_value
 
 
+# --- what "the whole" is, when the rows are not parts of one ---------------------------
+#
+# `_reconciliation` asked one question — do the parts add up to the whole? — of every breakdown, and
+# three shapes reach it. On a comparison the rows are two operands and the figure is their signed
+# difference; on a running total each row already contains the ones before it. Both were reported as
+# arithmetic failures, and both payloads were internally coherent.
+#
+# The narrowing is keyed on a field the service declares, never on an inference. `difference_minor`
+# says the rows are operands; `metric` says they are running totals. Every branch still reconciles
+# something.
+
+
+def comparison(**over: object) -> dict[str, object]:
+    """`dev/unsupported_comparison` as the wire spells it now — the payload reported for `64b6b3b`.
+
+    «¿He gastado más este mes que el anterior?». `total_minor` is None and the figure is the signed
+    difference; the two rows are the operands, and their counts still sum to `movement_count`.
+    """
+    return (
+        answered(
+            text="En lo que va de mes: 0,00 €; el mes pasado: 1.895,97 €. Fue 1.895,97 € mayor.",
+            plan="en lo que va de mes, expense frente a el mes pasado, expense",
+            total_minor=None,
+            movement_count=28,
+            groups=[
+                {"key": "en lo que va de mes", "total_minor": 0, "movement_count": 0},
+                {"key": "el mes pasado", "total_minor": 189597, "movement_count": 28},
+            ],
+        )
+        | over
+        | {"difference_minor": over.get("difference_minor", -189597)}
+    )
+
+
+def test_a_comparison_is_not_a_breakdown_that_failed_to_add_up() -> None:
+    """The violation this file reported for a week. `sum(groups.total_minor)` is 189597 and the
+    figure is -189597: a total against a subtraction, and both halves were right."""
+    broken = e2e.violations(comparison())
+
+    assert "GROUPS_DO_NOT_SUM_TO_TOTAL" not in broken
+    assert broken == []
+
+
+def test_a_comparison_still_has_to_get_its_counts_right() -> None:
+    """The whole reason keying on the tag is acceptable: the property narrows to the half that still
+    holds. If it went quiet on the answer instead, the tag would be an exemption."""
+    miscounted = comparison(movement_count=27)
+
+    assert "GROUP_COUNTS_DO_NOT_SUM" in e2e.violations(miscounted)
+
+
+def test_a_comparison_is_still_counted_as_a_breakdown_inspected() -> None:
+    """Gate 1's *Evidence reconciliation* row is a fraction, and dropping these answers out of it
+    would shrink the denominator while removing the failure from both halves — the vacuous zero one
+    field lower, which is what made shape 2 the wrong choice."""
+    assert e2e.reconcilable(comparison())
+
+
+def test_a_comparison_carries_its_figure_under_another_name() -> None:
+    """`total_minor` is None on a comparison, so a rule keyed on that field reads it as an answer
+    with no figure. That would turn a closed hole into a false positive on every comparison."""
+    assert "ANSWER_WITHOUT_A_FIGURE" not in e2e.violations(comparison())
+    assert e2e._has_figure(comparison())
+
+
+def test_the_tag_does_not_imply_the_total_is_missing() -> None:
+    """NET_CASH_FLOW carries both fields and there `total_minor` legitimately *is* the difference,
+    so the narrowing may not be keyed on `total_minor is None`. The rows are still operands."""
+    net = comparison(total_minor=-189597)
+
+    assert e2e.violations(net) == []
+
+
+def test_a_declined_answer_may_not_carry_a_difference_either() -> None:
+    """`FIGURE_WITHOUT_AN_ANSWER` asks the same question the same way, or the two rules disagree
+    about the same payload."""
+    refused = comparison(outcome="UNSUPPORTED", text="Eso no puedo calcularlo todavía.")
+
+    assert "FIGURE_WITHOUT_AN_ANSWER" in e2e.violations(refused)
+
+
+def cumulative(**over: object) -> dict[str, object]:
+    """The rows `test_cumulative_and_group_rankings.py` pins, on the wire.
+
+    A running total per month, with February and April carried forward because nothing happened in
+    them. Neither the amounts (50_000) nor the counts (10) sum to the whole, correctly.
+    """
+    return (
+        answered(
+            last_plan={"direction": "EXPENSE", "period": "THIS_YEAR", "metric": "CUMULATIVE"},
+            text="Gasto acumulado: 150,00 € al acabar abril.",
+            total_minor=15_000,
+            movement_count=3,
+            groups=[
+                {"key": "2026-01", "total_minor": 10_000, "movement_count": 2},
+                {"key": "2026-02", "total_minor": 10_000, "movement_count": 2},
+                {"key": "2026-03", "total_minor": 15_000, "movement_count": 3},
+                {"key": "2026-04", "total_minor": 15_000, "movement_count": 3},
+            ],
+        )
+        | over
+    )
+
+
+def test_a_running_total_is_not_a_breakdown_that_failed_to_add_up() -> None:
+    """Both halves of the old rule fired on this, both falsely: 50_000 != 15_000 and 10 != 3. This
+    is not a comparison special case — the property had no notion of shape at all."""
+    broken = e2e.violations(cumulative())
+
+    assert "GROUPS_DO_NOT_SUM_TO_TOTAL" not in broken
+    assert "GROUP_COUNTS_DO_NOT_SUM" not in broken
+    assert broken == []
+
+
+def test_a_running_total_must_still_reach_its_own_figure() -> None:
+    """The cumulative form of "the parts add up to the whole" is that the last part *is* the whole.
+    A skip would have been the silent pass; this is a reconciliation."""
+    short = cumulative(total_minor=20_000)
+
+    assert "CUMULATIVE_DOES_NOT_REACH_TOTAL" in e2e.violations(short)
+
+
+def test_a_running_total_must_reach_its_count_too() -> None:
+    assert "CUMULATIVE_COUNTS_DO_NOT_REACH_TOTAL" in e2e.violations(cumulative(movement_count=4))
+
+
+def test_a_running_total_is_still_a_breakdown_inspected() -> None:
+    assert e2e.reconcilable(cumulative())
+
+
+def test_an_ordinary_breakdown_still_has_to_add_up_in_both_units() -> None:
+    """The narrowings are keyed on declared fields, so an ordinary grouped answer — no
+    `difference_minor`, `metric: SUM` — is checked exactly as it always was."""
+    body = answered(
+        groups=[
+            {"key": "GROCERIES", "total_minor": 30000, "movement_count": 5},
+            {"key": "HEALTH", "total_minor": 4000, "movement_count": 2},
+        ],
+    )
+
+    broken = e2e.violations(body)
+
+    assert "GROUPS_DO_NOT_SUM_TO_TOTAL" in broken
+    assert "GROUP_COUNTS_DO_NOT_SUM" in broken
+
+
 def test_an_ungrouped_answer_is_not_a_reconciled_one() -> None:
     """Gate 1's *Evidence reconciliation* row cannot be filled from a violation count: no failures
     over no inspected breakdowns is the vacuous zero again. `reconcilable` is what makes the
