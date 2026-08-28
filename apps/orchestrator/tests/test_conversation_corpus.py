@@ -74,6 +74,15 @@ def test_every_episode_declares_a_scope_the_harness_knows() -> None:
     assert not unknown, f"episodes declaring a scope nothing implements: {unknown}"
 
 
+def test_some_episodes_reach_the_account_clarification() -> None:
+    """The floor under the other side of `scope`. `settled` is the default precisely so the
+    clarification does not cost 169 preamble turns — which makes it possible for the corpus to end
+    up never reaching it at all, and a corpus that never reached it is where this started."""
+    asking = [e.name for e in CORPUS if e.scope == episodes.UNSET]
+
+    assert len(asking) >= 4, f"only {len(asking)} episodes open with the account scope unsettled"
+
+
 def test_every_episode_is_long_enough_to_be_a_conversation() -> None:
     """Six turns is the floor the review set, and it is the right one: below it an episode is a
     pair of sentences, and the defects this corpus exists for live further in than that."""
