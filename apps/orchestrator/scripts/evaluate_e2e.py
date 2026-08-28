@@ -15,10 +15,17 @@ a second holder in the data.
 It asserts properties, not figures. `movementCount: 3` is true of one seed on one date;
 "a COUNT plan is answered with a count" is true of every seed on every date, and it is
 what was broken.
+
+Two things below exist because this harness spent a week reporting zeros it had not earned.
+`SETTLED` answers the account question the service asks before any unqualified figure, so the
+properties have answers to run on at all; `ANSWERING_FLOOR` makes a run that produced too few of
+them a failure rather than a clean sheet. Read both comments before changing either — the defect
+they describe was invisible precisely because it looked like a pass.
 """
 
 import argparse
 import asyncio
+import math
 import re
 import sys
 from pathlib import Path
@@ -38,6 +45,88 @@ _MONEY = re.compile(r"\d[\d.]*,\d{2}\s*(€|[A-Z]{3})")
 # is about a *decline* carrying a number, which is the shape where the text says no and the payload
 # says 10.370,42.
 _ANSWERING = frozenset({"PLANNED", "BALANCE"})
+
+
+# --- the account question these three sets could not answer ---------------------------------
+#
+# Laura holds three accounts, so `b928d90` (2026-08-21) made every question that names no account
+# ask which one before answering anything. 119 of the 120 dev questions name none. From that day
+# this harness measured 235 clarifications and zero answers, and every property above is guarded on
+# an answer existing — so the suite went green by testing nothing, for a week, with a tick beside it
+# in `docs/next.md`.
+#
+# The sentences are not ours to change. `evaluate_planning.py` scores these same three files and
+# there the sentence *is* the input being scored, so adding «en todas mis cuentas» to 235 questions
+# would quietly change what that benchmark measures. The scope is therefore settled in the harness.
+#
+# This is the same move `tests/support/episodes.py` makes for the conversation corpus — see
+# `opening()` and the `scope:` vocabulary there, which this deliberately borrows rather than
+# inventing a second idea of "scope already settled". A settled `AccountSelection` is the state the
+# service itself stores the moment a holder answers the account question, so a case opening here is
+# resuming a real thread rather than inhabiting a synthetic one: every case still reads that
+# selection back through the directory-backed branch of `_scoped`, which is the branch that had
+# never run.
+SETTLED: dict[str, Any] = {"account_selection_mode": "ALL"}
+
+# The chip the service draws, worded the way it draws it. `evaluation/conversations/
+# 31-account-scope.yaml` asserts this reply reaches no planner (`no_model: true`) — the account
+# vocabulary parses it in `account_words.asks_for_all_accounts`. So the second turn of an unsettled
+# case costs a round trip and no GPU, which is what makes keeping a real subset affordable.
+ALL_ACCOUNTS = "Todas mis cuentas"
+
+# One in this many plan-expecting cases opens with nothing settled and answers the account question
+# itself, instead of opening past it.
+#
+# Seeding every case would engineer away the commonest thing the service now emits, and a shortcut
+# nothing checks is how this benchmark broke in the first place. So a subset takes the production
+# path end to end, and its job is to detect the seeded opening drifting away from that path.
+#
+# The stride is derived from the smallest pool rather than picked. Only `expect: plan` cases can
+# reach the account question — an `unsupported` sentence is refused before any account matters, and
+# a `clarification` case is already about a different missing slot — and the smallest such pool is
+# adversarial's 17. One case is not coverage, because a single flake leaves the path unmeasured in
+# that set; two is the minimum that survives one. 17 // 2 = 8.
+CLARIFICATION_STRIDE = 8
+
+
+# --- the vacuity guard ----------------------------------------------------------------------
+#
+# The reason this file was revisited. On 2026-08-28 it reported 0 violations on all 235 cases across
+# three sets and the zero was empty: not one case reached an answering outcome, so not one
+# figure-integrity property was ever evaluated. Zero violations and zero answers print identically,
+# and nobody noticed for a week.
+#
+# An instrument that cannot detect its own silence will do this again. So a read benchmark in which
+# too few cases answered is not a pass with a low score — it is a run that did not happen, and it
+# says so and exits non-zero.
+#
+# **The denominator is the dataset's own claim**, not the case count: the cases whose `expect` field
+# says a plan is the right answer. A set may legitimately be mostly `unsupported` — adversarial
+# nearly is — and demanding answers from cases written to be refused would be a bar the data cannot
+# meet. Reading `expect` here is also the first time this harness reads it at all; it is used for
+# the denominator and deliberately not to score per-case correctness, which is
+# `evaluate_planning.py`'s job and a different benchmark.
+#
+# **The floor is half, and the half is measured rather than round.** It has to sit far below any
+# plausible accuracy result, or a vacuity guard becomes an accuracy gate that fires on ordinary
+# model variance and gets ignored; and far above zero, or it permits the silence it exists to catch.
+# `../evaluation/planning/RESULTS.md` bounds both ends. Its model table is eleven models over these
+# same sets, and the *worst outcome accuracy any of them scored on any of these three* is 50.0 % —
+# phi4-mini on adversarial, a model that was measured and rejected. (Its `inject` column goes lower,
+# but that is a group inside adversarial rather than a set this recipe runs.) The shipped
+# `qwen3.5:9b` scores 95.8 / 87.3 / 77.8, and that same file records the run-to-run band as ±1
+# case. So a run below half is below the worst
+# model anybody has ever pointed at this data: no model swap, no seed, and no ±1 case of
+# reproducibility reaches it. What does reach it is a feature landing between the sentences and the
+# properties, a credential quietly losing a scope, or a ledger re-seeded out from under the run —
+# which is the entire family of failures that produced the vacuous zero.
+ANSWERING_FLOOR = 0.5
+
+# The `expect` values a case may declare. The floor above is computed from these, so a mistyped one
+# would quietly shrink the denominator and weaken the guard — the same disease in the cure.
+# `test_e2e_checks.py` asserts the three datasets against this, the way `TURN_KEYS` is asserted
+# against `conversations.yaml`, because a check nobody runs reads exactly like a check that passes.
+EXPECTATIONS = frozenset({"plan", "clarification", "unsupported"})
 
 
 def violations(body: dict[str, Any]) -> list[str]:
@@ -100,49 +189,175 @@ def _reconciliation(body: dict[str, Any]) -> list[str]:
     return broken
 
 
+def reconcilable(body: dict[str, Any]) -> bool:
+    """Whether `_reconciliation` had a real breakdown to add up on this answer.
+
+    Gate 1 in `docs/next.md` carries an *Evidence reconciliation* row, and `_reconciliation`
+    returning `[]` reads identically whether the parts added up or there were no parts to add. So
+    the row cannot be filled from a violation count alone: 0 failures out of 0 inspected answers is
+    the vacuous zero again, one field lower down. Counting the answers it actually inspected is what
+    lets that row carry a number that means something.
+    """
+    groups = body.get("groups") or []
+    return bool(groups) and not (len(groups) == 1 and groups[0].get("key") == "total")
+
+
 def questions(dataset: str, limit: int | None) -> list[dict[str, Any]]:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
     cases = data["cases"]
     return cases[:limit] if limit else cases
 
 
+def expecting_a_plan(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The cases whose own `expect` says a plan is the right answer to them."""
+    return [case for case in cases if case.get("expect") == "plan"]
+
+
+def unsettled(cases: list[dict[str, Any]]) -> set[str]:
+    """Which cases open with nothing settled and answer the account question themselves.
+
+    A stride over the plan-expecting cases rather than a random sample, so the subset is the same on
+    every run: a benchmark whose coverage moves between runs cannot be compared with itself.
+    """
+    asking = expecting_a_plan(cases)
+    return {
+        case["id"] for position, case in enumerate(asking) if position % CLARIFICATION_STRIDE == 0
+    }
+
+
+def vacuity(dataset: str, answered: int, figures: int, expected: int) -> list[str]:
+    """Why this run does not count as a measurement, or nothing if it does.
+
+    Two prongs, because there are two ways to print zeros. The first is the one that happened: no
+    case reached an answering outcome, so the properties never ran. The second is the same shape one
+    field lower — an answering outcome carrying no figure passes every property in `violations()`
+    for want of anything to check, so a set where *no* answer carried one is equally silent. That
+    second prong is an absolute zero rather than a fraction on purpose: no accuracy story explains a
+    whole set of answers with no figures in them, whereas the count of answers legitimately moves
+    with the model.
+    """
+    if expected == 0:
+        return [
+            f"no case in {dataset} declares `expect: plan`, so no answer was ever required and "
+            f"nothing here could have been measured"
+        ]
+
+    floor = math.ceil(expected * ANSWERING_FLOOR)
+    reasons = []
+    if answered < floor:
+        reasons.append(
+            f"{answered} of {expected} plan-expecting cases reached an answering outcome; "
+            f"{floor} is the floor ({ANSWERING_FLOOR:.0%} of what {dataset} says should answer)"
+        )
+    if figures == 0:
+        reasons.append(
+            "not one answer carried a figure, so every figure-integrity property was skipped "
+            "for want of a number to check"
+        )
+    return reasons
+
+
+async def _ask(
+    client: httpx.AsyncClient,
+    base_url: str,
+    token: str,
+    question: str,
+    conversation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    response = await client.post(
+        f"{base_url}/v1/questions",
+        json={"question": question, "conversation": conversation},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    response.raise_for_status()
+    return dict(response.json())
+
+
 async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int:
     cases = questions(dataset, limit)
+    walks_the_real_path = unsettled(cases)
     failures: list[tuple[str, list[str], str]] = []
     outcomes: dict[str, int] = {}
+    # Two counters and not one. `answered` is every case that reached an answering outcome, which is
+    # what the properties had to work with. `earned` is only the plan-expecting ones, and it is what
+    # the floor is computed from — numerator and denominator over the same population, or the ratio
+    # is not a ratio. An `expect: unsupported` case that answers anyway is a real answer and counts
+    # in the first; letting it count in the second would let the guard be satisfied by cases the
+    # dataset never asked to answer.
+    answered = earned = figures = inspected = 0
+    asked_first = 0
 
     async with httpx.AsyncClient(timeout=180.0) as client:
         for case in cases:
+            real_path = case["id"] in walks_the_real_path
             try:
-                response = await client.post(
-                    f"{base_url}/v1/questions",
-                    json={"question": case["question"]},
-                    headers={"Authorization": f"Bearer {token}"},
+                body = await _ask(
+                    client, base_url, token, case["question"], None if real_path else SETTLED
                 )
+                broken = violations(body)
+
+                state = body.get("conversation") or {}
+                if real_path and state.get("workflow") == "ACCOUNT_SCOPE":
+                    # It asked which account, so answer it the way the client does: echo the whole
+                    # conversation back and send the chip. The reply reaches no planner, so this
+                    # buys the production path for the price of a round trip.
+                    asked_first += 1
+                    body = await _ask(client, base_url, token, ALL_ACCOUNTS, state)
+                    broken += violations(body)
+                    if body.get("outcome") == "NEEDS_CLARIFICATION":
+                        # It asked, the reply supplied exactly what it asked for, and it asked
+                        # again. The loop detector in the conversation path cannot see this one:
+                        # `awaiting` is null on an account-scope clarification, so `asked_slot`
+                        # returns None and the run never counts. Hence the explicit check.
+                        broken.append("CLARIFICATION_RESTARTED")
+            except httpx.HTTPStatusError as exc:
+                failures.append(
+                    (case["id"], [f"HTTP_{exc.response.status_code}"], exc.response.text[:80])
+                )
+                continue
             except httpx.HTTPError as exc:
                 failures.append((case["id"], ["TRANSPORT"], str(exc)))
                 continue
 
-            if response.status_code != 200:
-                failures.append((case["id"], [f"HTTP_{response.status_code}"], response.text[:80]))
-                continue
-
-            body = response.json()
             outcomes[body.get("outcome", "?")] = outcomes.get(body.get("outcome", "?"), 0) + 1
-            broken = violations(body)
+            if body.get("outcome") in _ANSWERING:
+                answered += 1
+                earned += case.get("expect") == "plan"
+                figures += body.get("total_minor") is not None
+                inspected += reconcilable(body)
             if broken:
-                failures.append((case["id"], broken, (body.get("text") or "")[:70]))
+                failures.append((case["id"], sorted(set(broken)), (body.get("text") or "")[:70]))
 
     total = len(cases)
+    expected = len(expecting_a_plan(cases))
     print(f"\n=== end to end · {dataset} · {total} questions ===\n")
+    print(f"  account scope settled by the harness   {total - len(walks_the_real_path):3}")
+    print(f"  answered the account question for real {len(walks_the_real_path):3}", end="")
+    print(f"  (asked on {asked_first} of them)\n")
     for name, count in sorted(outcomes.items(), key=lambda item: -item[1]):
         print(f"  {name:22} {count:3}")
+
+    # What the properties actually had to work with. Printed whether or not anything broke, because
+    # the failure this file exists to prevent looked exactly like a clean run.
+    print(f"\n  answered, of the {expected} that expect a plan   {earned:3}")
+    print(f"  answering outcomes, all cases                {answered:3}")
+    print(f"  answers with a figure                        {figures:3}")
+    print(f"  breakdowns reconciled                        {inspected:3}")
 
     print(f"\n  PROPERTY VIOLATIONS   {len(failures):3}/{total}")
     if failures:
         print("\n  what broke")
         for case_id, broken, detail in failures:
             print(f"    {case_id:32} {','.join(broken):28} {detail}")
+
+    empty = vacuity(dataset, earned, figures, expected)
+    if empty:
+        print("\n  THE BENCHMARK DID NOT RUN")
+        for reason in empty:
+            print(f"    {reason}")
+        print("\n  A violation count is only worth the answers it was computed over. This run")
+        print("  measured too few to mean anything, so it is a failure rather than a pass.")
+        return 1
 
     # Not "how accurate". These are properties the code can guarantee, so any failure is
     # a bug rather than a long tail, and the exit code says so.
