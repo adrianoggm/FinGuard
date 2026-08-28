@@ -153,7 +153,19 @@ def violations(body: dict[str, Any]) -> list[str]:
 
     if body.get("outcome") == "PLANNED":
         # The defect. A plan that counted, rendered as an amount.
-        counting = context.get("metric") == "COUNT"
+        #
+        # `FREQUENCY` counts too, and leaving it out cost this property a false positive on
+        # `validation/t_noise_typos` — «11 veces en alquiler en los últimos 12 meses: una al mes»
+        # is a correct answer to a cadence question, and the rule below read its money-free
+        # headline as a sum that forgot to show a figure. Third shape this check has had to be
+        # taught, after `COMPARISON` and `CUMULATIVE`, and like those two the tag was already on
+        # the wire in `last_plan.metric` and simply unread.
+        #
+        # `RECURRENCE` is deliberately *not* here. Its degenerate branches are money-free like
+        # these, but its answering branch lists charges and no measurement in this repository says
+        # whether that headline carries an amount. Adding it on the strength of a family
+        # resemblance is how a property stops discriminating; it goes in when somebody measures it.
+        counting = context.get("metric") in {"COUNT", "FREQUENCY"}
         money_shown = bool(_MONEY.search(headline))
         if counting and money_shown:
             broken.append("PLAN_ANSWER_MISMATCH")
