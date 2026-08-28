@@ -24,6 +24,10 @@ from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+)
 from finguard_orchestrator.domain.services import explicit_facts
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
@@ -151,22 +155,24 @@ async def test_the_answer_remembers_its_exact_source_and_clears_old_row_referenc
         period=RelativePeriod(Period.LAST_MONTH),
         group_by=GroupBy.CATEGORY,
     )
-    conversation = IDLE.answered(
-        previous,
-        referenced_category="GROCERIES",
-        referenced_group_by=GroupBy.CATEGORY,
-        referenced_group_key="GROCERIES",
-        referenced_transaction_ids=(uuid.UUID(int=41),),
+    conversation = answered_with_result(
+        IDLE,
+        ResultReference(
+            previous,
+            category="GROCERIES",
+            group_by=GroupBy.CATEGORY,
+            group_key="GROCERIES",
+            transaction_ids=(uuid.UUID(int=41),),
+        ),
     )
 
     result, ledger, planner = await ask("¿cuántas suscripciones tengo?", conversation=conversation)
 
     assert planner.calls == 0
     assert result.conversation.last_plan is ledger.plans[0]
-    assert result.conversation.referenced_category is None
-    assert result.conversation.referenced_group_by is None
-    assert result.conversation.referenced_group_key is None
-    assert result.conversation.referenced_transaction_ids == ()
+    assert result.conversation.result_reference is not None
+    assert result.conversation.result_reference.source_query is result.conversation.last_plan
+    assert result.conversation.result_reference.category is None
 
 
 async def test_the_misspelling_everybody_writes_is_read() -> None:

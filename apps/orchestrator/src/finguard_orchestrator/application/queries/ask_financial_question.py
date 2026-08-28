@@ -3115,18 +3115,9 @@ class AskFinancialQuestionHandler:
                 # memory: the current answer was right, and "compáralos otra vez" became euros.
                 remembered_latest = _with_execution_scope(stored_latest, scoped_latest)
                 remembered_earlier = _with_execution_scope(candidate_earlier, scoped_earlier)
-        referenced_category = (
-            remembered_latest.categories[0]
-            if len(remembered_latest.categories) == 1
-            and category_words.words_for(remembered_latest.categories[0]) is not None
-            else None
-        )
         remembered_comparison = ComparisonPlan.between(remembered_earlier, remembered_latest)
         assert remembered_comparison is not None  # execution only adds scope to a validated pair
-        comparison_memory = query.conversation.answered_comparison(
-            remembered_comparison,
-            referenced_category=referenced_category,
-        )
+        comparison_memory = query.conversation.answered_comparison(remembered_comparison)
         if grouped_text is not None:
             comparison_visual_rows = (
                 *(

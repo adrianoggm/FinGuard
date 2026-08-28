@@ -81,8 +81,6 @@ def test_second_read_uses_authorized_typed_reference_only() -> None:
             replace(
                 canonical,
                 result_reference=None,
-                referenced_group_by=None,
-                referenced_group_key=None,
             ),
         )
         is True
@@ -124,7 +122,11 @@ def test_stale_result_memory_does_not_suppress_second_read(kind: str) -> None:
             RatioKind.SHARE,
         )
         conversation = Conversation(
-            last_ratio=value, referenced_group_by=GroupBy.CATEGORY, referenced_group_key="GROCERIES"
+            last_plan=value.part,
+            last_ratio=value,
+            result_reference=ResultReference(
+                value.part, group_by=GroupBy.CATEGORY, group_key="GROCERIES"
+            ),
         )
     elif kind == "pending_ratio":
         value = RatioDraft(
@@ -132,26 +134,35 @@ def test_stale_result_memory_does_not_suppress_second_read(kind: str) -> None:
             FinancialPlanDraft(direction=Direction.INCOME),
             RatioKind.SHARE,
         )
+        source = ANSWERED.last_plan
+        assert source is not None
         conversation = Conversation(
+            last_plan=source,
             pending_ratio=value,
-            referenced_group_by=GroupBy.CATEGORY,
-            referenced_group_key="GROCERIES",
+            result_reference=ResultReference(
+                source, group_by=GroupBy.CATEGORY, group_key="GROCERIES"
+            ),
         )
     elif kind == "comparison":
         earlier = FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH))
         latest = FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
         value = ComparisonPlan(earlier, latest)
         conversation = Conversation(
+            last_plan=latest,
             last_comparison=value,
-            referenced_group_by=GroupBy.CATEGORY,
-            referenced_group_key="GROCERIES",
+            result_reference=ResultReference(
+                latest, group_by=GroupBy.CATEGORY, group_key="GROCERIES"
+            ),
         )
     else:
+        source = ANSWERED.last_plan
+        assert source is not None
         conversation = Conversation(
-            last_plan=ANSWERED.last_plan,
+            last_plan=source,
             answered_the_balance=True,
-            referenced_group_by=GroupBy.CATEGORY,
-            referenced_group_key="GROCERIES",
+            result_reference=ResultReference(
+                source, group_by=GroupBy.CATEGORY, group_key="GROCERIES"
+            ),
         )
     assert turn_interpreters._worth_a_second_read("¿y esa categoría?", conversation) is True
 
