@@ -28,7 +28,7 @@ A monorepo of independent projects: each service has its own dependencies, lockf
 
 | `apps/` | Responsibility | State |
 | --- | --- | --- |
-| `web` | Chat, audio, visualisations and confirmations | Working — seven screens, charts, voice, 85 tests. Not containerised: it runs from `just web` |
+| `web` | Chat, audio, visualisations and confirmations | Working — six screens plus the chat sheet, charts, voice, 85 tests. Not containerised: it runs from `just web` |
 | `orchestrator` | Conversational context, intent, tool coordination, LLM | Working, local models only |
 | `banking-api` | Accounts, ledger, balances, contacts, Bizum, the append-only audit trail. The only writer of financial data | Working |
 | `voice-gateway` | Streaming audio, transcription, synthesis, barge-in | Working, local providers only. Measured end to end in [its own evaluation](apps/voice-gateway/evaluation/RESULTS.md) |
