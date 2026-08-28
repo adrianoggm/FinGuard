@@ -3023,6 +3023,7 @@ class AskFinancialQuestionHandler:
             query.conversation,
             query.sentence,
             reporting_timezone=query.reporting_timezone,
+            ran_as=scoped,
         )
         if not difference and len(groups) >= 2:
             # Re-read the typed reference projected by ``_answered``.  In particular, do not
@@ -4242,6 +4243,7 @@ class AskFinancialQuestionHandler:
                         query.conversation,
                         query.sentence,
                         reporting_timezone=query.reporting_timezone,
+                        ran_as=scoped,
                     )
                     return replace(
                         answered,
@@ -4306,6 +4308,7 @@ class AskFinancialQuestionHandler:
             query.conversation,
             query.sentence,
             reporting_timezone=query.reporting_timezone,
+            ran_as=scoped,
         )
 
 
@@ -4645,6 +4648,16 @@ def _period_comparison_plans(
     if (latest.period, latest.date_range) == (earlier.period, earlier.date_range):
         return None
 
+    # Every field a question can state. `across_accounts` is deliberately not among them: a plan
+    # is what was *asked*, and after the turn that settled the scope no later sentence names it
+    # again, so the second of two answered periods carries `across_accounts=False` even though its
+    # figures came from every account. Requiring the two to agree refused a comparison the
+    # conversation had already answered twice, over a field neither question mentioned.
+    #
+    # `only_account_id` and `only_account_ids` stay here. Those the sentence *can* state — «cuánto
+    # gasté en la Hucha» — so a disagreement there is two different questions, and relaxing them
+    # too would compare the piggy bank against every account. A scope field the sentence can state
+    # stays strict; a scope field only the conversation can settle does not.
     scope = (
         "direction",
         "categories",
@@ -4657,7 +4670,6 @@ def _period_comparison_plans(
         "counterparty_types",
         "include_internal",
         "internal_only",
-        "across_accounts",
         "only_account_id",
         "only_account_ids",
         "transaction_ids",
@@ -4668,6 +4680,14 @@ def _period_comparison_plans(
         return None
     if latest.transaction_ids:
         return None
+    if earlier.across_accounts != latest.across_accounts:
+        # One comparison has one scope. `_compare_periods` scopes both operands through `_scoped`
+        # with the same conversation, so the widening either question asked for is what both sides
+        # actually read; `ComparisonPlan` requires its operands to say so, and rightly. Widened
+        # with the helper rather than by setting the flag, so the narrowing being given up goes
+        # with it -- the two agreed on `only_account_id` above, and they still do.
+        earlier = _across_every_account(earlier)
+        latest = _across_every_account(latest)
 
     # A metric is part of the question, not presentation. Turning both sides into SUM made
     # "¿en cuál hice más compras?" compare euros and made "¿qué ticket medio fue mayor?" compare
@@ -7133,7 +7153,16 @@ def _answered(
     sentence: str,
     *,
     reporting_timezone: str,
+    ran_as: FinancialPlan,
 ) -> AskFinancialQuestionResult:
+    """Present one answered plan.
+
+    `plan` is what was asked and becomes the memory a follow-up inherits. `ran_as` is the same
+    plan as it was executed, and it differs in one respect: which of the holder's accounts the
+    figures came from, which the conversation can settle without this sentence naming it. Both are
+    required, because the one consumer that wants the second is easy to serve wrongly with the
+    first -- and did, for as long as this took one argument.
+    """
     if plan.metric is Metric.CUMULATIVE:
         answer = cumulative_calculator.accumulate(answer, plan.group_by)
     # "¿Cuándo me ingresan la nómina?" ran the right query and was reported as a total. The
@@ -7155,7 +7184,13 @@ def _answered(
         text = answer_writer.compare_averages(answer, plan)
     else:
         text = answer_writer.write(answer, plan)
-    scope_note = _scope_note(plan, sentence)
+    # Off the executed plan, never the remembered one. "Consultado en todas tus cuentas" describes
+    # where the figures came from, and after the turn that settled the scope no later sentence
+    # names it again -- so the remembered plan correctly says `across_accounts=False` while the
+    # ledger is still being read across every account. Read from there, the note vanished from the
+    # second such turn onward and a figure covering three accounts was presented as one account's.
+    # The two ranking paths already pass the plan they ran; this is the same call.
+    scope_note = _scope_note(ran_as, sentence)
     if scope_note and "Consultado en " not in text:
         text = f"{text}\n{scope_note}"
     referenced_category: str | None = None
