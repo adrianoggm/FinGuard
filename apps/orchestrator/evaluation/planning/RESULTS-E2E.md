@@ -511,6 +511,86 @@ would accept.** No dataset edit was needed and none was made.
   **the container is `dd1d2d0`, so it cannot be attributed to current service code without a
   rebuild.** Recorded so the operator's sweep knows to look.
 
+#### The property learns what the rows are — `64b6b3b` and the narrowing
+
+The service half landed as shape 1: a comparison now declares itself on the wire with
+`difference_minor`, and the sibling reported honestly that **its change alone does not clear the
+violation** — `sum(groups) = 189597` against `total_minor = None` still fires. The narrowing is this
+side's, and it is now keyed on **a field that says what the rows are** rather than on an inference
+drawn from conversation memory. That is the distinction the previous section refused the earlier
+version over, and it is what makes this a narrowing rather than an exemption.
+
+`_reconciliation()` now dispatches on declared shape. **Every branch still reconciles something** —
+the rule is that it narrows, never that it goes quiet.
+
+| shape | keyed on | amounts | counts |
+| --- | --- | --- | --- |
+| ordinary breakdown | neither field | must sum to `total_minor` | must sum to `movement_count` |
+| comparison / net cash flow | `difference_minor` present | **rows are operands — not summed** | **still must sum** |
+| running total | `last_plan.metric == CUMULATIVE` | **last row must equal `total_minor`** | **last row must equal `movement_count`** |
+
+Three things worth stating about the boundary.
+
+- **Not keyed on `total_minor is None`.** `NET_CASH_FLOW` carries `difference_minor` *and* a
+  `total_minor` that legitimately **is** the difference, so the two fields do not travel together.
+  Tested both ways.
+- **`reconcilable()` is untouched**, so a comparison and a running total both still count as a
+  breakdown inspected. Dropping them would have shrunk gate 1's *Evidence reconciliation*
+  denominator while removing the failure from both halves of the ratio — the vacuous zero one field
+  lower, and the reason shape 2 was the wrong choice.
+- **A hole of my own, closed in the same change.** `ANSWER_WITHOUT_A_FIGURE` was keyed on
+  `total_minor`, and a comparison's `total_minor` is now `None`. Left alone it would have fired on
+  **every comparison the service emits** — a hole closed into a false positive. `_has_figure()` now
+  answers "does this answer carry a figure" in one place, and `NO_EVIDENCE`,
+  `FIGURE_WITHOUT_AN_ANSWER`, `ANSWER_WITHOUT_A_FIGURE` and the run's `figures` counter all ask it,
+  so they cannot come to disagree about the same payload.
+
+#### `CUMULATIVE` — handled here, not reported
+
+The sibling was right that the property was already wrong about a fourth shape, and it is worse than
+a comparison: on the rows `test_cumulative_and_group_rankings.py` pins, **both** halves of the old
+rule fired, both falsely.
+
+| | rows | whole | old rule |
+| --- | --- | ---: | --- |
+| amounts | 10 000 · 10 000 · 15 000 · 15 000 | 15 000 | `GROUPS_DO_NOT_SUM_TO_TOTAL` — false |
+| counts | 2 · 2 · 3 · 3 | 3 | `GROUP_COUNTS_DO_NOT_SUM` — false |
+
+**Handled rather than reported, because it already had a tag to key on and nobody had read it.**
+`Metric.CUMULATIVE` travels in `conversation.last_plan.metric` — the same field the `COUNT` check
+beside it has always read. So this needed no new contract, only the notion of shape the property
+never had.
+
+And it is given a real reconciliation, not a skip: **the cumulative form of "the parts add up to the
+whole" is that the last part *is* the whole**, asserted in both units. A running total that stops
+short of its own figure fails it.
+
+**Monotonicity is deliberately not asserted.** It is true of an expense accumulation and there is no
+evidence here that it holds of a signed one. Inventing a property to look thorough is how a
+benchmark earns the right to be switched off.
+
+#### Why `dev` cannot reach 0 on this container, and it is not the narrowing's fault
+
+**Measured directly, one request, before drawing any conclusion from a sweep.** The image at
+`dd1d2d0` predates `64b6b3b`, so it still emits the *old* comparison payload:
+
+```
+difference_minor present : False        total_minor    : -189597
+sum(group amounts)       : 189597       movement_count : 28
+last_plan.metric         : SUM          reconcilable   : True
+violations               : ['GROUPS_DO_NOT_SUM_TO_TOTAL']
+```
+
+`difference_minor` is **absent**, so the narrowing has nothing to key on and correctly does not
+engage. **`dev/unsupported_comparison` therefore still reports
+`GROUPS_DO_NOT_SUM_TO_TOTAL` on this container, and `dev` cannot reach 0 until the image carries the
+service half.** That is the contract working as designed rather than a gap in it: the property
+narrows on a declared field, and where nothing is declared it keeps checking.
+
+So the count of 0 that would make this the first dev set to both measure something and pass is
+**waiting on a rebuild, which this run deliberately did not do.** Whoever rebuilds should expect the
+comparison violation to disappear and nothing to take its place.
+
 #### Whether a comparison is a third shape, and whether it lives here
 
 It does not, and `_reconciliation()`'s notion of what reconciles was left exactly as it was.

@@ -162,22 +162,22 @@ def violations(body: dict[str, Any]) -> list[str]:
 
         # A figure with no plan beside it is a number to be taken on trust, which is the
         # one thing this pipeline should never ask for.
-        if body.get("total_minor") is not None and not body.get("plan"):
+        if _has_figure(body) and not body.get("plan"):
             broken.append("NO_EVIDENCE")
 
-        broken += _reconciliation(body)
+        broken += _reconciliation(body, context)
 
     elif body.get("outcome") in ("INVALID_STRUCTURE", "PROVIDER_ERROR"):
         # Under constrained decoding the first is unreachable. Counting it is how we find
         # out if that ever stops being true.
         broken.append(str(body["outcome"]))
 
-    if body.get("outcome") not in _ANSWERING and body.get("total_minor") is not None:
+    if body.get("outcome") not in _ANSWERING and _has_figure(body):
         # A declined question carrying a figure is the worst shape available: the text
         # says no and the payload says a number.
         broken.append("FIGURE_WITHOUT_AN_ANSWER")
 
-    if body.get("outcome") in _ANSWERING and body.get("total_minor") is None:
+    if body.get("outcome") in _ANSWERING and not _has_figure(body):
         # The mirror of the rule above, and the hole it left open: a figure with no answer was
         # caught, an answer with no figure was not. It matters because every figure-integrity
         # property in this function is guarded on `total_minor` existing — the reconciliation, the
@@ -190,12 +190,41 @@ def violations(body: dict[str, Any]) -> list[str]:
         # a BALANCE arrives with the figure it is about. Measured before it was added: 175 of the
         # 175 answers across the three read sets carried a figure, so this closes a hole rather
         # than reporting a live failure.
+        #
+        # It asks `_has_figure` rather than reading `total_minor` itself, because a comparison's
+        # figure is its `difference_minor` and its `total_minor` is `None`. Keyed on `total_minor`
+        # this rule would have fired on every comparison the service emits — a hole closed into a
+        # false positive.
         broken.append("ANSWER_WITHOUT_A_FIGURE")
 
     if not (body.get("text") or "").strip():
         broken.append("NOTHING_SAID")
 
     return broken
+
+
+def _has_figure(body: dict[str, Any]) -> bool:
+    """Whether this answer carries a figure at all, under whichever field names it.
+
+    Not the same question as "has a `total_minor`", and the difference is load-bearing. A comparison
+    puts its figure in `difference_minor` and leaves `total_minor` `None`; a net cash flow carries
+    both, and there `total_minor` legitimately *is* the difference. So presence of the one does not
+    imply absence of the other, and every rule guarded on a figure existing has to ask the question
+    the same way or two of them will disagree about the same answer.
+    """
+    return body.get("total_minor") is not None or body.get("difference_minor") is not None
+
+
+def _counts_reconcile(body: dict[str, Any], groups: list[dict[str, Any]]) -> list[str]:
+    """The half of the reconciliation that holds in every shape.
+
+    `movement_count` is the sum of the rows' counts whether the rows are parts of a whole or the two
+    operands of a comparison, so this is what lets the amount check narrow without the property
+    going quiet on the answer.
+    """
+    if sum(g["movement_count"] for g in groups) != body.get("movement_count"):
+        return ["GROUP_COUNTS_DO_NOT_SUM"]
+    return []
 
 
 def _is_figure(value: Any) -> bool:
@@ -206,11 +235,20 @@ def _is_figure(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
-def _reconciliation(body: dict[str, Any]) -> list[str]:
+def _reconciliation(body: dict[str, Any], context: dict[str, Any]) -> list[str]:
     """Do the parts add up to the whole?
 
     An ungrouped query still comes back with one row keyed "total", which is the figure
     again rather than a breakdown, so it is not reconciled against itself.
+
+    **"The whole" is not one thing, and until now this assumed it was.** Three shapes of breakdown
+    reach here and the arithmetic that reconciles them differs, so each branch is keyed on a field
+    the service *declares* rather than on an inference this could make from the numbers:
+    `difference_minor` says the rows are operands, `metric` says they are running totals.
+
+    The rule every branch obeys: **it narrows, it never goes quiet.** A shape this cannot add up in
+    one unit is still reconciled in the other, because a check that stops checking because a field
+    is present is the silent pass this file exists to catch.
     """
     groups = body.get("groups") or []
     if not groups or (len(groups) == 1 and groups[0].get("key") == "total"):
@@ -230,11 +268,51 @@ def _reconciliation(body: dict[str, Any]) -> list[str]:
     ):
         return ["GROUP_WITHOUT_A_FIGURE"]
 
+    if body.get("difference_minor") is not None:
+        # A comparison, and a net cash flow. The rows are the two operands and the headline figure
+        # is the signed difference between them, so summing the amounts against it compares a total
+        # against a subtraction. That is what fired `GROUPS_DO_NOT_SUM_TO_TOTAL` on
+        # `dev/unsupported_comparison` for a payload whose two halves were each coherent: 189597 was
+        # the sum of the operands and -189597 was the difference, and both were right.
+        #
+        # Keyed on `difference_minor` because that field is the service *saying* what the rows are.
+        # That is the whole difference between this and the version worth refusing, which would have
+        # inferred "comparison" from conversation memory and gone quiet on an answer nobody had
+        # declared anything about.
+        #
+        # Deliberately not keyed on `total_minor is None`: NET_CASH_FLOW carries both fields and
+        # there `total_minor` legitimately is the difference, so the two do not travel together.
+        #
+        # The counts still reconcile, and that is why narrowing here is honest rather than an
+        # exemption: `movement_count` is the sum of both operands' counts on every path.
+        return _counts_reconcile(body, groups)
+
+    if context.get("metric") == "CUMULATIVE":
+        # Running totals. Each row already contains every row before it, so *neither* unit can sum
+        # to the whole — `test_cumulative_and_group_rankings.py` pins rows of
+        # 10_000, 10_000, 15_000, 15_000 against a `total_minor` of 15_000, and counts of 2, 2, 3, 3
+        # against a `movement_count` of 3. Both halves of the old rule fired on that, both falsely,
+        # and this is not a comparison special case: the property simply had no notion of shape.
+        #
+        # The cumulative form of "the parts add up to the whole" is that **the last part is the
+        # whole**, so that is what is asserted, in both units. It is a real reconciliation rather
+        # than a skip: a running total that stops short of its own figure fails it.
+        #
+        # Monotonicity is deliberately not asserted. It is true of an expense accumulation and this
+        # has no evidence it holds of a signed one, and inventing a property to look thorough is how
+        # a benchmark earns the right to be switched off.
+        last = groups[-1]
+        broken = []
+        if last.get("total_minor") != body.get("total_minor"):
+            broken.append("CUMULATIVE_DOES_NOT_REACH_TOTAL")
+        if last.get("movement_count") != body.get("movement_count"):
+            broken.append("CUMULATIVE_COUNTS_DO_NOT_REACH_TOTAL")
+        return broken
+
     broken = []
     if sum(g["total_minor"] for g in groups) != body.get("total_minor"):
         broken.append("GROUPS_DO_NOT_SUM_TO_TOTAL")
-    if sum(g["movement_count"] for g in groups) != body.get("movement_count"):
-        broken.append("GROUP_COUNTS_DO_NOT_SUM")
+    broken += _counts_reconcile(body, groups)
     return broken
 
 
@@ -490,7 +568,7 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
             if body.get("outcome") in _ANSWERING:
                 answered += 1
                 earned += case.get("expect") == "plan"
-                figures += body.get("total_minor") is not None
+                figures += _has_figure(body)
                 inspected += reconcilable(body)
             if broken:
                 failures.append((case["id"], sorted(set(broken)), (body.get("text") or "")[:70]))
