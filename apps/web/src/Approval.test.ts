@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { Approval, replied, type Held, type Noun, type Reply } from "./Approval";
+import { Approval, forButtons, replied, type Held, type Noun, type Reply } from "./Approval";
 import { ApiError, type Answer } from "./api";
 
 const AWAITING = "AWAITING_CONFIRMATION";
@@ -194,5 +194,44 @@ describe("a reply that did complete", () => {
     expect(drawn).toContain("Confirmar");
     expect(drawn).toContain("Cancelar");
     expect(drawn).not.toContain("Reintentar");
+  });
+});
+
+describe("the service's sentence on a screen with buttons", () => {
+  it("does not tell the holder to type sí o no", () => {
+    /**
+     * The service writes one sentence for the chat, where "Responde sí o no" is exactly right, and
+     * for these two screens, where there is nothing to respond *with*. The instruction is not a
+     * fact about the payment — it is an instruction about a channel — and the channel is the
+     * client's own business, so the client trims it.
+     */
+    expect(forButtons(PREVIEW_TEXT)).not.toContain("Responde sí o no");
+    expect(forButtons(PREVIEW_TEXT).endsWith("¿Confirmas?")).toBe(true);
+  });
+
+  it("keeps every figure and every name the service wrote", () => {
+    // The numbers come from the ledger. A client that rewords them is a client that can round one.
+    const trimmed = forButtons(PREVIEW_TEXT);
+
+    expect(trimmed).toContain("20,00 €");
+    expect(trimmed).toContain("1.855,42 €");
+    expect(trimmed).toContain("Marta Solis Vega (+34600111222)");
+  });
+
+  it("trims the same instruction after a reply it did not understand", () => {
+    const unclear = `No estoy seguro de haberte entendido. ${PREVIEW_TEXT}`;
+
+    expect(forButtons(unclear)).toContain("No estoy seguro");
+    expect(forButtons(unclear)).not.toContain("Responde sí o no");
+  });
+
+  it("passes anything else through untouched", () => {
+    // If the service's wording changes, the sentence is drawn whole rather than silently mangled.
+    const receipt = "Hecho: 20,00 € enviados a Marta. Te quedan 1.835,42 €.";
+
+    expect(forButtons(receipt)).toBe(receipt);
+    expect(forButtons("Responde sí o no en el chat, no aquí.")).toBe(
+      "Responde sí o no en el chat, no aquí.",
+    );
   });
 });

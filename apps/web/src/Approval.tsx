@@ -116,6 +116,27 @@ export function notice(failure: unknown, reply: Reply, noun: Noun): string {
         `hubiera enviado, lo verás en tus movimientos.`;
 }
 
+/**
+ * A trailing instruction to type an answer, on a screen with no way to type one.
+ *
+ * The service writes one sentence for a preview and both channels read it: in the chat «Responde sí
+ * o no» is exactly right — the composer's own placeholder becomes those words — and on these two
+ * screens it asks for something the screen does not accept. So the fix is on the client's side of
+ * the boundary, and the trim is the smallest thing that can be cut: the instruction is not a fact
+ * about the payment, it is an instruction about a channel, and the channel is the client's own
+ * business. Every figure and every name the service wrote survives untouched, because a client that
+ * rewords those is a client that can round one.
+ *
+ * «¿Confirmas?» stays. It is the question the two buttons answer, and it is what marks the sentence
+ * as one that needs acting on.
+ *
+ * Only when trailing, and only that exact instruction. Anything else is drawn whole: if the
+ * service's wording changes, the sentence arrives verbatim rather than silently mangled.
+ */
+export function forButtons(text: string): string {
+  return text.replace(/\s*Responde s[íi] o no\.?\s*$/u, "");
+}
+
 type Props = {
   title: string;
   held: Held;
@@ -132,7 +153,7 @@ export function Approval({ title, held, busy, onReply, onRestart }: Props) {
       <h1 className="screen-title">{title}</h1>
       <section className={awaiting ? "card preview" : "card"}>
         {/* A receipt or a refusal arrives without anybody navigating, so it is announced. */}
-        <p role={awaiting ? undefined : "status"}>{answer.text}</p>
+        <p role={awaiting ? undefined : "status"}>{forButtons(answer.text)}</p>
         {awaiting && (
           /* Rendered whether or not there is anything to say, so the region exists before the
              sentence does — a live region inserted already full is a live region some screen
