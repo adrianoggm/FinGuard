@@ -322,6 +322,11 @@ Both rows can now be filled. They were `⬜ not measured` at `d439648`, correcte
 | E2E property violations | **0** | ❌ **2** — `dev/unsupported_comparison` `GROUPS_DO_NOT_SUM_TO_TOTAL`, `validation/t_noise_typos` `PLAN_ANSWER_MISMATCH`. Over **175 answering outcomes** carrying **175 figures**, so the count now means something. adversarial is a clean 0 over 17 answers. |
 | Evidence reconciliation | **0** failures | ❌ **1 of 11 breakdowns inspected** — the comparison above. Measured for the first time: `_reconciliation()` had executed zero times on every previous run. |
 
+**Both rows were re-measured for `dev` only after the harness repairs below**, and neither moved in
+the direction that matters: dev still carries exactly one violation on the same case, and its
+reconciled breakdowns went 7 → 8. `validation` and `adversarial` were not re-run, so the totals in
+this table still describe the run above it.
+
 Both are failures rather than passes, and both are worth more than the zero they replace. The
 reconciliation failure in particular is the row's first real reading in the table's history.
 
@@ -429,19 +434,49 @@ Two things follow that matter more than the colour changes.
   (`follow_grouping_after_period`, `follow_by_merchant`, `t_follow_grouping`) only reach `PLANNED`
   with their context, and they answer *with a breakdown*. Spot-checked live: **36 groups over 3
   answers, every one carrying both figures, `sum(groups.total_minor)` equal to `total_minor` in all
-  three** (189597 = 189597, over 9, 18 and 9 rows). So gate 1's *Evidence reconciliation* row should
-  read over more than the 11 breakdowns it was filled from — that is a number for the operator's
-  full sweep to produce, not one this measured.
+  three** (189597 = 189597, over 9, 18 and 9 rows). So gate 1's *Evidence reconciliation* row reads
+  over more breakdowns than the 11 it was filled from — **dev alone went from 7 to 8** in the run
+  below, and the remaining two sets are the operator's to re-measure.
+
+#### `dev`, run to completion — the answering gap closes
+
+120 cases, `demo-token-laura-0001`, harness at this commit against container `dd1d2d0`. Beside the
+entry this file already records for the same set:
+
+| | violations | exit | `PLANNED` | `NEEDS_CLARIFICATION` | `UNSUPPORTED` | answered / `expect: plan` | figures | breakdowns |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before | 1 | 1 | 101 | 16 | 3 | **96 / 102** | 101 | 7 |
+| now | **1** | 1 | **107** | **10** | 3 | **102 / 102** | **107** | **8** |
+
+**The single most useful number here is `102 / 102`.** The previous entry recorded 6 plan-expecting
+dev cases that did not answer and could not say which; sending the declared preceding turn accounts
+for them, and every case the dataset says should answer now does. `PLANNED` rose 101 → 107 and
+clarifications fell 16 → 10, a net 6 against the 5 dev cases the A/B predicted plus one case inside
+the ±1 run-to-run band `RESULTS.md` documents.
+
+**No new violation.** Still exactly one, still the same case and the same property —
+`unsupported_comparison` / `GROUPS_DO_NOT_SUM_TO_TOTAL`, with the same sentence and the same
+−189597. So over 107 answers and 8 breakdowns: `ANSWER_WITHOUT_A_FIGURE` fired **0** times,
+`GROUP_WITHOUT_A_FIGURE` **0** times, and `CLARIFICATION_RESTARTED` **0** times over the 13
+real-path cases, all 13 of which were asked the account question and accepted the chip. Three of the
+six fixes are now measured over a full set rather than argued from a unit test.
+
+`asked with the preceding turn they declare  9` — the new counter, reading the 9 dev cases.
+
+**One caveat on this run, and it is not about the properties.** It overlapped four requests of the
+spot-checks above, so it was mildly contended and **its timings are not quotable** — the same
+treatment the earlier contended run got. Nothing timed out, no `PROVIDER_ERROR`, and no
+`INVALID_STRUCTURE`, so the property results stand.
 
 #### The other five
 
 | # | hole | what it does now | evidence |
 | --- | --- | --- | --- |
 | 1 | `run_conversations()` had no vacuity guard | `corpus_vacuity()` — no threads, no declared turns, or fewer than `ANSWERING_FLOOR` of the declared turns replayed, all print `THE BENCHMARK DID NOT RUN` and exit non-zero | `--dataset conversations --limit 0` exits **1**, was **0** |
-| 3 | a `PLANNED` answer with `total_minor: None` violated nothing | `ANSWER_WITHOUT_A_FIGURE`, keyed on `_ANSWERING` so a figureless `BALANCE` counts too | 30 live answering arms, **0** without a figure — a closed hole, not a live failure |
+| 3 | a `PLANNED` answer with `total_minor: None` violated nothing | `ANSWER_WITHOUT_A_FIGURE`, keyed on `_ANSWERING` so a figureless `BALANCE` counts too | **107 live answers** in the dev run below, **0** without a figure — a closed hole, not a live failure |
 | 4 | `expect_shape` passed when the outcome was not `PLANNED` | `NOT_PLANNED_SO_NO_SHAPE`, matching `expect_plan` and `must_change` | unit-tested; **8 corpus turns** use `expect_shape` and their live effect is unmeasured (below) |
 | 5 | `--limit 0` meant *no limit* | `sliced()`, testing `is None` | `--dataset dev --limit 0` exits **1**, was **0** |
-| 6 | `_reconciliation()` raised `KeyError` on a malformed group | `GROUP_WITHOUT_A_FIGURE`, returned instead of summing; a missing key, a `null` and a string all report rather than crash | unit-tested; 36 live groups, **0** malformed |
+| 6 | `_reconciliation()` raised `KeyError` on a malformed group | `GROUP_WITHOUT_A_FIGURE`, returned instead of summing; a missing key, a `null` and a string all report rather than crash | unit-tested; **8 breakdowns reconciled** in the dev run and 36 groups spot-checked, **0** malformed |
 
 `ANSWERING_FLOOR` is reused for the corpus rather than a second threshold invented: both ask *did
 enough of this happen to be worth a count?*, and two numbers would be two things to justify and one
@@ -463,8 +498,8 @@ would accept.** No dataset edit was needed and none was made.
 
 #### Not measured here
 
-- **The three-set sweep.** dev, validation and adversarial were not re-run to completion; that is
-  the operator's to run after the merges. What is measured above is the affected subset.
+- **`validation` and `adversarial`.** Not re-run; that is the operator's sweep after the merges.
+  `dev` *was* run to completion and is tabled above.
 - **The 8 corpus turns that use `expect_shape`.** Whether any of them comes back as something other
   than `PLANNED` — and so whether fix (4) turns a corpus turn red — needs a `conversations` run with
   `demo-token-laura-pays`, which writes `payment_intents` and is a sibling's measurement. Not run.
