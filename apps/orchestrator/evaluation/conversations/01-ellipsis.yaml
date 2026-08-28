@@ -263,3 +263,49 @@ episodes:
       - say: la hucha
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+
+  - name: a_superlative_that_names_its_month
+    why: >
+      Every superlative-as-follow-up already in this corpus is a *bare* one — "Cual ha sido el
+      gasto mas alto?", "¿y el segundo?" — and those go through the deterministic ordinal path and
+      always worked. The shape that failed is the one that names its own month, because a window
+      made the turn look patchable: `gasto` was missing from the self-contained vocabulary, so
+      "¿cuál fue mi mayor gasto de junio?" stayed an ellipsis and the closed-vocabulary patch
+      grounded the month onto the previous question instead of asking it.
+
+      And it kept the previous aggregate's `categories` with it, which is worse than answering
+      with the previous total. After "¿cuánto gasté el mes pasado en el supermercado?" this turn
+      answered "465,56 € en supermercado del 2026-06-01 al 2026-06-30" — June's *supermarket*
+      total, offered as the largest expense of June. A real figure, a valid plan, and an answer to
+      a question nobody asked. The ordinals behind it then had no ranking to walk, so "¿y el
+      segundo?" and "¿y el tercero?" both went back to the model and repeated the same total.
+
+      `rank` is the discriminator: read as an ellipsis these turns ran an aggregate, which carries
+      no rank at all. The opener and the closer are here so the widening's other half is visible
+      too — a turn that stands on its own drops the inherited category, so the last turn is a
+      total of everything rather than of the supermarket.
+    metrics: [context_retention, wrong_tool]
+    turns:
+      - say: ¿cuánto gasté el mes pasado en el supermercado?
+        route: QUERY
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [GROCERIES], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # The turn the episode exists for. June because the sentence says June, and no GROCERIES
+      # because it is a question of its own. The category that is here is the stub planner's — it
+      # answers any superlative with a fuel ranking — and this sentence names none.
+      - say: ¿cuál fue mi mayor gasto de junio?
+        route: QUERY
+        ran: {rank: 1, window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿y el segundo?
+        route: QUERY
+        no_model: true
+        ran: {rank: 2, window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿y el tercero?
+        route: QUERY
+        no_model: true
+        ran: {rank: 3, window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+        no_model: true
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
