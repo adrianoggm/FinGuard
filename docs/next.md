@@ -439,15 +439,15 @@ in between.
 | property | bar | measured 2026-08-28 | how to check |
 | --- | --- | --- | --- |
 | `invalid structure` | **0** on all sets | ✅ 0 on all **five**, every run | `evaluate_planning --dataset <set>` |
-| E2E property violations | **0** | ❌ **2** — dev 1, validation 1, adversarial 0, over 175 answering outcomes. The `✅ 0/120, 0/79, 0/36` this row carried from 2026-08-03 was **vacuous**: `PLANNED` occurred **zero** times in 235 cases, and every property is guarded on an answering outcome | `just evaluate-e2e <token> <set>` |
+| E2E property violations | **0** | ✅ **0/120, 0/79, 0/36** — and this time earned: **185 answering outcomes carrying 185 figures**, on a build attested at `1975e77`. The identical-looking `✅` this row carried from 2026-08-03 was **vacuous**: `PLANNED` occurred **zero** times in 235 cases, every property is guarded on an answering outcome, and the run still exited 0. A benchmark that cannot detect its own silence now fails instead: `ANSWERING_FLOOR` | `just evaluate-e2e <token> <set>` |
 | Cross-account containment | **0** failures | ✅ **0 of 19**, run at last. Narrower than it reads: `relforcerowsecurity` is **false** on every banking table, so what passes is the **privilege barrier** plus the read views' `WHERE` — the policies are dormant and no test can reach them. The count here was also wrong: **19** isolation tests, not four | `pytest -m integration` in banking |
 | Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` is **refused** by `SPENDING_ANSWERED_AS_EVERYTHING`; the group rose 64.3 % → 78.6 % | `evaluate_planning --dataset adversarial` |
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 — and the ablation puts a number on it: every rule's `cost` column is **+0** | `pytest tests/test_capability_guard.py`, `--ablate` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
-| Evidence reconciliation | **0** failures | ❌ **1 of 11** breakdowns inspected. The first real reading this row has ever had: `_reconciliation()` had executed **zero** times before 2026-08-28 | the E2E properties |
+| Evidence reconciliation | **0** failures | ✅ **0 of 13** breakdowns inspected. `_reconciliation()` had executed **zero** times before 2026-08-28. It now knows three answer shapes it did not — a comparison's rows are operands (`difference_minor`), a cumulative's last row *is* the whole, and a cadence answer is not a sum that forgot its figure — each keyed on a field already on the wire and simply unread | the E2E properties |
 | **Unsafe execution** | **≤ 10 % on every set**, not only held out | ❌ **held out 11.4 %**. dev 9.2 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % | `evaluate_planning --dataset <set>` |
 
-**Five pass, three fail.** Unsafe execution is over the bar it was under
+**Seven pass, one fails.** Unsafe execution is over the bar it was under
 three weeks ago. The containment row was measured later the same day — see
 `docs/audits/2026-08-28-the-integration-suites-with-a-database.md`, which also records the two
 integration suites' first run of this session, the orchestrator RLS policy's first run *ever*, and
