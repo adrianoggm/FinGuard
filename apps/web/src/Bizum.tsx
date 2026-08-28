@@ -63,7 +63,11 @@ export function Bizum({ onPaid }: Props) {
     if (!chosen || amount === null || busy) return;
     setBusy(true);
     try {
-      setHeld({ answer: await payChosen(chosen.display_name, amount, attempt), failure: null, again: null });
+      setHeld({
+        answer: await payChosen(chosen.display_name, amount, attempt),
+        failure: null,
+        again: null,
+      });
       setError(null);
     } catch {
       setError("No he podido preparar el pago.");
@@ -82,11 +86,12 @@ export function Bizum({ onPaid }: Props) {
       noun: "pago",
     });
     setHeld(next);
-    // Only a reply the bank answered counts as done. Leaving the key alone after a failure is the
-    // safe direction: if the confirmation did execute unseen, the next prepare with the same
-    // recipient and amount finds that same consumed intent and is refused, rather than minting a
-    // second payment.
-    if (next.failure === null) {
+    // Only a reply the bank gave a verdict on counts as done, which is exactly `again === null`:
+    // a failure and an unknown outcome both leave something to repeat. Holding the key back in
+    // those two cases is the safe direction — if the confirmation did execute unseen, the next
+    // prepare for the same recipient and amount finds that consumed intent and is refused, where
+    // a fresh key would have minted a second payment.
+    if (next.again === null) {
       setCompleted((done) => done + 1);
       if (next.answer.outcome === PAID) onPaid();
     }

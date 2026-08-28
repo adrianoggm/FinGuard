@@ -46,6 +46,17 @@ export type Held = {
 };
 
 /**
+ * The outcome that is an answer without being a verdict.
+ *
+ * The service reaches it when banking failed *after* the confirmation started, so execution may
+ * already have happened. It arrives as a perfectly good 200 carrying
+ * `payment_writer.confirmation_unavailable()` — «puedes reintentar esta confirmación sin que se
+ * ejecute dos veces» — which is the right sentence, and it must not be drawn over a button that
+ * throws the intent away.
+ */
+const UNKNOWN = "BANKING_UNAVAILABLE";
+
+/**
  * One reply to a preview, and the two things the screen holds afterwards.
  *
  * They travel together because they are one state, the same way `Accounts.load` carries a list and
@@ -57,7 +68,10 @@ export async function replied(
   { reply, standing, noun }: { reply: Reply; standing: Answer; noun: Noun },
 ): Promise<Held> {
   try {
-    return { answer: await ask(), failure: null, again: null };
+    const settled = await ask();
+    // No sentence of our own for this one — the service's is better and is already on the card.
+    // What it needs is the button its own words promise.
+    return { answer: settled, failure: null, again: settled.outcome === UNKNOWN ? reply : null };
   } catch (failure) {
     // The preview is kept, not cleared. The payment is still the subject and the holder needs the
     // amount and the recipient in front of them to recognise what may or may not have happened.

@@ -85,11 +85,12 @@ export function Transfer({ summary, onPaid }: Props) {
       noun: "traspaso",
     });
     setHeld(next);
-    // Only a reply the bank answered counts as done. Leaving the key alone after a failure is the
-    // safe direction: if the confirmation did execute unseen, the next prepare with the same
-    // destination and amount finds that same consumed intent and is refused, rather than minting a
-    // second transfer.
-    if (next.failure === null) {
+    // Only a reply the bank gave a verdict on counts as done, which is exactly `again === null`:
+    // a failure and an unknown outcome both leave something to repeat. Holding the key back in
+    // those two cases is the safe direction — if the confirmation did execute unseen, the next
+    // prepare for the same destination and amount finds that consumed intent and is refused, where
+    // a fresh key would have minted a second transfer.
+    if (next.again === null) {
       setCompleted((done) => done + 1);
       if (next.answer.outcome === PAID) onPaid();
     }

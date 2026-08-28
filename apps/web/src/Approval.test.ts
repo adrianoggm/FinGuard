@@ -177,6 +177,50 @@ describe("what the holder is told about their money", () => {
   });
 });
 
+describe("a reply the bank answered without deciding", () => {
+  /**
+   * `BANKING_UNAVAILABLE` is a 200. The service reaches it when banking failed *after* the
+   * confirmation started, so execution may already have happened, and it says exactly that:
+   * «No he podido comprobar si el banco completó el pago… puedes reintentar esta confirmación sin
+   * que se ejecute dos veces.» Drawn under the settled branch, that sentence sat over a button
+   * labelled «Hacer otro», which abandons the intent it just told the holder to retry.
+   */
+  const unknown = answer({
+    outcome: "BANKING_UNAVAILABLE",
+    text:
+      "No he podido comprobar si el banco completó el pago. No crees otro bizum: puedes " +
+      "reintentar esta confirmación sin que se ejecute dos veces.",
+  });
+
+  function settled(reply: Reply = "sí"): Promise<Held> {
+    return replied(() => Promise.resolve(unknown), { reply, standing: STANDING, noun: "pago" });
+  }
+
+  it("offers the retry its own sentence promises, not a fresh payment", async () => {
+    const drawn = card(await settled());
+
+    expect(drawn).toContain("Reintentar");
+    expect(drawn).not.toContain("Hacer otro");
+  });
+
+  it("adds no sentence of its own, the service's being the better one", async () => {
+    const held = await settled();
+
+    expect(held.failure).toBeNull();
+    expect(card(held)).toContain("No he podido comprobar si el banco completó el pago.");
+  });
+
+  it("leaves something to repeat, which is what keeps the key alive", async () => {
+    /**
+     * The screens renew the idempotency key on `again === null`. A renewed key after an outcome
+     * this uncertain would let the next prepare mint a *second* intent for the same payment, where
+     * the old key finds the one that may already have been consumed and is refused.
+     */
+    expect((await settled()).again).toBe("sí");
+    expect((await settled("no")).again).toBe("no");
+  });
+});
+
 describe("a reply that did complete", () => {
   it("shows what came back and offers to start again", () => {
     const settled = answer({ outcome: "PAID", text: "Hecho: 20,00 € enviados a Marta Solis Vega." });
