@@ -440,15 +440,22 @@ in between.
 | --- | --- | --- | --- |
 | `invalid structure` | **0** on all sets | ✅ 0 on all **five**, every run | `evaluate_planning --dataset <set>` |
 | E2E property violations | **0** | ❌ **2** — dev 1, validation 1, adversarial 0, over 175 answering outcomes. The `✅ 0/120, 0/79, 0/36` this row carried from 2026-08-03 was **vacuous**: `PLANNED` occurred **zero** times in 235 cases, and every property is guarded on an answering outcome | `just evaluate-e2e <token> <set>` |
-| Cross-account containment | **0** failures | ⬜ *not measured*. And the count here was wrong: banking has **19** integration-marked isolation tests, not four, and they are excluded from the default gate | `pytest -m integration` in banking |
+| Cross-account containment | **0** failures | ✅ **0 of 19**, run at last. Narrower than it reads: `relforcerowsecurity` is **false** on every banking table, so what passes is the **privilege barrier** plus the read views' `WHERE` — the policies are dormant and no test can reach them. The count here was also wrong: **19** isolation tests, not four | `pytest -m integration` in banking |
 | Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` is **refused** by `SPENDING_ANSWERED_AS_EVERYTHING`; the group rose 64.3 % → 78.6 % | `evaluate_planning --dataset adversarial` |
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 — and the ablation puts a number on it: every rule's `cost` column is **+0** | `pytest tests/test_capability_guard.py`, `--ablate` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
 | Evidence reconciliation | **0** failures | ❌ **1 of 11** breakdowns inspected. The first real reading this row has ever had: `_reconciliation()` had executed **zero** times before 2026-08-28 | the E2E properties |
 | **Unsafe execution** | **≤ 10 % on every set**, not only held out | ❌ **held out 11.4 %**. dev 9.2 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % | `evaluate_planning --dataset <set>` |
 
-**Four pass, three fail, one was not measured.** Unsafe execution is over the bar it was under
-three weeks ago. The two E2E rows fail on their first honest reading — they had been green since
+**Five pass, three fail.** Unsafe execution is over the bar it was under
+three weeks ago. The containment row was measured later the same day — see
+`docs/audits/2026-08-28-the-integration-suites-with-a-database.md`, which also records the two
+integration suites' first run of this session, the orchestrator RLS policy's first run *ever*, and
+three findings that are not yet rows here: `assert_intent_transition` does not guard a payment's
+destination, so a confirmation can redirect one to another IBAN in silence (four failing tests in
+the tree); `row_mapper.to_balance` has no unit test, so the sign of every balance is unverified in
+the default gate; and the banking integration suite commits ledger rows it cannot delete, so it
+needs a `just seed` after it. The two E2E rows fail on their first honest reading — they had been green since
 2026-08-21 by testing nothing, because the account-scope feature made every unqualified question a
 clarification and no property runs on one. The instrument now refuses to report that: a run in which
 fewer than half the cases a set expects to answer actually answered is a **failure**, and the floor
