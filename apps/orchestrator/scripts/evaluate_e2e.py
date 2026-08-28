@@ -21,6 +21,18 @@ Two things below exist because this harness spent a week reporting zeros it had 
 properties have answers to run on at all; `ANSWERING_FLOOR` makes a run that produced too few of
 them a failure rather than a clean sheet. Read both comments before changing either — the defect
 they describe was invisible precisely because it looked like a pass.
+
+The rest of that audit is closed here, and it was all one shape: *a check that passes because the
+thing it reads is absent.* `corpus_vacuity` gives the conversation path the guard the read sets
+already had. `preceding` sends the fifteen cases that declare a preceding turn the turn they
+declare, instead of asking them cold. `ANSWER_WITHOUT_A_FIGURE` is the per-case mirror of
+`FIGURE_WITHOUT_AN_ANSWER`. `expect_shape` now says `NOT_PLANNED_SO_NO_SHAPE` where it used to say
+nothing, like its two siblings. `sliced` stops reading `--limit 0` as *no limit*. And
+`_reconciliation` reports a group with no figure in it rather than raising `KeyError` and taking
+the run with it.
+
+None of them was fixed by relaxing what is asserted. Where closing one turns a green case red,
+that red is the finding.
 """
 
 import argparse
@@ -165,10 +177,33 @@ def violations(body: dict[str, Any]) -> list[str]:
         # says no and the payload says a number.
         broken.append("FIGURE_WITHOUT_AN_ANSWER")
 
+    if body.get("outcome") in _ANSWERING and body.get("total_minor") is None:
+        # The mirror of the rule above, and the hole it left open: a figure with no answer was
+        # caught, an answer with no figure was not. It matters because every figure-integrity
+        # property in this function is guarded on `total_minor` existing — the reconciliation, the
+        # money/count agreement, the evidence check — so an answering outcome without one passes
+        # all of them for want of anything to check. That is the vacuous zero this file was
+        # revisited for, one case at a time instead of one set at a time; `vacuity`'s second prong
+        # defends the set and this defends the case.
+        #
+        # Keyed on `_ANSWERING` rather than on PLANNED alone, because it is that rule's mirror and
+        # a BALANCE arrives with the figure it is about. Measured before it was added: 175 of the
+        # 175 answers across the three read sets carried a figure, so this closes a hole rather
+        # than reporting a live failure.
+        broken.append("ANSWER_WITHOUT_A_FIGURE")
+
     if not (body.get("text") or "").strip():
         broken.append("NOTHING_SAID")
 
     return broken
+
+
+def _is_figure(value: Any) -> bool:
+    """Whether this is a number the reconciliation can add up.
+
+    `True` is an `int` in Python and is not a figure, which is why this is not a bare `isinstance`.
+    """
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _reconciliation(body: dict[str, Any]) -> list[str]:
@@ -180,6 +215,20 @@ def _reconciliation(body: dict[str, Any]) -> list[str]:
     groups = body.get("groups") or []
     if not groups or (len(groups) == 1 and groups[0].get("key") == "total"):
         return []
+
+    # A row with no number in it cannot be added up. This used to reach `sum(g["total_minor"] ...)`
+    # and raise `KeyError`, which took the whole run down and turned a data problem into a stack
+    # trace — the opposite failure to the rest of this file, and still a run that reported nothing.
+    #
+    # Reported as a property rather than summed around. A breakdown this cannot add up is precisely
+    # what gate 1's *Evidence reconciliation* row claims to have checked, so skipping the row
+    # quietly would be the silent pass again, and guessing a 0 for the missing figure would invent
+    # evidence. `reconcilable` still counts this answer as inspected, because it was: it was
+    # inspected and found unaddable.
+    if not all(
+        _is_figure(g.get("total_minor")) and _is_figure(g.get("movement_count")) for g in groups
+    ):
+        return ["GROUP_WITHOUT_A_FIGURE"]
 
     broken = []
     if sum(g["total_minor"] for g in groups) != body.get("total_minor"):
@@ -202,10 +251,124 @@ def reconcilable(body: dict[str, Any]) -> bool:
     return bool(groups) and not (len(groups) == 1 and groups[0].get("key") == "total")
 
 
+def sliced(cases: list[dict[str, Any]], limit: int | None) -> list[dict[str, Any]]:
+    """The first `limit` cases, where no limit and a limit of nothing are different requests.
+
+    `if limit` read `--limit 0` as *no limit* and ran the whole corpus. It cost this session a
+    contended run — two evaluations against one 8 GB GPU, and the timings of both discarded. The
+    honest answer to a request for no cases is no cases, and the vacuity guards then report that
+    as a run which did not happen rather than as a clean sheet.
+    """
+    return cases if limit is None else cases[:limit]
+
+
 def questions(dataset: str, limit: int | None) -> list[dict[str, Any]]:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
-    cases = data["cases"]
-    return cases[:limit] if limit else cases
+    return sliced(list(data["cases"]), limit)
+
+
+# The keys a `previous:` spec may carry — exactly the ones `evaluate_planning.as_plan` reads.
+#
+# It reads them with `.get`, so a mistyped key is dropped without a word and the case is asked with
+# less context than it declares. That is the same silent pass this file exists to close, one level
+# down in the dataset, and it would be invisible in both benchmarks. A test asserts the three read
+# sets against this, the way `EXPECTATIONS` and `TURN_KEYS` are asserted against theirs.
+PREVIOUS_KEYS = frozenset(
+    {
+        "period",
+        "dateRange",
+        "direction",
+        "categories",
+        "excludedCategories",
+        "merchants",
+        "excludedMerchants",
+        "counterparties",
+        "excludedCounterparties",
+        "counterpartyTypes",
+        "groupBy",
+        "metric",
+        "groupLimit",
+        "includeInternal",
+        "internalOnly",
+        "acrossAccounts",
+        "onlyAccountId",
+        "onlyAccountIds",
+        "transactionIds",
+        "transactionTypes",
+    }
+)
+
+
+def _wire_plan(spec: dict[str, Any]) -> dict[str, Any]:
+    """The dataset's spelling of a plan, rendered the way the endpoint renders one.
+
+    Two spellings exist and neither is negotiable: the datasets write `groupBy` and a nested
+    `period`, the wire carries flat snake_case. So this invents no third one. It borrows the reader
+    the other benchmark already uses on this very field — `evaluate_planning.as_plan` — and the
+    writer the endpoint itself uses to put a plan on the wire, `conversation_mapper.plan_payload`.
+
+    Two things follow, and both are the reason for going the long way round. A spec this cannot
+    build raises here instead of being quietly dropped, which is `as_plan`'s own promise: *a context
+    this cannot build is one a client could not send either*. And the two benchmarks cannot come to
+    disagree about what a `previous:` block means, because there is one function that decides.
+
+    Imported here rather than at the top because `evaluate_planning` builds `Settings` and the LLM
+    providers on import: a run over datasets that declare no preceding turn — `adversarial`, the
+    corpus — should not need the planner configured to drive HTTP.
+    """
+    scripts = str(Path(__file__).resolve().parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+
+    from evaluate_planning import as_plan
+
+    from finguard_orchestrator.infrastructure.mappers.conversation_mapper import plan_payload
+
+    return dict(plan_payload(as_plan(spec)).model_dump(mode="json"))
+
+
+def preceding(case: dict[str, Any]) -> dict[str, Any] | None:
+    """The plan behind this case's preceding turn, or None if it declares none.
+
+    9 dev cases and 6 validation cases carry a `previous:` plan and this harness asked every one of
+    them cold. «¿Y en gasolina?» arrived with no window, «¿Y este mes?» with no category to keep,
+    «¿Y cuántas veces?» with nothing to count — so fifteen expectations about follow-up context
+    were being evaluated against a service that had never been given any. Whatever they scored, it
+    was not what they say they measure.
+
+    `dev.yaml` states the field's meaning outright — *"`previous` is the plan behind the preceding
+    answer, for follow-up cases only"* — and the wire has carried it under `conversation.last_plan`
+    all along, which is what a client echoes back after an answer. Nothing had to be added to the
+    contract or to the datasets; the harness simply was not sending it.
+    """
+    spec = case.get("previous")
+    if spec is None:
+        return None
+    unknown = set(spec) - PREVIOUS_KEYS
+    if unknown:
+        raise SystemExit(
+            f"{case.get('id')}: `previous` carries {', '.join(sorted(unknown))}, which nothing "
+            f"reads. Known: {', '.join(sorted(PREVIOUS_KEYS))}"
+        )
+    return _wire_plan(spec)
+
+
+def opening_for(case: dict[str, Any], real_path: bool) -> dict[str, Any] | None:
+    """The conversation a case opens with: the account scope, and the turn before it.
+
+    Two independent pieces of memory that travel in one object, and `ConversationPayload` says why
+    they compose rather than conflict — `last_plan` is *"memory rather than a workflow, so it
+    travels alongside whatever is active"*. A case on the real path opens with no settled scope on
+    purpose, and still carries the context it declares: it has to answer the account question
+    first, which is the production path, and the plan it is following up on is not what that
+    question is about. Two cases are both at once — `dev/follow_category_after_period` and
+    `validation/t_follow_period` — and they are the only ones exercising the pair.
+    """
+    opening: dict[str, Any] = {} if real_path else dict(SETTLED)
+    context = preceding(case)
+    if context is not None:
+        opening["last_plan"] = context
+    return opening or None
 
 
 def expecting_a_plan(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -286,14 +449,18 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
     # dataset never asked to answer.
     answered = earned = figures = inspected = 0
     asked_first = 0
+    # How many cases were given the preceding turn they declare. Printed for the same reason the
+    # counters above it are: fifteen cases spent the harness's whole history being asked cold, and
+    # a run cannot say whether it sent the context unless it counts having sent it.
+    with_context = 0
 
     async with httpx.AsyncClient(timeout=180.0) as client:
         for case in cases:
             real_path = case["id"] in walks_the_real_path
+            opening = opening_for(case, real_path)
+            with_context += "previous" in case
             try:
-                body = await _ask(
-                    client, base_url, token, case["question"], None if real_path else SETTLED
-                )
+                body = await _ask(client, base_url, token, case["question"], opening)
                 broken = violations(body)
 
                 state = body.get("conversation") or {}
@@ -343,6 +510,7 @@ async def run(base_url: str, token: str, dataset: str, limit: int | None) -> int
     print(f"  answering outcomes, all cases                {answered:3}")
     print(f"  answers with a figure                        {figures:3}")
     print(f"  breakdowns reconciled                        {inspected:3}")
+    print(f"  asked with the preceding turn they declare   {with_context:3}")
 
     print(f"\n  PROPERTY VIOLATIONS   {len(failures):3}/{total}")
     if failures:
@@ -531,8 +699,18 @@ def turn_violations(
 
     # --- what shape the answer takes ------------------------------------------------------
     expected_shape = turn.get("expect_shape")
-    if expected_shape and outcome == "PLANNED" and shape_of(body) != expected_shape:
-        broken.append(f"SHAPE_IS_{shape_of(body)}")
+    if expected_shape:
+        if outcome != "PLANNED":
+            # The asymmetry this had with its two siblings, and the hole in it. `expect_plan` and
+            # `must_change` both say `NOT_PLANNED_SO_NO_<field>` when there is no plan to look at;
+            # this one had `and outcome == "PLANNED"` folded into the condition, so a turn
+            # demanding `expect_shape: GROUPS` that came back as a clarification asserted nothing
+            # and passed. A demand for a particular shape is a demand for an answer to have a
+            # shape, and a clarification does not satisfy it — the same reading `expect_plan`
+            # already takes of the same situation.
+            broken.append("NOT_PLANNED_SO_NO_SHAPE")
+        elif shape_of(body) != expected_shape:
+            broken.append(f"SHAPE_IS_{shape_of(body)}")
 
     for key in turn.get("expect_groups") or []:
         keys = [str(group.get("key", "")).lower() for group in body.get("groups") or []]
@@ -595,11 +773,45 @@ CONVERSATION_KEYS = frozenset({"id", "why", "turns", "max_repeated_clarification
 SHAPES = frozenset({"TOTAL", "GROUPS", "MOVEMENT", "NONE"})
 
 
+def corpus_vacuity(threads: int, declared: int, replayed: int) -> list[str]:
+    """Why a corpus run does not count as a measurement, or nothing if it does.
+
+    The three read sets got a guard and this path did not, in the same file and on the same day. An
+    empty corpus — or one emptied by `--limit 0`, which used to mean *no limit* — printed
+    `PROPERTY VIOLATIONS 0` and exited 0. Every property in `turn_violations` needs a turn to have
+    happened before it can fail, exactly as every property in `violations` needs an answer, so a
+    corpus that replayed nothing breaks nothing and reads as a clean sheet.
+
+    The denominator is the corpus's own claim, the way `ANSWERING_FLOOR`'s is: the turns the
+    dataset declares. And `ANSWERING_FLOOR` itself is reused rather than a second number invented,
+    because it is answering the same question — *did enough of this happen to be worth a count?* —
+    and two thresholds would be two things to justify and one to forget.
+
+    This is deliberately not an accuracy floor. A turn that ran and violated three properties still
+    counts as replayed; all this asks is whether the turns reached the service. A thread that breaks
+    early already records its own failure, so the fraction and the violation count are separate
+    questions and the run prints both.
+    """
+    if threads == 0:
+        return ["not one conversation was replayed, so nothing here could have been measured"]
+    if declared == 0:
+        return [f"the {threads} threads declare no turns at all, so no property could run"]
+
+    floor = math.ceil(declared * ANSWERING_FLOOR)
+    if replayed < floor:
+        return [
+            f"{replayed} of {declared} declared turns reached the service; {floor} is the floor "
+            f"({ANSWERING_FLOOR:.0%} of what the corpus declares)"
+        ]
+    return []
+
+
 async def run_conversations(base_url: str, token: str, limit: int | None) -> int:
     """Each conversation replayed the way the client has one: the plan and the draft echoed
     back, nothing kept on the server."""
     data = yaml.safe_load((PLANNING / "conversations.yaml").read_text(encoding="utf-8"))
-    cases = data["conversations"][:limit] if limit else data["conversations"]
+    cases = sliced(list(data["conversations"]), limit)
+    declared = sum(len(case["turns"]) for case in cases)
     failures: list[tuple[str, list[str], str]] = []
     turns_run = 0
 
@@ -665,12 +877,30 @@ async def run_conversations(base_url: str, token: str, limit: int | None) -> int
     print()
     print(f"=== conversations · {len(cases)} threads · {turns_run} turns ===")
     print()
+    # What the properties had to work with, printed whether or not anything broke — for the reason
+    # the read path prints its own block: the failure this file exists to prevent looked exactly
+    # like a clean run, and a bare violation count cannot tell 0 failures from 0 checks.
+    print(f"  turns the corpus declares   {declared:3}")
+    print(f"  turns replayed              {turns_run:3}")
+    print()
     print(f"  PROPERTY VIOLATIONS   {len(failures):3}")
     if failures:
         print()
         print("  what broke")
         for where, broken, detail in failures:
             print(f"    {where:32} {','.join(broken):28} {detail}")
+
+    empty = corpus_vacuity(len(cases), declared, turns_run)
+    if empty:
+        print()
+        print("  THE BENCHMARK DID NOT RUN")
+        for reason in empty:
+            print(f"    {reason}")
+        print()
+        print("  A violation count is only worth the turns it was computed over. This run")
+        print("  measured too few to mean anything, so it is a failure rather than a pass.")
+        return 1
+
     return 1 if failures else 0
 
 
