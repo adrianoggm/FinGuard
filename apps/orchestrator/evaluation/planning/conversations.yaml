@@ -895,6 +895,29 @@ conversations:
       - say: quería saber lo de la hucha
         must_keep: [window]
 
+  - id: a_superlative_scoped_to_every_account
+    why: >
+      A superlative and the all-accounts scope phrase in one sentence, which is where the
+      deterministic path used to answer instead of handing over. «en todas mis cuentas» supplied a
+      grouping dimension to a bare noun alternation, so "¿cuál fue mi mayor gasto de julio en todas
+      mis cuentas?" was answered «La cuenta con mayor importe total … es: Cuenta corriente» and the
+      planner never saw the question at all.
+
+      The first turn is the asymmetry that hid the defect for a thousand corpus turns: the same
+      noun, the same scope phrase, no ranking signal, and the reading was always right. Both belong
+      here rather than only in the routing corpus, because the account subset is not one of the
+      eight fields this checker knows — so what the pair pins is the half it can, the month, and
+      the answer shape that says a superlative is one charge and a total is a figure.
+    turns:
+      - say: ¿cuánto gasté en julio en todas mis cuentas?
+        expect_plan:
+          window: 2026-07-01..2026-07-31
+        expect_shape: TOTAL
+      - say: ¿cuál fue mi mayor gasto de julio en todas mis cuentas?
+        expect_plan:
+          window: 2026-07-01..2026-07-31
+        expect_shape: MOVEMENT
+
   - id: a_compound_question_after_an_absolute_month
     why: >
       Two readings in one sentence — a savings rate and a category total — after an answer about

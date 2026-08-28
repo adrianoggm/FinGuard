@@ -15,7 +15,7 @@ from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
-from finguard_orchestrator.domain.services import cumulative_calculator
+from finguard_orchestrator.domain.services import cumulative_calculator, spanish
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -284,6 +284,61 @@ def test_a_ranking_shows_the_number_of_rows_it_was_asked_for() -> None:
     assert three.group_limit == 3
     # And a plain breakdown still asks for no ranking at all.
     assert _ranking_for("cuanto gasto por comercio") is None
+
+
+def test_the_all_accounts_scope_is_not_a_grouping_instruction() -> None:
+    """«en todas mis cuentas» says where to look, not what to group by.
+
+    Measured against the running service on 2026-08-28, token `demo-token-laura-pays`: "cuál fue mi
+    mayor gasto de julio en todas mis cuentas" came back `group_by=ACCOUNT group_limit=5` and «La
+    cuenta con mayor importe total del 2026-07-01 al 2026-07-31 es: Cuenta corriente…» — a ranking
+    of accounts offered as the answer to a question about one charge. `_GROUP_RANKING_DIMENSION` was
+    a bare noun alternation, so the noun *inside the scope phrase* supplied the dimension, and this
+    recogniser runs ahead of the planner: the superlative was never read by anything.
+
+    The asymmetry is why a thousand turns of corpus never saw it. "cuánto gasté en julio en todas
+    mis cuentas" carries the same noun and no ranking signal, so it was always a plain total. Only a
+    superlative *plus* the scope phrase changed meaning.
+    """
+    hijacked = _ranking_for("¿cuál fue mi mayor gasto de julio en todas mis cuentas?")
+
+    assert hijacked is None, (
+        "the scope phrase supplied the dimension: "
+        f"group_by={hijacked.group_by if hijacked else None}, "
+        f"group_limit={hijacked.group_limit if hijacked else None}"
+    )
+    named = ask_financial_question._named_group_dimension
+    assert named(spanish.folded("¿cuál fue mi mayor gasto de julio en todas mis cuentas?")) is None
+    # The widening half of the same vocabulary, for the same reason: "todas las categorías" asks
+    # for a filter to disappear, which is the opposite of asking for one row each.
+    assert named(spanish.folded("mi mayor gasto de julio en todas las categorías")) is None
+
+
+def test_a_genuine_grouping_instruction_still_ranks_accounts() -> None:
+    """The other half, and the whole risk of the guard above.
+
+    «por cuenta», «en qué cuenta», «de cada cuenta» and «las cuentas con más gastos» are all
+    instructions to group, and every one of them has to survive a guard that refuses «todas mis
+    cuentas». What makes that line narrow is that the scope phrase puts a possessive directly in
+    front of the noun, exactly as two of the grouping phrasings do — so the discriminator is the
+    universal quantifier, not the determiner, and it cannot be "the noun needs a preposition in
+    front of it": four of the phrasings below put a number or an article there instead.
+    """
+    named = ask_financial_question._named_group_dimension
+
+    assert named(spanish.folded("mis mayores gastos por cuenta")) is GroupBy.ACCOUNT
+    assert named(spanish.folded("¿en qué cuenta gasté más?")) is GroupBy.ACCOUNT
+    assert named(spanish.folded("desglósalo por cada cuenta")) is GroupBy.ACCOUNT
+
+    ranked = _ranking_for("¿cuáles son las cuentas con más gastos?")
+    assert ranked is not None and ranked.group_by is GroupBy.ACCOUNT
+    assert ranked.metric is Metric.SUM
+
+    # The two dimensions that share the pattern read exactly as before.
+    merchants = _ranking_for("Los tres comercios donde más gasté este año")
+    assert merchants is not None and merchants.group_by is GroupBy.MERCHANT
+    categories = _ranking_for("Top 5 categorías con más operaciones este año")
+    assert categories is not None and categories.group_by is GroupBy.CATEGORY
 
 
 def test_the_row_ceiling_is_not_the_spoken_ranking_ceiling() -> None:
