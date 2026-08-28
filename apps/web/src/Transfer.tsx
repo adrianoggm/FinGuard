@@ -51,6 +51,7 @@ export function Transfer({ summary, onPaid }: Props) {
   const source = holdings.find((holding) => holding.booked_minor === summary?.booked_minor);
   const destinations = holdings.filter((holding) => holding.account_id !== source?.account_id);
   const amount = minorUnits(typed);
+  const excess = overdraft(summary, amount);
   // A name for this attempt: kept while the destination and the amount stand, so pressing again
   // after a timeout is the same preview and not a second one, and renewed the moment either
   // changes — the bank refuses a key reused for a different payment rather than answering with the
@@ -58,7 +59,7 @@ export function Transfer({ summary, onPaid }: Props) {
   const attempt = useMemo(newAttempt, [target?.account_id, amount, completed]);
 
   async function prepare() {
-    if (!target || amount === null || busy) return;
+    if (!target || amount === null || excess !== null || busy) return;
     setBusy(true);
     try {
       setHeld({
@@ -174,9 +175,10 @@ export function Transfer({ summary, onPaid }: Props) {
               {typed && amount === null && (
                 <p className="warn">Escríbelo en euros y céntimos, por ejemplo 12,50.</p>
               )}
+              {excess && <p className="warn">{excess}</p>}
               <button
                 className="primary"
-                disabled={amount === null || busy}
+                disabled={amount === null || excess !== null || busy}
                 onClick={() => void prepare()}
               >
                 {amount === null
@@ -188,5 +190,39 @@ export function Transfer({ summary, onPaid }: Props) {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * The refusal this screen can make itself, said where the amount can still be changed.
+ *
+ * The preview used to offer «Te quedarían -7.776,08 €» over a live Confirmar. Banking does refuse
+ * it — the balance is recomputed at confirmation and `insufficient_funds` raised — so no money
+ * moved. What the holder got was a card asking them to approve something the app already knew would
+ * be refused, showing a balance their account cannot hold, and a round trip through "Cancelar" to
+ * change the number.
+ *
+ * Banking's rule, transcribed: `booked < amount` against the booked balance of the account the
+ * credential names, with no overdraft allowance. This screen already prints that exact figure under
+ * «Desde», so the refusal is made against the number in front of the holder — the strongest form of
+ * honesty available to a client whose copy of a balance can always be a moment stale. Banking still
+ * recomputes and still has the last word; being stale here can only cost a payment that has to be
+ * retried, never one that goes through wrongly.
+ *
+ * Refused before preparing rather than on the preview, because that is where the holder can act:
+ * the amount field is right there. The preview could not do it anyway — `api.ts` drops
+ * `balanceAfterMinor` on the way through, so the card cannot see the balance it is printing.
+ *
+ * A sentence rather than a boolean, so the refusal and the reason it gives cannot drift apart.
+ */
+export function overdraft(summary: Summary | null, amount: number | null): string | null {
+  // The field is labelled € and the amount is parsed as euros. Against an account held in anything
+  // else the comparison is meaningless, and a local refusal built on a meaningless comparison would
+  // block a payment the bank would have taken. That one is the bank's to decide.
+  if (!summary || amount === null || summary.currency !== "EUR") return null;
+  if (amount <= summary.booked_minor) return null;
+  return (
+    `Tienes ${money(summary.booked_minor, summary.currency)} en esta cuenta, ` +
+    `así que no puedes mover ${money(amount)}.`
   );
 }
