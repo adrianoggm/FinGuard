@@ -87,6 +87,59 @@ def test_a_precise_category_exclusion_is_no_longer_refused(sentence: str) -> Non
 @pytest.mark.parametrize(
     "sentence",
     [
+        # The family every other test here pins from the outside: these are the sentences on which
+        # CATEGORY_EXCLUSION is supposed to fire. Without them the whole family could be switched
+        # off and the suite stayed green, because every test that touched it asserted it did *not*
+        # fire.
+        "cuanto gaste en gasolina sin contar algunas cosas",
+        "cuanto gaste en ocio excepto algunas cosas",
+        "cuanto gaste en gasolina si no contamos lo que ya sabes",
+        "cuanto gaste en ocio quitando lo de siempre",
+        "cuanto gaste en ocio sin contar eso",
+        # The verb of the exclusion phrase, alone. «sin contar el alquiler» is what the refusal
+        # message recommends to users, and its verb was being read as the name of a shop — which
+        # exempted this guard and produced a plan filtered on a merchant called "contar".
+        "cuanto gaste en gasolina sin contar",
+        "cuanto gaste en gasolina sin incluir",
+        # Accented, because that is what this file is about.
+        "¿cuánto gasté en gasolina sin contar algunas cosas?",
+    ],
+)
+def test_a_vague_exclusion_beside_a_named_category_is_refused(sentence: str) -> None:
+    """The mirror of `test_every_family_is_caught_with_or_without_accents`, which pins the other
+    six families and omits this one.
+
+    A vague exclusion has no domain representation. Executing it silently drops the filter and
+    answers the unfiltered question, which is a real number about a different question.
+    """
+    assert capability_guard.unsupported_reason(sentence) == "CATEGORY_EXCLUSION"
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # The other direction, and it matters more than the refusal: a merchant exclusion is
+        # expressible, so naming a real shop must keep exempting the guard.
+        "cuanto gaste en gasolina sin Mercadona",
+        "cuanto gaste en gasolina sin contar Cepsa",
+        "cuanto gaste en supermercado excepto Carrefour",
+        # Shops whose names are ordinary Spanish words, or open with a determiner. Tightening the
+        # vague-exclusion vocabulary must not reach these.
+        "cuanto gaste en supermercado sin contar Dia",
+        "cuanto gaste en ropa sin El Corte Ingles",
+        "cuanto gaste en ocio sin contar Casa del Libro",
+        "cuanto gaste en ocio sin contar La Sirena",
+        "cuanto gaste en gasolina sin meter Cepsa",
+        "¿cuánto gasté en gasolina sin contar Cepsa?",
+    ],
+)
+def test_a_named_shop_still_exempts_the_exclusion_guard(sentence: str) -> None:
+    assert capability_guard.unsupported_reason(sentence) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
         # Still not refusals. Folding widens what matches, so the discriminations that were
         # deliberate have to survive it: a ranking is not a comparison, and "gaste mas" is a verb.
         "en que categoria he gastado mas este mes",
