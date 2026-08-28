@@ -1314,9 +1314,18 @@ async def ask(
     A question the assistant will not guess at comes back with outcome
     NEEDS_CLARIFICATION and a question of its own, which is a turn in the conversation
     rather than an error.
-    """
-    who.assert_may_read(who.account_id)
 
+    There is no authorisation check here, and its absence is deliberate. This path has one
+    account -- the credential's -- because `QuestionRequest` has no account field and forbids
+    extras, so there is no second account to compare it against. The line that used to stand
+    here read `who.assert_may_read(who.account_id)`: a value compared with itself, which
+    cannot fail under any implementation of `may_read`. `Caller.may_read`'s own docstring
+    names that failure mode -- "an unused authorisation check is worse than none: it reads
+    like a control while enforcing nothing" -- so the inert line is gone rather than kept as
+    reassurance. What replaces it is a test on the thing that actually holds the guarantee:
+    `test_the_question_path_has_no_account_to_authorise` fails the day the request grows a
+    field that could carry one.
+    """
     key = attempt
     was = _conversation_of(request)
 
