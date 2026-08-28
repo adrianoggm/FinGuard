@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renameMetric, reorderMetrics, saveMetric, type SavedMetric } from "./api";
-import { moveMetricDown, moveMetricUp } from "./Finances";
+import { afterRefresh, moveMetricDown, moveMetricUp, type MetricView } from "./Finances";
 
 const rows: SavedMetric[] = [
   { id: "one", title: "Uno", position: 0, version: 1 },
@@ -20,6 +20,17 @@ describe("saved metrics", () => {
   it("moves only the selected metric one position down", () => {
     expect(moveMetricDown(rows, 0)).toEqual(["two", "one", "three"]);
     expect(moveMetricDown(rows, 2)).toEqual(["one", "two", "three"]);
+  });
+
+  it("drops a previous answer when a re-execution fails", () => {
+    const view = { answer: { text: "Gastaste 120,00 €" }, at: "2026-08-28T10:00:00Z" } as MetricView;
+    const shown = afterRefresh({}, "two", view);
+    expect(shown.two).toBe(view);
+    // The failure case is the whole point: a figure from the last good run must not survive under a
+    // card that could not be updated.
+    expect(afterRefresh(shown, "two", null)).toEqual({});
+    // And it only touches its own card.
+    expect(Object.keys(afterRefresh({ one: view, two: view }, "two", null))).toEqual(["one"]);
   });
 
   it("uses optimistic locking when renaming", async () => {

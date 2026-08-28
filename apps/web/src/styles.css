@@ -249,7 +249,25 @@ body {
 
 .card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .metric-list { list-style: none; margin: 0; padding: 0; }
-.metric-list li { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
+
+/* A card, not a row. It used to be a name and a strip of buttons on one line; it now carries the
+   period, the answer and a compact chart, so it stacks at every width instead of only on a phone. */
+.metric-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.metric-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.metric-what { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+/* Not editable and not a title: it is the window the service verified, so it is typeset as a note
+   under the name the holder chose rather than competing with it. */
+.metric-period { color: var(--ink-soft); font-size: 0.78rem; }
+.metric-headline { margin: 0; font-size: 0.88rem; line-height: 1.45; }
+.metric-when { margin: 0; color: var(--ink-soft); font-size: 0.72rem; }
+.metric-detail { border-top: 1px dashed var(--line); padding-top: 0.6rem; }
 .metric-actions, .metric-edit { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .metric-edit input, .metric-save input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 
@@ -272,7 +290,7 @@ body {
 
 @media (max-width: 30rem) {
   .visualization-chart { padding: 0.25rem 0.25rem 0; }
-  .metric-list li { align-items: flex-start; gap: 0.55rem; flex-direction: column; }
+  .metric-head { flex-direction: column; align-items: flex-start; gap: 0.2rem; }
   .metric-actions { width: 100%; justify-content: flex-start; gap: 0.7rem; }
 }
 
