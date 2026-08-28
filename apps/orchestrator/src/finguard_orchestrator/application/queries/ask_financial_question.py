@@ -120,6 +120,7 @@ from finguard_orchestrator.domain.services import (
     turn_analyzer,
     window_words,
 )
+from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -259,10 +260,18 @@ _DIRECT_PERIOD_COMPARISON: Final = re.compile(
     r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
     r"|mayor|menor)\b"
 )
+# What makes a turn stand on its own, together with a window (see `_starts_new_financial_scope`).
+#
+# The noun alternation is shared with the superlative recogniser rather than spelled again. It used
+# to hold only conjugated verbs and plural nouns, so "¿cuál fue mi mayor gasto de junio?" matched
+# nothing here, stayed an ellipsis, and became a *window patch* on the previous aggregate: the month
+# was applied and the superlative was dropped. "mis movimientos más altos de junio" worked, because
+# `movimientos` happened to be in the list. One word was the whole difference between a ranking and
+# somebody else's total.
 _SELF_CONTAINED_FINANCIAL_QUESTION: Final = re.compile(
     r"\b(?:cuanto|cuantos|cual|cuales|que)\b.{0,70}"
     r"\b(?:gaste|gastado|pague|pagado|compre|comprado|ingrese|ingresado|cobre|cobrado"
-    r"|movimientos|operaciones|categoria)\b"
+    rf"|movimientos|operaciones|categoria|{MOVEMENT_NOUNS})\b"
     r"|\b(?:muestrame|ensename|quiero\s+ver)\b.{0,55}"
     r"\b(?:movimientos|operaciones|gastos|ingresos)\b"
 )

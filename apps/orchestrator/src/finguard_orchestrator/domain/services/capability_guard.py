@@ -235,11 +235,24 @@ RULES: Final = frozenset(name for name, _ in _FAMILIES)
 # realizado?" carried "más … que", matched nothing here, and came back as "todavía no comparo dos
 # periodos" to a question containing one period. A ranking subject is whatever kind of movement the
 # holder names, so the transfer words belong here as much as "compra" does.
+#
+# The words for a movement, as somebody names one. Exported because two recognisers need the same
+# list and a second copy is a second thing to forget: this one decides that a superlative is a
+# ranking rather than a comparison, and `_SELF_CONTAINED_FINANCIAL_QUESTION` in the application uses
+# it to decide that a sentence naming one of these plus a window is a question and not an ellipsis.
+#
+# A fragment rather than a compiled pattern: no group, no anchor, no `\b`, so each caller keeps its
+# own boundaries and its own surrounding context.
+MOVEMENT_NOUNS: Final = (
+    "gasto|compra|pago|movimiento|cargo|importe|factura|bizum|transferencia|ingreso|cobro|recibo"
+)
+
+# The first alternative's list stays literal: it includes `cantidad` and excludes `factura`, so it
+# is not the same list, and quietly making it the same list would change what a superlative is.
 _A_SUPERLATIVE_NOUN: Final = re.compile(
     r"\b(mayor|maxim[oa])\s+"
     r"(gasto|compra|pago|movimiento|cargo|importe|cantidad|bizum|transferencia|ingreso|cobro|recibo)"
-    r"|\b(gasto|compra|pago|movimiento|cargo|importe|factura"
-    r"|bizum|transferencia|ingreso|cobro|recibo)s?\s+"
+    rf"|\b({MOVEMENT_NOUNS})s?\s+"
     r"(mas|de\s+mayor)\s+(alt[oa]|car[oa]|grande|elevad[oa]|importe)",
     re.IGNORECASE,
 )
