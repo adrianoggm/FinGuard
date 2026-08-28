@@ -46,6 +46,32 @@ def test_a_question_needs_nothing_but_the_question() -> None:
     assert not hasattr(request, "account_id")
 
 
+def test_the_question_path_has_no_account_to_authorise() -> None:
+    """What the deleted tautology was standing in for.
+
+    `llm_controller.ask` used to open with `who.assert_may_read(who.account_id)` -- a value
+    compared with itself, which cannot fail under any implementation of `may_read`. The audit
+    (§2.2) found it inert, and `Caller.may_read`'s docstring names that exact failure mode:
+    "an unused authorisation check is worse than none: it reads like a control while enforcing
+    nothing". The honest reason it could not fail is that there is genuinely nothing to compare
+    -- the account comes from the credential because the request cannot carry one.
+
+    That is a guarantee by construction, so this pins the construction instead of asserting a
+    tautology. It fails the day `QuestionRequest` grows a field that could name an account,
+    which is the change that would make an authorisation check on this path mean something.
+    """
+    named_by_the_client = set(QuestionRequest.model_fields)
+    assert not {name for name in named_by_the_client if "account" in name.lower()}
+
+    # Not just the snake_case spelling. Nothing account-shaped gets in under any name, because
+    # the model forbids extras rather than ignoring what it does not recognise.
+    from pydantic import ValidationError
+
+    for smuggled in ("account_id", "accountId", "onlyAccountId", "only_account_ids", "account"):
+        with pytest.raises(ValidationError):
+            QuestionRequest.model_validate({"question": "¿cuánto gasté?", smuggled: "x"})
+
+
 # --- resolving a credential --------------------------------------------------------
 
 
