@@ -721,7 +721,14 @@ class QuestionResponse(_Payload):
     # above is the same query in words, for a person to read.
     conversation: ConversationPayload | None = None
     currency: str | None = None
+    # The figure this answer's own `text` leads with, and `None` when it has no single one. Never a
+    # signed difference: those are `difference_minor`.
     total_minor: int | None = None
+    # The signed change between two compared figures, on an answer that compares two. Its presence
+    # is also what says the rows in `groups` are the two *operands* of that difference rather than
+    # *parts* of `total_minor` -- so a screen drawing a bar as a share of the total knows not to.
+    # `AskFinancialQuestionResult.difference_minor` carries the argument and the measurement.
+    difference_minor: int | None = None
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
