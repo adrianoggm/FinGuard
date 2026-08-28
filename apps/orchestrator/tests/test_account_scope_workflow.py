@@ -445,3 +445,34 @@ async def test_complete_balance_question_does_not_consume_pending_account_scope(
     assert result.outcome == "BALANCE"
     assert result.conversation.active == clarification.conversation.active
     assert ledger.plans == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # The comparison pair: two plans, two `_scoped` calls, no catch (`_compare_periods`).
+        "compara mis gastos de julio con junio",
+        # A ratio's two operands (`_answer_ratio`).
+        "qué porcentaje de mi nómina se fue en alquiler este año",
+        # Net cash flow, which reaches the scope through the ratio draft (`_scoped_ratio_draft`).
+        "cuál es mi flujo de caja neto",
+    ],
+)
+async def test_no_read_path_turns_a_scope_requirement_into_a_crash(sentence: str) -> None:
+    """A holder with several accounts and a sentence that names none is a question, never an error.
+
+    `_scoped` raises `AccountScopeRequiredError` and exactly two of its eleven call sites translated
+    it. The comparison pair, the ratio operands and net cash flow did not, so each of these was an
+    HTTP 500 as a first question -- and invisible to every test, because the same sentence works
+    once a previous turn has settled the scope.
+    """
+    ledger = Ledger()
+    handler = service(ledger)
+
+    answer = await ask(handler, sentence)
+
+    assert answer.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "cuenta" in answer.text.lower()
+    assert "Todas mis cuentas" in answer.suggestions
+    assert ledger.plans == [], "no figure is read before the holder has said whose money it is"

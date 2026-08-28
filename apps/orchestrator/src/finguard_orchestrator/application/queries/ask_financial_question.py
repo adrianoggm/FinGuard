@@ -647,7 +647,7 @@ class AskFinancialQuestionHandler:
         started = time.perf_counter()
         outcome = "INCOMPLETE"
         try:
-            async for step in self._steps(query):
+            async for step in self._steps_answering_scope(query):
                 if isinstance(step, AskFinancialQuestionResult):
                     outcome = step.outcome
                     step = replace(
@@ -677,6 +677,29 @@ class AskFinancialQuestionHandler:
                     "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                 },
             )
+
+    async def _steps_answering_scope(
+        self, query: AskFinancialQuestionQuery
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        """`_steps`, with an account-scope requirement answered instead of raised.
+
+        `_scoped` raises `AccountScopeRequiredError` from eleven call sites and exactly two of them
+        translated it. The other nine — the comparison pair, the ratio operands and the ratio
+        draft, the payee count, the group reference, the recent movements and the salary history —
+        let it out of the handler, where a first question from anybody holding more than one
+        account became an HTTP 500. Nine `try`/`except` blocks are nine chances to forget, and the
+        tenth path added next month would forget too.
+
+        Wrapped here rather than inside `stream`: this is the outermost place a result can still be
+        yielded *and still be recorded*, so the clarification travels through the same turn record
+        and reports the same `outcome` to the log as every other answer, instead of needing a
+        second copy of both.
+        """
+        try:
+            async for step in self._steps(query):
+                yield step
+        except AccountScopeRequiredError as required:
+            yield self._scope_question(required, query.conversation)
 
     async def _steps(
         self, query: AskFinancialQuestionQuery
@@ -3999,6 +4022,32 @@ class AskFinancialQuestionHandler:
             return ()
         return merchant_words.close_to(
             plan.merchants[0], tuple(group.key for group in wider.groups)
+        )
+
+    def _scope_question(
+        self, required: AccountScopeRequiredError, was: Conversation
+    ) -> AskFinancialQuestionResult:
+        """The clarification a scope requirement is, wherever it was raised.
+
+        `_answer` below and the scope-change path translate this themselves, because each has
+        something to add — a resumable `AccountScopeClarification`, and its own wording for
+        changing a scope already settled. This is the backstop for the other nine call sites,
+        which had nothing and therefore produced a 500: a comparison, a ratio or a net cash flow
+        asked first, by anybody with more than one account.
+
+        No `AccountScopeClarification` here on purpose. A path that never registered the pending
+        plan cannot resume it, and offering to resume something that is not stored is worse than
+        asking the whole question again.
+        """
+        names = [candidate.display_name for candidate in required.candidates]
+        return AskFinancialQuestionResult(
+            outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+            text="¿En qué cuenta quieres consultarlo? Puedes elegir "
+            + ", ".join(names)
+            + " o Todas mis cuentas.",
+            question="¿En qué cuenta quieres consultarlo?",
+            suggestions=[*names, "Todas mis cuentas"],
+            conversation=was,
         )
 
     async def _answer(
