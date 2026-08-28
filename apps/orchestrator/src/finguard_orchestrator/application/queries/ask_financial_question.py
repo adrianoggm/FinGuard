@@ -204,17 +204,36 @@ _RETURN_TO_PREVIOUS: Final = re.compile(
     r")$"
 )
 _UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
-_COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
-    r"^(?:(?:vale|bueno|ok|perfecto)(?:\s+genial)?\s+|pues\s+)?(?:y\s+)?(?:"
+# A comparison imperative wearing the pronoun, with the second operand still to come: "compáralo
+# con …", "vale, compruébalo con …", "¿me lo podrías comparar con …?".
+#
+# Two recognisers need it — one reads a calendar unit relative to the window in view, the other a
+# window named outright — and it is spelled once because the same list spelled twice is how two
+# readers come to disagree about which sentences are comparisons at all. Same mould as
+# `MOVEMENT_NOUNS`, and for the same reason.
+_A_COMPARISON_IMPERATIVE: Final = (
+    r"(?:(?:vale|bueno|ok|perfecto)(?:\s+genial)?\s+|pues\s+)?(?:y\s+)?(?:"
     r"(?:me\s+lo\s+)?podrias\s+comparar(?:lo|la)?"
     r"|compara(?:lo|la|melo|mela)?"
     r"|comparame\s+(?:eso|esto|el\s+resultado|la\s+consulta)"
     r"|comprueba(?:lo|la)?"
     r"|revisa(?:lo|la)?"
     r"|hazme\s+una\s+comparacion"
-    r")\s+con\s+(?:el\s+|la\s+)?"
+    r")"
+)
+_COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
+    rf"^{_A_COMPARISON_IMPERATIVE}\s+con\s+(?:el\s+|la\s+)?"
     r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|ano|periodo)\s+"
     r"(?:anterior|pasad[oa])$"
+)
+# The same imperative with a window named outright as its second operand: "compáralo con junio",
+# "compáralo con julio de 2025", "compáralo con la semana pasada".
+#
+# The tail is deliberately anything at all, because what makes it a window is `window_words` and
+# not a second vocabulary here. A tail that reads as no window — "compáralo con mi nómina" — leaves
+# the sentence exactly where it was, which is with the guard.
+_COMPARE_WITH_A_NAMED_WINDOW: Final = re.compile(
+    rf"^{_A_COMPARISON_IMPERATIVE}\s+con\s+(?P<window>\S.*)$"
 )
 # "¿Y el mes anterior?" — the same question, one calendar unit back from the window on screen.
 #
@@ -1135,6 +1154,11 @@ class AskFinancialQuestionHandler:
             period_comparison = _comparison_with_previous_period(query)
         if period_comparison is None:
             period_comparison = _direct_period_comparison(query)
+        if period_comparison is None:
+            # Last, so the cheapest readers answer first. Position is not what makes it correct:
+            # it asks the two readers whose phrases it can also match whether they claim the
+            # sentence, which its docstring explains and the contested-turn measurement requires.
+            period_comparison = _comparison_with_a_named_window(query)
         if period_comparison is not None:
             # Two complete, already validated questions are safer context than asking a model to
             # reconstruct both from "compáralos". Run them again so the comparison uses current
@@ -5195,6 +5219,91 @@ def _comparison_with_previous_period(
         period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
         date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
     )
+    return ComparisonPlan.between(earlier, latest)
+
+
+def _comparison_with_a_named_window(
+    query: AskFinancialQuestionQuery,
+) -> ComparisonPlan | None:
+    """Compare the plan in view against the one window the sentence names.
+
+    «Compáralo con junio», «compáralo con julio de 2025», «compáralo con la semana pasada». The
+    pronoun is one operand and the sentence supplies the other, and that shape had no reader at
+    all: `_period_comparison_plans` needs both operands already answered in the conversation,
+    `_direct_period_comparison` needs both windows in the sentence, and
+    `_comparison_with_previous_period` — the only one that paired the plan in view with a window
+    from the sentence — reads a closed list of calendar-unit nouns followed by "anterior". A month
+    name is not one of them, so a sentence anybody would say fell through to `capability_guard`,
+    whose refusal then recommended «compara mis gastos de julio con junio»: a form that works,
+    which is the tell that what was missing was a shape and not a word.
+
+    **It stands aside for the two readers whose phrases it can also match**, rather than relying
+    on being last in the cascade. Its regex has to overlap theirs — "compáralo con la semana
+    pasada" is one of the sentences this exists for and it matches
+    `_COMPARE_WITH_PREVIOUS_PERIOD`'s unit alternation too, so a disjoint pattern would refuse the
+    property — and an overlap the order silently resolves is the one thing that cascade is
+    measured for not having. So the overlap is removed here instead:
+
+    - `_comparison_with_previous_period` owns "con el mes anterior", which is a unit back from the
+      window in view. Read as a window named outright it would be *last month relative to today*,
+      which after a question about July is July — the same window, and not a comparison. It only
+      declines when the unit does not fit the window in view, and that is exactly when the
+      sentence means the window rather than the step, which is what leaves "con la semana pasada"
+      over a monthly question here.
+    - `_a_comparison_owns_it` owns a tail that names two windows of its own — "compáralo con junio
+      de 2025 y julio" — where taking the first and dropping the second answers half the question
+      with a real figure on it. The same predicate `average`, `natural_period` and
+      `deterministic_breakdown` ask, so "this sentence compares two periods" keeps one definition.
+
+    The plan in view is `latest`: the pronoun is the subject of the sentence, so it is the side
+    whose change is reported, and the window the sentence names is the reference it is measured
+    against. `_comparison_with_previous_period` reads the pair the same way round.
+
+    **Two shapes it refuses**, and neither refusal is spelled out below. Nothing in view is caught
+    by the `isinstance` — one operand of two is stated and the other would have to be invented,
+    which is a clarification and the guard's to make. The same window twice is caught by
+    `ComparisonPlan`, because deriving the second operand from the first makes them identical and
+    `between` returns None; a copy of that invariant here would be a second definition of it.
+    """
+    found = _COMPARE_WITH_A_NAMED_WINDOW.fullmatch(_clean_turn(query.sentence))
+    latest = query.conversation.last_plan
+    if found is None or not isinstance(latest, FinancialPlan) or latest.transaction_ids:
+        return None
+    if latest.period is None and latest.date_range is None:
+        # A plan a model returned with no window at all is no first operand, whatever else it says.
+        return None
+    if _comparison_with_previous_period(query) is not None or _a_comparison_owns_it(query):
+        return None
+
+    said = found.group("window")
+    # "Con el año pasado" after a question about July means July of last year — which is what
+    # `a_year_earlier` says and what "¿y el año anterior?" already answers. Read as a window named
+    # outright it would be the whole of 2025: a real figure, twelve times the question. So the
+    # reader that owns the phrase is asked first, rather than this one growing its own opinion.
+    earlier_window: window_words.Window | None = window_words.a_year_earlier(
+        said, latest.date_range
+    )
+    if earlier_window is None:
+        # A window preposition, because the shape supplies one and `window_words` requires one. A
+        # bare "junio" is not a window to that reader on purpose — in the middle of a sentence it
+        # is as likely to be part of a name — but the fullmatch above has already established that
+        # this fragment is the second operand and nothing else. Same reasoning as `_MONTH_MENTION`,
+        # which accepts bare month names because the connector between two of them supplies the
+        # structure the general reader is missing.
+        earlier_window = window_words.window_in(f"en {said}", today=query.today)
+    if earlier_window is None:
+        return None
+
+    earlier = replace(
+        latest,
+        period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
+        date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
+    )
+    # Deriving the second operand from the first is what keeps the pair comparable: every field in
+    # `ComparisonPlan._SAME_SCOPE` agrees by construction, filters included, so the pronoun means
+    # *that* query and not two bare months. It is also what leaves the same-window refusal where it
+    # belongs — «compáralo con julio» about July builds two identical windows and `between` returns
+    # None, which is `ComparisonPlan`'s invariant and does not want a second copy here.
     return ComparisonPlan.between(earlier, latest)
 
 

@@ -1290,6 +1290,125 @@ async def test_check_it_against_previous_month_is_anchored_to_the_payroll_month_
     assert "julio de 2026" in answer.text
 
 
+class WindowLedger(Ledger):
+    """One figure per window, so which side of a comparison a number came from is visible."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.windows: list[AbsoluteRange | RelativePeriod | None] = []
+        self.plans: list[FinancialPlan] = []
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plans.append(plan)
+        self.windows.append(plan.date_range or plan.period)
+        return QueryAnswer(
+            currency="EUR",
+            total_minor=10_000 * len(self.windows),
+            movement_count=2,
+        )
+
+
+GROCERIES_IN_JULY = FinancialPlan(
+    direction=Direction.EXPENSE,
+    date_range=window_words.whole_month(2026, 7),
+    categories=("GROCERIES",),
+)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "earlier", "names"),
+    [
+        ("Compáralo con junio", window_words.whole_month(2026, 6), "junio de 2026"),
+        ("Compáralo con julio de 2025", window_words.whole_month(2025, 7), "julio de 2025"),
+        ("Compáralo con la semana pasada", RelativePeriod(Period.LAST_WEEK), "la semana pasada"),
+    ],
+)
+async def test_one_named_window_is_compared_against_the_plan_in_view(
+    sentence: str, earlier: AbsoluteRange | RelativePeriod, names: str
+) -> None:
+    """A pronoun and one window is a comparison, and it was the one comparison shape with no reader.
+
+    `_period_comparison_plans` needs both operands already answered, `_direct_period_comparison`
+    needs both windows in the sentence, and `_comparison_with_previous_period` -- the only reader
+    that paired the plan in view with a window from the sentence -- knows a closed list of calendar
+    units followed by "anterior". A month name is not one, so all three of these fell through to
+    `capability_guard`, whose refusal then recommended «compara mis gastos de julio con junio»: a
+    form that works. Recommending a form that works is the tell that the missing thing was a shape
+    and not a word.
+
+    The category is asserted on both operands because the pronoun means *that* query. A comparison
+    that quietly dropped the filter would compare two whole months against each other and be right
+    about neither question.
+    """
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked(sentence, planner, ledger, Conversation(last_plan=GROCERIES_IN_JULY))
+
+    assert planner.asked == 0, "a complete comparison is intercepted before the model"
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.windows == [earlier, window_words.whole_month(2026, 7)]
+    assert all(plan.categories == ("GROCERIES",) for plan in ledger.plans)
+    assert "julio de 2026" in answer.text
+    assert names in answer.text
+
+
+async def test_the_same_window_twice_is_not_a_comparison() -> None:
+    """«Compáralo con julio» about July. Two operands naming one window is a tautology, and
+    answering it with two identical figures and "el gasto fue el mismo" reads as a finding.
+
+    Asserted end to end rather than on the recogniser, because the refusal is not the recogniser's:
+    the second operand is derived from the plan in view, so naming its own window builds two
+    identical plans and `ComparisonPlan` declines them. That is the right owner -- the invariant is
+    already written down once, in the value object -- and this is what says the new reader routes
+    into it rather than around it."""
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked(
+        "Compáralo con julio", planner, ledger, Conversation(last_plan=GROCERIES_IN_JULY)
+    )
+
+    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert "no he podido delimitar dos periodos" in answer.text
+    assert ledger.windows == [], "no figure is read for a comparison that is not one"
+
+
+async def test_a_comparison_imperative_with_nothing_in_view_is_not_a_comparison() -> None:
+    """The first thing somebody says cannot be «compáralo con junio»: one operand of two is stated
+    and the other would have to be invented. That is a clarification, and the guard already owns
+    it -- so this asserts the recogniser stands aside rather than building a `ComparisonPlan` out
+    of a window and a guess."""
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked("Compáralo con junio", planner, ledger, IDLE)
+
+    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert "no he podido delimitar dos periodos" in answer.text
+    assert ledger.windows == []
+
+
+async def test_the_refusal_does_not_recommend_a_form_this_service_refuses() -> None:
+    """The COMPARISON refusal names two forms, and a refusal that recommends a form which fails is
+    worse than the refusal on its own -- it teaches somebody the product cannot do something twice.
+
+    The second form -- «consulta dos periodos por separado y dime "compáralos"» -- is pinned by
+    `test_account_scope_workflow.test_two_answered_periods_compare_when_only_the_first_named_the_scope`.
+    The first had nothing behind it, which is how the text came to be checked at all.
+    """
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked("compara mis gastos de julio con junio", planner, ledger, IDLE)
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.windows == [
+        window_words.whole_month(2026, 6),
+        window_words.whole_month(2026, 7),
+    ]
+
+
 async def test_this_payroll_can_be_compared_with_all_the_previous_ones() -> None:
     class PayrollLedger(Ledger):
         def __init__(self) -> None:

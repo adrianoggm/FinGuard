@@ -720,13 +720,13 @@ def _window(query: FinancialPlan | TopMovements) -> str:
 
 # --- who claims a turn ---------------------------------------------------------------------
 #
-# `_steps` reads a sentence by asking nineteen deterministic recognisers in a fixed order and taking
+# `_steps` reads a sentence by asking twenty deterministic recognisers in a fixed order and taking
 # the first that answers. The order is the design, and it is also invisible: the first one to fire
 # returns, so nothing can observe that a second one would have fired too, with a different query.
 #
 # That is what makes the cascade hard to change. Fixing one turn by moving a branch can silently
 # change another, and there is no measurement that says which turns are sitting on a tie. These
-# nineteen have the same signature — a query in, a reading or None out, no I/O — so asking all of
+# twenty have the same signature — a query in, a reading or None out, no I/O — so asking all of
 # them is a thing a test can just do.
 #
 # Test-only on purpose. Production still short-circuits: evaluating a recogniser that today is
@@ -741,6 +741,7 @@ _RECOGNISERS: tuple[tuple[str, Any], ...] = (
     ("period_comparison", handler._period_comparison_plans),
     ("previous_period_comparison", handler._comparison_with_previous_period),
     ("direct_period_comparison", handler._direct_period_comparison),
+    ("named_window_comparison", handler._comparison_with_a_named_window),
     ("account_follow_up", handler._account_follow_up_plan),
     ("contextual_follow_up", handler._contextual_follow_up_plan),
     ("multiple_movement_ranking", handler._multiple_movement_ranking),

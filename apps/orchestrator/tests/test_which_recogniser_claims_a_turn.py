@@ -1,13 +1,13 @@
 """Where the order of the cascade is doing invisible work.
 
-`_steps` reads a sentence by asking nineteen deterministic recognisers in a fixed order and taking
+`_steps` reads a sentence by asking twenty deterministic recognisers in a fixed order and taking
 the first that answers. That is first-match, and for a turn only one of them claims it is also
 best-match — the two only differ where more than one fires. Which is exactly what the code cannot
 observe: the first one to answer returns, so a second reading is never computed, never logged and
 never measured.
 
 That is what makes the cascade expensive to change. A branch moved to fix one turn can silently
-change another, and nothing says which turns are sitting on a tie. So this file asks all nineteen
+change another, and nothing says which turns are sitting on a tie. So this file asks all twenty
 on every turn of the corpus and counts the disagreements.
 
 **It is a measurement, not a rule.** The recognisers are pure — a query in, a reading or None out,
