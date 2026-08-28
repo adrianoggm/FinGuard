@@ -12,15 +12,16 @@ from typing import Any
 
 import pytest
 
-from finguard_orchestrator.application.contextual_query_planner import LegacyPlannerInContext
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_context import (
     ContinuationBase,
     ContinuationSource,
     PlanningContext,
+    planning_context,
 )
-from finguard_orchestrator.domain.models.turn_analysis import TurnRelation
+from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -33,6 +34,7 @@ from finguard_orchestrator.infrastructure.planning.plan_schema import (
     NO_CATEGORY,
     build_schema,
 )
+from finguard_orchestrator.infrastructure.planning.prompt import build_prompt
 
 CATEGORIES = ("GROCERIES", "TRANSPORT_FUEL", "HOUSING_RENT")
 TODAY = date(2026, 7, 15)
@@ -61,6 +63,7 @@ class FakeProvider:
         self._answer = answer
         self._failure = failure
         self.schema: dict[str, Any] | None = None
+        self.prompts: list[str] = []
 
     async def complete(
         self,
@@ -71,6 +74,7 @@ class FakeProvider:
         max_output_tokens: int,
         schema: dict[str, Any] | None = None,
     ) -> str:
+        self.prompts.append(prompt)
         self.schema = schema
         if self._failure is not None:
             raise ProviderFailedError(self.name, self._failure)
@@ -99,9 +103,31 @@ def planner_for(provider: FakeProvider) -> LlmQueryPlanner:
     )
 
 
+def context_for(
+    previous: FinancialPlan | None = None, *, force_follow_up: bool = False
+) -> PlanningContext:
+    continuation = (
+        None
+        if previous is None
+        else ContinuationBase(previous, ContinuationSource.LAST_ANSWER, force_follow_up)
+    )
+    analysis = TurnAnalysis(
+        intent=Intent.FINANCIAL_QUERY,
+        relation=TurnRelation.FOLLOW_UP if previous is not None else TurnRelation.NEW_REQUEST,
+        focus=TurnFocus.LAST_ANSWER if previous is not None else TurnFocus.NEW_REQUEST,
+    )
+    return planning_context(
+        Conversation(last_plan=previous),
+        today=TODAY,
+        reporting_timezone="Europe/Madrid",
+        analysis=analysis,
+        continuation=continuation,
+    )
+
+
 async def plan_from(body: dict[str, Any] | str) -> Any:
     raw = body if isinstance(body, str) else json.dumps(body)
-    return await planner_for(FakeProvider(answer=raw)).plan("da igual", today=TODAY)
+    return await planner_for(FakeProvider(answer=raw)).plan("da igual", context=context_for())
 
 
 # --- the schema itself -------------------------------------------------------------
@@ -143,7 +169,7 @@ def test_the_periods_come_from_the_enum() -> None:
 async def test_the_schema_reaches_the_provider() -> None:
     provider = FakeProvider(answer=json.dumps(FULL))
 
-    await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert provider.schema is not None, "the request went out unconstrained"
 
@@ -235,7 +261,7 @@ async def test_text_that_is_not_json_is_structural() -> None:
 async def test_an_invalid_structure_is_retried_once_and_can_recover() -> None:
     provider = SequenceProvider(["not json", json.dumps(FULL)])
 
-    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    result = await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert result.outcome is PlanningOutcome.PLANNED
     assert len(provider.prompts) == 2
@@ -246,7 +272,7 @@ async def test_an_invalid_structure_is_retried_once_and_can_recover() -> None:
 async def test_a_second_invalid_structure_is_returned_without_a_loop() -> None:
     provider = SequenceProvider(["not json", "still not json"])
 
-    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    result = await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
     assert len(provider.prompts) == 2
@@ -255,7 +281,7 @@ async def test_a_second_invalid_structure_is_returned_without_a_loop() -> None:
 async def test_a_domain_rejection_is_not_retried() -> None:
     provider = SequenceProvider([json.dumps({**FULL, "period": "LAST_DECADE"})])
 
-    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    result = await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert result.outcome is PlanningOutcome.INVALID_DOMAIN
     assert len(provider.prompts) == 1
@@ -303,7 +329,9 @@ async def test_an_unparseable_date_is_a_domain_failure() -> None:
 async def test_a_dead_provider_is_an_outcome_not_an_exception() -> None:
     """The caller has to tell the user something whichever way it went, so raising here
     would only move the decision somewhere with less to say."""
-    result = await planner_for(FakeProvider(failure="daemon down")).plan("hola", today=TODAY)
+    result = await planner_for(FakeProvider(failure="daemon down")).plan(
+        "hola", context=context_for()
+    )
 
     assert result.outcome is PlanningOutcome.PROVIDER_ERROR
     assert not result.is_answerable
@@ -428,7 +456,7 @@ async def test_a_follow_up_inherits_the_window_it_was_told_not_to_restate() -> N
     }
 
     result = await planner_for(FakeProvider(answer=json.dumps(body))).plan(
-        "¿y en gasolina?", today=TODAY, previous=previous
+        "¿y en gasolina?", context=context_for(previous)
     )
 
     assert result.outcome is PlanningOutcome.PLANNED
@@ -455,9 +483,7 @@ async def test_a_forced_patch_merges_even_when_the_model_calls_it_a_new_question
 
     result = await planner_for(FakeProvider(answer=json.dumps(body))).plan(
         "¿cuántas veces este año?",
-        today=TODAY,
-        previous=previous,
-        force_follow_up=True,
+        context=context_for(previous, force_follow_up=True),
     )
 
     assert result.outcome is PlanningOutcome.PLANNED
@@ -467,52 +493,33 @@ async def test_a_forced_patch_merges_even_when_the_model_calls_it_a_new_question
     assert result.plan.metric is Metric.COUNT
 
 
-async def test_context_adapter_preserves_the_legacy_prompt_and_result() -> None:
-    previous = FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=RelativePeriod(period=Period.THIS_YEAR),
-        categories=("HOUSING_RENT",),
-    )
-    body = json.dumps(
-        {
-            **FULL,
-            "period": "THIS_YEAR",
-            "metric": "COUNT",
-            "isFollowUp": False,
-            "changed": ["metric"],
-        }
-    )
-    legacy_provider = SequenceProvider([body])
-    contextual_provider = SequenceProvider([body])
-    legacy = planner_for(legacy_provider)
-    contextual = LegacyPlannerInContext(planner_for(contextual_provider))
-
-    expected = await legacy.plan(
-        "¿cuántas veces este año?",
-        today=TODAY,
-        previous=previous,
-        force_follow_up=True,
-    )
-    actual = await contextual.plan(
-        "¿cuántas veces este año?",
-        context=PlanningContext(
-            today=TODAY,
-            reporting_timezone="Europe/Madrid",
-            intent=Intent.FINANCIAL_QUERY,
-            relation=TurnRelation.ANSWER_TO_SLOT,
-            focus=None,
-            continuation=ContinuationBase(
-                previous,
-                ContinuationSource.ACTIVE_CLARIFICATION,
-                force_follow_up=True,
-            ),
-            awaiting=None,
-            account_selection=None,
+async def test_initial_planner_prompt_is_byte_identical_to_build_prompt() -> None:
+    """The context projection must not alter the canonical prompt rendering."""
+    cases = [
+        ("\u00bfcu\u00e1nto gast\u00e9?", None, False),
+        (
+            "\u00bfy en gasolina?",
+            FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH)),
+            False,
         ),
-    )
-
-    assert actual == expected
-    assert contextual_provider.prompts == legacy_provider.prompts
+        (
+            "este a\u00f1o",
+            FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH)),
+            True,
+        ),
+    ]
+    for sentence, prior, forced in cases:
+        provider = FakeProvider(answer=json.dumps(FULL))
+        await planner_for(provider).plan(
+            sentence, context=context_for(prior, force_follow_up=forced)
+        )
+        assert provider.prompts[0] == build_prompt(
+            sentence,
+            today=TODAY,
+            categories=CATEGORIES,
+            previous=prior,
+            force_follow_up=forced,
+        )
 
 
 async def test_a_plan_with_no_window_asks_for_the_period() -> None:

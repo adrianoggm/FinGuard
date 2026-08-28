@@ -53,9 +53,17 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
     TransactionType,
 )
+from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import (
+    ContinuationBase,
+    ContinuationSource,
+    planning_context,
+)
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
+from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.services import capability_guard, explicit_facts, plan_verifier
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -371,7 +379,24 @@ async def _planned(
     if refused is not None:
         return PlanningResult.unsupported(refused)
 
-    result = await planner.plan(case["question"], today=today, previous=previous)
+    result = await planner.plan(
+        case["question"],
+        context=planning_context(
+            Conversation(last_plan=previous),
+            today=today,
+            reporting_timezone="UTC",
+            analysis=TurnAnalysis(
+                Intent.FINANCIAL_QUERY,
+                TurnRelation.FOLLOW_UP if previous is not None else TurnRelation.NEW_REQUEST,
+                TurnFocus.LAST_ANSWER if previous is not None else TurnFocus.NEW_REQUEST,
+            ),
+            continuation=(
+                ContinuationBase(previous, ContinuationSource.LAST_ANSWER)
+                if previous is not None
+                else None
+            ),
+        ),
+    )
     if not result.is_answerable:
         rescued = _from_what_the_sentence_said(
             result,
@@ -890,8 +915,24 @@ async def ablate(
         if index and pace_seconds:
             await asyncio.sleep(pace_seconds)
         context = case.get("previous")
+        previous = as_plan(context) if context else None
         raw = await planner.plan(
-            case["question"], today=today, previous=as_plan(context) if context else None
+            case["question"],
+            context=planning_context(
+                Conversation(last_plan=previous),
+                today=today,
+                reporting_timezone="UTC",
+                analysis=TurnAnalysis(
+                    Intent.FINANCIAL_QUERY,
+                    TurnRelation.FOLLOW_UP if previous is not None else TurnRelation.NEW_REQUEST,
+                    TurnFocus.LAST_ANSWER if previous is not None else TurnFocus.NEW_REQUEST,
+                ),
+                continuation=(
+                    ContinuationBase(previous, ContinuationSource.LAST_ANSWER)
+                    if previous is not None
+                    else None
+                ),
+            ),
         )
         if raw.outcome is PlanningOutcome.PROVIDER_ERROR:
             print(f"provider failed on {case['id']}: {raw.reason}", file=sys.stderr)
