@@ -330,9 +330,10 @@ reconciliation failure in particular is the row's first real reading in the tabl
 - **Which cases clarified, and which six plan-expecting dev cases did not answer.** The harness
   prints outcome totals and case ids only for violations, so per-case outcomes still cannot be read
   off a run. This is the same gap the previous entry recorded and it is unchanged.
-- **`previous` is still ignored.** 9 dev and 6 validation cases carry a `previous` plan for
-  follow-up context and `run()` never sends it, so those cases are asked cold. Pre-existing, not
-  introduced here, and a plausible contributor to the six dev cases that did not answer.
+- ~~**`previous` is still ignored.**~~ **Closed** — see the section below. 9 dev and 6 validation
+  cases carry a `previous` plan and `run()` never sent it, so those cases were asked cold. It was
+  indeed a contributor to the dev cases that did not answer: 7 of the 15 answered once given the
+  context they declare.
 - **The conversation corpus over HTTP.** Not run; it is a sibling's measurement and needs
   `demo-token-laura-pays`.
 - **Whether the seeded opening and the real path agree on the *answer*.** What is measured is that
@@ -345,27 +346,150 @@ reconciliation failure in particular is the row's first real reading in the tabl
 ### Other silent passes in this script
 
 Found while repairing the one above, in the same shape: *a check that passes because the field it
-reads is absent.* Reported, not fixed — several would change what a benchmark measures, and one path
-is a sibling's live measurement.
+reads is absent.* **Six of the seven are now closed** — see the section after this one for what
+each fix was and what it measured. The list is kept as the audit wrote it, annotated.
 
-1. **A `PLANNED` answer carrying no figure violates nothing.** Verified: `violations()` returns `[]`
-   for `outcome: PLANNED, total_minor: None`. The exact mirror of `FIGURE_WITHOUT_AN_ANSWER`. The
-   vacuity guard's second prong defends the set-level case; the per-case hole is still open.
-2. **`expect_shape` silently passes when the outcome is not `PLANNED`.** Its two siblings do not:
-   `expect_plan` and `must_change` both emit `NOT_PLANNED_SO_NO_<field>`. Verified asymmetry, so a
-   turn demanding `expect_shape: GROUPS` that came back as a clarification passes.
-3. **The clarification-loop detector cannot fire on the commonest clarification.** `asked_slot()`
+1. ✅ **A `PLANNED` answer carrying no figure violates nothing.** Verified: `violations()` returned
+   `[]` for `outcome: PLANNED, total_minor: None`. The exact mirror of `FIGURE_WITHOUT_AN_ANSWER`.
+   Now `ANSWER_WITHOUT_A_FIGURE`, keyed on `_ANSWERING` so a figureless `BALANCE` is caught too.
+2. ✅ **`expect_shape` silently passes when the outcome is not `PLANNED`.** Its two siblings did
+   not: `expect_plan` and `must_change` both emit `NOT_PLANNED_SO_NO_<field>`. Verified asymmetry,
+   so a turn demanding `expect_shape: GROUPS` that came back as a clarification passed. Now
+   `NOT_PLANNED_SO_NO_SHAPE`.
+3. ⬜ **The clarification-loop detector cannot fire on the commonest clarification.** `asked_slot()`
    reads `conversation.awaiting`, which is `null` on an account-scope clarification, so
    `ASKED_<slot>_N_TIMES` can never trigger there. Already noted in the previous entry; the read
    path now routes around it with an explicit `CLARIFICATION_RESTARTED` check that does not depend
-   on `awaiting`.
-4. **`run_conversations()` has no vacuity guard at all.** An empty or fully-skipped corpus prints
-   `PROPERTY VIOLATIONS 0` and exits 0 — the same defect, in the same file, on the path this repair
-   did not touch.
-5. **`--limit 0` means "no limit".** `cases[:limit] if limit else cases` is a falsy guard, in both
-   `questions()` and `run_conversations()`. It cost this session a contended run.
-6. **`_reconciliation()` raises `KeyError`** on a group missing `total_minor` rather than reporting
-   it. A crash rather than a silent pass, so lowest priority.
-7. **Already recorded elsewhere:** `adr-011-derived-charts-and-saved-metrics.md` notes that the same
-   reconciliation never reads `visualization`, so a chart disagreeing with the figure in the text is
-   invisible to it.
+   on `awaiting`. **Still open** — the fix belongs in what the service puts in `awaiting`, not here.
+4. ✅ **`run_conversations()` has no vacuity guard at all.** An empty or fully-skipped corpus
+   printed `PROPERTY VIOLATIONS 0` and exited 0 — the same defect, in the same file, on the path
+   that repair did not touch. Now `corpus_vacuity()`, reusing `ANSWERING_FLOOR`.
+5. ✅ **`--limit 0` means "no limit".** `cases[:limit] if limit else cases` was a falsy guard, in
+   both `questions()` and `run_conversations()`. It cost a session a contended run. Now `sliced()`,
+   which tests `is None`.
+6. ✅ **`_reconciliation()` raises `KeyError`** on a group missing `total_minor` rather than
+   reporting it. Now `GROUP_WITHOUT_A_FIGURE`.
+7. ⬜ **Already recorded elsewhere:** `adr-011-derived-charts-and-saved-metrics.md` notes that the
+   same reconciliation never reads `visualization`, so a chart disagreeing with the figure in the
+   text is invisible to it. **Still open**, and out of this repair's scope.
+
+### The six closed, and the fifteen cases that had never been measured
+
+Same file, same rule as the vacuity guard: **a run that did not measure something must say so, and
+no hole is closed by relaxing what is asserted.** Nothing below weakened an expectation.
+
+The reference block at the top of this file applies, with one change: the harness is this commit,
+and the container is still `dd1d2d0`. **Every figure below is therefore harness-side.** No new
+violation here can be attributed to the service without a rebuild, which was not done.
+
+#### The fifteen — `run()` never read `previous`
+
+`dev.yaml` says what the field is for: *"`previous` is the plan behind the preceding answer, for
+follow-up cases only."* The wire has carried it under `conversation.last_plan` the whole time.
+`run()` simply never sent it, so «¿Y en gasolina?» arrived with no window and «¿Y cuántas veces?»
+with nothing to count. Those fifteen expectations had never measured what they say they measure.
+
+The translation invents no third spelling of a plan: the dataset's `previous` block is read by
+`evaluate_planning.as_plan` — the same function the other benchmark reads it with, so the two
+cannot come to disagree — and written to the wire by `conversation_mapper.plan_payload`, the
+endpoint's own writer. A spec neither can build now raises instead of being dropped.
+
+Measured by asking all fifteen **both ways**, account scope settled in both arms so `previous` is
+the only variable. 30 requests, `demo-token-laura-0001`:
+
+| set / case | sentence | cold (before) | with its context (after) |
+| --- | --- | --- | --- |
+| dev/`follow_category_after_period` | «¿Y en gasolina?» | `PLANNED` | `PLANNED` |
+| dev/`follow_grouping_after_period` | «¿Y desglosado por categorías?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| dev/`follow_period_change_keeps_category` | «¿Y este mes?» | `PLANNED` | `PLANNED` |
+| dev/`follow_direction_change` | «¿Y lo que me entró?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| dev/`follow_fresh_question_drops_context` | «¿Cuánto gasté hoy?» | `PLANNED` | `PLANNED` |
+| dev/`follow_metric_change` | «¿Y cuántas veces?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| dev/`follow_narrow_to_week` | «¿Y solo la semana pasada?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| dev/`follow_by_merchant` | «¿Y por comercios?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| dev/`follow_ambiguous_stays_ambiguous` | «¿Y lo normal?» | `NEEDS_CLARIFICATION` | `NEEDS_CLARIFICATION` |
+| validation/`t_follow_category` | «¿Y en el súper?» | `PLANNED` | `PLANNED` |
+| validation/`t_follow_period` | «¿Y la semana pasada?» | `PLANNED` | `PLANNED` |
+| validation/`t_follow_grouping` | «¿Y repartido por comercios?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| validation/`t_follow_direction` | «¿Y lo que cobré?» | `PLANNED` | `PLANNED` |
+| validation/`t_follow_metric` | «¿Y cuántas fueron?» | **`NEEDS_CLARIFICATION`** | **`PLANNED`** |
+| validation/`t_follow_fresh_question` | «¿Cuánto cobré de nómina el mes pasado?» | `PLANNED` | `PLANNED` |
+
+**7 of 15 changed outcome, every one from `NEEDS_CLARIFICATION` to `PLANNED`. No case changed to
+a violation, in either arm — 0 new property violations, 0 cleared.** The two controls behave:
+`follow_ambiguous_stays_ambiguous` stays a clarification with its context supplied (context gives
+a window, not a meaning for «lo normal»), and `follow_fresh_question_drops_context` answers
+identically either way, which is the point of that case.
+
+Two things follow that matter more than the colour changes.
+
+- **The clarification count in the table above was partly this bug.** The previous entry recorded 6
+  plan-expecting dev cases that did not answer and could not say which; at least 5 of them are here.
+- **`_reconciliation()` gets breakdowns it had never seen.** The grouping follow-ups
+  (`follow_grouping_after_period`, `follow_by_merchant`, `t_follow_grouping`) only reach `PLANNED`
+  with their context, and they answer *with a breakdown*. Spot-checked live: **36 groups over 3
+  answers, every one carrying both figures, `sum(groups.total_minor)` equal to `total_minor` in all
+  three** (189597 = 189597, over 9, 18 and 9 rows). So gate 1's *Evidence reconciliation* row should
+  read over more than the 11 breakdowns it was filled from — that is a number for the operator's
+  full sweep to produce, not one this measured.
+
+#### The other five
+
+| # | hole | what it does now | evidence |
+| --- | --- | --- | --- |
+| 1 | `run_conversations()` had no vacuity guard | `corpus_vacuity()` — no threads, no declared turns, or fewer than `ANSWERING_FLOOR` of the declared turns replayed, all print `THE BENCHMARK DID NOT RUN` and exit non-zero | `--dataset conversations --limit 0` exits **1**, was **0** |
+| 3 | a `PLANNED` answer with `total_minor: None` violated nothing | `ANSWER_WITHOUT_A_FIGURE`, keyed on `_ANSWERING` so a figureless `BALANCE` counts too | 30 live answering arms, **0** without a figure — a closed hole, not a live failure |
+| 4 | `expect_shape` passed when the outcome was not `PLANNED` | `NOT_PLANNED_SO_NO_SHAPE`, matching `expect_plan` and `must_change` | unit-tested; **8 corpus turns** use `expect_shape` and their live effect is unmeasured (below) |
+| 5 | `--limit 0` meant *no limit* | `sliced()`, testing `is None` | `--dataset dev --limit 0` exits **1**, was **0** |
+| 6 | `_reconciliation()` raised `KeyError` on a malformed group | `GROUP_WITHOUT_A_FIGURE`, returned instead of summing; a missing key, a `null` and a string all report rather than crash | unit-tested; 36 live groups, **0** malformed |
+
+`ANSWERING_FLOOR` is reused for the corpus rather than a second threshold invented: both ask *did
+enough of this happen to be worth a count?*, and two numbers would be two things to justify and one
+to forget. The corpus guard is deliberately **not** an accuracy floor — a turn that ran and violated
+three properties still counts as replayed. It only asks whether the turns reached the service.
+
+The two fixes also interlock: `--limit 0` now yields no cases, and no cases is what the vacuity
+guards report as a run that did not happen. The failure mode that produced the contended run is now
+loud at both ends.
+
+#### A seventh, found while closing (2)
+
+**A mistyped key in a `previous:` block is dropped without a word.** `as_plan` reads the spec with
+`.get`, so `groupby:` for `groupBy:` would silently ask the case with less context than it declares
+— in *both* benchmarks. `PREVIOUS_KEYS` and a test now assert the three read sets against the keys
+`as_plan` actually reads, the way `EXPECTATIONS` and `TURN_KEYS` guard theirs. **All 15 specs pass:
+they use only `period`, `direction`, `categories` and `groupBy`, and all 15 build a plan the API
+would accept.** No dataset edit was needed and none was made.
+
+#### Not measured here
+
+- **The three-set sweep.** dev, validation and adversarial were not re-run to completion; that is
+  the operator's to run after the merges. What is measured above is the affected subset.
+- **The 8 corpus turns that use `expect_shape`.** Whether any of them comes back as something other
+  than `PLANNED` — and so whether fix (4) turns a corpus turn red — needs a `conversations` run with
+  `demo-token-laura-pays`, which writes `payment_intents` and is a sibling's measurement. Not run.
+- **Two follow-ups lose their window, and it is not this harness's finding.**
+  `dev/follow_direction_change` and `validation/t_follow_direction` — «¿Y lo que me entró?» and «¿Y
+  lo que cobré?» — both answered `del 2026-08-28 al 2026-08-28, income` with their context supplied,
+  instead of inheriting the declared `LAST_MONTH`. A direction-change follow-up appears to drop the
+  window and collapse to today. That is accuracy, so it is `evaluate_planning.py`'s business, and
+  **the container is `dd1d2d0`, so it cannot be attributed to current service code without a
+  rebuild.** Recorded so the operator's sweep knows to look.
+
+#### Whether a comparison is a third shape, and whether it lives here
+
+It does not, and `_reconciliation()`'s notion of what reconciles was left exactly as it was.
+
+`_reconciliation()` asks one question — *do the parts add up to the whole?* — and that question is
+only meaningful while `groups` are parts and `total_minor` is their total. On a comparison they are
+not: `groups` are two operands and `total_minor` is a signed difference. Teaching the property that
+a comparison is a third shape would mean **the harness reading an out-of-band signal in order to
+stop checking** — `last_comparison_earlier` / `last_comparison_latest` are on the wire, so it could
+— and a check that goes quiet because a field is present is precisely the family of silent passes
+this commit exists to close. It would also turn `dev/unsupported_comparison` green while a client
+rendering `total_minor` as "the total" still shows **−1.895,97 €** for a question about spending.
+Green benchmark, broken client: the exact trade the brief forbids.
+
+So the ambiguity belongs in the payload contract, in the service. If that contract grows an explicit
+shape tag, the property should read *the tag* — and that is a different change, legitimate, and one
+this file will welcome. Sequence it after the service, not before.
