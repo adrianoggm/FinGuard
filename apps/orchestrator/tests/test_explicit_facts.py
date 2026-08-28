@@ -151,6 +151,59 @@ def test_negative_filters_are_explicit_facts(
     assert facts.excluded_merchants == merchants
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # None of these names a shop, so none is a merchant exclusion. Accepting them produced a
+        # plan carrying an `excluded_merchants` filter that matches nothing, and exempted the
+        # capability guard that would otherwise have said the exclusion cannot be executed.
+        "Cuánto gasté en gasolina sin contar algunas cosas",
+        "Cuánto gasté en ocio excepto algunas cosas",
+        "Cuánto gasté en gasolina si no contamos lo que ya sabes",
+        "Cuánto gasté en ocio quitando lo de siempre",
+        "Cuánto gasté en ocio sin contar eso",
+        "Cuánto gasté en ocio sin contar unas cuantas cosas",
+        # The exclusion marker's own verb, left as the tail when nothing follows it.
+        "Cuánto gasté en gasolina sin contar",
+        "Cuánto gasté en gasolina sin incluir",
+    ],
+)
+def test_a_vague_exclusion_names_no_merchant(sentence: str) -> None:
+    assert explicit_facts.excluded_merchants_in(sentence) == ()
+    assert explicit_facts.read(sentence, today=TODAY).excluded_merchants == ()
+
+
+@pytest.mark.parametrize(
+    ("sentence", "merchant"),
+    [
+        ("Cuánto gasté en gasolina sin Mercadona", "mercadona"),
+        ("Cuánto gasté en gasolina sin contar Cepsa", "cepsa"),
+        ("Cuánto gasté en supermercado excepto Carrefour", "carrefour"),
+        # Shop names that are ordinary words, or that open with a determiner. The vague-exclusion
+        # vocabulary must not reach any of these — a fix that stops recognising real shops is
+        # worse than the leak it closed.
+        ("Cuánto gasté en supermercado sin contar Dia", "dia"),
+        ("Cuánto gasté en ropa sin El Corte Inglés", "el corte ingles"),
+        ("Cuánto gasté en ocio sin contar Casa del Libro", "casa del libro"),
+        ("Cuánto gasté en supermercado sin contar Simply", "simply"),
+        ("Cuánto gasté en ocio sin contar La Sirena", "la sirena"),
+    ],
+)
+def test_a_named_shop_is_still_a_merchant_exclusion(sentence: str, merchant: str) -> None:
+    assert explicit_facts.excluded_merchants_in(sentence) == (merchant,)
+    assert explicit_facts.read(sentence, today=TODAY).excluded_merchants == (merchant,)
+
+
+def test_a_shop_named_after_an_exclusion_verb_is_still_read() -> None:
+    """«sin meter Cepsa» has no `sin meter` alternative in the marker pattern, so its tail keeps
+    the verb — untidy, and pre-existing. What matters is that the shop is not thrown away with it:
+    rejecting every tail that *opens* with an exclusion verb would have done exactly that.
+    """
+    assert explicit_facts.excluded_merchants_in("Cuánto gasté en gasolina sin meter Cepsa") == (
+        "meter cepsa",
+    )
+
+
 async def test_a_direct_debit_amount_keeps_sum_and_adds_the_banking_rail() -> None:
     planned = FinancialPlan(
         direction=Direction.EXPENSE,

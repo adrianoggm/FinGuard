@@ -236,7 +236,40 @@ _NOT_A_MERCHANT: Final = frozenset(
         "todo",
         "todos",
         "nada",
+        # The exclusion marker's own verb. It reaches here because the optional
+        # `(?:\s+contar|\s+incluir)?` in `_EXCLUSION_TAIL` backtracks to nothing whenever the verb
+        # ends the sentence, so «sin contar» left "contar" as the name of a shop to exclude — and
+        # «sin contar el alquiler» is the phrase the refusal message itself recommends to users.
+        #
+        # Listed here rather than anchored to the start of the tail because the membership test
+        # below needs *every* word to be one of these: «sin meter Cepsa» has no `sin meter`
+        # alternative in `_EXCLUSION_TAIL`, so its tail is "meter cepsa", and Cepsa is a real shop.
+        "contar",
+        "contarlo",
+        "contarlos",
+        "contamos",
+        "cuente",
+        "cuentes",
+        "incluir",
+        "incluirlo",
+        "incluirlos",
+        "incluimos",
+        "incluya",
+        "incluyas",
+        "meter",
+        "metas",
     }
+)
+# A merchant name is a name. These openings announce a quantity, or point back at something said
+# earlier, so what follows one is an exclusion nobody can execute rather than a shop — «sin contar
+# algunas cosas», «si no contamos lo que ya sabes», «quitando lo de siempre».
+#
+# Determiners are deliberately absent. "el" and "la" open real shop names — «sin El Corte Inglés»,
+# «sin contar La Sirena» — and rejecting those would break the case this reader exists for.
+_VAGUE_TAIL: Final = re.compile(
+    r"^(?:algun[oa]s?|algo|un[oa]s|ciert[oa]s?|varias|varios|demas|resto"
+    r"|lo\s+(?:que|de|mismo|demas)|los\s+que|las?\s+que"
+    r"|es[oa]s?|aquell[oa]s?|siempre)\b"
 )
 
 
@@ -246,6 +279,11 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     Merchant names are data, so there is no catalogue to match. This therefore accepts only a
     compact tail and leaves longer clauses to the planner. Category exclusions win when present;
     otherwise "sin Mercadona" is the unambiguous free-text case this path exists for.
+
+    A tail that names no shop is not a merchant exclusion, and saying so here is what keeps
+    `capability_guard`'s CATEGORY_EXCLUSION family honest: the guard exempts itself whenever this
+    returns something, so anything vague accepted here becomes an unrefused query carrying a filter
+    that matches nothing. See `_NOT_A_MERCHANT` and `_VAGUE_TAIL`.
     """
     if excluded_categories:
         return ()
@@ -264,6 +302,8 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     if not tail or len(tail) > 140 or len(tail.split()) > 5:
         return ()
     if set(tail.split()) <= _NOT_A_MERCHANT:
+        return ()
+    if _VAGUE_TAIL.match(tail):
         return ()
     return (tail,)
 
