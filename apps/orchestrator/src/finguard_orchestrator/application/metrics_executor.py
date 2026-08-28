@@ -19,6 +19,31 @@ def financial_metric_executor(
         if not isinstance(definition.plan, FinancialPlan):
             raise ValueError("only financial plans are enabled for saved metrics")
         plan = definition.plan
+        # A stored plan is untrusted input (ADR-011 §5): written when the metric was saved,
+        # replayed now by whichever credential opens it. This is the one call site of
+        # `assert_may_read` that is not a tautology, and `test_saved_metrics.py` now pins it.
+        #
+        # It is also narrower and less coherent than it reads, and the two defects below are NOT
+        # fixed here because neither can be fixed in this file. Do not "tidy" this guard by
+        # widening it to the plural field: widening is what makes the first defect worse.
+        #
+        #  1. It refuses the holder's OWN other accounts. `Caller.account_id` is a single account
+        #     (`caller.py:26-33`, "singular on purpose") while every layer beneath it isolates by
+        #     *holder* (`0016_holder_scope.py`). Laura has three accounts in the seed, so a metric
+        #     she saves against her "Hucha" (`only_account_id=94d556d5-...`) is saveable --
+        #     `llm_mapper.py:480-499` offers a save candidate for any plan that produced a figure
+        #     -- and then raises NotAuthorisedError when she reopens it. Fixing it needs the
+        #     holder's real account set, i.e. the `AccountDirectoryPort` that every other
+        #     echoed-id path validates against (`ask_financial_question.py:3864`, `:3694`),
+        #     which is not wired into this executor.
+        #  2. It is inconsistent about scope. `only_account_ids` (plural) and `across_accounts`
+        #     are unchecked, and `across_accounts=True` reads *every* account the holder has --
+        #     strictly more than the single account this branch refuses.
+        #
+        # What it does stop is a stored plan naming a stranger's account, which banking's
+        # holder-scoped view would also refuse (`financial_query_repository.py:95-98` ->
+        # AccountNotFoundError). Its unique contribution is refusing here rather than relying on
+        # a 404 from another service.
         if plan.only_account_id is not None:
             caller.assert_may_read(plan.only_account_id)
         answer = await banking.run(
