@@ -77,17 +77,33 @@ class Caller:
         flagged that an unused authorisation check is worse than none: it reads like a
         control while enforcing nothing.
 
-        It is called by `assert_may_read`, which the handler path uses, so the guarantee
-        stops depending on every future call site remembering to copy the right field.
+        It is called by `assert_may_read`. There is exactly one production call site --
+        `metrics_executor.py`, on a stored plan's account -- and the count is deliberate:
+        the question path had one too, comparing `who.account_id` with itself, and that
+        line was deleted rather than left reading like a control. See `llm_controller.ask`.
+
+        Read `assert_may_read` before adding a second call site: this is account-granular
+        and the layers beneath it are holder-granular, so it refuses more than they do.
         """
         return account_id == self.account_id
 
     def assert_may_read(self, account_id: UUID) -> None:
-        """Raises unless the account is this caller's.
+        """Raises unless the account is *this caller's own*, which is narrower than "the
+        holder's".
 
         Cheap, and it closes the failure nobody would notice: a future route that takes
         an account from anywhere else would otherwise read another holder's figures and
         look completely normal doing it.
+
+        The narrowness is a live defect, not a nuance. `account_id` is one account, while
+        banking isolates by holder (`0016_holder_scope.py`) and a holder with several
+        accounts is now the seeded reality -- Laura has three. Measured against the running
+        service: `GET /v1/account/movements?account=<her savings>` answers 200 with 12
+        movements, while `assert_may_read(<her savings>)` raises. So this refuses accounts
+        the rest of the system correctly serves, and the one caller that reaches it
+        (`metrics_executor`) makes a metric saved against a second account unopenable.
+        Anything that needs "may this holder read this account?" must ask the account
+        directory, which is what every echoed-id path in `ask_financial_question` does.
         """
         if not self.may_read(account_id):
             raise NotAuthorisedError()

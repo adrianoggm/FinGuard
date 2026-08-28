@@ -327,13 +327,14 @@ episodes:
         ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
 
   - name: salary_analysis_survives_an_aside_and_pronouns
-    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
-    # wrongly, and writing the wrong scope into its expectations would record the defect as
-    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
-    #
-    # Turns 1-3 answer across every account. Turn 5 narrows the highest payslip to Cuenta corriente
-    # and turns 6-7 inherit it, which is exactly the payroll-paid-elsewhere that `_scoped` strips
-    # the nómina alias to prevent.
+    # scope: legacy — debt, not a choice, and a *different* defect from the three that came off this
+    # list. Turn 5 ranks «la nómina más alta» inside Cuenta corriente and turns 6-7 inherit it:
+    # `_scope_ranking` reads "la nómina" through the legacy CURRENT alias, which is the one reading
+    # `_scoped` strips on purpose — "applying that alias here silently hides payroll paid
+    # elsewhere". The ranking path never got that exception, so the account is derived from a word
+    # that names an income category, and `named_in` then reports it as an account the holder named.
+    # Reproduced identically with and without the fix to `_remember_explicit_scope`.
+    # See LEGACY_SCOPE in tests/test_conversation_corpus.py.
     scope: legacy
     why: >
       The user changes the divisor conversationally, pauses to inspect their balance, returns to
