@@ -653,8 +653,15 @@ def opening(episode: Episode) -> dict[str, Any] | None:
     the moment a holder answers the account question, so an episode opening here resumes a real
     thread rather than skipping a check: every turn in it still reads that selection back through
     the directory-backed branch of `_scoped`, which is the branch that had never run.
+
+    `==` and not `is`. Until an episode wrote `scope: settled` out loud, the only settled episodes
+    were the ones that omitted the field and took the dataclass default -- the interned literal, so
+    identity happened to hold. A value read out of YAML is a fresh string, so the first episode to
+    declare the default explicitly opened with nothing settled and every unqualified question in it
+    was answered with the account clarification instead. The typo rule below cannot see this: it
+    compares with `in`, which is `==` all the way down.
     """
-    return {"account_selection_mode": "ALL"} if _scope_of(episode) is SETTLED else None
+    return {"account_selection_mode": "ALL"} if _scope_of(episode) == SETTLED else None
 
 
 def a_stack_for(episode: Episode) -> Stack:
