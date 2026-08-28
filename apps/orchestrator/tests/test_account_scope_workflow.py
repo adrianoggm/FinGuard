@@ -12,6 +12,7 @@ from finguard_orchestrator.domain.models.conversation import (
     AccountSelection,
     AccountSelectionMode,
     Conversation,
+    Slot,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
@@ -646,3 +647,43 @@ async def test_the_account_the_holder_named_is_still_remembered() -> None:
 
     assert later.outcome == PlanningOutcome.PLANNED.value
     assert ledger.plans[-1].only_account_id == SAVINGS
+
+
+def slot_asked(answer: object) -> Slot | None:
+    """Which slot a turn asked for, read the way both counters read it.
+
+    The harness asks the wire for `conversation.awaiting`; this service's own
+    `_asks_the_same_thing_again` asks the state for `awaiting or last_asked`. The two agree by
+    construction, and a turn that asked for something and reports `None` here is invisible to
+    both.
+    """
+    if answer.outcome != PlanningOutcome.NEEDS_CLARIFICATION.value:
+        return None
+    return answer.conversation.awaiting or answer.conversation.last_asked
+
+
+@pytest.mark.asyncio
+async def test_the_same_account_question_twice_running_is_detectable() -> None:
+    """Two identical questions, two identical clarifications, and a counter that can see it.
+
+    This is the loop from `evaluation/conversations/RESULTS.md` with the account slot in place of
+    the period one: the reply does not settle the scope, so the same question comes back. Nothing
+    here breaks the loop — that is a judgement about wording, not about state — but the run has to
+    be *visible*, and it was not: both turns reported no slot at all, so a run-length counter over
+    the slot saw a run of zero on the path most likely to loop.
+
+    The comparison sentence is deliberate. It reaches the scope requirement through the backstop,
+    which leaves no resumable workflow behind, so `awaiting` has nothing to hang on and
+    `last_asked` is the only place the question can be recorded — the same hole `last_asked` was
+    added for, in a second path that never used it.
+    """
+    ledger = Ledger()
+    handler = service(ledger)
+
+    first = await ask(handler, "compara mis gastos de julio con junio")
+    again = await ask(handler, "compara mis gastos de julio con junio", first.conversation)
+
+    assert first.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert again.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert [slot_asked(first), slot_asked(again)] == [Slot.ACCOUNT, Slot.ACCOUNT]
+    assert ledger.plans == [], "no figure is read before the holder has said whose money it is"
