@@ -8,6 +8,7 @@ import pytest
 
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
+from finguard_orchestrator.domain.errors import NotAuthorisedError
 from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.models.saved_metric import SavedMetric, SavedMetricDefinition
@@ -236,6 +237,69 @@ async def test_a_metric_saved_as_a_figure_reopens_as_a_figure() -> None:
     third = await execute(counted, caller)
     assert third["visualization"]["unit"] == "count"  # type: ignore[index]
     assert third["visualization"]["data"] == [{"dimension": "total", "value_minor": 3}]  # type: ignore[index]
+
+
+# --- cross-account isolation on the saved-plan path ---------------------------------
+#
+# The one place `assert_may_read` is not a tautology. A saved metric's plan carries the
+# account it was saved against, and a stored plan is untrusted input (ADR-011 §5): it is
+# written at save time and replayed later by whichever credential opens the metric. The
+# audit in `docs/audits/2026-08-28-do-the-tests-prove-anything.md` §2.2 found the guard
+# could be deleted outright with 71 tests still passing, because both executor tests above
+# use a plan whose account fields are unset -- so the guard was never reached.
+#
+# This test reaches it. It asserts refusal *and* that banking was never called: a guard
+# that raises after the query has already gone out is not containment.
+
+
+class RefusingBanking:
+    """Records that it was asked. Reaching banking at all is the failure being pinned."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.calls += 1
+        return QueryAnswer(currency="EUR", total_minor=999_00, movement_count=9)
+
+
+OWN_ACCOUNT = UUID("08aba04f-2b30-4639-88a6-eac741153ce0")
+SOMEONE_ELSES = UUID("f1d2c3b4-a596-4877-8899-aabbccddeeff")
+
+
+@pytest.mark.asyncio
+async def test_a_saved_plan_naming_an_account_the_opener_cannot_read_is_refused() -> None:
+    """The singular field. A metric saved against one account, reopened by a credential
+    that account does not belong to, must not answer -- and must not ask banking either."""
+    banking = RefusingBanking()
+    execute = financial_metric_executor(banking)  # type: ignore[arg-type]
+    caller = Caller("ES-0001", OWN_ACCOUNT)
+    stored = SavedMetricDefinition(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_MONTH),
+            only_account_id=SOMEONE_ELSES,
+        )
+    )
+
+    with pytest.raises(NotAuthorisedError):
+        await execute(stored, caller)
+
+    # Refused *before* the query went out. `banking.run` is called with
+    # `account_id=caller.account_id`, so the request that would have left here carries the
+    # caller's own account as its scope and the stored plan's account only as a filter --
+    # and banking's holder-scoped view is what makes that filter safe. Asserting the call
+    # count keeps containment from depending on the other service being reachable, correct,
+    # or deployed: a guard that raises after the request has gone out is not containment.
+    assert banking.calls == 0
+
+    # The same stored plan, opened by the credential it was saved against, still answers:
+    # the guard refuses a foreign account, not every account it is given. Without this the
+    # test would also pass against a guard that refused unconditionally.
+    allowed = replace(stored.plan, only_account_id=OWN_ACCOUNT)
+    answered = await execute(SavedMetricDefinition(allowed), caller)
+    assert answered["outcome"] == "ANSWERED"
+    assert banking.calls == 1
 
 
 @pytest.mark.integration
