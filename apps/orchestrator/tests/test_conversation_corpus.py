@@ -47,17 +47,32 @@ def test_the_corpus_has_not_shrunk() -> None:
 # ever seen the account clarification, and `lost_context` read 0.0 % over 1143 turns while the
 # account scope was untested end to end.
 #
-# Six are left, and they are not waiting for anybody to write YAML. Each one is answered *wrongly*
-# by the directory-backed path — a question about last month's spending answered from inside an
-# index fund, a payslip ranking narrowed to one account, "de mis cuentas" answered from one — and
-# the fix is in `application/queries/ask_financial_question.py`: a scope the service derived for
-# itself is persisted as though the holder had chosen it, so it silently narrows every later
-# question. Stating those wrong accounts in the expectations would take this number to zero by
-# recording the defect as correct, which is the one way it must never move.
+# Six were left, and the note here said all six were the one defect: a scope the service derived
+# for itself, persisted as though the holder had chosen it by an unguarded twin of
+# `_remember_explicit_scope` that ran immediately after the guarded one. That defect is fixed and
+# three came off this list — a question about last month's spending no longer answered from inside
+# an index fund, two bizum-received turns no longer answered from one account, "de mis cuentas"
+# answered from all of them again.
 #
-# Only ever down, and only by the source fix. The reason each of the six is here is written above
-# its `scope: legacy` in the corpus file.
-LEGACY_SCOPE = Ceiling(6, "episodes still replayed without the account directory")
+# The other three were never that defect, and each still reproduces with the fix reverted:
+#
+#   14-averages   `_scope_ranking` reads "la nómina" as the CURRENT alias, the reading `_scoped`
+#                 strips on purpose because it hides payroll paid into another account.
+#   17-internal   turn 3 states «al fondo», which is kept as designed, and turns 5-6 inherit it
+#                 into questions about supermarkets and restaurants. How long a *stated* selection
+#                 lives, not where it came from.
+#   28-compound   a ratio paired with a plain query keeps the settled selection through the first
+#                 operand and loses it before the second, so one sentence answers half a figure
+#                 and half «¿En qué cuenta quieres consultarlo?».
+#
+# Stating those wrong accounts in the expectations would take this number to zero by recording a
+# defect as correct, which is the one way it must never move. Only ever down, and only by a source
+# fix. The reason each of the three is here is written above its `scope: legacy` in the corpus file.
+#
+# `test_a_filter_that_is_doing_something_is_stated` is the instrument that discriminates, not the
+# per-episode tests: an episode whose expectations never mention `accounts` passes with a wrong
+# scope. Under the reverted fix that rule listed ten turns over five episodes; it now lists none.
+LEGACY_SCOPE = Ceiling(3, "episodes still replayed without the account directory")
 
 
 def test_the_corpus_runs_on_the_path_a_deployment_runs() -> None:

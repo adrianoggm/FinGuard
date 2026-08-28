@@ -30,16 +30,27 @@ OWNER = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 21)
 CURRENT = uuid.UUID("22222222-2222-2222-2222-222222222222")
 SAVINGS = uuid.UUID("33333333-3333-3333-3333-333333333333")
+FUND = uuid.UUID("44444444-4444-4444-4444-444444444444")
 HOLDINGS = (
     Holding(CURRENT, "CURRENT", "Cuenta corriente", "EUR", 100_000),
     Holding(SAVINGS, "SAVINGS", "Hucha", "EUR", 50_000),
 )
+# The holder Laura actually has: the third one is what "¿cuánto he invertido?" resolves to without
+# the sentence ever naming it.
+THREE = (*HOLDINGS, Holding(FUND, "ASSET", "Fondo indexado", "EUR", 165_000))
 
 
 class Planner:
     async def plan(self, *_: object, **__: object) -> PlanningResult:
         return PlanningResult.planned(
             FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+        )
+
+
+class LastMonthPlanner:
+    async def plan(self, *_: object, **__: object) -> PlanningResult:
+        return PlanningResult.planned(
+            FinancialPlan(Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH))
         )
 
 
@@ -64,6 +75,11 @@ class Ledger:
 class Accounts:
     async def of(self, *_: object, **__: object) -> AccountSummary:
         return AccountSummary("EUR", 100_000, 100_000, datetime(2026, 8, 21), holdings=HOLDINGS)
+
+
+class ThreeAccounts:
+    async def of(self, *_: object, **__: object) -> AccountSummary:
+        return AccountSummary("EUR", 315_000, 315_000, datetime(2026, 8, 21), holdings=THREE)
 
 
 class CountingAccounts(Accounts):
@@ -109,10 +125,13 @@ class Cards:
 
 
 def service(
-    ledger: Ledger, directory: object = Directory(), accounts: object = Accounts()
+    ledger: Ledger,
+    directory: object = Directory(),
+    accounts: object = Accounts(),
+    planner: object | None = None,
 ) -> AskFinancialQuestionHandler:
     return AskFinancialQuestionHandler(
-        Planner(),
+        planner or Planner(),  # type: ignore[arg-type]
         ledger,
         accounts=accounts,  # type: ignore[arg-type]
         account_directory=directory,  # type: ignore[arg-type]
@@ -530,3 +549,100 @@ async def test_two_answered_periods_compare_when_only_the_first_named_the_scope(
     assert "junio de 2026" in compared.text
     # One comparison, one scope: both operands read the accounts both figures came from.
     assert [plan.across_accounts for plan in ledger.plans[-2:]] == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_a_scope_the_service_derived_is_not_stored_as_the_holders_choice() -> None:
+    """Reproduced twice against the live service from an empty thread, `demo-token-laura-pays`:
+
+        «¿cuánto he invertido en el último año?»
+            → «Moviste 1.650,00 € hacia la cuenta consultada …»
+              account_selection = SELECTED(Fondo indexado)   ← the holder never chose this
+        «¿cuánto gasté el mes pasado?»
+            → «No he encontrado movimientos el mes pasado. Puedes ampliar el periodo …»
+
+    Laura spent 1.895,97 € last month. "Cuánto he invertido" names a *purpose*, and `_scoped`
+    resolves it to the holder's asset account precisely because the sentence does not name one --
+    so that scope is this service's execution policy, and storing it made the next question about
+    ordinary spending mean "inside the index fund". The advice to widen the period then sent her
+    to fix the window, which was the one part of the query that was right.
+
+    An unqualified spending question with nothing settled is answered by asking whose money it is,
+    which is what a first turn gets anyway. The assertion that matters is that nothing about the
+    fund was inherited.
+    """
+    ledger = Ledger()
+    handler = service(
+        ledger, MutableDirectory(THREE), accounts=ThreeAccounts(), planner=LastMonthPlanner()
+    )
+
+    invested = await ask(handler, "¿cuánto he invertido en el último año?")
+
+    assert invested.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].internal_only is True
+    assert ledger.plans[-1].only_account_id == FUND, "the derived scope still runs on the fund"
+    assert invested.conversation.account_selection is None, (
+        "the sentence named no account, so there is no choice to remember"
+    )
+
+    spent = await ask(handler, "¿cuánto gasté el mes pasado?", invested.conversation)
+
+    assert spent.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert "Fondo indexado" in spent.suggestions
+    assert "Todas mis cuentas" in spent.suggestions
+    assert len(ledger.plans) == 1, "no figure about last month is read from inside the fund"
+
+
+@pytest.mark.asyncio
+async def test_a_derived_scope_does_not_overwrite_the_all_accounts_choice() -> None:
+    """The same defect from the state a real thread is in from its second turn onward.
+
+    This is the shape the `scope: legacy` corpus episodes replay: the holder has already said
+    "todas mis cuentas", one turn asks about contributions to the fund, and the turns after it are
+    about ordinary spending. Overwriting ALL with the fund is how a question about supermarkets was
+    answered from inside an index fund.
+    """
+    ledger = Ledger()
+    handler = service(
+        ledger, MutableDirectory(THREE), accounts=ThreeAccounts(), planner=LastMonthPlanner()
+    )
+    settled = Conversation(account_selection=AccountSelection(AccountSelectionMode.ALL))
+
+    invested = await ask(handler, "¿cuánto he invertido en el último año?", settled)
+
+    assert invested.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].only_account_id == FUND
+    assert invested.conversation.account_selection is not None
+    assert invested.conversation.account_selection.mode is AccountSelectionMode.ALL
+
+    spent = await ask(handler, "¿cuánto gasté el mes pasado?", invested.conversation)
+
+    assert spent.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].across_accounts is True
+    assert ledger.plans[-1].only_account_id is None
+
+
+@pytest.mark.asyncio
+async def test_the_account_the_holder_named_is_still_remembered() -> None:
+    """The other half of the rule, so the fix above cannot be "never remember anything".
+
+    A sentence that names an account states a scope, and losing it makes the very next ellipsis
+    widen back to every account.
+    """
+    ledger = Ledger()
+    handler = service(
+        ledger, MutableDirectory(THREE), accounts=ThreeAccounts(), planner=LastMonthPlanner()
+    )
+    settled = Conversation(account_selection=AccountSelection(AccountSelectionMode.ALL))
+
+    named = await ask(handler, "¿cuánto gasté en la hucha este mes?", settled)
+
+    assert named.outcome == PlanningOutcome.PLANNED.value
+    assert named.conversation.account_selection is not None
+    assert named.conversation.account_selection.mode is AccountSelectionMode.SELECTED
+    assert named.conversation.account_selection.account_ids == (SAVINGS,)
+
+    later = await ask(handler, "¿y el mes pasado?", named.conversation)
+
+    assert later.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].only_account_id == SAVINGS

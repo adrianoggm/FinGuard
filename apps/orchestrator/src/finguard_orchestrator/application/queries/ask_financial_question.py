@@ -2536,8 +2536,6 @@ class AskFinancialQuestionHandler:
             return scoped
         ranking = scoped
         query = _remember_explicit_scope(query, ranking)
-        if self._account_directory is not None:
-            query = _remember_runtime_scope(query, ranking)
         for attempt in range(self._read_attempts):
             try:
                 found = await self._queries.ranked(
@@ -2609,8 +2607,6 @@ class AskFinancialQuestionHandler:
             return scoped
         ranking = scoped
         query = _remember_explicit_scope(query, ranking)
-        if self._account_directory is not None:
-            query = _remember_runtime_scope(query, ranking)
         found: list[Movement] = []
         for rank in range(1, count + 1):
             candidate = ranking.at_rank(rank)
@@ -4122,27 +4118,8 @@ class AskFinancialQuestionHandler:
                 text="No puedo comprobar tus cuentas antes de consultar ese periodo.",
                 conversation=query.conversation,
             )
-        if self._account_directory is not None and (
-            account_words.asks_for_all_accounts(query.sentence)
-            or account_words.named_in(query.sentence)
-        ):
-            if scoped.across_accounts:
-                selection = AccountSelection(AccountSelectionMode.ALL)
-            elif scoped.only_account_id is not None:
-                selection = AccountSelection(
-                    AccountSelectionMode.SELECTED, (scoped.only_account_id,)
-                )
-            elif scoped.only_account_ids:
-                selection = AccountSelection(AccountSelectionMode.SELECTED, scoped.only_account_ids)
-            else:
-                selection = None
-            if selection is not None:
-                query = replace(
-                    query,
-                    conversation=replace(query.conversation, account_selection=selection),
-                )
         if self._account_directory is not None:
-            query = _remember_runtime_scope(query, scoped)
+            query = _remember_explicit_scope(query, scoped)
         # The ordinary all-accounts default is execution policy, not conversational data. An
         # explicit account choice is different: losing it makes the very next ellipsis widen back
         # to every account. Keep only scopes the user actually selected (plus ACCOUNT breakdown,
@@ -7441,25 +7418,35 @@ def _answers_account_scope(sentence: str, pending: AccountScopeClarification) ->
 def _remember_explicit_scope(
     query: AskFinancialQuestionQuery, plan: FinancialPlan | TopMovements
 ) -> AskFinancialQuestionQuery:
+    """Store an account scope in the conversation only when the sentence stated one.
+
+    Every scope reaching this function is a real one: `_scoped` resolved it against the holder's
+    directory and the figures were read from exactly those accounts. What the guard separates is
+    *where it came from*. A scope the service derived for itself is execution policy — one account
+    because the holder has one, the asset account because "cuánto he invertido" names a purpose
+    and this service knows which account that purpose lives in, an account carried in from the
+    plan the previous turn happened to build. A scope the holder said out loud is conversational
+    data, and losing it makes the very next ellipsis widen back to every account.
+
+    A twin of this function without the guard used to run straight after it, so the guard decided
+    nothing and every derived scope was persisted as though it had been chosen. Reproduced twice
+    against the live service, `demo-token-laura-pays`, from an empty conversation:
+
+        «¿cuánto he invertido en el último año?»  → 1.650,00 € moved into the fund. Correct, and
+                                                    `account_selection = SELECTED(Fondo indexado)`.
+        «¿cuánto gasté el mes pasado?»            → «No he encontrado movimientos el mes pasado.
+                                                    Puedes ampliar el periodo …»
+
+    She spent 1.895,97 € last month, from an account the second question was no longer allowed to
+    see — and the answer sent her to widen the window, which was the one part of the plan that was
+    right. `answer_writer.write` argues against exactly that sentence: "no encontré nada" usually
+    means the plan was wrong, and here it was.
+    """
     if not (
         account_words.asks_for_all_accounts(query.sentence)
         or account_words.named_in(query.sentence)
     ):
         return query
-    if plan.across_accounts:
-        selection = AccountSelection(AccountSelectionMode.ALL)
-    elif plan.only_account_id is not None:
-        selection = AccountSelection(AccountSelectionMode.SELECTED, (plan.only_account_id,))
-    elif plan.only_account_ids:
-        selection = AccountSelection(AccountSelectionMode.SELECTED, plan.only_account_ids)
-    else:
-        return query
-    return replace(query, conversation=replace(query.conversation, account_selection=selection))
-
-
-def _remember_runtime_scope(
-    query: AskFinancialQuestionQuery, plan: FinancialPlan | TopMovements
-) -> AskFinancialQuestionQuery:
     if plan.across_accounts:
         selection = AccountSelection(AccountSelectionMode.ALL)
     elif plan.only_account_id is not None:
