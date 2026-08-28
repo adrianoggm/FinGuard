@@ -1,5 +1,13 @@
 episodes:
   - name: typed_relationships_inside_compound_reads
+    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
+    # wrongly, and writing the wrong scope into its expectations would record the defect as
+    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    #
+    # Turn 5's two operands disagree about the settled scope: the savings-rate half reads it and
+    # the supermarket half asks for it again, so one sentence comes back as half a figure and half
+    # a question.
+    scope: legacy
     why: >
       Una relación financiera cerrada sigue siendo una sola petición aunque nombre dos operandos.
       Puede convivir con otra lectura segura, conservar su memoria tras un saldo y aceptar después

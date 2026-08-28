@@ -29,6 +29,14 @@ What each turn may say:
 And what a whole episode may say:
 
     metrics      the ones this episode is meant to exercise, so a run can report per feature
+    scope        which of the holder's accounts this conversation is already about
+
+**The stack is the deployment's, and `scope` is what made that affordable.** Production wires an
+`AccountDirectory` and therefore asks «¿En qué cuenta quieres consultarlo?» before answering any
+unqualified spending question. This harness did not wire one, so every turn here took three
+branches of `_scoped` that no deployment reaches — which is how a real account-scope defect
+survived 1143 turns at "0 % lost context". Declaring the scope once per episode buys the production
+path without a preamble turn in every conversation; see `opening`.
 """
 
 from __future__ import annotations
@@ -364,6 +372,20 @@ class Accounts:
         )
 
 
+class Directory:
+    """The holder's account names, which production wires and this harness did not.
+
+    `AskFinancialQuestionHandler` reads the account scope of a question through this port when it
+    has one, and through the account *summary* when it does not — and the two are not the same code.
+    Three branches of `_scoped` exist only for the second case, so a corpus built without a
+    directory replayed 1143 turns through a path no deployment runs: no turn had ever seen the
+    account clarification, stored an `AccountSelection`, or read one back on a later turn.
+    """
+
+    async def all_of(self, *_: object, **__: object) -> tuple[Holding, ...]:
+        return HOLDINGS
+
+
 class Contacts:
     async def all_of(self, *_: object, **__: object) -> tuple[Contact, ...]:
         return CONTACTS
@@ -507,12 +529,18 @@ class Stack:
     bank: Bank
 
 
-def a_stack() -> Stack:
+def a_stack(*, directory: bool = True) -> Stack:
+    """The service, wired as a deployment wires it.
+
+    `directory=False` is the shape every episode used to run in, and it is now only reached by the
+    episodes that declare `scope: legacy` — see `opening`.
+    """
     planner, ledger, bank = AnyPlan(), Ledger(), Bank()
     handler = AskFinancialQuestionHandler(
         planner,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Accounts(),  # type: ignore[arg-type]
+        account_directory=Directory() if directory else None,  # type: ignore[arg-type]
         contacts=Contacts(),
         cards=NoCards(),  # type: ignore[arg-type]
     )
@@ -545,6 +573,31 @@ def a_stack() -> Stack:
     app.state.questions_enabled = True
     app.state.payments_enabled = True
     return Stack(TestClient(app), planner, ledger, bank)
+
+
+# --- which accounts a conversation is about ------------------------------------------------
+#
+# Production holds three accounts and asks which one an unqualified spending question means. That
+# is a real turn — «¿En qué cuenta quieres consultarlo?» — and it costs a thread its first
+# exchange. A corpus that opened every conversation with nothing settled would spend its first turn
+# answering that question 169 times over: the same preamble copied into every episode, proving
+# nothing after the first, and drowning the thing each episode was written for.
+#
+# So an episode says once which accounts it is about and the harness opens the conversation there.
+#
+#   settled   the scope is already every account, which is the state a real thread is in from its
+#             second turn onward. The default, because almost every episode is about something else
+#             and was written as though the scope were not in question.
+#   unset     nothing settled, so the clarification actually happens. `31-account-scope.yaml` is
+#             written on this, because that turn is production behaviour and deserves conversations
+#             of its own rather than a mention in 169 preambles.
+#   legacy    no directory at all. Debt, not a choice — see `LEGACY_SCOPE` in
+#             `tests/test_conversation_corpus.py` for the defect these six are waiting on.
+
+SETTLED = "settled"
+UNSET = "unset"
+LEGACY = "legacy"
+SCOPES = (SETTLED, UNSET, LEGACY)
 
 
 # --- the corpus ------------------------------------------------------------------------------
@@ -589,6 +642,31 @@ class Episode:
     why: str
     turns: tuple[Turn, ...]
     metrics: tuple[str, ...] = ()
+    # Which of the holder's accounts this conversation is already about, once, for the episode.
+    scope: str = SETTLED
+
+
+def opening(episode: Episode) -> dict[str, Any] | None:
+    """The conversation a replay starts from, from what the episode declared.
+
+    A settled `AccountSelection` rather than an extra turn. It is the same state the service stores
+    the moment a holder answers the account question, so an episode opening here resumes a real
+    thread rather than skipping a check: every turn in it still reads that selection back through
+    the directory-backed branch of `_scoped`, which is the branch that had never run.
+    """
+    return {"account_selection_mode": "ALL"} if _scope_of(episode) is SETTLED else None
+
+
+def a_stack_for(episode: Episode) -> Stack:
+    """The stack this episode replays in. Only `scope: legacy` gets one without a directory."""
+    return a_stack(directory=_scope_of(episode) != LEGACY)
+
+
+def _scope_of(episode: Episode) -> str:
+    """The declared scope, refusing a typo rather than silently meaning `settled`."""
+    if episode.scope not in SCOPES:
+        raise ValueError(f"{episode.name}: scope {episode.scope!r} is not one of {SCOPES}")
+    return episode.scope
 
 
 @dataclass
@@ -651,6 +729,7 @@ def load() -> list[Episode]:
                     name=f"{path.stem}/{raw['name']}",
                     why=raw.get("why", ""),
                     metrics=tuple(raw.get("metrics", ())),
+                    scope=raw.get("scope", SETTLED),
                     turns=tuple(Turn(**{**turn, "say": str(turn["say"])}) for turn in raw["turns"]),
                 )
             )
@@ -816,8 +895,8 @@ def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
     asked. Precedence is only load-bearing where the readings differ, and those are the turns a
     reordering would silently change the answer to.
     """
-    stack = a_stack()
-    state: dict[str, Any] | None = None
+    stack = a_stack_for(episode)
+    state: dict[str, Any] | None = opening(episode)
     for number, turn in enumerate(episode.turns, start=1):
         claims = claimants(turn.say, state)
         if len(set(claims.values())) > 1:
@@ -860,10 +939,10 @@ def replay(
     any episode — it is a fact about the corpus — and running the conversations twice to learn it
     would double the slowest test in the suite.
     """
-    stack = a_stack()
+    stack = a_stack_for(episode)
     if interpreter is not None:
         app.dependency_overrides[turn_interpreter] = lambda: interpreter
-    conversation: dict[str, Any] | None = None
+    conversation: dict[str, Any] | None = opening(episode)
 
     for number, turn in enumerate(episode.turns, start=1):
         before = len(stack.planner.asked)
@@ -1137,11 +1216,11 @@ async def compare(
     reference = authority or Deterministic()
     report = Agreement()
     for episode in episodes:
-        stack = a_stack()
+        stack = a_stack_for(episode)
         app.dependency_overrides[turn_interpreter] = lambda: _Scored(
             reference, candidate, report, only
         )
-        conversation: dict[str, Any] | None = None
+        conversation: dict[str, Any] | None = opening(episode)
         for turn in episode.turns:
             answered = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}

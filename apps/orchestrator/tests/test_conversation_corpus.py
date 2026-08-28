@@ -16,7 +16,7 @@ and would measure the model instead.
 
 import pytest
 from support import episodes
-from support.ratchets import Floor
+from support.ratchets import Ceiling, Floor
 
 CORPUS = episodes.load()
 
@@ -38,6 +38,40 @@ FLOOR = Floor(166, "episodes loaded from evaluation/conversations")
 
 def test_the_corpus_has_not_shrunk() -> None:
     assert not FLOOR.undercut_by(CORPUS), FLOOR.undercut_by(CORPUS)
+
+
+# Episodes still replayed without an account directory, which is a path no deployment runs.
+#
+# It was 169 of 169 and the corpus could not see that: the harness wired no directory at all, so
+# every turn took three branches of `_scoped` written for the handler's legacy callers, no turn had
+# ever seen the account clarification, and `lost_context` read 0.0 % over 1143 turns while the
+# account scope was untested end to end.
+#
+# Six are left, and they are not waiting for anybody to write YAML. Each one is answered *wrongly*
+# by the directory-backed path — a question about last month's spending answered from inside an
+# index fund, a payslip ranking narrowed to one account, "de mis cuentas" answered from one — and
+# the fix is in `application/queries/ask_financial_question.py`: a scope the service derived for
+# itself is persisted as though the holder had chosen it, so it silently narrows every later
+# question. Stating those wrong accounts in the expectations would take this number to zero by
+# recording the defect as correct, which is the one way it must never move.
+#
+# Only ever down, and only by the source fix. The reason each of the six is here is written above
+# its `scope: legacy` in the corpus file.
+LEGACY_SCOPE = Ceiling(6, "episodes still replayed without the account directory")
+
+
+def test_the_corpus_runs_on_the_path_a_deployment_runs() -> None:
+    legacy = [e.name for e in CORPUS if e.scope == episodes.LEGACY]
+
+    assert not LEGACY_SCOPE.exceeded_by(legacy), LEGACY_SCOPE.exceeded_by(legacy)
+
+
+def test_every_episode_declares_a_scope_the_harness_knows() -> None:
+    """A typo in `scope:` must not quietly mean the default, because the default is the one value
+    that hides the account clarification."""
+    unknown = [(e.name, e.scope) for e in CORPUS if e.scope not in episodes.SCOPES]
+
+    assert not unknown, f"episodes declaring a scope nothing implements: {unknown}"
 
 
 def test_every_episode_is_long_enough_to_be_a_conversation() -> None:

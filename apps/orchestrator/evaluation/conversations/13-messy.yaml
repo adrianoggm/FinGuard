@@ -45,6 +45,13 @@ episodes:
         route: COURTESY
 
   - name: the_second_reported_conversation
+    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
+    # wrongly, and writing the wrong scope into its expectations would record the defect as
+    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    #
+    # Turns 4 and 5 ask about bizums received and are answered restricted to Fondo indexado, the
+    # scope turn 1 derived for a question about investment contributions.
+    scope: legacy
     why: >
       The tail of the same session, where a question about money *arriving* was read as an order to
       send some — and every turn after it lived inside a payment nobody had asked for.
