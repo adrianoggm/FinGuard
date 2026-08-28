@@ -39,3 +39,52 @@ episodes:
         ran: [{window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], rank: 1}, {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], rank: 2}, {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], rank: 3, excluded_categories: [], excluded_merchants: []}]
       - say: gracias
         route: COURTESY
+
+  - name: the_all_accounts_scope_is_not_a_grouping_instruction
+    why: >
+      Every ranking above names its dimension on purpose — "top 2 categorías", "los tres
+      comercios" — and the pattern that read them was a bare noun alternation, so a noun arriving
+      inside a *scope* phrase supplied the dimension just as well. "¿cuál fue mi mayor gasto de
+      julio en todas mis cuentas?" was therefore answered «La cuenta con mayor importe total del
+      2026-07-01 al 2026-07-31 es: Cuenta corriente…»: a ranking of accounts, offered to somebody
+      who asked which single charge was the largest. The recogniser runs ahead of the planner, so
+      nothing downstream ever saw the superlative, and the ordinals behind it then had no ranking
+      to walk — "¿y el segundo?" came back with the same aggregate figure.
+
+      The first turn is why a thousand turns of corpus never caught it: same noun, same scope
+      phrase, no ranking signal, and the reading was always right. Only a superlative *plus* the
+      scope phrase changed meaning. The last turn is the other half of the guard — «las cuentas con
+      más gastos» is a genuine grouping instruction and still ranks accounts, which is what the fix
+      had to leave alone.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      # The asymmetry, first: the dimension word is here and the ranking signal is not.
+      - say: ¿cuánto gasté en julio en todas mis cuentas?
+        route: QUERY
+        says: Consultado en todas tus cuentas
+        ran: {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # The turn the episode exists for. TRANSPORT_FUEL is the stub planner's — it answers any
+      # superlative with a fuel ranking — and `rank` is the discriminator: read as a grouping this
+      # turn ran an aggregate over accounts, which carries no rank at all.
+      - say: ¿cuál fue mi mayor gasto de julio en todas mis cuentas?
+        route: QUERY
+        not_says: La cuenta con mayor importe
+        ran: {rank: 1, window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿y el segundo?
+        route: QUERY
+        no_model: true
+        ran: {rank: 2, window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: ¿y el tercero?
+        route: QUERY
+        no_model: true
+        ran: {rank: 3, window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: [TRANSPORT_FUEL], excluded_categories: [], excluded_merchants: []}
+      - say: gracias
+        route: COURTESY
+        no_model: true
+      # And the dimension word as an instruction rather than as a scope, which the guard must not
+      # touch: no window in the sentence, so the ranking opens on the calendar year.
+      - say: ¿cuáles son las cuentas con más gastos?
+        route: QUERY
+        no_model: true
+        says: La cuenta con mayor importe
+        ran: {window: THIS_YEAR, direction: EXPENSE, categories: [], merchants: [], group_by: ACCOUNT, metric: SUM, excluded_categories: [], excluded_merchants: []}

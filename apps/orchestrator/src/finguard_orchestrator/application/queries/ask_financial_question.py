@@ -204,17 +204,36 @@ _RETURN_TO_PREVIOUS: Final = re.compile(
     r")$"
 )
 _UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
-_COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
-    r"^(?:(?:vale|bueno|ok|perfecto)(?:\s+genial)?\s+|pues\s+)?(?:y\s+)?(?:"
+# A comparison imperative wearing the pronoun, with the second operand still to come: "compáralo
+# con …", "vale, compruébalo con …", "¿me lo podrías comparar con …?".
+#
+# Two recognisers need it — one reads a calendar unit relative to the window in view, the other a
+# window named outright — and it is spelled once because the same list spelled twice is how two
+# readers come to disagree about which sentences are comparisons at all. Same mould as
+# `MOVEMENT_NOUNS`, and for the same reason.
+_A_COMPARISON_IMPERATIVE: Final = (
+    r"(?:(?:vale|bueno|ok|perfecto)(?:\s+genial)?\s+|pues\s+)?(?:y\s+)?(?:"
     r"(?:me\s+lo\s+)?podrias\s+comparar(?:lo|la)?"
     r"|compara(?:lo|la|melo|mela)?"
     r"|comparame\s+(?:eso|esto|el\s+resultado|la\s+consulta)"
     r"|comprueba(?:lo|la)?"
     r"|revisa(?:lo|la)?"
     r"|hazme\s+una\s+comparacion"
-    r")\s+con\s+(?:el\s+|la\s+)?"
+    r")"
+)
+_COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
+    rf"^{_A_COMPARISON_IMPERATIVE}\s+con\s+(?:el\s+|la\s+)?"
     r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|ano|periodo)\s+"
     r"(?:anterior|pasad[oa])$"
+)
+# The same imperative with a window named outright as its second operand: "compáralo con junio",
+# "compáralo con julio de 2025", "compáralo con la semana pasada".
+#
+# The tail is deliberately anything at all, because what makes it a window is `window_words` and
+# not a second vocabulary here. A tail that reads as no window — "compáralo con mi nómina" — leaves
+# the sentence exactly where it was, which is with the guard.
+_COMPARE_WITH_A_NAMED_WINDOW: Final = re.compile(
+    rf"^{_A_COMPARISON_IMPERATIVE}\s+con\s+(?P<window>\S.*)$"
 )
 # "¿Y el mes anterior?" — the same question, one calendar unit back from the window on screen.
 #
@@ -1135,6 +1154,11 @@ class AskFinancialQuestionHandler:
             period_comparison = _comparison_with_previous_period(query)
         if period_comparison is None:
             period_comparison = _direct_period_comparison(query)
+        if period_comparison is None:
+            # Last, so the cheapest readers answer first. Position is not what makes it correct:
+            # it asks the two readers whose phrases it can also match whether they claim the
+            # sentence, which its docstring explains and the contested-turn measurement requires.
+            period_comparison = _comparison_with_a_named_window(query)
         if period_comparison is not None:
             # Two complete, already validated questions are safer context than asking a model to
             # reconstruct both from "compáralos". Run them again so the comparison uses current
@@ -1536,13 +1560,17 @@ class AskFinancialQuestionHandler:
             )
 
         if not planned.is_answerable:
+            # Read here as well as below, because a turn that ends in a question read a sentence
+            # too. The draft it leaves behind is the only thing the reply has to build on, so what
+            # this sentence stated has to reach it — see `_next_state`.
+            said = explicit_facts.read(query.sentence, today=query.today)
             rescued = _from_what_the_sentence_said(planned, query)
             if rescued is None:
-                yield _decline(planned, was)
+                yield _decline(planned, was, said)
                 return
             if not rescued.is_answerable:
                 # A question rather than a plan: the sentence named a category and no period.
-                yield _decline(rescued, was)
+                yield _decline(rescued, was, said)
                 return
             planned = rescued
 
@@ -3019,6 +3047,7 @@ class AskFinancialQuestionHandler:
             query.conversation,
             query.sentence,
             reporting_timezone=query.reporting_timezone,
+            ran_as=scoped,
         )
         if not difference and len(groups) >= 2:
             # Re-read the typed reference projected by ``_answered``.  In particular, do not
@@ -4238,6 +4267,7 @@ class AskFinancialQuestionHandler:
                         query.conversation,
                         query.sentence,
                         reporting_timezone=query.reporting_timezone,
+                        ran_as=scoped,
                     )
                     return replace(
                         answered,
@@ -4302,6 +4332,7 @@ class AskFinancialQuestionHandler:
             query.conversation,
             query.sentence,
             reporting_timezone=query.reporting_timezone,
+            ran_as=scoped,
         )
 
 
@@ -4438,9 +4469,41 @@ _RANKING_REQUEST: Final = re.compile(
     r"(?:gasto|ingreso|movimiento|compra|pago|cargo|cobro|nomina|sueldo|salario)\b.{0,30}"
     r"\b(?:mas\s+(?:alto|alta|caro|cara|grande)|mayor)\b"
 )
+# The nouns a breakdown can be asked for. Named once because `_GROUP_RANKING_COUNT` below spells
+# the same list, and there is no reading of this module where the two should differ.
+_GROUP_DIMENSION_NOUNS: Final = r"categorias?|comercios?|tiendas?|establecimientos?|cuentas?"
+# A universally quantified noun is a *scope*, not a dimension: «en todas mis cuentas» says where to
+# look and «todas las categorías» asks for a filter to disappear, and neither asks for one row each.
+# Read as a dimension, "cuál fue mi mayor gasto de julio en todas mis cuentas" came back
+# `group_by=ACCOUNT group_limit=5` and «La cuenta con mayor importe total … es: Cuenta corriente» —
+# a ranking of accounts as the answer to a question about one charge. This recogniser runs ahead of
+# the planner, so nothing downstream ever saw the superlative.
+#
+# The first branch exists only to be *skipped*: it consumes the scope phrase so that
+# `_group_dimension_in` keeps looking for a noun that really is one. Requiring a grouping
+# preposition in front of the noun instead — the shape `explicit_facts._ACCOUNT_BREAKDOWN` uses —
+# cannot work here, because that pattern only reads breakdowns and this one also reads the
+# rankings, which put a number or an article there: «top 3 comercios», «los tres comercios donde
+# más gasté», «las cuentas con más gastos». Twelve of the sixteen ranking sentences the suite
+# covers would have stopped being read. The determiner is no help either, since the scope phrase
+# has one too. The quantifier is the whole difference.
 _GROUP_RANKING_DIMENSION: Final = re.compile(
-    r"\b(?P<dimension>categorias?|comercios?|tiendas?|establecimientos?|cuentas?)\b"
+    rf"\btod[oa]s?\s+(?:mis|tus|sus|las|los|nuestr[oa]s)\s+(?:{_GROUP_DIMENSION_NOUNS})\b"
+    rf"|\b(?P<dimension>{_GROUP_DIMENSION_NOUNS})\b"
 )
+
+
+def _group_dimension_in(folded: str) -> re.Match[str] | None:
+    """The first noun the sentence uses as a dimension rather than as a scope.
+
+    `finditer` rather than `search`, so a sentence that states the scope before the dimension —
+    "en todas mis cuentas, top 3 comercios" — is read by its second half instead of stopping at
+    the phrase the pattern above is there to discard.
+    """
+    for match in _GROUP_RANKING_DIMENSION.finditer(folded):
+        if match.group("dimension") is not None:
+            return match
+    return None
 
 
 def _named_group_dimension(folded: str) -> GroupBy | None:
@@ -4453,7 +4516,7 @@ def _named_group_dimension(folded: str) -> GroupBy | None:
     the order of the cascade decided which of the two ran, and a corpus episode whose whole point is
     that "merchant/category must alter only the named dimension" was passing on that.
     """
-    match = _GROUP_RANKING_DIMENSION.search(folded)
+    match = _group_dimension_in(folded)
     if match is None:
         return None
     word = match.group("dimension")
@@ -4482,7 +4545,7 @@ _GROUP_RANKING_FOLLOW_UP_REQUEST: Final = re.compile(
 )
 _GROUP_RANKING_COUNT: Final = re.compile(
     r"\b(?:top\s*)?(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    r"(?:categorias?|comercios?|tiendas?|establecimientos?|cuentas?)\b"
+    rf"(?:{_GROUP_DIMENSION_NOUNS})\b"
 )
 # The same count when the sentence does not glue it to the dimension: "top 25 gastos por categoria"
 # names the number and the dimension in different halves. Read only after the pattern above misses,
@@ -4609,6 +4672,16 @@ def _period_comparison_plans(
     if (latest.period, latest.date_range) == (earlier.period, earlier.date_range):
         return None
 
+    # Every field a question can state. `across_accounts` is deliberately not among them: a plan
+    # is what was *asked*, and after the turn that settled the scope no later sentence names it
+    # again, so the second of two answered periods carries `across_accounts=False` even though its
+    # figures came from every account. Requiring the two to agree refused a comparison the
+    # conversation had already answered twice, over a field neither question mentioned.
+    #
+    # `only_account_id` and `only_account_ids` stay here. Those the sentence *can* state — «cuánto
+    # gasté en la Hucha» — so a disagreement there is two different questions, and relaxing them
+    # too would compare the piggy bank against every account. A scope field the sentence can state
+    # stays strict; a scope field only the conversation can settle does not.
     scope = (
         "direction",
         "categories",
@@ -4621,7 +4694,6 @@ def _period_comparison_plans(
         "counterparty_types",
         "include_internal",
         "internal_only",
-        "across_accounts",
         "only_account_id",
         "only_account_ids",
         "transaction_ids",
@@ -4632,6 +4704,14 @@ def _period_comparison_plans(
         return None
     if latest.transaction_ids:
         return None
+    if earlier.across_accounts != latest.across_accounts:
+        # One comparison has one scope. `_compare_periods` scopes both operands through `_scoped`
+        # with the same conversation, so the widening either question asked for is what both sides
+        # actually read; `ComparisonPlan` requires its operands to say so, and rightly. Widened
+        # with the helper rather than by setting the flag, so the narrowing being given up goes
+        # with it -- the two agreed on `only_account_id` above, and they still do.
+        earlier = _across_every_account(earlier)
+        latest = _across_every_account(latest)
 
     # A metric is part of the question, not presentation. Turning both sides into SUM made
     # "¿en cuál hice más compras?" compare euros and made "¿qué ticket medio fue mayor?" compare
@@ -5139,6 +5219,91 @@ def _comparison_with_previous_period(
         period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
         date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
     )
+    return ComparisonPlan.between(earlier, latest)
+
+
+def _comparison_with_a_named_window(
+    query: AskFinancialQuestionQuery,
+) -> ComparisonPlan | None:
+    """Compare the plan in view against the one window the sentence names.
+
+    «Compáralo con junio», «compáralo con julio de 2025», «compáralo con la semana pasada». The
+    pronoun is one operand and the sentence supplies the other, and that shape had no reader at
+    all: `_period_comparison_plans` needs both operands already answered in the conversation,
+    `_direct_period_comparison` needs both windows in the sentence, and
+    `_comparison_with_previous_period` — the only one that paired the plan in view with a window
+    from the sentence — reads a closed list of calendar-unit nouns followed by "anterior". A month
+    name is not one of them, so a sentence anybody would say fell through to `capability_guard`,
+    whose refusal then recommended «compara mis gastos de julio con junio»: a form that works,
+    which is the tell that what was missing was a shape and not a word.
+
+    **It stands aside for the two readers whose phrases it can also match**, rather than relying
+    on being last in the cascade. Its regex has to overlap theirs — "compáralo con la semana
+    pasada" is one of the sentences this exists for and it matches
+    `_COMPARE_WITH_PREVIOUS_PERIOD`'s unit alternation too, so a disjoint pattern would refuse the
+    property — and an overlap the order silently resolves is the one thing that cascade is
+    measured for not having. So the overlap is removed here instead:
+
+    - `_comparison_with_previous_period` owns "con el mes anterior", which is a unit back from the
+      window in view. Read as a window named outright it would be *last month relative to today*,
+      which after a question about July is July — the same window, and not a comparison. It only
+      declines when the unit does not fit the window in view, and that is exactly when the
+      sentence means the window rather than the step, which is what leaves "con la semana pasada"
+      over a monthly question here.
+    - `_a_comparison_owns_it` owns a tail that names two windows of its own — "compáralo con junio
+      de 2025 y julio" — where taking the first and dropping the second answers half the question
+      with a real figure on it. The same predicate `average`, `natural_period` and
+      `deterministic_breakdown` ask, so "this sentence compares two periods" keeps one definition.
+
+    The plan in view is `latest`: the pronoun is the subject of the sentence, so it is the side
+    whose change is reported, and the window the sentence names is the reference it is measured
+    against. `_comparison_with_previous_period` reads the pair the same way round.
+
+    **Two shapes it refuses**, and neither refusal is spelled out below. Nothing in view is caught
+    by the `isinstance` — one operand of two is stated and the other would have to be invented,
+    which is a clarification and the guard's to make. The same window twice is caught by
+    `ComparisonPlan`, because deriving the second operand from the first makes them identical and
+    `between` returns None; a copy of that invariant here would be a second definition of it.
+    """
+    found = _COMPARE_WITH_A_NAMED_WINDOW.fullmatch(_clean_turn(query.sentence))
+    latest = query.conversation.last_plan
+    if found is None or not isinstance(latest, FinancialPlan) or latest.transaction_ids:
+        return None
+    if latest.period is None and latest.date_range is None:
+        # A plan a model returned with no window at all is no first operand, whatever else it says.
+        return None
+    if _comparison_with_previous_period(query) is not None or _a_comparison_owns_it(query):
+        return None
+
+    said = found.group("window")
+    # "Con el año pasado" after a question about July means July of last year — which is what
+    # `a_year_earlier` says and what "¿y el año anterior?" already answers. Read as a window named
+    # outright it would be the whole of 2025: a real figure, twelve times the question. So the
+    # reader that owns the phrase is asked first, rather than this one growing its own opinion.
+    earlier_window: window_words.Window | None = window_words.a_year_earlier(
+        said, latest.date_range
+    )
+    if earlier_window is None:
+        # A window preposition, because the shape supplies one and `window_words` requires one. A
+        # bare "junio" is not a window to that reader on purpose — in the middle of a sentence it
+        # is as likely to be part of a name — but the fullmatch above has already established that
+        # this fragment is the second operand and nothing else. Same reasoning as `_MONTH_MENTION`,
+        # which accepts bare month names because the connector between two of them supplies the
+        # structure the general reader is missing.
+        earlier_window = window_words.window_in(f"en {said}", today=query.today)
+    if earlier_window is None:
+        return None
+
+    earlier = replace(
+        latest,
+        period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
+        date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
+    )
+    # Deriving the second operand from the first is what keeps the pair comparable: every field in
+    # `ComparisonPlan._SAME_SCOPE` agrees by construction, filters included, so the pronoun means
+    # *that* query and not two bare months. It is also what leaves the same-window refusal where it
+    # belongs — «compáralo con julio» about July builds two identical windows and `between` returns
+    # None, which is `ComparisonPlan`'s invariant and does not want a second copy here.
     return ComparisonPlan.between(earlier, latest)
 
 
@@ -5653,7 +5818,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         and facts.direction is None
         and len(folded.split()) <= 8
         and not _starts_new_financial_scope(query.sentence, today=query.today)
-        and not (_GROUP_RANKING_DIMENSION.search(folded) and _GROUP_RANKING_SIGNAL.search(folded))
+        and not (_group_dimension_in(folded) and _GROUP_RANKING_SIGNAL.search(folded))
         and not _A_UNIT_BACK_ANYWHERE.search(folded)
         and capability_guard.unsupported_reason(query.sentence) is None
     ):
@@ -5873,7 +6038,7 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
     """Rank aggregate groups by the exact metric named in the sentence."""
     selected = _query_for_reader(query)
     folded = spanish.folded(selected.wording)
-    dimension_match = _GROUP_RANKING_DIMENSION.search(folded)
+    dimension_match = _group_dimension_in(folded)
     previous = selected.plan
     previous_ranking = (
         previous
@@ -6702,11 +6867,17 @@ def _narrows_the_balance(
     return facts.window is None and not facts.names_a_category
 
 
-def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestionResult:
+def _decline(
+    planned: PlanningResult, was: Conversation, said: explicit_facts.ExplicitFacts
+) -> AskFinancialQuestionResult:
     """The five outcomes that never reach the ledger.
 
     Each gets its own sentence. Collapsing them into "no he podido" would tell the user
     nothing about whether to rephrase, wait, or give up.
+
+    `said` is what the declined sentence stated outright. It is carried here rather than re-read
+    because only the caller still has the sentence: `_next_state` needs it to keep a stored draft
+    honest, and by the next turn the sentence is gone.
     """
     suggestions: list[str] = []
     match planned.outcome:
@@ -6736,7 +6907,7 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         # the answers this service is certain about instead of asking an open question again.
         text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
 
-    left_open = _next_state(planned)
+    left_open = _next_state(planned, said)
     conversation = (
         # The same rule the guard's own refusal follows one branch over: a refusal answers nothing,
         # so the thread the user was on survives it. Written here as well because a capability can
@@ -6780,17 +6951,32 @@ def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bo
     )
 
 
-def _next_state(planned: PlanningResult) -> ActiveWorkflow | None:
+def _next_state(
+    planned: PlanningResult, said: explicit_facts.ExplicitFacts
+) -> ActiveWorkflow | None:
     """Where a declined turn leaves the conversation.
 
     A clarification becomes an open question carrying its draft and its slot, so the reply completes
     it. A missing capability becomes a state that remembers what it was about, so the follow-up is a
     patch. Everything else leaves nothing open: a malformed answer and a dead provider are not
     conversations, they are failures, and inviting the user to continue one would be a lie.
+
+    **The draft is enforced against the sentence that produced it**, the same rule the answerable
+    branch states out loud: what the sentence stated outright wins over the model's reading of it.
+    Asking a question does not make the model's reading any better. "¿Qué día suelo gastar más?" is
+    read here as `Metric.FREQUENCY` and was stored as the model's `AVERAGE`, so «en julio» came back
+    «el importe medio por movimiento fue de 67,71 €» — a real figure, and not an answer to the
+    question asked.
+
+    Here rather than on the reply, because here is the last turn that still has the sentence. The
+    reply is a window and nothing else: `explicit_facts.read("en julio")` states no metric, so by
+    then there is nothing left to enforce and the draft is all that remains of what was asked.
     """
     match planned.outcome:
         case PlanningOutcome.NEEDS_CLARIFICATION if planned.draft is not None:
-            return FinancialClarification(draft=planned.draft, awaiting=planned.awaiting)
+            return FinancialClarification(
+                draft=explicit_facts.enforce(planned.draft, said), awaiting=planned.awaiting
+            )
         case PlanningOutcome.UNSUPPORTED if planned.reason in capability_guard.RULES:
             return UnsupportedCapability(capability=planned.reason or "")
         case _:
@@ -7076,7 +7262,16 @@ def _answered(
     sentence: str,
     *,
     reporting_timezone: str,
+    ran_as: FinancialPlan,
 ) -> AskFinancialQuestionResult:
+    """Present one answered plan.
+
+    `plan` is what was asked and becomes the memory a follow-up inherits. `ran_as` is the same
+    plan as it was executed, and it differs in one respect: which of the holder's accounts the
+    figures came from, which the conversation can settle without this sentence naming it. Both are
+    required, because the one consumer that wants the second is easy to serve wrongly with the
+    first -- and did, for as long as this took one argument.
+    """
     if plan.metric is Metric.CUMULATIVE:
         answer = cumulative_calculator.accumulate(answer, plan.group_by)
     # "¿Cuándo me ingresan la nómina?" ran the right query and was reported as a total. The
@@ -7098,7 +7293,13 @@ def _answered(
         text = answer_writer.compare_averages(answer, plan)
     else:
         text = answer_writer.write(answer, plan)
-    scope_note = _scope_note(plan, sentence)
+    # Off the executed plan, never the remembered one. "Consultado en todas tus cuentas" describes
+    # where the figures came from, and after the turn that settled the scope no later sentence
+    # names it again -- so the remembered plan correctly says `across_accounts=False` while the
+    # ledger is still being read across every account. Read from there, the note vanished from the
+    # second such turn onward and a figure covering three accounts was presented as one account's.
+    # The two ranking paths already pass the plan they ran; this is the same call.
+    scope_note = _scope_note(ran_as, sentence)
     if scope_note and "Consultado en " not in text:
         text = f"{text}\n{scope_note}"
     referenced_category: str | None = None

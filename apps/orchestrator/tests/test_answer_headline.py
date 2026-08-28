@@ -20,7 +20,7 @@ from datetime import date, datetime
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
-from finguard_orchestrator.domain.services import answer_writer
+from finguard_orchestrator.domain.services import answer_writer, continuation_patch
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -332,3 +332,166 @@ def test_the_movements_behind_it_are_still_the_evidence() -> None:
     )
 
     assert answer_writer.cite(with_movements) != []
+
+
+def test_an_exclusion_outside_the_category_filter_says_the_figure_did_not_change() -> None:
+    """The reported turn. "Top 3 comercios de supermercado en julio" was answered, then "sin
+    contar el alquiler" came back with every figure identical under a headline that had grown
+    ", sin alquiler". Rent was never inside a supermarket filter, so the exclusion could not have
+    moved a cent, and the only way a reader could tell was that nothing had changed."""
+    said = answer_writer.write(
+        answer(), plan(categories=("GROCERIES",), excluded_categories=("HOUSING_RENT",))
+    )
+
+    assert said == (
+        "449,62 € en supermercado el mes pasado, en 8 movimientos.\n"
+        "No hay alquiler en supermercado, así que la cifra no cambia."
+    )
+
+
+def test_the_domain_names_the_exclusions_that_could_not_have_bitten() -> None:
+    """The predicate the writer reads. A plan that counts only some categories cannot lose a
+    movement to an exclusion naming another, and `check_filters` already refuses a category that
+    is both included and excluded — so with a category filter every exclusion on it is inert."""
+    filtered = plan(categories=("GROCERIES",), excluded_categories=("HOUSING_RENT", "LEISURE"))
+    unfiltered = plan(excluded_categories=("HOUSING_RENT",))
+
+    assert answer_writer.inert_exclusions(filtered) == ("HOUSING_RENT", "LEISURE")
+    assert answer_writer.inert_exclusions(unfiltered) == ()
+    assert answer_writer.inert_exclusions(plan(categories=("GROCERIES",))) == ()
+
+
+def test_two_inert_exclusions_are_both_named_under_a_negation() -> None:
+    """ "Sin alquiler y ocio" is not how Spanish enumerates under a negation, and this is read as a
+    sentence rather than as the filter clause."""
+    said = answer_writer.write(
+        answer(),
+        plan(categories=("GROCERIES",), excluded_categories=("HOUSING_RENT", "LEISURE")),
+    )
+
+    assert said.endswith("No hay alquiler ni ocio en supermercado, así que la cifra no cambia.")
+
+
+def test_an_exclusion_with_no_category_filter_is_stated_and_not_explained_away() -> None:
+    """The half that must not change, and the more important one. "Sin contar el alquiler" over a
+    total with no category filter genuinely removes rent — 975,97 € against 1.895,97 €, 27
+    movements against 28 — so the answer names the exclusion and claims nothing about the figure
+    having stayed the same. A fix that made every exclusion silent would be worse than the bug."""
+    said = answer_writer.write(answer(), plan(excluded_categories=("HOUSING_RENT",)))
+    # A shop filter is not a category filter: nothing says a Mercadona charge cannot be filed
+    # under rent, so this exclusion is not provably inert either.
+    shop = answer_writer.write(
+        answer(), plan(merchants=("Mercadona",), excluded_categories=("HOUSING_RENT",))
+    )
+
+    assert said == "449,62 € sin alquiler el mes pasado, en 8 movimientos."
+    assert shop == "449,62 € en Mercadona, sin alquiler el mes pasado, en 8 movimientos."
+
+
+def test_an_excluded_shop_is_still_named_beside_an_inert_category() -> None:
+    """A category filter says nothing about which shops its movements are in, so excluding a
+    merchant can still remove rows and stays in the clause."""
+    said = answer_writer.write(
+        answer(),
+        plan(
+            categories=("GROCERIES",),
+            excluded_categories=("HOUSING_RENT",),
+            excluded_merchants=("Mercadona",),
+        ),
+    )
+
+    assert said.startswith("449,62 € en supermercado, sin Mercadona el mes pasado")
+    assert said.endswith("No hay alquiler en supermercado, así que la cifra no cambia.")
+
+
+def test_a_group_ranking_stops_claiming_a_filter_that_could_not_have_moved_a_row() -> None:
+    """The shape that reproduced over HTTP: a ranking of shops inside one category, where three
+    identical rows came back under a headline claiming the rent had been taken out."""
+    ranked_shops = QueryAnswer(
+        currency="EUR",
+        total_minor=42_471,
+        movement_count=7,
+        groups=(
+            Group("Carrefour", 21_828, 3),
+            Group("Mercadona", 13_121, 2),
+            Group("Alcampo", 7_522, 2),
+        ),
+    )
+
+    said = answer_writer.write(
+        ranked_shops,
+        plan(
+            categories=("GROCERIES",),
+            excluded_categories=("HOUSING_RENT",),
+            group_by=GroupBy.MERCHANT,
+            group_limit=3,
+        ),
+    )
+
+    assert said.splitlines()[0] == (
+        "Tus 3 comercios con mayor importe total en supermercado el mes pasado son:"
+    )
+    assert said.splitlines()[-1] == "No hay alquiler en supermercado, así que la cifra no cambia."
+    assert "  · Carrefour: 218,28 € (3)" in said
+
+
+def test_a_movement_ranking_says_when_its_exclusion_could_not_have_bitten() -> None:
+    """`TopMovements` carries the same two filters and reaches the same writer helper."""
+    biggest = Movement(
+        occurred_at=datetime(2026, 7, 14, 10, 0),
+        description="Carrefour",
+        amount_minor=8_940,
+        direction="EXPENSE",
+        merchant_name="Carrefour",
+        currency="EUR",
+    )
+    inert = TopMovements(
+        direction=Direction.EXPENSE,
+        period=LAST_MONTH,
+        categories=("GROCERIES",),
+        excluded_categories=("HOUSING_RENT",),
+    )
+    real = TopMovements(
+        direction=Direction.EXPENSE,
+        period=LAST_MONTH,
+        excluded_categories=("HOUSING_RENT",),
+    )
+
+    assert answer_writer.ranked(biggest, inert) == (
+        "Tu mayor gasto en supermercado el mes pasado fue de 89,40 €: Carrefour, el 14 de julio.\n"
+        "No hay alquiler en supermercado, así que la cifra no cambia."
+    )
+    assert answer_writer.ranked(biggest, real) == (
+        "Tu mayor gasto sin alquiler el mes pasado fue de 89,40 €: Carrefour, el 14 de julio."
+    )
+
+
+def test_an_answer_with_no_figure_does_not_explain_a_figure_that_did_not_change() -> None:
+    """Nothing was counted, so there is no "cifra" for the note to be about, and the invitation to
+    widen the search is the whole answer."""
+    said = answer_writer.write(
+        QueryAnswer(currency="EUR", total_minor=0, movement_count=0),
+        plan(categories=("GROCERIES",), excluded_categories=("HOUSING_RENT",)),
+    )
+
+    assert said == (
+        "No he encontrado movimientos en supermercado el mes pasado. "
+        "Puedes buscar sin categoría o ampliar el periodo."
+    )
+
+
+def test_the_inert_exclusion_is_still_applied_to_the_plan() -> None:
+    """Decision (a), end to end: the instruction is kept — it matters the day the category filter
+    widens — and what changes is only what the answer claims about the figure."""
+    patched = continuation_patch.apply(
+        "sin contar el alquiler",
+        plan(categories=("GROCERIES",)),
+        today=date(2026, 8, 25),
+    )
+
+    assert patched.plan is not None
+    assert patched.plan.excluded_categories == ("HOUSING_RENT",)
+    assert patched.plan.categories == ("GROCERIES",)
+    assert answer_writer.write(answer(), patched.plan).endswith(
+        "No hay alquiler en supermercado, así que la cifra no cambia."
+    )

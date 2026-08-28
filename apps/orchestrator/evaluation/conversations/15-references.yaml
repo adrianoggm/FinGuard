@@ -205,3 +205,39 @@ episodes:
         ran: [{window: '2026-01-01..2026-12-31', direction: EXPENSE, categories: [], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE}, {window: '2025-01-01..2025-12-31', direction: EXPENSE, categories: [], merchants: [], group_by: MONTH, metric: PERIOD_AVERAGE, excluded_categories: [], excluded_merchants: []}]
       - say: gracias
         route: COURTESY
+
+  - name: a_pronoun_and_one_named_window_are_a_comparison
+    why: >
+      "Compáralo con junio" points at one operand and names the other, and it was the comparison
+      shape no recogniser claimed: the pronoun readers need both periods already answered, the
+      direct reader needs both windows in the sentence, and the step-back reader knows only
+      calendar-unit nouns followed by "anterior". So a sentence anybody would say was refused --
+      and the refusal recommended "compara mis gastos de julio con junio", a form that does work,
+      which is the tell that what was missing was a shape and not a word. The category is asserted
+      on both operands of every turn because the pronoun means *that* query, filters included.
+    metrics: [wrong_tool, context_retention, unnecessary_model_call]
+    turns:
+      - say: ¿Cuánto gasté en restaurantes en julio de este año?
+        route: QUERY
+        ran: {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}
+      - say: Compáralo con junio
+        route: QUERY
+        no_model: true
+        says: junio de 2026
+        ran: [{window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+      - say: Compáralo con julio de 2025
+        route: QUERY
+        no_model: true
+        says: julio de 2025
+        ran: [{window: '2025-07-01..2025-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+      - say: Compáralo con la semana pasada
+        route: QUERY
+        no_model: true
+        says: la semana pasada
+        ran: [{window: LAST_WEEK, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+      - say: ¿Y en porcentaje?
+        route: QUERY
+        no_model: true
+        ran: [{window: '2026-07-01..2026-07-31', direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}, {window: LAST_WEEK, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], excluded_categories: [], excluded_merchants: [], group_by: NONE, metric: SUM}]
+      - say: gracias
+        route: COURTESY

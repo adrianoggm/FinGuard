@@ -82,6 +82,12 @@ class PlanPatch:
         if self.metric is not None:
             changed = replace(changed, metric=self.metric)
         if self.excluded_categories:
+            # Applied even when it can remove nothing. "Sin contar el alquiler" over a plan
+            # filtered to GROCERIES drops no movement — rent was never inside a supermarket
+            # filter — and the instruction is still real, so the patch keeps it: the day the
+            # category filter widens, it bites. What must not happen is the answer claiming a
+            # filter that cannot have moved the figure, and that is
+            # `answer_writer.inert_exclusions`, not this.
             excluded = tuple(
                 dict.fromkeys((*changed.excluded_categories, *self.excluded_categories))
             )

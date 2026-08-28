@@ -18,7 +18,7 @@ sentence does not contain, and it never overrides a refusal the guard actually m
 
 import uuid
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -45,6 +45,7 @@ from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -101,6 +102,20 @@ class AsksAnyway(GivesUp):
         return PlanningResult.needs_clarification(
             "¿Te refieres a supermercados en general o a un tipo específico de gasto?",
             awaiting=Slot.CATEGORY,
+        )
+
+
+class AsksForTheWindow(GivesUp):
+    """A model that stops for the window and carries its own reading of everything else."""
+
+    def __init__(self, draft: FinancialPlanDraft) -> None:
+        super().__init__()
+        self._draft = draft
+
+    async def plan(self, *_: object, **__: object) -> PlanningResult:
+        self.asked += 1
+        return PlanningResult.needs_clarification(
+            "¿De qué periodo?", self._draft, awaiting=Slot.WINDOW
         )
 
 
@@ -1275,6 +1290,125 @@ async def test_check_it_against_previous_month_is_anchored_to_the_payroll_month_
     assert "julio de 2026" in answer.text
 
 
+class WindowLedger(Ledger):
+    """One figure per window, so which side of a comparison a number came from is visible."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.windows: list[AbsoluteRange | RelativePeriod | None] = []
+        self.plans: list[FinancialPlan] = []
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plans.append(plan)
+        self.windows.append(plan.date_range or plan.period)
+        return QueryAnswer(
+            currency="EUR",
+            total_minor=10_000 * len(self.windows),
+            movement_count=2,
+        )
+
+
+GROCERIES_IN_JULY = FinancialPlan(
+    direction=Direction.EXPENSE,
+    date_range=window_words.whole_month(2026, 7),
+    categories=("GROCERIES",),
+)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "earlier", "names"),
+    [
+        ("Compáralo con junio", window_words.whole_month(2026, 6), "junio de 2026"),
+        ("Compáralo con julio de 2025", window_words.whole_month(2025, 7), "julio de 2025"),
+        ("Compáralo con la semana pasada", RelativePeriod(Period.LAST_WEEK), "la semana pasada"),
+    ],
+)
+async def test_one_named_window_is_compared_against_the_plan_in_view(
+    sentence: str, earlier: AbsoluteRange | RelativePeriod, names: str
+) -> None:
+    """A pronoun and one window is a comparison, and it was the one comparison shape with no reader.
+
+    `_period_comparison_plans` needs both operands already answered, `_direct_period_comparison`
+    needs both windows in the sentence, and `_comparison_with_previous_period` -- the only reader
+    that paired the plan in view with a window from the sentence -- knows a closed list of calendar
+    units followed by "anterior". A month name is not one, so all three of these fell through to
+    `capability_guard`, whose refusal then recommended «compara mis gastos de julio con junio»: a
+    form that works. Recommending a form that works is the tell that the missing thing was a shape
+    and not a word.
+
+    The category is asserted on both operands because the pronoun means *that* query. A comparison
+    that quietly dropped the filter would compare two whole months against each other and be right
+    about neither question.
+    """
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked(sentence, planner, ledger, Conversation(last_plan=GROCERIES_IN_JULY))
+
+    assert planner.asked == 0, "a complete comparison is intercepted before the model"
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.windows == [earlier, window_words.whole_month(2026, 7)]
+    assert all(plan.categories == ("GROCERIES",) for plan in ledger.plans)
+    assert "julio de 2026" in answer.text
+    assert names in answer.text
+
+
+async def test_the_same_window_twice_is_not_a_comparison() -> None:
+    """«Compáralo con julio» about July. Two operands naming one window is a tautology, and
+    answering it with two identical figures and "el gasto fue el mismo" reads as a finding.
+
+    Asserted end to end rather than on the recogniser, because the refusal is not the recogniser's:
+    the second operand is derived from the plan in view, so naming its own window builds two
+    identical plans and `ComparisonPlan` declines them. That is the right owner -- the invariant is
+    already written down once, in the value object -- and this is what says the new reader routes
+    into it rather than around it."""
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked(
+        "Compáralo con julio", planner, ledger, Conversation(last_plan=GROCERIES_IN_JULY)
+    )
+
+    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert "no he podido delimitar dos periodos" in answer.text
+    assert ledger.windows == [], "no figure is read for a comparison that is not one"
+
+
+async def test_a_comparison_imperative_with_nothing_in_view_is_not_a_comparison() -> None:
+    """The first thing somebody says cannot be «compáralo con junio»: one operand of two is stated
+    and the other would have to be invented. That is a clarification, and the guard already owns
+    it -- so this asserts the recogniser stands aside rather than building a `ComparisonPlan` out
+    of a window and a guess."""
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked("Compáralo con junio", planner, ledger, IDLE)
+
+    assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+    assert "no he podido delimitar dos periodos" in answer.text
+    assert ledger.windows == []
+
+
+async def test_the_refusal_does_not_recommend_a_form_this_service_refuses() -> None:
+    """The COMPARISON refusal names two forms, and a refusal that recommends a form which fails is
+    worse than the refusal on its own -- it teaches somebody the product cannot do something twice.
+
+    The second form -- «consulta dos periodos por separado y dime "compáralos"» -- is pinned by
+    `test_account_scope_workflow.test_two_answered_periods_compare_when_only_the_first_named_the_scope`.
+    The first had nothing behind it, which is how the text came to be checked at all.
+    """
+    planner = GivesUp("COMPARISON")
+    ledger = WindowLedger()
+
+    answer = await asked("compara mis gastos de julio con junio", planner, ledger, IDLE)
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.windows == [
+        window_words.whole_month(2026, 6),
+        window_words.whole_month(2026, 7),
+    ]
+
+
 async def test_this_payroll_can_be_compared_with_all_the_previous_ones() -> None:
     class PayrollLedger(Ledger):
         def __init__(self) -> None:
@@ -2080,3 +2214,75 @@ async def test_a_sentence_stating_nothing_certain_keeps_the_refusal() -> None:
     answer = await asked("¿qué tal va la cosa este mes?", GivesUp())
 
     assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+
+
+# --- what a question back is allowed to remember ------------------------------------------
+#
+# The same argument as `enforce` on the answerable branch, one branch over. A turn that stops to
+# ask still read a sentence, and the facts that sentence stated outright are the facts — whether
+# the turn ends in an answer or in a question. Storing the model's reading instead loses them for
+# good: the reply is a window and nothing else, so nothing later in the conversation can recover
+# what the first sentence said.
+
+
+class WeeklyLedger(Ledger):
+    """Four weekly movements, so a cadence answer has dates to describe."""
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plan = plan
+        mondays = tuple(
+            Movement(
+                occurred_at=datetime(2026, 7, 6, 10, 0, tzinfo=UTC) + timedelta(days=7 * index),
+                description="Movimiento",
+                amount_minor=5_000,
+                direction="EXPENSE",
+                merchant_name="Comercio",
+            )
+            for index in range(4)
+        )
+        return QueryAnswer(
+            currency="EUR",
+            total_minor=20_000,
+            movement_count=len(mondays),
+            movements=mondays,
+        )
+
+
+# The model's reading of «¿Qué día suelo gastar más?»: a mean amount per day, where the sentence
+# asks how often. Named once because both tests below turn on it being the wrong reading.
+AS_AN_AVERAGE = FinancialPlanDraft(
+    direction=Direction.EXPENSE, group_by=GroupBy.DAY, metric=Metric.AVERAGE
+)
+
+
+async def test_a_stored_draft_keeps_the_metric_the_sentence_stated() -> None:
+    """«¿Qué día suelo gastar más?» is a cadence question, and it names no window — so it is the
+    model that answers it, with a question of its own and a draft reading it as an average. Three
+    turns later the holder was told «el importe medio por movimiento fue de 67,71 €», which is a
+    real figure and not the answer to what they asked.
+
+    `explicit_facts.read` gets this right on its own: no window, no category, `Metric.FREQUENCY`.
+    Nothing applied it, because the enforcement lived only on the branch that answers."""
+    planner = AsksForTheWindow(AS_AN_AVERAGE)
+
+    answer = await asked("¿Qué día suelo gastar más?", planner)
+
+    assert answer.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert isinstance(answer.conversation.active, FinancialClarification)
+    assert answer.conversation.active.draft.metric is Metric.FREQUENCY
+
+
+async def test_the_reply_to_that_question_is_answered_as_a_cadence() -> None:
+    """The round trip the boundary test above protects. Enforcing on the way *out* is what makes
+    this work: on the way back the original sentence is gone and «en julio» states no metric at
+    all, so there is nothing left to enforce against."""
+    planner = AsksForTheWindow(AS_AN_AVERAGE)
+    first = await asked("¿Qué día suelo gastar más?", planner)
+
+    ledger = WeeklyLedger()
+    second = await asked("En julio", planner, ledger, first.conversation)
+
+    assert second.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.FREQUENCY
+    assert "€" not in second.text, "a cadence question is not answered with money"
