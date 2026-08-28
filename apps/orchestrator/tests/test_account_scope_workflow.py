@@ -476,3 +476,57 @@ async def test_no_read_path_turns_a_scope_requirement_into_a_crash(sentence: str
     assert "cuenta" in answer.text.lower()
     assert "Todas mis cuentas" in answer.suggestions
     assert ledger.plans == [], "no figure is read before the holder has said whose money it is"
+
+
+@pytest.mark.asyncio
+async def test_a_later_unqualified_turn_still_says_the_figures_covered_every_account() -> None:
+    """The note describes the figures, and on both turns those came from every account.
+
+    The remembered plan is what was *asked*, so a turn whose sentence never named the scope
+    carries `across_accounts=False` -- and that is correct. Reading the note off it made
+    "Consultado en todas tus cuentas" vanish from the second such turn onward while the ledger
+    was still being read across every account the holder has.
+    """
+    ledger = Ledger()
+    handler = service(ledger)
+    clarification = await ask(handler, "Cuánto he gastado este mes?")
+    across = await ask(handler, "Todas mis cuentas", clarification.conversation)
+    assert "Consultado en todas tus cuentas." in across.text
+
+    later = await ask(handler, "Cuánto he gastado el mes pasado?", across.conversation)
+
+    assert later.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[-1].across_accounts is True
+    assert "Consultado en todas tus cuentas." in later.text
+    # The plan stays what was asked. This sentence did not name the scope, so it does not claim it.
+    assert later.conversation.last_plan is not None
+    assert later.conversation.last_plan.across_accounts is False
+
+
+@pytest.mark.asyncio
+async def test_two_answered_periods_compare_when_only_the_first_named_the_scope() -> None:
+    """«Compáralos» compares the two questions the conversation has already answered.
+
+    A three-turn conversation rather than a call on the recogniser, because the defect lives in
+    what the previous turn stored: the July plan remembers the scope its own sentence named and
+    the June plan does not, so the pair disagreed on a field neither question mentioned and the
+    comparison was refused. Building the two plans by hand would prove nothing.
+    """
+    ledger = Ledger()
+    handler = service(ledger)
+
+    july = await ask(handler, "cuánto gasté en julio en todas mis cuentas")
+    june = await ask(handler, "cuánto gasté en junio", july.conversation)
+    assert july.outcome == PlanningOutcome.PLANNED.value
+    assert june.outcome == PlanningOutcome.PLANNED.value
+    # The precondition: the second question never named the scope, so its plan does not carry it.
+    assert june.conversation.last_plan is not None
+    assert june.conversation.last_plan.across_accounts is False
+
+    compared = await ask(handler, "compáralos", june.conversation)
+
+    assert compared.outcome == PlanningOutcome.PLANNED.value
+    assert "julio de 2026" in compared.text
+    assert "junio de 2026" in compared.text
+    # One comparison, one scope: both operands read the accounts both figures came from.
+    assert [plan.across_accounts for plan in ledger.plans[-2:]] == [True, True]
