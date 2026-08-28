@@ -1,0 +1,166 @@
+# Which of the holder's accounts a question is about, as conversations.
+#
+# Production wires an account directory and therefore asks «¿En qué cuenta quieres consultarlo?»
+# before answering any unqualified spending question. Until this file existed, no turn in the
+# corpus had ever seen that question: the harness wired no directory, so 1143 turns ran through
+# three branches of `_scoped` that no deployment reaches, and the corpus reported 0 % lost context
+# while the account scope was untested end to end.
+#
+# These episodes declare `scope: unset`, which is the only way to reach it — every other episode
+# opens with the scope already settled, because it is about something else and a preamble turn
+# copied into 169 conversations proves nothing after the first.
+
+episodes:
+  - name: the_account_question_is_asked_once_and_then_settled
+    scope: unset
+    why: >
+      The turn every unqualified spending question costs in production, and what it buys: asked
+      once, answered with a chip, and then never asked again for the rest of the thread. Both
+      halves matter — a service that asks is annoying, and a service that asks *every* time is
+      unusable, and only a conversation can tell them apart.
+    metrics: [unnecessary_clarification, context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: CLARIFY
+        says: ¿En qué cuenta quieres consultarlo?
+        keeps: ACCOUNT_SCOPE
+      # The chip, answered from the account vocabulary rather than by a model. A deployment that
+      # sent this word to a planner would be paying for a model to read a button the service drew.
+      - say: Hucha
+        route: QUERY
+        no_model: true
+        says: Hucha
+        total: 46556
+        ends: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      # And it is remembered. The choice was a whole turn to make, so a follow-up that widened
+      # back to every account would have charged for it and then thrown it away.
+      - say: ¿y en gasolina?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: ¿y el mes anterior?
+        route: QUERY
+        no_model: true
+        ran: {window: '2026-06-01..2026-06-30', direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        no_model: true
+        says: 5.485,50
+      - say: gracias
+        route: COURTESY
+        no_model: true
+        ends: true
+
+  - name: todas_mis_cuentas_settles_the_thread
+    scope: unset
+    why: >
+      The other chip, and the one that is the default everywhere else. Answering "todas mis
+      cuentas" has to widen the pending question rather than pick the first account, and it has to
+      keep widening for the follow-ups — including a fresh complete question, which must not
+      re-open a choice the holder has already made.
+    metrics: [unnecessary_clarification, context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: CLARIFY
+        says: Todas mis cuentas
+        keeps: ACCOUNT_SCOPE
+      - say: Todas mis cuentas
+        route: QUERY
+        no_model: true
+        says: todas tus cuentas
+        total: 46556
+        ends: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿y en restaurantes?
+        route: QUERY
+        no_model: true
+        says: todas tus cuentas
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['RESTAURANTS'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      # A whole new question, not an ellipsis. It must not ask again either: the scope of the
+      # thread is settled, and re-asking is what makes a two-turn question a four-turn one.
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        says: todas tus cuentas
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: ¿cuánto tengo?
+        route: BALANCE
+        no_model: true
+        says: 7.755,92
+      - say: gracias, adiós
+        route: COURTESY
+        no_model: true
+        ends: true
+
+  - name: the_account_question_survives_an_aside_and_a_balance
+    scope: unset
+    why: >
+      An open question is a thing the user can walk away from and come back to. "¿Quién eres?" and
+      "¿cuánto tengo?" are not accounts, so neither may be swallowed by the chip parser and neither
+      may throw the pending question away — the spending question was asked and is still owed an
+      answer three turns later.
+    metrics: [wrong_tool, context_retention]
+    turns:
+      - say: ¿cuánto gasté el mes pasado?
+        route: CLARIFY
+        keeps: ACCOUNT_SCOPE
+      - say: ¿quién eres?
+        route: IDENTITY
+        no_model: true
+        keeps: ACCOUNT_SCOPE
+      - say: ¿cuánto tengo?
+        route: BALANCE
+        no_model: true
+        says: 7.755,92
+        keeps: ACCOUNT_SCOPE
+      # And the question asked three turns ago is what this answers, with the window it had.
+      - say: Cuenta corriente
+        route: QUERY
+        no_model: true
+        total: 46556
+        ends: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente']}
+      - say: ¿y en gasolina?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente']}
+      - say: gracias
+        route: COURTESY
+        no_model: true
+        ends: true
+
+  - name: an_account_named_in_the_question_is_never_asked_about
+    scope: unset
+    why: >
+      The clarification is for questions that do not say which account, and a question that says
+      one must never pay for it. This is also where the persisted scope is *meant* to carry: the
+      holder named Hucha themselves, so the follow-ups and the next complete question stay there
+      until they say otherwise.
+    metrics: [unnecessary_clarification, context_retention]
+    turns:
+      - say: ¿cuánto gasté en la hucha el mes pasado?
+        route: QUERY
+        says: Hucha
+        not_says: ¿En qué cuenta
+        total: 46556
+        ends: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: ¿y en gasolina?
+        route: QUERY
+        no_model: true
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: ['TRANSPORT_FUEL'], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: ¿cuánto gasté este mes?
+        route: QUERY
+        not_says: ¿En qué cuenta
+        ran: {window: THIS_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
+      - say: ¿cuánto tengo en la hucha?
+        route: BALANCE
+        no_model: true
+        says: 5.485,50
+      - say: vale
+        route: COURTESY
+        no_model: true
+      - say: gracias
+        route: COURTESY
+        no_model: true
+        ends: true

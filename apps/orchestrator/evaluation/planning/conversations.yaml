@@ -884,6 +884,22 @@ conversations:
           window: THIS_MONTH
         must_change: [categories]
 
+  - id: an_account_and_a_month_both_stated_outright
+    why: >
+      The shape every unqualified spending question turns into once the holder has answered «¿En
+      qué cuenta quieres consultarlo?» — account and window both named in one sentence — and
+      nothing here measured it, because the conversation corpus had no account directory and so
+      never asked that question in the first place. The window is stated, so it is ours to enforce;
+      the category follow-up may not move it.
+    turns:
+      - say: ¿cuánto gasté en la hucha el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        expect_shape: TOTAL
+      - say: ¿Y cuánto en gasolina?
+        must_keep: [window]
+        must_change: [categories]
+
   - id: a_correction_that_names_an_account_and_no_period
     why: >
       "Quería saber lo de la hucha" corrects what the last answer was about without saying when. The

@@ -327,6 +327,14 @@ episodes:
         ran: {window: THIS_YEAR, direction: EXPENSE, categories: ['GROCERIES'], merchants: [], group_by: NONE, metric: COUNT, excluded_categories: [], excluded_merchants: []}
 
   - name: salary_analysis_survives_an_aside_and_pronouns
+    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
+    # wrongly, and writing the wrong scope into its expectations would record the defect as
+    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    #
+    # Turns 1-3 answer across every account. Turn 5 narrows the highest payslip to Cuenta corriente
+    # and turns 6-7 inherit it, which is exactly the payroll-paid-elsewhere that `_scoped` strips
+    # the nómina alias to prevent.
+    scope: legacy
     why: >
       The user changes the divisor conversationally, pauses to inspect their balance, returns to
       salary without restating the year and then asks about one ranked row as "esa". This is the
