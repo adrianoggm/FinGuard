@@ -27,7 +27,7 @@ about a year. With `awaiting` on the state, "de este" becomes answerable — the
 the sentence is filling, so the reply no longer has to be a self-contained phrase.
 """
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -39,12 +39,11 @@ from finguard_orchestrator.domain.constants import (
     MAX_MERCHANT_LENGTH,
     MAX_REMEMBERED_TURNS,
     MAX_SELECTED_ACCOUNTS,
-    MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
     MAX_VISUAL_CONTEXTS,
 )
-from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
+from finguard_orchestrator.domain.enums import CounterpartyType, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
@@ -359,22 +358,8 @@ class Conversation:
     # payment may coexist with it, and retrying must execute this exact plan instead of asking the
     # model to interpret "reintenta" as a new financial question.
     retry_plan: PlannedQuery | None = None
-    # A category the last answer explicitly singled out (for example the largest group). The plan
-    # alone remembers that a category breakdown was run, but not which row the answer called
-    # "the one where you spent most". This small referent makes "esa categoría" resolvable without
-    # storing financial results or asking a model to guess a row.
-    referenced_category: str | None = None
-    # The concrete row the last answer put in focus. Unlike `referenced_category`, this also
-    # covers merchant and account breakdowns, while keeping only an identifier/name and never the
-    # amount shown beside it. Both fields are one optional value and therefore travel together.
-    referenced_group_by: GroupBy | None = None
-    referenced_group_key: str | None = None
-    # Exact ledger rows displayed as evidence by the last aggregate answer. This lets a later
-    # "esos movimientos" select what was actually on screen instead of rerunning the broad query.
-    referenced_transaction_ids: tuple[UUID, ...] = ()
-    # Canonical, source-bound referent. Legacy fields above remain as the wire-compatible
-    # projection until the later migration phases remove them.
-    result_reference: "ResultReference | None" = field(default=None, compare=False)
+    # Canonical, source-bound referent. Its wire projection lives in ConversationPayload.
+    result_reference: "ResultReference | None" = None
     # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
     # a clarification records its slot on the workflow, and a question asked with nothing
     # half-built behind it leaves no workflow to record it on. Without this, that question can be
@@ -426,27 +411,6 @@ class Conversation:
         for context in self.visual_contexts:
             if not context.spec.valid_for(context.profile.field_names()):
                 raise InvalidValueError("visual context spec is incompatible with its profile")
-        if (self.referenced_group_by is None) != (self.referenced_group_key is None):
-            raise InvalidValueError("a referenced group needs both its dimension and key")
-        if self.referenced_group_by not in {
-            None,
-            GroupBy.CATEGORY,
-            GroupBy.MERCHANT,
-            GroupBy.COUNTERPARTY,
-            GroupBy.ACCOUNT,
-        }:
-            raise InvalidValueError(
-                "only category, merchant, counterparty and account rows can be referenced"
-            )
-        if self.referenced_group_key is not None:
-            if not self.referenced_group_key.strip():
-                raise InvalidValueError("a referenced group key cannot be blank")
-            if len(self.referenced_group_key) > MAX_MERCHANT_LENGTH:
-                raise InvalidValueError("referenced group key is too long")
-        if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
-            raise InvalidValueError("referenced transaction ids must be unique")
-        if len(self.referenced_transaction_ids) > MAX_SELECTED_TRANSACTIONS:
-            raise InvalidValueError("too many referenced transaction ids")
         folded_aliases = tuple(alias.alias.casefold().strip() for alias in self.account_aliases)
         if len(self.account_aliases) > MAX_ENTITY_ALIASES:
             raise InvalidValueError("too many account aliases")
@@ -622,85 +586,33 @@ class Conversation:
             last_plan=None,
             last_ratio=None,
             last_comparison=None,
-            # Replaced by whatever this answer put in focus, never inherited: a referent from the
-            # previous result points at rows this answer never showed.
-            referenced_category=None,
-            referenced_group_by=None,
-            referenced_group_key=None,
-            referenced_transaction_ids=(),
             result_reference=None,
         )
 
-    def answered(
-        self,
-        plan: PlannedQuery,
-        *,
-        referenced_category: str | None = None,
-        referenced_group_by: GroupBy | None = None,
-        referenced_group_key: str | None = None,
-        referenced_transaction_ids: tuple[UUID, ...] = (),
-    ) -> "Conversation":
+    def answered(self, plan: PlannedQuery) -> "Conversation":
         """Remember a financial answer and close only the workflow that answer resolves.
 
         A suspended payment belongs to the conversation before this answer and deliberately stepped
         aside for it. It survives; a financial clarification or refusal does not, because the new
         answer supersedes it.
         """
-        if referenced_category is not None and referenced_group_by is None:
-            referenced_group_by = GroupBy.CATEGORY
-            referenced_group_key = referenced_category
-        elif referenced_group_by is GroupBy.CATEGORY:
-            referenced_category = referenced_group_key
         return replace(
             self._answering(),
             last_plan=plan,
             # Asking the same question twice must not push the plan behind it out of memory.
             prior_plan=self.prior_plan if plan == self.last_plan else self.last_plan,
-            referenced_category=referenced_category,
-            referenced_group_by=referenced_group_by,
-            referenced_group_key=referenced_group_key,
-            referenced_transaction_ids=referenced_transaction_ids,
-        )
-
-    def with_references(
-        self,
-        *,
-        group_by: GroupBy | None = None,
-        group_key: str | None = None,
-        transaction_ids: tuple[UUID, ...] | None = None,
-    ) -> "Conversation":
-        """Focus an already answered result without changing the query behind it."""
-        grounded_category = (
-            self.referenced_category
-            if self.referenced_category is not None
-            and self.last_plan is not None
-            and self.last_plan.categories == (self.referenced_category,)
-            else None
-        )
-        return replace(
-            self,
-            referenced_category=(group_key if group_by is GroupBy.CATEGORY else grounded_category),
-            referenced_group_by=group_by,
-            referenced_group_key=group_key,
-            referenced_transaction_ids=(
-                self.referenced_transaction_ids if transaction_ids is None else transaction_ids
-            ),
-            result_reference=None,
         )
 
     def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
         """Remember both operands while asking for their shared period."""
         return replace(self, last_asked=Slot.WINDOW, pending_ratio=draft)
 
-    def answered_comparison(
-        self, plan: ComparisonPlan, *, referenced_category: str | None = None
-    ) -> "Conversation":
+    def answered_comparison(self, plan: ComparisonPlan) -> "Conversation":
         """Keep the compatible pair as one value while exposing both legacy plan slots."""
         return replace(
             self._answering(),
             last_plan=plan.latest,
             prior_plan=plan.earlier,
-            referenced_category=referenced_category,
             last_comparison=plan,
         )
 
@@ -710,9 +622,6 @@ class Conversation:
             self._answering(),
             last_plan=plan.part,
             prior_plan=plan.whole,
-            referenced_category=(
-                plan.part.categories[0] if len(plan.part.categories) == 1 else None
-            ),
             last_ratio=plan,
         )
 

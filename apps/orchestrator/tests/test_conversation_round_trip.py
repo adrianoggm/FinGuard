@@ -344,16 +344,14 @@ def test_special_focus_discards_incoming_legacy_reference(special: str) -> None:
             ),
             kind=RatioKind.SHARE,
         )
-        conversation = replace(IDLE.answered_ratio(ratio), **reference_fields)
+        conversation = IDLE.answered_ratio(ratio)
     elif special == "pending_ratio":
         draft = RatioDraft(
             part=FinancialPlanDraft(direction=Direction.EXPENSE),
             whole=FinancialPlanDraft(direction=Direction.INCOME),
             kind=RatioKind.SHARE,
         )
-        conversation = replace(
-            IDLE.answered(LAST_MONTH).waiting_for_ratio(draft), **reference_fields
-        )
+        conversation = IDLE.answered(LAST_MONTH).waiting_for_ratio(draft)
     elif special == "comparison":
         earlier = FinancialPlan(
             direction=Direction.EXPENSE,
@@ -367,13 +365,9 @@ def test_special_focus_discards_incoming_legacy_reference(special: str) -> None:
         )
         comparison = ComparisonPlan.between(earlier, latest)
         assert comparison is not None
-        conversation = replace(IDLE.answered_comparison(comparison), **reference_fields)
+        conversation = IDLE.answered_comparison(comparison)
     else:
-        conversation = replace(
-            IDLE.answered(LAST_MONTH),
-            answered_the_balance=True,
-            **reference_fields,
-        )
+        conversation = replace(IDLE.answered(LAST_MONTH), answered_the_balance=True)
 
     raw = mapper.to_payload(conversation).model_dump()
     raw.update(reference_fields)
@@ -383,10 +377,6 @@ def test_special_focus_discards_incoming_legacy_reference(special: str) -> None:
     projected = mapper.to_payload(back)
 
     assert back.result_reference is None
-    assert back.referenced_category is None
-    assert back.referenced_group_by is None
-    assert back.referenced_group_key is None
-    assert back.referenced_transaction_ids == ()
     assert projected.referenced_category is None
     assert projected.referenced_group_by is None
     assert projected.referenced_group_key is None

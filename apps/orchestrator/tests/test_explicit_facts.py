@@ -30,6 +30,7 @@ from finguard_orchestrator.domain.enums import (
     TransactionType,
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import explicit_facts
@@ -77,7 +78,7 @@ class FakePlanner:
         self._result = result
         self.asked: str | None = None
 
-    async def plan(self, sentence: str, *, today: date, previous=None, force_follow_up=False):
+    async def plan(self, sentence: str, *, context: PlanningContext):
         self.asked = sentence
         return self._result
 

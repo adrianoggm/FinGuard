@@ -1,8 +1,7 @@
 """A result referent bound to the exact query that produced it.
 
-``Conversation`` still owns the backwards-compatible wire fields.  This value is the
-read-side projection: consumers cannot accidentally combine a row from one answer with
-the query currently in focus.
+The wire projection lives in ``ConversationPayload``. This value is the read-side projection:
+consumers cannot accidentally combine a row from one answer with the query currently in focus.
 """
 
 from dataclasses import dataclass, replace

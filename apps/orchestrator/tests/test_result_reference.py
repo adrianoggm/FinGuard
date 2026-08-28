@@ -114,14 +114,14 @@ def test_canonical_reference_is_stored_and_exact_object_is_returned() -> None:
     assert result_reference_of(conversation, focus_of(conversation)) is reference
 
 
-def test_canonical_reference_rejects_wrong_source_or_projection() -> None:
+def test_canonical_reference_rejects_wrong_source_identity() -> None:
     reference = ResultReference(SOURCE, category="GROCERIES")
     with pytest.raises(InvalidValueError):
         Conversation(
             last_plan=FinancialPlan(direction=SOURCE.direction, period=SOURCE.period),
             result_reference=reference,
         )
-    Conversation(last_plan=SOURCE, result_reference=reference, referenced_category="OTHER")
+    Conversation(last_plan=SOURCE, result_reference=reference)
 
 
 def test_answered_clears_previous_canonical_reference() -> None:
@@ -142,25 +142,27 @@ def test_focused_reference_preserves_source_and_evidence() -> None:
     assert result_reference_of(focused, focus_of(focused)) is reference
 
 
-def test_with_references_on_canonical_clears_and_reconstructs() -> None:
+def test_focused_on_result_reconstructs_canonical_reference() -> None:
     reference = ResultReference(SOURCE, category="GROCERIES")
-    current = answered_with_result(Conversation(), reference).with_references(
-        group_by=GroupBy.MERCHANT, group_key="OTHER"
+    current = focused_on_result(
+        answered_with_result(Conversation(), reference),
+        ResultReference(SOURCE, group_by=GroupBy.MERCHANT, group_key="OTHER"),
     )
-    assert current.result_reference is None
+    assert current.result_reference is not None
+    assert current.result_reference.group_key == "OTHER"
 
 
-def test_focused_category_only_projects_legacy_category_key() -> None:
+def test_focused_category_only_keeps_the_exact_reference() -> None:
     reference = ResultReference(SOURCE, category="GROCERIES")
     focused = focused_on_result(answered_with_result(Conversation(), reference), reference)
     assert focused.result_reference is reference
 
 
-def test_canonical_and_legacy_conversations_compare_equal() -> None:
+def test_canonical_reference_is_part_of_conversation_equality() -> None:
     reference = ResultReference(SOURCE, category="GROCERIES")
     canonical = answered_with_result(Conversation(), reference)
     legacy = replace(canonical, result_reference=None)
-    assert canonical == legacy
+    assert canonical != legacy
 
 
 def test_canonical_reference_is_reconstructed_semantically_after_wire_round_trip() -> None:
@@ -231,10 +233,6 @@ def test_answered_with_an_empty_result_clears_all_previous_reference_fields() ->
     current = answered_with_result(previous, ResultReference(next_source))
 
     assert current.last_plan is next_source
-    assert current.referenced_category is None
-    assert current.referenced_group_by is None
-    assert current.referenced_group_key is None
-    assert current.referenced_transaction_ids == ()
     assert current.result_reference == ResultReference(next_source)
 
 
@@ -340,25 +338,8 @@ def test_factory_projects_one_coherent_reference_from_query_focus() -> None:
     )
 
 
-def test_safe_fallback_ignores_a_disagreeing_legacy_category_row() -> None:
-    conversation = Conversation(
-        last_plan=SOURCE,
-        referenced_category="LEISURE",
-        referenced_group_by=GroupBy.CATEGORY,
-        referenced_group_key="GROCERIES",
-    )
-
-    assert result_reference_of(conversation, focus_of(conversation)) == ResultReference(
-        SOURCE, category="GROCERIES"
-    )
-
-
 def test_safe_fallback_derives_only_the_source_singleton_category() -> None:
-    conversation = Conversation(
-        last_plan=SOURCE,
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
-    )
+    conversation = Conversation(last_plan=SOURCE)
 
     result = result_reference_of(conversation, focus_of(conversation))
 
@@ -368,46 +349,35 @@ def test_safe_fallback_derives_only_the_source_singleton_category() -> None:
     assert result.group_key is None
 
 
-def test_safe_fallback_ignores_an_ungrounded_legacy_merchant_row() -> None:
-    conversation = Conversation(
-        last_plan=SOURCE,
-        referenced_category="LEISURE",
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
-    )
-
-    assert result_reference_of(conversation, focus_of(conversation)) == ResultReference(
-        SOURCE, category="GROCERIES"
-    )
-
-
-def test_safe_fallback_does_not_read_a_legacy_refocus() -> None:
-    category = Conversation().answered(SOURCE, referenced_category="GROCERIES")
-    merchant = category.with_references(
-        group_by=GroupBy.MERCHANT,
-        group_key="Mercadona",
+def test_canonical_refocus_replaces_previous_reference() -> None:
+    category = answered_with_result(Conversation(), ResultReference(SOURCE, category="GROCERIES"))
+    merchant = focused_on_result(
+        category,
+        ResultReference(
+            SOURCE, category="GROCERIES", group_by=GroupBy.MERCHANT, group_key="Mercadona"
+        ),
     )
 
     expected = ResultReference(SOURCE, category="GROCERIES")
     assert result_reference_of(category, focus_of(category)) == expected
-    assert merchant.referenced_category == "GROCERIES"
-    assert result_reference_of(merchant, focus_of(merchant)) == expected
+    assert merchant.result_reference is not None
+    assert result_reference_of(merchant, focus_of(merchant)) == merchant.result_reference
 
 
-def test_with_references_clears_a_category_not_grounded_by_the_source_query() -> None:
+def test_canonical_refocus_drops_a_category_not_grounded_by_the_source_query() -> None:
     unfiltered = FinancialPlan(
         direction=Direction.EXPENSE,
         period=RelativePeriod(Period.THIS_YEAR),
         group_by=GroupBy.CATEGORY,
     )
-    category = Conversation().answered(unfiltered, referenced_category="GROCERIES")
-
-    merchant = category.with_references(
-        group_by=GroupBy.MERCHANT,
-        group_key="Mercadona",
+    category = answered_with_result(
+        Conversation(), ResultReference(unfiltered, category="GROCERIES")
     )
-
-    assert merchant.referenced_category is None
+    merchant = focused_on_result(
+        category, ResultReference(unfiltered, group_by=GroupBy.MERCHANT, group_key="Mercadona")
+    )
+    assert merchant.result_reference is not None
+    assert merchant.result_reference.category is None
 
 
 def test_a_new_answer_clears_the_previous_result_reference() -> None:
@@ -552,11 +522,11 @@ async def test_explicit_return_from_balance_uses_the_suspended_reference_and_wor
 
 def test_contextual_category_branch_uses_only_a_category_tied_to_query_focus() -> None:
     coherent = referenced(transaction_ids=())
-    dual = Conversation(
-        last_plan=SOURCE,
-        referenced_category="GROCERIES",
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
+    dual = focused_on_result(
+        coherent,
+        ResultReference(
+            SOURCE, category="GROCERIES", group_by=GroupBy.MERCHANT, group_key="Mercadona"
+        ),
     )
 
     planned = _contextual_follow_up_plan(query("Y esa categoría el mes pasado", coherent))

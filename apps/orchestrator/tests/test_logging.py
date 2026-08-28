@@ -32,6 +32,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -91,7 +92,7 @@ class FakePlanner:
     def __init__(self, result: PlanningResult) -> None:
         self._result = result
 
-    async def plan(self, sentence: str, *, today: date, previous=None, force_follow_up=False):
+    async def plan(self, sentence: str, *, context: PlanningContext):
         return self._result
 
 

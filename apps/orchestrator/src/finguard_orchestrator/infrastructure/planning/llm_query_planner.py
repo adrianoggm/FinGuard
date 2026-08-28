@@ -38,6 +38,7 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import InvalidValueError, ProviderFailedError
 from finguard_orchestrator.domain.models.conversation import Slot
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.services import plan_merger
@@ -65,7 +66,7 @@ _STRUCTURE_REPAIR: Final = (
 
 
 class LlmQueryPlanner:
-    """Implements QueryPlannerPort against a single model."""
+    """Implements ContextualQueryPlannerPort against a single model."""
 
     def __init__(
         self,
@@ -87,10 +88,11 @@ class LlmQueryPlanner:
         self,
         sentence: str,
         *,
-        today: date,
-        previous: FinancialPlan | None = None,
-        force_follow_up: bool = False,
+        context: PlanningContext,
     ) -> PlanningResult:
+        today = context.today
+        previous = context.continuation.plan if context.continuation else None
+        force_follow_up = context.continuation.force_follow_up if context.continuation else False
         prompt = build_prompt(
             sentence,
             today=today,

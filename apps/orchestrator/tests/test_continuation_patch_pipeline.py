@@ -15,6 +15,7 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -50,11 +51,11 @@ class PlannerSpy:
     def __init__(self, result: PlanningResult) -> None:
         self.result = result
         self.calls: list[str] = []
-        self.arguments: list[dict[str, object]] = []
+        self.contexts: list[PlanningContext] = []
 
-    async def plan(self, sentence: str, **kwargs: object) -> PlanningResult:
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
         self.calls.append(sentence)
-        self.arguments.append(kwargs)
+        self.contexts.append(context)
         return self.result
 
 
@@ -156,7 +157,8 @@ async def test_autocontained_question_uses_planner() -> None:
     result = await ask(make_handler(planner, ledger), "Cuánto gasté en ocio durante 2025")
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == ["Cuánto gasté en ocio durante 2025"]
-    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert planner.contexts[-1].today == TODAY
+    assert planner.contexts[-1].continuation is None
 
 
 @pytest.mark.asyncio
@@ -169,21 +171,23 @@ async def test_non_grounded_statuses_fall_through_to_planner(
 ) -> None:
     planner = PlannerSpy(PlanningResult.planned(previous_plan()))
     ledger = LedgerSpy()
+    prior = previous_plan()
 
     result = await ask(
         make_handler(planner, ledger),
         sentence,
-        Conversation(last_plan=previous_plan()),
+        Conversation(last_plan=prior),
     )
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == [sentence]
-    expected = (
-        {"today": TODAY, "previous": previous_plan()}
-        if inherits_previous
-        else {"today": TODAY, "previous": None}
-    )
-    assert planner.arguments == [expected]
+    context = planner.contexts[-1]
+    assert context.today == TODAY
+    if inherits_previous:
+        assert context.continuation is not None
+        assert context.continuation.plan is prior
+    else:
+        assert context.continuation is None
 
 
 @pytest.mark.asyncio
@@ -236,7 +240,8 @@ async def test_special_focus_never_reuses_the_mirrored_single_plan(
     await ask(make_handler(planner, LedgerSpy()), sentence, conversation)
 
     assert planner.calls == [sentence]
-    assert planner.arguments[-1] == {"today": TODAY, "previous": None}
+    assert planner.contexts[-1].today == TODAY
+    assert planner.contexts[-1].continuation is None
 
 
 @pytest.mark.asyncio
@@ -313,7 +318,8 @@ async def test_balance_focus_blocks_a_ranking_mirror_in_the_pipeline() -> None:
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == ["y el segundo"]
-    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert planner.contexts[-1].today == TODAY
+    assert planner.contexts[-1].continuation is None
     assert ledger.plans == [previous_plan()]
 
 
@@ -346,7 +352,8 @@ async def test_comparison_focus_blocks_shifting_only_the_latest_mirror() -> None
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == ["y el año anterior"]
-    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert planner.contexts[-1].today == TODAY
+    assert planner.contexts[-1].continuation is None
     assert len(ledger.plans) == 1
     assert ledger.plans[0].categories == planned.categories
     assert ledger.plans[0].date_range == AbsoluteRange(date(2025, 1, 1), date(2025, 12, 31))
@@ -390,7 +397,8 @@ async def test_balance_focus_does_not_execute_query_mirrors_in_the_pipeline(
 
     assert result.outcome == PlanningOutcome.PLANNED.value
     assert planner.calls == [sentence]
-    assert planner.arguments == [{"today": TODAY, "previous": None}]
+    assert planner.contexts[-1].today == TODAY
+    assert planner.contexts[-1].continuation is None
     assert len(ledger.plans) == 1
     assert ledger.plans[0].period == planned.period
     assert ledger.plans[0].categories == planned.categories
