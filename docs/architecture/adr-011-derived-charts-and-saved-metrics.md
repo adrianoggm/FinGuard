@@ -152,6 +152,44 @@ Each step leaves a runnable slice. Steps 1–4 are shippable without any of 5–
   deterministic seed.
 - An encoding patch that names an absent field is refused rather than dropped silently.
 
+### Status against each criterion — 2026-08-28
+
+Recorded, not revised: the eight criteria above are the ones that were accepted and they are
+unchanged. This is where each one stands in the code today.
+
+| criterion | status |
+| --- | --- |
+| **0** specs with a numeric literal in a data position, on the whole corpus | **Stronger than asked where it is checked, and never checked over the corpus.** A `ChartEncoding` field must match an identifier, so a number cannot occupy a data position at all; `test_visualization_stage1.py::test_chart_references_only_result_fields_and_never_values` pins one example and the client refuses a derivation carrying `data` or `values`. The conversation corpus asserts no chart on any of its 1167 turns, so "on the whole corpus" has no instrument behind it. |
+| **0** specs invalid against the schema or naming an absent field | **Half met.** The absent-field half is real and tested on both sides — `ChartSpec.valid_for`, `test_missing_field_is_rejected`, and a matching client test. The schema half is not met at all: no JSON-schema validation exists anywhere, and the only `compile()` call in the repository runs on hand-written client fixtures. See the two defects below. |
+| **0** charts whose values disagree with the figure in the answer text | **Nobody checks this.** The reconciliation this criterion points at, in `evaluate_e2e.py`, sums the answer's groups against its total and never reads `visualization`. |
+| **0** answers with two or more rows that offer no chart | **Nobody checks this, and one passing test asserts the opposite case** — `test_mapper_never_infers_a_chart_from_public_groups` requires no chart for a two-row answer whose visual dataset is absent. Either the criterion or that test is wrong, and the criterion was accepted first. |
+| **0** charts of a single row | **Met.** `derive_chart` returns nothing below two rows; a single row becomes a KPI and never a mark, asserted on both sides. |
+| **0** saved metrics readable by another holder | **Met in the repository and the token, unproven at the wire.** Holder isolation is asserted in the in-memory repository and the codec; the test that executes the RLS policy needs a database URL nothing sets, and no test reaches `/v1/metrics` with a second credential. |
+| A re-executed saved plan produces the same outcome class as the question that created it | **Unverified.** Two tests prove that opening a metric re-executes rather than replaying stored figures. Nothing compares the outcome class against the originating question, and no run does it over the seed. |
+| An encoding patch naming an absent field is refused rather than dropped | **Met.** `merge_encoding_patch` raises, and the source spec is left untouched — atomicity is asserted alongside the refusal. |
+
+Two defects break this list from the inside rather than sitting outside it. The presenter declares
+`https://vega.github.io/schema/vega-lite/v5.json` while the client resolves `vega-lite@6.4.3` and
+forwards the declaration untouched; nothing reconciles the two and no test would fail if the string
+said `v99`. And the derived default sets `sort: descending` with no sort field, which on a discrete
+Vega-Lite channel orders the labels rather than the measure — so a ranking's longest bar lands in
+the middle of the chart, which is criterion three failing in the shape criterion three describes.
+
+Delivery step 3's "with schema validation in CI" was not delivered, and step 8's «reshape» was
+never built: `PATCH /v1/metrics/{id}` accepts a title and passes the stored definition through by
+construction. The repository can write a new encoding; no route reaches it.
+
+§2 says a model emits the encoding patch. It does not — the interpreter is a deterministic regex
+over an allow-list, invoked before any model call. That is safer than the decision asked for, and it
+is a difference the decision should not be read as describing.
+
+§5's re-check is narrower than it reads. `assert_may_read` compares against a single
+`Caller.account_id` while every layer beneath isolates by holder, so a metric saved over the
+holder's own second account is saveable and then refused on reopen — while `across_accounts=True`,
+strictly more accounts, is not checked at all. Recorded at both sites in the code, and not fixable
+in them: a correct check needs the holder's account set from the directory port, which the executor
+is not wired to.
+
 ## Consequences
 
 The orchestrator becomes a stateful service, which it was not: one schema, one table, one set of
