@@ -125,8 +125,12 @@ def cases() -> list[dict[str, Any]]:
     measured = _sentences(yaml.safe_load(WRITTEN.read_text(encoding="utf-8")))
     found: list[dict[str, Any]] = []
     for episode in episodes.load():
-        stack = episodes.a_stack()
-        conversation = None
+        # Through the same stack and from the same opening state the corpus replays in. A second
+        # reader here would be a second definition of what a turn is, and the account scope is
+        # part of it: replaying from an empty conversation would hand the planner every first
+        # spending question twice over, once as itself and once as the account clarification.
+        stack = episodes.a_stack_for(episode)
+        conversation = episodes.opening(episode)
         for number, turn in enumerate(episode.turns, start=1):
             asked = len(stack.planner.asked)
             # The query in view when the turn arrived, which is the field the handler passes to the

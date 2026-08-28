@@ -2,6 +2,14 @@
 
 episodes:
   - name: highlighted_groups_and_evidence_can_be_reused_without_replanning
+    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
+    # wrongly, and writing the wrong scope into its expectations would record the defect as
+    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    #
+    # Turn 7 says "de mis cuentas" outright and is answered from Cuenta corriente alone — the one
+    # row turn 5's per-account breakdown happened to contain, kept as though the holder had picked
+    # it. Turn 8 inherits it.
+    scope: legacy
     why: >
       A pronoun must point to the concrete row or movement identifiers the user just saw, not to
       a merchant guessed by the model or to the broader query that originally produced the list.

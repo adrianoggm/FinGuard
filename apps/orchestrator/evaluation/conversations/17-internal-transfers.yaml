@@ -41,6 +41,14 @@ episodes:
         route: COURTESY
 
   - name: contributions_are_not_salary_or_ordinary_spending
+    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
+    # wrongly, and writing the wrong scope into its expectations would record the defect as
+    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    #
+    # The last clause of `why` below is the whole point of the episode, and it is what breaks:
+    # turns 5 and 6 are answered restricted to Fondo indexado, so the holder asks what they spent
+    # on supermarkets and restaurants and gets it from inside an index fund.
+    scope: legacy
     why: >
       Different natural phrasings for money put into an investment all select incoming internal
       movements into the asset account, then allow an ordinary spending question to change topic.

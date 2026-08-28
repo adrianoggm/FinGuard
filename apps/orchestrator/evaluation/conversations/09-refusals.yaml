@@ -79,6 +79,14 @@ episodes:
         route: COURTESY
 
   - name: contribution_history_is_distinct_from_the_fund_balance
+    # scope: legacy — debt, not a choice. With the account directory wired this episode is answered
+    # wrongly, and writing the wrong scope into its expectations would record the defect as
+    # correct. See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    #
+    # Turn 5 asks what the holder spent last month and is answered restricted to Fondo indexado,
+    # because turn 1 derived that scope for a question about contributions and the service
+    # persisted it as though the holder had chosen it.
+    scope: legacy
     why: >
       Contribution history is the incoming internal leg of transfers into the fund; its balance is
       still a separate cost-basis question and neither may be answered with ordinary income.

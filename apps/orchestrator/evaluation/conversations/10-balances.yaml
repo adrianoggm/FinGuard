@@ -62,9 +62,15 @@ episodes:
     turns:
       - say: ¿cuánto tengo?
         route: BALANCE
+      # It asks which account instead of widening to all three, and that is the better of the two
+      # answers to a question about an account nobody holds: widening returned a real figure about
+      # every account under a question about one, which is nearer to inventing a figure than to
+      # saying what exists. The clarification names exactly what exists, and this is what a
+      # deployment does — the harness had no account directory, so no turn had ever seen it.
       - say: ¿y en la cuenta de la empresa?
-        route: QUERY
-        ran: {window: LAST_MONTH, categories: [], merchants: [], group_by: NONE, excluded_categories: [], excluded_merchants: [], accounts: ['Cuenta corriente', 'Fondo indexado', 'Hucha']}
+        route: CLARIFY
+        says: Cuenta corriente, Hucha, Fondo indexado
+        keeps: ACCOUNT_SCOPE
       - say: ¿y en la hucha?
         route: QUERY
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: [], accounts: ['Hucha']}
