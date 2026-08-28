@@ -18,7 +18,7 @@ sentence does not contain, and it never overrides a refusal the guard actually m
 
 import uuid
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -45,6 +45,7 @@ from finguard_orchestrator.domain.services import window_words
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -101,6 +102,20 @@ class AsksAnyway(GivesUp):
         return PlanningResult.needs_clarification(
             "¿Te refieres a supermercados en general o a un tipo específico de gasto?",
             awaiting=Slot.CATEGORY,
+        )
+
+
+class AsksForTheWindow(GivesUp):
+    """A model that stops for the window and carries its own reading of everything else."""
+
+    def __init__(self, draft: FinancialPlanDraft) -> None:
+        super().__init__()
+        self._draft = draft
+
+    async def plan(self, *_: object, **__: object) -> PlanningResult:
+        self.asked += 1
+        return PlanningResult.needs_clarification(
+            "¿De qué periodo?", self._draft, awaiting=Slot.WINDOW
         )
 
 
@@ -2080,3 +2095,75 @@ async def test_a_sentence_stating_nothing_certain_keeps_the_refusal() -> None:
     answer = await asked("¿qué tal va la cosa este mes?", GivesUp())
 
     assert answer.outcome == PlanningOutcome.UNSUPPORTED.value
+
+
+# --- what a question back is allowed to remember ------------------------------------------
+#
+# The same argument as `enforce` on the answerable branch, one branch over. A turn that stops to
+# ask still read a sentence, and the facts that sentence stated outright are the facts — whether
+# the turn ends in an answer or in a question. Storing the model's reading instead loses them for
+# good: the reply is a window and nothing else, so nothing later in the conversation can recover
+# what the first sentence said.
+
+
+class WeeklyLedger(Ledger):
+    """Four weekly movements, so a cadence answer has dates to describe."""
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        self.plan = plan
+        mondays = tuple(
+            Movement(
+                occurred_at=datetime(2026, 7, 6, 10, 0, tzinfo=UTC) + timedelta(days=7 * index),
+                description="Movimiento",
+                amount_minor=5_000,
+                direction="EXPENSE",
+                merchant_name="Comercio",
+            )
+            for index in range(4)
+        )
+        return QueryAnswer(
+            currency="EUR",
+            total_minor=20_000,
+            movement_count=len(mondays),
+            movements=mondays,
+        )
+
+
+# The model's reading of «¿Qué día suelo gastar más?»: a mean amount per day, where the sentence
+# asks how often. Named once because both tests below turn on it being the wrong reading.
+AS_AN_AVERAGE = FinancialPlanDraft(
+    direction=Direction.EXPENSE, group_by=GroupBy.DAY, metric=Metric.AVERAGE
+)
+
+
+async def test_a_stored_draft_keeps_the_metric_the_sentence_stated() -> None:
+    """«¿Qué día suelo gastar más?» is a cadence question, and it names no window — so it is the
+    model that answers it, with a question of its own and a draft reading it as an average. Three
+    turns later the holder was told «el importe medio por movimiento fue de 67,71 €», which is a
+    real figure and not the answer to what they asked.
+
+    `explicit_facts.read` gets this right on its own: no window, no category, `Metric.FREQUENCY`.
+    Nothing applied it, because the enforcement lived only on the branch that answers."""
+    planner = AsksForTheWindow(AS_AN_AVERAGE)
+
+    answer = await asked("¿Qué día suelo gastar más?", planner)
+
+    assert answer.outcome == PlanningOutcome.NEEDS_CLARIFICATION.value
+    assert isinstance(answer.conversation.active, FinancialClarification)
+    assert answer.conversation.active.draft.metric is Metric.FREQUENCY
+
+
+async def test_the_reply_to_that_question_is_answered_as_a_cadence() -> None:
+    """The round trip the boundary test above protects. Enforcing on the way *out* is what makes
+    this work: on the way back the original sentence is gone and «en julio» states no metric at
+    all, so there is nothing left to enforce against."""
+    planner = AsksForTheWindow(AS_AN_AVERAGE)
+    first = await asked("¿Qué día suelo gastar más?", planner)
+
+    ledger = WeeklyLedger()
+    second = await asked("En julio", planner, ledger, first.conversation)
+
+    assert second.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plan is not None
+    assert ledger.plan.metric is Metric.FREQUENCY
+    assert "€" not in second.text, "a cadence question is not answered with money"

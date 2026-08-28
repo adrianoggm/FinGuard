@@ -1536,13 +1536,17 @@ class AskFinancialQuestionHandler:
             )
 
         if not planned.is_answerable:
+            # Read here as well as below, because a turn that ends in a question read a sentence
+            # too. The draft it leaves behind is the only thing the reply has to build on, so what
+            # this sentence stated has to reach it — see `_next_state`.
+            said = explicit_facts.read(query.sentence, today=query.today)
             rescued = _from_what_the_sentence_said(planned, query)
             if rescued is None:
-                yield _decline(planned, was)
+                yield _decline(planned, was, said)
                 return
             if not rescued.is_answerable:
                 # A question rather than a plan: the sentence named a category and no period.
-                yield _decline(rescued, was)
+                yield _decline(rescued, was, said)
                 return
             planned = rescued
 
@@ -6702,11 +6706,17 @@ def _narrows_the_balance(
     return facts.window is None and not facts.names_a_category
 
 
-def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestionResult:
+def _decline(
+    planned: PlanningResult, was: Conversation, said: explicit_facts.ExplicitFacts
+) -> AskFinancialQuestionResult:
     """The five outcomes that never reach the ledger.
 
     Each gets its own sentence. Collapsing them into "no he podido" would tell the user
     nothing about whether to rephrase, wait, or give up.
+
+    `said` is what the declined sentence stated outright. It is carried here rather than re-read
+    because only the caller still has the sentence: `_next_state` needs it to keep a stored draft
+    honest, and by the next turn the sentence is gone.
     """
     suggestions: list[str] = []
     match planned.outcome:
@@ -6736,7 +6746,7 @@ def _decline(planned: PlanningResult, was: Conversation) -> AskFinancialQuestion
         # the answers this service is certain about instead of asking an open question again.
         text, suggestions = query_recovery.repeated_question(planned.awaiting.value)
 
-    left_open = _next_state(planned)
+    left_open = _next_state(planned, said)
     conversation = (
         # The same rule the guard's own refusal follows one branch over: a refusal answers nothing,
         # so the thread the user was on survives it. Written here as well because a capability can
@@ -6780,17 +6790,32 @@ def _asks_the_same_thing_again(planned: PlanningResult, was: Conversation) -> bo
     )
 
 
-def _next_state(planned: PlanningResult) -> ActiveWorkflow | None:
+def _next_state(
+    planned: PlanningResult, said: explicit_facts.ExplicitFacts
+) -> ActiveWorkflow | None:
     """Where a declined turn leaves the conversation.
 
     A clarification becomes an open question carrying its draft and its slot, so the reply completes
     it. A missing capability becomes a state that remembers what it was about, so the follow-up is a
     patch. Everything else leaves nothing open: a malformed answer and a dead provider are not
     conversations, they are failures, and inviting the user to continue one would be a lie.
+
+    **The draft is enforced against the sentence that produced it**, the same rule the answerable
+    branch states out loud: what the sentence stated outright wins over the model's reading of it.
+    Asking a question does not make the model's reading any better. "¿Qué día suelo gastar más?" is
+    read here as `Metric.FREQUENCY` and was stored as the model's `AVERAGE`, so «en julio» came back
+    «el importe medio por movimiento fue de 67,71 €» — a real figure, and not an answer to the
+    question asked.
+
+    Here rather than on the reply, because here is the last turn that still has the sentence. The
+    reply is a window and nothing else: `explicit_facts.read("en julio")` states no metric, so by
+    then there is nothing left to enforce and the draft is all that remains of what was asked.
     """
     match planned.outcome:
         case PlanningOutcome.NEEDS_CLARIFICATION if planned.draft is not None:
-            return FinancialClarification(draft=planned.draft, awaiting=planned.awaiting)
+            return FinancialClarification(
+                draft=explicit_facts.enforce(planned.draft, said), awaiting=planned.awaiting
+            )
         case PlanningOutcome.UNSUPPORTED if planned.reason in capability_guard.RULES:
             return UnsupportedCapability(capability=planned.reason or "")
         case _:
