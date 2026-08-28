@@ -570,6 +570,21 @@ conversations:
         expect_shape: MOVEMENT
         not_says: comparo
 
+  - id: a_superlative_that_states_its_own_month
+    why: >
+      A movement rather than an aggregate, like the case above, and an absolute month rather than
+      a named period — which is the spread this group exists for. It reaches a planner at all only
+      since `_SELF_CONTAINED_FINANCIAL_QUESTION` learned the singular movement nouns: while `gasto`
+      was missing from that list the sentence was read as an ellipsis, so the month was applied to
+      the *previous* question as a window patch and the superlative was thrown away. The month is
+      ours to demand; that the answer is one charge and not a total is the model's reading, so the
+      shape carries it.
+    turns:
+      - say: ¿cuál fue mi mayor gasto de junio?
+        expect_plan:
+          window: 2026-06-01..2026-06-30
+        expect_shape: MOVEMENT
+
   - id: show_me_the_movements
     why: >
       A list rather than a figure, and a counted window rather than a named one — "los últimos 4
