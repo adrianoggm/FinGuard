@@ -6,6 +6,7 @@ from typing import Any
 from finguard_orchestrator.domain.models.chart import Visualization
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
+from finguard_orchestrator.domain.services import answer_writer
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
@@ -59,12 +60,42 @@ def financial_metric_executor(
             visualization = {
                 "kind": "chart",
                 "chart_id": "saved-metric",
+                # The unit the rows are in, exactly as a live answer declares it. It was missing,
+                # and the client only converts minor units to euros when it is told the rows are
+                # money -- so a reopened metric drew 92000 on an axis where the chat drew 920,00 €.
+                # A figure a hundred times too large is the worst thing this screen can show.
+                "unit": "count" if counted else "money",
                 "spec": presented["spec"],
                 "data": presented["data"],
             }
         return {
             "outcome": "ANSWERED",
-            "text": "Métrica actualizada",
+            # The query in words, which is what "Ver la consulta" shows. A saved metric is a stored
+            # plan, so the one screen that reopens one is the screen that most needs to say which.
+            "plan": answer_writer.describe(plan),
+            # The evidence banking already returned with the figure. It was absent altogether, and
+            # `Answer.movements` is not optional -- so the disclosure that reads it crashed the
+            # whole screen rather than showing one card without movements.
+            "movements": [
+                {
+                    "occurred_at": movement.occurred_at.isoformat(),
+                    "description": movement.description,
+                    "amount_minor": movement.amount_minor,
+                    "direction": movement.direction,
+                    "merchant_name": movement.merchant_name,
+                    "category": movement.category,
+                }
+                for movement in answer.movements
+            ],
+            # Empty, and stated rather than omitted for the same reason: a client reading a field
+            # the contract promises should not have to guess whether it is missing or empty.
+            "suggestions": [],
+            # The same writer a live question uses, on the same plan and the same answer. It used to
+            # be the literal "Métrica actualizada", which said only that something had happened --
+            # so a saved metric reopened without its figure, its window or its direction, and the
+            # card above it could not say what the number meant. Re-executing through the path a
+            # question takes (ADR-011 §5) has to include the sentence that path writes.
+            "text": answer_writer.write(answer, plan),
             "total_minor": answer.total_minor,
             "movement_count": answer.movement_count,
             "groups": [

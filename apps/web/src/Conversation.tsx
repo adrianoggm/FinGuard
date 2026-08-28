@@ -652,7 +652,13 @@ function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: 
   </div>;
 }
 
-function AnswerEvidence({ answer }: { answer: Answer }) {
+/**
+ * The plan, the movements and the breakdown of one answer, each behind a disclosure.
+ *
+ * Exported because "Mis métricas" opens the same answer and owes the reader the same evidence. A
+ * second table there would be a second opinion about the same figures.
+ */
+export function AnswerEvidence({ answer }: { answer: Answer }) {
   return (
     <>
       {answer.plan && (

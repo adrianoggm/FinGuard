@@ -13,7 +13,7 @@ from uuid import UUID
 
 import asyncpg
 
-from finguard_orchestrator.domain.models.saved_metric import SavedMetric
+from finguard_orchestrator.domain.models.saved_metric import SavedMetric, SavedMetricDefinition
 from finguard_orchestrator.domain.ports.saved_metric_repository import (
     IdempotencyConflictError,
     VersionConflictError,
@@ -22,6 +22,24 @@ from finguard_orchestrator.infrastructure.metrics.codec import (
     decode_definition,
     encode_definition,
 )
+
+
+def _columns(definition: SavedMetricDefinition) -> tuple[str, str]:
+    """The two JSON columns a definition becomes: `plan_json` and `encoding_json`.
+
+    `chart` is *absent* from the encoding when the metric is a figure rather than a chart, so it is
+    read with `.get`: subscripting it raised `KeyError` and turned every save of a lone figure into
+    a 500. `json.dumps(None)` is `"null"` -- a JSON null, which the column accepts, and not the SQL
+    null it forbids.
+
+    A function rather than two copies of the same two lines, so the encoding has one place to be
+    wrong and one place to be tested without a database.
+    """
+    encoded = encode_definition(definition)
+    return (
+        json.dumps(encoded["plan"], separators=(",", ":")),
+        json.dumps(encoded.get("chart"), separators=(",", ":")),
+    )
 
 
 class PostgresSavedMetricRepository:
@@ -78,7 +96,7 @@ class PostgresSavedMetricRepository:
                 if int(count) >= self.maximum:
                     raise ValueError("saved metric limit reached")
                 position = int(count)
-                encoded = encode_definition(metric.definition)
+                plan_json, encoding_json = _columns(metric.definition)
                 row = await connection.fetchrow(
                     "INSERT INTO assistant.saved_metric "
                     "(id,holder_id,title,plan_json,encoding_json,position,version,"
@@ -87,8 +105,8 @@ class PostgresSavedMetricRepository:
                     metric.id,
                     metric.holder_id,
                     metric.title,
-                    json.dumps(encoded["plan"], separators=(",", ":")),
-                    json.dumps(encoded["chart"], separators=(",", ":")),
+                    plan_json,
+                    encoding_json,
                     position,
                     idempotency_key,
                     request_hash,
@@ -105,9 +123,7 @@ class PostgresSavedMetricRepository:
                     "version=version+1, updated_at=now() "
                     "WHERE id=$3 AND version=$4 RETURNING *",
                     metric.title,
-                    json.dumps(
-                        encode_definition(metric.definition)["chart"], separators=(",", ":")
-                    ),
+                    _columns(metric.definition)[1],
                     metric.id,
                     expected_version,
                 )

@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import replace
 from uuid import UUID, uuid4
@@ -29,6 +30,7 @@ from finguard_orchestrator.infrastructure.metrics.memory_repository import (
 )
 from finguard_orchestrator.infrastructure.metrics.postgres_repository import (
     PostgresSavedMetricRepository,
+    _columns,
 )
 
 
@@ -52,6 +54,31 @@ def definition(*, metric: Metric = Metric.SUM) -> SavedMetricDefinition:
             limit=10,
             responsive=False,
         ),
+    )
+
+
+def test_a_figure_metric_survives_the_two_columns_the_table_has() -> None:
+    """A metric saved as a figure has no chart, and the codec *omits* the key rather than writing a
+    null. The Postgres adapter read `encoded["chart"]`, so saving one crashed with a `KeyError` --
+    and nothing caught it: the memory repository stores the object without encoding it, and the only
+    Postgres test is an integration one whose definition always had a chart.
+
+    This calls the adapter's own encoding, so it fails if that regresses, and it needs no database.
+    """
+    figure = SavedMetricDefinition(definition().plan)
+    assert "chart" not in encode_definition(figure)
+    plan_json, encoding_json = _columns(figure)
+    # What `_row` reads back out of the two columns.
+    stored = {"version": 1, "plan": json.loads(plan_json), "chart": json.loads(encoding_json)}
+    assert decode_definition(stored) == figure
+    # And a chart still survives the same path, so the fix did not trade one shape for the other.
+    with_chart = definition()
+    plan_json, encoding_json = _columns(with_chart)
+    assert (
+        decode_definition(
+            {"version": 1, "plan": json.loads(plan_json), "chart": json.loads(encoding_json)}
+        )
+        == with_chart
     )
 
 
@@ -158,6 +185,15 @@ async def test_opening_a_metric_executes_banking_fresh() -> None:
     assert second["total_minor"] == 200
     assert first["visualization"]["data"] != second["visualization"]["data"]  # type: ignore[index]
 
+    # A reopened metric has to be a whole answer, because the client renders it with the components
+    # a live answer uses. `unit` was missing and the rows are minor units, so an axis drew 92000
+    # where the chat drew 920,00 €; `movements` was missing and is not optional in the contract, so
+    # the disclosure that reads it took the screen down with it.
+    assert first["visualization"]["unit"] == "money"  # type: ignore[index]
+    for promised in ("plan", "movements", "suggestions", "groups", "currency", "text"):
+        assert promised in first, promised
+    assert isinstance(first["movements"], list)
+
 
 @pytest.mark.asyncio
 async def test_a_metric_saved_as_a_figure_reopens_as_a_figure() -> None:
@@ -178,6 +214,7 @@ async def test_a_metric_saved_as_a_figure_reopens_as_a_figure() -> None:
     second = await execute(figure, caller)
 
     assert banking.calls == 2
+    assert "movements" in first and "plan" in first
     assert first["visualization"] == {
         "kind": "kpi",
         "value_field": "value_minor",
@@ -214,6 +251,7 @@ async def test_postgres_repository_enforces_holder_rls_and_jsonb_roundtrip() -> 
     holder_b = f"test-b-{uuid4()}"
     saved_a: SavedMetric | None = None
     saved_b: SavedMetric | None = None
+    saved_figure: SavedMetric | None = None
     try:
         saved_a = await repository.create(
             SavedMetric.new(holder_a, "A", definition()),
@@ -225,14 +263,24 @@ async def test_postgres_repository_enforces_holder_rls_and_jsonb_roundtrip() -> 
             idempotency_key="b",
             request_hash="b" * 64,
         )
+        # A metric that is a figure: no chart, and therefore no `chart` key to write. This is the
+        # shape that crashed the save.
+        saved_figure = await repository.create(
+            SavedMetric.new(holder_a, "Solo la cifra", SavedMetricDefinition(definition().plan)),
+            idempotency_key="figure",
+            request_hash="c" * 64,
+        )
+        assert (await repository.get(holder_a, saved_figure.id)) == saved_figure
 
         assert (await repository.get(holder_a, saved_a.id)) == saved_a
         assert await repository.get(holder_a, saved_b.id) is None
-        assert [row.id for row in await repository.list(holder_a)] == [saved_a.id]
+        assert [row.id for row in await repository.list(holder_a)] == [saved_a.id, saved_figure.id]
         assert [row.id for row in await repository.list(holder_b)] == [saved_b.id]
         async with pool.acquire() as connection:
             assert await connection.fetchval("SELECT count(*) FROM assistant.saved_metric") == 0
     finally:
+        if saved_figure is not None:
+            await repository.delete(holder_a, saved_figure.id)
         if saved_a is not None:
             await repository.delete(holder_a, saved_a.id)
         if saved_b is not None:
