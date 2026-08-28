@@ -23,6 +23,7 @@ from finguard_orchestrator.domain.models.account_summary import AccountSummary, 
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
 )
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
 from finguard_orchestrator.domain.services import answer_writer
@@ -76,9 +77,7 @@ class FakePlanner:
     def __init__(self) -> None:
         self.asked: str | None = None
 
-    async def plan(
-        self, sentence: str, *, today: date, previous: FinancialPlan | None = None
-    ) -> PlanningResult:
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
         self.asked = sentence
         return PlanningResult.planned(
             FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(period=Period.TODAY))

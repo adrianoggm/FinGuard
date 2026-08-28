@@ -34,6 +34,7 @@ from finguard_orchestrator.domain.models.conversation import (
     FinancialClarification,
     Slot,
 )
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.models.result_reference import (
@@ -1614,9 +1615,9 @@ async def test_a_natural_account_correction_keeps_the_financial_question() -> No
 
 async def test_a_complete_account_question_does_not_inherit_an_old_category() -> None:
     class FreshPlanner(GivesUp):
-        async def plan(self, *_: object, **kwargs: object) -> PlanningResult:
+        async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
             self.asked += 1
-            assert kwargs.get("previous") is None
+            assert context.continuation is None
             return PlanningResult(
                 outcome=PlanningOutcome.PLANNED,
                 plan=FinancialPlan(

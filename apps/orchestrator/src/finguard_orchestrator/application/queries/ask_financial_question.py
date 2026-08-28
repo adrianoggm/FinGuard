@@ -20,7 +20,6 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.application.contextual_query_planner import LegacyPlannerInContext
 from finguard_orchestrator.domain.constants import (
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
@@ -93,7 +92,6 @@ from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
 from finguard_orchestrator.domain.ports.contact_directory import ContactDirectoryPort
 from finguard_orchestrator.domain.ports.contextual_query_planner import ContextualQueryPlannerPort
 from finguard_orchestrator.domain.ports.financial_query import FinancialQueryPort
-from finguard_orchestrator.domain.ports.query_planner import QueryPlannerPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     account_words,
@@ -572,7 +570,7 @@ class AskFinancialQuestionHandler:
 
     def __init__(
         self,
-        planner: QueryPlannerPort,
+        planner: ContextualQueryPlannerPort,
         queries: FinancialQueryPort,
         policy: GuardPolicy = EVERY_RULE,
         *,
@@ -584,7 +582,7 @@ class AskFinancialQuestionHandler:
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
     ) -> None:
-        self._planner: ContextualQueryPlannerPort = LegacyPlannerInContext(planner)
+        self._planner = planner
         self._queries = queries
         self._policy = policy
         self._read_attempts = read_attempts

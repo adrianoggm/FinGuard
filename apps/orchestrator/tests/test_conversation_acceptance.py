@@ -47,6 +47,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, PaymentOutcome, Period
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -127,7 +128,7 @@ class ScriptedPlanner:
         self._script = script
         self.asked: list[str] = []
 
-    async def plan(self, sentence: str, *, today: date, previous=None, force_follow_up=False):
+    async def plan(self, sentence: str, *, context: PlanningContext):
         self.asked.append(sentence)
         for fragment, result in self._script.items():
             if fragment in sentence.lower():

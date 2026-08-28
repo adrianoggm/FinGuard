@@ -23,6 +23,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 )
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -93,7 +94,7 @@ class FakePlanner:
         self._result = result
         self.asked: str | None = None
 
-    async def plan(self, sentence: str, *, today: date, previous: FinancialPlan | None = None):
+    async def plan(self, sentence: str, *, context: PlanningContext):
         self.asked = sentence
         if self._result is None:
             raise AssertionError(f"the model was consulted about {sentence!r}")

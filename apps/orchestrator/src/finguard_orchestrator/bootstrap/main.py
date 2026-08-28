@@ -41,6 +41,7 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
+from finguard_orchestrator.application.contextual_query_planner import LegacyPlannerInContext
 from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
@@ -258,12 +259,14 @@ def create_app() -> FastAPI:
         timeout_seconds=settings.banking_timeout_seconds,
     )
     asking = AskFinancialQuestionHandler(
-        LlmQueryPlanner(
-            planner_provider,
-            model=settings.planner_model,
-            temperature=settings.planner_temperature,
-            max_output_tokens=settings.planner_max_output_tokens,
-            categories=settings.categories,
+        LegacyPlannerInContext(
+            LlmQueryPlanner(
+                planner_provider,
+                model=settings.planner_model,
+                temperature=settings.planner_temperature,
+                max_output_tokens=settings.planner_max_output_tokens,
+                categories=settings.categories,
+            )
         ),
         banking,
         # Validated here, so a rule name this build does not have stops the service

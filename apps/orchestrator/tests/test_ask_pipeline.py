@@ -35,6 +35,7 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentInProgress,
     Slot,
 )
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.models.result_reference import (
@@ -101,12 +102,11 @@ class FakePlanner:
         self,
         sentence: str,
         *,
-        today: date,
-        previous: FinancialPlan | None = None,
-        force_follow_up: bool = False,
+        context: PlanningContext,
     ) -> PlanningResult:
-        self.previous, self.asked = previous, sentence
-        self.force_follow_up = force_follow_up
+        self.previous = context.continuation.plan if context.continuation else None
+        self.asked = sentence
+        self.force_follow_up = bool(context.continuation and context.continuation.force_follow_up)
         return self._result
 
 
