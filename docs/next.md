@@ -439,16 +439,31 @@ in between.
 | property | bar | measured 2026-08-28 | how to check |
 | --- | --- | --- | --- |
 | `invalid structure` | **0** on all sets | ✅ 0 on all **five**, every run | `evaluate_planning --dataset <set>` |
-| E2E property violations | **0** | ⬜ *not measured* — needs the stack up and the ledger intact | `just evaluate-e2e <token> <set>` |
+| E2E property violations | **0** | ❌ **2** — dev 1, validation 1, adversarial 0, over 175 answering outcomes. The `✅ 0/120, 0/79, 0/36` this row carried from 2026-08-03 was **vacuous**: `PLANNED` occurred **zero** times in 235 cases, and every property is guarded on an answering outcome | `just evaluate-e2e <token> <set>` |
 | Cross-account containment | **0** failures | ⬜ *not measured*. And the count here was wrong: banking has **19** integration-marked isolation tests, not four, and they are excluded from the default gate | `pytest -m integration` in banking |
 | Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` is **refused** by `SPENDING_ANSWERED_AS_EVERYTHING`; the group rose 64.3 % → 78.6 % | `evaluate_planning --dataset adversarial` |
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 — and the ablation puts a number on it: every rule's `cost` column is **+0** | `pytest tests/test_capability_guard.py`, `--ablate` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
-| Evidence reconciliation | **0** failures | ⬜ *not measured* — part of the E2E properties | the E2E properties |
+| Evidence reconciliation | **0** failures | ❌ **1 of 11** breakdowns inspected. The first real reading this row has ever had: `_reconciliation()` had executed **zero** times before 2026-08-28 | the E2E properties |
 | **Unsafe execution** | **≤ 10 % on every set**, not only held out | ❌ **held out 11.4 %**. dev 9.2 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % | `evaluate_planning --dataset <set>` |
 
-**Four pass, one fails, three were not measured.** The failure is the one property this table says
-to quote to somebody else, and it is over the bar it was under three weeks ago.
+**Four pass, three fail, one was not measured.** Unsafe execution is over the bar it was under
+three weeks ago. The two E2E rows fail on their first honest reading — they had been green since
+2026-08-21 by testing nothing, because the account-scope feature made every unqualified question a
+clarification and no property runs on one. The instrument now refuses to report that: a run in which
+fewer than half the cases a set expects to answer actually answered is a **failure**, and the floor
+is argued from the fact that the worst of eleven measured models scored 50.0 % on this data.
+
+The one violation worth reading is a wire-contract defect rather than a planner one. On a comparison,
+`total_minor` is a **signed difference** and `groups` are two **operands**, so «¿He gastado más este
+mes que el anterior?» answers `total_minor: −189597` with groups summing to `+189597`. The counts
+reconcile and the amounts cannot. A client rendering `total_minor` as a total shows −1.895,97 € for a
+spending question.
+
+The conversation corpus over HTTP — the only set that was never vacuous, because it asserts a plan
+per turn — reports 34 turns with a violation, of which 32 are the same clarification noise and **two
+are the product**: a `WRONG_DIRECTION` answered with a false «no he encontrado movimientos», and the
+`GROUPS_DO_NOT_SUM_TO_TOTAL` above.
 
 **Today's nine conversational fixes are not why.** That was checked rather than assumed:
 `explicit_facts.read()` returns the same value on all 329 sentences of all five datasets either side
