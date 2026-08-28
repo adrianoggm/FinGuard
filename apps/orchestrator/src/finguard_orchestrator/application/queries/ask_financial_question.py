@@ -4438,9 +4438,41 @@ _RANKING_REQUEST: Final = re.compile(
     r"(?:gasto|ingreso|movimiento|compra|pago|cargo|cobro|nomina|sueldo|salario)\b.{0,30}"
     r"\b(?:mas\s+(?:alto|alta|caro|cara|grande)|mayor)\b"
 )
+# The nouns a breakdown can be asked for. Named once because `_GROUP_RANKING_COUNT` below spells
+# the same list, and there is no reading of this module where the two should differ.
+_GROUP_DIMENSION_NOUNS: Final = r"categorias?|comercios?|tiendas?|establecimientos?|cuentas?"
+# A universally quantified noun is a *scope*, not a dimension: «en todas mis cuentas» says where to
+# look and «todas las categorías» asks for a filter to disappear, and neither asks for one row each.
+# Read as a dimension, "cuál fue mi mayor gasto de julio en todas mis cuentas" came back
+# `group_by=ACCOUNT group_limit=5` and «La cuenta con mayor importe total … es: Cuenta corriente» —
+# a ranking of accounts as the answer to a question about one charge. This recogniser runs ahead of
+# the planner, so nothing downstream ever saw the superlative.
+#
+# The first branch exists only to be *skipped*: it consumes the scope phrase so that
+# `_group_dimension_in` keeps looking for a noun that really is one. Requiring a grouping
+# preposition in front of the noun instead — the shape `explicit_facts._ACCOUNT_BREAKDOWN` uses —
+# cannot work here, because that pattern only reads breakdowns and this one also reads the
+# rankings, which put a number or an article there: «top 3 comercios», «los tres comercios donde
+# más gasté», «las cuentas con más gastos». Twelve of the sixteen ranking sentences the suite
+# covers would have stopped being read. The determiner is no help either, since the scope phrase
+# has one too. The quantifier is the whole difference.
 _GROUP_RANKING_DIMENSION: Final = re.compile(
-    r"\b(?P<dimension>categorias?|comercios?|tiendas?|establecimientos?|cuentas?)\b"
+    rf"\btod[oa]s?\s+(?:mis|tus|sus|las|los|nuestr[oa]s)\s+(?:{_GROUP_DIMENSION_NOUNS})\b"
+    rf"|\b(?P<dimension>{_GROUP_DIMENSION_NOUNS})\b"
 )
+
+
+def _group_dimension_in(folded: str) -> re.Match[str] | None:
+    """The first noun the sentence uses as a dimension rather than as a scope.
+
+    `finditer` rather than `search`, so a sentence that states the scope before the dimension —
+    "en todas mis cuentas, top 3 comercios" — is read by its second half instead of stopping at
+    the phrase the pattern above is there to discard.
+    """
+    for match in _GROUP_RANKING_DIMENSION.finditer(folded):
+        if match.group("dimension") is not None:
+            return match
+    return None
 
 
 def _named_group_dimension(folded: str) -> GroupBy | None:
@@ -4453,7 +4485,7 @@ def _named_group_dimension(folded: str) -> GroupBy | None:
     the order of the cascade decided which of the two ran, and a corpus episode whose whole point is
     that "merchant/category must alter only the named dimension" was passing on that.
     """
-    match = _GROUP_RANKING_DIMENSION.search(folded)
+    match = _group_dimension_in(folded)
     if match is None:
         return None
     word = match.group("dimension")
@@ -4482,7 +4514,7 @@ _GROUP_RANKING_FOLLOW_UP_REQUEST: Final = re.compile(
 )
 _GROUP_RANKING_COUNT: Final = re.compile(
     r"\b(?:top\s*)?(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    r"(?:categorias?|comercios?|tiendas?|establecimientos?|cuentas?)\b"
+    rf"(?:{_GROUP_DIMENSION_NOUNS})\b"
 )
 # The same count when the sentence does not glue it to the dimension: "top 25 gastos por categoria"
 # names the number and the dimension in different halves. Read only after the pattern above misses,
@@ -5653,7 +5685,7 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         and facts.direction is None
         and len(folded.split()) <= 8
         and not _starts_new_financial_scope(query.sentence, today=query.today)
-        and not (_GROUP_RANKING_DIMENSION.search(folded) and _GROUP_RANKING_SIGNAL.search(folded))
+        and not (_group_dimension_in(folded) and _GROUP_RANKING_SIGNAL.search(folded))
         and not _A_UNIT_BACK_ANYWHERE.search(folded)
         and capability_guard.unsupported_reason(query.sentence) is None
     ):
@@ -5873,7 +5905,7 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
     """Rank aggregate groups by the exact metric named in the sentence."""
     selected = _query_for_reader(query)
     folded = spanish.folded(selected.wording)
-    dimension_match = _GROUP_RANKING_DIMENSION.search(folded)
+    dimension_match = _group_dimension_in(folded)
     previous = selected.plan
     previous_ranking = (
         previous
