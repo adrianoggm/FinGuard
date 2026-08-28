@@ -311,6 +311,35 @@ body {
   border: 1px solid #f0dca8;
 }
 
+/* What a reply to that card could not tell the holder, said beside the buttons that produced it.
+   Both money screens draw this and nothing else does — `.card.preview` is theirs, the chat's
+   preview being a `.bubble`. */
+.card.preview .approval-notice {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--out);
+  background: #fff;
+  color: var(--out);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* Nothing to say yet. The element stays in the tree so the live region exists before its text
+   does; it must not also take up room. */
+.card.preview .approval-notice:empty {
+  display: none;
+}
+
+/* A reply in flight, on the one card where a second tap costs money. It had no disabled styling at
+   all, so both buttons looked live throughout. */
+.card.preview .confirm button:disabled,
+.card.preview .primary:disabled {
+  background: var(--line);
+  color: var(--ink-soft);
+  cursor: default;
+}
+
 /* --- the home screen ------------------------------------------------------------ */
 
 .brand {

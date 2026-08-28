@@ -14,21 +14,22 @@
  * The investment is offered like any other account and labelled for what it is. Putting money into
  * a fund is a real thing to do; what it must never look like is spending, and the balance beside it
  * is a cost basis rather than a valuation.
+ *
+ * The preview and everything that can happen to it live in `Approval`, shared with Bizum.
  */
 
 import { useMemo, useState } from "react";
 
+import { Approval, replied, type Held, type Reply } from "./Approval";
 import {
   confirm,
   newAttempt,
   transferBetweenAccounts,
-  type Answer,
   type Holding,
   type Summary,
 } from "./api";
 import { accountGlyph, accountName, minorUnits, money } from "./format";
 
-const AWAITING = "AWAITING_CONFIRMATION";
 const PAID = "PAID";
 
 type Props = { summary: Summary | null; onPaid: () => void };
@@ -36,7 +37,7 @@ type Props = { summary: Summary | null; onPaid: () => void };
 export function Transfer({ summary, onPaid }: Props) {
   const [target, setTarget] = useState<Holding | null>(null);
   const [typed, setTyped] = useState("");
-  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [held, setHeld] = useState<Held | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // How many transfers this screen has completed. It exists only to renew the key below: once one
@@ -60,7 +61,11 @@ export function Transfer({ summary, onPaid }: Props) {
     if (!target || amount === null || busy) return;
     setBusy(true);
     try {
-      setAnswer(await transferBetweenAccounts(target.account_id, amount, target.currency, attempt));
+      setHeld({
+        answer: await transferBetweenAccounts(target.account_id, amount, target.currency, attempt),
+        failure: null,
+        again: null,
+      });
       setError(null);
     } catch {
       setError("No he podido preparar el traspaso.");
@@ -69,50 +74,42 @@ export function Transfer({ summary, onPaid }: Props) {
     }
   }
 
-  async function answerPreview(reply: string) {
-    if (!answer?.intent_id || busy) return;
+  async function reply(said: Reply) {
+    const intent = held?.answer.intent_id;
+    if (!intent || busy) return;
     setBusy(true);
-    try {
-      const settled = await confirm(answer.intent_id, reply);
-      setAnswer(settled);
+    const next = await replied(() => confirm(intent, said), {
+      reply: said,
+      standing: held.answer,
+      noun: "traspaso",
+    });
+    setHeld(next);
+    // Only a reply the bank answered counts as done. Leaving the key alone after a failure is the
+    // safe direction: if the confirmation did execute unseen, the next prepare with the same
+    // destination and amount finds that same consumed intent and is refused, rather than minting a
+    // second transfer.
+    if (next.failure === null) {
       setCompleted((done) => done + 1);
-      if (settled.outcome === PAID) onPaid();
-    } catch {
-      setError("No he podido confirmar el traspaso.");
-    } finally {
-      setBusy(false);
+      if (next.answer.outcome === PAID) onPaid();
     }
+    setBusy(false);
   }
 
   function restart() {
-    setAnswer(null);
+    setHeld(null);
     setTarget(null);
     setTyped("");
   }
 
-  if (answer) {
-    const awaiting = answer.outcome === AWAITING;
+  if (held) {
     return (
-      <div className="screen">
-        <h1 className="screen-title">Traspaso</h1>
-        <section className={awaiting ? "card preview" : "card"}>
-          <p>{answer.text}</p>
-          {awaiting ? (
-            <div className="confirm">
-              <button className="yes" disabled={busy} onClick={() => void answerPreview("sí")}>
-                Confirmar
-              </button>
-              <button className="no" disabled={busy} onClick={() => void answerPreview("no")}>
-                Cancelar
-              </button>
-            </div>
-          ) : (
-            <button className="restart" onClick={restart}>
-              Hacer otro
-            </button>
-          )}
-        </section>
-      </div>
+      <Approval
+        title="Traspaso"
+        held={held}
+        busy={busy}
+        onReply={(said) => void reply(said)}
+        onRestart={restart}
+      />
     );
   }
 
