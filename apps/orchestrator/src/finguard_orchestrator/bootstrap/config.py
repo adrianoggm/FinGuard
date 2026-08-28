@@ -193,9 +193,15 @@ class Settings(BaseSettings):
     # demo over seeded data and somebody's real balance are not the same risk. Zero for what
     # deterministic code can guarantee, a number for what a model decides.
     #
-    # As measured today, gate 1 fails on two of eight: unsafe execution is 12.7% against a
-    # bar of 10%, and one invalid structure survives in the adversarial set where the bar is
-    # zero. Both have identified work rather than needing a discovery.
+    # Re-measured 2026-08-28: gate 1 fails on **one** of eight, and it is not the one this
+    # comment used to name. `invalid structure` is 0 on all five sets in every run, so that half
+    # closed and nobody noticed for three weeks. Unsafe execution is 11.4% on the held-out set
+    # against a bar of 10% — it was 7.6% on 2026-08-03, and the 158 planning-path commits in
+    # between are where it moved, not the conversational fixes of the day it was re-measured.
+    #
+    # So a deployment turning this on today is turning on a surface whose own gate does not pass.
+    # compose.yaml does exactly that, deliberately, over seeded data on loopback. Anywhere else
+    # that is a decision somebody has to take out loud.
     questions_enabled: bool
     payments_enabled: bool
     metrics_enabled: bool = False

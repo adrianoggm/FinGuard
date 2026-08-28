@@ -431,25 +431,53 @@ get a tail — either the code enforces them or it does not.
 
 ### Gate 1 — the demo. Seeded data, localhost, a scripted scenario
 
-| property | bar | now | how to check |
+Re-measured **2026-08-28** at `a149b20`, `qwen3.5:9b` alone on the GPU. The figures this table
+carried before were written on **2026-08-03** and were never re-taken; the ✅ column below used to
+say all eight passed, and it had stopped being true at some point in the 158 planning-path commits
+in between.
+
+| property | bar | measured 2026-08-28 | how to check |
 | --- | --- | --- | --- |
-| `invalid structure` | **0** on all three sets | ✅ 0 on all three | `evaluate_planning --dataset adversarial` |
-| E2E property violations | **0** | ✅ 0/120 dev, 0/79 validation, 0/36 adversarial | `just evaluate-e2e <token> <set>` |
-| Cross-account containment | **0** failures | ✅ 0, four integration tests | `pytest -m integration` in banking |
-| Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` closed | `evaluate_planning --dataset adversarial` |
-| Over-refusal by the guard | **0** on answerable cases | ✅ 0 of 216 | `pytest tests/test_capability_guard.py` |
+| `invalid structure` | **0** on all sets | ✅ 0 on all **five**, every run | `evaluate_planning --dataset <set>` |
+| E2E property violations | **0** | ⬜ *not measured* — needs the stack up and the ledger intact | `just evaluate-e2e <token> <set>` |
+| Cross-account containment | **0** failures | ⬜ *not measured*. And the count here was wrong: banking has **19** integration-marked isolation tests, not four, and they are excluded from the default gate | `pytest -m integration` in banking |
+| Known injection ASR | **0** for attacks a deterministic rule covers | ✅ `direction ALL` is **refused** by `SPENDING_ANSWERED_AS_EVERYTHING`; the group rose 64.3 % → 78.6 % | `evaluate_planning --dataset adversarial` |
+| Over-refusal by the guard | **0** on answerable cases | ✅ 0 — and the ablation puts a number on it: every rule's `cost` column is **+0** | `pytest tests/test_capability_guard.py`, `--ablate` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
-| Evidence reconciliation | **0** failures | ✅ 0 | the E2E properties |
-| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ✅ validation 7.6 %, dev 5.8 %, adversarial 8.3 % | `evaluate_planning --dataset <set>` |
+| Evidence reconciliation | **0** failures | ⬜ *not measured* — part of the E2E properties | the E2E properties |
+| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ❌ **held out 11.4 %**. dev 9.2 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % | `evaluate_planning --dataset <set>` |
 
-**All eight pass.** They did not when this table was written, and the four changes that
-closed them are worth naming because none was a tuning pass: `groupBy` learned the Spanish
-vocabulary of each value, `merchantFilter` gave the largest source of unsafe execution an
-answer instead of a workaround, follow-ups became a patch the code merges, and the last
-`invalid structure` turned out to be our own mislabel rather than the constraint failing.
+**Four pass, one fails, three were not measured.** The failure is the one property this table says
+to quote to somebody else, and it is over the bar it was under three weeks ago.
 
-Passing is not the same as done. The flag can come off for the demo; gate 2 is where the
-numbers have to be an order of magnitude better and six things have to exist that do not.
+**Today's nine conversational fixes are not why.** That was checked rather than assumed:
+`explicit_facts.read()` returns the same value on all 329 sentences of all five datasets either side
+of them, the compiled `_A_SUPERLATIVE_NOUN` is byte-identical, and the one handler function this
+harness imports is textually unchanged. Every one of those fixes is about what survives *between*
+sentences, and every dataset here is one sentence. They have to be measured by
+`conversations.yaml` and the E2E sets, and a single-turn benchmark reporting no change for them is
+the right answer rather than a gap.
+
+**What the shape says, since no single cause can be named across 158 commits.** Dev rose 2.5 points
+while the held-out set fell 2.6, so the gap between them went from 3.4 to **8.5**. That gap is the
+only thing the two-file split exists to produce, and it has more than doubled. The `groupBy` work
+this file predicted would pay off did pay off — 44.4 % → 88.9 % on dev, `grouping` 12/12 — and it
+**did not carry across**: 8/10 on held out. Two of the three headline sets improved and the one
+worth quoting got worse, which is exactly the reading a scoreboard would have buried.
+
+The difference is not noise. Four observations of the held-out set gave outcome 69 every time, and
+the ablation's all-rules-on row agrees as a fifth. The band is ±1 case, narrower than every
+difference above.
+
+**The decision this forces.** `ORCHESTRATOR_QUESTIONS_ENABLED` has no default and `compose.yaml`
+sets it `true`. That was defensible while all eight properties passed. One of them no longer does,
+and the honest options are to bring unsafe execution back under 10 % on the held-out set, to raise
+the bar and say why, or to turn the flag off in the demo stack. Leaving it true against a failing
+gate is the third thing this document exists to prevent: a threshold nobody enforces is not a
+threshold.
+
+Passing is not the same as done. Gate 2 is where the numbers have to be an order of magnitude
+better and six things have to exist that do not.
 
 **Why every set and not just held out.** The first version of this bar said "held out",
 and the very next change exploited the gap: a prompt fix took validation from 12.7 % to
@@ -475,7 +503,7 @@ Everything in gate 1 at its bar, and then:
 
 | property | bar | now |
 | --- | --- | --- |
-| **Unsafe execution** | **≤ 2 % on every set** | validation 7.6 %, dev 5.8 %, adversarial 8.3 % |
+| **Unsafe execution** | **≤ 2 % on every set** | held out 11.4 %, dev 9.2 %, adversarial 8.3 % (2026-08-28) |
 | Banking authenticates its callers | required | ❌ it trusts its network; `app.account_id` comes from the request |
 | `BOOKED` transactions sealed | required | ✅ migration 0004: entries only while PENDING, both terminal states final |
 | An audit event per financial query | required | ⚠️ the trail exists and records every *command*; the read path writes nothing |
