@@ -650,3 +650,211 @@ filter chips carry no `aria-pressed`.
 **Not a defect, worth a decision.** Every spending question costs two turns, because a holder with
 three accounts is asked which one before any figure. Inside a conversation the answer is remembered;
 between conversations it never is. For a voice assistant that doubles every interaction.
+
+---
+
+## Root causes found on 2026-08-28
+
+Task 3's deliverable. Measured against the running compose stack at `6ba084c`, token
+`demo-token-laura-pays`, seeded today 2026-08-28. Every cause below was confirmed twice: once over
+HTTP against the live service, and once in-process by calling the recogniser or the patch directly
+with the same sentence, so the file and line quoted are the line that decides rather than the line
+that looked likely. Paths are relative to
+`apps/orchestrator/src/finguard_orchestrator/` unless stated otherwise.
+
+**All six still reproduce.** Two of them turned out to be one cause seen twice: Step 4 is a
+downstream consequence of Step 2, proved by construction below.
+
+### Step 1 — «en todas mis cuentas» hijacks `group_by` — BUG
+
+**Reproduces.** `cuál fue mi mayor gasto de julio en todas mis cuentas` →
+`PLANNED  group_by=ACCOUNT  group_limit=5  rank=null`, text «La cuenta con mayor importe total del
+2026-07-01 al 2026-07-31 es: Cuenta corriente…».
+
+**Cause:** `application/queries/ask_financial_question.py:4383-4385`, `_GROUP_RANKING_DIMENSION`.
+
+The pattern is a bare noun alternation — `categorias?|comercios?|tiendas?|establecimientos?|cuentas?`
+— with no requirement that the noun be preceded by a grouping preposition. The scope phrase «en
+todas mis **cuentas**» therefore supplies the dimension, `_named_group_dimension` maps it to
+`GroupBy.ACCOUNT` (line 4406), `_GROUP_RANKING_SIGNAL` (lines 4411-4415) matches «mayor gasto»
+through its `mayor(?:es)?\s+(?:gasto|importe|ticket|media|promedio)` alternative, and
+`_group_ranking_plan` (line 5814) returns a ranking of accounts. It runs at line 1335, ahead of every
+other reader and ahead of the planner, so nothing downstream ever sees the superlative.
+
+**Ruled out, with the check.** The plan pointed at `explicit_facts`. It is not there.
+`explicit_facts.read("cuál fue mi mayor gasto de julio en todas mis cuentas")` returns
+`group_by=None, asks_account_breakdown=False`; `_ACCOUNT_BREAKDOWN`
+(`domain/services/explicit_facts.py:194-201`) does not match, because every one of its alternatives
+requires «por/de cada/separado por cuenta» or «en qué cuenta» — which is exactly the guard
+`_GROUP_RANKING_DIMENSION` lacks. The account-scope vocabulary is innocent too:
+`account_words.asks_for_all_accounts` correctly returns True and `named_in` correctly returns `()`.
+
+The asymmetry that makes this narrow: «cuánto gasté en julio en todas mis cuentas» has the dimension
+word but no ranking signal, so it is unaffected. Only a superlative *plus* the scope phrase changes
+meaning.
+
+### Step 2 — `across_accounts` narrows while `selection_mode` stays `ALL` — BUG
+
+**Reproduces exactly as recorded**, including the answer dropping «Consultado en todas tus cuentas».
+
+**Cause:** `application/queries/ask_financial_question.py:4063-4071`, the `remembered` ternary in
+`_answer`.
+
+`_answer` deliberately reads with `scoped` and remembers `plan` — the comment at lines 4059-4062 says
+so, and the rule is reasonable. But the exception it makes for a widened scope is
+`scoped.across_accounts and account_words.asks_for_all_accounts(query.sentence)` (line 4067): the
+**current sentence** has to re-say «todas mis cuentas». A scope settled by an earlier turn does not
+qualify, so `remembered` falls back to the planner's plan with `across_accounts=False`, and that is
+what `_answered` receives at line 4241 and what becomes `conversation.last_plan`. Meanwhile
+`_remember_runtime_scope` (lines 7201-7212) correctly records `AccountSelectionMode.ALL` on the
+conversation. Two halves of one fact, written by two lines eight apart.
+
+The vanished note is the same line: `_scope_note` (lines 7146-7147) reads `plan.across_accounts` off
+`remembered`, so a turn whose figures came from three accounts is presented as if scoped to one.
+
+**One correction to the finding as recorded.** The plan says «on a holder with money spread across
+accounts this under-reports». It does not, today: the ledger read at lines 4076-4088 is executed with
+`scoped`, and `_scoped`'s persisted-`ALL` branch (lines 3801-3802) widens every subsequent
+unqualified turn as well. The figures are right; the recorded plan and the sentence about it are
+wrong. That still matters, because the recorded plan is an input elsewhere — see Step 4, which is
+this same bug producing a wrong outcome rather than only a wrong label.
+
+**The fix carries one design choice.** Either `remembered` honours a settled
+`conversation.account_selection`, or `_scope_note` and `_period_comparison_plans` stop reading scope
+off the remembered plan and read the selection instead. The second is the smaller change and puts the
+fact in one place; the first keeps `last_plan` self-describing. Decide before writing the task.
+
+### Step 3 — «qué día suelo gastar más» answers with an average — BUG
+
+**Reproduces.** Three turns (`qué día suelo gastar más` / `en julio` / `todas mis cuentas`) →
+`metric=AVERAGE group_by=DAY`, «El importe medio por movimiento … fue de 67,71 €».
+
+**The single-turn form is correct**, which is what localises it:
+`qué día suelo gastar más en julio en todas mis cuentas` → `metric=FREQUENCY`, «28 veces del
+2026-07-01 al 2026-07-31: aproximadamente cada día.» The defect is in the clarification round trip,
+not in the reading of the sentence.
+
+**Cause:** `application/queries/ask_financial_question.py:6734-6735` and `:1453-1460`.
+
+`explicit_facts.read` gets this right on its own — it returns `Metric.FREQUENCY`, because `_ASKS_WHEN`
+(`domain/services/explicit_facts.py:103-106`) matches «que dia» and `asks_average` is False (the
+`_TYPICAL_AMOUNT` half at lines 415-417 also needs a temporal group, which «qué día» is not). Nothing
+applies it:
+
+1. The sentence carries no window, so the LLM planner answers `NEEDS_CLARIFICATION` with a draft.
+   `_next_state` (lines 6734-6735) stores `planned.draft` verbatim in the `FinancialClarification`.
+   `explicit_facts.enforce` is never called on the declined branch — only at line 1523, on the
+   answerable one. The stored draft is `{group_by: DAY, metric: AVERAGE}`, the model's reading;
+   confirmed by dumping `conversation.draft` after turn 1.
+2. The reply «en julio» resumes through `_finish_pending` (line 2138), which adds the window and is
+   dispatched at lines 1453-1460 straight into `self._answer`, bypassing line 1523 altogether. The
+   facts read on that turn would be «en julio»'s anyway, and its metric is `None`.
+
+**Contributing, and why the corpus never saw it.** The deterministic `_frequency_plan` (line 4682)
+declines at lines 4694-4699 when the sentence names no category, which is why this sentence reaches
+the model at all. Every asserted frequency sentence names one — `tests/test_frequency.py` uses
+«gasolina», «supermercado» and «pagarme», and each states its own window in the same sentence, so
+none of them ever takes the clarification round trip. The `suelo gastar` cases in corpus 14 are the
+same shape.
+
+### Step 4 — «compáralos» after two answered periods is refused — BUG, and it is Step 2
+
+**Reproduces**, and its cause is Step 2's remembered plan.
+
+**Cause:** `application/queries/ask_financial_question.py:4566` with `:4573`, in
+`_period_comparison_plans`.
+
+The recogniser accepts the pronoun (`_PERIOD_COMPARISON_REFERENCE` fullmatches «comparalos») and then
+requires the two stored plans to differ *solely* by window: `across_accounts` is a member of the
+`scope` tuple at line 4566, and line 4573 returns `None` if any scope field disagrees. In the
+recorded conversation the July plan was remembered as `scoped` (`across_accounts=True`, because that
+turn's sentence *was* «todas mis cuentas») and the June plan as the unscoped planner plan
+(`across_accounts=False`). The pair disagrees on a field neither question mentioned.
+
+**Proved by construction.** The same conversation with the scope named on both turns, so both plans
+are remembered scoped:
+
+```
+'cuánto gasté en julio en todas mis cuentas'   -> 1.895,97 €   across=True
+'cuánto gasté en junio en todas mis cuentas'   -> 2.081,40 €   across=True
+'compáralos'  -> PLANNED «En junio de 2026: 2.081,40 €; en julio de 2026: 1.895,97 €.
+                 El gasto fue 185,43 € mayor en junio de 2026.»
+```
+
+So `_period_comparison_plans` needs no change of its own. Fixing Step 2 fixes this, and Step 4's task
+should be a regression test on the three-turn conversation rather than a second edit.
+
+### Step 5 — «compáralo con junio» is refused where «con el mes anterior» works — BUG
+
+**Reproduces.** Verified in-process against a conversation carrying a July `last_plan`, which takes
+the LLM out of the reproduction: all three comparison recognisers return `None` for «compáralo con
+junio», and `_comparison_with_previous_period` returns a well-formed `ComparisonPlan` for «compáralo
+con el mes anterior».
+
+**Cause:** `application/queries/ask_financial_question.py:206-217`, `_COMPARE_WITH_PREVIOUS_PERIOD`.
+
+This is the only recogniser that pairs the plan in view with a window named in the sentence, and its
+second operand is a closed list of *relative* calendar-unit nouns —
+`fin de semana|trimestre|semestre|quincena|mes|semana|ano|periodo` followed by `anterior|pasad[oa]`
+(lines 215-216). A month name is not in it, and neither is anything else `window_words.window_in` can
+read. The other two recognisers do not cover the shape either: `_period_comparison_plans` (line 4536)
+needs both operands already in the conversation, and `_direct_period_comparison` (line 5087) needs
+both windows in the sentence — `window_words.compared_calendar_months("compáralo con junio")` is
+`None`, because there is one month and a pronoun. With no recogniser claiming it the sentence falls to
+`capability_guard`, whose COMPARISON family pattern `\bcompara`
+(`domain/services/capability_guard.py:83`) refuses it, and the refusal text at lines 4286-4289
+recommends «compara mis gastos de julio con junio» — which does work, because it names both windows.
+
+The missing vocabulary is therefore not a word but a shape: «pronoun + one named window». The fix is a
+recogniser that takes `window_words.window_in(sentence)` as the second operand of a bare comparison
+imperative, with `last_plan`'s window as the first.
+
+### Step 6 — an inert exclusion is presented as applied — PRODUCT DECISION
+
+**Reproduces.** Over HTTP, on a route that needs no planner call so it replays deterministically:
+
+```
+'top 3 comercios de supermercado en julio en todas mis cuentas'
+   -> Carrefour: 218,28 € (3) · Mercadona: 131,21 € (2) · Alcampo: 75,22 € (2)
+'sin contar el alquiler'
+   -> «Tus 3 comercios con mayor importe total en supermercado, sin alquiler …»
+      Carrefour: 218,28 € (3) · Mercadona: 131,21 € (2) · Alcampo: 75,22 € (2)
+      plan gains excluded_categories=['HOUSING_RENT']; every figure identical
+```
+
+And the whole chain confirmed in-process on the same shape of plan:
+
+```
+continuation_patch.apply("sin contar el alquiler", <julio, categories=('GROCERIES',)>)
+  -> APPLIED   categories=('GROCERIES',)   excluded_categories=('HOUSING_RENT',)
+answer_writer.filter_of(that plan)  ->  ' en supermercado, sin alquiler'
+```
+
+**Where it happens:** `domain/value_objects/plan_patch.py:84-92` and
+`domain/services/answer_writer.py:395-405`.
+
+`PlanPatch.apply_to` (`plan_patch.py:84-92`) unions the exclusion into `excluded_categories` and
+removes it from `categories`, which removes nothing — `HOUSING_RENT` was never inside a `GROCERIES`
+filter. Nothing tests whether the exclusion intersects what is being counted.
+`answer_writer.filter_of` (`answer_writer.py:395-405`) then states every exclusion on the plan
+unconditionally, so the sentence claims a filter that cannot have changed the figure. The total and
+the movement count are identical before and after, which is the only way a reader can tell.
+
+**This is the product call the plan flagged, and it is genuinely open.** Three defensible answers:
+(a) apply the patch and say it changed nothing — «El alquiler no estaba en supermercado, así que la
+cifra no cambia»; (b) refuse the patch as not applicable and leave the previous answer standing;
+(c) accept it silently as future-proofing, on the grounds that the exclusion is a real instruction
+that will matter if the category filter is later widened. Today's behaviour is (c) *presented as*
+(a) — and that part is indefensible whichever way the decision goes. Recommended: (a). It is the only
+one of the three that tells the reader the truth about the figure in front of them.
+
+### Not found
+
+Nothing: all six have a file and a line, and two of them share one.
+
+### Note for whoever writes Tasks 4-9
+
+Steps 2 and 4 are one task, not two. Step 3's fix touches the clarification lifecycle rather than a
+vocabulary, so it needs a test at the boundary («a draft stored by a declined turn is enforced against
+the sentence that produced it») rather than a corpus sentence alone. Steps 1 and 5 are both regex
+edits with obvious corpus cases. Step 6 needs the decision above taken before any code is written.
