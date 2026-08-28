@@ -858,3 +858,165 @@ Steps 2 and 4 are one task, not two. Step 3's fix touches the clarification life
 vocabulary, so it needs a test at the boundary («a draft stored by a declined turn is enforced against
 the sentence that produced it») rather than a corpus sentence alone. Steps 1 and 5 are both regex
 edits with obvious corpus cases. Step 6 needs the decision above taken before any code is written.
+
+---
+
+## Decisions taken on 2026-08-28, before writing Tasks 4-8
+
+**Defect 6 → option (a).** Apply the patch and say it changed nothing: «El alquiler no estaba en
+supermercado, así que la cifra no cambia». Of the three defensible answers it is the only one that
+tells the reader the truth about the figure in front of them. (b) throws away a real instruction and
+(c) is what happens today, presented as (a).
+
+**Defect 2 → option (ii)**, the consumers read the runtime scope; `remembered` is left alone.
+
+Not because it is smaller. `_answer`'s own comment at lines 4059-4062 states the rule: *"Which
+accounts the figures came from is a property of how the question was answered; the plan is what was
+asked, and that is what gets described to the user and remembered for a follow-up."* Under that rule
+`across_accounts=False` on a remembered plan whose sentence never said it is **correct**, and option
+(i) — making `remembered` reflect the run — would contradict a decision the code states out loud.
+What is wrong is the two consumers:
+
+- `_scope_note` describes the *figures*, so it must read the runtime scope, not the asked plan.
+- `_period_comparison_plans` compares two *questions*, so it must not require them to agree on a
+  field neither of them mentioned.
+
+**One refinement the diagnosis does not cover.** When `across_accounts` leaves the strict-equality
+`scope` tuple at line 4566, `only_account_id` and `only_account_ids` must stay in it. Those *are*
+stated by the question — «cuánto gasté en la Hucha» — so dropping them too would happily compare the
+piggy bank against every account. The rule is: a scope field the sentence can state stays strict; a
+scope field only the conversation can settle does not.
+
+## Task ordering and why it is not fully parallel
+
+Five fixes for six defects (Steps 2 and 4 are one). Four of the five touch
+`ask_financial_question.py`, so the constraint is semantic overlap rather than merge mechanics —
+distant hunks in one file merge cleanly, as Tasks 1 and 2 proved.
+
+| wave | tasks | why together |
+| --- | --- | --- |
+| A | **4** (defect 1, `_GROUP_RANKING_DIMENSION` at :4383) · **6** (defect 3, clarification lifecycle at :6734 and :1453) · **8** (defect 6, `plan_patch.py` + `answer_writer.py`) | three disjoint concerns; 4 and 6 are ~2300 lines apart in one file, 8 is in different files entirely |
+| B | **5** (defects 2+4, `_scope_note` at :7146 and `_period_comparison_plans` at :4566) | changes what the comparison recogniser accepts |
+| C | **7** (defect 5, a recogniser for «pronoun + one named window») | adds a recogniser that could claim sentences Task 5 just changed the handling of. Sequential after B on purpose |
+
+Every task starts from the merge commit `4da1516` on `task/visualization`, which carries this plan and
+both earlier fixes. **A worktree does not necessarily cut from that** — both Task 1 and Task 2 were
+handed a worktree at `main` (`d062f03`), where most of the code these tasks describe does not exist.
+Verify the base before starting: the reliable tell is whether this plan document is present.
+
+## Task 4: the scope phrase is not a grouping instruction
+
+**Cause:** recorded above under "Step 1". `_GROUP_RANKING_DIMENSION`
+(`ask_financial_question.py:4383-4385`) is a bare noun alternation including `cuentas?` with no
+requirement of a grouping preposition, so «en todas mis **cuentas**» supplies the dimension and a
+superlative about movements becomes a ranking of accounts, at line 1335, ahead of the planner.
+
+**The property to pin:** a sentence carrying a movement superlative *and* the all-accounts scope
+phrase is a ranking of movements, scoped to every account. A sentence carrying the dimension word as
+a genuine grouping instruction («mis mayores gastos **por cuenta**», «en qué cuenta gasté más») is
+still a ranking of accounts.
+
+**Fix shape:** require a grouping preposition before the dimension noun, the way
+`explicit_facts._ACCOUNT_BREAKDOWN` already does («por / de cada / separado por / en qué»). That
+pattern is the guard this one lacks; read it before writing the regex, and consider whether the two
+should share a fragment the way `MOVEMENT_NOUNS` now does.
+
+**Test:** `tests/test_cumulative_and_group_rankings.py` owns group rankings. Add both directions —
+the hijack case must produce a movement ranking, and at least two genuine grouping sentences must
+still produce `GroupBy.ACCOUNT`. The second half is the whole risk of this change.
+
+**Corpus:** one episode in `evaluation/conversations/`, at least 6 turns. Note the errata that bit
+Task 1: `window` is a string, and the corpus stub answers any superlative with a `TRANSPORT_FUEL`
+ranking. A new sentence handed to the planner needs a case in
+`evaluation/planning/conversations.yaml` or the `UNMEASURED` ratchet at 22 breaks.
+
+## Task 5: the scope of the run and the scope of the question are different facts
+
+**Cause:** recorded above under "Step 2" and "Step 4". Decision (ii) is taken; the refinement about
+`only_account_id`/`only_account_ids` is mandatory.
+
+**Two properties to pin:**
+1. A turn whose figures came from every account says so, even when its own sentence did not name the
+   scope. Today «Consultado en todas tus cuentas» vanishes from the second such turn onward.
+2. «compáralos» after two answered periods in one conversation compares them, even though only the
+   first sentence named the scope. This needs **no** change to the comparison recogniser — Task 3
+   proved by construction that naming the scope on both turns already works — so it is a regression
+   test on the three-turn conversation plus the `scope` tuple edit.
+
+**Do not touch `remembered`.** See the decision above.
+
+**Test:** `tests/test_account_scope_workflow.py` for property 1, and the comparison test file for
+property 2. Property 2's test must be the three-turn conversation, not a unit call on
+`_period_comparison_plans`, because the bug lives in what the previous turn stored.
+
+## Task 6: a draft stored by a declined turn is enforced against the sentence that produced it
+
+**Cause:** recorded above under "Step 3". `explicit_facts.read` already returns `Metric.FREQUENCY`
+for «qué día suelo gastar más». `_next_state` (`:6734-6735`) stores the model's raw draft
+(`group_by=DAY, metric=AVERAGE`) in the `FinancialClarification`, and the resume path
+(`_finish_pending`, dispatched at `:1453-1460`) goes straight into `_answer`, bypassing the
+`explicit_facts.enforce` at `:1523`. So the facts the sentence stated are read, and then dropped.
+
+**The property to pin:** what the sentence stated outright survives a clarification round trip. The
+existing comment at `:1520-1523` already argues for exactly this on the answerable branch — *"What
+the sentence stated outright wins over both the model's opinion about which fields changed and the
+plan it inherited from"* — and the declined branch is the same argument with no code behind it.
+
+**Fix shape:** enforce the facts against the draft before storing it, so the stored draft is the
+sentence's reading rather than the model's. Prefer that to enforcing on resume: on resume the
+original sentence is gone, and re-reading the reply («en julio») yields `metric=None`.
+
+**Test:** at the boundary rather than end to end — store a draft from a declined turn and assert the
+stored `metric` is `FREQUENCY`, then a resume test asserting the answer is a frequency. Note from the
+diagnosis: every asserted frequency sentence in `tests/test_frequency.py` and corpus 14 names a
+category and its own window, so none of them takes this round trip. That is why it was invisible.
+
+## Task 7: «compáralo con junio» — a pronoun and one named window
+
+**Cause:** recorded above under "Step 5". `_COMPARE_WITH_PREVIOUS_PERIOD` (`:206-217`) is the only
+recogniser that pairs the plan in view with a window from the sentence, and its second operand is a
+closed list of relative calendar-unit nouns plus `anterior|pasad[oa]`. A month name is not in it.
+`_period_comparison_plans` needs both operands in the conversation; `_direct_period_comparison` needs
+both windows in the sentence. Nothing claims «pronoun + one named window», so
+`capability_guard`'s `\bcompara` refuses it — and the refusal recommends a form that does work.
+
+**The property to pin:** a bare comparison imperative carrying exactly one readable window compares
+the plan in view against that window. «compáralo con junio», «compáralo con julio de 2025»,
+«compáralo con la semana pasada».
+
+**Fix shape:** take `window_words.window_in(sentence)` as the second operand and `last_plan`'s window
+as the first. Two guards the diagnosis implies and the task must honour: refuse when the two windows
+are the same window, and refuse when there is no plan in view — a comparison imperative with nothing
+to compare is a clarification, not a `ComparisonPlan`.
+
+**Also fix the refusal text** at `:4286-4289`. It currently recommends «consulta dos periodos por
+separado y dime "compáralos"», which Task 5 makes true; until Task 5 lands it recommends a form that
+does not work. Check after Task 5 that both recommended forms actually work, and change the text if
+either does not.
+
+**Test:** the comparison test file, with the two guard cases as well as the happy one. Corpus case in
+`evaluation/conversations/`, with its planning case if the sentence reaches a planner.
+
+## Task 8: an exclusion that cannot have changed the figure says so
+
+**Cause:** recorded above under "Step 6". `PlanPatch.apply_to` (`plan_patch.py:84-92`) unions the
+exclusion without testing whether it intersects what is being counted, and
+`answer_writer.filter_of` (`answer_writer.py:395-405`) states every exclusion on the plan
+unconditionally. Decision (a) is taken: apply, and say it changed nothing.
+
+**The property to pin:** when an excluded category cannot intersect the plan's own category filter,
+the answer says the figure did not change. When it can — an unfiltered plan, or a plan filtered to a
+category that is being excluded — nothing changes about today's behaviour.
+
+**Fix shape:** the domain decides whether the exclusion is inert; the writer says it. Put the
+predicate where the plan is (a method on `FinancialPlan` or a function beside `filter_of`), not in
+the patch: `apply_to` still applies it, because decision (a) keeps the instruction.
+
+**Careful:** «sin contar el alquiler» on a plan with no category filter at all is *not* inert — it
+removes rent from the total, and Task 3 measured that working correctly (975,97 € against 1.895,97 €,
+27 movements against 28). Only the intersection case is inert. A test for the non-inert case is as
+important as one for the inert case.
+
+**Test:** `tests/test_continuation_patch.py` or the answer-writer test file for the predicate, and one
+test asserting the sentence for each of the two cases. This task touches no file the other tasks
+touch, which is why it is in wave A.
