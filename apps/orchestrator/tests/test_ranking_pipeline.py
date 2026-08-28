@@ -405,3 +405,45 @@ async def test_a_sentence_with_its_own_content_is_not_a_continuation() -> None:
 
     assert planner.asked == "¿cuánto gasté en gasolina este año?"
     assert ledger.rankings == []
+
+
+async def test_a_superlative_that_names_its_window_is_not_a_continuation() -> None:
+    """The mirror of the test above, and the one that was missing.
+
+    "¿Cuál fue mi mayor gasto de junio?" after a total names its own subject and its own window, so
+    it is a new question. Read as an ellipsis it became a *window patch* on the previous aggregate —
+    the month was applied, the superlative was dropped, and the answer was June's total presented as
+    June's largest expense. A real figure about a different question, which is the failure this
+    whole path exists to avoid.
+
+    The singular noun is the point. "mis movimientos más altos de junio" already worked, because
+    `movimientos` was in the self-contained vocabulary and `gasto` was not.
+    """
+    aggregate = FinancialPlan(direction=Direction.EXPENSE, period=THIS_YEAR)
+    planner = FakePlanner(PlanningResult.planned(aggregate))
+    ledger = FakeLedger(CEPSA)
+
+    await ask(
+        "¿cuál fue mi mayor gasto de junio?",
+        planner,
+        ledger,
+        conversation=Conversation(last_plan=aggregate),
+    )
+
+    assert planner.asked == "¿cuál fue mi mayor gasto de junio?", (
+        "it has to reach the model: the patch cannot express a rank, so grounding the window "
+        "silently discards the question"
+    )
+
+
+async def test_an_ellipsis_without_a_window_is_still_an_ellipsis() -> None:
+    """The guard on the widening. A movement noun alone does not make a turn self-contained —
+    `_starts_new_financial_scope` also requires a window — so "¿y el gasto?" stays a follow-up and
+    keeps whatever the conversation was about."""
+    previous = FinancialPlan(direction=Direction.EXPENSE, period=THIS_YEAR)
+    planner = FakePlanner(PlanningResult.planned(previous))
+    ledger = FakeLedger(CEPSA)
+
+    await ask("¿y el gasto?", planner, ledger, conversation=Conversation(last_plan=previous))
+
+    assert planner.asked == "¿y el gasto?"
