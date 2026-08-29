@@ -915,6 +915,33 @@ def test_a_pronoun_after_a_monthly_average_ungroups_safely(sentence: str) -> Non
     assert reshaped.group_by is GroupBy.MONTH
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "gasto acumulado por comercio",
+        "gasto acumulado por cada cuenta",
+        "compara el gasto acumulado de restaurantes y supermercado",
+    ],
+)
+def test_a_running_total_by_shop_is_not_a_422(sentence: str) -> None:
+    """The live one. `_cumulative_plan` built the forbidden plan before `enforce` was reached.
+
+    The capability guard refuses the `PERIOD_AVERAGE` half of this family, which is why
+    «gasto medio mensual por comercio» comes back as a refusal over HTTP. It does not refuse
+    "acumulado", and it runs after every deterministic recogniser anyway — so this sentence
+    reached `FinancialPlan(group_by=COUNTERPARTY, metric=CUMULATIVE)` and raised out of the
+    handler as `invalid_input`, which the edge maps to 422.
+    """
+    from finguard_orchestrator.application.queries.ask_financial_question import _cumulative_plan
+
+    assert (
+        _cumulative_plan(
+            AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+        )
+        is None
+    ), "declines instead of building a plan the domain refuses"
+
+
 def test_an_exclusion_matches_a_merchant_the_plan_padded() -> None:
     """The plan's merchant name was compared unstripped and the invariant compares it stripped."""
     plan = FinancialPlan(
