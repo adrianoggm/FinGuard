@@ -13,6 +13,7 @@ import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.card import Card, CardCharge, Wallet
+from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
 class HttpCards:
@@ -25,7 +26,7 @@ class HttpCards:
     async def all_of(self, account_id: UUID, *, since: date, today: date, timezone: str) -> Wallet:
         url = f"{self._base_url}/v1/accounts/{account_id}/cards?{_window(since, today, timezone)}"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.get(url)
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{url}: {exc}") from exc
@@ -78,7 +79,7 @@ class HttpCards:
             f"?{_window(since, today, timezone)}&limit={limit}"
         )
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.get(url)
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{url}: {exc}") from exc

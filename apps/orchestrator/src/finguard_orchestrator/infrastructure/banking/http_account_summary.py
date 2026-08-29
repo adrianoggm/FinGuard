@@ -23,6 +23,7 @@ from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Perio
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.infrastructure.banking.client import banking_client
 from finguard_orchestrator.infrastructure.banking.http_accounts import HttpAccounts
 from finguard_orchestrator.infrastructure.banking.http_financial_query import HttpFinancialQuery
 
@@ -86,7 +87,7 @@ class HttpAccountSummary:
     async def _balance(self, account_id: UUID) -> dict[str, Any]:
         url = f"{self._base_url}/v1/accounts/{account_id}/balance"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.get(url)
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{url}: {exc}") from exc
