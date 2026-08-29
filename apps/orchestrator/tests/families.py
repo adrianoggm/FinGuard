@@ -97,6 +97,7 @@ _BY_PATH: tuple[tuple[str, str], ...] = (
     ("test_plan_patch", "follow_up"),
     ("test_result_reference", "follow_up"),
     ("test_a_follow_up_said_differently", "follow_up"),
+    ("test_a_follow_up_keeps_the_window", "follow_up"),
     # -- a sentence that determines no plan -------------------------------------------
     ("test_plan_draft", "ambiguity"),
     ("test_clarification_round_trip", "ambiguity"),
