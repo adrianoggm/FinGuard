@@ -92,6 +92,7 @@ from finguard_orchestrator.infrastructure.security.static_token_identity import 
     StaticTokenIdentity,
 )
 from finguard_orchestrator.observability import configure_logging
+from finguard_orchestrator.observability.otel import configure_tracing, register_turn_recording
 
 # The vendor behind the OpenAI-compatible adapter. A name and a base URL are the whole of
 # what distinguishes one from another, which is why the adapter is not named after this one.
@@ -432,6 +433,19 @@ def create_app() -> FastAPI:
     # by itself. Every request accounted for is the property; a decorator per route would account
     # for the ones somebody remembered.
     register_request_logging(app)
+
+    # The two halves of the observability adapter, and the order between them is the whole of the
+    # wiring. **Recording is unconditional; exporting is optional** — the middleware that opens a
+    # turn around every request is added whatever the settings say, so the decisions of a live turn
+    # are recorded and assertable with nothing listening, and `configure_tracing` returns having
+    # done nothing at all when `otel_enabled` is false, which is the default.
+    #
+    # The order between these two does not matter, which is worth stating because it looks as
+    # though it should: the FastAPI instrumentation replaces the app's `build_middleware_stack`
+    # rather than adding a middleware, so its inbound span wraps every user middleware whichever
+    # was registered first, and every `turn` span is a child of the request that produced it.
+    register_turn_recording(app)
+    configure_tracing(app, settings=settings)
 
     app.include_router(assistant_router)
     app.include_router(payments_router)

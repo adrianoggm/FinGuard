@@ -57,6 +57,7 @@ from finguard_orchestrator.infrastructure.planning.plan_schema import (
     build_schema,
 )
 from finguard_orchestrator.infrastructure.planning.prompt import build_prompt
+from finguard_orchestrator.observability import Step, Verdict, record
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,45 @@ _STRUCTURE_REPAIR: Final = (
     "\n\nYour previous response did not satisfy the required JSON schema. "
     "Return only one JSON object that matches the supplied schema exactly."
 )
+
+# How each planning outcome reads as a verdict. A table rather than a chain of `if`s because the
+# mapping is data: a seam that has to branch to work out what it decided is a seam whose telemetry
+# can disagree with its behaviour, and there is nothing here to disagree about.
+#
+# A clarification is `DECLINED` beside `UNSUPPORTED` because the shape of the decision is the same
+# from the outside — the model looked and did not produce a plan — and the exact outcome is in
+# `now` for anybody who needs the difference. `FAILED` is kept for the two that are not this
+# service choosing: bytes that did not match the schema, and a provider that said nothing at all.
+_VERDICT: Final = {
+    PlanningOutcome.PLANNED: Verdict.AGREED,
+    PlanningOutcome.NEEDS_CLARIFICATION: Verdict.DECLINED,
+    PlanningOutcome.UNSUPPORTED: Verdict.DECLINED,
+    PlanningOutcome.INVALID_DOMAIN: Verdict.DECLINED,
+    PlanningOutcome.INVALID_STRUCTURE: Verdict.FAILED,
+    PlanningOutcome.PROVIDER_ERROR: Verdict.FAILED,
+}
+
+
+def _settled(group_by: GroupBy, metric: Metric) -> Metric:
+    """`metric_without_a_bucket`, recorded.
+
+    Both places that settle the pair go through here — the plan and the clarification's draft —
+    so the seam is one `record` call and neither call site grew a telemetry block. `changed` is
+    the pair actually moving, which is exactly the case the domain used to refuse: a cumulative
+    metric with no bucket to accumulate over was an `InvalidValueError`, and a refusal becoming
+    an answer is the whole reason this step is worth counting.
+    """
+    now = metric_without_a_bucket(group_by, metric)
+    record(
+        Step.METRIC_WITHOUT_A_BUCKET,
+        Verdict.OVERRODE if now is not metric else Verdict.AGREED,
+        changed=now is not metric,
+        field="metric",
+        was=metric.value,
+        now=now.value,
+        detail=group_by.value,
+    )
+    return now
 
 
 class LlmQueryPlanner:
@@ -91,6 +131,33 @@ class LlmQueryPlanner:
         *,
         context: PlanningContext,
     ) -> PlanningResult:
+        """One planning decision, recorded once, whatever route inside produced it.
+
+        `changed` is the repair. The other two facts the seam carries have somewhere of their own
+        to go — the outcome in `now`, the model in `detail` — and what is left for "did this alter
+        what the turn answered" is the one thing that did: a first answer that failed the schema
+        and a second that did not. Without the repair those turns are `INVALID_STRUCTURE`, so the
+        rate of `changed=True` here is the rate at which constrained decoding stopped holding and
+        this layer covered for it. `planner.invalid_structure` says the same thing to a log; this
+        makes it a figure beside every other step's.
+        """
+        planned, repaired = await self._planned(sentence, context=context)
+        record(
+            Step.PLANNER,
+            _VERDICT[planned.outcome],
+            changed=repaired,
+            now=planned.outcome.value,
+            detail=self._model,
+        )
+        return planned
+
+    async def _planned(
+        self,
+        sentence: str,
+        *,
+        context: PlanningContext,
+    ) -> tuple[PlanningResult, bool]:
+        """The result, and whether it came from the schema-repair attempt rather than the first."""
         today = context.today
         previous = context.continuation.plan if context.continuation else None
         force_follow_up = context.continuation.force_follow_up if context.continuation else False
@@ -104,7 +171,7 @@ class LlmQueryPlanner:
         try:
             answer = await self._complete(prompt)
         except ProviderFailedError as exc:
-            return PlanningResult.provider_error(str(exc))
+            return PlanningResult.provider_error(str(exc)), False
 
         planned = _read(
             answer,
@@ -114,7 +181,7 @@ class LlmQueryPlanner:
             force_follow_up=force_follow_up,
         )
         if planned.outcome is not PlanningOutcome.INVALID_STRUCTURE:
-            return planned
+            return planned, False
 
         # Never echo malformed provider text into the repair prompt. The original question and the
         # exact schema are sufficient, and the second result is still validated without coercion.
@@ -122,13 +189,16 @@ class LlmQueryPlanner:
         try:
             repaired = await self._complete(prompt + _STRUCTURE_REPAIR)
         except ProviderFailedError as exc:
-            return PlanningResult.provider_error(str(exc))
-        return _read(
-            repaired,
-            today=today,
-            categories=self._categories,
-            previous=previous,
-            force_follow_up=force_follow_up,
+            return PlanningResult.provider_error(str(exc)), True
+        return (
+            _read(
+                repaired,
+                today=today,
+                categories=self._categories,
+                previous=previous,
+                force_follow_up=force_follow_up,
+            ),
+            True,
         )
 
     async def _complete(self, prompt: str) -> str:
@@ -305,7 +375,7 @@ def _draft(
         group_by = GroupBy(_text(body, "groupBy"))
         # The same reading `_build_plan` makes, for the same pair. A draft that lost it came back
         # as no draft at all, and the draft is the only thing the reply to the question builds on.
-        metric = metric_without_a_bucket(group_by, Metric(_text(body, "metric")))
+        metric = _settled(group_by, Metric(_text(body, "metric")))
         selected_categories = _categories(_texts(body, "categories"), allowed=categories)
         merchants = tuple(dict.fromkeys(m.strip() for m in _texts(body, "merchants") if m.strip()))
     except (_MalformedError, ValueError):
@@ -442,7 +512,7 @@ def _build_plan(
             # docstring refuses: that rule is about repairs which *widen* a query, and every filter
             # here is left exactly as read. The pair is settled rather than dropped, and only where
             # settling it changes no figure — `metric_without_a_bucket` argues which pair that is.
-            metric=metric_without_a_bucket(grouping, Metric(metric)),
+            metric=_settled(grouping, Metric(metric)),
         )
     except InvalidValueError as exc:
         return PlanningResult.invalid_domain(str(exc))

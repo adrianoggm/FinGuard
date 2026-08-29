@@ -12,9 +12,10 @@ the evaluation depends on it.
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
+from functools import wraps
 from typing import Final, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -133,7 +134,13 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.guard_policy import EVERY_RULE, GuardPolicy
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
-from finguard_orchestrator.observability import account_ref
+from finguard_orchestrator.observability import (
+    Step,
+    Verdict,
+    account_ref,
+    current_turn,
+    record,
+)
 
 
 class AccountScopeRequiredError(Exception):
@@ -343,6 +350,58 @@ _ACCOUNT_YIELD_AMOUNT: Final = re.compile(
 _GAMBLING: Final = re.compile(r"\b(?:apuest\w*|bet(?:365|fair)?|casino\w*|codere|bwin|sportium)\b")
 
 logger = logging.getLogger(__name__)
+
+# How a turn's outcome reads as a verdict. A table because the mapping is data, and `AGREED` is
+# the default because everything not listed is an answer: the eleven `Spoken` outcomes are answers
+# this service already held, and `PLANNED` is one it went and got.
+#
+# The three that decline are this service choosing — it will not express the question, it does not
+# know which one was asked, or the rules rejected the plan. The two that fail are not: bytes that
+# did not match a schema, and a bank that did not answer.
+_TURN_VERDICT: Final = {
+    PlanningOutcome.UNSUPPORTED.value: Verdict.DECLINED,
+    PlanningOutcome.NEEDS_CLARIFICATION.value: Verdict.DECLINED,
+    PlanningOutcome.INVALID_DOMAIN.value: Verdict.DECLINED,
+    PlanningOutcome.INVALID_STRUCTURE.value: Verdict.FAILED,
+    PlanningOutcome.PROVIDER_ERROR.value: Verdict.FAILED,
+    "BANKING_UNAVAILABLE": Verdict.FAILED,
+}
+
+
+def _recogniser[**P, T](reader: Callable[P, T]) -> Callable[P, T]:
+    """Mark a deterministic reader, and record the turns it claims.
+
+    **This is the whole `recogniser` seam: one `record` call, and not one line inside `_steps`.**
+    The chain in there is twenty-odd `plan = _reader(query)` / `if plan is not None: … return`
+    blocks, and a `record` in each would be twenty telemetry blocks in the file that already does
+    too much — the trade this design refuses. A decorator puts the decision where the decision is:
+    a reader returning something *is* the claim, and there is nothing else to work out.
+
+    **There is no `agreed` verdict here, and that is deliberate rather than an omission.** A reader
+    that returns `None` has not decided anything — it has declined to read, and recording twenty
+    "not mine" decisions per turn would bury the one that matters. So every decision this seam
+    records is `CLAIMED` with `changed=True`, which is exactly what `Step.RECOGNISER` says it
+    means: the model never ran. The denominator is turns, and `Step.OUTCOME` records one of those
+    per turn.
+
+    **A turn can record two of these**, on one path: `_ratio_request` reads a percent-change
+    follow-up by asking `_direct_period_comparison`, and both claim. Both are true — the ratio
+    reader took the turn, on the strength of the comparison reader — and the alternative was
+    leaving one of the two undecorated, which is an instrument with a hole in it rather than one
+    with an honest extra row. The other three readers consulted from inside another
+    (`_comparison_with_previous_period`, `_internal_movement_request`, and
+    `_direct_period_comparison` under `_a_comparison_owns_it`) are all reached only after the chain
+    has already asked them and been told `None`, so they cannot double.
+    """
+
+    @wraps(reader)
+    def read(*args: P.args, **kwargs: P.kwargs) -> T:
+        claimed = reader(*args, **kwargs)
+        if claimed is not None:
+            record(Step.RECOGNISER, Verdict.CLAIMED, changed=True, detail=reader.__name__)
+        return claimed
+
+    return read
 
 
 def _clean_turn(sentence: str) -> str:
@@ -632,6 +691,96 @@ class Stage:
     detail: str | None = None
 
 
+class _RecordedLedger:
+    """The ledger port, with what the bank returned recorded on the way past.
+
+    **A wrapper and not a `record` call at the reads, because there are sixteen of them.** They are
+    spread over the comparison pair, both ratio operands, the salary history, the payee count, the
+    rankings, the movement lists and the ordinary answer, and a telemetry block at each would be
+    sixteen blocks in the file this design promised not to make harder to read — and the
+    seventeenth read, added next month, would forget. One seam, one place, every read.
+
+    `changed` is the run crossing accounts. Across every account of the holder is now the default
+    and it was not always: until there were three accounts the figures were the credential's one,
+    which was also all of them. `_scoped` calls that a change of meaning worth stating, and this is
+    where it becomes a figure — a turn answered over three accounts answered a wider question than
+    the plan on its own says.
+
+    `detail` is `account_ref`, never the account. `now` is a row count. Neither is anything the
+    holder wrote, and nothing about the movements themselves is recorded: what the ledger holds is
+    on the prohibited list beside what the holder typed.
+    """
+
+    def __init__(self, queries: FinancialQueryPort) -> None:
+        self._queries = queries
+
+    async def run(
+        self,
+        plan: FinancialPlan,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+        movements: int | None = None,
+    ) -> QueryAnswer:
+        # Forwarded exactly as it arrived. Passing `movements=None` through would change the call
+        # every adapter and every fake sees, for a value that means "do not ask".
+        extra: dict[str, int] = {} if movements is None else {"movements": movements}
+        try:
+            answer = await self._queries.run(
+                plan,
+                account_id=account_id,
+                today=today,
+                reporting_timezone=reporting_timezone,
+                **extra,
+            )
+        except Exception:
+            record(
+                Step.LEDGER,
+                Verdict.FAILED,
+                changed=plan.across_accounts,
+                field="rows",
+                detail=account_ref(account_id),
+            )
+            raise
+        record(
+            Step.LEDGER,
+            Verdict.AGREED,
+            changed=plan.across_accounts,
+            field="rows",
+            now=str(answer.movement_count),
+            detail=account_ref(account_id),
+        )
+        return answer
+
+    async def ranked(
+        self,
+        ranking: TopMovements,
+        *,
+        account_id: UUID,
+        today: date,
+        reporting_timezone: str,
+    ) -> Movement | None:
+        found = await self._queries.ranked(
+            ranking,
+            account_id=account_id,
+            today=today,
+            reporting_timezone=reporting_timezone,
+        )
+        # No row count and no `FAILED`: this one answers with a movement or with None, and None is
+        # an answer — "el quinto" of three movements does not exist. A count of one or zero would
+        # be a figure about the ledger's contents rather than about what the run did.
+        record(
+            Step.LEDGER,
+            Verdict.AGREED,
+            changed=ranking.across_accounts,
+            field="rank",
+            now=str(ranking.rank),
+            detail=account_ref(account_id),
+        )
+        return found
+
+
 class AskFinancialQuestionHandler:
     """Question in, figure and sentence out, with two deterministic gates around the model.
 
@@ -662,7 +811,10 @@ class AskFinancialQuestionHandler:
         interpreter: TurnInterpreterPort | None = None,
     ) -> None:
         self._planner = planner
-        self._queries = queries
+        # Wrapped here rather than at the composition root, so a handler built directly — by a
+        # test, or by the evaluation harness — records its bank reads too. An instrument only the
+        # deployment wires is an instrument no test has ever executed.
+        self._queries: FinancialQueryPort = _RecordedLedger(queries)
         self._policy = policy
         self._read_attempts = read_attempts
         self._cards = cards
@@ -720,6 +872,26 @@ class AskFinancialQuestionHandler:
             async for step in self._steps_answering_scope(query):
                 if isinstance(step, AskFinancialQuestionResult):
                     outcome = step.outcome
+                    # The turn, as one decision. Here rather than in the `finally` below on
+                    # purpose: an abandoned generator runs its `finally` in whatever context the
+                    # finaliser is on, where the recorder this turn owns is not reachable — so the
+                    # one record that says how every turn ended would be the one missing from the
+                    # turns that ended badly. This line runs in the caller's own context, where the
+                    # recorder is, and every branch of `_steps` passes through it.
+                    #
+                    # `changed` is whether a figure was actually shown. It is the fact `outcome`
+                    # cannot carry: `PLANNED` with no figure is a plan that ran and answered
+                    # nothing, and it counts as a success in every instrument that reads the
+                    # outcome alone.
+                    record(
+                        Step.OUTCOME,
+                        _TURN_VERDICT.get(step.outcome, Verdict.AGREED),
+                        changed=step.total_minor is not None,
+                        now=step.outcome,
+                    )
+                    recorder = current_turn()
+                    if recorder is not None:
+                        recorder.outcome = step.outcome
                     step = replace(
                         step,
                         conversation=step.conversation.with_turn(
@@ -1048,6 +1220,16 @@ class AskFinancialQuestionHandler:
 
         early_refusal = capability_guard.unsupported_reason(query.sentence, self._policy)
         if early_refusal == "CATEGORY_EXCLUSION":
+            # The one refusal the guard makes before the deterministic chain rather than after it,
+            # and therefore the one that never reaches the record below. Recorded where it acts:
+            # the same reading taken at the ordinary seam would be an opinion the turn never used.
+            record(
+                Step.CAPABILITY_GUARD,
+                Verdict.DECLINED,
+                changed=True,
+                field="family",
+                now=early_refusal,
+            )
             yield self._declined(early_refusal, was)
             return
 
@@ -1550,6 +1732,18 @@ class AskFinancialQuestionHandler:
             return
 
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
+        # The guard's own verdict, both ways, from the one place it is acted on. `AGREED` is here
+        # rather than left implicit because an override rate with no agreements in the denominator
+        # is a count: without this line the seam would report that the guard refuses 100% of the
+        # turns it sees. `now` carries the rule that refused and `None` when none did, which is
+        # `capability_guard`'s own vocabulary either way.
+        record(
+            Step.CAPABILITY_GUARD,
+            Verdict.DECLINED if refused is not None else Verdict.AGREED,
+            changed=refused is not None,
+            field="family",
+            now=refused,
+        )
         if refused is not None:
             # Before the model, on purpose. Refusing here is a control; refusing after is
             # whatever disposition the configured model happens to have, and that moved
@@ -1641,13 +1835,28 @@ class AskFinancialQuestionHandler:
         # list — a real figure about a window the user had written down and nobody read.
         facts = explicit_facts.read(query.sentence, today=query.today)
         checked = explicit_facts.enforce(planned.plan, facts)
+        _enforced(planned.plan, checked, facts)
         # And what its silence means, which `enforce` cannot read: on a continuation naming no
         # period at all, the window is the one from the turn being continued.
-        checked = inherited_window(
+        continued = inherited_window(
             checked,
             context.continuation.plan if context.continuation is not None else None,
             facts,
         )
+        # Read off the two windows and not off object identity. `inherited_window` builds a new
+        # plan whenever it fills a silence, and the merge has usually already carried the same
+        # window down — so identity says "inherited" on turns where the figure was never going to
+        # move, and `changed` would then disagree with the `was`/`now` it reports.
+        model_window, ran_window = _window_of(checked), _window_of(continued)
+        record(
+            Step.INHERITED_WINDOW,
+            Verdict.OVERRODE if ran_window != model_window else Verdict.AGREED,
+            changed=ran_window != model_window,
+            field="window",
+            was=model_window,
+            now=ran_window,
+        )
+        checked = continued
         if facts.window is not None:
             # The record that makes a degraded conversation readable after the fact. Three windows
             # in one line — what the sentence said, what the model produced, what ran — so the turn
@@ -1681,6 +1890,16 @@ class AskFinancialQuestionHandler:
             checked = explicit_facts.restored_filters(checked, context.continuation.plan, facts)
 
         broken = plan_verifier.disagreement(query.sentence, checked, self._policy)
+        # `changed` is the disagreement, not the refusal. A rule that disagreed either had the
+        # plan repaired or had the turn refused, and both altered what was answered — the figure
+        # that would otherwise have come back is the one this step exists to stop. Which of the
+        # two it was is the turn's outcome, and `Step.OUTCOME` records that.
+        record(
+            Step.PLAN_VERIFIER,
+            Verdict.DECLINED if broken is not None else Verdict.AGREED,
+            changed=broken is not None,
+            detail=broken,
+        )
         if broken is not None:
             # The plan is well formed, the domain accepts it, and it answers a different
             # question from the one asked. Nothing downstream can tell: banking would
@@ -4733,6 +4952,7 @@ def _only_filters_changed(current: PlannedQuery | None, previous: PlannedQuery) 
     return without_current == without_previous
 
 
+@_recogniser
 def _period_comparison_plans(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
@@ -4803,6 +5023,7 @@ def _period_comparison_plans(
     return ComparisonPlan.between(earlier, latest)
 
 
+@_recogniser
 def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft | None:
     """A proportion stated completely, or the exact pair waiting for one shared window."""
     facts = explicit_facts.read(query.sentence, today=query.today)
@@ -4896,6 +5117,7 @@ def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft |
     return draft.with_window(window) if window is not None else draft
 
 
+@_recogniser
 def _frequency_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """A complete cadence question over a grounded category, with a useful default horizon."""
     facts = explicit_facts.read(query.sentence, today=query.today)
@@ -4922,6 +5144,7 @@ def _frequency_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     )
 
 
+@_recogniser
 def _cumulative_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Build a running calendar total without asking the model to reinterpret arithmetic."""
     facts = explicit_facts.read(query.sentence, today=query.today)
@@ -4991,6 +5214,7 @@ def _cumulative_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     )
 
 
+@_recogniser
 def _recurrence_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Discover periodic expenses from a conservative, complete category scope."""
     facts = explicit_facts.read(query.sentence, today=query.today)
@@ -5013,6 +5237,7 @@ def _recurrence_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     )
 
 
+@_recogniser
 def _how_many_payees_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """How many distinct payees a kind of spending has, and which they are.
 
@@ -5095,6 +5320,7 @@ def _account_activity_request(
     return FinancialPlanDraft(direction=Direction.INCOME, group_by=group_by, metric=metric)
 
 
+@_recogniser
 def _internal_movement_request(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
@@ -5218,6 +5444,7 @@ def _distinct_movements(movements: tuple[Movement, ...]) -> tuple[Movement, ...]
     return tuple(found)
 
 
+@_recogniser
 def _salary_history_plans(
     query: AskFinancialQuestionQuery,
 ) -> tuple[FinancialPlan, FinancialPlan] | None:
@@ -5292,6 +5519,7 @@ def _with_ratio_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> F
     )
 
 
+@_recogniser
 def _comparison_with_previous_period(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
@@ -5317,6 +5545,7 @@ def _comparison_with_previous_period(
     return ComparisonPlan.between(earlier, latest)
 
 
+@_recogniser
 def _comparison_with_a_named_window(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
@@ -5402,6 +5631,7 @@ def _comparison_with_a_named_window(
     return ComparisonPlan.between(earlier, latest)
 
 
+@_recogniser
 def _direct_period_comparison(
     query: AskFinancialQuestionQuery,
 ) -> ComparisonPlan | None:
@@ -5770,6 +6000,7 @@ def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
     return False
 
 
+@_recogniser
 def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Patch explicit filters and calculations onto the last validated financial query."""
     focus = focus_of(query.conversation)
@@ -6059,6 +6290,7 @@ def _query_for_reader(query: AskFinancialQuestionQuery) -> _QueryForReader:
     return _QueryForReader(None, query.sentence)
 
 
+@_recogniser
 def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements | None:
     """Turn a superlative into a ranking while retaining the prior window and filters."""
     selected = _query_for_reader(query)
@@ -6133,6 +6365,7 @@ def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan |
     )
 
 
+@_recogniser
 def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Rank aggregate groups by the exact metric named in the sentence."""
     selected = _query_for_reader(query)
@@ -6233,6 +6466,7 @@ def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | Non
     )
 
 
+@_recogniser
 def _gambling_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
@@ -6266,6 +6500,7 @@ def _gambling_plan(
     )
 
 
+@_recogniser
 def _multiple_movement_ranking(
     query: AskFinancialQuestionQuery,
 ) -> tuple[TopMovements, int] | None:
@@ -6326,6 +6561,7 @@ def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:
     return _direct_period_comparison(query) is not None
 
 
+@_recogniser
 def _natural_period_aggregate_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | None:
@@ -6364,6 +6600,7 @@ def _natural_period_aggregate_plan(
     return explicit_facts.enforce_exclusions(plan, facts)
 
 
+@_recogniser
 def _deterministic_breakdown_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
@@ -6510,6 +6747,7 @@ def _deterministic_breakdown_plan(
     )
 
 
+@_recogniser
 def _average_plan(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
@@ -7202,6 +7440,65 @@ def _refusal_for(rule: str, sentence: str, plan: FinancialPlan | TopMovements) -
         f"así que no te doy una cifra que estaría mal. Prueba a decírmelo nombrando la categoría: "
         f"«¿cuánto gasté en {words} el mes pasado?»"
     )
+
+
+def _enforced(
+    planned: PlannedQuery, checked: PlannedQuery, facts: explicit_facts.ExplicitFacts
+) -> None:
+    """Record what the sentence stated against what the model produced, one field at a time.
+
+    **The seam this whole design exists for**, and the reason it is per field rather than per turn:
+    a turn where the sentence overruled the model on the window and agreed with it on the direction
+    is two different facts about two different rules, and one `enforce: overrode` row cannot say
+    which. Read back, this is «los últimos 3 meses» answered over five, visible as
+    `window: LAST_N_MONTHS:5 → LAST_N_MONTHS:3` beside `direction: EXPENSE → EXPENSE`.
+
+    Only the fields the sentence actually stated. `enforce` has nothing to impose where the
+    sentence said nothing, so a decision there would be a row saying a rule that did not run
+    agreed — which is how an override rate acquires a denominator of turns it was never asked
+    about. Silence is `inherited_window`'s seam, not this one.
+
+    `changed` and the verdict both come from the one comparison, so the invariant `Decision`
+    deliberately does not enforce cannot be broken here by miswiring: a field that reads the same
+    before and after is `agreed`, and it is the case worth having — a deterministic rule that fires
+    on every turn and alters nothing is noise, and only the agreements make that visible.
+
+    Nothing here can carry what the holder wrote. A window is a period name and a count or two
+    dates, and the other three are enum values; `field` is one of four literals typed here. What a
+    category *is* never reaches this — `enforce` moves categories too, and they are deliberately
+    absent, because a category name is one unspaced word and `_own_words` says plainly that it
+    cannot tell «abogado» from GROCERIES.
+    """
+    for name, stated in (
+        ("window", facts.window),
+        ("direction", facts.direction),
+        ("group_by", facts.group_by),
+        ("metric", facts.metric),
+    ):
+        if stated is None:
+            continue
+        was, now = _field_of(planned, name), _field_of(checked, name)
+        record(
+            Step.ENFORCE,
+            Verdict.OVERRODE if now != was else Verdict.AGREED,
+            changed=now != was,
+            field=name,
+            was=was,
+            now=now,
+        )
+
+
+def _field_of(plan: PlannedQuery, name: str) -> str | None:
+    """One field of a plan, in this service's own vocabulary, or None where the shape has none.
+
+    A ranking has no direction, grouping or metric — «a qué personas» is not a question about one
+    movement — so the sentence can state one and there be nothing on the plan to compare it with.
+    That reads as None on both sides, which is `agreed`: the plan did not move.
+    """
+    if name == "window":
+        return _window_of(plan)
+    value = getattr(plan, name, None)
+    return None if value is None else str(value.value)
 
 
 def _window_of(plan: PlannedQuery | None) -> str | None:
