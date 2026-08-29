@@ -231,6 +231,37 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
+    # Whether anything is exported, and to where.
+    #
+    # **False by default, and that default is load-bearing.** A test run and a developer's laptop
+    # must not need a collector, so the whole SDK stays unbuilt unless a deployment says otherwise
+    # — `just app` does not pay for the observability profile either, which is the same decision
+    # one layer out.
+    #
+    # What this does *not* switch off is the recording. The decisions of a turn are recorded
+    # whether or not anybody is listening, and only the export asks this question; see the module
+    # docstrings of `observability/decisions.py` and `observability/otel.py`, which both argue it
+    # at length because it is the property six green-but-dead instruments in the last week were
+    # missing. If a flag here ever starts deciding whether a call site executes, that is the
+    # seventh.
+    #
+    # These two have defaults, unlike every operational number above, for the reason the vendor
+    # base URLs do: there is nothing about them a deployment has to state in order to be correct.
+    # Off is a complete configuration.
+    otel_enabled: bool = False
+
+    # The collector's OTLP/HTTP root, without a signal path — `observability/otel.py` appends
+    # `/v1/traces` and `/v1/metrics`, because the HTTP exporter posts to an explicit endpoint
+    # verbatim and a base URL handed straight to it is a 404 on every export that nothing outside
+    # the SDK's own logs would show.
+    #
+    # HTTP and not gRPC, and 4318 and not 4317: the collector opens both and says why — inside
+    # compose the orchestrator reaches it by service name, but `just serve-orchestrator` runs it on
+    # the host, and OTLP/HTTP is the protocol that survives every proxy in between. Loopback, since
+    # that is where compose publishes it (rule 13). A compose deployment overrides this with
+    # http://otel-collector:4318.
+    otel_endpoint: str = "http://127.0.0.1:4318"
+
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
     # a different measurement — scripts/evaluate_planning.py is what picks this value.
