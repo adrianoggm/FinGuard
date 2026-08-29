@@ -1,0 +1,79 @@
+# Tempo — where a turn's decisions live.
+#
+# The design records each decision as a span event rather than a log line, so this is not
+# "the tracing backend" in the latency sense: it is the queryable form of the decision log.
+# That is also why Loki is not in this stack. See section 5 of
+# docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+#
+# Single binary (the image's default target), because one process holding a few days of a
+# laptop's traces is the honest shape here. The microservices topology is a deployment
+# concern and none of the settings below would change for it except `storage`.
+
+# TraceQL streaming: Grafana shows partial search results as they arrive instead of blocking
+# until the whole time range is scanned. Off by default; on here because the search that
+# matters — "find the turn where enforce overrode the window" — is a full scan of recent
+# blocks, and a progress bar beats a spinner.
+stream_over_http_enabled: true
+
+server:
+  # MEASURED, and the thing most likely to cause a bad afternoon in a real deployment:
+  # /ready on this port answered 503 for the first few minutes of this container's life
+  # while it was already accepting OTLP and serving /api/traces lookups at 200. Readiness
+  # here means "every module has settled", not "usable". A Kubernetes readiness probe with
+  # a tight failureThreshold will therefore kill Tempo before it ever comes up, in a loop,
+  # and the logs will show nothing wrong because nothing is wrong. Give the probe a
+  # generous initialDelaySeconds / failureThreshold rather than shortening the block
+  # duration below to chase it.
+  http_listen_port: 3200
+  # Tempo's internal gRPC, not the OTLP receiver below. Named explicitly because the two are
+  # easy to confuse at 3am and pointing the collector at this one fails in a way that looks
+  # like a network problem rather than a wrong port.
+  grpc_listen_port: 9096
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          # Reachable only on the compose network — deliberately NOT published to the host.
+          # The host's 4317 belongs to the collector, and everything is supposed to go
+          # through the collector; a second OTLP door on the same port number would both
+          # clash and quietly bypass the batching and memory limits.
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  # A trace is not searchable until its block is cut. The default is 30 minutes, which on a
+  # developer's machine means asking "where did my turn go?" and the true answer being "still
+  # in the write-ahead log". 5 minutes trades a larger number of small blocks — irrelevant at
+  # this volume — for a trace you can find while you still care about it.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # 72h. Traces are the expensive signal and the question they answer is "what did this
+    # specific turn decide", which is asked about a turn from today or yesterday.
+    #
+    # KNOWN ASYMMETRY, and the thing most likely to surprise somebody at 3am: Prometheus
+    # below keeps 15 days. So an override-rate panel over a 7-day window will show
+    # exemplar dots for the whole range, and clicking one older than 3 days lands on a
+    # trace Tempo has already compacted away. That is a deliberate trade — rates are cheap
+    # and the history is worth keeping, traces are not — not an oversight. If the dead
+    # links become annoying, raise this before lowering Prometheus.
+    block_retention: 72h
+
+storage:
+  trace:
+    # Local disk in a named volume. The single setting in this file that a real deployment
+    # certainly replaces (s3/gcs/azure) — and the block format written here is the same one
+    # those backends take, so the swap is this stanza and nothing else.
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+# No phoning home. The stack is for a service whose founding constraint is that nothing the
+# account holder wrote leaves it; a usage ping from the trace store is not covered by that
+# rule, but switching it off costs nothing and keeps the claim simple to defend.
+usage_report:
+  reporting_enabled: false

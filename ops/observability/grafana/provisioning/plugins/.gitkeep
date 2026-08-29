@@ -1,0 +1,12 @@
+# Intentionally empty, and it has to exist.
+#
+# compose.yaml mounts this whole provisioning/ tree read-only over /etc/grafana/provisioning,
+# which REPLACES the one in the image — and the image's copy ships empty plugins/ and
+# alerting/ directories. Without them Grafana logs, at level=error, on every single boot:
+#
+#   Failed to read plugin provisioning files from directory ... no such file or directory
+#
+# Nothing is actually broken by that, which is the problem: an observability stack whose own
+# startup prints errors that are fine to ignore is a stack that teaches people to ignore
+# errors. The directory is empty because there genuinely are no provisioned plugins; saying
+# so in an empty directory is cheaper than explaining the log line to everybody who reads it.
