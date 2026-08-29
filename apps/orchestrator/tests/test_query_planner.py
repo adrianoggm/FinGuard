@@ -567,3 +567,54 @@ async def test_a_window_that_is_wrong_rather_than_missing_is_still_refused() -> 
     result = await plan_from({**FULL, "period": ABSOLUTE, "from": "2026-01-01", "to": "2027-12-31"})
 
     assert result.outcome is PlanningOutcome.INVALID_DOMAIN
+
+
+# The body below is what `qwen3.5:9b` actually returns for "¿Qué llevo gastado en la semana en
+# curso?" and for three sentences like it, recorded rather than imagined. Everything in it is
+# right except that two of its fields cannot both be true.
+
+
+@pytest.mark.parametrize("period", ["THIS_WEEK", "THIS_MONTH", "THIS_YEAR"])
+async def test_a_running_total_the_model_gave_no_buckets_is_a_plain_total(period: str) -> None:
+    """Four held-out cases came back INVALID_DOMAIN on this pair, and the question was
+    "¿qué llevo gastado este mes?" — about as ordinary as this product gets.
+
+    `NONE` is the model saying there is nothing to accumulate over, so the running total it also
+    asked for is a sequence of one entry. `SUM` shows that entry. The window, the direction and
+    the filters are the model's, untouched: this settles which figure is displayed, never which
+    movements it is over.
+    """
+    result = await plan_from({**FULL, "period": period, "groupBy": "NONE", "metric": "CUMULATIVE"})
+
+    assert result.outcome is PlanningOutcome.PLANNED
+    assert result.plan is not None
+    assert result.plan.metric is Metric.SUM
+    assert result.plan.group_by is GroupBy.NONE
+    assert result.plan.direction is Direction.EXPENSE
+    assert result.plan.period == RelativePeriod(period=Period(period))
+
+
+@pytest.mark.parametrize("group_by", ["CATEGORY", "MERCHANT", "COUNTERPARTY", "ACCOUNT"])
+async def test_a_running_total_broken_down_by_something_is_still_refused(group_by: str) -> None:
+    """The line the rule above stops at.
+
+    A grouping that is not `NONE` is a second axis the model asked for, and a plan holds one. The
+    handler's `_cumulative_plan` declines exactly this rather than dropping a half, so the planner
+    may not settle it either — the refusal is the same refusal, arriving by a different road.
+    """
+    result = await plan_from({**FULL, "groupBy": group_by, "metric": "CUMULATIVE"})
+
+    assert result.outcome is PlanningOutcome.INVALID_DOMAIN
+    assert result.reason is not None and "CUMULATIVE requires" in result.reason
+
+
+async def test_a_clarification_keeps_the_draft_the_same_pair_used_to_destroy() -> None:
+    """`_draft` swallows an `InvalidValueError` and returns None, so the identical pair cost the
+    clarification its draft — and the draft is the only thing the reply builds on."""
+    result = await plan_from(
+        {**FULL, "period": "", "groupBy": "NONE", "metric": "CUMULATIVE"},
+    )
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert result.draft is not None
+    assert result.draft.metric is Metric.SUM

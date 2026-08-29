@@ -353,6 +353,41 @@ the prediction did not cover is that the held-out set kept the defect — `group
 `period_named` 6/9 there — and that is most of why dev and held-out have pulled apart. A win
 measured only on the file the prompt is tuned against is a win that has not been measured.
 
+### The held-out remainder was one defect, and it was not in the prompt
+
+`period_named` 6/9 and `period_confusable` 6/7 were four cases and one cause. All four came back
+`INVALID_DOMAIN: CUMULATIVE requires DAY, WEEK or MONTH grouping`, on questions as ordinary as
+«¿Qué gasto acumulo en el mes en curso?». Recorded rather than inferred, `qwen3.5:9b` answers each
+of them with `metric: CUMULATIVE` **and `groupBy: NONE`** — the window and the direction correct,
+the two shape fields unable to both be true.
+
+The prompt already demanded the pairing in the same breath, which is the evidence that a fifth line
+about it would not have held either. `metric_without_a_bucket` settles it in the domain instead:
+`NONE` is the model saying nothing buckets the result, so the running total it also asked for has
+one entry and `SUM` is that entry — the same figure, over the same rows. `PERIOD_AVERAGE` beside
+`NONE` and `CUMULATIVE` beside a real grouping both stay refused, for reasons the function argues.
+
+| held out, `qwen3.5:9b` | before | after |
+| --- | ---: | ---: |
+| outcome | 70/79 | **74/79** |
+| exact | 60/66 | **63/66** |
+| unsafe | 5/79 · 6.3 % | **4/79 · 5.1 %** |
+| `period_named` | 6/9 | **9/9** |
+| `period_confusable` | 6/7 | **7/7** |
+
+**Nothing entered the unsafe list, and that is the number that mattered.** The four moved from a
+refusal to an exact match, which cannot add an unsafe execution: the alternative rule — dropping
+the metric wherever the model over-applied it — could have, and is not what was built. Dev is
+unchanged case for case, unsafe 10/120 with the same ten ids, because dev has no case the rule
+can reach.
+
+Two held-out cases moved that the rule cannot explain: `t_ambiguous_bastante` left the unsafe list
+and `t_group_category_with_filter` began failing the verifier. Both were re-queried directly and
+both answer `metric: SUM`, which `metric_without_a_bucket` never touches, so both are run-to-run
+spread rather than an effect. The after-state was run three times and did not move — outcome 74,
+exact 63, the same four unsafe ids each time — so the single-run *before* is the noisier half of
+every row above, and 5 → 4 should be read as "did not rise" rather than as an improvement.
+
 ## Latency: no figure in this document is quotable
 
 Every latency measured in the model comparison is void, and the evidence is direct:
