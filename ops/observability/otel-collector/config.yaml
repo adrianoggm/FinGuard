@@ -1,0 +1,137 @@
+# OpenTelemetry Collector — the single endpoint the orchestrator knows about.
+#
+# Why a collector at all, when the SDK could export straight to Tempo and Prometheus:
+# because then the application hard-codes two backends and their two protocols, and moving
+# off this laptop becomes a code change. Here the orchestrator knows one endpoint speaking
+# one protocol (OTLP) and the routing is an operations concern. That split is the part of
+# this file meant to survive the move to a real deployment — the endpoints below are
+# expected to change, the pipeline shape is not.
+#
+# Section 5 of docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        # 0.0.0.0 *inside the container*, published on 127.0.0.1 only by compose (rule 13).
+        # Upstream changed the default bind to localhost in 0.104 for exactly the reason
+        # rule 13 exists — but inside a container "localhost" means "nothing can reach me",
+        # so the bind is stated back explicitly rather than inherited from a default that
+        # means the opposite here. The loopback guarantee is compose's `ports:`, not this.
+        endpoint: 0.0.0.0:4317
+      http:
+        # 4318 as well as 4317 because the orchestrator runs both ways: inside compose it
+        # reaches the collector by service name over gRPC, but `just serve-orchestrator`
+        # runs it on the host, and OTLP/HTTP is the protocol that survives every proxy in
+        # between. One extra listener costs less than debugging that difference later.
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # FIRST in every pipeline, and the ordering is load-bearing. A collector that runs out of
+  # memory drops telemetry it has already accepted — silently, which is the failure mode this
+  # repository keeps finding. memory_limiter instead refuses new batches and pushes the
+  # backpressure onto the SDK, which retries. Placed after `batch` it would be policing memory
+  # it had already committed to, which is not policing.
+  memory_limiter:
+    check_interval: 1s
+    # Percentages, not absolute MiB, so the same file works on a laptop and on a 2 GiB pod
+    # without anybody remembering to retune it.
+    limit_percentage: 75
+    spike_limit_percentage: 15
+
+  # LAST. Amortises the write to Tempo and to Prometheus into one request per batch instead
+  # of one per span. 5s is therefore the ceiling on how stale a freshly finished turn looks;
+  # if you push a test span and go looking for it immediately, this is the wait.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      # Plaintext, on a private compose network that publishes nothing. This is the exact
+      # line a deployment has to change, which is why it is written out rather than left to
+      # a default — an `insecure: true` you can see is a decision, one you inherit is a leak.
+      insecure: true
+
+  # Push, not scrape. A scrape would mean Prometheus has to discover collector replicas, and
+  # that discovery config is the part that does not transfer off compose. Remote write also
+  # carries exemplars natively rather than depending on the scrape negotiating OpenMetrics,
+  # and exemplars are what lets section 6 get from a rate to one turn's waterfall — see
+  # exemplarTraceIdDestinations in ../grafana/provisioning/datasources/datasources.yaml.
+  # TEMPORALITY, for whoever wires up the SDK in section 3: this exporter handles CUMULATIVE
+  # sums. There is no deltatocumulative processor in the pipeline below, so if the SDK is
+  # ever switched to delta temporality — one environment variable,
+  # OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta — the counters stop arriving and
+  # nothing anywhere reports an error. The Python SDK's default is cumulative, which is why
+  # this works today; it is written down because the failure mode is silent.
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+    # Left OFF deliberately. Turning it on copies every resource attribute onto every series;
+    # since service.version is a git SHA (the orchestrator stamps BUILD_SHA into the image),
+    # that would mint a fresh set of time series on every deploy and break every rate() across
+    # it. The resource still arrives as the `target_info` metric, which is the join you want.
+    resource_to_telemetry_conversion:
+      enabled: false
+    remote_write_queue:
+      enabled: true
+      num_consumers: 5
+      queue_size: 10000
+
+extensions:
+  # Nothing in this compose file can call it: the collector image is distroless, so there is
+  # no shell and no curl for a docker HEALTHCHECK to run (verified against 0.130.0 — /bin/sh
+  # does not exist). It is here because a real deployment's readiness probe is an httpGet
+  # from outside the container, and that probe needs this endpoint to exist. Reachable on the
+  # compose network and from the host; compose.yaml publishes it for the same reason.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]
+    # No logs pipeline, on purpose. Loki is out of the first cut: the decision log lives in
+    # span events, which Tempo holds, and the raw JSON logs stay on stdout where they are
+    # already greppable. A logs pipeline here with nowhere to send it would be a pipeline
+    # that silently discards everything — precisely the green-but-dead instrument this
+    # design exists to stop shipping.
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      # The collector's own numbers, scraped by Prometheus (see ../prometheus/prometheus.yml).
+      # This is what answers "did my span actually get through, or is the pipeline eating
+      # them": otelcol_receiver_accepted_spans vs otelcol_exporter_sent_spans vs
+      # otelcol_exporter_send_failed_spans. A stack that cannot report its own drops is
+      # exactly the instrument that goes green after it stops measuring anything.
+      #
+      # `readers:` rather than the older `address:` key, which is deprecated upstream and
+      # removed in recent builds — this is the form that still parses on 0.130 and after.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+                # WITHOUT THIS the collector names its own counters
+                # `otelcol_receiver_accepted_spans_{spans}_total` — the OTel unit
+                # annotation, braces and all, baked into the metric name. Measured, not
+                # assumed: that is what 0.130.0 exposes by default. Every query anybody
+                # would think to write (`otelcol_receiver_accepted_spans_total`) then
+                # matches nothing and returns an empty graph, which reads as "the pipeline
+                # is idle" rather than "your query is wrong". That is the exact failure this
+                # repository keeps finding, so it is switched off at the source instead of
+                # being worked around in each panel.
+                without_units: true

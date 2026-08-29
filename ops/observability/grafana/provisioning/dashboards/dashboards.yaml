@@ -1,0 +1,29 @@
+# Where Grafana looks for dashboard JSON.
+#
+# Section 5 (this wave) builds the stack; section 6 draws the panels. This file is the seam
+# between them: it exists now, pointing at an empty directory, so that section 6 is purely
+# "add a .json file" and never "and also wire up provisioning". A dashboard drawn in the
+# browser lives in one Grafana's database and dies with the volume — the design says
+# in the repository, not by hand in a browser, and this is the mechanism for that.
+#
+# Section 5/6 of docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+
+apiVersion: 1
+
+providers:
+  - name: finguard
+    orgId: 1
+    # Empty string means dashboards land at the top level rather than in a folder named
+    # after the provider — one less click to the override-rate panel.
+    folder: ""
+    type: file
+    # Same argument as the datasources: an edit made in the browser that cannot be saved
+    # back to the file is an edit that will be lost. Read-only makes that immediate instead
+    # of surprising.
+    disableDeletion: false
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      # Mirror the directory layout into Grafana folders, so section 6 can group panels by
+      # subdirectory without touching this file again.
+      foldersFromFilesStructure: true
