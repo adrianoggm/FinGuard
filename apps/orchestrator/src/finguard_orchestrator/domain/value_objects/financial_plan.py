@@ -237,12 +237,18 @@ class FinancialPlanDraft:
             raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
         if len(set(self.transaction_types)) != len(self.transaction_types):
             raise InvalidValueError("transactionTypes cannot contain duplicates")
-        if self.metric is Metric.CUMULATIVE and self.group_by not in {
+        # Both time-normalised metrics, and the second one was missing. The draft's rule is that
+        # the *window* is all it relaxes, so a draft accepting PERIOD_AVERAGE beside a merchant
+        # grouping was not a relaxation but a hole: `explicit_facts.enforce` built it without
+        # complaint, `_next_state` stored it on the conversation, and the raise arrived a turn
+        # later when the user answered the clarification and `with_window` finally checked. A
+        # deferred crash on the reply to our own question is strictly worse than refusing here.
+        if self.metric in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE} and self.group_by not in {
             GroupBy.DAY,
             GroupBy.WEEK,
             GroupBy.MONTH,
         }:
-            raise InvalidValueError("CUMULATIVE requires DAY, WEEK or MONTH grouping")
+            raise InvalidValueError(f"{self.metric} requires DAY, WEEK or MONTH grouping")
         if self.group_limit is not None:
             if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
                 raise InvalidValueError("groupLimit requires a non-temporal grouping")

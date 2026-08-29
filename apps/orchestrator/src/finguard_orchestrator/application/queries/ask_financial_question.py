@@ -2839,25 +2839,30 @@ class AskFinancialQuestionHandler:
             if not selected:
                 return None
             if isinstance(previous, TopMovements):
-                return FinancialPlan(
-                    direction=facts.direction or previous.direction,
-                    period=previous.period,
-                    date_range=previous.date_range,
-                    categories=previous.categories,
-                    excluded_categories=previous.excluded_categories,
-                    merchants=previous.merchants,
-                    merchant_terms=previous.merchant_terms,
-                    excluded_merchants=previous.excluded_merchants,
+                return explicit_facts.reshaped(
+                    FinancialPlan(
+                        direction=facts.direction or previous.direction,
+                        period=previous.period,
+                        date_range=previous.date_range,
+                        categories=previous.categories,
+                        excluded_categories=previous.excluded_categories,
+                        merchants=previous.merchants,
+                        merchant_terms=previous.merchant_terms,
+                        excluded_merchants=previous.excluded_merchants,
+                        transaction_ids=selected,
+                    ),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or Metric.SUM,
-                    transaction_ids=selected,
                 )
             if not isinstance(previous, FinancialPlan):
                 return None
+            # Through `reshaped`, because ungrouping is half a decision. "Esos cinco" states no
+            # grouping, so this resets it to NONE — and after "¿cuál es mi gasto medio mensual?"
+            # the inherited PERIOD_AVERAGE has no buckets left to average over. Neither turn said
+            # anything contradictory; the pair simply arrived one field at a time.
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    transaction_ids=selected,
+                explicit_facts.reshaped(
+                    replace(previous, transaction_ids=selected),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2872,17 +2877,19 @@ class AskFinancialQuestionHandler:
             if category is None or category_words.words_for(category) is None:
                 return None
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    categories=(category,),
-                    excluded_categories=tuple(
-                        excluded
-                        for excluded in previous.excluded_categories
-                        if excluded != category
+                explicit_facts.reshaped(
+                    replace(
+                        previous,
+                        categories=(category,),
+                        excluded_categories=tuple(
+                            excluded
+                            for excluded in previous.excluded_categories
+                            if excluded != category
+                        ),
+                        merchants=(),
+                        excluded_merchants=(),
+                        transaction_ids=(),
                     ),
-                    merchants=(),
-                    excluded_merchants=(),
-                    transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2895,15 +2902,17 @@ class AskFinancialQuestionHandler:
             return None
         if dimension is GroupBy.MERCHANT and _MERCHANT_REFERENCE.search(folded):
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    merchants=(key,),
-                    excluded_merchants=tuple(
-                        merchant
-                        for merchant in previous.excluded_merchants
-                        if merchant.casefold() != key.casefold()
+                explicit_facts.reshaped(
+                    replace(
+                        previous,
+                        merchants=(key,),
+                        excluded_merchants=tuple(
+                            merchant
+                            for merchant in previous.excluded_merchants
+                            if merchant.casefold() != key.casefold()
+                        ),
+                        transaction_ids=(),
                     ),
-                    transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2913,15 +2922,17 @@ class AskFinancialQuestionHandler:
             _COUNTERPARTY_REFERENCE.search(folded) or _MERCHANT_REFERENCE.search(folded)
         ):
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    counterparties=(key,),
-                    excluded_counterparties=tuple(
-                        counterparty
-                        for counterparty in previous.excluded_counterparties
-                        if counterparty.casefold() != key.casefold()
+                explicit_facts.reshaped(
+                    replace(
+                        previous,
+                        counterparties=(key,),
+                        excluded_counterparties=tuple(
+                            counterparty
+                            for counterparty in previous.excluded_counterparties
+                            if counterparty.casefold() != key.casefold()
+                        ),
+                        transaction_ids=(),
                     ),
-                    transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2954,12 +2965,14 @@ class AskFinancialQuestionHandler:
         if selected_account is None:
             return None
         return explicit_facts.enforce(
-            replace(
-                previous,
-                across_accounts=False,
-                only_account_id=selected_account,
-                only_account_ids=(),
-                transaction_ids=(),
+            explicit_facts.reshaped(
+                replace(
+                    previous,
+                    across_accounts=False,
+                    only_account_id=selected_account,
+                    only_account_ids=(),
+                    transaction_ids=(),
+                ),
                 group_by=facts.group_by or GroupBy.NONE,
                 metric=facts.metric or previous.metric,
             ),
@@ -4908,6 +4921,22 @@ def _cumulative_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     )
     if facts.metric is not Metric.CUMULATIVE and not unit_follow_up:
         return None
+    # A running total accumulates over calendar buckets, so the grouping *is* the bucket and the
+    # domain refuses a non-temporal one beside CUMULATIVE. "Gasto acumulado por comercio" states
+    # both, and this built the forbidden plan: the constructor below raised straight out of the
+    # handler, and an ordinary Spanish sentence came back 422 invalid_input. Unlike the average
+    # family, the capability guard does not refuse "acumulado", and it runs after this recogniser
+    # anyway — so declining here is what keeps the sentence answerable at all.
+    #
+    # Declining rather than dropping the grouping, which is the same rule `_average_plan` already
+    # follows below: this path exists to answer what it is sure of, and a request for a running
+    # total broken down by shop needs two grouping axes where a plan has one.
+    if facts.group_by is not None and facts.group_by not in {
+        GroupBy.DAY,
+        GroupBy.WEEK,
+        GroupBy.MONTH,
+    }:
+        return None
     contextual = not _starts_new_financial_scope(query.sentence, today=query.today)
     if not contextual and not unit_follow_up:
         previous_financial = None
@@ -5805,14 +5834,18 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         if referenced is None or category_words.words_for(referenced) is None:
             return None
         return explicit_facts.enforce(
-            replace(
-                previous,
-                categories=(referenced,),
-                excluded_categories=tuple(
-                    category for category in previous.excluded_categories if category != referenced
+            explicit_facts.reshaped(
+                replace(
+                    previous,
+                    categories=(referenced,),
+                    excluded_categories=tuple(
+                        category
+                        for category in previous.excluded_categories
+                        if category != referenced
+                    ),
+                    merchants=(),
+                    excluded_merchants=(),
                 ),
-                merchants=(),
-                excluded_merchants=(),
                 group_by=facts.group_by or GroupBy.NONE,
                 metric=facts.metric or previous.metric,
             ),
@@ -6539,9 +6572,14 @@ def _average_plan(
     else:
         group_by = GroupBy.NONE
 
-    # PERIOD_AVERAGE is only produced together with a temporal group by explicit_facts. Keeping
-    # this defensive check here turns future vocabulary drift into a clarification, not an invalid
-    # plan sent to banking.
+    # Not defensive, and not about future drift — this fires today. `explicit_facts` reads
+    # "gasto medio mensual por comercio" as PERIOD_AVERAGE grouped by COUNTERPARTY, because the
+    # sentence states both and the grouping cascade puts the shop ahead of the month. The comment
+    # here used to say the pair could not be produced; it can, and this check is the only reason
+    # this recogniser does not build a plan the domain refuses.
+    #
+    # Declining sends it on to the capability guard, whose AVERAGE family owns the refusal: a
+    # per-period average broken down by shop needs two grouping axes and a plan has one.
     if facts.metric is Metric.PERIOD_AVERAGE and group_by not in {
         GroupBy.DAY,
         GroupBy.WEEK,
@@ -6735,20 +6773,24 @@ def _from_what_the_sentence_said(
             question=(
                 "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
             ),
-            draft=FinancialPlanDraft(
-                direction=facts.direction or _direction_of(named),
-                categories=named,
+            draft=explicit_facts.reshaped(
+                FinancialPlanDraft(
+                    direction=facts.direction or _direction_of(named),
+                    categories=named,
+                ),
                 group_by=facts.group_by or GroupBy.NONE,
                 metric=facts.metric or Metric.SUM,
             ),
             awaiting=Slot.WINDOW,
         )
 
-    plan = FinancialPlan(
-        direction=facts.direction or _direction_of(named),
-        period=facts.window if isinstance(facts.window, RelativePeriod) else None,
-        date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
-        categories=named,
+    plan = explicit_facts.reshaped(
+        FinancialPlan(
+            direction=facts.direction or _direction_of(named),
+            period=facts.window if isinstance(facts.window, RelativePeriod) else None,
+            date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
+            categories=named,
+        ),
         group_by=facts.group_by or GroupBy.NONE,
         metric=facts.metric or Metric.SUM,
     )
