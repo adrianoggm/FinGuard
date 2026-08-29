@@ -1071,6 +1071,14 @@ class AskFinancialQuestionHandler:
             # that half-built calculation exactly as an ordinary clarification does.
             was = was.without_pending_ratio()
             query = replace(query, conversation=was)
+            # And the continuation base goes with it. `last_plan` behind a half-built ratio is a
+            # *mirror* of the focus being abandoned, not a question this turn continues —
+            # `_contextual_follow_up_plan` declines on exactly that state. Dropping the pending
+            # ratio is what makes the mirror indistinguishable from a base, because
+            # `planning_context.can_continue` tells the two apart by whether the focus is a
+            # `QueryFocus`, and this line has just made it one. Left standing, "ahora en todas mis
+            # cuentas" over an abandoned ratio inherits the mirrored twelve months.
+            continuation = None
 
         incoming_payment = await self._incoming_person_payment_plan(query)
         if isinstance(incoming_payment, FinancialPlanDraft):
@@ -1633,6 +1641,13 @@ class AskFinancialQuestionHandler:
         # list — a real figure about a window the user had written down and nobody read.
         facts = explicit_facts.read(query.sentence, today=query.today)
         checked = explicit_facts.enforce(planned.plan, facts)
+        # And what its silence means, which `enforce` cannot read: on a continuation naming no
+        # period at all, the window is the one from the turn being continued.
+        checked = inherited_window(
+            checked,
+            context.continuation.plan if context.continuation is not None else None,
+            facts,
+        )
         if facts.window is not None:
             # The record that makes a degraded conversation readable after the fact. Three windows
             # in one line — what the sentence said, what the model produced, what ran — so the turn
@@ -2839,25 +2854,30 @@ class AskFinancialQuestionHandler:
             if not selected:
                 return None
             if isinstance(previous, TopMovements):
-                return FinancialPlan(
-                    direction=facts.direction or previous.direction,
-                    period=previous.period,
-                    date_range=previous.date_range,
-                    categories=previous.categories,
-                    excluded_categories=previous.excluded_categories,
-                    merchants=previous.merchants,
-                    merchant_terms=previous.merchant_terms,
-                    excluded_merchants=previous.excluded_merchants,
+                return explicit_facts.reshaped(
+                    FinancialPlan(
+                        direction=facts.direction or previous.direction,
+                        period=previous.period,
+                        date_range=previous.date_range,
+                        categories=previous.categories,
+                        excluded_categories=previous.excluded_categories,
+                        merchants=previous.merchants,
+                        merchant_terms=previous.merchant_terms,
+                        excluded_merchants=previous.excluded_merchants,
+                        transaction_ids=selected,
+                    ),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or Metric.SUM,
-                    transaction_ids=selected,
                 )
             if not isinstance(previous, FinancialPlan):
                 return None
+            # Through `reshaped`, because ungrouping is half a decision. "Esos cinco" states no
+            # grouping, so this resets it to NONE — and after "¿cuál es mi gasto medio mensual?"
+            # the inherited PERIOD_AVERAGE has no buckets left to average over. Neither turn said
+            # anything contradictory; the pair simply arrived one field at a time.
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    transaction_ids=selected,
+                explicit_facts.reshaped(
+                    replace(previous, transaction_ids=selected),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2872,17 +2892,19 @@ class AskFinancialQuestionHandler:
             if category is None or category_words.words_for(category) is None:
                 return None
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    categories=(category,),
-                    excluded_categories=tuple(
-                        excluded
-                        for excluded in previous.excluded_categories
-                        if excluded != category
+                explicit_facts.reshaped(
+                    replace(
+                        previous,
+                        categories=(category,),
+                        excluded_categories=tuple(
+                            excluded
+                            for excluded in previous.excluded_categories
+                            if excluded != category
+                        ),
+                        merchants=(),
+                        excluded_merchants=(),
+                        transaction_ids=(),
                     ),
-                    merchants=(),
-                    excluded_merchants=(),
-                    transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2895,15 +2917,17 @@ class AskFinancialQuestionHandler:
             return None
         if dimension is GroupBy.MERCHANT and _MERCHANT_REFERENCE.search(folded):
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    merchants=(key,),
-                    excluded_merchants=tuple(
-                        merchant
-                        for merchant in previous.excluded_merchants
-                        if merchant.casefold() != key.casefold()
+                explicit_facts.reshaped(
+                    replace(
+                        previous,
+                        merchants=(key,),
+                        excluded_merchants=tuple(
+                            merchant
+                            for merchant in previous.excluded_merchants
+                            if merchant.casefold() != key.casefold()
+                        ),
+                        transaction_ids=(),
                     ),
-                    transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2913,15 +2937,17 @@ class AskFinancialQuestionHandler:
             _COUNTERPARTY_REFERENCE.search(folded) or _MERCHANT_REFERENCE.search(folded)
         ):
             return explicit_facts.enforce(
-                replace(
-                    previous,
-                    counterparties=(key,),
-                    excluded_counterparties=tuple(
-                        counterparty
-                        for counterparty in previous.excluded_counterparties
-                        if counterparty.casefold() != key.casefold()
+                explicit_facts.reshaped(
+                    replace(
+                        previous,
+                        counterparties=(key,),
+                        excluded_counterparties=tuple(
+                            counterparty
+                            for counterparty in previous.excluded_counterparties
+                            if counterparty.casefold() != key.casefold()
+                        ),
+                        transaction_ids=(),
                     ),
-                    transaction_ids=(),
                     group_by=facts.group_by or GroupBy.NONE,
                     metric=facts.metric or previous.metric,
                 ),
@@ -2954,12 +2980,14 @@ class AskFinancialQuestionHandler:
         if selected_account is None:
             return None
         return explicit_facts.enforce(
-            replace(
-                previous,
-                across_accounts=False,
-                only_account_id=selected_account,
-                only_account_ids=(),
-                transaction_ids=(),
+            explicit_facts.reshaped(
+                replace(
+                    previous,
+                    across_accounts=False,
+                    only_account_id=selected_account,
+                    only_account_ids=(),
+                    transaction_ids=(),
+                ),
                 group_by=facts.group_by or GroupBy.NONE,
                 metric=facts.metric or previous.metric,
             ),
@@ -4908,6 +4936,22 @@ def _cumulative_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     )
     if facts.metric is not Metric.CUMULATIVE and not unit_follow_up:
         return None
+    # A running total accumulates over calendar buckets, so the grouping *is* the bucket and the
+    # domain refuses a non-temporal one beside CUMULATIVE. "Gasto acumulado por comercio" states
+    # both, and this built the forbidden plan: the constructor below raised straight out of the
+    # handler, and an ordinary Spanish sentence came back 422 invalid_input. Unlike the average
+    # family, the capability guard does not refuse "acumulado", and it runs after this recogniser
+    # anyway — so declining here is what keeps the sentence answerable at all.
+    #
+    # Declining rather than dropping the grouping, which is the same rule `_average_plan` already
+    # follows below: this path exists to answer what it is sure of, and a request for a running
+    # total broken down by shop needs two grouping axes where a plan has one.
+    if facts.group_by is not None and facts.group_by not in {
+        GroupBy.DAY,
+        GroupBy.WEEK,
+        GroupBy.MONTH,
+    }:
+        return None
     contextual = not _starts_new_financial_scope(query.sentence, today=query.today)
     if not contextual and not unit_follow_up:
         previous_financial = None
@@ -5805,14 +5849,18 @@ def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPla
         if referenced is None or category_words.words_for(referenced) is None:
             return None
         return explicit_facts.enforce(
-            replace(
-                previous,
-                categories=(referenced,),
-                excluded_categories=tuple(
-                    category for category in previous.excluded_categories if category != referenced
+            explicit_facts.reshaped(
+                replace(
+                    previous,
+                    categories=(referenced,),
+                    excluded_categories=tuple(
+                        category
+                        for category in previous.excluded_categories
+                        if category != referenced
+                    ),
+                    merchants=(),
+                    excluded_merchants=(),
                 ),
-                merchants=(),
-                excluded_merchants=(),
                 group_by=facts.group_by or GroupBy.NONE,
                 metric=facts.metric or previous.metric,
             ),
@@ -6539,9 +6587,14 @@ def _average_plan(
     else:
         group_by = GroupBy.NONE
 
-    # PERIOD_AVERAGE is only produced together with a temporal group by explicit_facts. Keeping
-    # this defensive check here turns future vocabulary drift into a clarification, not an invalid
-    # plan sent to banking.
+    # Not defensive, and not about future drift — this fires today. `explicit_facts` reads
+    # "gasto medio mensual por comercio" as PERIOD_AVERAGE grouped by COUNTERPARTY, because the
+    # sentence states both and the grouping cascade puts the shop ahead of the month. The comment
+    # here used to say the pair could not be produced; it can, and this check is the only reason
+    # this recogniser does not build a plan the domain refuses.
+    #
+    # Declining sends it on to the capability guard, whose AVERAGE family owns the refusal: a
+    # per-period average broken down by shop needs two grouping axes and a plan has one.
     if facts.metric is Metric.PERIOD_AVERAGE and group_by not in {
         GroupBy.DAY,
         GroupBy.WEEK,
@@ -6679,6 +6732,65 @@ def _average_follow_up_plan(
     )
 
 
+def inherited_window[T: FinancialPlan | FinancialPlanDraft | TopMovements](
+    plan: T, previous: FinancialPlan | None, facts: explicit_facts.ExplicitFacts
+) -> T:
+    """The plan, over the window of the turn it continues, when this sentence names none.
+
+    `explicit_facts.enforce` imposes what the sentence *stated* over the model's reading, and that
+    is where this stops: silence is not a statement, so a continuation naming no period leaves
+    `facts.window` None, `enforce` with nothing to impose, and whatever the model produced standing.
+    On a follow-up, silence about the window is not an absence of information — it means the one
+    from before. That is a rule, not a judgement, and it is the same principle `enforce` embodies,
+    carried from what the sentence said to what its silence means in a continuation.
+
+    **`plan_merger` already promises exactly this** — "a field nobody named comes from the previous
+    plan, and there is no way for that to be lost, because no model is involved in it" — and the
+    promise is broken one layer up, because whether the field was *named* is read out of the
+    model's own `changed` list rather than out of the sentence. A model emitting
+    `changed: ["window"]` about a sentence containing no period has contradicted the user in the
+    way that module's docstring says it must not, and both the merge and the planner's
+    `inherits_window` obey it. This restores the promise from the sentence, where it was always
+    meant to come from.
+
+    Measured on the held-out set: «¿Y lo que cobré?» after a question about last month came back
+    over 2026-07-15 .. 2026-07-15 — one day of income under a headline about a month — and the E2E
+    harness reported the same collapse independently on the same sentence.
+
+    **`previous` is the continuation base, never `conversation.last_plan`.** The two differ exactly
+    where it matters: after a balance the spending plan is still mirrored in `last_plan` while
+    `planning_context` withholds it as a base, and `a_category_follow_up_after_a_balance_has_no
+    _spending_base` exists to say that "¿y en restaurantes?" must not silently revive that month.
+    Reading the mirror instead of the base would revive it.
+
+    **A sentence that names its own window never reaches the replacement**, which is what keeps
+    `eight_windows_that_may_not_be_inherited` green: all eight name a period, so `facts.window` is
+    not None for every one of them and `enforce` has already imposed it above. The boundary is not
+    a second opinion about which turns stand alone — it is the same fact `_starts_new_financial
+    _scope` is built on, since a window is the half of that predicate this one reads. A sentence
+    with no window cannot start a new scope, so the two can never disagree.
+
+    Narrow in the one way that matters: a window the model got right out of words this service's
+    own reader does not know would be replaced here. `continuation_patch` cannot produce that case
+    — it and `explicit_facts` read the same `window_words`, so a grounded window patch always
+    arrives with `facts.window` set — and for the model it is the trade `explicit_facts` argues in
+    full: a deterministic reader may be overruled by the sentence, and there is nothing left to
+    overrule a model that invented a month.
+    """
+    if previous is None or facts.window is not None:
+        return plan
+    window = previous.period or previous.date_range
+    if window is None:
+        return plan
+    # As a pair, never one at a time, for the reason `enforce` gives: a plan carries exactly one of
+    # the two, so setting a range beside an inherited period builds what the domain refuses.
+    return replace(
+        plan,
+        period=window if isinstance(window, RelativePeriod) else None,
+        date_range=window if isinstance(window, AbsoluteRange) else None,
+    )
+
+
 def _from_what_the_sentence_said(
     planned: PlanningResult, query: AskFinancialQuestionQuery
 ) -> PlanningResult | None:
@@ -6735,20 +6847,24 @@ def _from_what_the_sentence_said(
             question=(
                 "¿De qué periodo? Por ejemplo este mes, el mes pasado o los últimos 30 días."
             ),
-            draft=FinancialPlanDraft(
-                direction=facts.direction or _direction_of(named),
-                categories=named,
+            draft=explicit_facts.reshaped(
+                FinancialPlanDraft(
+                    direction=facts.direction or _direction_of(named),
+                    categories=named,
+                ),
                 group_by=facts.group_by or GroupBy.NONE,
                 metric=facts.metric or Metric.SUM,
             ),
             awaiting=Slot.WINDOW,
         )
 
-    plan = FinancialPlan(
-        direction=facts.direction or _direction_of(named),
-        period=facts.window if isinstance(facts.window, RelativePeriod) else None,
-        date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
-        categories=named,
+    plan = explicit_facts.reshaped(
+        FinancialPlan(
+            direction=facts.direction or _direction_of(named),
+            period=facts.window if isinstance(facts.window, RelativePeriod) else None,
+            date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
+            categories=named,
+        ),
         group_by=facts.group_by or GroupBy.NONE,
         metric=facts.metric or Metric.SUM,
     )

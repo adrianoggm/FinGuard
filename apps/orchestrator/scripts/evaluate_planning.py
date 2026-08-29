@@ -42,6 +42,7 @@ import yaml  # type: ignore[import-untyped]
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionQuery,
     _from_what_the_sentence_said,
+    inherited_window,
 )
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.enums import (
@@ -413,6 +414,11 @@ async def _planned(
 
     facts = explicit_facts.read(case["question"], today=today)
     checked = explicit_facts.enforce(result.plan, facts)
+    # The same step the handler runs beside `enforce`, and here for the reason in this function's
+    # own docstring: a score that skipped it would measure a system nobody runs. `previous` is the
+    # dataset's declared preceding plan, which is exactly what the handler passes — the
+    # continuation base rather than a mirror of it.
+    checked = inherited_window(checked, previous, facts)
     if previous is not None and facts.corrects and isinstance(checked, FinancialPlan):
         checked = explicit_facts.restored_filters(checked, previous, facts)
 
