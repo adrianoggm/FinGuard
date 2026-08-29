@@ -9,6 +9,7 @@ from uuid import UUID
 import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRejectedError
+from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
 class HttpMovementCategories:
@@ -21,7 +22,7 @@ class HttpMovementCategories:
     async def set(self, account_id: UUID, transaction_id: UUID, category: str | None) -> None:
         url = f"{self._base_url}/v1/accounts/{account_id}/movements/{transaction_id}/category"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.put(url, json={"category": category})
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{url}: {exc}") from exc
