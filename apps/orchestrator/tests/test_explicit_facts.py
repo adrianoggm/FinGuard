@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.enums import (
     PlanningOutcome,
     TransactionType,
 )
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
@@ -37,6 +38,7 @@ from finguard_orchestrator.domain.services import explicit_facts
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
+    FinancialPlanDraft,
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
@@ -734,3 +736,194 @@ async def test_a_category_the_sentence_names_is_never_dropped() -> None:
     # window so it can offer a spelling, finds the name spelled correctly and offers nothing.
     # What this test is about is that neither call dropped a category the sentence named.
     assert [p.categories for p in ledger.plans] == [("HEALTH",), ("HEALTH",)]
+
+
+# --- a sentence that states a pair the domain cannot hold ------------------------------
+#
+# «gasto medio mensual por comercio» is an ordinary Spanish sentence. It asks for a monthly
+# average broken down by shop — two grouping axes, where a `FinancialPlan` has one, because
+# `PERIOD_AVERAGE` spends the only one on its own buckets. The sentence is not confused; the
+# domain cannot express it, and `enforce` used to build the forbidden plan regardless.
+#
+# `enforce` must be total. It is a `T -> T` domain service with 25 call sites, twenty of them
+# deterministic recognisers whose contract on failure is "return None and let the planner try".
+# A refusal raised from here reaches the edge as a 422 on a sentence somebody typed.
+
+
+@pytest.mark.parametrize(
+    ("sentence", "metric", "group_by"),
+    [
+        ("gasto medio mensual por comercio", Metric.PERIOD_AVERAGE, GroupBy.COUNTERPARTY),
+        ("gasto medio mensual por cada cuenta", Metric.PERIOD_AVERAGE, GroupBy.ACCOUNT),
+        ("media semanal por comercio", Metric.PERIOD_AVERAGE, GroupBy.COUNTERPARTY),
+        ("media diaria por cada cuenta", Metric.PERIOD_AVERAGE, GroupBy.ACCOUNT),
+        ("gasto acumulado por comercio", Metric.CUMULATIVE, GroupBy.COUNTERPARTY),
+        ("gasto acumulado por cada cuenta", Metric.CUMULATIVE, GroupBy.ACCOUNT),
+    ],
+)
+def test_a_sentence_states_a_pair_the_domain_forbids(
+    sentence: str, metric: Metric, group_by: GroupBy
+) -> None:
+    """Both halves are read from the one sentence, and the domain refuses them together."""
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.metric is metric
+    assert facts.group_by is group_by
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "gasto medio mensual por comercio",
+        "gasto medio mensual por cada cuenta",
+        "media semanal por comercio",
+        "media diaria por cada cuenta",
+        "gasto acumulado por comercio",
+        "gasto acumulado por cada cuenta",
+        "compara el gasto acumulado de restaurantes y supermercado",
+        "¿En qué categoría gasto más al mes de media?",
+    ],
+)
+def test_enforce_never_raises_on_a_sentence_a_person_can_type(sentence: str) -> None:
+    """The plan carries one half, the sentence states the other. This used to raise."""
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        metric=Metric.PERIOD_AVERAGE,
+        group_by=GroupBy.MONTH,
+    )
+
+    checked = explicit_facts.enforce(plan, explicit_facts.read(sentence, today=TODAY))
+
+    # Whatever comes back is a plan the domain accepts, and never the forbidden pair.
+    assert not (
+        checked.metric in {Metric.PERIOD_AVERAGE, Metric.CUMULATIVE}
+        and checked.group_by not in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+    )
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["¿y por comercio?", "¿y por cada cuenta?", "¿En qué categoría gasté más?"],
+)
+@pytest.mark.parametrize("inherited", [Metric.PERIOD_AVERAGE, Metric.CUMULATIVE])
+def test_a_grouping_the_sentence_states_meets_an_inherited_metric(
+    sentence: str, inherited: Metric
+) -> None:
+    """The sentence states only the grouping. The metric it cannot live beside was inherited."""
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        metric=inherited,
+        group_by=GroupBy.MONTH,
+    )
+
+    explicit_facts.enforce(plan, explicit_facts.read(sentence, today=TODAY))
+
+
+def test_a_coherent_pair_is_not_refused_by_the_order_it_is_applied_in() -> None:
+    """The sentence states a valid pair and the plan carries a metric that pair replaces.
+
+    Nothing here is contradictory: the plan the sentence asks for is grouped by category and
+    counted, which the domain accepts. `enforce` raised anyway, because it applied the grouping
+    while the *old* metric was still in place and the plan passed through a state neither the
+    sentence nor the model ever asked for.
+    """
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        metric=Metric.CUMULATIVE,
+        group_by=GroupBy.MONTH,
+    )
+    facts = explicit_facts.read(
+        "compara cuantos pagos hice en restaurantes y en supermercado", today=TODAY
+    )
+    assert (facts.group_by, facts.metric) == (GroupBy.CATEGORY, Metric.COUNT)
+
+    checked = explicit_facts.enforce(plan, facts)
+
+    assert checked.group_by is GroupBy.CATEGORY
+    assert checked.metric is Metric.COUNT
+
+
+def test_a_group_limit_travels_with_the_grouping_it_limits() -> None:
+    """ "¿Y por mes?" over a top-5 ranking. The limit belonged to the grouping being replaced.
+
+    `groupLimit` is a rider on `group_by` rather than a fact of its own — the domain refuses it
+    beside a temporal grouping — so replacing the grouping has to carry it, exactly as the
+    window's two fields already travel as a pair.
+    """
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.MERCHANT,
+        group_limit=5,
+    )
+
+    checked = explicit_facts.enforce(plan, explicit_facts.read("¿y por mes?", today=TODAY))
+
+    assert checked.group_by is GroupBy.MONTH
+    assert checked.group_limit is None
+
+
+def test_a_draft_refuses_the_pair_here_rather_than_a_turn_later() -> None:
+    """A draft relaxes the window and nothing else, and PERIOD_AVERAGE was missing from its rules.
+
+    `enforce` built the pair without complaint, `_next_state` stored it on the conversation, and
+    the raise arrived on the *reply* to our own clarification, where `with_window` finally checked.
+    """
+    with pytest.raises(InvalidValueError):
+        FinancialPlanDraft(
+            direction=Direction.EXPENSE,
+            metric=Metric.PERIOD_AVERAGE,
+            group_by=GroupBy.COUNTERPARTY,
+        )
+
+    # And so `enforce` now has something to catch, instead of handing on a poisoned draft.
+    checked = explicit_facts.enforce(
+        FinancialPlanDraft(direction=Direction.EXPENSE),
+        explicit_facts.read("gasto medio mensual por comercio", today=TODAY),
+    )
+    checked.with_window(RelativePeriod(period=Period.THIS_YEAR))
+
+
+@pytest.mark.parametrize("sentence", ["esos cinco", "y esos", "de esa categoría", "en esa cuenta"])
+def test_a_pronoun_after_a_monthly_average_ungroups_safely(sentence: str) -> None:
+    """No contradictory sentence anywhere — the pair arrives one field at a time, two turns apart.
+
+    After "¿cuál es mi gasto medio mensual?" the plan is `PERIOD_AVERAGE` by `MONTH`. A pronoun
+    reference resets the grouping to `NONE` because the sentence names none, and the average is
+    inherited from the turn before. `reshaped` is what stops the reset landing on its own.
+    """
+    monthly_average = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        metric=Metric.PERIOD_AVERAGE,
+        group_by=GroupBy.MONTH,
+    )
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    reshaped = explicit_facts.reshaped(
+        monthly_average,
+        group_by=facts.group_by or GroupBy.NONE,
+        metric=facts.metric or monthly_average.metric,
+    )
+
+    # The average survives with the buckets it needs, rather than the reset producing a
+    # per-period average with no period to average over.
+    assert reshaped.metric is Metric.PERIOD_AVERAGE
+    assert reshaped.group_by is GroupBy.MONTH
+
+
+def test_an_exclusion_matches_a_merchant_the_plan_padded() -> None:
+    """The plan's merchant name was compared unstripped and the invariant compares it stripped."""
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        merchants=(" Mercadona ",),
+    )
+
+    checked = explicit_facts.enforce(plan, explicit_facts.read("gastos sin Mercadona", today=TODAY))
+
+    assert checked.merchants == ()
+    assert checked.excluded_merchants == ("mercadona",)

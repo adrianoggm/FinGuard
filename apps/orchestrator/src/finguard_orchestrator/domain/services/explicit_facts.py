@@ -52,6 +52,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     TransactionType,
 )
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.services import category_words, spanish, window_words
 from finguard_orchestrator.domain.services.window_words import Window
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -515,6 +516,38 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     )
 
 
+def reshaped[P: FinancialPlan | FinancialPlanDraft](
+    plan: P, *, group_by: GroupBy, metric: Metric
+) -> P:
+    """`plan` under this grouping and this metric, or unchanged where the domain refuses the pair.
+
+    **A grouping and a metric are decided together or not at all.** Setting one and inheriting the
+    other builds a shape nobody asked for, and the domain is right to refuse it: `PERIOD_AVERAGE`
+    and `CUMULATIVE` both spend the plan's only grouping axis on their own calendar buckets, so
+    either one beside a merchant grouping is a request for a cross-tabulation the schema cannot
+    hold. It takes no contradictory sentence to reach — after "¿cuál es mi gasto medio mensual?"
+    the follow-up "esos cinco" resets the grouping to `NONE` while the average is inherited, and
+    the two arrive one at a time from two different turns.
+
+    `group_limit` is a rider on `group_by` rather than a value of its own: "los 5 comercios donde
+    más gasto" limits *that* grouping, and the domain refuses a limit beside a temporal one. So it
+    travels with the field it qualifies, exactly as the window's two fields already do — offered
+    first with the limit, then without it.
+
+    Which shape the domain accepts is the domain's to say, which is why this offers rather than
+    decides. Restating "PERIOD_AVERAGE needs a temporal grouping" here would be a second copy of
+    an invariant to keep level with the first, and this file's whole subject is readers that drift.
+
+    Unchanged is the answer of last resort, and `enforce` argues why it is the right one.
+    """
+    for group_limit in (plan.group_limit, None):
+        try:
+            return replace(plan, group_by=group_by, metric=metric, group_limit=group_limit)
+        except InvalidValueError:
+            continue
+    return plan
+
+
 def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
     plan: T, facts: ExplicitFacts
 ) -> T:
@@ -526,6 +559,20 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
 
     A ranking takes the window and not the grouping: `TopMovements` has none, and "a qué personas"
     is not a question about one movement.
+
+    **This is total: it returns a plan for every sentence, and never raises.** It used to raise,
+    and «gasto medio mensual por comercio» is the sentence that showed it. The reader takes both
+    halves of that sentence — a per-period average, and a grouping by shop — and the domain refuses
+    them together, because `PERIOD_AVERAGE` spends the plan's only grouping axis on its own buckets
+    and a question needing two axes has no representation here. Nothing about the Spanish is
+    confused; it is the schema that cannot hold the answer.
+
+    Raising was wrong wherever it happened. Twenty of the twenty-five call sites are deterministic
+    recognisers whose contract on failure is "return None and let the planner try", so an
+    `InvalidValueError` from here does not become a refusal — it becomes a 422 on a sentence
+    somebody typed, from a layer whose whole job is to make the plan agree with them.
+
+    What happens when the sentence and the plan cannot both be satisfied is argued at the end.
     """
     if facts.window is not None:
         # As a pair, never one at a time: a plan carries exactly one of the two, so setting a range
@@ -536,16 +583,9 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
             date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
         )
     plan = enforce_exclusions(plan, facts)
-    if facts.asks_direct_debits:
-        if isinstance(plan, FinancialPlan):
-            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
-        elif isinstance(plan, FinancialPlanDraft):
-            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
-    if facts.group_by is not None and isinstance(plan, FinancialPlan | FinancialPlanDraft):
-        plan = replace(plan, group_by=facts.group_by)
     if isinstance(plan, FinancialPlan | FinancialPlanDraft):
-        if facts.metric is not None:
-            plan = replace(plan, metric=facts.metric)
+        if facts.asks_direct_debits:
+            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
         if facts.direction is not None:
             plan = replace(plan, direction=facts.direction)
         if facts.compared_categories:
@@ -557,6 +597,41 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
                     if category not in plan.excluded_categories
                 ),
             )
+    if (facts.group_by is not None or facts.metric is not None) and isinstance(
+        plan, FinancialPlan | FinancialPlanDraft
+    ):
+        return reshaped(
+            plan,
+            group_by=plan.group_by if facts.group_by is None else facts.group_by,
+            metric=plan.metric if facts.metric is None else facts.metric,
+        )
+    # Reached when the sentence stated no shape at all, when the plan is a ranking that has none —
+    # and, the case this is written for, when the domain refused every shape offered above. Then
+    # there is no plan that agrees with the sentence and nothing here to enforce, so **the plan's
+    # own grouping and metric stand, together.**
+    #
+    # The alternative is to keep the half of the pair that fits and drop the other, and that is
+    # the one outcome worth refusing outright. After "¿cuál es mi gasto medio mensual?" → 850 €/mes,
+    # the follow-up "¿y por comercio?" would keep the grouping, drop `PERIOD_AVERAGE` to a total,
+    # and answer with per-shop *totals over the window* — a real figure, correctly computed, for a
+    # question nobody asked, and indistinguishable from the right answer to everything downstream.
+    # `plan_verifier` has no rule that compares the sentence's grouping to the plan's, so nothing
+    # would catch it. Leaving the pair alone answers the previous question again instead, which is
+    # visibly unhelpful rather than quietly wrong — and `answer_writer` describes the plan, so the
+    # headline still says "gasto medio mensual" and the user can see they were not split by shop.
+    #
+    # Which half is "stated more strongly" is not a question the sentence answers, so ranking them
+    # would be a guess wearing this module's authority — and this module exists precisely because
+    # the model was allowed to guess about things the user had written down.
+    #
+    # The cost is real and is not hidden: a fact the sentence stated is ignored. It is bounded by
+    # who reaches here. A sentence that states the whole forbidden pair by itself is a capability
+    # the domain does not have, and is refused before a plan exists — `capability_guard`'s AVERAGE
+    # family already refuses every `PERIOD_AVERAGE` one, and `_cumulative_plan` declines the
+    # `CUMULATIVE` ones rather than building them. What is left here is the other case: one half
+    # inherited from an earlier turn, where the plan being kept came from a reader that saw the
+    # whole sentence, and the honest report is "I have not changed the question" rather than a
+    # number about a different one.
     return plan
 
 
@@ -574,13 +649,16 @@ def enforce_exclusions[T: FinancialPlan | FinancialPlanDraft | TopMovements](
             excluded_categories=excluded,
         )
     if facts.excluded_merchants:
-        folded_excluded = {merchant.casefold() for merchant in facts.excluded_merchants}
+        # Stripped as well as folded, because `check_filters` compares the two lists that way. A
+        # plan carrying " Mercadona " kept it while the exclusion was added beside it, and the
+        # invariant that refuses a name on both lists then rejected a plan this had just built.
+        folded_excluded = {merchant.strip().casefold() for merchant in facts.excluded_merchants}
         plan = replace(
             plan,
             merchants=tuple(
                 merchant
                 for merchant in plan.merchants
-                if merchant.casefold() not in folded_excluded
+                if merchant.strip().casefold() not in folded_excluded
             ),
             excluded_merchants=tuple(
                 dict.fromkeys((*plan.excluded_merchants, *facts.excluded_merchants))
