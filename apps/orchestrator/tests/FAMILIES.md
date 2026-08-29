@@ -55,8 +55,8 @@ Per family, out of 3073 collected:
 | `direction` | 38 | 38 | 0 |
 | `category_single` | 91 | 46 | 45 |
 | `category_multiple` | 20 | 20 | 0 |
-| `metric` | 42 | 26 | 16 |
-| `grouping` | 38 | 38 | 0 |
+| `metric` | 45 | 26 | 19 |
+| `grouping` | 47 | 38 | 9 |
 | `merchant` | 16 | 16 | 0 |
 | `follow_up` | 201 | 31 | 170 |
 | `ambiguity` | 42 | 13 | 29 |
@@ -65,16 +65,28 @@ Per family, out of 3073 collected:
 | `injection` | 37 | 23 | 14 |
 | `out_of_domain` | 6 | 6 | 0 |
 | `boundary` | 14 | 14 | 0 |
-| `unmapped` | 1948 | | |
+| `unmapped` | 1936 | | |
 
-## Seven families have no test file of their own
+## Six families have no test file of their own
 
-`period_confusable`, `direction`, `category_multiple`, `grouping`, `merchant`,
+`period_confusable`, `direction`, `category_multiple`, `merchant`,
 `out_of_domain` and `boundary` have **zero** dedicated unit tests — the whole "from the
 path table" column is 0. Every test they own arrives by being swept into a
 dataset-parametrised guard or verifier case. They are measured by the planning harness
 and by nothing a person wrote for them, and `merchant` (16), `boundary` (14) and
 `out_of_domain` (6) are the thinnest cells in the suite.
+
+`grouping` was the seventh and that was a mistake in this table, not a hole in the
+suite. `test_cumulative_and_group_rankings` holds nine group-ranking tests and three
+calendar accumulations, so the mixed-file rule below left it unmapped -- and left the
+family that owns the largest grouping file in the repo reading as a capability nobody
+had written a test for. The three accumulations say so in their names, so `_BY_NAME`
+reads them into `metric` and the rest of the file falls through to `grouping`. What
+`test_explainer` taught still holds -- a mixed file may not be filed under one of its
+groups -- but "no row at all" was the wrong remedy for a file that names its own seam.
+
+`test_ranking_pipeline` (19 tests) stays unmapped, and that is not a gap in this table:
+GROUPS.md has no group for rankings at all.
 
 ## The table
 

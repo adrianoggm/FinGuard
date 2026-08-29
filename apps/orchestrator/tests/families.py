@@ -67,6 +67,20 @@ UNMAPPED = "unmapped"
 # assistant answering about itself -- but over half of it asserts on the *category*
 # vocabulary, so a category regression was reported as `out_of_domain`. That was found by
 # breaking `category_words` on purpose and watching the wrong family light up.
+# Read before `_BY_PATH`, against the whole node id rather than the file.
+#
+# `test_cumulative_and_group_rankings` is the one file whose name says out loud that it holds two
+# capabilities. Nine of its twelve tests are group rankings and three are calendar accumulations,
+# so the file rule the module argues for -- a mixed file gets no row, because picking one of its
+# groups reports the other one's regression under the wrong name -- left it in `unmapped` and left
+# `grouping` looking like a capability with no tests at all. It is not: it is the largest thing
+# `grouping` owns. Three test names carry the distinction the file name already made, so they are
+# read here and the rest of the file falls through to `grouping` below.
+#
+# This table stays short on purpose. A file that needs more than a line or two here is a file that
+# should be split, and the row would be hiding that.
+_BY_NAME: tuple[tuple[str, str], ...] = (("accumulation", "metric"),)
+
 _BY_PATH: tuple[tuple[str, str], ...] = (
     # -- windows ----------------------------------------------------------------------
     # `window_words` reads months, years and explicit ranges -- "a month of a year",
@@ -81,6 +95,7 @@ _BY_PATH: tuple[tuple[str, str], ...] = (
     ("test_category_words", "category_single"),
     ("test_category_misread", "category_single"),
     ("test_frequency", "metric"),
+    ("test_cumulative_and_group_rankings", "grouping"),
     ("test_how_many_subscriptions", "metric"),
     # -- the refusal boundary ---------------------------------------------------------
     # GROUPS.md names averages, comparisons and ratios as what `unsupported` is for, so
@@ -160,6 +175,10 @@ def family_of(nodeid: str) -> str:
                 group = cases.get(piece.strip())
                 if group is not None:
                     return group
+        node = nodeid.replace("\\", "/")
+        for fragment, family in _BY_NAME:
+            if fragment in node:
+                return family
         stem = path.replace("\\", "/")
         for fragment, family in _BY_PATH:
             if fragment in stem:
