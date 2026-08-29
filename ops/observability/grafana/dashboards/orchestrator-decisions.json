@@ -1,0 +1,559 @@
+{
+  "uid": "finguard-orchestrator-decisions",
+  "title": "Orchestrator — decisions",
+  "description": "Section 6 of docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md. The unit of observation is a decision, and the fact worth reading about a decision is whether it changed the answer. Every panel here is fed by decisions_total{step,verdict,changed} or turns_total{outcome}, both of which come from one TurnRecord, so a rate and a trace can never disagree. Nothing is drawn from a source the record does not hold: there is no planner-latency panel, and the reason is in the description of the one latency panel that does exist.\n\nTHE TIME PICKER CHANGES WHICH PROCESSES ARE IN SCOPE, and on this dashboard that is louder than usual. `instance` is a per-process UUID, so every restart of the orchestrator starts a fresh set of counters rather than resetting the old ones, and the old ones stay in Prometheus for the full 15 days of retention. The panels sum over instance deliberately — 'what did this service decide' is a question about the service and not about one process — but it means widening the range from 1h to 3h can pull an entire earlier run into the totals. Observed while this dashboard was being verified: an override that read 0.0% at 1h and 8.3% at 3h, and both numbers were correct answers to different questions. If a figure moves when you touch the range and you did not expect it to, that is the reason.",
+  "tags": ["finguard", "orchestrator", "decisions"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Outcome mix over time",
+      "description": "What turns ended as, binned over time. Bars and not lines: the underlying quantity is a count of turns in a bucket, and a line between two buckets draws values that were never measured.\n\nThe dots are exemplars. Click one to open that turn's waterfall in Tempo — that is the link this whole design is arranged around, and it is live on this panel, on 'Overrides and changes over time' and on 'Claimed by a recogniser, or planned by the model'.\n\nCAVEAT, and it is a real one: increase() measures growth from the first sample inside the window, and these counters are PUSHED (remote write, every 60s) rather than scraped. A series is therefore born holding whatever the process had already counted, and that birth value is invisible to increase(). Over a service that has been up for hours this is one export interval of noise. Over a ten-minute run it can be the entire signal — which is exactly why the two override panels below use last_over_time and not this.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 75,
+            "lineWidth": 1,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (increase(turns_total{job=\"orchestrator\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "instant": false,
+          "exemplar": true,
+          "interval": "1m"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "piechart",
+      "title": "Outcome mix",
+      "description": "The same turns as the panel on the left, totalled over the dashboard's time range instead of binned.\n\nlast_over_time, not increase(): these are cumulative counters, so the last sample in the window IS the total, exactly, with no extrapolation and no lost birth value. What it costs is that the number is 'since this process started' rather than 'during this window' — the honest trade, and the one worth taking on a panel whose whole job is to be a correct count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "donut",
+        "displayLabels": ["percent"],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true,
+          "values": ["value"]
+        },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (last_over_time(turns_total{job=\"orchestrator\"}[$__range]))",
+          "legendFormat": "{{outcome}}",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Override rate per step — how often a rule corrected the model",
+      "description": "THE PANEL THIS DESIGN EXISTS FOR, first half. Of every decision a step made, the share where its verdict was 'overrode' — the deterministic rule looked at what the model produced and replaced it.\n\nA step that never overrides shows a real, measured 0% and not a blank row: the numerator is 0-filled against the denominator ('X or 0 * Y'), because a PromQL division whose numerator series does not exist yet returns NO ROW, and a step silently missing from this panel reads exactly like a step that is behaving.\n\nlast_over_time rather than rate/increase, and this is not a stylistic choice — see the caveat on 'Outcome mix over time'. An override is rare by nature, so its series is frequently born and then never grows again, and increase() reports 0 for it forever. Measured on this stack: intent had overridden the router twice, and the increase()-based version of this panel put a confident 0% next to it.\n\nThe cost of last_over_time is the scope note in the dashboard description: the totals are per instance since it started, summed over every instance in the window, so the range picker decides which runs are counted.\n\nNo red thresholds. A high override rate is not a fault — it is a rule doing its job — and colouring it as an alarm would teach the wrong reading.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "continuous-BlPu" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "(sum by (step) (last_over_time(decisions_total{job=\"orchestrator\",verdict=\"overrode\"}[$__range])) or 0 * sum by (step) (last_over_time(decisions_total{job=\"orchestrator\"}[$__range]))) / sum by (step) (last_over_time(decisions_total{job=\"orchestrator\"}[$__range]))",
+          "legendFormat": "{{step}}",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "Change rate per step — how often it altered the answer",
+      "description": "THE PANEL THIS DESIGN EXISTS FOR, second half, and the one the spec calls the headline metric: of every decision a step made, the share carrying changed=true.\n\nRead it beside the panel on the left. They are different questions and the gap between them is the interesting part. 'overrode' is a step disagreeing with the model; 'changed' is a step altering what the turn ANSWERED. A rule that fires constantly and changes nothing is noise; a rule that fires rarely and always changes the answer is where the risk lives.\n\nSome steps are 100% here by construction rather than by accident, and that is not a bug to chase: 'recogniser' only ever records a turn it CLAIMED, so every one of its decisions means the model never ran. 'ledger' records changed=true when a run crossed accounts, and 'outcome' when a figure was actually shown.\n\nSame 0-fill and same last_over_time as the left panel, for the same two reasons.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "valueMode": "text",
+        "namePlacement": "left",
+        "sizing": "auto",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 300,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "(sum by (step) (last_over_time(decisions_total{job=\"orchestrator\",changed=\"true\"}[$__range])) or 0 * sum by (step) (last_over_time(decisions_total{job=\"orchestrator\"}[$__range]))) / sum by (step) (last_over_time(decisions_total{job=\"orchestrator\"}[$__range]))",
+          "legendFormat": "{{step}}",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Decisions by step, verdict and impact",
+      "description": "The counts the two rate panels above are computed from, in the metric's own shape — one row per {step, verdict, changed}, which is exactly the label set decisions_total carries.\n\nHere so that a percentage is never the only thing on screen. 100% of 5 and 100% of 5000 read identically on a bar gauge and mean very different things, and this is where you find out which one you are looking at.\n\nOne query and no joins on purpose: a five-query table joined by field name is a table that breaks silently when a datasource renames 'Value', and it would break into empty columns rather than into an error.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 12, "w": 14, "x": 0, "y": 17 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "filterable": true,
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "text", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "decisions" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "gauge", "mode": "gradient", "valueDisplayMode": "text" }
+              },
+              { "id": "color", "value": { "mode": "continuous-BlPu" } },
+              { "id": "custom.width", "value": 220 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "changed the answer" },
+            "properties": [{ "id": "custom.width", "value": 170 }]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
+          "countRows": false,
+          "fields": "",
+          "enablePagination": true
+        },
+        "sortBy": [{ "displayName": "decisions", "desc": true }]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "job": true, "instance": true },
+            "renameByName": {
+              "Value": "decisions",
+              "changed": "changed the answer"
+            },
+            "indexByName": {
+              "step": 0,
+              "verdict": 1,
+              "changed": 2,
+              "Value": 3
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (step, verdict, changed) (last_over_time(decisions_total{job=\"orchestrator\"}[$__range]))",
+          "format": "table",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Overrides and changes over time",
+      "description": "The two rate panels answer 'how much'; this answers 'when', which is the question you actually have after a deploy.\n\nincrease() here rather than last_over_time, and that inversion is deliberate: a trend is inherently windowed, and the birth-value blind spot that ruins an exact count is the right trade for a shape over time. Read this for movement and read the panels above for magnitude.\n\nExemplars are on. A spike here plus one click is that turn's waterfall.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 12, "w": 10, "x": 14, "y": 17 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "axisSoftMin": 0,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (step) (increase(decisions_total{job=\"orchestrator\",changed=\"true\"}[$__rate_interval]))",
+          "legendFormat": "changed · {{step}}",
+          "range": true,
+          "instant": false,
+          "exemplar": true,
+          "interval": "1m"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Turns the model never saw",
+      "description": "The share of turns a deterministic recogniser claimed outright, so the planner was never called.\n\nDenominator is turns_total, which records exactly one sample per turn that reached an outcome. Numerator is decisions_total{step=\"recogniser\",verdict=\"claimed\"}, and there is no 'agreed' verdict on that step by design — a reader that returns None has declined to read, not decided, and recording twenty 'not mine' rows per turn would bury the one that matters.\n\nOne honest wrinkle, from the recogniser decorator's own docstring: a single turn CAN record two claims, on the path where a ratio follow-up reads a period comparison and both readers claim. So this can in principle read slightly high. Left as it is rather than deduplicated, because the alternative was leaving one of the two readers undecorated — an instrument with a hole in it instead of one with an honest extra row.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 29 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "purple", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "sum (last_over_time(decisions_total{job=\"orchestrator\",step=\"recogniser\",verdict=\"claimed\"}[$__range])) / sum (last_over_time(turns_total{job=\"orchestrator\"}[$__range]))",
+          "legendFormat": "claimed",
+          "range": false,
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Claimed by a recogniser, or planned by the model",
+      "description": "The same split as the stat on the left, over time and in absolute turns: how many turns a deterministic reader took, against how many reached the planner.\n\nWorth watching as one line rather than two numbers, because the interesting event is the crossover — a release that widens a recogniser moves work off the model, and a release that narrows one moves it back on, and neither is visible in a latency chart.\n\nExemplars are on here too.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 8, "w": 10, "x": 6, "y": 29 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "axisSoftMin": 0,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (step) (increase(decisions_total{job=\"orchestrator\",step=~\"recogniser|planner\"}[$__rate_interval]))",
+          "legendFormat": "{{step}}",
+          "range": true,
+          "instant": false,
+          "exemplar": true,
+          "interval": "1m"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Request duration · POST /v1/questions",
+      "description": "READ THE GAP THIS PANEL DOES NOT CLOSE.\n\nThe design asked for planner latency percentiles by model. They are not here and they are not here on purpose. TurnRecord holds no timing at all — a Decision is a step, a verdict, two values and a bool — so the only ways to get planner percentiles would be a second timer inside the planner, or a spanmetrics connector in the collector. Both are a second source of truth about one turn, which Section 5 ruled out in writing, and a figure that is real and about the wrong question is the exact defect class this whole design was built to catch.\n\nWhat IS real: opentelemetry-instrumentation-fastapi records http.server.duration, so this is the whole HTTP request — planning, the ledger, the sentence, and the wire. Not the planner. Treat a move here as a question to take to the waterfall, not as an answer.\n\nExplicit buckets, not exponential: Prometheus is not started with --enable-feature=native-histograms, so an exponential histogram would be accepted by the collector and silently dropped here. observability/otel.py pins the aggregation for that reason.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "finguard-prometheus"
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 29 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"orchestrator\",http_target=\"/v1/questions\"}[$__rate_interval])))",
+          "legendFormat": "p50",
+          "range": true,
+          "instant": false,
+          "interval": "1m"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "finguard-prometheus" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"orchestrator\",http_target=\"/v1/questions\"}[$__rate_interval])))",
+          "legendFormat": "p95",
+          "range": true,
+          "instant": false,
+          "interval": "1m"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Recent turns — open one for its full waterfall",
+      "description": "Every `turn` span this service emitted, newest first. Click a Trace ID to open the waterfall: one turn span with a child span per decision, each carrying step, verdict, changed and the field it was about.\n\nThis is the SECOND route to a waterfall and not the primary one. The primary route is the exemplar — the dots on 'Outcome mix over time', 'Overrides and changes over time' and 'Claimed by a recogniser'. That route starts from a rate you were already reading and lands on one of the turns that produced it, which is the question you actually have. This panel is the route for when you have no particular rate in mind.\n\nTempo keeps 72h of blocks and Prometheus 15 days of samples, so an exemplar older than three days points at a trace that no longer exists. That is stated in ops/observability/tempo/tempo.yaml and it is a retention choice, not a fault.",
+      "datasource": {
+        "type": "tempo",
+        "uid": "finguard-tempo"
+      },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 37 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "filterable": true,
+            "inspect": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": { "show": false, "reducer": ["sum"], "countRows": false, "fields": "" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "finguard-tempo" },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"orchestrator\" && name=\"turn\"}",
+          "tableType": "traces",
+          "limit": 30
+        }
+      ]
+    }
+  ]
+}
