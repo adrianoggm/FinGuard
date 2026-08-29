@@ -1,0 +1,46 @@
+# Prometheus — the rates.
+#
+# The headline number of this design is the proportion of turns where a deterministic rule
+# overruled the model AND that changed the answer (decisions_total{step,verdict,changed}).
+# That is a rate over time, which is this, not a trace.
+#
+# NOTE, because it is the least obvious thing here: the orchestrator's own metrics do NOT
+# appear in scrape_configs below. They arrive by remote write, pushed from the collector
+# (see ../otel-collector/config.yaml). The receiver is enabled by a command-line flag in
+# compose.yaml, not by this file — so if application metrics are missing, check the flag
+# and the collector's otelcol_exporter_send_failed_metric_points before touching this file.
+#
+# Section 5 of docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+
+global:
+  # 15s: fine enough that a one-minute rate() has four points to work with, coarse enough
+  # that the two targets below cost nothing. The application path does not use this — remote
+  # write arrives at whatever cadence the SDK exports, batched by the collector's 5s timeout.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    # Stamped on everything leaving this Prometheus (federation, remote read, alerts) so a
+    # figure from the laptop stack is never mistaken for one from a deployment.
+    stack: finguard-local
+
+# Deliberately empty of alerting and rules. This stack answers questions somebody is already
+# asking; it does not page anybody. Adding a rules file that nothing evaluates would be one
+# more thing that looks configured and is not.
+
+scrape_configs:
+  # Prometheus itself. Cheap, and it is the control: if this target is down, the scrape loop
+  # is broken and no other conclusion drawn from this instance is worth anything.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # The collector's own telemetry. This is the target that matters most and the one people
+  # forget: it carries otelcol_receiver_accepted_spans, otelcol_exporter_sent_spans and
+  # otelcol_exporter_send_failed_spans, which together are the only way to tell "the
+  # orchestrator sent nothing" apart from "the collector dropped it". Without this job a
+  # silent pipeline and a silent application look identical from Grafana.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
+    # By service name on the compose network. A deployment replaces this block with service
+    # discovery; the metric names it produces are unchanged, so panels built on them survive.

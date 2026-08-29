@@ -1,12 +1,26 @@
-"""What this service says about a turn, and what it will never say.
+"""What this service says about a turn, what it decided, and what it will never say.
 
-`observability.py` became this package so that the decision record has somewhere to live beside
-the logging setup without the two sharing a module. Today it holds one module and re-exports
-exactly what that module already exported, so the split is invisible to every existing import —
-`observability.request_id` means what it meant before, and the four call sites outside this
-package did not have to move for a change that is none of their business.
+Two modules, one rule. `logging` is the record a person greps; `decisions` is the record a
+dashboard counts. They are split because they are read by different people at different times,
+and joined because the thing neither may contain is the same thing: anything the holder wrote.
+
+This was a single module until the decision record needed somewhere to live. The names below are
+re-exported so that split stayed invisible to every existing import — `observability.request_id`
+means what it meant before, and the four call sites outside this package did not have to move for
+a change that is none of their business.
 """
 
+from finguard_orchestrator.observability.decisions import (
+    REDACTED,
+    Decision,
+    Step,
+    TurnRecord,
+    TurnRecorder,
+    Verdict,
+    current_turn,
+    record,
+    recording_turn,
+)
 from finguard_orchestrator.observability.logging import (
     JsonLines,
     RequestId,
@@ -16,9 +30,18 @@ from finguard_orchestrator.observability.logging import (
 )
 
 __all__ = [
+    "REDACTED",
+    "Decision",
     "JsonLines",
     "RequestId",
+    "Step",
+    "TurnRecord",
+    "TurnRecorder",
+    "Verdict",
     "account_ref",
     "configure_logging",
+    "current_turn",
+    "record",
+    "recording_turn",
     "request_id",
 ]
