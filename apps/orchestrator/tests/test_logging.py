@@ -39,7 +39,12 @@ from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.request_log import HEADER
-from finguard_orchestrator.observability import JsonLines, account_ref, request_id
+from finguard_orchestrator.observability import (
+    JsonLines,
+    account_ref,
+    configure_logging,
+    request_id,
+)
 
 
 class NoCards:
@@ -278,6 +283,44 @@ def test_a_record_with_no_request_behind_it_still_formats() -> None:
     record = logging.LogRecord("x", logging.INFO, "", 0, "started", None, None)
 
     assert json.loads(JsonLines().format(record))["request_id"] == "-"
+
+
+# --- the trace a line was emitted inside ----------------------------------------------------
+
+
+def test_with_tracing_off_a_line_is_what_it_always_was() -> None:
+    """A log line can name the trace it belongs to, so getting from a record to the turn's
+    waterfall is a copy and a paste rather than a second correlation scheme somebody maintains.
+
+    With nothing tracing — which is this suite, and a developer's laptop — the two keys are
+    **absent** rather than zeroed. Thirty-two zeros look like an identifier and correlate nothing,
+    which is the argument `banking/client.py` already makes about forwarding a `-` request id: a
+    false correlation is worse than a missing one, because only one of the two is visible to
+    whoever is reading at the time. So every line here is what it was before the field existed.
+    """
+    from finguard_orchestrator.observability.logging import TraceContext
+
+    line = logging.LogRecord("x", logging.INFO, "", 0, "turn", None, None)
+
+    assert TraceContext().filter(line) is True
+
+    emitted = json.loads(JsonLines().format(line))
+    assert "trace_id" not in emitted
+    assert "span_id" not in emitted
+    assert emitted["request_id"] == "-", "and the correlation that already worked still does"
+
+
+def test_the_trace_filter_is_installed_whether_or_not_anything_traces() -> None:
+    """The filter always runs and the *source* it reads is what gets swapped, so turning tracing on
+    does not need the logging configuration rebuilt — and a filter that only exists when a
+    collector does is a filter nothing has ever executed."""
+    from finguard_orchestrator.observability.logging import RequestId, TraceContext
+
+    configure_logging(level="INFO", as_json=True)
+    handler = logging.getLogger().handlers[0]
+
+    assert any(isinstance(f, TraceContext) for f in handler.filters)
+    assert any(isinstance(f, RequestId) for f in handler.filters)
 
 
 def test_an_idle_conversation_says_so_rather_than_saying_nothing(recording) -> None:

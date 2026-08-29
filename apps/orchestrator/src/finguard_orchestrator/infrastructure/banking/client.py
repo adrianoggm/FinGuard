@@ -26,13 +26,20 @@ when the client was constructed, which is correct here only because these client
 built one per call — a property nothing enforces and a future pool would quietly break. The hook
 reads the context variable when the request is actually sent, so it is right either way.
 
-**Where a span goes.** Section 3 of the observability design adds OpenTelemetry, and this is the
-one file it needs for the outbound span: a second `request` hook to start it and a `response` hook
-to end it, or a wrapping `AsyncBaseTransport` passed here. Neither reaches a call site.
+**Where a span goes — and it went in the transport.** Section 3 offered two shapes here, a second
+`request` hook paired with a `response` hook, or a wrapping `AsyncBaseTransport`. The transport
+won, for three reasons the hooks cannot cover: a `response` hook never runs when the connection
+fails, which is the outbound call worth seeing most; a span opened in one hook and closed in
+another has to be smuggled between them on the request object; and only a transport can hold the
+span *current* while the request is in flight, which is what lets a `traceparent` be injected onto
+it. As promised, neither reaches a call site — `_transport` below is None until
+`observability/otel.py` installs one, and `banking_client`'s signature is unchanged.
 `opentelemetry-instrumentation-httpx` is not an option and will not become one — it patches
 `httpx`, and this service has `httpx2`. `tests/test_dependency_provenance.py` holds the three facts
 behind that, and `import httpx` raises `ModuleNotFoundError` here.
 """
+
+from collections.abc import Callable
 
 import httpx2 as httpx
 
@@ -53,6 +60,30 @@ UNSET = "-"
 # this is the last code before a socket — httpx2 forwards a value containing CRLF without
 # complaint, which is a request-splitting gadget pointed at the bank.
 LIMIT = 64
+
+# What every client built here is put on top of, and None means httpx's own default — which is
+# what this file did before and what it still does in every test run.
+#
+# **A slot rather than an import**, for the same reason `observability/logging.py` has one: this
+# module must not import OpenTelemetry, and the design says exactly one module may.
+# `observability/otel.py` installs a tracing transport during set-up if a deployment turned tracing
+# on, and nothing else ever calls this. A callable rather than a stored instance because a
+# transport owns a connection pool and this factory builds one client per call — a single shared
+# instance would quietly become the pool the module docstring above says nothing holds.
+Transports = Callable[[], httpx.AsyncBaseTransport | None]
+
+
+def _untraced() -> httpx.AsyncBaseTransport | None:
+    return None
+
+
+_transport: Transports = _untraced
+
+
+def use_transport(source: Transports) -> None:
+    """Called by `observability.otel` when tracing is configured. Never by anything else."""
+    global _transport
+    _transport = source
 
 
 def _forwarded() -> str | None:
@@ -96,5 +127,12 @@ def banking_client(*, timeout: float) -> httpx.AsyncClient:
     httpx has built the request, and sets one key on it — so `Idempotency-Key` on a payment travels
     *beside* the request id rather than being replaced by it. That is the header this service has
     that stops a payment being made twice, and it keeps working exactly as it did.
+
+    `transport=None` is httpx's own default, so with nothing installed this returns precisely the
+    client it returned before the span existed.
     """
-    return httpx.AsyncClient(timeout=timeout, event_hooks={"request": [_stamp]})
+    return httpx.AsyncClient(
+        timeout=timeout,
+        event_hooks={"request": [_stamp]},
+        transport=_transport(),
+    )
