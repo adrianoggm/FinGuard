@@ -15,7 +15,8 @@ from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
-from finguard_orchestrator.domain.services import cumulative_calculator, spanish
+from finguard_orchestrator.domain.services import cumulative_calculator, explicit_facts, spanish
+from finguard_orchestrator.domain.value_objects import financial_plan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -359,3 +360,98 @@ def test_the_row_ceiling_is_not_the_spoken_ranking_ceiling() -> None:
             group_by=GroupBy.MERCHANT,
             group_limit=constants.MAX_GROUP_ROWS + 1,
         )
+
+
+# `qwen3.5:9b` answers "¿Qué llevo gastado en la semana en curso?" with `metric: CUMULATIVE` and
+# `groupBy: NONE` — the accumulation words are real Spanish and the model reads them, then states
+# that nothing buckets the result. The window and the direction are right; the pair is not a plan.
+# Four held-out cases died on it as INVALID_DOMAIN, and `enforce` never saw them, because the
+# constructor raises before there is any plan for it to correct.
+
+
+@pytest.mark.parametrize("group_by", [GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH])
+def test_an_accumulation_over_real_buckets_is_left_alone(group_by: GroupBy) -> None:
+    """The buckets are there, so there is a build-up to show and nothing to settle."""
+    assert financial_plan.metric_without_a_bucket(group_by, Metric.CUMULATIVE) is Metric.CUMULATIVE
+
+
+def test_an_accumulation_over_no_buckets_is_the_total_itself() -> None:
+    """One undifferentiated bucket makes the running total a sequence of one — the total."""
+    assert financial_plan.metric_without_a_bucket(GroupBy.NONE, Metric.CUMULATIVE) is Metric.SUM
+
+
+@pytest.mark.parametrize(
+    "group_by",
+    [GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT],
+)
+def test_an_accumulation_beside_a_second_axis_is_still_refused(group_by: GroupBy) -> None:
+    """«Gasto acumulado por comercio» needs two grouping axes, and a plan has one.
+
+    `_cumulative_plan` and `explicit_facts.reshaped` both decline this rather than keeping a half.
+    Settling it here would quietly answer what they refuse to, and answer it with a figure — a
+    running total whose breakdown was dropped on the way — so the pair stays forbidden and the
+    constructor stays the thing that says so.
+    """
+    assert financial_plan.metric_without_a_bucket(group_by, Metric.CUMULATIVE) is Metric.CUMULATIVE
+    with pytest.raises(InvalidValueError, match="CUMULATIVE requires"):
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_YEAR),
+            group_by=group_by,
+            metric=Metric.CUMULATIVE,
+        )
+
+
+def test_a_period_average_over_no_buckets_is_not_the_total() -> None:
+    """The asymmetry this rule is narrow for.
+
+    «Gasto medio mensual» over an unbucketed year is not the year's total — it is that total over
+    a divisor the sentence named and the plan then failed to carry. No figure settles that
+    reading, so it stays a refusal rather than becoming a number twelve times too large.
+    """
+    assert (
+        financial_plan.metric_without_a_bucket(GroupBy.NONE, Metric.PERIOD_AVERAGE)
+        is Metric.PERIOD_AVERAGE
+    )
+    with pytest.raises(InvalidValueError, match="PERIOD_AVERAGE requires"):
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_YEAR),
+            metric=Metric.PERIOD_AVERAGE,
+        )
+
+
+@pytest.mark.parametrize("metric", [Metric.SUM, Metric.COUNT, Metric.AVERAGE, Metric.FREQUENCY])
+def test_a_metric_that_needs_no_bucket_is_never_touched(metric: Metric) -> None:
+    assert financial_plan.metric_without_a_bucket(GroupBy.NONE, metric) is metric
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿cuál es mi gasto acumulado este año?",
+        "¿cuánto llevaba gastado en mayo?",
+        "¿cómo ha ido mi gasto este año?",
+    ],
+)
+def test_an_accumulation_the_sentence_states_survives_the_settled_pair(sentence: str) -> None:
+    """**The bound on what settling the pair can cost.**
+
+    `enforce` runs after the planner in both the handler and the evaluation harness, and there the
+    deterministic reader outranks the model. So wherever the sentence really does say "acumulado",
+    the metric comes straight back — with the MONTH bucket the reader supplies — and the settled
+    SUM never survives to be shown. What this rule can reach is only the sentences `_CUMULATIVE`
+    does not know, and there the figure it produces is the one the running total would have ended
+    on.
+    """
+    settled = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+        metric=financial_plan.metric_without_a_bucket(GroupBy.NONE, Metric.CUMULATIVE),
+    )
+    assert settled.metric is Metric.SUM
+
+    checked = explicit_facts.enforce(settled, explicit_facts.read(sentence, today=TODAY))
+
+    assert checked.metric is Metric.CUMULATIVE
+    assert checked.group_by is GroupBy.MONTH

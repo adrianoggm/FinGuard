@@ -48,6 +48,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
+    metric_without_a_bucket,
 )
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 from finguard_orchestrator.infrastructure.planning.plan_schema import (
@@ -302,7 +303,9 @@ def _draft(
     try:
         direction = Direction(_text(body, "direction"))
         group_by = GroupBy(_text(body, "groupBy"))
-        metric = Metric(_text(body, "metric"))
+        # The same reading `_build_plan` makes, for the same pair. A draft that lost it came back
+        # as no draft at all, and the draft is the only thing the reply to the question builds on.
+        metric = metric_without_a_bucket(group_by, Metric(_text(body, "metric")))
         selected_categories = _categories(_texts(body, "categories"), allowed=categories)
         merchants = tuple(dict.fromkeys(m.strip() for m in _texts(body, "merchants") if m.strip()))
     except (_MalformedError, ValueError):
@@ -427,14 +430,19 @@ def _build_plan(
             return PlanningResult.invalid_domain(str(exc))
 
     try:
+        grouping = GroupBy(group_by)
         plan = FinancialPlan(
             direction=Direction(direction),
             period=window if isinstance(window, RelativePeriod) else None,
             date_range=window if isinstance(window, AbsoluteRange) else None,
             categories=selected_categories,
             merchants=merchants,
-            group_by=GroupBy(group_by),
-            metric=Metric(metric),
+            group_by=grouping,
+            # A running total the model gave no buckets to. This is not the normalising the module
+            # docstring refuses: that rule is about repairs which *widen* a query, and every filter
+            # here is left exactly as read. The pair is settled rather than dropped, and only where
+            # settling it changes no figure — `metric_without_a_bucket` argues which pair that is.
+            metric=metric_without_a_bucket(grouping, Metric(metric)),
         )
     except InvalidValueError as exc:
         return PlanningResult.invalid_domain(str(exc))
