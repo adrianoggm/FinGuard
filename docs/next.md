@@ -445,10 +445,21 @@ in between.
 | Over-refusal by the guard | **0** on answerable cases | ✅ 0 — and the ablation puts a number on it: every rule's `cost` column is **+0** | `pytest tests/test_capability_guard.py`, `--ablate` |
 | Unsupported execution | **0** for the guard's six families | ✅ 5/5 held out, 6/6 dev | `evaluate_planning --ablate` |
 | Evidence reconciliation | **0** failures | ✅ **0 of 13** breakdowns inspected. `_reconciliation()` had executed **zero** times before 2026-08-28. It now knows three answer shapes it did not — a comparison's rows are operands (`difference_minor`), a cumulative's last row *is* the whole, and a cadence answer is not a sum that forgot its figure — each keyed on a field already on the wire and simply unread | the E2E properties |
-| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ❌ **held out 11.4 %**. dev 9.2 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % | `evaluate_planning --dataset <set>` |
+| **Unsafe execution** | **≤ 10 % on every set**, not only held out | ✅ **held out 6.3 %**. dev 8.3 %, adversarial 8.3 %, drift 5.3 %, metamorphic 0 % — the five re-taken **2026-08-30 in one sitting at `7156038`**, `qwen3.5:9b`, because the figures this row carried were measured on different commits and that is how the previous version of this table stopped being true. Held out was 11.4 % on 2026-08-28; three deterministic-reader fixes took it to 6.3 % without touching the model or the prompt | `evaluate_planning --dataset <set>` |
 
-**Seven pass, one fails.** Unsafe execution is over the bar it was under
-three weeks ago. The containment row was measured later the same day — see
+**Eight pass.** Unsafe execution was the one that failed and it is the one that moved: 11.4 % → **6.3 %**
+on the held-out set, from three fixes that are all the same shape — a deterministic reader that could not
+see something the sentence said, so the model's answer stood unopposed. `window_words` learned
+«desde el lunes» and «entre el 10 y el 20 de mayo»; a follow-up now inherits the window its silence did
+not name; and a running total the model gave no buckets to is the total rather than an error. None of
+the three touched the model or the prompt, which is what makes them carry across sets rather than
+fitting the one they were measured on.
+
+**Four cases remain unsafe on the held-out set and none of them is a code fix.** Three are merchant
+cases whose dataset expectation may be stale since `merchantFilter` shipped, and one —
+«¿Dónde he gastado más dinero este año?» — cannot be passed by any model: the reader is *wrong*
+there and `enforce` imposes its reading. It needs a decision about what «dónde» means in this
+product, not a patch. The containment row was measured later the same day — see
 `docs/audits/2026-08-28-the-integration-suites-with-a-database.md`, which also records the two
 integration suites' first run of this session, the orchestrator RLS policy's first run *ever*, and
 three findings that are not yet rows here: `assert_intent_transition` does not guard a payment's
