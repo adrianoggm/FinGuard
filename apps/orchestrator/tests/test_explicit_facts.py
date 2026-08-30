@@ -526,6 +526,71 @@ def test_salary_and_income_words_force_incoming_movements() -> None:
         assert explicit_facts.enforce(planned, facts).direction is Direction.INCOME
 
 
+def test_being_charged_reads_as_money_leaving_even_though_the_verb_is_cobrar() -> None:
+    """«me cobraron» matches `_INCOME` on `cobraron` and `_EXPENSE` on `me cobr`, so the reader
+    used to compute both and answer None — it saw the spending and had no way to say it. The
+    specific pattern is consulted first, so two characters of pronoun decide it."""
+    facts = explicit_facts.read("¿Cuánto me cobraron el mes pasado?", today=TODAY)
+    planned = FinancialPlan(direction=Direction.INCOME, period=RelativePeriod(Period.LAST_MONTH))
+
+    assert facts.direction is Direction.EXPENSE
+    assert explicit_facts.enforce(planned, facts).direction is Direction.EXPENSE
+
+
+def test_what_i_dropped_on_something_reads_as_money_leaving() -> None:
+    """«me he dejado» is ordinary Spanish for spending and the vocabulary simply lacked it, so
+    neither pattern fired and the model's INCOME stood. The category question is the same gap
+    read through a sentence that also names a category, and both were unsafe for one reason."""
+    for sentence in (
+        "¿Cuánto me he dejado este mes?",
+        "¿Cuánto me he dejado en salir a comer este mes?",
+    ):
+        facts = explicit_facts.read(sentence, today=TODAY)
+        planned = FinancialPlan(
+            direction=Direction.INCOME, period=RelativePeriod(Period.THIS_MONTH)
+        )
+
+        assert facts.direction is Direction.EXPENSE
+        assert explicit_facts.enforce(planned, facts).direction is Direction.EXPENSE
+
+
+def test_cobrar_without_the_pronoun_is_still_money_arriving() -> None:
+    """The general reading is what the specific one is carved out of, so it has to survive
+    intact — otherwise «me cobraron» was fixed by breaking every payroll question."""
+    for sentence in ("¿Cuánto cobré el mes pasado?", "¿Cuánto me ingresaron en junio?"):
+        facts = explicit_facts.read(sentence, today=TODAY)
+
+        assert facts.direction is Direction.INCOME
+
+
+def test_an_income_question_carrying_a_spending_verb_is_still_income() -> None:
+    """The risk this change creates and the reason `_LEAVING` is not `_EXPENSE`. Giving the
+    reader authority over EXPENSE means it can now flip a question, and unlike the failure it
+    replaces that one would show a figure. Neither of these carries a `_LEAVING` form, so the
+    first reads INCOME on the income word alone and the second — which states both directions —
+    reads None and leaves the model's answer where it was."""
+    stated = explicit_facts.read(
+        "¿Cuánto ingresé el mes pasado después de pagar el alquiler?", today=TODAY
+    )
+    both = explicit_facts.read(
+        "¿Cuánto ingresé el mes pasado sin contar lo que gasté?", today=TODAY
+    )
+
+    assert stated.direction is Direction.INCOME
+    assert both.direction is None
+
+
+def test_the_expense_reading_is_not_widened_to_every_spending_word() -> None:
+    """What `_LEAVING` refuses to become. «me clavaron» and «se me ha ido» plainly mean spending
+    and are deliberately absent: no dataset says what they should read as, so enforcing them
+    would be this module overruling the model on unmeasured vocabulary. The model gets both right
+    unaided today, which is the argument for leaving them to it."""
+    for sentence in ("¿Cuánto me clavaron este mes?", "¿Cuánto se me ha ido este mes?"):
+        facts = explicit_facts.read(sentence, today=TODAY)
+
+        assert facts.direction is None
+
+
 def test_income_and_expenses_together_do_not_get_narrowed_to_income() -> None:
     facts = explicit_facts.read("Compara mis ingresos y gastos este mes", today=TODAY)
 
