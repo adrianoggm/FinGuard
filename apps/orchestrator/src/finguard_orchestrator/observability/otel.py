@@ -33,6 +33,13 @@ value of its own is the outbound span, where the URL path to banking carries acc
 is minted here with `uuid4`, is derived from nothing, and means nothing outside a trace — which is
 exactly why `TurnRecord` carries it rather than a `Decision`, whose shape check refuses UUIDs.
 
+**Two things the record grew, and what each becomes.** `TurnRecord.conversation` becomes one
+attribute on the `turn` span, so a Tempo search returns every turn of one conversation instead of
+one unrelated trace per turn. `TurnRecord.consulted` becomes a span per reader the deterministic
+cascade asked, nested by who asked whom — and **never a counter increment**. See `_consultation`
+for why the two records are asymmetric: the counter's shape is a live dashboard's contract and the
+path would be unbounded label churn in it, while in a trace the path is the whole finding.
+
 **What is deliberately not here.**
 
 * No `spanmetrics` connector in the collector. The counters below are incremented from the same
@@ -49,6 +56,7 @@ exactly why `TurnRecord` carries it rather than a `Decision`, whose shape check 
 
 import logging
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
@@ -79,7 +87,13 @@ from opentelemetry.trace import Span, Status, StatusCode, Tracer
 
 from finguard_orchestrator.infrastructure.banking import client as banking_client
 from finguard_orchestrator.observability import logging as service_logging
-from finguard_orchestrator.observability.decisions import Decision, TurnRecord, recording_turn
+from finguard_orchestrator.observability.decisions import (
+    Consultation,
+    Decision,
+    Step,
+    TurnRecord,
+    recording_turn,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - imported for types only, and it imports this package back
     from fastapi import FastAPI
@@ -201,6 +215,15 @@ def _event(decision: Decision) -> dict[str, str]:
     return {key: value for key, value in slots.items() if value is not None}
 
 
+def _every(consulted: tuple[Consultation, ...]) -> Iterator[Consultation]:
+    """Every consultation in a path, nested ones included. `Consultation.walk` per root, flattened,
+    with the depth dropped — the count is what the turn span wants and the depth is what it does
+    not."""
+    for root in consulted:
+        for _, found in root.walk():
+            yield found
+
+
 def _templated(path: str) -> str:
     """A banking path with its account identifiers taken out.
 
@@ -256,9 +279,12 @@ class TurnTelemetry:
     tracer: Tracer
     decisions: Counter
     turns: Counter
+    readers: bool = True
+    """Whether the deterministic cascade's path is drawn. `Settings.otel_recogniser_spans`, carried
+    here rather than read from settings at export time so a test can build one of each."""
 
     @classmethod
-    def build(cls, tracer: Tracer, meter: Meter) -> "TurnTelemetry":
+    def build(cls, tracer: Tracer, meter: Meter, *, readers: bool = True) -> "TurnTelemetry":
         return cls(
             tracer=tracer,
             decisions=meter.create_counter(
@@ -270,6 +296,7 @@ class TurnTelemetry:
                 TURNS,
                 description="Turns that reached an outcome, by outcome.",
             ),
+            readers=readers,
         )
 
     def turn(self, record: TurnRecord, *, started_at: int, ended_at: int) -> None:
@@ -310,6 +337,14 @@ class TurnTelemetry:
                     turn.set_attribute("conversation.id", record.conversation)
                 for decision in record.decisions:
                     self._decision(decision)
+                if self.readers:
+                    # How wide the path under this turn is, so the cost the setting exists to turn
+                    # down is legible from the turn span without counting rows. Set only when the
+                    # path is actually drawn: an attribute saying twenty-two above no reader spans
+                    # would read as twenty-two that went missing.
+                    turn.set_attribute("consulted", sum(1 for _ in _every(record.consulted)))
+                    for consultation in record.consulted:
+                        self._consultation(consultation)
                 if record.outcome is not None:
                     # Inside the turn span, for the same exemplar reason as the decision counter
                     # below: an outcome panel is one of the places section 6 wants a waterfall to
@@ -342,6 +377,49 @@ class TurnTelemetry:
                 span.set_attribute("field", decision.field)
             span.add_event("decision", attributes=_event(decision))
             self.decisions.add(1, attributes)
+
+    def _consultation(self, consultation: Consultation) -> None:
+        """One reader the cascade asked, and — nested inside it — whatever it asked in turn.
+
+        **No counter here, and that is the line to read twice.** Section 2's argument for recording
+        only claims is right *for the metric*: twenty "not mine" rows per turn would bury the one
+        that matters, and telling them apart would mean promoting the reader's name to a label,
+        which is the unbounded cardinality `decisions._own_words`' neighbours were bounded to
+        avoid. A trace has neither problem and the order is the whole point there, so the path is
+        drawn and never counted. `decisions_total` and the `recogniser` decision keep exactly the
+        behaviour the live dashboard was built on.
+
+        **The nesting is not computed here either.** It is the shape `record.consulted` already
+        has, and that shape came from which frames were open when — `decisions.consulting`. This
+        walks a tree it was handed; it does not decide who called whom, and neither does the
+        decorator. `_ratio_request` is the parent of `_direct_period_comparison` on the
+        percent-change path because that is when the inner reader ran, and the call graph draws
+        itself from that and nothing else.
+
+        Real start and end times, unlike the decision spans one method up. A `Decision` carries no
+        clock on purpose; a consultation is a call, and the interval is what makes "the cascade
+        asked this reader five times" a cost somebody can weigh against the setting that turns it
+        off.
+        """
+        span = self.tracer.start_span(
+            consultation.reader,
+            start_time=consultation.started_at,
+            attributes={
+                "step": Step.RECOGNISER.value,
+                # `claimed` rather than a `verdict`, deliberately. A reader that returns None has
+                # not decided anything — `_recogniser` says so at length — and reusing `Verdict`
+                # here would put `declined` on eighteen spans a turn, next to a counter that means
+                # something narrower by it: this service refusing to answer.
+                "claimed": consultation.claimed,
+                "reader": consultation.reader,
+            },
+        )
+        with trace.use_span(span, end_on_exit=False, record_exception=False):
+            try:
+                for child in consultation.consulted:
+                    self._consultation(child)
+            finally:
+                span.end(end_time=consultation.ended_at)
 
 
 # The exporter, or None when nothing is configured. Set once by `configure_tracing` and read by
@@ -559,13 +637,24 @@ def configure_tracing(app: "FastAPI", *, settings: "Settings") -> bool:
         app, tracer_provider=tracer_provider, meter_provider=meter_provider
     )
     tracer = tracer_provider.get_tracer(SCOPE)
-    _telemetry = TurnTelemetry.build(tracer, meter_provider.get_meter(SCOPE))
+    _telemetry = TurnTelemetry.build(
+        tracer,
+        meter_provider.get_meter(SCOPE),
+        readers=settings.otel_recogniser_spans,
+    )
     # The two seams that make a log line and a trace find each other, and an outbound call part of
     # the turn that made it. Both are injected rather than imported: `logging` and
     # `banking/client.py` must not import OpenTelemetry, and this is the module that may.
     service_logging.use_trace_context(_current_trace_context)
     banking_client.use_transport(_transports(tracer))
-    logger.info("otel.configured", extra={"endpoint": endpoint, "service": SERVICE_NAME})
+    logger.info(
+        "otel.configured",
+        extra={
+            "endpoint": endpoint,
+            "service": SERVICE_NAME,
+            "recogniser_spans": settings.otel_recogniser_spans,
+        },
+    )
     return True
 
 

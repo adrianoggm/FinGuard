@@ -51,12 +51,14 @@ from finguard_orchestrator.domain.value_objects.financial_plan import FinancialP
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.observability import (
     REDACTED,
+    Consultation,
     Decision,
     Step,
     TurnRecord,
     TurnRecorder,
     Verdict,
     account_ref,
+    consulting,
     current_turn,
     name_the_conversation,
     record,
@@ -159,9 +161,9 @@ def wired(planned: FinancialPlan) -> TestClient:
 def everything_in(sealed: TurnRecord) -> str:
     """Every free-text slot of every decision, as one string to sweep.
 
-    The conversation identifier is in here too. It cannot carry what a holder wrote — it is a
-    `uuid4` — but "cannot" is what six green-but-dead instruments were also true by, and the sweep
-    costs one line.
+    The reader names and the conversation identifier are in here too. Neither can carry what a
+    holder wrote — one is a Python identifier and the other is a `uuid4` — but "cannot" is what
+    six green-but-dead instruments were also true by, and the sweep costs one join.
     """
     return (
         "\n".join(
@@ -178,6 +180,8 @@ def everything_in(sealed: TurnRecord) -> str:
             )
             for decision in sealed.decisions
         )
+        + "\n"
+        + "\n".join(found.reader for root in sealed.consulted for _, found in root.walk())
         + f"\n{sealed.outcome}\n{sealed.conversation}"
     )
 
@@ -622,11 +626,138 @@ def test_the_two_records_are_separate_modules() -> None:
     assert decisions_module.REDACTED == REDACTED
 
 
+# --- the path the reasoning fell through -------------------------------------------------------
+
+
+def test_the_path_is_recorded_with_nothing_listening() -> None:
+    """**The property this module exists for, applied to the second record.**
+
+    `otel_recogniser_spans` decides whether the path is *drawn*. It does not decide whether it is
+    built, and it must never: the configuration that would switch this off is the configuration no
+    test runs under. So a turn with no exporter, no collector and no setting still comes out of
+    here holding the order the readers were asked in.
+    """
+    with recording_turn() as turn:
+        for reader in ("_ratio_request", "_gambling_plan", "_cumulative_plan"):
+            with consulting(reader) as consulted:
+                consulted.claimed = reader == "_cumulative_plan"
+
+    sealed = turn.sealed()
+
+    assert [found.reader for found in sealed.consulted] == [
+        "_ratio_request",
+        "_gambling_plan",
+        "_cumulative_plan",
+    ]
+    assert [found.claimed for found in sealed.consulted] == [False, False, True]
+
+
+def test_a_reader_consulted_from_inside_another_becomes_its_child() -> None:
+    """**The callback case, and the reason this exists at all.**
+
+    `_ratio_request` reads a percent-change follow-up by asking `_direct_period_comparison`, and
+    before this the two flattened into unrelated `CLAIMED` rows with nothing saying one asked the
+    other.
+
+    Nothing here names either function, and nothing passes a parent. The inner consultation is a
+    child because its frame opened while the outer one was still on the stack — the same rule
+    OpenTelemetry's own context uses, applied to a value so it holds with nothing listening.
+    """
+    with recording_turn() as turn, consulting("_ratio_request") as outer:
+        with consulting("_direct_period_comparison") as inner:
+            inner.claimed = True
+        outer.claimed = True
+
+    sealed = turn.sealed()
+
+    assert len(sealed.consulted) == 1, "one root: the reader the cascade asked"
+    assert [(depth, found.reader) for depth, found in sealed.consulted[0].walk()] == [
+        (0, "_ratio_request"),
+        (1, "_direct_period_comparison"),
+    ]
+    assert all(found.claimed for _, found in sealed.consulted[0].walk())
+
+
+def test_a_consultation_is_timed_and_a_decision_is_not() -> None:
+    """A `Decision` is a choice and carries no clock on purpose. A consultation is a call, and the
+    interval is what makes "the cascade asked this reader four times" a cost rather than a shrug."""
+    with recording_turn() as turn, consulting("_average_plan"):
+        pass
+
+    only = turn.sealed().consulted[0]
+
+    assert only.ended_at >= only.started_at
+    assert not hasattr(record(Step.INTENT, Verdict.AGREED, changed=False), "started_at")
+
+
+def test_a_reader_that_raises_still_closes_its_frame() -> None:
+    """Balanced by a `finally`. Without it one exception would leave the stack permanently deeper
+    and every later reader in the turn would be recorded as a child of a call that had ended."""
+    with recording_turn() as turn:
+        with pytest.raises(ValueError), consulting("_ratio_request"):
+            raise ValueError("a reader blew up")
+        with consulting("_frequency_plan"):
+            pass
+
+    sealed = turn.sealed()
+
+    assert [found.reader for found in sealed.consulted] == ["_ratio_request", "_frequency_plan"]
+    assert sealed.consulted[0].claimed is False, "it raised; it did not claim"
+    assert sealed.consulted[1].consulted == (), "the second reader is a sibling, not a child"
+
+
+def test_a_reader_consulted_outside_a_turn_is_dropped() -> None:
+    """The same answer `record` gives, for the same reason: there is nowhere honest to put it."""
+    assert current_turn() is None
+
+    with consulting("_ratio_request") as consulted:
+        consulted.claimed = True
+
+    assert current_turn() is None
+
+
+def test_the_path_is_bounded_rather_than_unbounded() -> None:
+    """A compound question runs the whole cascade once per clause inside one request, so the record
+    legitimately holds several passes. It is still bounded, and it truncates rather than raising —
+    a bookkeeping call that can abort a turn has made the service less reliable in exchange for
+    watching it."""
+    with recording_turn() as turn:
+        for index in range(300):
+            with consulting(f"_reader_{index}"):
+                pass
+
+    assert len(turn.sealed().consulted) == 128, "the ceiling, not three hundred"
+
+
+def test_a_declined_reader_is_not_a_decision() -> None:
+    """**The counter is untouched, and this is the assertion that says so.**
+
+    Section 2's argument for recording only claims is right for the metric: twenty "not mine" rows
+    a turn would bury the one that matters, and telling them apart would mean the reader's name as
+    a label, which is unbounded cardinality. The path goes to the trace and never to the counter.
+    """
+    with recording_turn() as turn, consulting("_ratio_request"):
+        pass
+
+    sealed = turn.sealed()
+
+    assert sealed.decisions == (), "consulting a reader records no decision at all"
+    assert len(sealed.consulted) == 1
+
+
+def test_a_reader_name_is_still_put_through_the_vocabulary_check() -> None:
+    """ "A Python identifier cannot hold a sentence" is true and is not a control. The same shape
+    check every other free slot gets applies here too, so a future caller that passes something
+    else is a redaction rather than a leak."""
+    assert Consultation(reader=PRIVATE, claimed=False, started_at=0, ended_at=1).reader == REDACTED
+
+
 # --- which conversation this turn belongs to ---------------------------------------------------
 
 
 def test_a_turn_carries_the_conversation_it_belongs_to() -> None:
-    """Without this, N turns of one conversation are N unrelated traces and nothing links them."""
+    """The whole of gap one, as a value: without this, N turns of one conversation are N unrelated
+    traces and nothing links them."""
     identifier = str(uuid.uuid4())
 
     with recording_turn() as turn:

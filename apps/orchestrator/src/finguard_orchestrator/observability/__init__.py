@@ -20,11 +20,14 @@ imported by its full path, from `bootstrap/main.py`, and by nothing else. `use_t
 
 from finguard_orchestrator.observability.decisions import (
     REDACTED,
+    Consultation,
+    Consulting,
     Decision,
     Step,
     TurnRecord,
     TurnRecorder,
     Verdict,
+    consulting,
     current_turn,
     name_the_conversation,
     record,
@@ -40,6 +43,8 @@ from finguard_orchestrator.observability.logging import (
 
 __all__ = [
     "REDACTED",
+    "Consultation",
+    "Consulting",
     "Decision",
     "JsonLines",
     "RequestId",
@@ -49,6 +54,7 @@ __all__ = [
     "Verdict",
     "account_ref",
     "configure_logging",
+    "consulting",
     "current_turn",
     "name_the_conversation",
     "record",
