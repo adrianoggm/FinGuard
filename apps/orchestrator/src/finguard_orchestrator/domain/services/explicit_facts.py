@@ -30,7 +30,11 @@ the better answer for them and refusing is what happens today:
     direction    `SPENDING_ANSWERED_AS_EVERYTHING` refuses a spending question planned as ALL.
                  Silently rewriting it to EXPENSE would also be the pipeline quietly repairing a
                  prompt injection instead of reporting it, and the refusal is the control that
-                 test exists for.
+                 test exists for. **Still true of every sentence that rule can see**: it reads the
+                 stem `gast`, and the only thing this module states EXPENSE for is `_LEAVING` —
+                 «me cobraron» and «me he dejado», neither of which contains `gast`. The refusal
+                 and the reading are disjoint by construction rather than by luck, and `_LEAVING`
+                 argues where that boundary is and what it refuses to be widened to.
     categories   `CATEGORY_MISREAD` refuses a plan filtered by something the sentence did not
                  name. *Setting* the filter instead would drop the categories the model read
                  correctly out of words this vocabulary does not know — the subset rule that
@@ -216,6 +220,29 @@ _INCOME: Final = re.compile(
     r"|\bincome\b|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
 )
 _EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
+# `_EXPENSE` **vetoes** an income reading; `_LEAVING` **asserts** a spending one. Two patterns
+# because the two powers are not worth the same. A veto costs a `None`: the model keeps whichever
+# direction it chose and `plan_verifier` still gets to look at it. An assertion overwrites a field
+# the model stated, on every sentence that matches, and nothing downstream re-examines it.
+#
+# `gast|pagu|compr|cargo` are good enough to veto — they say the sentence is not purely about money
+# arriving — and deliberately not good enough to assert. They are topic words: «¿en qué categoría
+# gasto más?» is about spending without stating a direction to impose. And `\bgast` is the exact
+# trigger of `plan_verifier._spending_answered_as_everything`, so a reader that forced EXPENSE on
+# every `gast` sentence would repair that disagreement before the verifier could ever see it —
+# which is the refusal this module's docstring makes, and would leave the one guard written
+# against the live prompt injection unreachable on the sentences it was written for.
+#
+# What is here instead is the first-person constructions that can only mean money left this
+# account: «me cobraron» — somebody charged me — and «me he dejado» — what I dropped on something.
+# Neither contains `gast`, so this and that rule cannot collide on any sentence either could be
+# about. The one overlap is a compound «¿cuánto me he dejado y cuánto gasté?», which states two
+# questions and belongs to the clarification path rather than to either rule.
+#
+# Refused, all for one reason — no dataset says what they should read as, so adding them would be
+# vocabulary nobody measured: «me clavaron», «me crujieron», and «se me ha ido», which the model
+# already gets right unaided and which would be this module overruling it on a guess.
+_LEAVING: Final = re.compile(r"\bme\s+cobr|\bme\s+he\s+dejado\b")
 _EXCLUSION_TAIL: Final = re.compile(
     r"\b(?:sin(?:\s+contar|\s+incluir)?|quitando|excepto|salvo|menos"
     r"|no\s+(?:contamos|cuentes|incluimos|incluyas|metas))\s+(?P<tail>.+)$"
@@ -435,6 +462,28 @@ class ExplicitFacts:
     asks_direct_debits: bool = False
 
 
+def _direction(folded: str, *, says_income: bool, says_expense: bool) -> Direction | None:
+    r"""Which way the money moved, or no opinion — the specific reading asked first.
+
+    The order is the whole rule. «me cobraron» matches `_INCOME` on `cobraron` and `_EXPENSE` on
+    `me cobr`, so **both flags are true**, and any rule phrased as "X and not Y" answers None for
+    it whichever way round X and Y are put. The symmetric version of the line this replaced is not
+    a fix for it; it is the same `None` reached from the other side.
+
+    What separates the two readings is not which pattern fired but which one read more of the
+    sentence. `\bme\s+cobr` names the pronoun that reverses the verb and `\bcobr…` does not, so
+    «cobré» is money arriving and «me cobraron» is money leaving on the strength of two characters
+    the general pattern cannot see. Hence: consult the specific pattern, and only then the pair.
+
+    The second clause is the old line, unchanged, and its `not says_expense` still does exactly the
+    work it always did — «compara mis ingresos y gastos» states both directions and gets None,
+    because a reader with no way to tell which was meant has no business picking one.
+    """
+    if _LEAVING.search(folded):
+        return Direction.EXPENSE
+    return Direction.INCOME if says_income and not says_expense else None
+
+
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     """The facts this sentence states outright.
 
@@ -501,7 +550,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
                 )
             )
         ),
-        direction=Direction.INCOME if says_income and not says_expense else None,
+        direction=_direction(folded, says_income=says_income, says_expense=says_expense),
         compared_categories=named if comparison else (),
         excluded_categories=excluded_categories,
         excluded_merchants=excluded_merchants_in(sentence),
