@@ -334,3 +334,63 @@ the one adapter that already exports it, keeping the design's "both from the sam
 intact. That is a change to a shape that call sites are written against, so it belongs in a diff
 somebody argues for, not in the section that draws the panels. The two rejected alternatives stay
 rejected: a second timer and a `spanmetrics` connector both create a second source of truth.
+
+## What the 0.0 % override rate was actually saying
+
+In 69 real turns, `explicit_facts.enforce` overrode the model **0.0 %** of the time, and so did
+every step except `intent` (8.6 %). The reading offered was that the deterministic correction layer
+does not fire in ordinary conversation — it fires on the sentences the datasets stress. That
+reading had never been tested, because nothing had made one of those guards fire on ordinary
+Spanish.
+
+`_LEAVING` (see `explicit_facts`) did. It gives the reader authority to state EXPENSE for «me
+cobraron» and «me he dejado», which it never had. Eleven turns of direction-stressing conversation
+were driven through a host orchestrator on 8010 against the same running banking-api, once on each
+side of that change, and read back from Tempo by `conversation.id`:
+
+| | turns | `enforce` decisions | overrode | rate |
+| --- | --- | --- | --- | --- |
+| before | 11 | 11 | 0 | **0.0 %** |
+| after | 11 | 14 | 3 | **21.4 %** |
+
+**The denominator moved, and that is the finding.** `_enforced` records one decision per field *the
+sentence stated*, and skips a field the reader had nothing to say about — deliberately, so an
+override rate is not diluted by turns a rule was never asked about. Before the change the reader
+could state a direction only towards income, so on «¿cuánto me he dejado?» it stated nothing and
+there was no direction row to be either an override or an agreement. The three new rows are the
+three direction statements it can now make, and all three are overrides. **0.0 % was partly a
+measurement of what the reader was able to say, not only of how often it disagreed.**
+
+What the rate does *not* say is that the layer was idle: 11 of 11 turns already carried an
+`enforce` decision, all `agreed` — the window, stated and matched. A step that fires on every turn
+and alters nothing is exactly the case Section 3 kept `agreed` for, and it is what separates "not
+consulted" from "consulted and content".
+
+### Three things the graph shows that the datasets do not
+
+**A turn a recogniser claims never reaches `enforce` at all.** «¿Y cuánto ingresé?», the second
+turn of a three-turn conversation, is claimed by `_contextual_follow_up_plan`: 11 consultations
+instead of 22, and **4 decisions — `intent`, `recogniser`, `ledger`, `outcome`.** No
+`capability_guard`, no `planner`, no `enforce`, no `plan_verifier`. The deterministic reader cannot
+correct a direction on a turn the deterministic cascade has already answered, and no dataset case
+can show this, because the datasets score one sentence at a time.
+
+**The whole cascade declines on the sentences this defect was about.** «¿Cuánto me he dejado este
+mes?» falls through all nineteen readers — 22 consultations, 19 roots plus
+`_direct_period_comparison` asked three more times from inside `_natural_period_aggregate_plan`,
+`_deterministic_breakdown_plan` and `_average_plan` — and lands on the model, every time. The
+reader that eventually corrects it is not in that cascade at all; it runs after the model has
+answered. A follow-up costs 23.
+
+**The correction is worth a real figure, not a refusal.** «¿Cuánto me cobraron el mes pasado en
+todas mis cuentas?» answered **2.512,07 € in 3 movimientos** before and **1.895,97 € in 28
+movimientos** after. Both are real numbers, correctly computed, over the same window; the first is
+the money that *arrived*. Nothing downstream could have told them apart, which is the failure this
+whole service is arranged around, and it is visible here only because the direction row on that
+turn says `overrode`.
+
+One caveat on repeating this. Local inference is not bit-reproducible even at seed 0: one turn
+(«¿Y cuánto me cobraron?», third of its conversation) planned before and asked for clarification
+after. Three consecutive re-runs planned it. The difference is `planner verdict=declined`, which is
+upstream of the seam under test — but a single run of eleven turns cannot tell that apart from a
+regression without re-running it.
