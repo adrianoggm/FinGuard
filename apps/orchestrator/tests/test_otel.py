@@ -728,11 +728,22 @@ def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported)
 def test_a_real_turn_falls_through_the_readers_in_order(monkeypatch) -> None:
     """**Measured against the live cascade rather than a hand-built tree.**
 
-    Two facts nothing could have asserted before: the reasoning falls through nineteen readers in a
-    fixed order, and four of them consult another. `_direct_period_comparison` in particular is
-    asked once by the cascade and again inside every reader that calls `_a_comparison_owns_it` —
-    repeats that were always happening and that a counter of claims cannot see, because none of
-    them claims.
+    The reasoning falls through nineteen readers in a fixed order, and this is what says so against
+    the running service instead of against a tree somebody built by hand.
+
+    **The line that changed, and why.** This used to assert `path.count(...) > 1` —
+    `_direct_period_comparison` asked once by the cascade and three times more from inside the
+    readers that call `_a_comparison_owns_it`. Twenty-two consultations for a question about last
+    quarter's spending, three of them pure waste. Those three are gone: `reader_registry` gives
+    every reader a precondition, and `_natural_period_aggregate_plan`,
+    `_deterministic_breakdown_plan` and `_average_plan` cannot claim a sentence with no natural
+    period, no breakdown and no average in it, so none of them runs and none of them asks.
+
+    Nineteen roots is unchanged, because the precondition is checked *inside* the frame: every
+    reader is still consulted, still appears in the tree, and still records what it claimed. What
+    the count now measures is that the repeats are gone rather than that they are there —
+    `test_a_real_callback_nests_without_anyone_programming_it` below is where nesting is still
+    asserted, on the path where a reader genuinely does consult another.
     """
     sealed: list[TurnRecord] = []
     monkeypatch.setattr(
@@ -745,7 +756,8 @@ def test_a_real_turn_falls_through_the_readers_in_order(monkeypatch) -> None:
     path = [found.reader for root in turn.consulted for _, found in root.walk()]
     assert path[0] == "_ratio_request", "the cascade's first reader, and the order is the point"
     assert len(turn.consulted) == 19, "nineteen readers the cascade asks directly"
-    assert path.count("_direct_period_comparison") > 1, "asked again from inside other readers"
+    assert len(path) == 19, "and no reader consulted from inside another, on this sentence"
+    assert path.count("_direct_period_comparison") == 1, "asked once, where it was asked four times"
     assert not turn.where(Step.RECOGNISER), "and none of them claimed, so none of them counted"
 
 

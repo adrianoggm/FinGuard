@@ -16,11 +16,13 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from functools import wraps
-from typing import Final, Literal
+from typing import Any, Final, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from finguard_orchestrator.application.bus.query_bus import Query
+from finguard_orchestrator.application.queries import reader_registry
+from finguard_orchestrator.application.queries.reader_registry import Precondition, Reader, Registry
 from finguard_orchestrator.domain.constants import (
     MAX_GROUP_RANK,
     MAX_GROUP_ROWS,
@@ -369,6 +371,26 @@ _TURN_VERDICT: Final = {
 }
 
 
+def _reading(reader: Callable[..., Any], query: "AskFinancialQuestionQuery") -> Any:
+    """What one reader answers about one turn, computed at most once.
+
+    Split out of the decorator below so the two halves stay legible: that one is about the
+    instrument, this one is about the work. Both the precondition and the answer are cached, on the
+    query, because a reader consulted five times would otherwise check its precondition five times
+    as well — one kind of waste traded for another.
+
+    `READERS` is looked up rather than closed over: the table is built after the readers it names,
+    which it has to be, and by the time any of them is called it exists.
+    """
+    cache = reader_registry.memo_of(query)
+    name = reader.__name__
+    if name in cache:
+        return cache[name]
+    answer = reader(query) if READERS.worth_asking(name, query) else None
+    cache[name] = answer
+    return answer
+
+
 def _recogniser[**P, T](reader: Callable[P, T]) -> Callable[P, T]:
     """Mark a deterministic reader, and record the turns it claims.
 
@@ -394,18 +416,26 @@ def _recogniser[**P, T](reader: Callable[P, T]) -> Callable[P, T]:
     `_direct_period_comparison` under `_a_comparison_owns_it`) are all reached only after the chain
     has already asked them and been told `None`, so they cannot double.
 
-    **The claim in the paragraph above survived contact with spans, and only just.** It is a claim
-    about *claims*, and it is still exactly right: those three are asked by the cascade first and
-    consulted again only after they declined, so no turn records two `CLAIMED` decisions for them.
-    What it never said, because until now there was nothing to say it about, is that they are still
-    *consulted* twice — and `_direct_period_comparison` up to five times: once by the cascade and
-    once inside each of `_comparison_with_a_named_window`, `_natural_period_aggregate_plan`,
+    **The claim in the paragraph above is no longer a paragraph.** It is a claim about *claims* —
+    those three are asked by the cascade first and consulted again only after they declined, so no
+    turn records two `CLAIMED` decisions for them — and `test_no_reader_claims_one_turn_twice` now
+    checks it over 1,341 sentences instead of over the four its author had in mind. It is also what
+    makes the memo below free: a memoised repeat still records, so `decisions_total` only stays
+    identical while no reader claims twice.
+
+    **What the spans then made visible, and what has since been paid off.** The claim never said
+    anything about *consultations*, and there were many more of those: `_direct_period_comparison`
+    up to five times, once by the cascade and once inside each of
+    `_comparison_with_a_named_window`, `_natural_period_aggregate_plan`,
     `_deterministic_breakdown_plan` and `_average_plan`, all four of which ask
     `_a_comparison_owns_it`, which is that reader under another name. Four of the five were
-    measured on an ordinary spending question; the fifth needs a sentence that gets past
-    `_comparison_with_a_named_window`'s own shape check first. The repeats were always happening.
-    The counter cannot see them because none of them claims; the tree shows them with a duration on
-    each, which is the first time the cost of asking one reader four times has been visible.
+    measured on an ordinary spending question — twenty-two consultations for one turn.
+
+    It is nineteen now, and the thing that removed the three is the *precondition*, not the memo:
+    none of those three readers can claim a sentence with no natural period, no breakdown request
+    and no average in it, so none of them runs and none of them asks. The memo is what stops the
+    repeats that remain, on the sentences where those readers do run, from costing four passes over
+    the same date grammar.
 
     **`consulting` is the second half, and it deliberately records what `record` refuses to.** A
     reader returning `None` still declined *in an order*, and the order is the question this whole
@@ -416,12 +446,32 @@ def _recogniser[**P, T](reader: Callable[P, T]) -> Callable[P, T]:
     The nesting is not programmed. `_ratio_request` becomes the parent of
     `_direct_period_comparison` because its frame was open when the inner one started, and nothing
     here names either function.
+
+    **The registry is consulted from inside the frame, and that placement is the whole of it.**
+    `READERS` holds each reader's precondition and the turn's memo, and this seam is the one place
+    both are applied — so the cascade's call sites, the four readers that consult another, and
+    anything `reader_registry` asks all get them without a line changing anywhere else.
+
+    Inside the frame rather than around it, so the nineteen the cascade asks directly are still
+    nineteen rows in the tree with a verdict each. A reader whose precondition does not hold is not
+    run, and is recorded as having declined — which is what it would have done anyway, because a
+    precondition is a *necessary* condition for claiming and never a sufficient one. That is the
+    property `test_no_precondition_refuses_a_sentence_its_reader_would_claim` checks for all
+    nineteen readers over every sentence there is, which is what makes it a fact rather than a hope.
     """
 
     @wraps(reader)
     def read(*args: P.args, **kwargs: P.kwargs) -> T:
+        # One positional query and nothing else is every reader in the table. `_recogniser` is
+        # generic, so anything else falls through uncached rather than hanging a memo off an object
+        # nobody has established is a turn.
+        asked = args[0] if len(args) == 1 and not kwargs else None
         with consulting(reader.__name__) as consulted:
-            claimed = reader(*args, **kwargs)
+            claimed = (
+                _reading(reader, asked)
+                if isinstance(asked, AskFinancialQuestionQuery)
+                else reader(*args, **kwargs)
+            )
             consulted.claimed = claimed is not None
         # Outside the frame on purpose, so the `CLAIMED` decision is recorded exactly where it was
         # recorded before this line existed. It would make no difference to the export — decision
@@ -7973,3 +8023,337 @@ def _remember_explicit_scope(
     else:
         return query
     return replace(query, conversation=replace(query.conversation, account_selection=selection))
+
+
+# ----------------------------------------------------------------------------------------------
+# The nineteen, as a table.
+#
+# Everything above this line is unchanged by it: `_steps` still asks the readers where it always
+# did, and this is what says *why* that order is the order. `reader_registry` holds the machinery
+# and the argument; this holds the Spanish, because the vocabulary a precondition reads has to be
+# the vocabulary its reader reads, and that lives here.
+#
+# **Preconditions are necessary, never sufficient**, so every one of them is allowed to be lazier
+# than the guard it stands in front of — and several are, deliberately. `internal_movement` claims
+# on three shapes and its row asks only whether the sentence mentions an account, an internal
+# transfer or an investment at all; restating the three shapes here would be a second definition of
+# them, and a second definition is the defect this file keeps finding in its own Spanish. Being
+# lazy costs a call that returns None. Being clever costs a sentence.
+#
+# **All nineteen have one, and none of them says True.** That was the thing to check, because a
+# precondition that always holds is a row that lies. The closest is `contextual_follow_up`, whose
+# precondition is about the *turn* rather than the sentence: it is the general reader, and the only
+# fact that constrains it is that some query is in view. That still refuses every opening turn, and
+# it is exactly why it contends with three of the others.
+def _stated(query: AskFinancialQuestionQuery) -> explicit_facts.ExplicitFacts:
+    """What the sentence says outright, read once for every precondition that wants it.
+
+    The readers each call `explicit_facts.read` again for themselves and this does not stop them —
+    that duplication is Section B's and not this change's. What it stops is nineteen preconditions
+    adding a twentieth reading apiece.
+    """
+    cache = reader_registry.memo_of(query)
+    if "facts" not in cache:
+        cache["facts"] = explicit_facts.read(query.sentence, today=query.today)
+    facts: explicit_facts.ExplicitFacts = cache["facts"]
+    return facts
+
+
+def _asks_a_proportion(query: AskFinancialQuestionQuery) -> bool:
+    focus = focus_of(query.conversation)
+    if isinstance(focus, PendingRatioFocus | RatioFocus):
+        return True
+    folded = spanish.folded(query.sentence)
+    return bool(
+        _PERCENT_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
+        or _RATIO_WORDS.search(folded)
+        or financial_relationships.asks_savings_rate(query.sentence)
+        or financial_relationships.asks_net_cash_flow(query.sentence)
+    )
+
+
+def _names_an_account_movement(query: AskFinancialQuestionQuery) -> bool:
+    folded = spanish.folded(query.sentence)
+    return bool(
+        _INVESTMENT_HISTORY.search(folded)
+        or _INTERNAL_BETWEEN_ACCOUNTS.search(folded)
+        or account_words.named_in(query.sentence)
+    )
+
+
+def _a_plan_is_in_view(query: AskFinancialQuestionQuery) -> bool:
+    return isinstance(query.conversation.last_plan, FinancialPlan)
+
+
+def _asks_a_running_total(query: AskFinancialQuestionQuery) -> bool:
+    previous = query.conversation.last_plan
+    return _stated(query).metric is Metric.CUMULATIVE or (
+        isinstance(previous, FinancialPlan) and previous.metric is Metric.CUMULATIVE
+    )
+
+
+def _asks_an_average(query: AskFinancialQuestionQuery) -> bool:
+    averages = {Metric.AVERAGE, Metric.PERIOD_AVERAGE}
+    if _stated(query).metric in averages:
+        return True
+    previous = query.conversation.last_plan
+    if not isinstance(previous, FinancialPlan):
+        return False
+    return previous.metric in averages or bool(
+        _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
+    )
+
+
+def _asks_for_a_breakdown(query: AskFinancialQuestionQuery) -> bool:
+    facts = _stated(query)
+    return bool(
+        facts.asks_top_category
+        or facts.asks_account_breakdown
+        or (facts.compared_categories and facts.metric is None)
+    )
+
+
+def _asks_to_rank_groups(query: AskFinancialQuestionQuery) -> bool:
+    selected = _query_for_reader(query)
+    if _group_dimension_in(spanish.folded(selected.wording)) is not None:
+        return True
+    return isinstance(selected.plan, FinancialPlan) and selected.plan.group_limit is not None
+
+
+def _asks_for_the_biggest_movement(query: AskFinancialQuestionQuery) -> bool:
+    selected = _query_for_reader(query)
+    facts = explicit_facts.read(selected.wording, today=query.today)
+    return not facts.asks_top_category and bool(
+        _RANKING_REQUEST.search(spanish.folded(selected.wording))
+    )
+
+
+def _asks_for_several_movements(query: AskFinancialQuestionQuery) -> bool:
+    folded = spanish.folded(query.sentence)
+    return bool(_MULTIPLE_MOVEMENT_RANKING.search(folded) or _ORDERED_MOVEMENT_LIST.search(folded))
+
+
+READERS: Final = Registry(
+    (
+        Reader(
+            name="_ratio_request",
+            read=_ratio_request,
+            stood_at=1,
+            when=Precondition(
+                "the sentence asks for a proportion, or a proportion is in view",
+                _asks_a_proportion,
+            ),
+        ),
+        Reader(
+            name="_gambling_plan",
+            read=_gambling_plan,
+            stood_at=2,
+            when=Precondition(
+                "the sentence names a betting merchant",
+                lambda query: _GAMBLING.search(spanish.folded(query.sentence)) is not None,
+            ),
+        ),
+        Reader(
+            name="_how_many_payees_plan",
+            read=_how_many_payees_plan,
+            stood_at=3,
+            when=Precondition(
+                "the sentence asks how many things it is paying for",
+                lambda query: explicit_facts.asks_how_many_payees(query.sentence),
+            ),
+            yields_to=("_ratio_request",),
+            because=(
+                "«¿qué porcentaje de mis gastos fue supermercado este mes?» is a proportion, and "
+                "`asks_how_many_payees` reads its «qué parte de» as a count of payees. Both claim "
+                "and only one is the question. Measured on two corpus turns."
+            ),
+        ),
+        Reader(
+            name="_internal_movement_request",
+            read=_internal_movement_request,
+            stood_at=4,
+            when=Precondition(
+                "the sentence names an account, an internal transfer or an investment",
+                _names_an_account_movement,
+            ),
+        ),
+        Reader(
+            name="_salary_history_plans",
+            read=_salary_history_plans,
+            stood_at=5,
+            when=Precondition(
+                "the sentence asks to compare a payroll with its history, over a plan in view",
+                lambda query: (
+                    _SALARY_HISTORY_COMPARISON.search(spanish.folded(query.sentence)) is not None
+                    and _a_plan_is_in_view(query)
+                ),
+            ),
+        ),
+        Reader(
+            name="_period_comparison_plans",
+            read=_period_comparison_plans,
+            stood_at=6,
+            when=Precondition(
+                "the whole turn is a comparison pronoun",
+                lambda query: (
+                    _PERIOD_COMPARISON_REFERENCE.fullmatch(_clean_turn(query.sentence)) is not None
+                ),
+            ),
+        ),
+        Reader(
+            name="_comparison_with_previous_period",
+            read=_comparison_with_previous_period,
+            stood_at=7,
+            when=Precondition(
+                "the whole turn asks for the period before the plan in view",
+                lambda query: (
+                    _COMPARE_WITH_PREVIOUS_PERIOD.fullmatch(_clean_turn(query.sentence)) is not None
+                    and _a_plan_is_in_view(query)
+                ),
+            ),
+        ),
+        Reader(
+            name="_direct_period_comparison",
+            read=_direct_period_comparison,
+            stood_at=8,
+            when=Precondition(
+                "the sentence compares two periods outright",
+                lambda query: (
+                    _DIRECT_PERIOD_COMPARISON.search(spanish.folded(query.sentence)) is not None
+                ),
+            ),
+        ),
+        Reader(
+            name="_comparison_with_a_named_window",
+            read=_comparison_with_a_named_window,
+            stood_at=9,
+            when=Precondition(
+                "the whole turn compares the plan in view with one named window",
+                lambda query: (
+                    _COMPARE_WITH_A_NAMED_WINDOW.fullmatch(_clean_turn(query.sentence)) is not None
+                    and _a_plan_is_in_view(query)
+                ),
+            ),
+        ),
+        Reader(
+            name="_contextual_follow_up_plan",
+            read=_contextual_follow_up_plan,
+            stood_at=10,
+            when=Precondition(
+                "a query is in view for this turn to be about",
+                lambda query: isinstance(
+                    focus_of(query.conversation), QueryFocus | ComparisonFocus
+                ),
+            ),
+        ),
+        Reader(
+            name="_multiple_movement_ranking",
+            read=_multiple_movement_ranking,
+            stood_at=11,
+            when=Precondition(
+                "the sentence asks for several individual movements",
+                _asks_for_several_movements,
+            ),
+        ),
+        Reader(
+            name="_group_ranking_plan",
+            read=_group_ranking_plan,
+            stood_at=12,
+            when=Precondition(
+                "the sentence names a dimension to rank, or a ranking is in view",
+                _asks_to_rank_groups,
+            ),
+        ),
+        Reader(
+            name="_natural_period_aggregate_plan",
+            read=_natural_period_aggregate_plan,
+            stood_at=13,
+            when=Precondition(
+                "the sentence names a natural calendar period",
+                lambda query: (
+                    window_words.natural_period_in(query.sentence, today=query.today) is not None
+                ),
+            ),
+        ),
+        Reader(
+            name="_deterministic_breakdown_plan",
+            read=_deterministic_breakdown_plan,
+            stood_at=14,
+            when=Precondition(
+                "the sentence asks for a breakdown by category or by account",
+                _asks_for_a_breakdown,
+            ),
+            yields_to=("_contextual_follow_up_plan",),
+            because=(
+                "«hazme el desglose por cuenta» and «sepáralos por cuenta» are both a breakdown "
+                "request and an ellipsis, and the ellipsis wins: the follow-up keeps what the "
+                "query in view is filtered by, and this reader builds a fresh plan that drops it. "
+                "Its own `_REFERS_TO_THE_QUERY_IN_VIEW` guard already stands aside on the "
+                "«desglósalo» form; these two are that argument with no clitic to see it by. "
+                "Measured on two corpus turns."
+            ),
+        ),
+        Reader(
+            name="_contextual_ranking_plan",
+            read=_contextual_ranking_plan,
+            stood_at=15,
+            when=Precondition(
+                "the sentence asks which single movement was the biggest",
+                _asks_for_the_biggest_movement,
+            ),
+        ),
+        Reader(
+            name="_cumulative_plan",
+            read=_cumulative_plan,
+            stood_at=16,
+            when=Precondition(
+                "the sentence asks for a running total, or one is in view",
+                _asks_a_running_total,
+            ),
+            yields_to=("_contextual_follow_up_plan",),
+            because=(
+                "«¿y por semana?» over a running total is read by both, and the two have the same "
+                "branch written twice — `unit_follow_up` here, and the CUMULATIVE clause in the "
+                "follow-up reader. The follow-up wins because it patches the plan in view instead "
+                "of rebuilding one. Measured on one corpus turn; the duplication is Section B's."
+            ),
+        ),
+        Reader(
+            name="_recurrence_plan",
+            read=_recurrence_plan,
+            stood_at=17,
+            when=Precondition(
+                "the sentence asks which expenses repeat",
+                lambda query: _stated(query).metric is Metric.RECURRENCE,
+            ),
+        ),
+        Reader(
+            name="_frequency_plan",
+            read=_frequency_plan,
+            stood_at=18,
+            when=Precondition(
+                "the sentence asks how often something happens",
+                lambda query: _stated(query).metric is Metric.FREQUENCY,
+            ),
+        ),
+        Reader(
+            name="_average_plan",
+            read=_average_plan,
+            stood_at=19,
+            when=Precondition(
+                "the sentence asks for an average, or an average is in view",
+                _asks_an_average,
+            ),
+            yields_to=("_contextual_follow_up_plan", "_group_ranking_plan"),
+            because=(
+                "Two different arguments, and both were already written down in prose. Against "
+                "the follow-up: «¿y en gasolina?» after an average is an ellipsis, and the "
+                "follow-up keeps the average's own divisor and filters — nine corpus turns. "
+                "Against the group ranking: «ahora top 2 categorías por ticket medio» is a "
+                "ranking that happens to name a metric, and this reader's own comment says «only "
+                "the order of the cascade kept it off the wire». It is this row that keeps it off "
+                "the wire now. One corpus turn."
+            ),
+        ),
+    )
+)
