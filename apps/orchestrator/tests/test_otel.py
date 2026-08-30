@@ -56,7 +56,7 @@ from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.banking import client as banking_client
 from finguard_orchestrator.observability import JsonLines, Step, TurnRecord, Verdict, otel, record
 from finguard_orchestrator.observability import logging as service_logging
-from finguard_orchestrator.observability.decisions import Decision
+from finguard_orchestrator.observability.decisions import Consultation, Decision
 
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
@@ -70,14 +70,14 @@ PRIVATE = "¿cuánto le he pagado a Marta Solís Vega por el abogado en los últ
 class Exported:
     """A tracer and a meter that keep everything, so a test can read what would have been sent."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, readers: bool = True) -> None:
         self.spans = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(self.spans))
         self.reader = InMemoryMetricReader()
         meters = MeterProvider(metric_readers=[self.reader])
         self.telemetry = otel.TurnTelemetry.build(
-            provider.get_tracer("test"), meters.get_meter("test")
+            provider.get_tracer("test"), meters.get_meter("test"), readers=readers
         )
 
     def turn(self, sealed: TurnRecord) -> None:
@@ -111,6 +111,14 @@ def overrode_the_window() -> Decision:
         field="window",
         was="LAST_N_MONTHS:5",
         now="LAST_N_MONTHS:3",
+    )
+
+
+def claimed_the_turn() -> Decision:
+    """What the `recogniser` seam records, unchanged by anything below. A reader that *declines*
+    still records nothing here — that is the counter's shape and it is deliberately untouched."""
+    return Decision(
+        step=Step.RECOGNISER, verdict=Verdict.CLAIMED, changed=True, detail="_ratio_request"
     )
 
 
@@ -635,6 +643,150 @@ def test_the_templated_path_only_replaces_identifiers() -> None:
 
 
 # --- the refusal the design is built on --------------------------------------------------------
+
+
+def test_the_call_graph_draws_itself_from_the_span_tree(exported: Exported) -> None:
+    """**The callback case, as spans.** `_ratio_request` reads a percent-change follow-up by asking
+    `_direct_period_comparison`, and before this the two arrived as unrelated rows.
+
+    Nothing in the adapter, the decorator or the record names either function. The inner span is a
+    child because the inner consultation is, and the inner consultation is one because its frame
+    opened while the outer one was still on the stack. The graph is not computed anywhere.
+    """
+    inner = Consultation(
+        reader="_direct_period_comparison", claimed=True, started_at=1_100, ended_at=1_400
+    )
+    outer = Consultation(
+        reader="_ratio_request", claimed=True, started_at=1_000, ended_at=1_500, consulted=(inner,)
+    )
+
+    exported.turn(
+        TurnRecord(decisions=(claimed_the_turn(),), consulted=(outer,), outcome="PLANNED")
+    )
+
+    turn = exported.span("turn")
+    ratio = exported.span("_ratio_request")
+    comparison = exported.span("_direct_period_comparison")
+    assert ratio.parent is not None and ratio.parent.span_id == turn.context.span_id
+    assert comparison.parent is not None
+    assert comparison.parent.span_id == ratio.context.span_id, "the callback nests under its caller"
+    assert ratio.attributes["claimed"] is True
+    assert comparison.attributes["claimed"] is True
+    assert ratio.end_time > ratio.start_time, "a consultation is a call and has a duration"
+
+
+def test_a_reader_that_declined_is_a_span_and_never_a_count(exported: Exported) -> None:
+    """**The line this change is careful about.** Eighteen "not mine" rows a turn would bury the
+    one that matters in a counter, and telling them apart would need the reader's name as a label —
+    unbounded cardinality by the one route `Step` and `Verdict` do not cover. A trace has neither
+    problem and there the order is the finding. So the path is drawn and never counted."""
+    declined = Consultation(reader="_gambling_plan", claimed=False, started_at=1, ended_at=2)
+
+    exported.turn(TurnRecord(decisions=(claimed_the_turn(),), consulted=(declined,)))
+
+    assert exported.span("_gambling_plan").attributes["claimed"] is False
+    # One point, from the one `CLAIMED` decision. The declining reader contributed nothing.
+    (point,) = exported.points(otel.DECISIONS)
+    assert point.value == 1
+    assert dict(point.attributes) == {"step": "recogniser", "verdict": "claimed", "changed": True}
+
+
+def test_the_setting_turns_the_path_down_and_leaves_everything_else(exported: Exported) -> None:
+    """`otel_recogniser_spans=False`. The cost is about nineteen spans a turn, so it has to be
+    possible to stop paying it without a redesign — and stopping must cost nothing else: the
+    decision spans, the counters and the exemplars are what a live dashboard is built on."""
+    consulted = (Consultation(reader="_gambling_plan", claimed=False, started_at=1, ended_at=2),)
+    record = TurnRecord(decisions=(overrode_the_window(),), consulted=consulted, outcome="PLANNED")
+    quiet = Exported(readers=False)
+
+    exported.turn(record)
+    quiet.turn(record)
+
+    assert [span.name for span in quiet.spans.get_finished_spans()] == [
+        "explicit_facts.enforce",
+        "turn",
+    ]
+    assert len(exported.spans.get_finished_spans()) == 3, "the reader span is the difference"
+    for both in (exported, quiet):
+        (point,) = both.points(otel.DECISIONS)
+        assert point.value == 1 and len(point.exemplars) == 1
+        assert [dict(p.attributes) for p in both.points(otel.TURNS)] == [{"outcome": "PLANNED"}]
+
+
+def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported) -> None:
+    """Gap one, as the attribute a Tempo search reads. On the `turn` span and nowhere else: one
+    trace is one turn, so `{ span.conversation.id = "…" }` returns every turn of one conversation,
+    and repeating it on seventeen decision spans would multiply one fact and buy nothing."""
+    identifier = str(uuid.uuid4())
+
+    exported.turn(TurnRecord(decisions=(overrode_the_window(),), conversation=identifier))
+
+    assert exported.span("turn").attributes["conversation.id"] == identifier
+    assert "conversation.id" not in exported.span("explicit_facts.enforce").attributes
+
+
+def test_a_real_turn_falls_through_the_readers_in_order(monkeypatch) -> None:
+    """**Measured against the live cascade rather than a hand-built tree.**
+
+    Two facts nothing could have asserted before: the reasoning falls through nineteen readers in a
+    fixed order, and four of them consult another. `_direct_period_comparison` in particular is
+    asked once by the cascade and again inside every reader that calls `_a_comparison_owns_it` —
+    repeats that were always happening and that a counter of claims cannot see, because none of
+    them claims.
+    """
+    sealed: list[TurnRecord] = []
+    monkeypatch.setattr(
+        otel, "export_turn", lambda record, **kwargs: sealed.append(record), raising=True
+    )
+
+    wired().post("/v1/questions", json={"question": "¿cuánto gasté en los últimos 3 meses?"})
+
+    (turn,) = [record for record in sealed if record.decisions]
+    path = [found.reader for root in turn.consulted for _, found in root.walk()]
+    assert path[0] == "_ratio_request", "the cascade's first reader, and the order is the point"
+    assert len(turn.consulted) == 19, "nineteen readers the cascade asks directly"
+    assert path.count("_direct_period_comparison") > 1, "asked again from inside other readers"
+    assert not turn.where(Step.RECOGNISER), "and none of them claimed, so none of them counted"
+
+
+def test_a_real_callback_nests_without_anyone_programming_it(monkeypatch) -> None:
+    """The percent-change path, end to end. `_ratio_request` claims on the strength of
+    `_direct_period_comparison`, and the two `CLAIMED` decisions the counter records are unchanged
+    — what is new is that the tree above them says which one asked the other."""
+    sealed: list[TurnRecord] = []
+    monkeypatch.setattr(
+        otel, "export_turn", lambda record, **kwargs: sealed.append(record), raising=True
+    )
+
+    wired().post(
+        "/v1/questions", json={"question": "¿En qué porcentaje gasté menos en julio que en junio?"}
+    )
+
+    (turn,) = [record for record in sealed if record.decisions]
+    (root,) = turn.consulted
+    assert [(depth, found.reader) for depth, found in root.walk()] == [
+        (0, "_ratio_request"),
+        (1, "_direct_period_comparison"),
+    ]
+    assert all(found.claimed for _, found in root.walk())
+    claims = turn.where(Step.RECOGNISER)
+    assert len(claims) == 2, "the two flat CLAIMED rows are exactly as they were"
+    assert {claim.verdict for claim in claims} == {Verdict.CLAIMED}
+
+
+def test_a_real_turn_carries_its_conversation_across_two_requests() -> None:
+    """The round trip that makes N turns one trace. The client echoes the payload back untouched,
+    which is what it already does with every other field on it."""
+    client = wired()
+    question = {"question": "¿cuánto gasté en los últimos 3 meses?"}
+
+    first = client.post("/v1/questions", json=question).json()["conversation"]
+    second = client.post("/v1/questions", json={**question, "conversation": first}).json()[
+        "conversation"
+    ]
+
+    assert first["conversation_id"] is not None
+    assert second["conversation_id"] == first["conversation_id"]
 
 
 def test_only_one_module_imports_opentelemetry() -> None:

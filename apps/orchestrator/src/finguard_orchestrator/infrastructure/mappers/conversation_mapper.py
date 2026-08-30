@@ -11,7 +11,7 @@ layers in with an apology.
 """
 
 from typing import Any, Literal, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
@@ -63,6 +63,7 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     draft_to_domain,
     plan_to_domain,
 )
+from finguard_orchestrator.observability import name_the_conversation
 
 
 def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> PlanPayload:
@@ -230,11 +231,36 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
     return plan_to_domain(payload)
 
 
+def _identified(payload: ConversationPayload | None) -> UUID:
+    """Which conversation this is: the one the caller echoed back, or a new one.
+
+    **Minted here because this is the only moment a wire payload becomes a conversation.** There is
+    no session and no store, and this does not invent one: the identifier is a value the client
+    round-trips exactly like the workflow and the plans, and the mapper's existing job is already
+    to fill in the state the client did not send — an absent payload is an idle conversation, and
+    an absent identifier is a first turn.
+
+    **`uuid4` and nothing cleverer, and that is the privacy rule rather than laziness.** An
+    identifier derived from anything — the sentence, the holder, the first plan — would be a
+    function of what somebody typed, and this value ends up on a span attribute where a label is
+    forever. Random is the only mint with no input to leak. It also means two conversations cannot
+    collide into one trace by having started the same way, which a hash of the opening turn would.
+
+    Telling the turn is the second half and belongs in the same breath: a conversation that were
+    identified here and named somewhere else would be two places to forget.
+    """
+    known = payload.conversation_id if payload is not None else None
+    identifier = known or uuid4()
+    name_the_conversation(str(identifier))
+    return identifier
+
+
 def to_domain(payload: ConversationPayload | None) -> Conversation:
     """The conversation a caller echoed back.
 
     An absent payload is an idle conversation rather than an error: the first turn has none, and a
-    client that forgets to send one gets a fresh conversation instead of a rejection.
+    client that forgets to send one gets a fresh conversation instead of a rejection. It gets a
+    fresh *identifier* on the same terms and for the same reason — see `_identified`.
 
     A payload whose `workflow` does not match the fields it carries — PAYMENT_CONFIRMATION with no
     intent, a clarification with no draft — never reaches this function: the payload refuses itself
@@ -242,8 +268,9 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     nobody could have been in is a client bug or an attempt, and silently reinterpreting it as "no
     conversation" tells whoever sent it nothing while discarding whatever was really under way.
     """
+    conversation_id = _identified(payload)
     if payload is None:
-        return Conversation()
+        return Conversation(conversation_id=conversation_id)
     if payload.workflow is None:
         last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
         last_ratio = _ratio_plan(payload)
@@ -253,6 +280,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             payload, last_plan, last_ratio, pending_ratio, last_comparison
         )
         return Conversation(
+            conversation_id=conversation_id,
             last_plan=last_plan,
             prior_plan=(
                 query_to_domain(payload.prior_plan) if payload and payload.prior_plan else None
@@ -288,6 +316,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         payload, last_plan, last_ratio, pending_ratio, last_comparison
     )
     return Conversation(
+        conversation_id=conversation_id,
         active=active,
         last_plan=last_plan,
         prior_plan=prior_plan,
@@ -458,6 +487,10 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     )
     return ConversationPayload.model_validate(
         {
+            # The half of the round trip that makes it one. Without this line the identifier is
+            # minted on every turn and every turn is still its own trace, which is the state this
+            # change exists to end — and nothing would fail, because nothing downstream reads it.
+            "conversation_id": conversation.conversation_id,
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,

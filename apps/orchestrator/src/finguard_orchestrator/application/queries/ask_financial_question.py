@@ -138,6 +138,7 @@ from finguard_orchestrator.observability import (
     Step,
     Verdict,
     account_ref,
+    consulting,
     current_turn,
     record,
 )
@@ -392,11 +393,40 @@ def _recogniser[**P, T](reader: Callable[P, T]) -> Callable[P, T]:
     (`_comparison_with_previous_period`, `_internal_movement_request`, and
     `_direct_period_comparison` under `_a_comparison_owns_it`) are all reached only after the chain
     has already asked them and been told `None`, so they cannot double.
+
+    **The claim in the paragraph above survived contact with spans, and only just.** It is a claim
+    about *claims*, and it is still exactly right: those three are asked by the cascade first and
+    consulted again only after they declined, so no turn records two `CLAIMED` decisions for them.
+    What it never said, because until now there was nothing to say it about, is that they are still
+    *consulted* twice — and `_direct_period_comparison` up to five times: once by the cascade and
+    once inside each of `_comparison_with_a_named_window`, `_natural_period_aggregate_plan`,
+    `_deterministic_breakdown_plan` and `_average_plan`, all four of which ask
+    `_a_comparison_owns_it`, which is that reader under another name. Four of the five were
+    measured on an ordinary spending question; the fifth needs a sentence that gets past
+    `_comparison_with_a_named_window`'s own shape check first. The repeats were always happening.
+    The counter cannot see them because none of them claims; the tree shows them with a duration on
+    each, which is the first time the cost of asking one reader four times has been visible.
+
+    **`consulting` is the second half, and it deliberately records what `record` refuses to.** A
+    reader returning `None` still declined *in an order*, and the order is the question this whole
+    change exists to answer: which nineteen functions did the reasoning fall through, and which
+    called which. That is a tree, not a rate — so it goes to the trace and never to
+    `decisions_total`, whose shape a live dashboard is built on and which this leaves untouched.
+
+    The nesting is not programmed. `_ratio_request` becomes the parent of
+    `_direct_period_comparison` because its frame was open when the inner one started, and nothing
+    here names either function.
     """
 
     @wraps(reader)
     def read(*args: P.args, **kwargs: P.kwargs) -> T:
-        claimed = reader(*args, **kwargs)
+        with consulting(reader.__name__) as consulted:
+            claimed = reader(*args, **kwargs)
+            consulted.claimed = claimed is not None
+        # Outside the frame on purpose, so the `CLAIMED` decision is recorded exactly where it was
+        # recorded before this line existed. It would make no difference to the export — decision
+        # spans are built afterwards from the sealed record and are all children of `turn` — but
+        # "the counter path is untouched" is a property worth being able to read off the source.
         if claimed is not None:
             record(Step.RECOGNISER, Verdict.CLAIMED, changed=True, detail=reader.__name__)
         return claimed

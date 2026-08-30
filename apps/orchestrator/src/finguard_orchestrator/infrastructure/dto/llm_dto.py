@@ -345,6 +345,32 @@ class ConversationPayload(_Payload):
 
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
 
+    # Which conversation this is, so N turns stop being N unrelated traces. Minted here on the
+    # first turn and echoed back by the client like every field below it — no session, no store,
+    # one more value that round-trips.
+    #
+    # **`extra="forbid"` is what decided the shape of this field, in both directions.**
+    #
+    # Forwards, it is the reason there is nothing to worry about for a client that predates it: a
+    # payload arrives without `conversation_id`, `forbid` has no opinion about an *absent* optional
+    # field, and the mapper mints one. That client keeps working exactly as it did, and its turns
+    # go on being one trace each until it starts echoing the field back — degraded, never broken,
+    # and it needs no version negotiation to cross over. The rule bites the other way round, on a
+    # client that sends a field *we* do not know, which is unchanged.
+    #
+    # Backwards, it is the reason this had to be a declared field at all rather than a key the
+    # client tacks on and we read loosely — and being declared, it had to be typed. That is the
+    # half that matters, because this value makes a round trip through something we do not
+    # control. **Typed `UUID`, it cannot carry anything else.** As a `str` it would be the one
+    # field on this payload a client could fill with the holder's own sentence, and this service
+    # would stamp it onto a span — a content leak through the exact field added to make traces
+    # joinable. Pydantic refuses a non-UUID here with a 422 at the edge, before any of it reaches
+    # a recorder, which makes "an opaque identifier and nothing else" mechanical rather than hoped
+    # for. It is the same argument `_own_words` makes about shape, arriving at the opposite
+    # conclusion about UUIDs for the opposite reason: there a UUID is refused because it would be
+    # a raw *account* id, here it is required because it is the only thing that cannot be prose.
+    conversation_id: UUID | None = None
+
     # Absent when nothing is under way.
     workflow: Workflow | None = None
     # What the last turn asked for, when it asked for anything. This is what makes "de este"
