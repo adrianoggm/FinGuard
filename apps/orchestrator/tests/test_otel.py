@@ -637,6 +637,33 @@ def test_the_templated_path_only_replaces_identifiers() -> None:
 # --- the refusal the design is built on --------------------------------------------------------
 
 
+def test_the_turn_span_says_which_conversation_it_belongs_to(exported: Exported) -> None:
+    """The attribute a Tempo search reads. On the `turn` span and nowhere else: one trace is one
+    turn, so `{ span.conversation.id = "…" }` returns every turn of one conversation, and repeating
+    it on seventeen decision spans would multiply one fact and buy nothing."""
+    identifier = str(uuid.uuid4())
+
+    exported.turn(TurnRecord(decisions=(overrode_the_window(),), conversation=identifier))
+
+    assert exported.span("turn").attributes["conversation.id"] == identifier
+    assert "conversation.id" not in exported.span("explicit_facts.enforce").attributes
+
+
+def test_a_real_turn_carries_its_conversation_across_two_requests() -> None:
+    """The round trip that makes N turns one trace. The client echoes the payload back untouched,
+    which is what it already does with every other field on it."""
+    client = wired()
+    question = {"question": "¿cuánto gasté en los últimos 3 meses?"}
+
+    first = client.post("/v1/questions", json=question).json()["conversation"]
+    second = client.post("/v1/questions", json={**question, "conversation": first}).json()[
+        "conversation"
+    ]
+
+    assert first["conversation_id"] is not None
+    assert second["conversation_id"] == first["conversation_id"]
+
+
 def test_only_one_module_imports_opentelemetry() -> None:
     """No OpenTelemetry import outside `observability/otel.py` is the first thing this design
     refuses, and the one that stops being true quietly: the domain and the application record

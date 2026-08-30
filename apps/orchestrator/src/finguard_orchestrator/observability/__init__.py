@@ -26,6 +26,7 @@ from finguard_orchestrator.observability.decisions import (
     TurnRecorder,
     Verdict,
     current_turn,
+    name_the_conversation,
     record,
     recording_turn,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "account_ref",
     "configure_logging",
     "current_turn",
+    "name_the_conversation",
     "record",
     "recording_turn",
     "request_id",

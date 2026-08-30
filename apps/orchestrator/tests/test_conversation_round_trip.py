@@ -81,10 +81,18 @@ RUIZ = Contact(uuid.UUID(int=1), "Marta Ruiz Gomez", "+34600111222")
 
 def there_and_back(conversation: Conversation) -> Conversation:
     """Out to the wire, through JSON, and back — including the serialisation, because a field that
-    survives the mapper and not `model_dump` is still lost."""
+    survives the mapper and not `model_dump` is still lost.
+
+    The identifier is put back the way it went out, and every test below is about *state*. It is
+    not an exemption: `conversation_id` is minted by `to_domain` when the payload does not carry
+    one, so a conversation built in a test and sent through here legitimately comes back with an
+    identity it did not have. Normalising it here rather than in each assertion keeps that one
+    difference from reading as "some field survived and one did not" in thirty diffs, and the
+    round trip it actually has to make is asserted on its own, below.
+    """
     payload = mapper.to_payload(conversation)
     echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
-    return mapper.to_domain(echoed)
+    return replace(mapper.to_domain(echoed), conversation_id=conversation.conversation_id)
 
 
 def test_an_idle_conversation_survives() -> None:
@@ -92,7 +100,55 @@ def test_an_idle_conversation_survives() -> None:
 
 
 def test_an_absent_payload_is_an_idle_conversation() -> None:
-    assert mapper.to_domain(None) == IDLE
+    assert replace(mapper.to_domain(None), conversation_id=None) == IDLE
+
+
+# --- and the one field that is minted rather than echoed ---------------------------------------
+
+
+def test_a_conversation_the_client_has_never_seen_is_given_an_identity() -> None:
+    """The first turn. There is no session and no store, so the identifier has to be minted at the
+    one moment a payload becomes a conversation, and it has to leave with the answer or the second
+    turn is a second conversation."""
+    first = mapper.to_domain(None)
+
+    assert first.conversation_id is not None
+    assert mapper.to_payload(first).conversation_id == first.conversation_id
+
+
+def test_two_first_turns_are_two_conversations() -> None:
+    """Minted with `uuid4`, so nothing about the turn can make two of them collide into one
+    trace. A hash of the opening sentence would put every "hola" in the same conversation."""
+    assert mapper.to_domain(None).conversation_id != mapper.to_domain(None).conversation_id
+
+
+def test_an_identity_the_client_echoes_back_is_kept() -> None:
+    """The round trip that makes N turns one trace instead of N."""
+    started = mapper.to_domain(None)
+
+    assert there_and_back(started).conversation_id == started.conversation_id
+
+
+def test_a_client_that_predates_the_field_is_not_refused() -> None:
+    """**What `extra="forbid"` decided.** It rejects fields we do not know; it has no opinion about
+    an optional field a caller leaves out. So a client written before this shipped keeps working
+    untouched — it just gets a fresh identity every turn, and its turns go on being one trace each
+    until it starts echoing the field back. Degraded, never broken, and no version negotiation."""
+    old_shape = ConversationPayload.model_validate({"answered_the_balance": True})
+
+    assert old_shape.conversation_id is None
+    assert mapper.to_domain(old_shape).conversation_id is not None
+
+
+def test_an_identity_that_is_not_an_identifier_is_refused_at_the_edge() -> None:
+    """The other half of what `extra="forbid"` forced: the field had to be *declared*, and being
+    declared it had to be typed. Typed `UUID`, this is the one field on the payload a client
+    cannot fill with the holder's own sentence — which matters because this value is the one that
+    ends up on a span attribute. Pydantic refuses it here, before any of it reaches a recorder."""
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(
+            {"conversation_id": "¿cuánto le he pagado a Marta Solís Vega?"}
+        )
 
 
 def test_the_memory_of_the_last_answer_survives() -> None:
@@ -626,8 +682,9 @@ def test_the_memory_survives_alongside_a_workflow() -> None:
 
 def test_no_payload_is_an_idle_conversation() -> None:
     """The first turn has none, and a client that forgets it gets a fresh conversation rather than a
-    rejection — the sentence is still answerable."""
-    assert mapper.to_domain(None) == IDLE
+    rejection — the sentence is still answerable. Idle in every field but its identity, which is
+    minted here precisely because this is the first turn."""
+    assert replace(mapper.to_domain(None), conversation_id=None) == IDLE
 
 
 @pytest.mark.parametrize(

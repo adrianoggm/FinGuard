@@ -213,6 +213,13 @@ export type Slot =
  * keep.
  */
 export type ConversationState = {
+  // Which conversation this is. Minted by the service on the first turn and echoed back like
+  // everything else here — there is no session and nothing to store. Declared rather than left to
+  // ride along undeclared: this object is round-tripped whole today, and the day somebody rebuilds
+  // it from its declared fields, a field that was never declared is the one that silently goes.
+  // Dropping it is not a visible failure — every answer still works — it just quietly makes each
+  // turn its own trace again, which is exactly the state it was added to end.
+  conversation_id?: string | null;
   workflow: Workflow | null;
   awaiting: Slot | null;
   // What the last turn asked for even when it left no workflow behind. Round-tripped like the

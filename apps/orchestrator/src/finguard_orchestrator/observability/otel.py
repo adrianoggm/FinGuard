@@ -29,7 +29,9 @@ middleware and not `@app.middleware("http")`: `BaseHTTPMiddleware` returns as so
 **Nothing the holder wrote leaves this service, and that rule reaches spans.** `decisions` already
 scrubs what it records, so a `Decision` is safe to export as-is. The one place this module adds a
 value of its own is the outbound span, where the URL path to banking carries account UUIDs — see
-`_templated`.
+`_templated`. The conversation identifier is the one span attribute that is a UUID on purpose: it
+is minted here with `uuid4`, is derived from nothing, and means nothing outside a trace — which is
+exactly why `TurnRecord` carries it rather than a `Decision`, whose shape check refuses UUIDs.
 
 **What is deliberately not here.**
 
@@ -293,6 +295,19 @@ class TurnTelemetry:
                 turn.set_attribute("changed", bool(record.changed))
                 if record.outcome is not None:
                     turn.set_attribute("outcome", record.outcome)
+                if record.conversation is not None:
+                    # **The attribute this whole conversation-identity change is for.** On the
+                    # `turn` span and on nothing else: one trace is one turn, so
+                    # `{ span.conversation.id = "…" }` in Tempo returns every turn of one
+                    # conversation, which is the query that did not exist before. Putting it on
+                    # every decision span too would multiply the same fact by seventeen and buy
+                    # nothing — the search already lands on the trace that holds them.
+                    #
+                    # Named `conversation.id` rather than the Gen-AI convention's
+                    # `gen_ai.conversation.id`: these are not Gen-AI spans, nothing else in this
+                    # service emits that namespace, and half-adopting a convention is how a
+                    # dashboard ends up joining on an attribute that means something adjacent.
+                    turn.set_attribute("conversation.id", record.conversation)
                 for decision in record.decisions:
                     self._decision(decision)
                 if record.outcome is not None:

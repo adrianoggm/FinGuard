@@ -58,6 +58,7 @@ from finguard_orchestrator.observability import (
     Verdict,
     account_ref,
     current_turn,
+    name_the_conversation,
     record,
     recording_turn,
 )
@@ -156,7 +157,12 @@ def wired(planned: FinancialPlan) -> TestClient:
 
 
 def everything_in(sealed: TurnRecord) -> str:
-    """Every free-text slot of every decision, as one string to sweep."""
+    """Every free-text slot of every decision, as one string to sweep.
+
+    The conversation identifier is in here too. It cannot carry what a holder wrote — it is a
+    `uuid4` — but "cannot" is what six green-but-dead instruments were also true by, and the sweep
+    costs one line.
+    """
     return (
         "\n".join(
             "\t".join(
@@ -172,7 +178,7 @@ def everything_in(sealed: TurnRecord) -> str:
             )
             for decision in sealed.decisions
         )
-        + f"\n{sealed.outcome}"
+        + f"\n{sealed.outcome}\n{sealed.conversation}"
     )
 
 
@@ -614,3 +620,37 @@ def test_the_two_records_are_separate_modules() -> None:
     assert "record" not in dir(logging_module), "logging did not learn about decisions"
     assert isinstance(TurnRecorder(), TurnRecorder)
     assert decisions_module.REDACTED == REDACTED
+
+
+# --- which conversation this turn belongs to ---------------------------------------------------
+
+
+def test_a_turn_carries_the_conversation_it_belongs_to() -> None:
+    """Without this, N turns of one conversation are N unrelated traces and nothing links them."""
+    identifier = str(uuid.uuid4())
+
+    with recording_turn() as turn:
+        name_the_conversation(identifier)
+
+    assert turn.sealed().conversation == identifier
+
+
+def test_naming_a_conversation_outside_a_turn_is_dropped() -> None:
+    assert current_turn() is None
+    name_the_conversation(str(uuid.uuid4()))
+    assert current_turn() is None
+
+
+def test_the_conversation_identifier_is_not_a_decision_slot() -> None:
+    """**The tension worth writing down.** `_own_words` refuses anything that parses as a UUID,
+    because the value that rule was written for is a raw *account* id. A conversation identifier is
+    a UUID too — so it can never travel through `record`, and a call site working around that
+    redaction would be the first crack in the rule. It lives on the record instead, and `otel`
+    stamps it on the `turn` span from there."""
+    identifier = str(uuid.uuid4())
+
+    assert record(Step.OUTCOME, Verdict.AGREED, changed=False, now=identifier).now == REDACTED
+
+    with recording_turn() as turn:
+        name_the_conversation(identifier)
+    assert turn.sealed().conversation == identifier

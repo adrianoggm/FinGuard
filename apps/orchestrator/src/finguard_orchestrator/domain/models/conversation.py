@@ -345,6 +345,21 @@ class Conversation:
     it round-trips one value.
     """
 
+    # Which conversation this is. There are still no sessions and no store: the identifier is
+    # minted on the first turn by the edge that maps the payload, travels back to the client with
+    # everything else, and comes home on the next turn — the same rule as every field below it.
+    #
+    # **Nothing in this file, and nothing in the pipeline, may branch on it.** It is not state the
+    # reasoning reads; it exists so that N turns of one conversation stop being N unrelated traces.
+    # It lives on the conversation rather than beside it because the alternative was stamping it
+    # onto fifteen `to_payload` call sites in the controller, and the fifteenth would be the one
+    # that forgot — which is the failure mode this whole value replaced.
+    #
+    # `None` for a conversation nobody mapped from the wire: `IDLE` is a module-level singleton and
+    # a default factory here would mint one identifier at import time and hand the same one to
+    # every conversation in the process, which is worse than having none.
+    conversation_id: UUID | None = None
+
     active: ActiveWorkflow | None = None
     account_selection: AccountSelection | None = None
     # The last answered question, whichever kind it was. An aggregate and a ranking are both

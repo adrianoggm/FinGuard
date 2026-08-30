@@ -296,7 +296,11 @@ def test_the_choice_survives_the_round_trip() -> None:
         ConversationPayload.model_validate(conversation_mapper.to_payload(out).model_dump())
     )
 
-    assert back == out
+    # The identifier put back the way it went out. This conversation was built in a test and never
+    # crossed the wire, so it has none, and `to_domain` mints one for what it correctly reads as a
+    # first turn. That is the one field this test is not about — see the round-trip suite for the
+    # one that is — and every other field has to come back unchanged.
+    assert replace(back, conversation_id=out.conversation_id) == out
 
 
 def _client():

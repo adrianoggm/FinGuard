@@ -257,6 +257,18 @@ class TurnRecord:
 
     decisions: tuple[Decision, ...] = ()
     outcome: str | None = None
+    conversation: str | None = None
+    """Which conversation this turn belongs to, as the opaque identifier the client round-trips.
+
+    **It is an identifier and nothing else, and it is deliberately not a `Decision` slot.** A
+    conversation id parses as a UUID, and `_own_words` refuses those outright — correctly, because
+    the value that rule was written for is a raw *account* id. This one is minted by this service
+    with `uuid4`, means nothing to anything outside a trace, and is derived from nothing the holder
+    typed, which is the reason it can be a span attribute at all. Routing it through `record()`
+    would only get it redacted, and a call site that worked around that redaction would be the
+    first crack in the rule. So it lives on the record, `otel` stamps it on the `turn` span, and
+    `_own_words` goes on refusing UUIDs everywhere it applies.
+    """
 
     def where(self, step: Step) -> tuple[Decision, ...]:
         """Every decision one step made. A helper because the assertion a test wants to write is
@@ -289,13 +301,18 @@ class TurnRecorder:
 
     _decisions: list[Decision] = dataclass_field(default_factory=list)
     outcome: str | None = None
+    conversation: str | None = None
 
     def append(self, decision: Decision) -> None:
         self._decisions.append(decision)
 
     def sealed(self) -> TurnRecord:
         """The turn as a value. Copies, so a record handed to an exporter cannot grow afterwards."""
-        return TurnRecord(decisions=tuple(self._decisions), outcome=self.outcome)
+        return TurnRecord(
+            decisions=tuple(self._decisions),
+            outcome=self.outcome,
+            conversation=self.conversation,
+        )
 
 
 # The turn every decision in flight belongs to. A ContextVar rather than a constructor parameter
@@ -394,3 +411,18 @@ def record(
     if recorder is not None:
         recorder.append(decision)
     return decision
+
+
+def name_the_conversation(identifier: str) -> None:
+    """Tell the turn in flight which conversation it belongs to.
+
+    Called once per turn from the one place a wire payload becomes a `Conversation`. Idempotent by
+    construction rather than by a guard: a compound question maps its own rendered payload back
+    through the same function, and the identifier it carries is the one that came in.
+
+    Not a `Decision`. See `TurnRecord.conversation` — an identifier is not a choice, it has no
+    verdict, and `_own_words` would redact it on the way past anyway.
+    """
+    recorder = _current.get()
+    if recorder is not None:
+        recorder.conversation = identifier
