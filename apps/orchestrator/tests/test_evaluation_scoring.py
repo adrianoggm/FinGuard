@@ -19,7 +19,7 @@ import pytest
 import yaml
 from pydantic import SecretStr
 
-from finguard_orchestrator.domain.enums import Direction, Metric, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
@@ -314,6 +314,76 @@ def test_two_refusals_are_robust_even_when_the_dataset_wanted_a_plan() -> None:
     assert (score.invariance_held, score.invariance_total) == (1, 1)
 
 
+def test_robustness_crosses_outcome_changes_with_accuracy_and_safety() -> None:
+    cases = paraphrase_pair()
+    score = evaluate.Score()
+    evaluate.judge(cases[0], spending(), score, TODAY)
+    evaluate.judge(cases[1], PlanningResult.needs_clarification("¿de qué periodo?"), score, TODAY)
+
+    evaluate._check_invariance(cases, score, today=TODAY)
+
+    assert score.invariance_break_classes == {
+        "correct plan -> refusal": 1,
+        "correct -> safe incorrect": 1,
+    }
+    assert score.invariance_by_group == {"ungrouped": [0, 1]}
+
+
+def test_expected_refusal_to_plan_is_marked_unsafe_not_assumed_from_the_transition() -> None:
+    cases = [
+        {"id": "base", "expect": "clarification", "question": "¿cuánto cuesta Netflix?"},
+        {
+            "id": "rewrite",
+            "expect": "clarification",
+            "question": "¿cuál es el precio de Netflix?",
+            "paraphrase_of": "base",
+        },
+    ]
+    score = evaluate.Score()
+    evaluate.judge(cases[0], PlanningResult.needs_clarification("¿precio o gasto?"), score, TODAY)
+    evaluate.judge(cases[1], spending(), score, TODAY)
+
+    evaluate._check_invariance(cases, score, today=TODAY)
+
+    assert score.invariance_break_classes == {
+        "correct -> unsafe": 1,
+        "expected refusal -> plan": 1,
+    }
+
+
+def test_group_by_breaks_name_the_transition_and_metric_coupling() -> None:
+    cases = paraphrase_pair()
+    for case in cases:
+        case["plan"]["groupBy"] = "MERCHANT"
+    base = PlanningResult.planned(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            group_by=GroupBy.MERCHANT,
+            metric=Metric.SUM,
+        )
+    )
+    rewrite = PlanningResult.planned(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            group_by=GroupBy.CATEGORY,
+            metric=Metric.COUNT,
+        )
+    )
+    score = evaluate.Score()
+    evaluate.judge(cases[0], base, score, TODAY)
+    evaluate.judge(cases[1], rewrite, score, TODAY)
+
+    evaluate._check_invariance(cases, score, today=TODAY)
+
+    assert score.invariance_field_changes == {"groupBy + metric": 1}
+    assert score.invariance_group_by_transitions == {
+        "MERCHANT -> CATEGORY": 1,
+        "MERCHANT -> CATEGORY + metric": 1,
+    }
+
+
 def test_a_paraphrase_that_edited_its_expectation_is_a_dataset_error() -> None:
     """The rule `drift.yaml` states in prose: the plan is copied from the source, never invented."""
     cases = paraphrase_pair()
@@ -359,6 +429,7 @@ def test_the_refusal_rate_has_a_denominator_of_answerable_cases() -> None:
 
 def complete_robustness_score(rewording: PlanningResult | None = None) -> evaluate.Score:
     score = invariance(spending(), rewording or spending())
+    score.cases = 2
     score.answerable = 2
     return score
 
@@ -390,6 +461,45 @@ def test_a_partial_run_cannot_pass_the_robustness_gate() -> None:
     assert "executed 2/10 cases" in broken
     assert "measured 1/8 paraphrase pairs" in broken
     assert "measured 1/2 paraphrase bases" in broken
+
+
+def test_the_robustness_gate_keeps_the_safety_and_structure_limits() -> None:
+    score = complete_robustness_score()
+    score.unsafe = [("base", "wrong plan")]
+    score.structural = 1
+    metadata = {"base_count": 1, "paraphrase_count": 1}
+
+    broken = evaluate.robustness_gate_failures(score, metadata, evaluate.RobustnessGate(0.0, 100.0))
+
+    assert "unsafe execution 50.0% is above 10.0%" in broken
+    assert "invalid structure 1 is above 0" in broken
+
+
+def test_machine_summary_keeps_tail_latency_and_release_invariants() -> None:
+    score = evaluate.Score(
+        cases=2,
+        unsafe=[("unsafe", "wrong")],
+        missed=["missed"],
+        answerable=2,
+        structural=0,
+        latencies=[1.0, 3.0],
+        invariance_total=1,
+        invariance_held=1,
+        invariance_by_base={"base": [1, 1]},
+    )
+
+    summary = evaluate._run_summary(score)
+
+    assert summary["robustness_macro_pct"] == 100.0
+    assert summary["unsafe_pct"] == 50.0
+    assert summary["over_refusal_pct"] == 50.0
+    assert summary["invalid_structure"] == 0
+    assert summary["latency_seconds"] == {
+        "p50": 2.0,
+        "p95": 3.0,
+        "max": 3.0,
+        "last_ten_mean": 2.0,
+    }
 
 
 def provider_settings(**changes: object) -> SimpleNamespace:

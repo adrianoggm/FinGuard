@@ -285,8 +285,8 @@ _THIS_ONE: Final = re.compile(r"(de\s+)?(este|esta|el\s+actual|la\s+actual|actua
 # Either position accepts digits or a written cardinal, because "los dos últimos meses" was the same
 # silent one, and half of a fix to a wrong number is not one.
 _COUNTED: Final = re.compile(
-    r"(?:(?P<before>\d{1,3}|[a-z]+)\s+)?ultim[oa]s?\s+"
-    r"(?:(?P<after>\d{1,3}|[a-z]+)\s+)?(?P<unit>dias?|meses|mes|anos|ano)\b",
+    r"(?:(?P<before>\d+|[a-z]+)\s+)?ultim[oa]s?\s+"
+    r"(?:(?P<after>\d+|[a-z]+)\s+)?(?P<unit>dias?|meses|mes|anos|ano)\b",
     re.IGNORECASE,
 )
 
@@ -307,6 +307,26 @@ def _how_many(counted: re.Match[str]) -> int:
         if value is not None and value > 0:
             return value
     return 1
+
+
+def has_invalid_counted_window(sentence: str) -> bool:
+    """Whether a stated relative count is outside the domain instead of merely absent.
+
+    `window_in` must keep returning ``None`` for this case, but that value alone cannot tell a
+    caller whether there was no recognised window or a recognised, impossible one. Keeping this
+    distinction prevents the model from accepting "5000 days" under one paraphrase after asking
+    for a correction under another.
+    """
+    counted = _COUNTED.search(spanish.folded(sentence))
+    if counted is None:
+        return False
+    count = _how_many(counted)
+    unit = counted.group("unit")
+    try:
+        RelativePeriod(period=_UNIT[unit], n=count * _MONTHS_PER.get(unit, 1))
+    except InvalidValueError:
+        return True
+    return False
 
 
 _UNIT: Final[dict[str, Period]] = {
