@@ -133,6 +133,16 @@ def test_explicitly_owned_account_relationships_are_internal_transfers(sentence:
     assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
 
 
+def test_a_relative_que_inside_the_ownership_phrase_is_not_an_interrogative() -> None:
+    sentence = "Mueve dinero de una cuenta a otra cuenta que también es mía"
+
+    assert intent_router.route(sentence, has_previous=False) is Intent.OWN_TRANSFER
+    assert (
+        intent_router.route("¿Qué cuenta mueve dinero de una cuenta a otra?", has_previous=False)
+        is not Intent.OWN_TRANSFER
+    )
+
+
 def test_a_damaged_own_account_phrase_stays_on_the_safe_internal_rail() -> None:
     sentence = "Quiero mover dinreo de una cuenta a otr, ¿es posible?"
 

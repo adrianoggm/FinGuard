@@ -190,7 +190,19 @@ def _moving_money_inside(sentence: str) -> bool:
     from finguard_orchestrator.domain.services import account_words
 
     folded = spanish.folded(sentence)
-    if _ASKING.search(folded) and _ACTION_INTENT.search(folded) is None:
+    asking = _ASKING.search(folded)
+    own_relation = _OWN_ACCOUNT_RELATION.search(folded)
+    # `que` can be the relative pronoun after the relation that proves both accounts belong to the
+    # holder: "de una cuenta a otra cuenta que también es mía". Treating it as an interrogative
+    # sent an imperative to the model. A real question puts its interrogative before that relation.
+    asking_follows_ownership = bool(
+        asking is not None and own_relation is not None and own_relation.start() <= asking.start()
+    )
+    if (
+        asking is not None
+        and not asking_follows_ownership
+        and _ACTION_INTENT.search(folded) is None
+    ):
         return False
     if not _MOVING.search(folded):
         return False
@@ -198,7 +210,7 @@ def _moving_money_inside(sentence: str) -> bool:
         bool(account_words.named_in(sentence))
         or account_words.names_a_custom_destination(sentence)
         or bool(_BETWEEN_ACCOUNTS.search(folded))
-        or bool(_OWN_ACCOUNT_RELATION.search(folded))
+        or own_relation is not None
         or payment_words.amount_in(sentence) is not None
     )
 

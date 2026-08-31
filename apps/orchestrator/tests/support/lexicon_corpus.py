@@ -1,12 +1,13 @@
 """Every sentence this repository has written down, for asking a phrasing whether anything uses it.
 
-Both evaluation trees, because the question "has this vocabulary ever been measured?" does not care
-which harness measures it: `evaluation/planning` is the datasets the planner is scored on and
-`evaluation/conversations` is the corpus replayed as tests. A phrasing reached by neither is
-unwatched, and `scripts/lexicon_coverage.py` reports the same number for a human.
+All four evaluation trees, because the question "has this vocabulary ever been measured?" does not
+care which harness measures it. Planning, conversations, dispatch paraphrases and payment drift
+are all replayed by tests; omitting the latter two called vocabulary unwatched while a dedicated
+robustness test was exercising it. `scripts/lexicon_coverage.py` reports the same number for a
+human.
 
-Loaded once and folded once. 1,600-odd sentences against 149 phrasings is a quarter of a million
-searches, which is cheap exactly once and not cheap per test.
+Loaded once and folded once. 1,800-odd sentences against the lexicons is cheap exactly once and not
+cheap per test.
 """
 
 import functools
@@ -18,7 +19,13 @@ import yaml  # type: ignore[import-untyped]
 from finguard_orchestrator.domain.services import spanish
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-SENTENCE_KEYS = {"question", "say", "sentence", "text", "utterance", "reply"}
+SENTENCE_KEYS = {"question", "say", "says", "sentence", "text", "utterance", "reply"}
+EVALUATION_FOLDERS = (
+    "evaluation/planning",
+    "evaluation/conversations",
+    "evaluation/paraphrases",
+    "evaluation/payments",
+)
 
 
 def _harvest(node: object, into: list[str]) -> None:
@@ -26,6 +33,8 @@ def _harvest(node: object, into: list[str]) -> None:
         for key, value in node.items():
             if key in SENTENCE_KEYS and isinstance(value, str):
                 into.append(value)
+            elif key in SENTENCE_KEYS and isinstance(value, list):
+                into.extend(item for item in value if isinstance(item, str))
             else:
                 _harvest(value, into)
     elif isinstance(node, list):
@@ -37,7 +46,7 @@ def _harvest(node: object, into: list[str]) -> None:
 def folded_sentences() -> tuple[str, ...]:
     """Every written-down sentence, folded the way every reader receives it."""
     found: list[str] = []
-    for folder in ("evaluation/planning", "evaluation/conversations"):
+    for folder in EVALUATION_FOLDERS:
         for path in sorted((ROOT / folder).glob("*.yaml")):
             _harvest(yaml.safe_load(path.read_text(encoding="utf-8")), found)
     return tuple(spanish.folded(sentence) for sentence in dict.fromkeys(found))
