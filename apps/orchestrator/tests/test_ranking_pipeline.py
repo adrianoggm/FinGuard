@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import date, datetime
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
-from finguard_orchestrator.application.queries.ask_financial_question import (
+from finguard_orchestrator.application.queries.readers.rankings import (
     _multiple_movement_ranking,
 )
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome

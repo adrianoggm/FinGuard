@@ -308,6 +308,10 @@ def test_no_call_site_in_this_section_opens_a_turn() -> None:
     """
     owned = (
         "application/queries/ask_financial_question.py",
+        # The recogniser seam, which A2 moved out of the handler along with the nineteen readers it
+        # wraps. It is the file that holds `consulting` and the one `record(Step.RECOGNISER, ...)`,
+        # so it is exactly the kind of seam this rule is about.
+        "application/queries/readers/seam.py",
         "domain/services/turn_interpreters.py",
         "infrastructure/planning/llm_query_planner.py",
         "infrastructure/controllers/llm_controller.py",

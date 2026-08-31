@@ -44,9 +44,6 @@ from finguard_orchestrator.application.queries.answer_message import (
 )
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
-    AskFinancialQuestionQuery,
-    AskFinancialQuestionResult,
-    SpokenPlan,
     Stage,
 )
 from finguard_orchestrator.application.queries.browse_account import (
@@ -56,6 +53,16 @@ from finguard_orchestrator.application.queries.browse_account import (
     GetMovementsHandler,
     GetMovementsQuery,
     MovementsResult,
+)
+
+# The query and its answer live a layer below the handler since A2, because the nineteen readers
+# take an `AskFinancialQuestionQuery` and a reader module cannot import the handler that dispatches
+# them. Imported from where they are defined rather than through the handler, which mypy's strict
+# re-export rule would refuse anyway.
+from finguard_orchestrator.application.queries.financial_turn import (
+    AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
+    SpokenPlan,
 )
 from finguard_orchestrator.application.queries.get_account_summary import (
     AccountSummaryResult,
