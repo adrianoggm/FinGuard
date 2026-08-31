@@ -170,7 +170,21 @@ def _prompt(case: dict[str, Any], count: int) -> str:
         "Esta es la pregunta anterior, sólo para entender el contexto:\n"
         f"{preceding}\n\n"
         "Reformula únicamente esta segunda frase. Debe seguir siendo una continuación y no debe "
-        "repetir ni completar la pregunta anterior:\n"
+        "repetir ni completar la pregunta anterior.\n\n"
+        # Prose did not carry this. Told only in words, `granite4.1:8b` resolved the ellipsis in
+        # 93 of 96 candidates: «¿Y en gasolina?» came back as «¿Cuánto consumí en combustible el
+        # mes pasado?» — good Spanish, the same question, and not a continuation. The meaning rule
+        # then rejects it for adding a period the base never stated, and it is right to. What a
+        # follow-up case measures is whether an *ellipsis* survives being said differently; the
+        # resolved form is already covered by the bases that state their own window.
+        #
+        # The example is built on a sentence that is none of the eight, so it teaches the shape
+        # rather than the answer.
+        "Ejemplo. Si la pregunta anterior fuera «¿Cuánto ingresé el año pasado?» y la segunda "
+        "frase fuera «¿Y en enero?», valdrían «¿y enero?», «¿y el mes de enero?» o «¿qué tal en "
+        "enero?». No valdrían «¿Cuánto ingresé en enero del año pasado?» ni «¿Qué cantidad "
+        "recibí en enero?», porque esas dicen por sí solas lo que la primera frase ya decía.\n\n"
+        "La segunda frase es:\n"
         f"{case['question']}"
     )
 
@@ -342,6 +356,13 @@ def main() -> int:
     )
     parser.add_argument("--temperature", type=float, default=0.9)
     parser.add_argument("--limit", type=int, default=None, help="only the first N bases")
+    parser.add_argument(
+        "--only",
+        default=None,
+        help="comma-separated base ids, for regenerating a subset instead of the corpus. "
+        "The output is a corpus of just those, to be merged: this writes what it was asked "
+        "for and never edits a file it did not produce",
+    )
     parser.add_argument("--out", default=str(PLANNING / "robustness.yaml"))
     parser.add_argument(
         "--dry-run",
@@ -351,7 +372,17 @@ def main() -> int:
     args = parser.parse_args()
 
     dev = _load("dev")
-    chosen = bases()[: args.limit] if args.limit else bases()
+    chosen = bases()
+    if args.only:
+        wanted = {piece.strip() for piece in args.only.split(",") if piece.strip()}
+        chosen = [case for case in chosen if str(case["id"]) in wanted]
+        missing = wanted - {str(case["id"]) for case in chosen}
+        if missing:
+            # Silence here would regenerate fewer bases than asked for and look like success.
+            print(f"no such base: {sorted(missing)}", file=sys.stderr)
+            return 2
+    elif args.limit:
+        chosen = chosen[: args.limit]
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
