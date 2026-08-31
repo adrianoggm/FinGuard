@@ -935,8 +935,22 @@ def _check_invariance(cases: list[dict[str, Any]], score: Score, *, today: date)
 
 
 def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:
+    """Pairs where one side is right and the other wrong, over both kinds of pair.
+
+    **This reads `variant_of` as well, and `_score_invariance` deliberately does not.** The two
+    keys are two relations and one name for both is what made `dev` unmeasurable: a strict
+    paraphrase differs from its base in the sentence and in nothing else, while a variant is the
+    same question shape said differently *with a deliberately different window* — «¿En qué comercio
+    gasté más el mes pasado?» beside «¿Cuál es el comercio donde más gasto este mes?».
+
+    An invariance check cannot use a variant, because the two plans are supposed to differ. This
+    check can, because it compares nothing but whether each case got its own expectation right, and
+    "one of these two was understood and the other was not" is exactly as informative when the
+    windows differ. It is also where the value showed up: this report is what surfaced
+    `merchant_top_ranking right, merchant_top_ranking_last_month wrong`.
+    """
     for case in cases:
-        twin = case.get("paraphrase_of")
+        twin = case.get("paraphrase_of") or case.get("variant_of")
         if twin is None:
             continue
         mine, theirs = score.right_by_id.get(case["id"]), score.right_by_id.get(twin)
@@ -975,6 +989,17 @@ def validate_paraphrase_cases(cases: list[dict[str, Any]]) -> list[str]:
                 issues.append(f"{case['id']}: {owned} differs from {base_id}, which it may not")
         if str(case["question"]).strip() == str(base["question"]).strip():
             issues.append(f"{case['id']}: the same sentence as {base_id}")
+
+    # A variant carries none of the obligations above -- its plan is *meant* to differ -- so the
+    # only thing to check is that it points at a case that exists. A dangling relation is a pair
+    # that silently measures nothing, which is the failure this whole validator is here to refuse.
+    for case in cases:
+        variant_of = case.get("variant_of")
+        if variant_of is not None:
+            if variant_of not in by_id:
+                issues.append(f"{case['id']}: unknown variant_of {variant_of}")
+            elif case.get("paraphrase_of") is not None:
+                issues.append(f"{case['id']}: both paraphrase_of and variant_of")
     return issues
 
 

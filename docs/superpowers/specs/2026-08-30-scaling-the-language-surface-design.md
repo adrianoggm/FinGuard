@@ -89,11 +89,25 @@ Measured, so the scope is not a matter of taste:
 | `account_words.py` | 370 | 10 | 4 | lexicon |
 | `category_words.py` | 283 | 2 | 0 | lexicon |
 | `continuation_patch.py` | 292 | 3 | 0 | lexicon |
+| `intent_router.py` | 519 | 23 | 61, **none read** | lexicon — **the table above missed it**, and it is the largest single win: 168 phrasings, 519 → 298 lines |
 | **`window_words.py`** | 914 | 33 | **29** | a date grammar → **stays code** |
 
 **The lexicon is for words. Structure stays in code.** `window_words` is 29 capture groups reading
 days, months and years; turning that into a table would trade readable code for a DSL, and the
 second thing anyone would have to build is a parser for it.
+
+**A correction to the measurement above, from doing it.** The capture-group column is the wrong
+count on its own. `intent_router` holds **61** groups, not zero as this table first said — they are
+`(` written where `(?:` was meant, inert and never inspected. What decides whether a pattern can
+become data is not whether it *has* a group but whether one is **read**: `explicit_facts` reads one,
+`intent_router` reads none (`.group(`, `.groups(`, `.groupdict(` all absent, now asserted by a
+test). On that count the router is the purer case, which is what the first reading claimed for the
+wrong reason.
+
+**And a criterion that turned out to be narrower than it looked.** B1 kept two patterns as code
+because an alternation's order was load-bearing through backtracking. That test finds nothing in the
+router: with no group read anywhere, no alternative's win is observable. A pattern consulted only for
+truth can always be a row.
 
 What a table buys that nine regex files cannot:
 
