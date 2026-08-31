@@ -95,7 +95,7 @@ metadata:
   base_count: 56
   paraphrase_count: 416
   rejected_count: 342
-  not_admitted_count: 16
+  not_admitted_count: 12
 cases:
 - id: confuse_30_days_not_last_month
   group: period_confusable
@@ -3168,24 +3168,24 @@ bases_not_admitted:
   why: the sentence carries fewer than two words to rewrite
 - id: follow_grouping_after_period
   question: ¿Y desglosado por categorías?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
+  why: 'an elliptical continuation with a structural marker: 1 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
 - id: follow_period_change_keeps_category
   question: ¿Y este mes?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
+  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
 - id: follow_without_context_must_ask
   question: ¿Y en gasolina?
   why: a continuation cannot be rewritten by somebody who has not seen the turn before it
   rewordings_discarded_with_it: 12
 - id: follow_narrow_to_week
   question: ¿Y solo la semana pasada?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
+  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
 - id: follow_by_merchant
   question: ¿Y por comercios?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
+  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
 - id: confuse_this_week_not_7_days
   question: ¿Cuánto llevo esta semana?
   why: every rewording of it was rejected, so it contributes no pair to measure
@@ -3194,22 +3194,6 @@ bases_not_admitted:
   question: ¿Cuánto llevo gastado desde Navidad?
   why: every rewording of it was rejected, so it contributes no pair to measure
   rewordings_discarded_with_it: 12
-- id: follow_grouping_after_period
-  question: ¿Y desglosado por categorías?
-  why: 'an elliptical continuation with a structural marker: 1 of 36 candidates survived the meaning rule,
-    because any rewording either drops the marker the base names or adds one it never had'
-- id: follow_period_change_keeps_category
-  question: ¿Y este mes?
-  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
-    because any rewording either drops the marker the base names or adds one it never had'
-- id: follow_narrow_to_week
-  question: ¿Y solo la semana pasada?
-  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
-    because any rewording either drops the marker the base names or adds one it never had'
-- id: follow_by_merchant
-  question: ¿Y por comercios?
-  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
-    because any rewording either drops the marker the base names or adds one it never had'
 rejected:
 - paraphrase_of: confuse_30_days_not_last_month
   question: Me gustaría conocer el gasto acumulado en mi cuenta durante el período de 30 días pasados.
