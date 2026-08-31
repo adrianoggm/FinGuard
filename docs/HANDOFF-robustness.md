@@ -1,5 +1,28 @@
 # Handoff — FinGuard, 2026-08-31
 
+## Update after `49b1124`
+
+Section C is now integrated into `task/visualization`; the worktree and commit references below
+describe the state before that squash and are retained as history.
+
+- The committed corpus has executable metadata for **52 bases, 389 rewordings, 235 rejections and
+  16 bases not admitted**. The evaluator refuses a corpus whose counts drift from its content.
+- All corpus honesty checks are green. The formerly red discriminator now treats only a
+  semantically different expected plan as a wrong-question control; duplicate questions filed
+  under different groups no longer manufacture false cross-acceptance.
+- Robustness is reported both per pair and macro-averaged per base. A configurable gate combines
+  macro robustness with an over-refusal ceiling, refuses partial runs, and exits non-zero. A
+  deliberately changed produced plan proves that exit path without a GPU.
+- The generator now gives the eight elliptical `follow_*` cases preceding Spanish questions
+  written by hand. It never receives `previous`, the planning schema or rendered enum values. The
+  context-free control remains inadmissible.
+- Those eight bases have **not yet been regenerated into the committed corpus**: `qwen3.5:9b`
+  currently occupies the constrained GPU and the original blocker still applies. No robustness
+  threshold or result is claimed until a complete run on stable hardware establishes the baseline.
+
+Focused verification: **38 passed**. The orchestrator suite, run in two halves to avoid the known
+long-run stall, passed **3,322 tests with 4 skips**; Ruff and `mypy src` are clean.
+
 Written to be read by somebody with no context. Everything here is measured unless it says
 otherwise.
 
