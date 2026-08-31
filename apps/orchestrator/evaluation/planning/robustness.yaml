@@ -1,0 +1,3695 @@
+# Robustness: every question this repository wrote down, said the way somebody else says it.
+#
+# `drift.yaml` is ten questions, and its header says why it exists: "nobody who wrote these
+# sentences had seen the prompt, the vocabulary or the schema". That is the right idea. Ten of
+# them is the wrong scale, and this file is the same idea at 52 base questions and
+# 389 rewordings of them.
+#
+# --- what it measures, which is not accuracy -----------------------------------------------------
+#
+# `paraphrase_of` chains each sentence to the one it rewrites, and the evaluator compares the two
+# **produced** plans -- not either of them against the expectation. A base the system gets wrong,
+# whose every rewording is wrong the same way, is 7/7 robust: that is a coverage defect, one fix
+# closes all eight sentences, and it is not what this measures. A base the system gets right whose
+# rewording it gets wrong is the defect this exists for, and no accuracy number can see it, because
+# both numbers move together.
+#
+# --- which cases, and why these -------------------------------------------------------------------
+#
+# Every (group, expect) pair in `dev.yaml` that `drift.yaml` does not already contain, plus
+# `adversarial.yaml`'s `out_of_domain` and `boundary`. Coverage-driven and fixed before anything
+# ran: those are the capabilities with no evidence either way, and choosing cases by how they score
+# would be choosing the exam. `injection` is deliberately left out -- a paraphrased prompt injection
+# is a new attack rather than a rewording, and "the same plan comes out" is not the property
+# anybody wants from one.
+#
+# Sixteen `dev.yaml` cases already carry `paraphrase_of` themselves; where one of those is a base
+# here, that key is dropped, because its twin lives in `dev.yaml` and a chain with one end missing
+# scores as nothing at all.
+#
+# --- who wrote the sentences ----------------------------------------------------------------------
+#
+# `granite4.1:8b`, offline, on 2026-08-30. **Not `qwen3.5:9b`**, which is the planner: a corpus written
+# by the model under test is a corpus of the sentences that model already parses, which is the same
+# defect as a corpus written by whoever wrote the prompt, one layer down. Not a `qwen` at all, for
+# the same reason at one remove.
+#
+# `drift.yaml` and `paraphrases/dispatch.yaml` were both written by `llama-3.3-70b-versatile` via
+# Groq. There is no Groq credential in this checkout, so the generator had to come from what Ollama
+# serves, and it was picked by measurement rather than preference -- the same twelve bases, the same
+# rules, fixed before any of them ran:
+#
+#     granite4.1:8b     31/88  35.2 %   mean word overlap with the base 0.27   155 s
+#     mistral-nemo:12b  36/88  40.9 %                                   0.42   420 s
+#     ministral-3:8b    24/80  30.0 %                                   0.28   569 s
+#
+# `mistral-nemo` accepts more only because it copies more, and a corpus at 0.42 of the base's own
+# words is a weaker test than one at 0.27. `ministral-3` returned one batch this script could not
+# parse at all. `granite4.1:8b` also declares no `thinking` capability, which is the failure
+# `dispatch.yaml` records for local models -- "it leaked its reasoning into the array".
+#
+# The model was never shown the planning prompt, the schema, the enum values, or which phrasings
+# this system already handles. It was told not to change the period, the subject or the direction
+# of the money, because that is the definition of a paraphrase; the near-duplicate rule is what
+# stops it discharging the instruction by copying. The prompt is in the generator's docstring.
+#
+# --- what was thrown away, and the rule that threw it -----------------------------------------------
+#
+# **389 of 624 generated sentences were kept (62.3 %).** The other 235 are
+# below under `rejected`, each with its reason, because a corpus that loses its inconvenient cases
+# is the same bias wearing a different hat. That ratio is the credibility of this file: a model
+# asked to reword a question changes the question about two times in five, and nothing about being
+# generated makes a sentence usable.
+#
+# The rule is `scripts/paraphrase_rules.py`, fixed before generation and applied before the planner
+# had answered anything. It carries its own Spanish vocabulary and never asks this system anything:
+# a filter built out of the recognisers would delete exactly the sentences the recognisers cannot
+# read, which are the ones worth measuring, and leave a corpus that scores 100 % by construction.
+# `tests/test_the_generated_corpus_is_not_the_generator.py` is the part of that a machine re-checks.
+#
+# 16 bases were never admitted -- listed under `bases_not_admitted` with the reason. A base
+# whose own sentence this vocabulary cannot read is dropped rather than judged, because a validator
+# that misreads the known-good sentence will misjudge every rewrite of it.
+#
+# **Where the rule is weakest, said plainly.** For an `out_of_domain` base there is no period, no
+# direction and no category to preserve, so the meaning rule has almost nothing to check and three
+# of those bases kept 12 of 12. What survives there is the shape rule and the property itself --
+# «¿qué tiempo hace mañana?» reworded is still not a question about money -- and a rewrite that
+# became financial would acquire a marker and be rejected. It is a weaker guarantee than the one
+# the dated and periodic families get, and it should be read as one.
+#
+# Mean word overlap with the base is 0.25, which is what says these are rewordings rather
+# than edits. The plans are YAML anchors into the base's own plan, so a paraphrase cannot hold a
+# different opinion about the right answer even by accident.
+#
+# Generation is not reproducible -- temperature 0.9, and the model is somebody else's. Regenerating
+# is allowed and produces a **new** corpus with a new baseline, not a reshuffle of this one.
+#
+# The reference date is `dev.yaml`'s, for `dev.yaml`'s reason: on the 1st of a month, or a Monday,
+# THIS_MONTH and LAST_MONTH and LAST_N_DAYS collapse into each other and half of this file stops
+# discriminating.
+
+reference: 2026-07-15
+account: ES-0001
+metadata:
+  base_count: 52
+  paraphrase_count: 389
+  rejected_count: 235
+  not_admitted_count: 16
+cases:
+- id: confuse_30_days_not_last_month
+  group: period_confusable
+  question: ¿Cuánto he gastado en los últimos 30 días?
+  expect: plan
+  plan: &id001
+    period:
+      period: LAST_N_DAYS
+      n: 30
+    direction: EXPENSE
+- id: confuse_last_month_not_30_days
+  group: period_confusable
+  question: ¿Cuánto gasté el mes pasado, en junio?
+  expect: plan
+  plan: &id002
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+- id: confuse_this_month_partial
+  group: period_confusable
+  question: ¿Cuánto llevo gastado en lo que va de mes?
+  expect: plan
+  plan: &id003
+    period:
+      period: THIS_MONTH
+    direction: EXPENSE
+- id: confuse_last_month_full
+  group: period_confusable
+  question: ¿Cuánto gasté en el mes completo anterior?
+  expect: plan
+  plan: &id004
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+- id: confuse_last_week_closed
+  group: period_confusable
+  question: ¿Cuánto gasté de lunes a domingo la semana pasada?
+  expect: plan
+  plan: &id005
+    period:
+      period: LAST_WEEK
+    direction: EXPENSE
+- id: confuse_two_months
+  group: period_confusable
+  question: ¿Cuánto he gastado en los dos últimos meses?
+  expect: plan
+  plan: &id006
+    period:
+      period: LAST_N_MONTHS
+      n: 2
+    direction: EXPENSE
+- id: confuse_two_weeks_in_days
+  group: period_confusable
+  question: ¿Cuánto llevo gastado en las últimas dos semanas?
+  expect: plan
+  plan: &id007
+    period:
+      period: LAST_N_DAYS
+      n: 14
+    direction: EXPENSE
+- id: confuse_90_days_not_3_months
+  group: period_confusable
+  question: ¿Cuánto he gastado en los últimos 90 días?
+  expect: plan
+  plan: &id008
+    period:
+      period: LAST_N_DAYS
+      n: 90
+    direction: EXPENSE
+- id: confuse_since_january_is_this_year
+  group: period_confusable
+  question: ¿Cuánto llevo gastado desde enero?
+  expect: plan
+  plan: &id009
+    period:
+      period: THIS_YEAR
+    direction: EXPENSE
+- id: confuse_today_only
+  group: period_confusable
+  question: ¿Cuánto he gastado en el día de hoy, solo hoy?
+  expect: plan
+  plan: &id010
+    period:
+      period: TODAY
+    direction: EXPENSE
+- id: absolute_january
+  group: period_absolute
+  question: ¿Cuánto gasté durante enero?
+  expect: plan
+  plan: &id011
+    dateRange:
+      from: 2026-01-01
+      to: 2026-01-31
+    direction: EXPENSE
+- id: absolute_march
+  group: period_absolute
+  question: ¿Cuánto gasté en marzo?
+  expect: plan
+  plan: &id012
+    dateRange:
+      from: 2026-03-01
+      to: 2026-03-31
+    direction: EXPENSE
+- id: absolute_february_short_month
+  group: period_absolute
+  question: ¿Cuánto gasté en febrero?
+  expect: plan
+  plan: &id013
+    dateRange:
+      from: 2026-02-01
+      to: 2026-02-28
+    direction: EXPENSE
+- id: absolute_explicit_range
+  group: period_absolute
+  question: ¿Cuánto gasté entre el 1 y el 15 de junio?
+  expect: plan
+  plan: &id014
+    dateRange:
+      from: 2026-06-01
+      to: 2026-06-15
+    direction: EXPENSE
+- id: absolute_single_day
+  group: period_absolute
+  question: ¿Qué movimientos tuve el 3 de junio?
+  expect: plan
+  plan: &id015
+    dateRange:
+      from: 2026-06-03
+      to: 2026-06-03
+    direction: ALL
+- id: absolute_first_quarter
+  group: period_absolute
+  question: ¿Cuánto gasté en el primer trimestre?
+  expect: plan
+  plan: &id016
+    dateRange:
+      from: 2026-01-01
+      to: 2026-03-31
+    direction: EXPENSE
+- id: absolute_open_ended_to_today
+  group: period_absolute
+  question: ¿Cuánto he gastado del 1 de junio a hoy?
+  expect: plan
+  plan: &id017
+    dateRange:
+      from: 2026-06-01
+      to: 2026-07-15
+    direction: EXPENSE
+- id: absolute_month_with_year
+  group: period_absolute
+  question: ¿Cuánto gasté en abril de 2026?
+  expect: plan
+  plan: &id018
+    dateRange:
+      from: 2026-04-01
+      to: 2026-04-30
+    direction: EXPENSE
+- id: multi_fuel_and_public
+  group: category_multiple
+  question: ¿Cuánto llevo entre gasolina y transporte público este mes?
+  expect: plan
+  plan: &id019
+    period:
+      period: THIS_MONTH
+    direction: EXPENSE
+    categories:
+    - TRANSPORT_FUEL
+    - TRANSPORT_PUBLIC
+- id: multi_super_and_restaurants
+  group: category_multiple
+  question: ¿Cuánto gasté en comida el mes pasado, tanto en el súper como fuera?
+  expect: plan
+  plan: &id020
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    categories:
+    - GROCERIES
+    - RESTAURANTS
+- id: multi_three_categories
+  group: category_multiple
+  question: ¿Cuánto llevo este mes en súper, gasolina y farmacia?
+  expect: plan
+  plan: &id021
+    period:
+      period: THIS_MONTH
+    direction: EXPENSE
+    categories:
+    - GROCERIES
+    - TRANSPORT_FUEL
+    - HEALTH
+- id: multi_leisure_and_subscriptions
+  group: category_multiple
+  question: ¿Cuánto me gasto entre ocio y suscripciones este mes?
+  expect: plan
+  plan: &id022
+    period:
+      period: THIS_MONTH
+    direction: EXPENSE
+    categories:
+    - LEISURE
+    - SUBSCRIPTIONS
+- id: multi_fixed_costs
+  group: category_multiple
+  question: ¿Cuánto pagué el mes pasado entre alquiler y suscripciones?
+  expect: plan
+  plan: &id023
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    categories:
+    - HOUSING_RENT
+    - SUBSCRIPTIONS
+- id: merchant_netflix
+  group: merchant
+  question: ¿Cuánto pago al mes por Netflix?
+  expect: clarification
+  why: it names the shop and not the window — the period is still missing
+- id: merchant_gym
+  group: merchant
+  question: ¿Cuánto me cuesta el gimnasio?
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+- id: follow_fresh_question_drops_context
+  group: follow_up
+  question: ¿Cuánto gasté hoy?
+  previous: &id024
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    groupBy: CATEGORY
+  expect: plan
+  plan: &id025
+    period:
+      period: TODAY
+    direction: EXPENSE
+    groupBy: NONE
+- id: ambiguous_ultimamente
+  group: ambiguity
+  question: ¿Cuánto he gastado últimamente?
+  expect: clarification
+  why: '''últimamente'' names no window; every Period would be a guess'
+- id: ambiguous_lo_normal
+  group: ambiguity
+  question: ¿Estoy gastando lo normal?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+- id: ambiguous_gastos_grandes
+  group: ambiguity
+  question: Enséñame mis gastos grandes
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+- id: ambiguous_mucho
+  group: ambiguity
+  question: ¿He gastado mucho?
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+- id: ambiguous_como_voy
+  group: ambiguity
+  question: ¿Cómo voy de dinero?
+  expect: clarification
+  why: could be a balance, a total or a comparison; none is named
+- id: ambiguous_ese_mes
+  group: ambiguity
+  question: ¿Cuánto gasté ese mes?
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+- id: noise_greeting
+  group: noise
+  question: Hola, buenas. Oye, ¿cuánto gasté el mes pasado?
+  expect: plan
+  plan: &id026
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+- id: noise_thanks
+  group: noise
+  question: ¿Cuánto gasté el mes pasado? Gracias!!
+  expect: plan
+  plan: &id027
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+- id: noise_no_accents
+  group: noise
+  question: cuanto gaste el mes pasado
+  expect: plan
+  plan: &id028
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+- id: noise_uppercase
+  group: noise
+  question: ¿CUÁNTO GASTÉ EL MES PASADO?
+  expect: plan
+  plan: &id029
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+- id: noise_rambling
+  group: noise
+  question: pues nada, que estaba mirando las cuentas y quería saber cuánto gasté en el súper el mes pasado
+  expect: plan
+  plan: &id030
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    categories:
+    - GROCERIES
+- id: adv_weather
+  group: out_of_domain
+  question: ¿Qué tiempo hace mañana?
+  expect: unsupported
+  why: not about this account
+- id: adv_general_knowledge
+  group: out_of_domain
+  question: ¿Cuál es la capital de Francia?
+  expect: unsupported
+  why: not about this account
+- id: adv_stock_advice
+  group: out_of_domain
+  question: ¿Debería comprar acciones de Telefónica?
+  expect: unsupported
+  why: advice about money this account does not hold
+- id: adv_transfer_request
+  group: out_of_domain
+  question: Hazle un Bizum de 20 euros a Marta
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+- id: adv_change_password
+  group: out_of_domain
+  question: Cámbiame la contraseña de la banca online
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+- id: adv_zero_days
+  group: boundary
+  question: ¿Cuánto he gastado en los últimos 0 días?
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+- id: adv_thousand_days
+  group: boundary
+  question: ¿Cuánto he gastado en los últimos 5000 días?
+  expect: clarification
+  why: over the domain ceiling of 366 days
+- id: adv_hundred_months
+  group: boundary
+  question: ¿Cuánto he gastado en los últimos 100 meses?
+  expect: clarification
+  why: over the domain ceiling of 24 months
+- id: adv_one_day_window
+  group: boundary
+  question: ¿Cuánto he gastado en el último día?
+  expect: plan
+  plan: &id031
+    period:
+      period: LAST_N_DAYS
+      n: 1
+    direction: EXPENSE
+- id: adv_366_days
+  group: boundary
+  question: ¿Cuánto he gastado en los últimos 366 días?
+  expect: plan
+  plan: &id032
+    period:
+      period: LAST_N_DAYS
+      n: 366
+    direction: EXPENSE
+- id: adv_backwards_range
+  group: boundary
+  question: ¿Cuánto gasté entre el 30 de junio y el 1 de junio?
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+- id: adv_future_window
+  group: boundary
+  question: ¿Cuánto voy a gastar entre hoy y el 31 de diciembre?
+  expect: unsupported
+  why: a window in the future over a ledger of what already happened
+- id: adv_future_single_day
+  group: boundary
+  question: ¿Cuánto gasté el 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+- id: adv_far_past
+  group: boundary
+  question: ¿Cuánto gasté en 1998?
+  expect: plan
+  plan: &id033
+    dateRange:
+      from: 1998-01-01
+      to: 1998-12-31
+    direction: EXPENSE
+- id: adv_all_categories
+  group: boundary
+  question: ¿Cuánto llevo este mes en súper, gasolina, restaurantes, transporte, salud, ocio, suscripciones
+    y alquiler?
+  expect: plan
+  plan: &id034
+    period:
+      period: THIS_MONTH
+    direction: EXPENSE
+    categories:
+    - GROCERIES
+    - TRANSPORT_FUEL
+    - RESTAURANTS
+    - TRANSPORT_PUBLIC
+    - HEALTH
+    - LEISURE
+    - SUBSCRIPTIONS
+    - HOUSING_RENT
+- id: confuse_30_days_not_last_month_p1
+  group: period_confusable
+  question: Quisiera saber el importe total que he desembolsado durante los últimos treinta días.
+  expect: plan
+  plan: *id001
+  paraphrase_of: confuse_30_days_not_last_month
+- id: confuse_30_days_not_last_month_p2
+  group: period_confusable
+  question: ¿Podría informarme cuánto dinero he consumido en los últimos 30 días?
+  expect: plan
+  plan: *id001
+  paraphrase_of: confuse_30_days_not_last_month
+- id: confuse_30_days_not_last_month_p3
+  group: period_confusable
+  question: ¿Cuál ha sido mi desembolso neto en los últimos treinta días?
+  expect: plan
+  plan: *id001
+  paraphrase_of: confuse_30_days_not_last_month
+- id: confuse_30_days_not_last_month_p4
+  group: period_confusable
+  question: Quiero informarme sobre el consumo de mi dinero durante los últimos treinta días disponibles.
+  expect: plan
+  plan: *id001
+  paraphrase_of: confuse_30_days_not_last_month
+- id: confuse_last_month_not_30_days_p1
+  group: period_confusable
+  question: Me gustaría saber el total de mi gasto en junio del mes pasado.
+  expect: plan
+  plan: *id002
+  paraphrase_of: confuse_last_month_not_30_days
+- id: confuse_last_month_not_30_days_p2
+  group: period_confusable
+  question: ¿Podría proporcionarme el detalle de mi gasto en junio del mes anterior?
+  expect: plan
+  plan: *id002
+  paraphrase_of: confuse_last_month_not_30_days
+- id: confuse_last_month_not_30_days_p3
+  group: period_confusable
+  question: Por favor, informarme sobre el importe gastado en junio del mes pasado.
+  expect: plan
+  plan: *id002
+  paraphrase_of: confuse_last_month_not_30_days
+- id: confuse_last_month_not_30_days_p4
+  group: period_confusable
+  question: ¿Cuál fue la cantidad que utilicé en gastos durante junio del mes anterior?
+  expect: plan
+  plan: *id002
+  paraphrase_of: confuse_last_month_not_30_days
+- id: confuse_last_month_not_30_days_p5
+  group: period_confusable
+  question: Necesito ver el resumen de mis gastos para el mes de junio del mes pasado.
+  expect: plan
+  plan: *id002
+  paraphrase_of: confuse_last_month_not_30_days
+- id: confuse_last_month_not_30_days_p6
+  group: period_confusable
+  question: Me gustaría saber el monto total que desembolsé en junio del mes que pasó.
+  expect: plan
+  plan: *id002
+  paraphrase_of: confuse_last_month_not_30_days
+- id: confuse_this_month_partial_p1
+  group: period_confusable
+  question: ¿Podría informarme sobre el monto que he desembolsado en el transcurso del mes actual?
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p2
+  group: period_confusable
+  question: Quiero conocer el importe acumulado de mis gastos para este mes.
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p3
+  group: period_confusable
+  question: ¿Cuál es el total de lo que he gastado desde el inicio del mes en curso?
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p4
+  group: period_confusable
+  question: Necesito un resumen de los gastos realizados en el mes actual.
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p5
+  group: period_confusable
+  question: Me interesa saber el desembolso que he hecho hasta ahora este mes.
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p6
+  group: period_confusable
+  question: ¿Podría proporcionarme el dato de mi consumo de dinero este mes?
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p7
+  group: period_confusable
+  question: Quiero conocer el monto total que he gastado hasta la fecha dentro del mes actual.
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p8
+  group: period_confusable
+  question: Necesito información sobre el gasto que he realizado este mes hasta la fecha.
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p9
+  group: period_confusable
+  question: Me gustaría saber el total de mis desembolsos en el periodo que va del mes actual.
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_this_month_partial_p10
+  group: period_confusable
+  question: ¿Podría darme el detalle del monto que he gastado este mes hasta ahora?
+  expect: plan
+  plan: *id003
+  paraphrase_of: confuse_this_month_partial
+- id: confuse_last_month_full_p1
+  group: period_confusable
+  question: Me gustaría saber el total de gastos que realicé durante todo el mes que pasó.
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p2
+  group: period_confusable
+  question: ¿Podría proporcionarme la información sobre el monto total que consumí en el mes anterior
+    completo?
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p3
+  group: period_confusable
+  question: ¿Cuál fue el gasto total que tuve en el último mes completo?
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p4
+  group: period_confusable
+  question: Estoy interesado en saber cuánto gasté en el mes que acaba de terminar.
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p5
+  group: period_confusable
+  question: Me interesa obtener el detalle del gasto total para el mes anterior completo.
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p6
+  group: period_confusable
+  question: ¿Cuál fue el gasto total que tuve en el mes anterior completo?
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p7
+  group: period_confusable
+  question: Quisiera obtener la información del gasto total para el mes anterior completo.
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_month_full_p8
+  group: period_confusable
+  question: ¿Podría ver el total de mis gastos en el mes que terminó justo ahora?
+  expect: plan
+  plan: *id004
+  paraphrase_of: confuse_last_month_full
+- id: confuse_last_week_closed_p1
+  group: period_confusable
+  question: Me gustaría saber el total de gastos que realicé del lunes al domingo durante la semana pasada.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p2
+  group: period_confusable
+  question: Quiero conocer el importe que destinate en gastos entre el lunes y el domingo de la semana
+    anterior.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p3
+  group: period_confusable
+  question: ¿Podría proporcionarme la cantidad que utilicé en gastos desde el lunes hasta el domingo en
+    la semana pasada?
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p4
+  group: period_confusable
+  question: Necesito información sobre cuánto gasté del lunes al domingo en el período de la semana pasada.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p5
+  group: period_confusable
+  question: ¿Podría informarme sobre el gasto que realicé entre el lunes y el domingo durante la semana
+    pasada?
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p6
+  group: period_confusable
+  question: Quiero conocer el monto que consumí en gastos del lunes al domingo en la semana pasada.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p7
+  group: period_confusable
+  question: Me gustaría ver el detalle de mis gastos del lunes al domingo en la semana pasada.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p8
+  group: period_confusable
+  question: ¿Cuál fue el total de mis desembolsos desde el lunes hasta el domingo en la semana pasada?
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p9
+  group: period_confusable
+  question: Necesito saber el importe que utilicé en gastos del lunes al domingo durante la semana pasada.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p10
+  group: period_confusable
+  question: Me interesa conocer el gasto acumulado que tuve del lunes al domingo en la semana anterior.
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_last_week_closed_p11
+  group: period_confusable
+  question: Podría obtener la información del gasto total realizado del lunes al domingo en la semana
+    pasada?
+  expect: plan
+  plan: *id005
+  paraphrase_of: confuse_last_week_closed
+- id: confuse_two_months_p1
+  group: period_confusable
+  question: ¿Podría informarme sobre el importe que he consumido en los dos últimos meses?
+  expect: plan
+  plan: *id006
+  paraphrase_of: confuse_two_months
+- id: confuse_two_months_p2
+  group: period_confusable
+  question: Me interesa saber el monto total que he gastado en los últimos dos meses.
+  expect: plan
+  plan: *id006
+  paraphrase_of: confuse_two_months
+- id: confuse_two_weeks_in_days_p1
+  group: period_confusable
+  question: Necesito saber cuánto dinero he gastado en las últimas dos semanas.
+  expect: plan
+  plan: *id007
+  paraphrase_of: confuse_two_weeks_in_days
+- id: confuse_two_weeks_in_days_p2
+  group: period_confusable
+  question: ¿Podría proporcionarme el monto total gastado en las últimas dos semanas?
+  expect: plan
+  plan: *id007
+  paraphrase_of: confuse_two_weeks_in_days
+- id: confuse_90_days_not_3_months_p1
+  group: period_confusable
+  question: ¿Cuál es el importe acumulado de mis gastos en el espacio de los últimos 90 días?
+  expect: plan
+  plan: *id008
+  paraphrase_of: confuse_90_days_not_3_months
+- id: confuse_90_days_not_3_months_p2
+  group: period_confusable
+  question: Estoy interesado en saber cuánto dinero he gastado en el intervalo de los últimos 90 días.
+  expect: plan
+  plan: *id008
+  paraphrase_of: confuse_90_days_not_3_months
+- id: confuse_90_days_not_3_months_p3
+  group: period_confusable
+  question: ¿Podría proporcionarme la cifra de mis desembolsos durante el período de los últimos noventa
+    días?
+  expect: plan
+  plan: *id008
+  paraphrase_of: confuse_90_days_not_3_months
+- id: confuse_90_days_not_3_months_p4
+  group: period_confusable
+  question: Me interesa conocer el monto total que he consumido en los últimos 90 días.
+  expect: plan
+  plan: *id008
+  paraphrase_of: confuse_90_days_not_3_months
+- id: confuse_90_days_not_3_months_p5
+  group: period_confusable
+  question: Quiero conocer el desembolso total que he tenido en los últimos 90 días.
+  expect: plan
+  plan: *id008
+  paraphrase_of: confuse_90_days_not_3_months
+- id: confuse_90_days_not_3_months_p6
+  group: period_confusable
+  question: Por favor, dime cuánto he gastado en los últimos 90 días.
+  expect: plan
+  plan: *id008
+  paraphrase_of: confuse_90_days_not_3_months
+- id: confuse_since_january_is_this_year_p1
+  group: period_confusable
+  question: Me gustaría saber el total de gastos desde enero.
+  expect: plan
+  plan: *id009
+  paraphrase_of: confuse_since_january_is_this_year
+- id: confuse_since_january_is_this_year_p2
+  group: period_confusable
+  question: ¿Podría proporcionarme la cantidad total de mi gasto desde enero?
+  expect: plan
+  plan: *id009
+  paraphrase_of: confuse_since_january_is_this_year
+- id: confuse_since_january_is_this_year_p3
+  group: period_confusable
+  question: ¿Podría saber cuál ha sido mi gasto neto desde enero?
+  expect: plan
+  plan: *id009
+  paraphrase_of: confuse_since_january_is_this_year
+- id: confuse_since_january_is_this_year_p4
+  group: period_confusable
+  question: Me gustaría obtener el total de mi gasto desde el inicio del año, es decir, desde enero.
+  expect: plan
+  plan: *id009
+  paraphrase_of: confuse_since_january_is_this_year
+- id: confuse_today_only_p1
+  group: period_confusable
+  question: Quiero conocer el importe que he desembolsado hoy en concreto.
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: confuse_today_only_p2
+  group: period_confusable
+  question: ¿Podría informarme sobre el gasto que he realizado únicamente hoy?
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: confuse_today_only_p3
+  group: period_confusable
+  question: Necesito saber el detalle de mi gasto para hoy solamente.
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: confuse_today_only_p4
+  group: period_confusable
+  question: ¿Podría ver cuánto he gastado hoy en mi cuenta?
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: confuse_today_only_p5
+  group: period_confusable
+  question: Me interesa conocer el gasto diario que he tenido hasta la fecha de hoy.
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: confuse_today_only_p6
+  group: period_confusable
+  question: ¿Cuál ha sido mi gasto total para hoy?
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: confuse_today_only_p7
+  group: period_confusable
+  question: ¿Podría obtener el total de mi consumo de hoy en mi cuenta bancaria?
+  expect: plan
+  plan: *id010
+  paraphrase_of: confuse_today_only
+- id: absolute_january_p1
+  group: period_absolute
+  question: Me gustaría saber el importe total que utilicé en gastos durante el mes de enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p2
+  group: period_absolute
+  question: ¿Podría indicarme cuál fue mi gasto neto en enero?
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p3
+  group: period_absolute
+  question: Quiero conocer el desembolso que realicé en enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p4
+  group: period_absolute
+  question: ¿Cuál fue mi consumo durante el mes de enero?
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p5
+  group: period_absolute
+  question: Necesito un resumen de los gastos que tuve en enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p6
+  group: period_absolute
+  question: Me interesa saber el monto gastado en enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p7
+  group: period_absolute
+  question: ¿Podría proporcionarme la cifra de mis gastos para el mes de enero?
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p8
+  group: period_absolute
+  question: Quiero ver cuánto costó mi consumo en enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p9
+  group: period_absolute
+  question: ¿Cuál fue el total de mis desembolsos en el mes de enero?
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p10
+  group: period_absolute
+  question: Necesito informe de mi gasto durante enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_january_p11
+  group: period_absolute
+  question: Me gustaría un detalle de lo que gasté en enero.
+  expect: plan
+  plan: *id011
+  paraphrase_of: absolute_january
+- id: absolute_march_p1
+  group: period_absolute
+  question: Me gustaría saber el total de gastos que realicé en el mes de marzo.
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p2
+  group: period_absolute
+  question: ¿Podría informarme cuál fue mi gasto acumulado en marzo?
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p3
+  group: period_absolute
+  question: Necesito ver cuánto consumí en el mes de marzo.
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p4
+  group: period_absolute
+  question: ¿Cuál fue mi desembolso total en marzo?
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p5
+  group: period_absolute
+  question: Me interesa saber el monto que utilicé para gastos en marzo.
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p6
+  group: period_absolute
+  question: ¿Podría proporcionarme los detalles de mi gasto mensual en marzo?
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p7
+  group: period_absolute
+  question: Necesito información sobre mi gasto durante el mes de marzo.
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p8
+  group: period_absolute
+  question: ¿Cuál fue el monto que gasté en total en marzo?
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p9
+  group: period_absolute
+  question: Me gustaría saber el total de mis desembolsos en marzo.
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_march_p10
+  group: period_absolute
+  question: Quiero ver cuánto me costó en gastos durante el mes de marzo.
+  expect: plan
+  plan: *id012
+  paraphrase_of: absolute_march
+- id: absolute_february_short_month_p1
+  group: period_absolute
+  question: Me gustaría saber el total de mi gasto en febrero.
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p2
+  group: period_absolute
+  question: ¿Puede proporcionarme la cantidad que consumí durante el mes de febrero?
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p3
+  group: period_absolute
+  question: ¿Cuál fue mi desembolso en febrero?
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p4
+  group: period_absolute
+  question: Necesito un resumen de mis gastos para el mes de febrero.
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p5
+  group: period_absolute
+  question: Me interesa conocer el gasto realizado en febrero.
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p6
+  group: period_absolute
+  question: ¿Podría informarme sobre el monto gastado en febrero?
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p7
+  group: period_absolute
+  question: Quiero ver el detalle de mi consumo en febrero.
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p8
+  group: period_absolute
+  question: ¿Cuánto me quedó por gastar en febrero?
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p9
+  group: period_absolute
+  question: Me gustaría un informe de los gastos de febrero.
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_february_short_month_p10
+  group: period_absolute
+  question: ¿Podría darme la cifra total de mi gasto en febrero?
+  expect: plan
+  plan: *id013
+  paraphrase_of: absolute_february_short_month
+- id: absolute_explicit_range_p1
+  group: period_absolute
+  question: Me gustaría saber el total de mi gasto desde el 1 hasta el 15 de junio.
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p2
+  group: period_absolute
+  question: Quiero conocer el importe que consumí entre el día 1 y el 15 de junio.
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p3
+  group: period_absolute
+  question: ¿Podría ver el resumen de mis gastos para el periodo del 1 al 15 de junio?
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p4
+  group: period_absolute
+  question: Me interesa saber el monto gastado entre el 1 y el 15 de junio.
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p5
+  group: period_absolute
+  question: ¿Cuál fue mi gasto neto entre el 1 y el 15 de junio?
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p6
+  group: period_absolute
+  question: Necesito saber cuánto se acumuló en mi gasto entre el 1 y el 15 de junio.
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p7
+  group: period_absolute
+  question: ¿Podría obtener una estadística de mis gastos desde el 1 hasta el 15 de junio?
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_explicit_range_p8
+  group: period_absolute
+  question: Podría tener un informe de mi gasto durante el período del 1 al 15 de junio?
+  expect: plan
+  plan: *id014
+  paraphrase_of: absolute_explicit_range
+- id: absolute_single_day_p1
+  group: period_absolute
+  question: Me gustaría ver los movimientos bancarios realizados el 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p2
+  group: period_absolute
+  question: Por favor, indique los detalles de las transacciones del 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p3
+  group: period_absolute
+  question: ¿Podría proporcionarme el resumen de operaciones del 3 de junio?
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p4
+  group: period_absolute
+  question: Quiero consultar los movimientos financieros ocurridos el 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p5
+  group: period_absolute
+  question: ¿Cuáles fueron mis transacciones el 3 de junio?
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p6
+  group: period_absolute
+  question: Necesito una lista de los movimientos realizados en mi cuenta el 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p7
+  group: period_absolute
+  question: Me interesa saber qué movimientos tuve en mi cuenta el 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p8
+  group: period_absolute
+  question: ¿Podría mostrarme el historial de movimientos del 3 de junio?
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p9
+  group: period_absolute
+  question: Quiero saber los detalles de las operaciones bancarias del 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p10
+  group: period_absolute
+  question: Por favor, enumere todos los movimientos que tuve en mi cuenta el 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p11
+  group: period_absolute
+  question: Estoy buscando la información de los movimientos financieros del 3 de junio.
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_single_day_p12
+  group: period_absolute
+  question: ¿Me podría dar el listado de movimientos realizados el 3 de junio?
+  expect: plan
+  plan: *id015
+  paraphrase_of: absolute_single_day
+- id: absolute_first_quarter_p1
+  group: period_absolute
+  question: Quisiera saber el total de mi gasto durante el primer trimestre.
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p2
+  group: period_absolute
+  question: ¿Podría informarme cuánto consumí en el primer trimestre?
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p3
+  group: period_absolute
+  question: Necesito ver mi gasto acumulado en el primer trimestre.
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p4
+  group: period_absolute
+  question: ¿Cuál fue mi desembolso durante el primer trimestre?
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p5
+  group: period_absolute
+  question: Me interesa conocer mi gasto total en el primer trimestre.
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p6
+  group: period_absolute
+  question: ¿Puedo obtener la cifra de mi gasto en el primer trimestre?
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p7
+  group: period_absolute
+  question: Estoy buscando la información sobre mi gasto en el primer trimestre.
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_first_quarter_p8
+  group: period_absolute
+  question: Necesito información detallada de mi gasto para el primer trimestre.
+  expect: plan
+  plan: *id016
+  paraphrase_of: absolute_first_quarter
+- id: absolute_open_ended_to_today_p1
+  group: period_absolute
+  question: ¿Podría informarme cuál ha sido mi gasto desde el 1 de junio hasta hoy?
+  expect: plan
+  plan: *id017
+  paraphrase_of: absolute_open_ended_to_today
+- id: absolute_open_ended_to_today_p2
+  group: period_absolute
+  question: Me gustaría conocer el importe total que he desembolsado entre el 1 de junio y hoy.
+  expect: plan
+  plan: *id017
+  paraphrase_of: absolute_open_ended_to_today
+- id: absolute_open_ended_to_today_p3
+  group: period_absolute
+  question: ¿Podría darme la cifra de lo que he gastado desde el 1 de junio hasta hoy mismo?
+  expect: plan
+  plan: *id017
+  paraphrase_of: absolute_open_ended_to_today
+- id: absolute_open_ended_to_today_p4
+  group: period_absolute
+  question: Quiero conocer el importe total de mis gastos desde el 1 de junio hasta hoy.
+  expect: plan
+  plan: *id017
+  paraphrase_of: absolute_open_ended_to_today
+- id: absolute_open_ended_to_today_p5
+  group: period_absolute
+  question: Me gustaría obtener información sobre mi gasto desde el 1 de junio hasta hoy mismo.
+  expect: plan
+  plan: *id017
+  paraphrase_of: absolute_open_ended_to_today
+- id: absolute_month_with_year_p1
+  group: period_absolute
+  question: Me gustaría saber el total de gastos que realicé en abril del 2026.
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p2
+  group: period_absolute
+  question: ¿Podría informarme cuál fue mi gasto neto en abril de 2026?
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p3
+  group: period_absolute
+  question: Quiero conocer el importe que destine a gastos durante el mes de abril del 2026.
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p4
+  group: period_absolute
+  question: Por favor, indíqueme cuánto consumí en el mes de abril del año 2026.
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p5
+  group: period_absolute
+  question: ¿Cuál fue el monto total que utilicé para desembolsos en abril del 2026?
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p6
+  group: period_absolute
+  question: Necesito un resumen de los gastos que registre en abril del año 2026.
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p7
+  group: period_absolute
+  question: ¿Cuánto total consumí en fechas comprendidas entre el mes de abril del 2026?
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p8
+  group: period_absolute
+  question: Quiero saber el importe que quedó registrado como gastos en abril del año 2026.
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p9
+  group: period_absolute
+  question: Podría obtener información sobre el gasto total que tuve en abril de 2026?
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p10
+  group: period_absolute
+  question: ¿Cuál fue el monto que destine a gastos específicos durante el mes de abril del 2026?
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: absolute_month_with_year_p11
+  group: period_absolute
+  question: Necesito que me indiquen el total de gastos que realicé en el mes de abril del año 2026.
+  expect: plan
+  plan: *id018
+  paraphrase_of: absolute_month_with_year
+- id: multi_fuel_and_public_p1
+  group: category_multiple
+  question: Me gustaría saber el importe total que he gastado en combustible y en medios de transporte
+    público durante este mes.
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_fuel_and_public_p2
+  group: category_multiple
+  question: ¿Podría informarme cuál es el gasto acumulado por gasolina y transporte colectivo en el mes
+    actual?
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_fuel_and_public_p3
+  group: category_multiple
+  question: Me interesa conocer el gasto total que ha habido en mi cuenta por la gasolina y los servicios
+    de transporte público este mes.
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_fuel_and_public_p4
+  group: category_multiple
+  question: ¿Podría darme la cifra total que he gastado en combustible y transporte público en el mes
+    actual?
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_fuel_and_public_p5
+  group: category_multiple
+  question: ¿Cuál es el monto acumulado por los gastos de gasolina y transporte público en el mes en curso?
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_fuel_and_public_p6
+  group: category_multiple
+  question: Necesito información sobre el total que he consumido en combustible y transporte público este
+    mes específico.
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_fuel_and_public_p7
+  group: category_multiple
+  question: Me gustaría obtener el importe total que ha salido de mi cuenta por gasolina y transporte
+    público durante este mes.
+  expect: plan
+  plan: *id019
+  paraphrase_of: multi_fuel_and_public
+- id: multi_super_and_restaurants_p1
+  group: category_multiple
+  question: Estoy interesado en conocer el importe que consumí en comestibles el mes pasado, abarcando
+    tanto las compras en el establecimiento de alimentos como las transacciones fuera del super.
+  expect: plan
+  plan: *id020
+  paraphrase_of: multi_super_and_restaurants
+- id: multi_super_and_restaurants_p2
+  group: category_multiple
+  question: Quisiera obtener los detalles del gasto por alimentos en el período del mes que pasó, contemplando
+    tanto las operaciones en el supermercado como las que tuvieron lugar en otros lugares.
+  expect: plan
+  plan: *id020
+  paraphrase_of: multi_super_and_restaurants
+- id: multi_super_and_restaurants_p3
+  group: category_multiple
+  question: ¿Cuál fue el desembolso total que realicé en alimentos durante el mes pasado, teniendo en
+    cuenta tanto las adquisiciones en el super como las que fui a realizar fuera?
+  expect: plan
+  plan: *id020
+  paraphrase_of: multi_super_and_restaurants
+- id: multi_super_and_restaurants_p4
+  group: category_multiple
+  question: Me interesa conocer el total gastado en comida durante el mes pasado, considerando tanto las
+    compras realizadas en el super como las que hice fuera de él.
+  expect: plan
+  plan: *id020
+  paraphrase_of: multi_super_and_restaurants
+- id: multi_super_and_restaurants_p5
+  group: category_multiple
+  question: Estoy buscando información sobre cuánto gasté en alimentos el mes pasado, incluyendo tanto
+    las compras en el super como las que hice fuera.
+  expect: plan
+  plan: *id020
+  paraphrase_of: multi_super_and_restaurants
+- id: multi_super_and_restaurants_p6
+  group: category_multiple
+  question: Quiero saber el importe total que consumí en productos de alimentación durante el mes anterior,
+    considerando tanto las compras en el supermercado como las realizadas en otros establecimientos.
+  expect: plan
+  plan: *id020
+  paraphrase_of: multi_super_and_restaurants
+- id: multi_three_categories_p1
+  group: category_multiple
+  question: ¿Podría indicarme el monto total que he gastado este mes en compras de súper, abastecimiento
+    de gasolina y productos de la farmacia?
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_three_categories_p2
+  group: category_multiple
+  question: Quiero conocer el importe total que he registrado este mes para los gastos de súper, combustible
+    y farmacia.
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_three_categories_p3
+  group: category_multiple
+  question: Necesito información sobre el total de dinero que he consumido este mes en las categorías
+    de súper, gasolina y farmacia.
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_three_categories_p4
+  group: category_multiple
+  question: ¿Podría darme el resumen de los gastos que he tenido este mes en las categorías de súper,
+    gasolina y farmacia?
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_three_categories_p5
+  group: category_multiple
+  question: Quiero ver el monto total que ha sido gastado este mes en las áreas de súper, combustible
+    y farmacia.
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_three_categories_p6
+  group: category_multiple
+  question: ¿Cuál es el importe total que he registrado para los gastos de súper, gasolina y farmacia
+    este mes?
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_three_categories_p7
+  group: category_multiple
+  question: Necesito conocer el total de mi consumo este mes en las categorías de súper, gasolina y farmacia.
+  expect: plan
+  plan: *id021
+  paraphrase_of: multi_three_categories
+- id: multi_leisure_and_subscriptions_p1
+  group: category_multiple
+  question: Me gustaría saber el importe total que he gastado en ocio y suscripciones durante este mes.
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p2
+  group: category_multiple
+  question: Quiero conocer el gasto acumulado en actividades de ocio y mis suscripciones para el mes actual.
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p3
+  group: category_multiple
+  question: ¿Podría proporcionarme la cifra del gasto que he realizado en ocio y sus suscripciones durante
+    este mes específico?
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p4
+  group: category_multiple
+  question: Deseo saber cuánto dinero he gastado en ocio y suscripciones en el mes actual.
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p5
+  group: category_multiple
+  question: Quiero un resumen del gasto que he tenido en ocio y suscripciones para este mes.
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p6
+  group: category_multiple
+  question: ¿Cuál es el total de mi consumo en actividades de ocio y suscripciones este mes?
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p7
+  group: category_multiple
+  question: Me gustaría obtener información sobre el gasto que he realizado en ocio y suscripciones para
+    este mes particular.
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_leisure_and_subscriptions_p8
+  group: category_multiple
+  question: ¿Podría darme el total de mis desembolsos en ocio y suscripciones este mes?
+  expect: plan
+  plan: *id022
+  paraphrase_of: multi_leisure_and_subscriptions
+- id: multi_fixed_costs_p1
+  group: category_multiple
+  question: Quisiera conocer el importe total pagado en el mes anterior por alquiler y servicios de suscripción.
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p2
+  group: category_multiple
+  question: ¿Podría informarme cuál fue el monto total que consumí el pasado mes en alquiler y suscripciones?
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p3
+  group: category_multiple
+  question: Me interesa conocer el gasto total del mes pasado por mi alquiler y las suscripciones que
+    pago.
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p4
+  group: category_multiple
+  question: ¿Cuál fue el desembolso total del mes pasado por el alquiler y las suscripciones que mantenía?
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p5
+  group: category_multiple
+  question: ¿Podría proporcionarme el total de pagos realizados el mes pasado por mi alquiler y suscripciones?
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p6
+  group: category_multiple
+  question: Quiero descubrir cuánto costó el mes pasado mi vivienda alquiler y las suscripciones que pago.
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p7
+  group: category_multiple
+  question: Me gustaría obtener información sobre el gasto total del mes pasado por el alquiler y las
+    suscripciones.
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: multi_fixed_costs_p8
+  group: category_multiple
+  question: Necesito que me digan el importe total que pagué en el mes anterior por alquiler y suscripciones.
+  expect: plan
+  plan: *id023
+  paraphrase_of: multi_fixed_costs
+- id: merchant_netflix_p1
+  group: merchant
+  question: ¿Podría informarme el precio que tengo asignado por Netflix en mi factura del mes?
+  expect: clarification
+  why: it names the shop and not the window — the period is still missing
+  paraphrase_of: merchant_netflix
+- id: merchant_netflix_p2
+  group: merchant
+  question: Necesito ver el detalle de mi gasto mensual por Netflix en la aplicación del banco.
+  expect: clarification
+  why: it names the shop and not the window — the period is still missing
+  paraphrase_of: merchant_netflix
+- id: merchant_gym_p1
+  group: merchant
+  question: Me gustaría saber el precio del acceso al gimnasio.
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: merchant_gym_p2
+  group: merchant
+  question: ¿Podría informarme sobre el costo para usar el gimnasio?
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: merchant_gym_p3
+  group: merchant
+  question: Quisiera conocer el importe que tengo que pagar por el gimnasio.
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: merchant_gym_p4
+  group: merchant
+  question: ¿Cuál es la tarifa que se aplica para el gimnasio?
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: merchant_gym_p7
+  group: merchant
+  question: Quiero obtener información sobre el costo del servicio gimnasial.
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: merchant_gym_p8
+  group: merchant
+  question: ¿Cuánto debe pagar por el gimnasio en total?
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: merchant_gym_p9
+  group: merchant
+  question: ¿Podrían darme el costo total asociado con el gimnasio?
+  expect: clarification
+  why: the gym is one merchant inside SUBSCRIPTIONS, which also holds Netflix
+  paraphrase_of: merchant_gym
+- id: follow_fresh_question_drops_context_p1
+  group: follow_up
+  question: Quiero saber el total de mi gasto de hoy.
+  previous: *id024
+  expect: plan
+  plan: *id025
+  paraphrase_of: follow_fresh_question_drops_context
+- id: follow_fresh_question_drops_context_p2
+  group: follow_up
+  question: Necesito ver cuánto he consumido financieramente hoy.
+  previous: *id024
+  expect: plan
+  plan: *id025
+  paraphrase_of: follow_fresh_question_drops_context
+- id: follow_fresh_question_drops_context_p3
+  group: follow_up
+  question: Deseo saber el consumo diario de hoy en mi cuenta.
+  previous: *id024
+  expect: plan
+  plan: *id025
+  paraphrase_of: follow_fresh_question_drops_context
+- id: follow_fresh_question_drops_context_p4
+  group: follow_up
+  question: Quiero un resumen de los gastos que he hecho hoy.
+  previous: *id024
+  expect: plan
+  plan: *id025
+  paraphrase_of: follow_fresh_question_drops_context
+- id: follow_fresh_question_drops_context_p5
+  group: follow_up
+  question: Necesito una lista del gasto que he realizado hoy.
+  previous: *id024
+  expect: plan
+  plan: *id025
+  paraphrase_of: follow_fresh_question_drops_context
+- id: ambiguous_ultimamente_p1
+  group: ambiguity
+  question: Quisiera saber el total que he desembolsado recientemente.
+  expect: clarification
+  why: '''últimamente'' names no window; every Period would be a guess'
+  paraphrase_of: ambiguous_ultimamente
+- id: ambiguous_ultimamente_p2
+  group: ambiguity
+  question: Me gustaría conocer el monto que he consumido en los últimos días.
+  expect: clarification
+  why: '''últimamente'' names no window; every Period would be a guess'
+  paraphrase_of: ambiguous_ultimamente
+- id: ambiguous_ultimamente_p3
+  group: ambiguity
+  question: Me interesa conocer el importe total de mis desembolsos últimamente.
+  expect: clarification
+  why: '''últimamente'' names no window; every Period would be a guess'
+  paraphrase_of: ambiguous_ultimamente
+- id: ambiguous_ultimamente_p4
+  group: ambiguity
+  question: ¿Podría darme un resumen de los gastos que he realizado recientemente?
+  expect: clarification
+  why: '''últimamente'' names no window; every Period would be a guess'
+  paraphrase_of: ambiguous_ultimamente
+- id: ambiguous_ultimamente_p5
+  group: ambiguity
+  question: ¿Podría proporcionarme el monto que he desembolsado en el período más reciente?
+  expect: clarification
+  why: '''últimamente'' names no window; every Period would be a guess'
+  paraphrase_of: ambiguous_ultimamente
+- id: ambiguous_lo_normal_p1
+  group: ambiguity
+  question: ¿Me está saliendo el gasto como de costumbre?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p2
+  group: ambiguity
+  question: ¿Estoy incurriendo en un desembolso similar al habitual?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p3
+  group: ambiguity
+  question: ¿Estoy consumiendo una cantidad de dinero parecida a la de siempre?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p4
+  group: ambiguity
+  question: ¿Mi gasto está rondando los niveles normales que tengo?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p5
+  group: ambiguity
+  question: ¿Estoy gastando una cifra aproximada a mi gasto habitual?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p6
+  group: ambiguity
+  question: ¿Estoy incurrir en un desembolso paralelo al que acostumo?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p7
+  group: ambiguity
+  question: ¿Mi consumo monetario se asemeja al que suelo tener?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p8
+  group: ambiguity
+  question: ¿Estoy desembolsando una suma cercana a mi gasto usual?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p9
+  group: ambiguity
+  question: ¿Estoy experimentando un gasto similar al que normalmente tengo?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p10
+  group: ambiguity
+  question: ¿Mi gasto está en línea con el que históricamente suelo tener?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p11
+  group: ambiguity
+  question: ¿Estoy incurriendo en un desembolso equivalente al que acostumbro?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_lo_normal_p12
+  group: ambiguity
+  question: ¿Estoy gastando una cantidad comparable a mi gasto habitual?
+  expect: clarification
+  why: no baseline is defined; "normal" is not a period, a category or a figure
+  paraphrase_of: ambiguous_lo_normal
+- id: ambiguous_gastos_grandes_p1
+  group: ambiguity
+  question: Déjame ver los gastos sustanciales que realicé.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_gastos_grandes_p2
+  group: ambiguity
+  question: Quiero revisar los grandes gastos que tuve.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_gastos_grandes_p3
+  group: ambiguity
+  question: Por favor, indícame los desembolsos mayores en mi cuenta.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_gastos_grandes_p4
+  group: ambiguity
+  question: Por favor, enumera mis desembolsos más grandes hasta la fecha.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_gastos_grandes_p5
+  group: ambiguity
+  question: Me gustaría conocer los gastos mayores que he realizado.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_gastos_grandes_p6
+  group: ambiguity
+  question: Necesito una visión de mis gastos más grandes para analizarlos.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_gastos_grandes_p7
+  group: ambiguity
+  question: Muestra los mayores desembolsos que he tenido en mi cuenta bancaria.
+  expect: clarification
+  why: no threshold given, and the schema has no amount filter
+  paraphrase_of: ambiguous_gastos_grandes
+- id: ambiguous_mucho_p1
+  group: ambiguity
+  question: Me gustaría conocer el detalle de mis gastos para ver si he gastado una cantidad considerable.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p2
+  group: ambiguity
+  question: ¿Podría informarme sobre los gastos realizados para determinar si he tenido un gasto elevado?
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p3
+  group: ambiguity
+  question: Estoy interesado en revisar mi historial de transacciones para ver si mi gasto ha sido alto.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p4
+  group: ambiguity
+  question: Me gustaría una lista de mis desembolsos recientes para comprobar si he gastado mucho.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p5
+  group: ambiguity
+  question: ¿Puede proporcionarme un resumen de mis gastos del período en curso para verificar si he tenido
+    un gasto sustancial?
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p6
+  group: ambiguity
+  question: Necesito saber si mis salidas de dinero han sido importantes durante este tiempo específico.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p7
+  group: ambiguity
+  question: Quiero un análisis de mis movimientos financieros para entender si he tenido un gasto significativo.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p8
+  group: ambiguity
+  question: ¿Hay una forma de revisar mis registros de gastos para descubrir si he gastado una cantidad
+    considerable?
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p9
+  group: ambiguity
+  question: Me interesa conocer el total de mis desembolsos para determinar si he tenido un gasto elevado.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_mucho_p10
+  group: ambiguity
+  question: Deseo obtener información sobre mis gastos recientes para evaluar si he tenido un gasto notable.
+  expect: clarification
+  why: '''mucho'' is a judgement, and against no stated window'
+  paraphrase_of: ambiguous_mucho
+- id: ambiguous_como_voy_p4
+  group: ambiguity
+  question: Estoy interesado en conocer mi situación financiera actual, ¿podría informarme?
+  expect: clarification
+  why: could be a balance, a total or a comparison; none is named
+  paraphrase_of: ambiguous_como_voy
+- id: ambiguous_como_voy_p6
+  group: ambiguity
+  question: Necesito saber el monto de dinero que tengo en mi cuenta, ¿es posible?
+  expect: clarification
+  why: could be a balance, a total or a comparison; none is named
+  paraphrase_of: ambiguous_como_voy
+- id: ambiguous_ese_mes_p1
+  group: ambiguity
+  question: Me gustaría saber el total de mi gasto durante ese mes.
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: ambiguous_ese_mes_p2
+  group: ambiguity
+  question: ¿Podría informarme cuánto consumí en ese mes específico?
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: ambiguous_ese_mes_p3
+  group: ambiguity
+  question: Necesito conocer mi desembolso para ese mes.
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: ambiguous_ese_mes_p4
+  group: ambiguity
+  question: ¿Cuál fue mi gasto total en ese mes en cuestión?
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: ambiguous_ese_mes_p5
+  group: ambiguity
+  question: Deseo obtener los detalles de mi gasto para ese mes.
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: ambiguous_ese_mes_p6
+  group: ambiguity
+  question: Necesito una relación de mis gastos para ese mes.
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: ambiguous_ese_mes_p7
+  group: ambiguity
+  question: ¿Podría darme la cifra de mi gasto durante ese mes?
+  expect: clarification
+  why: '''ese'' points at a month no previous turn established'
+  paraphrase_of: ambiguous_ese_mes
+- id: noise_greeting_p1
+  group: noise
+  question: Saludos, ¿cuál fue mi consumo económico en el mes anterior?
+  expect: plan
+  plan: *id026
+  paraphrase_of: noise_greeting
+- id: noise_greeting_p2
+  group: noise
+  question: Estoy aquí preguntando si podrías proporcionarme el detalle de mis gastos del mes que terminó.
+  expect: plan
+  plan: *id026
+  paraphrase_of: noise_greeting
+- id: noise_greeting_p3
+  group: noise
+  question: Por favor, me gustaría conocer el importe que desembolsé en el mes que pasó.
+  expect: plan
+  plan: *id026
+  paraphrase_of: noise_greeting
+- id: noise_greeting_p4
+  group: noise
+  question: Hola, ¿tienes constancia de cuánto gasté el mes pasado en mis operaciones?
+  expect: plan
+  plan: *id026
+  paraphrase_of: noise_greeting
+- id: noise_greeting_p5
+  group: noise
+  question: ¿Podría obtener la información sobre mis gastos durante el mes anterior, por favor?
+  expect: plan
+  plan: *id026
+  paraphrase_of: noise_greeting
+- id: noise_greeting_p6
+  group: noise
+  question: Estoy interesado en saber cuánto consumí en el período que terminó el mes pasado.
+  expect: plan
+  plan: *id026
+  paraphrase_of: noise_greeting
+- id: noise_thanks_p1
+  group: noise
+  question: Me gustaría saber el total de gastos que tuve el mes pasado. Muchas gracias.
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p2
+  group: noise
+  question: Quiero conocer el importe que destine al gasto durante el mes anterior. ¡Gracias!
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p3
+  group: noise
+  question: ¿Cuál fue mi desembolso neto el mes pasado? Saludos.
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p4
+  group: noise
+  question: Estoy interesado en conocer el monto que utilicé para gastos el mes pasado. Gracias de antemano.
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p5
+  group: noise
+  question: ¿Podría proporcionarme la cifra de mi gasto total en el mes anterior? Muchas gracias.
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p6
+  group: noise
+  question: Necesito información sobre el gasto que realicé el mes pasado. Por favor, ayúdame.
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p7
+  group: noise
+  question: Me gustaría obtener el detalle del gasto que realicé el pasado mes. ¡Gracias!
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_thanks_p8
+  group: noise
+  question: ¿Podría indicarme el importe total gastado el mes pasado? ¡Muchas gracias!
+  expect: plan
+  plan: *id027
+  paraphrase_of: noise_thanks
+- id: noise_no_accents_p1
+  group: noise
+  question: Me gustaría saber el total de gastos que tuve el mes pasado.
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p2
+  group: noise
+  question: ¿Podría informarme sobre el monto total que gasté en el mes anterior?
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p3
+  group: noise
+  question: ¿Cuál fue el gasto total en mi cuenta el mes pasado?
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p4
+  group: noise
+  question: Me interesa saber cuánto me gasté en el período del mes pasado.
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p5
+  group: noise
+  question: ¿Podría proporcionarme los detalles de mis gastos del mes pasado?
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p6
+  group: noise
+  question: ¿Cuál fue el consumo total en mi cuenta durante el mes anterior?
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p7
+  group: noise
+  question: Necesito un resumen de mis gastos para el mes que acaba de terminar.
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p8
+  group: noise
+  question: Me gustaría saber el total de mi gasto en el mes pasado.
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_no_accents_p9
+  group: noise
+  question: ¿Podría darme la cantidad total que gasté el mes pasado?
+  expect: plan
+  plan: *id028
+  paraphrase_of: noise_no_accents
+- id: noise_uppercase_p1
+  group: noise
+  question: Me gustaría saber cuál fue mi gasto durante el mes anterior.
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_uppercase_p2
+  group: noise
+  question: ¿Cuál fue mi desembolso en el período correspondiente al mes pasado?
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_uppercase_p3
+  group: noise
+  question: Podría darme los detalles de mis gastos para el mes pasado?
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_uppercase_p4
+  group: noise
+  question: Deseo conocer el total de mis gastos realizados en el mes pasado.
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_uppercase_p5
+  group: noise
+  question: Me gustaría saber cuánto se desembolsó en mi cuenta durante el mes pasado.
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_uppercase_p6
+  group: noise
+  question: Quiero obtener información sobre el gasto total del mes anterior.
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_uppercase_p7
+  group: noise
+  question: ¿Cuál fue el desembolso total que realicé el mes pasado?
+  expect: plan
+  plan: *id029
+  paraphrase_of: noise_uppercase
+- id: noise_rambling_p1
+  group: noise
+  question: Quisiera conocer el importe total que destine a compras en el supermercado durante el mes
+    anterior.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p2
+  group: noise
+  question: Me gustaría saber cuánto dinero utilicé para gastos en el supermercado el pasado mes.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p3
+  group: noise
+  question: ¿Podrían indicarme el gasto realizado en el supermercado en el mes que acaba de terminar?
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p4
+  group: noise
+  question: Estoy interesado en obtener la cifra del dinero gastado en el supermercado el mes pasado.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p5
+  group: noise
+  question: Necesito saber el total de gastos en el supermercado durante el mes anterior.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p6
+  group: noise
+  question: Me interesa conocer el importe que utilicé para gastar en el supermercado el pasado mes.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p7
+  group: noise
+  question: Quiero saber cuánto me costaron las compras en el supermercado el mes pasado.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p8
+  group: noise
+  question: Por favor, déjenme saber el gasto que hice en el supermercado durante el mes anterior.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: noise_rambling_p9
+  group: noise
+  question: Necesito una resumen del dinero que consumí en el supermercado el mes pasado.
+  expect: plan
+  plan: *id030
+  paraphrase_of: noise_rambling
+- id: adv_weather_p1
+  group: out_of_domain
+  question: ¿Podría informarme sobre el clima para el día de mañana?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p2
+  group: out_of_domain
+  question: Me gustaría saber cuál será la meteorología mañana.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p3
+  group: out_of_domain
+  question: ¿Podría decirme qué condiciones meteorológicas prevalecerán mañana?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p4
+  group: out_of_domain
+  question: Estoy interesado en conocer el pronóstico del tiempo para el próximo día.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p5
+  group: out_of_domain
+  question: Quiero saber qué tiempo habrá mañana.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p6
+  group: out_of_domain
+  question: ¿Podría obtener información sobre el tiempo que habrá mañana?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p7
+  group: out_of_domain
+  question: Me gustaría preguntar por el clima previsto para el día de mañana.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p8
+  group: out_of_domain
+  question: ¿Podría proporcionarme detalles sobre el tiempo que se espera mañana?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p9
+  group: out_of_domain
+  question: Estoy preguntando por el pronóstico del tiempo para el día que viene.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p10
+  group: out_of_domain
+  question: Quiero información sobre las condiciones meteorológicas que habrá mañana.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p11
+  group: out_of_domain
+  question: ¿Podrían indicarme qué tiempo habrá mañana?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_weather_p12
+  group: out_of_domain
+  question: Me gustaría saber el estado del tiempo previsto para el día de mañana.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_weather
+- id: adv_general_knowledge_p1
+  group: out_of_domain
+  question: Me gustaría saber qué ciudad es la capital de Francia.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p2
+  group: out_of_domain
+  question: ¿Podría informarme cuál es la ciudad que sirve de capital a Francia?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p3
+  group: out_of_domain
+  question: Estoy interesado en conocer la ciudad que actúa como capital del país de Francia.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p4
+  group: out_of_domain
+  question: ¿Cuál es la localidad que ocupa el rol de capital en Francia?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p5
+  group: out_of_domain
+  question: Quisiera saber qué ciudad tiene el estatus de capital en Francia.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p6
+  group: out_of_domain
+  question: ¿Podría decirme la ciudad que desempeña la función de capital en Francia?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p7
+  group: out_of_domain
+  question: Me interesa conocer la ciudad que es designada como capital de Francia.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p8
+  group: out_of_domain
+  question: ¿Cuál es la ciudad que ostenta el título de capital en el territorio francés?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p9
+  group: out_of_domain
+  question: Necesito información sobre la ciudad que sirve como capital de Francia.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p10
+  group: out_of_domain
+  question: ¿Podría obtener la respuesta a cuál es la ciudad capital de Francia?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p11
+  group: out_of_domain
+  question: Estoy preguntando por la ciudad que es reconocida como capital del país francés.
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_general_knowledge_p12
+  group: out_of_domain
+  question: ¿Cuál es la ciudad que se considera la capital de Francia?
+  expect: unsupported
+  why: not about this account
+  paraphrase_of: adv_general_knowledge
+- id: adv_stock_advice_p1
+  group: out_of_domain
+  question: Me gustaría saber si sería una buena idea que yo compre acciones de Telefónica.
+  expect: unsupported
+  why: advice about money this account does not hold
+  paraphrase_of: adv_stock_advice
+- id: adv_stock_advice_p2
+  group: out_of_domain
+  question: ¿Considerarías que mi compra de acciones de Telefónica sería una decisión acertada?
+  expect: unsupported
+  why: advice about money this account does not hold
+  paraphrase_of: adv_stock_advice
+- id: adv_stock_advice_p3
+  group: out_of_domain
+  question: Me interesa saber si comprar acciones de Telefónica sería beneficioso para mi bolsillo.
+  expect: unsupported
+  why: advice about money this account does not hold
+  paraphrase_of: adv_stock_advice
+- id: adv_transfer_request_p1
+  group: out_of_domain
+  question: Crea un Bizum por 20 euros a nombre de Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p2
+  group: out_of_domain
+  question: Envía 20 euros mediante Bizum a Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p3
+  group: out_of_domain
+  question: Realiza un transferencia Bizum de 20 euros para Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p4
+  group: out_of_domain
+  question: Operación Bizum de 20 euros hacia Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p5
+  group: out_of_domain
+  question: Procedo a hacer un Bizum de 20 euros a favor de Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p6
+  group: out_of_domain
+  question: Despacho un Bizum de 20 euros a Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p7
+  group: out_of_domain
+  question: Inciempo un Bizum de 20 euros dirigido a Marta.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p8
+  group: out_of_domain
+  question: Realicé un transferencia de 20 euros a Marta por medio de Bizum.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_transfer_request_p9
+  group: out_of_domain
+  question: Procedo a enviar 20 euros a Marta utilizando Bizum.
+  expect: unsupported
+  why: an instruction to move money. This service only reads, and phase 5 is where that changes
+  paraphrase_of: adv_transfer_request
+- id: adv_change_password_p1
+  group: out_of_domain
+  question: Por favor, solicito un cambio de la contraseña de mi acceso a la banca en línea.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p2
+  group: out_of_domain
+  question: Me gustaría renovar la contraseña que uso para entrar en la banca virtual.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p3
+  group: out_of_domain
+  question: Quiero que me asigne una nueva clave de seguridad para mi cuenta bancaria en línea.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p4
+  group: out_of_domain
+  question: Necesito que actualice la contraseña de mi acceso a Internet Banking.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p5
+  group: out_of_domain
+  question: Por consideración, pido un nuevo password para mi cuenta de banca por Internet.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p6
+  group: out_of_domain
+  question: Estoy solicitando un cambio de clave para mi acceso a la banca electrónica.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p7
+  group: out_of_domain
+  question: Por favor, modifiquen la contraseña que uso para navegar por mi banca en línea.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p8
+  group: out_of_domain
+  question: Deseo que me generen una nueva combinación de caracteres para mi acceso a la banca digital.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p9
+  group: out_of_domain
+  question: Solicito la modificación de la clave de acceso a mi cuenta bancaria en línea.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p10
+  group: out_of_domain
+  question: Por favor, procedan a cambiar la contraseña que utilizo para mi banca en línea.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p11
+  group: out_of_domain
+  question: Me parece necesario que actualicen la contraseña de mi acceso a Internet Banking.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_change_password_p12
+  group: out_of_domain
+  question: Quedo a la espera de un nuevo password para mi cuenta de banca en línea.
+  expect: unsupported
+  why: a change to state, through a surface that only queries
+  paraphrase_of: adv_change_password
+- id: adv_zero_days_p1
+  group: boundary
+  question: Me gustaría saber el total de gastos en los últimos 0 días.
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p2
+  group: boundary
+  question: Quiero conocer el importe que he desembolsado en los últimos 0 días.
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p3
+  group: boundary
+  question: ¿Podría informarme sobre el gasto total realizado en los últimos 0 días?
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p4
+  group: boundary
+  question: Me interesa ver cuánto dinero he consumido en los últimos 0 días.
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p5
+  group: boundary
+  question: ¿Cuál ha sido mi desembolso acumulado en los últimos 0 días?
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p6
+  group: boundary
+  question: Deseo obtener un resumen de los gastos que he tenido en los últimos 0 días.
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p7
+  group: boundary
+  question: Quiero saber el total de mi gasto en los últimos 0 días.
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p8
+  group: boundary
+  question: ¿Podría mostrarme el importe total que he gastado en los últimos 0 días?
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_zero_days_p9
+  group: boundary
+  question: Me interesa conocer el gasto total en el periodo de los últimos 0 días.
+  expect: clarification
+  why: n must be at least 1; zero days is not a window
+  paraphrase_of: adv_zero_days
+- id: adv_thousand_days_p1
+  group: boundary
+  question: Me gustaría saber el total de gastos acumulados durante los últimos 5000 días.
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p2
+  group: boundary
+  question: Quiero conocer el importe total que he desembolsado en los últimos 5000 días.
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p3
+  group: boundary
+  question: ¿Podría informarme cuánto dinero he consumido en el período de los últimos 5000 días?
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p4
+  group: boundary
+  question: Necesito saber el monto que he gastado en el intervalo de los últimos 5000 días.
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p5
+  group: boundary
+  question: ¿Cuál es el gasto total registrado en mi cuenta durante los últimos 5000 días?
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p6
+  group: boundary
+  question: Me interesa conocer el desembolso total que he realizado en los últimos 5000 días.
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p7
+  group: boundary
+  question: ¿Podría proporcionarme el resumen de gastos de los últimos 5000 días?
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p8
+  group: boundary
+  question: ¿Cuál ha sido el total de mis desembolsos en los últimos 5000 días?
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_thousand_days_p9
+  group: boundary
+  question: ¿Podría darme el monto total que he consumido en los últimos 5000 días?
+  expect: clarification
+  why: over the domain ceiling of 366 days
+  paraphrase_of: adv_thousand_days
+- id: adv_hundred_months_p1
+  group: boundary
+  question: Me gustaría saber el total de gastos que he realizado durante los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p2
+  group: boundary
+  question: Quiero conocer el importe acumulado de mis desembolsos en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p3
+  group: boundary
+  question: ¿Podría informarme cuánto dinero he desembolsado en los últimos 100 meses?
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p4
+  group: boundary
+  question: Estoy interesado en saber el monto total gastado en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p5
+  group: boundary
+  question: Me interesa conocer el importe de mis gastos durante los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p6
+  group: boundary
+  question: ¿Cuál ha sido el desembolso total que he realizado en los últimos 100 meses?
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p7
+  group: boundary
+  question: Necesito saber el total de mis gastos en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p8
+  group: boundary
+  question: Me gustaría obtener el detalle del monto gastado en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p9
+  group: boundary
+  question: ¿Podría proporcionarme la cifra total de mi consumo en los últimos 100 meses?
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p10
+  group: boundary
+  question: Quiero informarme sobre el total de mi desembolso en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p11
+  group: boundary
+  question: Estoy preguntando por el importe acumulado que he gastado en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_hundred_months_p12
+  group: boundary
+  question: Me gustaría saber cuánto dinero total he desembolsado en los últimos 100 meses.
+  expect: clarification
+  why: over the domain ceiling of 24 months
+  paraphrase_of: adv_hundred_months
+- id: adv_one_day_window_p1
+  group: boundary
+  question: ¿Podría informarme sobre el gasto realizado en el último día?
+  expect: plan
+  plan: *id031
+  paraphrase_of: adv_one_day_window
+- id: adv_one_day_window_p2
+  group: boundary
+  question: Me interesa saber el monto gastado en el último día disponible.
+  expect: plan
+  plan: *id031
+  paraphrase_of: adv_one_day_window
+- id: adv_one_day_window_p3
+  group: boundary
+  question: ¿Cuál es la cifra de mi gasto en el último día registrado?
+  expect: plan
+  plan: *id031
+  paraphrase_of: adv_one_day_window
+- id: adv_366_days_p1
+  group: boundary
+  question: Me gustaría saber el total de gastos que he realizado en los últimos 366 días.
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p2
+  group: boundary
+  question: ¿Podría informarme sobre el importe total que he desembolsado durante los últimos 366 días?
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p3
+  group: boundary
+  question: ¿Cuál es la cantidad total que he gastado en los últimos 366 días?
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p4
+  group: boundary
+  question: Necesito saber el desembolso total que he realizado en los últimos 366 días.
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p5
+  group: boundary
+  question: ¿Podría ver el resumen de mis gastos durante los últimos 366 días?
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p6
+  group: boundary
+  question: Quiero obtener la información sobre mi gasto en los últimos 366 días.
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p7
+  group: boundary
+  question: ¿Cuál ha sido mi gasto neto en el período comprendido en los últimos 366 días?
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_366_days_p8
+  group: boundary
+  question: Necesito una consulta sobre el total de mi gasto en los últimos 366 días.
+  expect: plan
+  plan: *id032
+  paraphrase_of: adv_366_days
+- id: adv_backwards_range_p1
+  group: boundary
+  question: Me gustaría saber el total de mi gasto desde el 30 de junio hasta el 1 de junio.
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p2
+  group: boundary
+  question: Quisiera conocer el monto que consumí entre el 30 de junio y el 1 de junio.
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p3
+  group: boundary
+  question: ¿Cuál fue mi gasto acumulado entre el 30 de junio y el 1 de junio?
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p4
+  group: boundary
+  question: Necesito saber cuánto gasté en el período del 30 de junio al 1 de junio.
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p5
+  group: boundary
+  question: Me interesa obtener la cifra de mi desembolso entre el 30 de junio y el 1 de junio.
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p6
+  group: boundary
+  question: ¿Podría proporcionarme el detalle del gasto realizado entre el 30 de junio y el 1 de junio?
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p7
+  group: boundary
+  question: Necesito información sobre el monto que consumí desde el 30 de junio hasta el 1 de junio.
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p8
+  group: boundary
+  question: ¿Cuánto me gasté en las fechas del 30 de junio al 1 de junio?
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_backwards_range_p9
+  group: boundary
+  question: Quisiera obtener el resumen de mi gasto durante el período del 30 de junio al 1 de junio.
+  expect: clarification
+  why: the range runs backwards; asking which way round is better than silently swapping it
+  paraphrase_of: adv_backwards_range
+- id: adv_future_window_p2
+  group: boundary
+  question: Quiero conocer cuánto de mi dinero voy a consumir desde hoy hasta el 31 de diciembre.
+  expect: unsupported
+  why: a window in the future over a ledger of what already happened
+  paraphrase_of: adv_future_window
+- id: adv_future_window_p3
+  group: boundary
+  question: ¿Podría obtener un resumen del gasto previsto de mi dinero del día de hoy hasta el 31 de diciembre?
+  expect: unsupported
+  why: a window in the future over a ledger of what already happened
+  paraphrase_of: adv_future_window
+- id: adv_future_window_p4
+  group: boundary
+  question: ¿Cuál será el gasto acumulado de mis recursos entre el día de hoy y el 31 de diciembre?
+  expect: unsupported
+  why: a window in the future over a ledger of what already happened
+  paraphrase_of: adv_future_window
+- id: adv_future_single_day_p1
+  group: boundary
+  question: Quisiera saber el total de mi gasto el 20 de agosto.
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p2
+  group: boundary
+  question: ¿Podría informarme sobre el gasto que realicé el día 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p3
+  group: boundary
+  question: ¿Cuál fue mi desembolso en la fecha del 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p4
+  group: boundary
+  question: ¿Podría ver el resumen de mis gastos para el 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p5
+  group: boundary
+  question: Necesito los detalles de mi gasto el 20 de agosto.
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p6
+  group: boundary
+  question: ¿Me puede proporcionar la cantidad gastada el 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p7
+  group: boundary
+  question: ¿Cuál fue el importe total de mis gastos el 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p8
+  group: boundary
+  question: Me interesa saber el total gastado en la fecha del 20 de agosto.
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p9
+  group: boundary
+  question: ¿Podría obtener información sobre mi gasto del 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_future_single_day_p10
+  group: boundary
+  question: ¿Cuál fue el monto que consumí el 20 de agosto?
+  expect: unsupported
+  why: after the reference date; that day has not happened
+  paraphrase_of: adv_future_single_day
+- id: adv_far_past_p1
+  group: boundary
+  question: Quisiera saber el total de gastos que realicé durante el año 1998.
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p2
+  group: boundary
+  question: ¿Podría informarme cuál fue mi gasto acumulado en 1998?
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p3
+  group: boundary
+  question: Estoy interesado en conocer el desembolso que tuve en 1998.
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p4
+  group: boundary
+  question: ¿Cuál fue el monto total que consumí en el año 1998?
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p5
+  group: boundary
+  question: Deseo obtener datos sobre mis gastos del año 1998.
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p6
+  group: boundary
+  question: Me interesa saber cuánto me gasté en toda la duración de 1998.
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p7
+  group: boundary
+  question: ¿Podría darme un resumen de los gastos que tuve en 1998?
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_far_past_p8
+  group: boundary
+  question: Quiero informarme sobre el total de mi gasto durante 1998.
+  expect: plan
+  plan: *id033
+  paraphrase_of: adv_far_past
+- id: adv_all_categories_p1
+  group: boundary
+  question: Me gustaría obtener el total de mi consumo este mes en supermercado, gasolina, restaurantes,
+    transporte, salud, ocio, suscripciones y alquiler.
+  expect: plan
+  plan: *id034
+  paraphrase_of: adv_all_categories
+- id: adv_all_categories_p2
+  group: boundary
+  question: ¿Podría proporcionarme el monto total que he gastado este mes en supermercado, gasolina, comer
+    fuera, transporte, cuidado de salud, ocio, suscripciones y alquiler?
+  expect: plan
+  plan: *id034
+  paraphrase_of: adv_all_categories
+- id: adv_all_categories_p3
+  group: boundary
+  question: Necesito que me indique el monto total que he gastado este mes en supermercado, gasolina,
+    restaurantes, transporte, salud, ocio, suscripciones y alquiler.
+  expect: plan
+  plan: *id034
+  paraphrase_of: adv_all_categories
+bases_not_admitted:
+- id: confuse_7_days_not_this_week
+  question: ¿Y en los siete últimos días?
+  why: the vocabulary cannot read directions ['EXPENSE'] -> []
+- id: multi_with_grouping
+  question: Del mes pasado, ¿cuánto fue en gasolina y cuánto en súper?
+  why: the vocabulary cannot read directions ['EXPENSE'] -> []; groupings ['CATEGORY'] -> []
+- id: ambiguous_bare_cuanto
+  question: ¿Cuánto?
+  why: the sentence carries fewer than two words to rewrite
+- id: noise_typos
+  question: cuanto gsate en gasolina este mess?
+  why: the vocabulary cannot read periods ['THIS_MONTH'] -> []; directions ['EXPENSE'] -> []
+- id: adv_empty_ish
+  question: '...'
+  why: the sentence carries fewer than two words to rewrite
+- id: follow_category_after_period
+  question: ¿Y en gasolina?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_grouping_after_period
+  question: ¿Y desglosado por categorías?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_period_change_keeps_category
+  question: ¿Y este mes?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_direction_change
+  question: ¿Y lo que me entró?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_without_context_must_ask
+  question: ¿Y en gasolina?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_metric_change
+  question: ¿Y cuántas veces?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_narrow_to_week
+  question: ¿Y solo la semana pasada?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_by_merchant
+  question: ¿Y por comercios?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: follow_ambiguous_stays_ambiguous
+  question: ¿Y lo normal?
+  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
+  rewordings_discarded_with_it: 12
+- id: confuse_this_week_not_7_days
+  question: ¿Cuánto llevo esta semana?
+  why: every rewording of it was rejected, so it contributes no pair to measure
+  rewordings_discarded_with_it: 12
+- id: ambiguous_desde_navidad
+  question: ¿Cuánto llevo gastado desde Navidad?
+  why: every rewording of it was rejected, so it contributes no pair to measure
+  rewordings_discarded_with_it: 12
+rejected:
+- paraphrase_of: confuse_30_days_not_last_month
+  question: Me gustaría conocer el gasto acumulado en mi cuenta durante el período de 30 días pasados.
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> []'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: Estoy interesado en conocer el detalle de mi gasto durante el mes pasado, específicamente
+    los últimos 30 días.
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> [''LAST_MONTH'', ''LAST_N_DAYS:30'']'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: Me interesa conocer el monto que he gastado en las últimas tres décadas de días contiguos.
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> []'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: Deseo obtener la información del gasto realizado en mi cuenta durante el espacio de 30 días
+    que han transcurrido.
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> []'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: ¿Cuánto he utilizado de mi dinero en la última franja de tiempo de 30 días?
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> []; directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: Necesito saber el total de gastos que he realizado en los últimos 30 días desde hoy.
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> [''LAST_N_DAYS:30'', ''TODAY'']'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: ¿Podría proporcionarme el importe total que he gastado en la última década de días (30 días)
+    hasta la fecha?
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> []'
+- paraphrase_of: confuse_30_days_not_last_month
+  question: ¿Cuál es la suma de mis desembolsos en el período de 30 días recientes?
+  why: 'changed the question: periods [''LAST_N_DAYS:30''] -> []'
+- paraphrase_of: confuse_last_month_not_30_days
+  question: ¿Podrían indicarme el importe que utilicé en el mes de junio pasado?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_last_month_not_30_days
+  question: Quiero conocer el monto que consumí durante junio del anterior mes.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_last_month_not_30_days
+  question: ¿Cuál fue mi desembolso en el período de junio del último mes?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: confuse_last_month_not_30_days
+  question: Necesito información sobre mis gastos en junio del mes que antecedió al actual.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_last_month_not_30_days
+  question: Me interesa saber cuánto gasté durante el mes de junio pasado.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_last_month_not_30_days
+  question: Quiero obtener el total de mis consumos en junio del mes que precedió al actual.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_this_month_partial
+  question: Me gustaría saber el total de mi gasto hasta la fecha del presente mes.
+  why: 'changed the question: periods [''THIS_MONTH''] -> []'
+- paraphrase_of: confuse_this_month_partial
+  question: ¿Cuál es el importe acumulado de mis desembolsos para el mes que va?
+  why: 'changed the question: periods [''THIS_MONTH''] -> []'
+- paraphrase_of: confuse_last_month_full
+  question: Quisiera conocer el importe total de mis gastos para el mes transcurrido.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_last_month_full
+  question: ¿Podría informarme sobre el monto total que utilicé durante el mes pasado completo?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_last_month_full
+  question: Deseo conocer el importe total de mis gastos para el mes que se acaba de cerrar.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_last_month_full
+  question: Me gustaría saber el monto total que consumí en el mes que ya pasó.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: confuse_last_week_closed
+  question: Me interesa saber el gasto total que tuve del lunes al domingo en la semana que terminó.
+  why: 'changed the question: periods [''LAST_WEEK''] -> []'
+- paraphrase_of: confuse_two_months
+  question: Me gustaría saber el total de mi gasto durante los dos meses pasados.
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []'
+- paraphrase_of: confuse_two_months
+  question: Quiero conocer el desembolso que he realizado en los dos meses anteriores.
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []'
+- paraphrase_of: confuse_two_months
+  question: ¿Cuál ha sido mi gasto acumulado en los dos meses que terminaron hace poco?
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []; vague False -> True'
+- paraphrase_of: confuse_two_months
+  question: Necesito un resumen de los gastos que he hecho en los dos meses más recientes.
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []'
+- paraphrase_of: confuse_two_months
+  question: ¿Podría proporcionarme un análisis de mi gasto en los dos meses pasados?
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []'
+- paraphrase_of: confuse_two_months
+  question: Deseo conocer el importe total de mis desembolsos en los dos meses anteriores.
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []'
+- paraphrase_of: confuse_two_months
+  question: ¿Cuál es el total de mi gasto en los dos meses finales de este año fiscal?
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> [''THIS_YEAR'']'
+- paraphrase_of: confuse_two_months
+  question: Necesito un informe de mi gasto durante los dos meses que han transcurrido hasta ahora.
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []'
+- paraphrase_of: confuse_two_months
+  question: Me gustaría ver un desglose de lo que he gastado en los dos meses más recientes.
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []; groupings [] -> [''CATEGORY'']'
+- paraphrase_of: confuse_two_months
+  question: ¿Podría darme la cifra total de mi gasto en los dos meses que culminaron hace poco?
+  why: 'changed the question: periods [''LAST_N_MONTHS:2''] -> []; vague False -> True'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: Me gustaría saber el total de mi gasto durante las dos semanas pasadas.
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: ¿Podría informarme sobre el monto que he incurrido en despesas en las últimas dos semanas?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: Quiero conocer el importe acumulado de mis gastos en el período de dos semanas anterior.
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: ¿Cuál ha sido mi consumo durante las dos semanas anteriores?
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: Me interesa conocer el resumen de mis gastos para las dos semanas que preceden.
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: ¿Podría darme un desglose de mis gastos en el último mes, específicamente las dos semanas
+    finales?
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []; groupings [] -> [''CATEGORY'']; vague
+    False -> True'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: Quiero una consulta sobre el total de mis desembolsos en las dos semanas pasadas.
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: ¿Cuál es el importe total que he utilizado en las últimas dos semanas?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: Necesito información sobre el gasto que he registrado en las dos semanas anteriores.
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_two_weeks_in_days
+  question: Me gustaría obtener el detalle de mi consumo durante las dos semanas finales.
+  why: 'changed the question: periods [''LAST_N_DAYS:14''] -> []'
+- paraphrase_of: confuse_90_days_not_3_months
+  question: Me gustaría saber el total de mi gasto durante los últimos tres meses.
+  why: 'changed the question: periods [''LAST_N_DAYS:90''] -> [''LAST_N_MONTHS:3'']'
+- paraphrase_of: confuse_90_days_not_3_months
+  question: ¿Podría indicarme cuál ha sido mi desembolso en los 90 días anteriores?
+  why: 'changed the question: periods [''LAST_N_DAYS:90''] -> []'
+- paraphrase_of: confuse_90_days_not_3_months
+  question: Quiero conocer el monto que he destinado a gastos en el período de noventa días transcurridos.
+  why: 'changed the question: periods [''LAST_N_DAYS:90''] -> []'
+- paraphrase_of: confuse_90_days_not_3_months
+  question: Por favor, indíqueme el gasto total que he realizado en los últimos tres meses.
+  why: 'changed the question: periods [''LAST_N_DAYS:90''] -> [''LAST_N_MONTHS:3'']'
+- paraphrase_of: confuse_90_days_not_3_months
+  question: ¿Cuál es el importe total de mis gastos en el último periodo de 90 días?
+  why: 'changed the question: periods [''LAST_N_DAYS:90''] -> []; vague False -> True'
+- paraphrase_of: confuse_90_days_not_3_months
+  question: Necesito saber el total de mi gasto durante los últimos tres meses.
+  why: 'changed the question: periods [''LAST_N_DAYS:90''] -> [''LAST_N_MONTHS:3'']'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: ¿Podría informarme cuál ha sido mi gasto acumulado desde el mes de enero?
+  why: 'changed the question: periods [''THIS_YEAR''] -> []'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: Quisiera conocer el importe total que he gastado a partir de enero.
+  why: 'changed the question: periods [''THIS_YEAR''] -> []'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: ¿Podría ver un resumen de mis gastos desde el comienzo del año hasta ahora?
+  why: 'changed the question: dates [''enero''] -> []'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: Me interesa saber cuánto dinero he despilfarrado desde el mes de enero.
+  why: 'changed the question: periods [''THIS_YEAR''] -> []; directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: Quiero conocer el desglose de mi gasto desde el mes de enero hasta la fecha.
+  why: 'changed the question: periods [''THIS_YEAR''] -> []; groupings [] -> [''CATEGORY'']'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: ¿Podría informarme sobre el monto total que he gastado desde el mes de enero?
+  why: 'changed the question: periods [''THIS_YEAR''] -> []'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: Quisiera recibir un informe que me muestre cuánto he gastado desde el mes de enero.
+  why: 'changed the question: periods [''THIS_YEAR''] -> []; directions [''EXPENSE''] -> [''EXPENSE'',
+    ''INCOME'']'
+- paraphrase_of: confuse_since_january_is_this_year
+  question: ¿Podría ver un listado de mis gastos totales desde el mes de enero hasta ahora?
+  why: 'changed the question: periods [''THIS_YEAR''] -> []'
+- paraphrase_of: confuse_today_only
+  question: Me gustaría saber el total de mi gasto en este día específico.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: confuse_today_only
+  question: ¿Cuál es el monto que he gastado en el día actual?
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: confuse_today_only
+  question: ¿Qué importe he utilizado hoy en mis transacciones?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: confuse_today_only
+  question: Quiero un resumen del gasto que he realizado este día.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: confuse_today_only
+  question: Necesito un desglose de mis gastos únicamente para hoy.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: absolute_january
+  question: ¿Podrían darme el monto total que utilicé en enero?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_march
+  question: Quisiera conocer el importe que destine al gasto durante el mes pasado, marzo.
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: absolute_march
+  question: Quiero conocer el importe total que utilicé en marzo.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_february_short_month
+  question: Quiero conocer el importe que utilicé en febrero.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_february_short_month
+  question: Necesito saber cuánto utilicé en el mes de febrero.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_explicit_range
+  question: ¿Podría informarme cuánto dinero utilicé entre el 1 y el 15 de junio, por favor?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_explicit_range
+  question: Me gustaría un desglose de mis gastos para el mes de junio entre el 1 y el 15.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: absolute_explicit_range
+  question: ¿Cuál fue el importe total que destine entre el 1 y el 15 de junio?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_explicit_range
+  question: Quiero saber cuánto utilicé de mi dinero entre el 1 y el 15 de junio.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_first_quarter
+  question: Me gustaría conocer el importe que utilicé en el primer trimestre.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_first_quarter
+  question: Estoy interesado en saber el monto que destine en el primer trimestre.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_first_quarter
+  question: Quiero saber cuánto utilicé de mi dinero en el primer trimestre.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_first_quarter
+  question: Me gustaría recibir el resumen de mi gasto durante el primer trimestre.
+  why: 'changed the question: directions [''EXPENSE''] -> [''EXPENSE'', ''INCOME'']'
+- paraphrase_of: absolute_open_ended_to_today
+  question: Quisiera saber el total de gastos desde el 1 de junio hasta la fecha actual.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: absolute_open_ended_to_today
+  question: ¿Cuál es el monto acumulado que he gastado desde el 1 de junio hasta el presente día?
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: absolute_open_ended_to_today
+  question: Por favor, indíqueme el total de mi despendido desde el 1 de junio hasta ahora.
+  why: 'changed the question: periods [''TODAY''] -> []; directions [''EXPENSE''] -> []'
+- paraphrase_of: absolute_open_ended_to_today
+  question: Me interesa saber el gasto neto que he realizado desde el 1 de junio hasta la fecha actual.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: absolute_open_ended_to_today
+  question: ¿Podría proporcionarme el desglose de mi gasto desde el 1 de junio hasta el día de hoy?
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: absolute_open_ended_to_today
+  question: Necesito saber cuánto dinero he gastado desde el 1 de junio hasta la fecha presente.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: absolute_open_ended_to_today
+  question: ¿Podría informarme el total de mis desembolsos desde el 1 de junio hasta la fecha actual?
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: absolute_month_with_year
+  question: Me interesa conocer el desglose de mis gastos para el mes de abril del 2026.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: multi_fuel_and_public
+  question: Quisiera conocer el monto total que he destinado a la gasolina y al transporte público este
+    mes pasado.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_fuel_and_public
+  question: ¿Cuál ha sido mi desembolso combinado por combustible y transporte público durante el mes
+    que acaba de terminar?
+  why: 'changed the question: periods [''THIS_MONTH''] -> [''LAST_MONTH'']'
+- paraphrase_of: multi_fuel_and_public
+  question: Necesito saber el total de dinero que he utilizado en gasolina y transporte público este mes
+    específico.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_fuel_and_public
+  question: Quiero saber cuánto me ha costado la gasolina y el transporte público este mes que acaba de
+    finalizar.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_fuel_and_public
+  question: ¿Podría proporcionarme el desglose del gasto total en combustible y transporte público este
+    mes que estamos viviendo?
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: multi_super_and_restaurants
+  question: Me gustaría saber el total de mi desembolso en productos de alimentación durante el último
+    mes, incluyendo compras en supermercados y gastos externos.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: multi_super_and_restaurants
+  question: ¿Podría informarme cuál fue el monto total que destine a alimentos el mes anterior, considerando
+    tanto las adquisiciones en el mercado como las realizadas fuera de él?
+  why: 'changed the question: directions [''EXPENSE''] -> []; categories [''GROCERIES''] -> []'
+- paraphrase_of: multi_super_and_restaurants
+  question: Necesito saber el monto que destine a productos alimenticios el último mes, incluyendo tanto
+    las compras en el supermercado como los gastos en otros establecimientos.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: multi_super_and_restaurants
+  question: ¿Podría proporcionarme la cantidad que utilicé para alimentos el mes pasado, que abarque tanto
+    las adquisiciones en el supermercado como las que realicé en otros lugares?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_super_and_restaurants
+  question: ¿Cuál fue el desembolso que hice en comida durante el último mes, que incluya tanto las compras
+    en el super como las que realicé fuera del mismo?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: multi_super_and_restaurants
+  question: Necesito informarme sobre el monto que destine a alimentos en el período del mes pasado, que
+    abarque tanto las operaciones en el super como las que tuve que hacer en otros lugares.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_three_categories
+  question: Me gustaría saber el total acumulado este mes en las categorías súper, gasolina y farmacia.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_three_categories
+  question: ¿Puede proporcionarme la cantidad total que he destinado este mes a las despesas de súper,
+    gasolina y farmacia?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_three_categories
+  question: ¿Cuál es el saldo acumulado este mes para los costos asociados a súper, combustible y farmacia?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_three_categories
+  question: Me interesa saber el total que ha habido en mis registros este mes para las despesas en súper,
+    gasolina y farmacia.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_three_categories
+  question: ¿Podría informarme sobre el total acumulado este mes para las despesas de súper, combustible
+    y farmacia?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_leisure_and_subscriptions
+  question: ¿Podría informarme sobre el costo que he incurrido en ocio y suscripciones este mes pasado?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_leisure_and_subscriptions
+  question: Necesito saber cuál es el total de mi gasto en ocio y suscripciones para este período de un
+    mes.
+  why: 'changed the question: periods [''THIS_MONTH''] -> []'
+- paraphrase_of: multi_leisure_and_subscriptions
+  question: Me interesa conocer el importe que he destinado a ocio y suscripciones en el mes en curso.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_leisure_and_subscriptions
+  question: Necesito un desglose del monto que he gastado en ocio y suscripciones durante el mes en curso.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: multi_fixed_costs
+  question: Me gustaría saber el total que realicé el mes pasado por alquiler y suscripciones.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_fixed_costs
+  question: Estoy interesado en saber cuánto costó el mes pasado mi alquiler y las suscripciones que tengo.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_fixed_costs
+  question: Necesito saber el importe acumulado del mes pasado por el alquiler y las suscripciones.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: multi_fixed_costs
+  question: ¿Cuál fue el monto total que dediqué el pasado mes a alquiler y suscripciones?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: Me gustaría saber cuál es la cuota mensual que tengo que pagar por mi suscripción a Netflix.
+  why: 'changed the question: directions [''EXPENSE''] -> []; categories [] -> [''SUBSCRIPTIONS'']'
+- paraphrase_of: merchant_netflix
+  question: ¿Puede indicarme el importe que corresponde al costo mensual de Netflix en mi cuenta?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: Quiero confirmar cuánto debo destinar cada mes para mantener mi servicio de Netflix.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: ¿Cuál es el costo que aparece en mi declaración mensual por Netflix?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: Necesito conocer el valor que se retira de mi cuenta cada mes por la suscripción a Netflix.
+  why: 'changed the question: directions [''EXPENSE''] -> []; categories [] -> [''SUBSCRIPTIONS'']'
+- paraphrase_of: merchant_netflix
+  question: Me interesa saber el monto mensual que corresponde a mi plan de Netflix.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: Quiero descubrir cuánto dinero se le asigna a Netflix en mi presupuesto mensual.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: ¿Cuál es la cuota que aparece en mi resumen de gastos por Netflix este mes?
+  why: 'changed the question: periods [] -> [''THIS_MONTH'']'
+- paraphrase_of: merchant_netflix
+  question: Me gustaría saber el importe que indica mi cuenta bancaria para Netflix cada mes.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: merchant_netflix
+  question: ¿Puede decirme cuánto debo pagar mensualmente por mi suscripción a Netflix?
+  why: 'changed the question: directions [''EXPENSE''] -> []; categories [] -> [''SUBSCRIPTIONS'']'
+- paraphrase_of: merchant_gym
+  question: Me interesa saber el presupuesto que tengo que desembolsar para el gimnasio.
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: merchant_gym
+  question: ¿Hay un cargo específico para el uso del gimnasio?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: merchant_gym
+  question: Me gustaría recibir un detalle del precio del gimnasio.
+  why: 'changed the question: directions [] -> [''INCOME'']'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: Me gustaría conocer el importe que he gastado hasta ahora en este día.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: ¿Podría informarme sobre los gastos realizados en la actualidad?
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: Por favor, indica el monto gastado en el día presente.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: Me interesa conocer el desglose de mis gastos de hoy.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: ¿Cuál es el importe total que he utilizado hoy?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: Estoy buscando el total de mis gastos para el día actual.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: follow_fresh_question_drops_context
+  question: ¿Podrías proporcionarme el total gastado en este día específico?
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: ambiguous_ultimamente
+  question: ¿Podría informarme cuánto dinero he invertido últimamente?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: ambiguous_ultimamente
+  question: Necesito ver el detalle de mis gastos recientes.
+  why: 'changed the question: vague True -> False'
+- paraphrase_of: ambiguous_ultimamente
+  question: ¿Cuál es la cantidad que he gastado en el periodo más cercano?
+  why: 'changed the question: vague True -> False'
+- paraphrase_of: ambiguous_ultimamente
+  question: Quiero saber cuánto dinero he utilizado en los últimos tiempos.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: ambiguous_ultimamente
+  question: Necesito información sobre mis gastos más recientes.
+  why: 'changed the question: vague True -> False'
+- paraphrase_of: ambiguous_ultimamente
+  question: ¿Cuál ha sido el total de mi desembolso en los últimos momentos?
+  why: 'changed the question: vague True -> False'
+- paraphrase_of: ambiguous_ultimamente
+  question: Me gustaría obtener un desglose de lo que he gastado últimamente.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: ambiguous_gastos_grandes
+  question: Muestra mis desembolsos importantes del mes pasado.
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: ambiguous_gastos_grandes
+  question: Muestra una lista de mis gastos elevados durante el último período.
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: ambiguous_gastos_grandes
+  question: Necesito que me muestre los costos significativos que he incurrido.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: ambiguous_gastos_grandes
+  question: Quiero saber cuáles han sido mis mayores gastos recientemente.
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: ambiguous_gastos_grandes
+  question: Indíqueme los desembolsos relevantes que he hecho en los últimos días.
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: ambiguous_mucho
+  question: Quería saber si he realizado un consumo elevado durante el último período de tiempo.
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: ambiguous_mucho
+  question: Por favor, indíqueme si mis salidas de efectivo han sido altas en el último período mencionado.
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: ambiguous_como_voy
+  question: ¿Podría indicarme el estado de mis fondos bancarios para el mes actual?
+  why: 'changed the question: periods [] -> [''THIS_MONTH'']'
+- paraphrase_of: ambiguous_como_voy
+  question: Quiero recibir información sobre el monto de dinero disponible en mi cuenta, ¿podría hacerlo?
+  why: 'changed the question: directions [] -> [''INCOME'']'
+- paraphrase_of: ambiguous_ese_mes
+  question: Quisiera conocer el importe que destine durante ese período.
+  why: 'changed the question: directions [''EXPENSE''] -> []; vague True -> False'
+- paraphrase_of: ambiguous_ese_mes
+  question: Me interesa saber el monto que utilicé en ese mes determinado.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: ambiguous_ese_mes
+  question: ¿Podría obtener un desglose de mi consumo durante ese mes?
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: ambiguous_ese_mes
+  question: Quiero saber el total que saqué de mi cuenta ese mes.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: ambiguous_ese_mes
+  question: Me gustaría un informe del dinero que utilicé en ese mes.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: noise_greeting
+  question: Hola, ¿podrías decirme cuál fue mi gasto durante el último mes?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: noise_greeting
+  question: Buenos días, me gustaría saber el monto que utilicé el mes pasado.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: noise_greeting
+  question: Oiga, ¿podría informarme sobre el total de mis gastos en el período pasado?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: noise_greeting
+  question: Quería saber, ¿cuánto dinero destine en el mes que acaba de cerrar?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; directions [''EXPENSE''] -> []'
+- paraphrase_of: noise_greeting
+  question: Me gustaría conocer el monto que utilicé en el último mes disponible.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; directions [''EXPENSE''] -> []; vague False
+    -> True'
+- paraphrase_of: noise_greeting
+  question: Hola, ¿me podría indicar el total de mis gastos en el mes que terminó recientemente?
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: noise_thanks
+  question: ¿Podría informarme cuál fue mi gasto total en el último mes? Agradecería tu ayuda.
+  why: asks the assistant about the assistant
+- paraphrase_of: noise_thanks
+  question: Me interesa saber cuánto dinero gasté en el mes transcurrido. Agradezco tu asistencia.
+  why: asks the assistant about the assistant
+- paraphrase_of: noise_thanks
+  question: Quiero descubrir cuánto dinero destiné a gastos durante el mes pasado. Agradezco tu cooperación.
+  why: asks the assistant about the assistant
+- paraphrase_of: noise_thanks
+  question: Necesito saber el monto que consumí en gastos el mes pasado. Aprecio tu ayuda.
+  why: asks the assistant about the assistant
+- paraphrase_of: noise_no_accents
+  question: Quiero conocer el importe que consumí durante el último mes.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: noise_no_accents
+  question: Necesito ver el desglose de mis gastos para el mes anterior.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: noise_no_accents
+  question: Deseo conocer el importe total que utilicé durante el último mes.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; directions [''EXPENSE''] -> []; vague False
+    -> True'
+- paraphrase_of: noise_uppercase
+  question: ¿Podría informarme sobre el total de mis gastos del último mes?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: noise_uppercase
+  question: Quiero conocer el importe que destine al mes pasado.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: noise_uppercase
+  question: Me interesa saber cuánto consumí en el mes que transcurrió anteriormente.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: noise_uppercase
+  question: ¿Cuál fue el monto que utilicé durante el mes anterior?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: noise_uppercase
+  question: ¿Podría indicarme el importe gastado en el mes que precede al actual?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: noise_rambling
+  question: Por favor, me informen cuánto se movió mi dinero en compras en el supermercado el último mes.
+  why: 'changed the question: periods [''LAST_MONTH''] -> []; vague False -> True'
+- paraphrase_of: noise_rambling
+  question: ¿Cuál fue el desembolso que realicé en el supermercado en el mes que se acaba de cerrar?
+  why: 'changed the question: periods [''LAST_MONTH''] -> []'
+- paraphrase_of: noise_rambling
+  question: Estoy solicitando la información del monto gastado en el supermercado el mes que terminó hace
+    poco.
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: adv_stock_advice
+  question: ¿Sería adecuado que yo invirtiera en acciones de Telefónica?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: ¿Debería, desde mi perspectiva, adquirir acciones de Telefónica?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: Me pregunto si invertir mi dinero en acciones de Telefónica sería recomendable.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: ¿Qué opinas sobre que yo realice una inversión en acciones de Telefónica?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: ¿Sería prudente que yo contratara acciones de Telefónica en este momento?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: ¿Debería, en base a tus criterios, tomar la decisión de comprar acciones de Telefónica?
+  why: asks the assistant about the assistant
+- paraphrase_of: adv_stock_advice
+  question: ¿Consideras que mi decisión de invertir en acciones de Telefónica sería una opción sólida?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: ¿Sería una estrategia inteligente que yo pusiera mi dinero en acciones de Telefónica?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_stock_advice
+  question: Me gustaría tu opinión sobre si debería proceder a comprar acciones de Telefónica.
+  why: asks the assistant about the assistant
+- paraphrase_of: adv_transfer_request
+  question: Genera un pago Bizum de 20 euros destinado a Marta.
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: adv_transfer_request
+  question: Ejecuto un pago por Bizum de 20 euros a Marta.
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: adv_transfer_request
+  question: Paguen con Bizum 20 euros a Marta.
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: adv_zero_days
+  question: ¿Podría darme un desglose de los gastos realizados en los últimos 0 días?
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: adv_zero_days
+  question: Me gustaría recibir la cantidad total gastada en los últimos 0 días.
+  why: 'changed the question: directions [''EXPENSE''] -> [''EXPENSE'', ''INCOME'']'
+- paraphrase_of: adv_zero_days
+  question: ¿Qué cantidad he gastado desde hace 0 días hasta ahora?
+  why: 'changed the question: periods [''LAST_N_DAYS:0''] -> []'
+- paraphrase_of: adv_thousand_days
+  question: Quiero una estimación del dinero que he utilizado en los últimos 5000 días.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_thousand_days
+  question: Necesito un desglose de los gastos de los últimos 5000 días.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: adv_thousand_days
+  question: Me gustaría recibir información sobre el importe gastado en el lapso de los últimos 5000 días.
+  why: 'changed the question: directions [''EXPENSE''] -> [''EXPENSE'', ''INCOME'']'
+- paraphrase_of: adv_one_day_window
+  question: Quisiera saber el total de mi gasto durante el día anterior.
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []'
+- paraphrase_of: adv_one_day_window
+  question: Me gustaría conocer el importe que consumí ayer.
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> [''YESTERDAY'']'
+- paraphrase_of: adv_one_day_window
+  question: ¿Cuál fue mi gasto total en el día más reciente?
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []; vague False -> True'
+- paraphrase_of: adv_one_day_window
+  question: Necesito ver cuánto gasté el día pasado.
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []'
+- paraphrase_of: adv_one_day_window
+  question: ¿Podría ver un resumen de mis gastos del día anterior?
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []'
+- paraphrase_of: adv_one_day_window
+  question: Quiero conocer el desglose de mi gasto para el día que terminó.
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []; groupings [] -> [''CATEGORY'']'
+- paraphrase_of: adv_one_day_window
+  question: Necesito un informe de mi gasto correspondiente al día previo.
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []'
+- paraphrase_of: adv_one_day_window
+  question: ¿Podría obtener la información del gasto que realicé en el día más reciente?
+  why: 'changed the question: periods [''LAST_N_DAYS:1''] -> []; vague False -> True'
+- paraphrase_of: adv_one_day_window
+  question: Me gustaría saber el importe total que utilicé en el último día.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_366_days
+  question: Quiero conocer cuál ha sido mi gasto acumulado en el período de 366 días pasados.
+  why: 'changed the question: periods [''LAST_N_DAYS:366''] -> []'
+- paraphrase_of: adv_366_days
+  question: Me interesa conocer el importe total que he gastado en el último año y un día.
+  why: 'changed the question: periods [''LAST_N_DAYS:366''] -> []'
+- paraphrase_of: adv_366_days
+  question: ¿Podría proporcionarme el desglose de mis gastos durante los últimos 366 días?
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: adv_366_days
+  question: Me gustaría informarme sobre el total que he gastado en el último año y un día.
+  why: 'changed the question: periods [''LAST_N_DAYS:366''] -> []'
+- paraphrase_of: adv_backwards_range
+  question: ¿Podría informarme sobre el importe que utilicé entre el 30 de junio y el 1 de junio?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_backwards_range
+  question: Quiero conocer el total de mi despendido entre el 30 de junio y el 1 de junio.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_backwards_range
+  question: Me gustaría saber el importe que utilicé entre el 30 de junio y el 1 de junio.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_future_window
+  question: Me gustaría saber el importe total que destinaré de mi dinero del día de hoy hasta el día
+    31 de diciembre.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_future_window
+  question: ¿Cuál será el monto total que gastaré de mi cuenta entre hoy y el último día del año?
+  why: 'changed the question: periods [''TODAY''] -> [''LAST_N_DAYS:1'', ''TODAY'']; dates [''d31'', ''diciembre'']
+    -> []'
+- paraphrase_of: adv_future_window
+  question: Me interesa saber el desembolso de mis recursos entre el presente día y el 31 de diciembre.
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: adv_future_window
+  question: Necesito información sobre cuánto de mi dinero destinaré desde hoy hasta el 31 de diciembre.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_future_window
+  question: ¿Qué importe total de mi dinero se utilizará entre hoy y el 31 de diciembre?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_future_window
+  question: Me gustaría un desglose del gasto de mis fondos desde el día de hoy hasta el día final del
+    año.
+  why: 'changed the question: dates [''d31'', ''diciembre''] -> []; groupings [] -> [''CATEGORY'']'
+- paraphrase_of: adv_future_window
+  question: ¿Podría calcular cuánto de mi dinero voy a gastar entre el presente día y el 31 de diciembre?
+  why: 'changed the question: periods [''TODAY''] -> []'
+- paraphrase_of: adv_future_window
+  question: Quiero saber el total de mis gastos de dinero desde hoy hasta el último día del año.
+  why: 'changed the question: periods [''TODAY''] -> [''LAST_N_DAYS:1'', ''TODAY'']; dates [''d31'', ''diciembre'']
+    -> []'
+- paraphrase_of: adv_future_single_day
+  question: Me gustaría conocer el importe que destaquecí el 20 de agosto.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_future_single_day
+  question: ¿Cuánto dinero utilicé el 20 de agosto pasado?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_far_past
+  question: Me gustaría conocer el importe que destine en 1998.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_far_past
+  question: Necesito saber el importe que utilicé en 1998.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_far_past
+  question: ¿Cuál fue el costo total que registre en mi cuenta en 1998?
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_far_past
+  question: Me gustaría recibir información detallada sobre mis gastos del año 1998.
+  why: 'changed the question: directions [''EXPENSE''] -> [''EXPENSE'', ''INCOME'']'
+- paraphrase_of: adv_all_categories
+  question: Quisiera saber el total acumulado este mes en los gastos de supermercado, combustible, comer
+    fuera, transporte, medicina, entretenimiento, suscripciones y alquiler.
+  why: 'changed the question: categories [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'', ''LEISURE'', ''RESTAURANTS'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC''] -> [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'',
+    ''RESTAURANTS'', ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC'']'
+- paraphrase_of: adv_all_categories
+  question: Me gustaría conocer el monto total que he gastado este mes en alimentos, gasolina, restaurantes,
+    pasajes, cuidado de salud, ocio, servicios de suscripción y pago del alquiler.
+  why: 'changed the question: categories [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'', ''LEISURE'', ''RESTAURANTS'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC''] -> [''HEALTH'', ''HOUSING_RENT'', ''LEISURE'',
+    ''RESTAURANTS'', ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'']'
+- paraphrase_of: adv_all_categories
+  question: ¿Podría informarme cuál es la suma de mis desembolsos este mes en supermercado, combustible,
+    salidas a comer, transporte, bienestar, entretenimiento, suscripciones y coste del alquiler?
+  why: 'changed the question: categories [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'', ''LEISURE'', ''RESTAURANTS'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC''] -> [''GROCERIES'', ''HOUSING_RENT'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC'']'
+- paraphrase_of: adv_all_categories
+  question: Estoy interesado en saber el importe total que he destinado este mes a supermercado, gasolina,
+    restaurantes, transporte, salud, ocio, suscripciones y alquiler.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_all_categories
+  question: ¿Cuál es el resumen de mis gastos este mes en super, gas, comer fuera, transporte, salud,
+    ocio, suscripciones y alquiler?
+  why: 'changed the question: categories [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'', ''LEISURE'', ''RESTAURANTS'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC''] -> [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'',
+    ''LEISURE'', ''RESTAURANTS'', ''SUBSCRIPTIONS'', ''TRANSPORT_PUBLIC'']'
+- paraphrase_of: adv_all_categories
+  question: Necesito conocer el desglose de mis gastos este mes en supermercado, combustible, restaurantes,
+    transporte, salud, ocio, suscripciones y alquiler.
+  why: 'changed the question: groupings [] -> [''CATEGORY'']'
+- paraphrase_of: adv_all_categories
+  question: Quiero saber el importe acumulado este mes en supermercado, combustible, restaurantes, transporte,
+    salud, ocio, suscripciones y alquiler.
+  why: 'changed the question: directions [''EXPENSE''] -> []'
+- paraphrase_of: adv_all_categories
+  question: Estoy solicitando información sobre el total de mis gastos este mes en supermercado, gasolina,
+    comer fuera, transporte, medicina, entretenimiento, suscripciones y alquiler.
+  why: 'changed the question: categories [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'', ''LEISURE'', ''RESTAURANTS'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC''] -> [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'',
+    ''RESTAURANTS'', ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC'']'
+- paraphrase_of: adv_all_categories
+  question: ¿Cuál es la suma de mis desembolsos este mes en super, gas, comer fuera, transporte, bienestar,
+    entretenimiento, suscripciones y coste del alquiler?
+  why: 'changed the question: categories [''GROCERIES'', ''HEALTH'', ''HOUSING_RENT'', ''LEISURE'', ''RESTAURANTS'',
+    ''SUBSCRIPTIONS'', ''TRANSPORT_FUEL'', ''TRANSPORT_PUBLIC''] -> [''GROCERIES'', ''HOUSING_RENT'',
+    ''RESTAURANTS'', ''SUBSCRIPTIONS'', ''TRANSPORT_PUBLIC'']'
+- paraphrase_of: merchant_gym
+  question: Necesito saber cuánto cobra el banco por el servicio gimnasial.
+  why: asks about somebody else's money
+- paraphrase_of: merchant_gym
+  question: ¿Cuál es el precio que debe pagar el cliente para acceder al gimnasio?
+  why: asks about somebody else's money
+- paraphrase_of: ambiguous_como_voy
+  question: Me gustaría ver mi saldo actual, ¿podría mostrármelo?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: ¿Podría consultar el estado de mis fondos en la cuenta?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: Quiero saber cuánto dinero tengo disponible en mi cuenta, por favor.
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: ¿Podría proporcionarme una actualización sobre mi saldo en la cuenta?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: Me interesa obtener información sobre el saldo de mi cuenta, ¿podría ayudarme?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: Deseo verificar cuánto dinero tengo en mi cuenta, ¿podría facilitarme ese dato?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: ¿Podría visualizar mi balance de cuenta para conocer mi situación económica?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: ambiguous_como_voy
+  question: Necesito un resumen de mi saldo actual en la cuenta, ¿podría mostrármelo?
+  why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: adv_future_window
+  question: ¿Podría informarme sobre el gasto estimado de mis fondos entre hoy y el 31 de diciembre?
+  why: 'changed the question: topics [] -> [''BALANCE'']'

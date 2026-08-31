@@ -173,6 +173,11 @@ evaluate-planning model="qwen2.5-coder:7b" provider="ollama" tpm="0":
 # in apps/orchestrator/.env; tpm=8000 is what Groq's free tier publishes and the pace comes from it.
 evaluate-metamorphic model="qwen3.5:9b" provider="ollama" tpm="0":
     uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset metamorphic --tpm {{ tpm }}
+# Robustness is a real gate only when both sides of the safety trade are bounded. The two numbers
+# are required arguments until a stable-GPU baseline has been measured and signed in docs/next.md;
+# choosing them in advance would be inventing a release claim rather than measuring one.
+evaluate-robustness robustness_floor over_refusal_ceiling model="qwen3.5:9b" provider="ollama" tpm="0":
+    uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset robustness --tpm {{ tpm }} --robustness-floor {{ robustness_floor }} --over-refusal-ceiling {{ over_refusal_ceiling }}
 # The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
 # up, because the point is to exercise the deployed service and not the handler.
 # Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.

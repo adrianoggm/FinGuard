@@ -249,6 +249,149 @@ def test_the_dataset_validator_catches_a_false_locality_claim() -> None:
     assert "declares ['window'], expected plans change ['metric']" in issues[0]
 
 
+def paraphrase_pair() -> list[dict[str, object]]:
+    """One base and one rewording of it, saying the same thing."""
+    plan = {"period": {"period": "LAST_MONTH"}, "direction": "EXPENSE"}
+    return [
+        {"id": "base", "expect": "plan", "question": "¿Cuánto gasté el mes pasado?", "plan": plan},
+        {
+            "id": "said_differently",
+            "expect": "plan",
+            "question": "Dime el total de mis gastos del mes anterior",
+            "paraphrase_of": "base",
+            "plan": plan,
+        },
+    ]
+
+
+def invariance(base: PlanningResult, rewording: PlanningResult):
+    score = evaluate.Score(results_by_id={"base": base, "said_differently": rewording})
+    evaluate._check_invariance(paraphrase_pair(), score, today=TODAY)
+    return score
+
+
+def test_a_rewording_that_produces_the_same_plan_holds_the_property() -> None:
+    score = invariance(spending(), spending())
+
+    assert (score.invariance_held, score.invariance_total) == (1, 1)
+    assert score.invariance_breaks == []
+
+
+def test_a_rewording_that_moves_a_field_breaks_the_property() -> None:
+    """The defect the whole corpus exists to find: the same question, a different answer."""
+    score = invariance(spending(), spending(Direction.ALL))
+
+    assert (score.invariance_held, score.invariance_total) == (0, 1)
+    assert "rewording changed ['direction']" in score.invariance_breaks[0]
+
+
+def test_a_rewording_the_system_declines_breaks_the_property() -> None:
+    """A refusal is an answer, and a refusal that only some phrasings trigger is the same bug."""
+    score = invariance(spending(), PlanningResult.needs_clarification("¿de qué periodo?"))
+
+    assert score.invariance_held == 0
+    assert "base PLANNED, rewording NEEDS_CLARIFICATION" in score.invariance_breaks[0]
+
+
+def test_two_identically_wrong_plans_are_robust() -> None:
+    """The distinction that makes this a second number rather than a second accuracy score.
+
+    Both sides answer a spending question with `ALL`, so both are wrong and the dataset's own
+    expectation is missed twice. The property still holds: one fix to the base fixes the rewording
+    too, which is exactly what is *not* true of a set that answers the base correctly and the
+    rewording wrongly.
+    """
+    score = invariance(spending(Direction.ALL), spending(Direction.ALL))
+
+    assert (score.invariance_held, score.invariance_total) == (1, 1)
+
+
+def test_two_refusals_are_robust_even_when_the_dataset_wanted_a_plan() -> None:
+    declined = PlanningResult.needs_clarification("¿de qué periodo?")
+
+    score = invariance(declined, declined)
+
+    assert (score.invariance_held, score.invariance_total) == (1, 1)
+
+
+def test_a_paraphrase_that_edited_its_expectation_is_a_dataset_error() -> None:
+    """The rule `drift.yaml` states in prose: the plan is copied from the source, never invented."""
+    cases = paraphrase_pair()
+    cases[1]["plan"] = {"period": {"period": "THIS_MONTH"}, "direction": "EXPENSE"}
+
+    issues = evaluate.validate_paraphrase_cases(cases)
+
+    assert "plan differs from base, which it may not" in issues[0]
+
+
+def test_a_paraphrase_that_is_the_same_sentence_is_a_dataset_error() -> None:
+    """A pair of identical sentences is 1/1 robust for free and measures nothing."""
+    cases = paraphrase_pair()
+    cases[1]["question"] = cases[0]["question"]
+
+    issues = evaluate.validate_paraphrase_cases(cases)
+
+    assert issues == ["said_differently: the same sentence as base"]
+
+
+def test_the_refusal_rate_has_a_denominator_of_answerable_cases() -> None:
+    """`missed` was a bare count, and a bare count cannot be a gate bar.
+
+    An unsupported case that is correctly refused must not enter the denominator: refusing what
+    the dataset itself refuses is the system working.
+    """
+    score = evaluate.Score()
+    answerable = {
+        "id": "answerable",
+        "expect": "plan",
+        "question": "¿Cuánto gasté el mes pasado?",
+        "plan": {"period": {"period": "LAST_MONTH"}, "direction": "EXPENSE"},
+    }
+    refusable = {"id": "out_of_scope", "expect": "unsupported", "question": "¿Qué tiempo hace?"}
+
+    evaluate.judge(answerable, PlanningResult.needs_clarification("¿de qué mes?"), score, TODAY)
+    evaluate.judge(
+        refusable, PlanningResult.unsupported("no es una pregunta de dinero"), score, TODAY
+    )
+
+    assert (len(score.missed), score.answerable) == (1, 1)
+
+
+def complete_robustness_score(rewording: PlanningResult | None = None) -> evaluate.Score:
+    score = invariance(spending(), rewording or spending())
+    score.answerable = 2
+    return score
+
+
+def test_a_complete_robustness_measurement_can_pass_the_gate() -> None:
+    score = complete_robustness_score()
+    metadata = {"base_count": 1, "paraphrase_count": 1}
+    gate = evaluate.RobustnessGate(100.0, 0.0)
+
+    assert evaluate.robustness_gate_exit_code(score, metadata, gate) == 0
+
+
+def test_a_deliberately_broken_plan_makes_the_gate_exit_nonzero(capsys) -> None:  # noqa: ANN001
+    """Sensitivity control: the gate is red when one produced plan stops matching its twin."""
+    score = complete_robustness_score(spending(Direction.ALL))
+    metadata = {"base_count": 1, "paraphrase_count": 1}
+    gate = evaluate.RobustnessGate(100.0, 0.0)
+
+    assert evaluate.robustness_gate_exit_code(score, metadata, gate) == 1
+    assert "macro robustness 0.0% is below 100.0%" in capsys.readouterr().err
+
+
+def test_a_partial_run_cannot_pass_the_robustness_gate() -> None:
+    score = complete_robustness_score()
+    metadata = {"base_count": 2, "paraphrase_count": 8}
+
+    broken = evaluate.robustness_gate_failures(score, metadata, evaluate.RobustnessGate(0.0, 100.0))
+
+    assert "executed 2/10 cases" in broken
+    assert "measured 1/8 paraphrase pairs" in broken
+    assert "measured 1/2 paraphrase bases" in broken
+
+
 def provider_settings(**changes: object) -> SimpleNamespace:
     values = {
         "ollama_base_url": "http://ollama.test",
