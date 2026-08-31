@@ -8,6 +8,8 @@ import pytest
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
+)
+from finguard_orchestrator.application.queries.readers.follow_up import (
     _contextual_follow_up_plan,
 )
 from finguard_orchestrator.domain.constants import MAX_SELECTED_TRANSACTIONS

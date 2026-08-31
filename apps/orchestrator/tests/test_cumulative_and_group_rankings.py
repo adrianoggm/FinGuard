@@ -6,7 +6,7 @@ from datetime import date, datetime
 import pytest
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
-from finguard_orchestrator.application.queries import ask_financial_question
+from finguard_orchestrator.application.queries.readers import dimensions, metrics, rankings
 from finguard_orchestrator.domain import constants
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import InvalidValueError
@@ -222,7 +222,7 @@ def test_a_named_dimension_is_not_overruled_by_the_one_before_it() -> None:
         group_limit=3,
     )
 
-    reading = ask_financial_question._average_plan(
+    reading = metrics._average_plan(
         AskFinancialQuestionQuery(
             sentence="Ahora top 2 categorías por ticket medio",
             account_id=ACCOUNT,
@@ -252,7 +252,7 @@ def test_cumulative_and_group_rankings_reject_meaningless_shapes() -> None:
 
 
 def _ranking_for(sentence: str) -> FinancialPlan | None:
-    return ask_financial_question._group_ranking_plan(
+    return rankings._group_ranking_plan(
         AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
     )
 
@@ -308,7 +308,7 @@ def test_the_all_accounts_scope_is_not_a_grouping_instruction() -> None:
         f"group_by={hijacked.group_by if hijacked else None}, "
         f"group_limit={hijacked.group_limit if hijacked else None}"
     )
-    named = ask_financial_question._named_group_dimension
+    named = dimensions._named_group_dimension
     assert named(spanish.folded("¿cuál fue mi mayor gasto de julio en todas mis cuentas?")) is None
     # The widening half of the same vocabulary, for the same reason: "todas las categorías" asks
     # for a filter to disappear, which is the opposite of asking for one row each.
@@ -325,7 +325,7 @@ def test_a_genuine_grouping_instruction_still_ranks_accounts() -> None:
     universal quantifier, not the determiner, and it cannot be "the noun needs a preposition in
     front of it": four of the phrasings below put a number or an article there instead.
     """
-    named = ask_financial_question._named_group_dimension
+    named = dimensions._named_group_dimension
 
     assert named(spanish.folded("mis mayores gastos por cuenta")) is GroupBy.ACCOUNT
     assert named(spanish.folded("¿en qué cuenta gasté más?")) is GroupBy.ACCOUNT
