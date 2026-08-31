@@ -20,7 +20,18 @@ ask. Every other number here can look healthy while this one is bad.
 
 MISSED — the dataset says plan, and the model asked or refused. Cheap by comparison:
 the user is inconvenienced, not misinformed. Worth watching so a model cannot score
-well by refusing everything.
+well by refusing everything. It is reported as a **rate** as well as a list, because
+`Unsafe execution <= 10 %` in gate 1 falls when the system refuses and something has to
+bound that: the two hardest sets have the best safety numbers because they fail by
+saying no.
+
+ROBUSTNESS — of the pairs a dataset marks with `paraphrase_of`, how many produced the
+same answer on both sides. Deliberately independent of whether that answer was right:
+two identically wrong plans are robust, and a paraphrase that flips a correct plan to a
+wrong one and a paraphrase that flips a wrong plan to a correct one are both breaks.
+Accuracy says how many of the sentences we wrote down are understood; this says whether
+understanding survives somebody saying it their own way, and only the second one
+predicts a stranger's experience.
 
 The reference date comes from the dataset and never from the clock, so a run today and
 a run in March are comparable.
@@ -216,6 +227,77 @@ class Score:
     metamorphic_right: int = 0
     metamorphic_violations: list[str] = field(default_factory=list)
     results_by_id: dict[str, PlanningResult] = field(default_factory=dict)
+    # The metamorphic property with an empty declared delta: a paraphrase changes no field, so
+    # the two plans must be identical. Scored against the *base's own answer* rather than against
+    # the dataset's expectation, which is what makes it robustness and not a second accuracy
+    # number — a base the system gets wrong is still robust if every rewording of it is wrong the
+    # same way, and that distinction is the whole point of the row.
+    invariance_total: int = 0
+    invariance_held: int = 0
+    invariance_breaks: list[str] = field(default_factory=list)
+    # Per base as [held, total]. The headline pair rate otherwise gives a base with twelve
+    # rewrites six times the influence of one with two; their mean gives every question one vote.
+    invariance_by_base: dict[str, list[int]] = field(default_factory=dict)
+    # The denominator of the refusal rate: cases the dataset says are answerable. `missed` is the
+    # numerator and already exists; without this it could only ever be printed as a bare count.
+    answerable: int = 0
+
+
+@dataclass(frozen=True)
+class RobustnessGate:
+    """Explicit thresholds, supplied only after a stable baseline has been measured."""
+
+    minimum_macro_pct: float
+    maximum_over_refusal_pct: float
+
+
+def robustness_macro_pct(score: Score) -> float | None:
+    measured = [held / total for held, total in score.invariance_by_base.values() if total]
+    return 100 * statistics.mean(measured) if measured else None
+
+
+def robustness_gate_failures(
+    score: Score, metadata: dict[str, Any], gate: RobustnessGate
+) -> list[str]:
+    """Why a robustness run cannot pass; empty means the complete measurement passed."""
+    expected_bases = int(metadata["base_count"])
+    expected_pairs = int(metadata["paraphrase_count"])
+    failures: list[str] = []
+    if len(score.results_by_id) != expected_bases + expected_pairs:
+        failures.append(
+            f"executed {len(score.results_by_id)}/{expected_bases + expected_pairs} cases"
+        )
+    if score.invariance_total != expected_pairs:
+        failures.append(f"measured {score.invariance_total}/{expected_pairs} paraphrase pairs")
+    if len(score.invariance_by_base) != expected_bases:
+        failures.append(
+            f"measured {len(score.invariance_by_base)}/{expected_bases} paraphrase bases"
+        )
+    macro = robustness_macro_pct(score)
+    if macro is None:
+        failures.append("robustness has no measured base")
+    elif macro < gate.minimum_macro_pct:
+        failures.append(f"macro robustness {macro:.1f}% is below {gate.minimum_macro_pct:.1f}%")
+    if not score.answerable:
+        failures.append("over-refusal has no answerable denominator")
+    else:
+        over_refusal = 100 * len(score.missed) / score.answerable
+        if over_refusal > gate.maximum_over_refusal_pct:
+            failures.append(
+                f"over-refusal {over_refusal:.1f}% is above {gate.maximum_over_refusal_pct:.1f}%"
+            )
+    return failures
+
+
+def robustness_gate_exit_code(score: Score, metadata: dict[str, Any], gate: RobustnessGate) -> int:
+    """Print the gate verdict and return the process status used by the CLI."""
+    broken = robustness_gate_failures(score, metadata, gate)
+    if not broken:
+        return 0
+    print("\n  ROBUSTNESS GATE FAILED", file=sys.stderr)
+    for problem in broken:
+        print(f"    {problem}", file=sys.stderr)
+    return 1
 
 
 def as_plan(spec: dict[str, Any]) -> FinancialPlan:
@@ -573,6 +655,8 @@ def judge(case: dict[str, Any], result: PlanningResult, score: Score, today: dat
     group.cases += 1
     wanted = case["expect"]
     got = result.outcome
+    if wanted == "plan":
+        score.answerable += 1
 
     if got is PlanningOutcome.INVALID_STRUCTURE:
         score.structural += 1
@@ -645,7 +729,14 @@ def report(model: str, score: Score) -> None:
         f"{pct(len(score.unsafe), total)}   a wrong figure would have been shown"
     )
     print(f"  INVENTED            {len(score.invented):3}      a plan where a question was due")
-    print(f"  missed              {len(score.missed):3}      a question where a plan was due")
+    # The bound on the other half of the safety trade. `Unsafe execution` falls when the system
+    # refuses, so a build that grew more timid would improve gate 1 while answering less; this is
+    # the number that stops that being free. Denominator is the cases the dataset says are
+    # answerable, because refusing something the dataset itself refuses is correct.
+    print(
+        f"  OVER-REFUSAL        {len(score.missed):3}/{score.answerable}  "
+        f"{pct(len(score.missed), score.answerable)}   a question where a plan was due"
+    )
     print(f"  invalid structure   {score.structural:3}      should be 0 under constrained decoding")
 
     if score.groups:
@@ -680,6 +771,23 @@ def report(model: str, score: Score) -> None:
         # last ten is what makes that visible instead of hiding inside the mean: a cold
         # load inflates the first, and thermal throttling inflates the last.
         print(f"           first {first:.2f}s   last ten {last:.2f}s")
+
+    if score.invariance_total:
+        # The headline of a robustness set, and the figure gate 1 carries. Printed before the
+        # splits below because it subsumes them: a split is a break that happened to cross the
+        # line between right and wrong, and this counts the ones that did not as well.
+        print(
+            f"\n  ROBUSTNESS          {score.invariance_held:3}/{score.invariance_total}  "
+            f"{pct(score.invariance_held, score.invariance_total)}   "
+            "a rewording produced the same answer"
+        )
+        macro = robustness_macro_pct(score)
+        if macro is not None:
+            print(
+                f"  ROBUSTNESS-MACRO             {macro:5.1f}%   every base question has one vote"
+            )
+        for broken in score.invariance_breaks:
+            print(f"    {broken}")
 
     if score.paraphrase_splits:
         print("\n  said differently, answered differently")
@@ -719,14 +827,18 @@ async def run(
     dataset: str = "dev",
     pace_seconds: float = 0.0,
     collect: list[tuple[int, int]] | None = None,
+    gate: RobustnessGate | None = None,
 ) -> int:
     data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
     today = data["reference"]
     all_cases = data["cases"]
     malformed = validate_metamorphic_cases(all_cases, today=today)
+    malformed += validate_paraphrase_cases(all_cases)
+    if dataset == "robustness":
+        malformed += validate_robustness_metadata(data)
     if malformed:
         for issue in malformed:
-            print(f"invalid metamorphic dataset: {issue}", file=sys.stderr)
+            print(f"invalid dataset: {issue}", file=sys.stderr)
         return 2
     cases = all_cases[:limit] if limit else all_cases
 
@@ -757,6 +869,7 @@ async def run(
 
     _check_paraphrases(cases, score)
     _check_metamorphs(cases, score, today=today)
+    _check_invariance(cases, score, today=today)
 
     if collect is None:
         report(f"{provider.name}/{model}", score)
@@ -766,7 +879,59 @@ async def run(
         collect.append((score.outcome_right, score.exact))
         if len(collect) == 1:
             report(f"{provider.name}/{model}", score)
+    if gate is not None:
+        return robustness_gate_exit_code(score, data["metadata"], gate)
     return 0
+
+
+def _check_invariance(cases: list[dict[str, Any]], score: Score, *, today: date) -> None:
+    """The metamorphic property over a rewording, whose declared delta is empty.
+
+    `_check_metamorphs` cannot express this: the dataset's own validator requires `changes` to
+    name at least one field, and a paraphrase changes none. So the pair is compared here, and the
+    comparison is against **the base's produced answer** rather than the dataset's expectation.
+
+    That is the difference between this number and every other one in this file. If the system
+    answers «¿cuánto gasté el mes pasado?» with the wrong window, and answers all four rewordings
+    of it with the same wrong window, this is 4/4 — the system is wrong, consistently, and a fix
+    to that base fixes all five sentences. If it gets the base right and one rewording wrong, this
+    is 3/4 and the defect is that the reader is matching strings. The first is a coverage problem
+    and the second is the problem this whole design exists for.
+    """
+    for case in cases:
+        twin = case.get("paraphrase_of")
+        if twin is None:
+            continue
+        before = score.results_by_id.get(twin)
+        after = score.results_by_id.get(case["id"])
+        # A `--limit` run may hold only one side of a pair. It did not measure that pair.
+        if before is None or after is None:
+            continue
+        score.invariance_total += 1
+        by_base = score.invariance_by_base.setdefault(str(twin), [0, 0])
+        by_base[1] += 1
+        if before.outcome is not after.outcome:
+            score.invariance_breaks.append(
+                f"{case['id']}: base {before.outcome.value}, rewording {after.outcome.value}"
+            )
+            continue
+        if before.plan is None or after.plan is None:
+            # Both declined, and declined the same way. A refusal that survives rewording is as
+            # much a held property as a plan that does; whether it *should* have refused is the
+            # accuracy question, and this is not it.
+            score.invariance_held += 1
+            by_base[0] += 1
+            continue
+        left, right = actual_fields(before, today), actual_fields(after, today)
+        if left.keys() != right.keys():
+            score.invariance_breaks.append(f"{case['id']}: rewording changed the shape of the plan")
+            continue
+        moved = sorted(name for name in left if left[name] != right[name])
+        if moved:
+            score.invariance_breaks.append(f"{case['id']}: rewording changed {moved}")
+        else:
+            score.invariance_held += 1
+            by_base[0] += 1
 
 
 def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:
@@ -778,6 +943,58 @@ def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:
         if mine is not None and theirs is not None and mine != theirs:
             winner, loser = (twin, case["id"]) if theirs else (case["id"], twin)
             score.paraphrase_splits.append(f"{winner} right, {loser} wrong")
+
+
+def validate_paraphrase_cases(cases: list[dict[str, Any]]) -> list[str]:
+    """A paraphrase must differ from its base in the sentence and in nothing else.
+
+    The robustness corpus is generated, so the one thing that must not be generated is the
+    opinion about what the right answer is. `drift.yaml` states the rule in its own header —
+    "**Every `plan` here is copied from dev.yaml, never invented.**" — and this is that rule made
+    checkable: an expectation that drifted from its base would turn a robustness failure into a
+    dataset disagreement, and the report would call it a defect in the planner.
+
+    It also refuses the sentence being the same as the base's. Two identical sentences are 1/1
+    robust for free, and a corpus that padded itself that way would be the eighth green
+    instrument in this repository that had stopped measuring anything.
+    """
+    by_id = {case["id"]: case for case in cases}
+    issues: list[str] = []
+    for case in cases:
+        base_id = case.get("paraphrase_of")
+        if base_id is None:
+            continue
+        base = by_id.get(base_id)
+        if base is None:
+            issues.append(f"{case['id']}: unknown paraphrase_of {base_id}")
+            continue
+        if case.get("changes") is not None:
+            issues.append(f"{case['id']}: a paraphrase declares no changed fields")
+        for owned in ("expect", "plan", "previous", "preceding_question"):
+            if case.get(owned) != base.get(owned):
+                issues.append(f"{case['id']}: {owned} differs from {base_id}, which it may not")
+        if str(case["question"]).strip() == str(base["question"]).strip():
+            issues.append(f"{case['id']}: the same sentence as {base_id}")
+    return issues
+
+
+def validate_robustness_metadata(data: dict[str, Any]) -> list[str]:
+    """Keep the committed corpus header honest about the document it describes."""
+    metadata = data.get("metadata")
+    if not isinstance(metadata, dict):
+        return ["robustness: missing metadata (regenerate with generate_paraphrases.py)"]
+    cases = data.get("cases", [])
+    actual = {
+        "base_count": sum("paraphrase_of" not in case for case in cases),
+        "paraphrase_count": sum("paraphrase_of" in case for case in cases),
+        "rejected_count": len(data.get("rejected", [])),
+        "not_admitted_count": len(data.get("bases_not_admitted", [])),
+    }
+    return [
+        f"robustness metadata {name}={metadata.get(name)!r}, content={value}"
+        for name, value in actual.items()
+        if metadata.get(name) != value
+    ]
 
 
 def validate_metamorphic_cases(cases: list[dict[str, Any]], *, today: date) -> list[str]:
@@ -853,6 +1070,7 @@ async def repeated(
     dataset: str,
     times: int,
     pace_seconds: float,
+    gate: RobustnessGate | None = None,
 ) -> int:
     """Runs the set `times` over and report the spread as well as the numbers.
 
@@ -868,6 +1086,7 @@ async def repeated(
             dataset,
             pace_seconds,
             collect=scores,
+            gate=gate,
         )
         if code:
             return code
@@ -1008,13 +1227,16 @@ def main() -> int:
     parser.add_argument(
         "--dataset",
         default="dev",
-        choices=("dev", "validation", "adversarial", "drift", "metamorphic"),
+        choices=("dev", "validation", "adversarial", "drift", "metamorphic", "robustness"),
         help="dev is what the prompt was tuned against; validation is what eleven models were "
         "compared against, so it selected a model and is no longer held out. Metamorphic checks "
         "whether a local wording change produces only the declared plan delta. Neither is a "
         "release number — see evaluation/planning/RESULTS.md. drift is the only one nobody "
         "here wrote: ten questions from dev, paraphrased by a model that had never seen the "
-        "prompt, and it scores robustness rather than accuracy.",
+        "prompt, and it scores robustness rather than accuracy. robustness is that idea at the "
+        "scale it needed: every case dev and adversarial have that drift never reached, "
+        "rewritten by a model that is not the planner and filtered by a rule fixed before any "
+        "of it ran — see the header of robustness.yaml.",
     )
     parser.add_argument(
         "--timeout",
@@ -1044,11 +1266,31 @@ def main() -> int:
         "not bit-reproducible even at temperature 0, so a single run of a 60-case set "
         "carries a few points of noise — enough to invent an improvement.",
     )
+    parser.add_argument(
+        "--robustness-floor",
+        type=float,
+        default=None,
+        help="minimum macro robustness percentage; requires --over-refusal-ceiling and the "
+        "complete robustness dataset",
+    )
+    parser.add_argument(
+        "--over-refusal-ceiling",
+        type=float,
+        default=None,
+        help="maximum percentage of answerable cases refused; requires --robustness-floor",
+    )
     args = parser.parse_args()
     if args.tpm < 0:
         parser.error("--tpm cannot be negative")
     if args.think and args.provider != "ollama":
         parser.error("--think is only supported by the Ollama adapter")
+    thresholds = (args.robustness_floor, args.over_refusal_ceiling)
+    if (thresholds[0] is None) != (thresholds[1] is None):
+        parser.error("the robustness floor and over-refusal ceiling must be supplied together")
+    if any(value is not None and not 0 <= value <= 100 for value in thresholds):
+        parser.error("robustness gate percentages must be between 0 and 100")
+    if thresholds[0] is not None and args.dataset != "robustness":
+        parser.error("robustness gate thresholds require --dataset robustness")
     return asyncio.run(_evaluate(args))
 
 
@@ -1108,6 +1350,9 @@ async def _evaluate(args: argparse.Namespace) -> int:
     pace_seconds = _pace(args) if args.tpm else 0.0
     if args.ablate:
         return await ablate(args.model, provider, args.dataset, pace_seconds)
+    gate = None
+    if args.robustness_floor is not None:
+        gate = RobustnessGate(args.robustness_floor, args.over_refusal_ceiling)
     return await repeated(
         args.model,
         args.limit,
@@ -1115,6 +1360,7 @@ async def _evaluate(args: argparse.Namespace) -> int:
         args.dataset,
         args.repeat,
         pace_seconds,
+        gate,
     )
 
 
