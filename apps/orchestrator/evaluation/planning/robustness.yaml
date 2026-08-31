@@ -92,9 +92,9 @@
 reference: 2026-07-15
 account: ES-0001
 metadata:
-  base_count: 52
-  paraphrase_count: 389
-  rejected_count: 235
+  base_count: 56
+  paraphrase_count: 416
+  rejected_count: 342
   not_admitted_count: 16
 cases:
 - id: confuse_30_days_not_last_month
@@ -2878,6 +2878,278 @@ cases:
   expect: plan
   plan: *id034
   paraphrase_of: adv_all_categories
+- id: follow_category_after_period
+  group: follow_up
+  question: ¿Y en gasolina?
+  previous: &id035
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+  expect: plan
+  plan: &id036
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    categories:
+    - TRANSPORT_FUEL
+  preceding_question: ¿Cuánto gasté el mes pasado?
+- id: follow_direction_change
+  group: follow_up
+  question: ¿Y lo que me entró?
+  previous: &id037
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+  expect: plan
+  plan: &id038
+    period:
+      period: LAST_MONTH
+    direction: INCOME
+  preceding_question: ¿Cuánto gasté el mes pasado?
+- id: follow_metric_change
+  group: follow_up
+  question: ¿Y cuántas veces?
+  previous: &id039
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    categories:
+    - GROCERIES
+  expect: plan
+  plan: &id040
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+    categories:
+    - GROCERIES
+    metric: COUNT
+  preceding_question: ¿Cuánto gasté en supermercados el mes pasado?
+- id: follow_ambiguous_stays_ambiguous
+  group: follow_up
+  question: ¿Y lo normal?
+  previous: &id041
+    period:
+      period: LAST_MONTH
+    direction: EXPENSE
+  expect: clarification
+  why: context supplies a window, not a meaning for "normal"
+  preceding_question: ¿Cuánto gasté el mes pasado?
+- id: follow_category_after_period_p1
+  group: follow_up
+  question: ¿Cuántas monedas destiné a gasolina en el mes que ya pasó?
+  previous: *id035
+  expect: plan
+  plan: *id036
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_category_after_period
+- id: follow_category_after_period_p2
+  group: follow_up
+  question: ¿Cuánto destine a gasolina en el período final del año pasado?
+  previous: *id035
+  expect: plan
+  plan: *id036
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_category_after_period
+- id: follow_category_after_period_p3
+  group: follow_up
+  question: ¿Qué monto me costó la gasolina en el mes que ya no es el actual?
+  previous: *id035
+  expect: plan
+  plan: *id036
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_category_after_period
+- id: follow_category_after_period_p4
+  group: follow_up
+  question: ¿Cuánto destine a gasolina en el mes que ya no está?
+  previous: *id035
+  expect: plan
+  plan: *id036
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_category_after_period
+- id: follow_direction_change_p1
+  group: follow_up
+  question: ¿Cuánto ingresó a mi cuenta?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p2
+  group: follow_up
+  question: ¿Cuál fue la cantidad que recibí?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p3
+  group: follow_up
+  question: ¿Qué sumatoria recibí en total?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p4
+  group: follow_up
+  question: ¿Cuál fue el importe que me entró?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p5
+  group: follow_up
+  question: ¿Qué cifra ingresó a mi cuenta bancaria?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p6
+  group: follow_up
+  question: ¿Cuánto recibí como ingreso?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p7
+  group: follow_up
+  question: ¿Qué cantidad total me entró en mi cuenta?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p8
+  group: follow_up
+  question: ¿Qué importe total me entró a mi cuenta corriente?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p9
+  group: follow_up
+  question: ¿Cuál fue el total que ingresó a mi cuenta corriente?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p10
+  group: follow_up
+  question: ¿Cuál fue la cantidad que me entró a mi cuenta?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p11
+  group: follow_up
+  question: ¿Cuánto me entró en total a mi cuenta?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p12
+  group: follow_up
+  question: ¿Qué cifra total me entró en mi cuenta?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p13
+  group: follow_up
+  question: ¿Cuánto ingresó a mis ahorros en total?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_direction_change_p14
+  group: follow_up
+  question: ¿Cuál fue la cantidad total que me entró?
+  previous: *id037
+  expect: plan
+  plan: *id038
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_direction_change
+- id: follow_metric_change_p1
+  group: follow_up
+  question: ¿Con cuánta frecuencia?
+  previous: *id039
+  expect: plan
+  plan: *id040
+  preceding_question: ¿Cuánto gasté en supermercados el mes pasado?
+  paraphrase_of: follow_metric_change
+- id: follow_metric_change_p2
+  group: follow_up
+  question: ¿La cantidad de veces?
+  previous: *id039
+  expect: plan
+  plan: *id040
+  preceding_question: ¿Cuánto gasté en supermercados el mes pasado?
+  paraphrase_of: follow_metric_change
+- id: follow_metric_change_p3
+  group: follow_up
+  question: ¿En qué número de instancias?
+  previous: *id039
+  expect: plan
+  plan: *id040
+  preceding_question: ¿Cuánto gasté en supermercados el mes pasado?
+  paraphrase_of: follow_metric_change
+- id: follow_metric_change_p4
+  group: follow_up
+  question: ¿En cuántas veces?
+  previous: *id039
+  expect: plan
+  plan: *id040
+  preceding_question: ¿Cuánto gasté en supermercados el mes pasado?
+  paraphrase_of: follow_metric_change
+- id: follow_metric_change_p5
+  group: follow_up
+  question: ¿En cuántas veces confirmadas?
+  previous: *id039
+  expect: plan
+  plan: *id040
+  preceding_question: ¿Cuánto gasté en supermercados el mes pasado?
+  paraphrase_of: follow_metric_change
+- id: follow_ambiguous_stays_ambiguous_p1
+  group: follow_up
+  question: ¿Cuál es la cantidad que suelo pagar cada mes?
+  previous: *id041
+  expect: clarification
+  why: context supplies a window, not a meaning for "normal"
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_ambiguous_stays_ambiguous
+- id: follow_ambiguous_stays_ambiguous_p2
+  group: follow_up
+  question: ¿Cuál es la cantidad que normalmente corro en un mes?
+  previous: *id041
+  expect: clarification
+  why: context supplies a window, not a meaning for "normal"
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_ambiguous_stays_ambiguous
+- id: follow_ambiguous_stays_ambiguous_p3
+  group: follow_up
+  question: ¿Cuál es el monto que generalmente tengo en mis transacciones?
+  previous: *id041
+  expect: clarification
+  why: context supplies a window, not a meaning for "normal"
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_ambiguous_stays_ambiguous
+- id: follow_ambiguous_stays_ambiguous_p4
+  group: follow_up
+  question: ¿Cuál es la cantidad que suele haber en mi cuenta cada mes?
+  previous: *id041
+  expect: clarification
+  why: context supplies a window, not a meaning for "normal"
+  preceding_question: ¿Cuánto gasté el mes pasado?
+  paraphrase_of: follow_ambiguous_stays_ambiguous
 bases_not_admitted:
 - id: confuse_7_days_not_this_week
   question: ¿Y en los siete últimos días?
@@ -2894,10 +3166,6 @@ bases_not_admitted:
 - id: adv_empty_ish
   question: '...'
   why: the sentence carries fewer than two words to rewrite
-- id: follow_category_after_period
-  question: ¿Y en gasolina?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
 - id: follow_grouping_after_period
   question: ¿Y desglosado por categorías?
   why: a continuation cannot be rewritten by somebody who has not seen the turn before it
@@ -2906,16 +3174,8 @@ bases_not_admitted:
   question: ¿Y este mes?
   why: a continuation cannot be rewritten by somebody who has not seen the turn before it
   rewordings_discarded_with_it: 12
-- id: follow_direction_change
-  question: ¿Y lo que me entró?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
 - id: follow_without_context_must_ask
   question: ¿Y en gasolina?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
-- id: follow_metric_change
-  question: ¿Y cuántas veces?
   why: a continuation cannot be rewritten by somebody who has not seen the turn before it
   rewordings_discarded_with_it: 12
 - id: follow_narrow_to_week
@@ -2926,10 +3186,6 @@ bases_not_admitted:
   question: ¿Y por comercios?
   why: a continuation cannot be rewritten by somebody who has not seen the turn before it
   rewordings_discarded_with_it: 12
-- id: follow_ambiguous_stays_ambiguous
-  question: ¿Y lo normal?
-  why: a continuation cannot be rewritten by somebody who has not seen the turn before it
-  rewordings_discarded_with_it: 12
 - id: confuse_this_week_not_7_days
   question: ¿Cuánto llevo esta semana?
   why: every rewording of it was rejected, so it contributes no pair to measure
@@ -2938,6 +3194,22 @@ bases_not_admitted:
   question: ¿Cuánto llevo gastado desde Navidad?
   why: every rewording of it was rejected, so it contributes no pair to measure
   rewordings_discarded_with_it: 12
+- id: follow_grouping_after_period
+  question: ¿Y desglosado por categorías?
+  why: 'an elliptical continuation with a structural marker: 1 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
+- id: follow_period_change_keeps_category
+  question: ¿Y este mes?
+  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
+- id: follow_narrow_to_week
+  question: ¿Y solo la semana pasada?
+  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
+- id: follow_by_merchant
+  question: ¿Y por comercios?
+  why: 'an elliptical continuation with a structural marker: 0 of 36 candidates survived the meaning rule,
+    because any rewording either drops the marker the base names or adds one it never had'
 rejected:
 - paraphrase_of: confuse_30_days_not_last_month
   question: Me gustaría conocer el gasto acumulado en mi cuenta durante el período de 30 días pasados.
@@ -3693,3 +3965,324 @@ rejected:
 - paraphrase_of: adv_future_window
   question: ¿Podría informarme sobre el gasto estimado de mis fondos entre hoy y el 31 de diciembre?
   why: 'changed the question: topics [] -> [''BALANCE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto gasté en gasolina el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿El gasto de gasolina fue cuánto el pasado mes?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué monto consumí en combustible el mes que viene de atrás?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi desembolso en gasolina durante el período anterior?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto pagué por gasolina en el último mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; vague False -> True'
+- paraphrase_of: follow_category_after_period
+  question: ¿El importe que destine a gasolina el mes pasado es cuál?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué cantidad destiné a gasolina en el mes anterior?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi gasto en combustible para el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué total arrojó mi consumo de gasolina el mes que viene de atrás?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto destine a gasolina en el último mes transcurrido?
+  why: 'changed the question: vague False -> True'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi desembolso específico en combustible el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué monto me costó la gasolina en el mes anterior?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto gasté en combustible para el mes que ya no está?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi gasto en gasolina durante el período final del año pasado?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué total correspondió a mi consumo de gasolina en el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto destine a gasolina en el último mes que pasó?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi desembolso en combustible para el mes que ya no es actual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué monto consumí en gasolina el mes que viene de atrás?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto pagué por gasolina en el mes que ya no es el presente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿El importe que arrojó mi consumo de gasolina en el mes pasado es cuál?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi gasto en combustible para el último mes del año anterior?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; vague False -> True'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué total correspondió a mi consumo de gasolina en el mes que ya no está?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi desembolso específico en combustible para el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto gasté en gasolina para el mes que viene de atrás?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi gasto en combustible durante el mes que ya no es el presente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué total arrojó mi consumo de gasolina en el último mes del año pasado?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; vague False -> True'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi desembolso en combustible para el mes que ya no es el actual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Qué monto consumí en gasolina en el mes que viene de atrás?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuánto pagué por gasolina en el período final del año pasado?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿El importe que me costó la gasolina en el mes pasado es cuál?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']'
+- paraphrase_of: follow_category_after_period
+  question: ¿Cuál fue mi gasto en combustible para el mes que ya no es el presente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_direction_change
+  question: ¿Qué monto me llegó?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto dinero llegó a mis finales?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuál fue el total que entró a mis ahorros?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto me depositaron?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuál fue la entrada total a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuál fue el monto que llegó a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto dinero me llegó a mi cuenta personal?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto me depositaron en mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Qué suma llegó a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto llegó a mi cuenta personal?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Qué monto total me llegó a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuál fue el importe que llegó a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Qué suma total llegó a mis ahorros?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuál fue el total que llegó a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto me llegó en total a mi cuenta bancaria?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuál fue el monto total que me llegó?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Qué importe total llegó a mi cuenta?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Cuánto me llegó en mi cuenta personal?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_direction_change
+  question: ¿Qué suma total llegó a mi cuenta corriente?
+  why: 'changed the question: directions [''INCOME''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas ocasiones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿Cómo muchas veces?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿Con qué iteraciones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuantos eventos?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántos casos?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas oportunidades?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas repeticiones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas apariciones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas manifestaciones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas realizaciones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas ejecuciones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas materializaciones?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas instancias concretas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas ocurrencias específicas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas manifestaciones tangibles?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas apariciones visibles?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas realizaciones perceptibles?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas ejecuciones observables?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas materializaciones detectables?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas instancias registradas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas oportunidades documentadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas repeticiones verificadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas apariciones auditadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas manifestaciones auditadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas realizaciones auditadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas ejecuciones auditadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_metric_change
+  question: ¿En cuántas materializaciones auditadas?
+  why: 'changed the question: metrics [''COUNT''] -> []'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto habitual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cómo suele ser mi desembolso mensual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el gasto promedio en mis transacciones?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; metrics [] -> [''AVERAGE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el monto típico que gasto cada mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el gasto estándar que tengo?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto medio mensual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es la cantidad normal que consumo en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto recurrente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el monto que normalmente corro en mis gastos?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el desembolso que tengo de manera habitual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto habitual en el período mensual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el monto que suelo gastar en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el gasto que tengo en promedio cada mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; metrics [] -> [''AVERAGE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es la cantidad que generalmente desembolsó en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el gasto que tengo típicamente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto mensual estándar?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el monto que consumo normalmente en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el desembolso que tengo de forma habitual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto regular en el período mensual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el gasto que tengo en promedio en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; metrics [] -> [''AVERAGE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el monto que generalmente uso en mis gastos?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto habitual en el mes actual?
+  why: 'changed the question: periods [] -> [''THIS_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el desembolso que tengo típicamente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto promedio en el período mensual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']; metrics [] -> [''AVERAGE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el monto que suelo gastar en el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el gasto estándar que tengo en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es la cantidad que consumo habitualmente?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto recurrente en el período mensual?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es el desembolso que normalmente corro en un mes?
+  why: 'changed the question: directions [] -> [''EXPENSE'']'
+- paraphrase_of: follow_ambiguous_stays_ambiguous
+  question: ¿Cuál es mi gasto típico en el mes pasado?
+  why: 'changed the question: periods [] -> [''LAST_MONTH'']; directions [] -> [''EXPENSE'']'
