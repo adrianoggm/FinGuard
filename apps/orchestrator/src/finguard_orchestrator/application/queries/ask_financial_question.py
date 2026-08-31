@@ -1,4 +1,4 @@
-"""AskFinancialQuestionQuery · Result · Handler — the whole phase 3 path.
+"""The handler for a financial question — the whole phase 3 path.
 
 Sentence in, plan, figures from banking, sentence out. The handler's only real job is
 deciding what each planning outcome means, and five of the six never reach the ledger:
@@ -7,28 +7,59 @@ the cheapest wrong plan is the one that was never run.
 `today` arrives on the query rather than being read here, for the same reason it does
 in banking: a handler that reads the clock cannot be replayed, and this one has to be —
 the evaluation depends on it.
+
+**Two things that used to be here are not any more.** The query and its answer are in
+`financial_turn`, because the nineteen readers take an `AskFinancialQuestionQuery` and a
+reader module cannot import the handler that dispatches them. The readers themselves are
+in `queries/readers/`, in six modules cut where their Spanish is shared — that package's
+docstring is where the grouping is argued. What is left here is the handler: the order of
+the turn, and what each claim becomes.
+
+`_steps` asks the readers in five declared runs rather than at nineteen interleaved call
+sites; see the comment above `_BEFORE_THE_ASIDES` for why it is five and not one.
 """
 
 import logging
 import re
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from functools import wraps
 from typing import Any, Final, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from finguard_orchestrator.application.bus.query_bus import Query
-from finguard_orchestrator.application.queries import reader_registry
-from finguard_orchestrator.application.queries.reader_registry import Precondition, Reader, Registry
+from finguard_orchestrator.application.queries.financial_turn import (
+    AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
+    SpokenContact,
+    SpokenGroup,
+    SpokenMovement,
+    SpokenPlan,
+    VisualDataset,
+    VisualRow,
+    _across_every_account,
+    _clean_turn,
+    _direction_of,
+    _query_for_reader,
+    _same_window,
+    _starts_new_financial_scope,
+    _window_of,
+)
+from finguard_orchestrator.application.queries.reader_registry import Claim
+from finguard_orchestrator.application.queries.readers import seam
+from finguard_orchestrator.application.queries.readers.follow_up import (
+    _CATEGORY_REFERENCE,
+    _account_follow_up_plan,
+)
+from finguard_orchestrator.application.queries.readers.subjects import _INVESTMENT_HISTORY
+from finguard_orchestrator.application.queries.readers.windows import (
+    _is_whole_month,
+    _is_whole_year,
+)
 from finguard_orchestrator.domain.constants import (
-    MAX_GROUP_RANK,
-    MAX_GROUP_ROWS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_SUPPORTING_MOVEMENTS,
-    RECURRING_EXPENSE_CATEGORIES,
 )
 from finguard_orchestrator.domain.enums import (
     CounterpartyType,
@@ -47,7 +78,6 @@ from finguard_orchestrator.domain.errors import (
     QueryRejectedError,
 )
 from finguard_orchestrator.domain.models.conversation import (
-    IDLE,
     AccountAlias,
     AccountCandidate,
     AccountScopeClarification,
@@ -66,13 +96,9 @@ from finguard_orchestrator.domain.models.conversation import (
     workflow_of,
 )
 from finguard_orchestrator.domain.models.planning_context import (
-    BalanceFocus,
-    ComparisonFocus,
     ContinuationBase,
     ContinuationSource,
-    PendingRatioFocus,
     QueryFocus,
-    RatioFocus,
     focus_of,
     planning_context,
 )
@@ -107,7 +133,6 @@ from finguard_orchestrator.domain.services import (
     entity_alias_words,
     explainer,
     explicit_facts,
-    financial_relationships,
     frequency_analyzer,
     incoming_payment_words,
     intent_router,
@@ -123,7 +148,6 @@ from finguard_orchestrator.domain.services import (
     turn_analyzer,
     window_words,
 )
-from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -140,7 +164,6 @@ from finguard_orchestrator.observability import (
     Step,
     Verdict,
     account_ref,
-    consulting,
     current_turn,
     record,
 )
@@ -214,131 +237,11 @@ _RETURN_TO_PREVIOUS: Final = re.compile(
     r")$"
 )
 _UNDO_FILTER: Final = re.compile(r"^(?:quita|elimina|deshaz)\s+(?:ese|el\s+ultimo)\s+filtro$")
-# A comparison imperative wearing the pronoun, with the second operand still to come: "compáralo
-# con …", "vale, compruébalo con …", "¿me lo podrías comparar con …?".
-#
-# Two recognisers need it — one reads a calendar unit relative to the window in view, the other a
-# window named outright — and it is spelled once because the same list spelled twice is how two
-# readers come to disagree about which sentences are comparisons at all. Same mould as
-# `MOVEMENT_NOUNS`, and for the same reason.
-_A_COMPARISON_IMPERATIVE: Final = (
-    r"(?:(?:vale|bueno|ok|perfecto)(?:\s+genial)?\s+|pues\s+)?(?:y\s+)?(?:"
-    r"(?:me\s+lo\s+)?podrias\s+comparar(?:lo|la)?"
-    r"|compara(?:lo|la|melo|mela)?"
-    r"|comparame\s+(?:eso|esto|el\s+resultado|la\s+consulta)"
-    r"|comprueba(?:lo|la)?"
-    r"|revisa(?:lo|la)?"
-    r"|hazme\s+una\s+comparacion"
-    r")"
-)
-_COMPARE_WITH_PREVIOUS_PERIOD: Final = re.compile(
-    rf"^{_A_COMPARISON_IMPERATIVE}\s+con\s+(?:el\s+|la\s+)?"
-    r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|ano|periodo)\s+"
-    r"(?:anterior|pasad[oa])$"
-)
-# The same imperative with a window named outright as its second operand: "compáralo con junio",
-# "compáralo con julio de 2025", "compáralo con la semana pasada".
-#
-# The tail is deliberately anything at all, because what makes it a window is `window_words` and
-# not a second vocabulary here. A tail that reads as no window — "compáralo con mi nómina" — leaves
-# the sentence exactly where it was, which is with the guard.
-_COMPARE_WITH_A_NAMED_WINDOW: Final = re.compile(
-    rf"^{_A_COMPARISON_IMPERATIVE}\s+con\s+(?P<window>\S.*)$"
-)
-# "¿Y el mes anterior?" — the same question, one calendar unit back from the window on screen.
-#
-# The year had this and nothing else did. "¿Y el año anterior?" after July 2026 has meant July 2025
-# since it was written; "¿y el mes anterior?" after the same question was not read at all, so it
-# went to the planner and came back as *last month* with the category dropped — a different month
-# from the one asked for, and the petrol filter gone from a question about petrol.
-#
-# The unit is handed to `_previous_calendar_window`, which the comparison path already uses for
-# "compruébalo con el mes anterior". One definition of what precedes a window, rather than this
-# reader growing a second one that would answer June in one sentence and July in the other.
-#
-# **"Anterior" only, except for the year.** "Anterior" is relative to the window in view and says
-# so; "el mes pasado" is relative to *today* and is how everybody names last month outright, so
-# reading it as a step back would answer June to somebody who said July. The year keeps both words
-# because "el año pasado" after a month means that month a year ago, which is what it already did.
-_A_CALENDAR_UNIT_BACK: Final = re.compile(
-    r"(?:y\s+)?(?:el\s+|la\s+)?(?:"
-    r"(?P<unit>fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|periodo)\s+"
-    r"(?:anterior|previo|previa)"
-    r"|(?P<year>ano)\s+(?:anterior|pasado)"
-    r")"
-)
 
-# The same words anywhere in a longer sentence, which is a different question: not "is this turn a
-# step back" but "is a step back what this turn is about", and the answer keeps the generic window
-# patch off it. "Vale, compruébalo con el mes anterior" is a comparison between two months and the
-# comparison reader owns it; read as a plain new window it becomes one month with the other operand
-# dropped.
-#
-# **This was written for the year alone**, as `\bano\s+(anterior|pasado)\b` inline, and the day the
-# month learned the word "anterior" the corpus grew a turn whose reader was decided by the order of
-# the cascade. Same mould as the four before it — a rule written for the member in front of somebody
-# rather than for the class — and this time a parity test is what turned it up.
-_A_UNIT_BACK_ANYWHERE: Final = re.compile(
-    r"\b(?:fin\s+de\s+semana|trimestre|semestre|quincena|mes|semana|periodo)\s+"
-    r"(?:anterior|previo|previa)\b"
-    r"|\bano\s+(?:anterior|pasado)\b"
-)
-_DIRECT_PERIOD_COMPARISON: Final = re.compile(
-    r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs"
-    r"|mas\b.{0,55}\b(?:que|o)|menos\b.{0,55}\b(?:que|o)"
-    r"|(?:cual|que|donde)\b.{0,50}\b(?:mas|menos|mayor|menor)"
-    r"|mayor|menor)\b"
-)
-# What makes a turn stand on its own, together with a window (see `_starts_new_financial_scope`).
-#
-# The noun alternation is shared with the superlative recogniser rather than spelled again. It used
-# to hold only conjugated verbs and plural nouns, so "¿cuál fue mi mayor gasto de junio?" matched
-# nothing here, stayed an ellipsis, and became a *window patch* on the previous aggregate: the month
-# was applied and the superlative was dropped. "mis movimientos más altos de junio" worked, because
-# `movimientos` happened to be in the list. One word was the whole difference between a ranking and
-# somebody else's total.
-_SELF_CONTAINED_FINANCIAL_QUESTION: Final = re.compile(
-    r"\b(?:cuanto|cuantos|cual|cuales|que)\b.{0,70}"
-    r"\b(?:gaste|gastado|pague|pagado|compre|comprado|ingrese|ingresado|cobre|cobrado"
-    rf"|movimientos|operaciones|categoria|{MOVEMENT_NOUNS})\b"
-    r"|\b(?:muestrame|ensename|quiero\s+ver)\b.{0,55}"
-    r"\b(?:movimientos|operaciones|gastos|ingresos)\b"
-)
-_SALARY_HISTORY_COMPARISON: Final = re.compile(
-    r"\b(?:cobr|recib|ingres)\w*\b.{0,55}\b(?:mas|menos)\b.{0,55}"
-    r"\b(?:anteriores?|otras?)\b"
-    r"|\b(?:esa|esta|ultima)\s+nomina\b.{0,55}\b(?:mas|menos)\b.{0,55}"
-    r"\b(?:anteriores?|otras?)\b"
-)
 _NUMBERED_MONTH_FALLBACK: Final = re.compile(
     r"\b(?:el\s+)?mes\s+(?P<first>0?[1-9]|1[0-2])\b.{0,24}"
     r"\b(?:y\s+)?si\s+no\b\s+(?:(?:el\s+)?mes\s+|el\s+)?"
     r"(?P<second>0?[1-9]|1[0-2])\b"
-)
-_RATIO_WORDS: Final = re.compile(r"\bporcentaje\b|\bque\s+parte\s+de\b|\bque\s+proporcion\s+de\b|%")
-_PERCENT_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:cuanto\s+(?:es|fue|supone)\s+eso\s+)?(?:en\s+)?porcentaje$"
-    r"|^(?:y\s+)?(?:cual|cuanto)\s+fue\s+(?:la\s+)?(?:diferencia|variacion)\s+porcentual$"
-)
-_RATIO_WINDOW_REPLY: Final = re.compile(
-    r"^(?:(?:vale|bueno|perfecto|pues)\s+)?(?:en\s+|durante\s+)?(?:"
-    r"este\s+(?:mes|ano)|esta\s+semana|el\s+(?:mes|ano)\s+(?:pasado|anterior)"
-    r"|la\s+semana\s+(?:pasada|anterior)|los\s+ultimos\s+\w+\s+(?:dias|meses|anos)"
-    r"|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre"
-    r"|noviembre|diciembre|desde\s+.+|entre\s+.+)\s*$"
-)
-_INTERNAL_HISTORY_WORDS: Final = re.compile(
-    r"\b(?:movimientos?|movimeintos?|traspasos?|transferencias?|movid[oa]s?|traspasad[oa]s?|"
-    r"pasad[oa]s?|metid[oa]s?|aportad[oa]s?)\b"
-)
-_INTERNAL_BETWEEN_ACCOUNTS: Final = re.compile(
-    r"\b(?:entre|de\s+una\s+(?:de\s+)?mis)\s+(?:mis|tus|sus|las)?\s*cuentas\b"
-    r"|\bde\s+una\s+cuenta\s+a\s+otra\b"
-)
-_INVESTMENT_HISTORY: Final = re.compile(
-    r"\b(?:cuanto|caunto|cuantos|que|cual|dime|dame|muestrame|ensename)\b.{0,55}"
-    r"\b(?:(?:invertid|aportad|metid|traspasad)\w*|gast\w*\s+en\s+inversion(?:es)?)\b"
-    r"|\b(?:mis\s+)?(?:aportaciones?|inversiones?)\b.{0,40}\b(?:hech|realiz|este|ultimo)\w*\b"
 )
 _ACCOUNT_ACTIVITY: Final = re.compile(
     r"\b(?:movimientos?|operaciones?|ingresos?|income|gast\w*|cargos?|compr\w*|pag\w*)\b"
@@ -350,7 +253,6 @@ _ASKS_ACCOUNT_ACTIVITY: Final = re.compile(
 _ACCOUNT_YIELD_AMOUNT: Final = re.compile(
     r"\bcuantos?\s+ingresos?\b.{0,45}\b(?:me\s+da|genera|produce|renta)\w*\b"
 )
-_GAMBLING: Final = re.compile(r"\b(?:apuest\w*|bet(?:365|fair)?|casino\w*|codere|bwin|sportium)\b")
 
 logger = logging.getLogger(__name__)
 
@@ -369,376 +271,6 @@ _TURN_VERDICT: Final = {
     PlanningOutcome.PROVIDER_ERROR.value: Verdict.FAILED,
     "BANKING_UNAVAILABLE": Verdict.FAILED,
 }
-
-
-def _reading(reader: Callable[..., Any], query: "AskFinancialQuestionQuery") -> Any:
-    """What one reader answers about one turn, computed at most once.
-
-    Split out of the decorator below so the two halves stay legible: that one is about the
-    instrument, this one is about the work. Both the precondition and the answer are cached, on the
-    query, because a reader consulted five times would otherwise check its precondition five times
-    as well — one kind of waste traded for another.
-
-    `READERS` is looked up rather than closed over: the table is built after the readers it names,
-    which it has to be, and by the time any of them is called it exists.
-    """
-    cache = reader_registry.memo_of(query)
-    name = reader.__name__
-    if name in cache:
-        return cache[name]
-    answer = reader(query) if READERS.worth_asking(name, query) else None
-    cache[name] = answer
-    return answer
-
-
-def _recogniser[**P, T](reader: Callable[P, T]) -> Callable[P, T]:
-    """Mark a deterministic reader, and record the turns it claims.
-
-    **This is the whole `recogniser` seam: one `record` call, and not one line inside `_steps`.**
-    The chain in there is twenty-odd `plan = _reader(query)` / `if plan is not None: … return`
-    blocks, and a `record` in each would be twenty telemetry blocks in the file that already does
-    too much — the trade this design refuses. A decorator puts the decision where the decision is:
-    a reader returning something *is* the claim, and there is nothing else to work out.
-
-    **There is no `agreed` verdict here, and that is deliberate rather than an omission.** A reader
-    that returns `None` has not decided anything — it has declined to read, and recording twenty
-    "not mine" decisions per turn would bury the one that matters. So every decision this seam
-    records is `CLAIMED` with `changed=True`, which is exactly what `Step.RECOGNISER` says it
-    means: the model never ran. The denominator is turns, and `Step.OUTCOME` records one of those
-    per turn.
-
-    **A turn can record two of these**, on one path: `_ratio_request` reads a percent-change
-    follow-up by asking `_direct_period_comparison`, and both claim. Both are true — the ratio
-    reader took the turn, on the strength of the comparison reader — and the alternative was
-    leaving one of the two undecorated, which is an instrument with a hole in it rather than one
-    with an honest extra row. The other three readers consulted from inside another
-    (`_comparison_with_previous_period`, `_internal_movement_request`, and
-    `_direct_period_comparison` under `_a_comparison_owns_it`) are all reached only after the chain
-    has already asked them and been told `None`, so they cannot double.
-
-    **The claim in the paragraph above is no longer a paragraph.** It is a claim about *claims* —
-    those three are asked by the cascade first and consulted again only after they declined, so no
-    turn records two `CLAIMED` decisions for them — and `test_no_reader_claims_one_turn_twice` now
-    checks it over 1,341 sentences instead of over the four its author had in mind. It is also what
-    makes the memo below free: a memoised repeat still records, so `decisions_total` only stays
-    identical while no reader claims twice.
-
-    **What the spans then made visible, and what has since been paid off.** The claim never said
-    anything about *consultations*, and there were many more of those: `_direct_period_comparison`
-    up to five times, once by the cascade and once inside each of
-    `_comparison_with_a_named_window`, `_natural_period_aggregate_plan`,
-    `_deterministic_breakdown_plan` and `_average_plan`, all four of which ask
-    `_a_comparison_owns_it`, which is that reader under another name. Four of the five were
-    measured on an ordinary spending question — twenty-two consultations for one turn.
-
-    It is nineteen now, and the thing that removed the three is the *precondition*, not the memo:
-    none of those three readers can claim a sentence with no natural period, no breakdown request
-    and no average in it, so none of them runs and none of them asks. The memo is what stops the
-    repeats that remain, on the sentences where those readers do run, from costing four passes over
-    the same date grammar.
-
-    **`consulting` is the second half, and it deliberately records what `record` refuses to.** A
-    reader returning `None` still declined *in an order*, and the order is the question this whole
-    change exists to answer: which nineteen functions did the reasoning fall through, and which
-    called which. That is a tree, not a rate — so it goes to the trace and never to
-    `decisions_total`, whose shape a live dashboard is built on and which this leaves untouched.
-
-    The nesting is not programmed. `_ratio_request` becomes the parent of
-    `_direct_period_comparison` because its frame was open when the inner one started, and nothing
-    here names either function.
-
-    **The registry is consulted from inside the frame, and that placement is the whole of it.**
-    `READERS` holds each reader's precondition and the turn's memo, and this seam is the one place
-    both are applied — so the cascade's call sites, the four readers that consult another, and
-    anything `reader_registry` asks all get them without a line changing anywhere else.
-
-    Inside the frame rather than around it, so the nineteen the cascade asks directly are still
-    nineteen rows in the tree with a verdict each. A reader whose precondition does not hold is not
-    run, and is recorded as having declined — which is what it would have done anyway, because a
-    precondition is a *necessary* condition for claiming and never a sufficient one. That is the
-    property `test_no_precondition_refuses_a_sentence_its_reader_would_claim` checks for all
-    nineteen readers over every sentence there is, which is what makes it a fact rather than a hope.
-    """
-
-    @wraps(reader)
-    def read(*args: P.args, **kwargs: P.kwargs) -> T:
-        # One positional query and nothing else is every reader in the table. `_recogniser` is
-        # generic, so anything else falls through uncached rather than hanging a memo off an object
-        # nobody has established is a turn.
-        asked = args[0] if len(args) == 1 and not kwargs else None
-        with consulting(reader.__name__) as consulted:
-            claimed = (
-                _reading(reader, asked)
-                if isinstance(asked, AskFinancialQuestionQuery)
-                else reader(*args, **kwargs)
-            )
-            consulted.claimed = claimed is not None
-        # Outside the frame on purpose, so the `CLAIMED` decision is recorded exactly where it was
-        # recorded before this line existed. It would make no difference to the export — decision
-        # spans are built afterwards from the sealed record and are all children of `turn` — but
-        # "the counter path is untouched" is a property worth being able to read off the source.
-        if claimed is not None:
-            record(Step.RECOGNISER, Verdict.CLAIMED, changed=True, detail=reader.__name__)
-        return claimed
-
-    return read
-
-
-def _clean_turn(sentence: str) -> str:
-    """Fold a short conversational turn and remove only punctuation at its edges."""
-    return re.sub(r"[^a-z0-9]+", " ", spanish.folded(sentence)).strip()
-
-
-def _across_every_account(plan: FinancialPlan) -> FinancialPlan:
-    """Widen to the whole holder, and drop the narrowing that is being given up.
-
-    Written once because it was written five times and four of them forgot the second half. A plan
-    reaching `_scoped` may already name an account — `merge` rebuilds a follow-up out of the earlier
-    plan and the scope survives that — so widening with `replace(plan, across_accounts=True)` alone
-    left the account in place. Banking reads that pair as a request for every account of the holder
-    while `scoped_to` goes on naming the one that was asked for: a real figure about a wider scope
-    than the question had. It is refused outright on that side now, so leaving it here only trades a
-    wrong answer for a 422. Widening means widening.
-    """
-    return replace(plan, across_accounts=True, only_account_id=None, only_account_ids=())
-
-
-def _starts_new_financial_scope(sentence: str, *, today: date) -> bool:
-    """Whether this turn states a complete new question rather than an ellipsis.
-
-    A concrete window plus a financial question is enough to stand on its own. Inheriting an old
-    category there is how "cuánto gasté en la cuenta principal este mes" remained filtered by
-    restaurants. Short turns without a window ("y cuánto gasté?") remain follow-ups.
-    """
-    folded = spanish.folded(sentence)
-    if re.search(r"\b(?:esa|ese|esas|esos)\b|\blo\s+mismo\b", folded):
-        return False
-    return (
-        window_words.window_in(sentence, today=today) is not None
-        and _SELF_CONTAINED_FINANCIAL_QUESTION.search(folded) is not None
-    )
-
-
-@dataclass(frozen=True)
-class SpokenGroup:
-    key: str
-    total_minor: int
-    movement_count: int
-    # Backend-derived value for the requested metric (never recomputed by clients).
-    value_minor: int | None = None
-
-
-@dataclass(frozen=True)
-class VisualRow:
-    dimension: str
-    value_minor: int
-    series: str | None = None
-    occurred_at: str | None = None
-
-
-@dataclass(frozen=True)
-class VisualDataset:
-    rows: tuple[VisualRow, ...]
-    metric: str
-    title: str = "Resultados"
-
-
-@dataclass(frozen=True)
-class SpokenPlan:
-    """The plan in fields rather than in words, flat like every other Result piece.
-
-    It exists so a follow-up can carry its context back without the client having to
-    re-type a sentence — and, more to the point, without the *description* travelling,
-    which put a client-supplied string inside the prompt's instructions.
-    """
-
-    direction: str
-    period: str | None = None
-    n: int | None = None
-    start: str | None = None
-    end: str | None = None
-    categories: list[str] = field(default_factory=list)
-    excluded_categories: list[str] = field(default_factory=list)
-    merchants: list[str] = field(default_factory=list)
-    merchant_terms: list[str] = field(default_factory=list)
-    excluded_merchants: list[str] = field(default_factory=list)
-    counterparties: list[str] = field(default_factory=list)
-    excluded_counterparties: list[str] = field(default_factory=list)
-    counterparty_types: list[str] = field(default_factory=list)
-    group_by: str = "NONE"
-    metric: str = "SUM"
-    group_limit: int | None = None
-    include_internal: bool = False
-    internal_only: bool = False
-    across_accounts: bool = False
-    only_account_id: str | None = None
-    only_account_ids: list[str] = field(default_factory=list)
-    transaction_ids: list[str] = field(default_factory=list)
-    transaction_types: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class SpokenContact:
-    """Somebody who can be paid, flat like every Result piece.
-
-    The identifier is here so a client can offer a choice and send back *which* contact rather
-    than a name to be interpreted again — which is how money reaches the wrong Marta.
-    """
-
-    contact_id: str
-    display_name: str
-    phone: str
-
-
-@dataclass(frozen=True)
-class SpokenMovement:
-    occurred_at: str
-    description: str
-    # Unsigned, as banking returns it: a query filtered by EXPENSE comes back with positive
-    # amounts and the direction beside them. The direction is what makes the sign, and dropping
-    # it here is why every expense in the chat rendered as "+22,11 €" — money coming in.
-    amount_minor: int
-    direction: str
-    merchant_name: str | None = None
-    category: str | None = None
-    transaction_type: str | None = None
-    counterparty_name: str | None = None
-    counterparty_type: str = "UNKNOWN"
-    receipt_category: str | None = None
-
-
-@dataclass(frozen=True)
-class AskFinancialQuestionResult:
-    """Flat, like every Result: no domain object leaves the application layer.
-
-    `plan` is the plan in words. It is here because an answer whose derivation the user
-    cannot inspect is a number to be believed, and this pipeline has a language model in
-    it — showing the question it actually asked is the difference between a tool and an
-    oracle.
-    """
-
-    outcome: str
-    text: str
-    question: str | None = None
-    plan: str | None = None
-    plan_context: SpokenPlan | None = None
-    # Where the conversation is after this turn: at most one active workflow, plus the memory of
-    # the last answered question. The client stores it and sends it back without reading it.
-    #
-    # A domain object leaving this layer, which every other Result field avoids. The exception is
-    # deliberate: the alternative is a third representation of the same five states — domain, wire,
-    # and a flat one here — kept in sync by hand, and states drifting apart between layers is the
-    # failure this type was introduced to end. The query already accepts domain objects coming in.
-    conversation: Conversation = IDLE
-    currency: str | None = None
-    # The figure the answer's own sentence leads with -- `None` when it has no single one, and a
-    # client that gets `None` renders the sentence, which was the whole answer either way.
-    # `answer_writer.leading_figure` is where that rule is written down and why: the field and the
-    # prose are two representations of one decision, and a client showing 2.270,42 € under a
-    # sentence saying 7.755,92 € is what happens when they disagree. Never a signed difference --
-    # `difference_minor` below carries those.
-    total_minor: int | None = None
-    # The signed change between two compared figures, `latest - earlier`, in the unit the
-    # comparison measured. `None` unless the answer *is* a comparison of two operands, and also on
-    # a counted one, where the change is movements rather than money and `_minor` would be a lie
-    # about the unit.
-    #
-    # It exists because `total_minor` was carrying it. «¿He gastado más este mes que el anterior?»
-    # answered `total_minor: -189597` beside groups summing to `+189597`, so a client rendering the
-    # leading figure showed −1.895,97 € for a question about spending, under a sentence saying
-    # "1.895,97 € mayor el mes pasado". Measured over HTTP in
-    # `evaluation/planning/RESULTS-E2E.md`, which is where gate 1's *Evidence reconciliation* row
-    # took its first real reading and failed 1 of 11 breakdowns.
-    #
-    # Its presence is also the only thing on the wire that says the rows in `groups` are the two
-    # *operands* of a difference rather than *parts* of a total. Nothing else discriminates: the
-    # `metric="COMPARISON"` marker stops at `VisualDataset` and never reaches `visualization`,
-    # `plan` is prose no client parses, and `outcome` is `PLANNED` either way.
-    #
-    # Two other shapes were weighed and rejected.
-    #
-    # **Make `total_minor` the figure the groups add up to.** It would satisfy the reconciliation
-    # property by construction, and it puts a number in the field that the sentence never says:
-    # 1.000 € this month against 1.895,97 € last month would report 2.895,97 €. That is exactly
-    # the failure `leading_figure` exists to prevent, so it trades a wrong sign for a wrong figure.
-    #
-    # **Take the operands out of `groups`.** That also satisfies the property, while leaving
-    # `total_minor` a signed difference under a name that says total -- it silences the measurement
-    # and keeps the client bug. And it silences it in the worst available way: `reconcilable()`
-    # calls an empty breakdown *not inspectable*, so the answer would leave the denominator too and
-    # "breakdowns reconciled" would fall from 11 to 10 with the failure gone from both halves of
-    # the ratio. That is the vacuous zero `RESULTS-E2E.md` exists to prevent, one field lower.
-    # Keeping the rows is also what a screen needs: the web renders them in `AnswerEvidence`, the
-    # only place a person sees the two windows as data.
-    #
-    # **Teach the property that a comparison is a third shape, and change nothing here.** The
-    # cheapest, and it concedes that one field means "a total", "a signed difference" and "a signed
-    # net" depending on the answer -- the shape `docs/next.md` lists as a known defect under
-    # "Discriminated responses". The property does have to learn: `CUMULATIVE` groups are running
-    # totals and cannot sum to their total either, correctly, so its assumption was already wrong
-    # on a path nobody disputes. But it had nothing on the wire to key on until this field existed.
-    #
-    # What it can key on now is a tag, not a hint, and it narrows one check rather than dropping
-    # both: with `difference_minor` present the rows are operands and their amounts do not add up
-    # to a total, while their *counts* still must -- 28 = 28 held on the measured case and holds on
-    # every path here, because `movement_count` is the sum of both operands' counts.
-    difference_minor: int | None = None
-    movement_count: int | None = None
-    # Which of the holder's accounts a fully-read transfer is going to, once one is settled.
-    #
-    # This handler reads and never writes: resolving the account is reading, and staging money is a
-    # `payments:prepare` scope the questions route does not have. So the read comes out here and the
-    # route above decides whether it may be turned into a preview. Before this, the account was
-    # resolved, the amount was resolved, and the answer was a sentence telling the holder to go and
-    # do it again on a screen — with everything needed to offer it already in hand.
-    transfer_to: str | None = None
-    groups: list[SpokenGroup] = field(default_factory=list)
-    movements: list[SpokenMovement] = field(default_factory=list)
-    # Filled only by a question about who can be paid. Data as well as prose, so a client
-    # can draw one button per contact instead of parsing names out of a paragraph.
-    contacts: list[SpokenContact] = field(default_factory=list)
-    suggestions: list[str] = field(default_factory=list)
-    explicit_visualization: bool = False
-    visual_dataset: VisualDataset | None = None
-    # Internal, typed source for a save candidate. Never serialized as financial data.
-    metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
-
-
-@dataclass(frozen=True)
-class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
-    sentence: str
-    account_id: UUID
-    today: date
-    # The zone `today` was measured in. It travels with the date because neither describes a
-    # window alone, and it belongs to the holder rather than the deployment: between
-    # midnight and 01:00 peninsular time, today in the Canaries is yesterday in Madrid.
-    reporting_timezone: str = "Europe/Madrid"
-    # Where the conversation was before this turn, echoed back by the caller. Held by whoever is
-    # having it rather than by this service, and already typed by the time it arrives here — the
-    # edge rebuilt it through the domain, so nothing in here has to believe a string.
-    conversation: Conversation = IDLE
-    # What this turn was read as, when the caller already knows.
-    #
-    # The edge has to classify the sentence before it can decide whether to dispatch this query at
-    # all — a payment order never reaches here. Left out, the classification happened again inside,
-    # and two readings of one sentence is a thing that can disagree with itself. It already did:
-    # the edge and the handler each grew their own exception for "¿a quién puedo hacer un bizum?"
-    # and only one of them got it.
-    #
-    # It is *not* a client field. Nothing deserialises into it; the edge fills it from the
-    # interpreter it just asked, and a caller that leaves it out gets the same reading computed
-    # here. That keeps the handler usable on its own — every test and the corpus call it that way —
-    # without letting a second reading exist on the path a user is actually on.
-    intent: Intent | None = None
-    analysis: TurnAnalysis | None = None
-
-    def __post_init__(self) -> None:
-        if (
-            self.intent is not None
-            and self.analysis is not None
-            and self.intent is not self.analysis.intent
-        ):
-            raise InvalidValueError("intent and turn analysis disagree")
 
 
 def _legacy_turn_analysis(intent: Intent, conversation: Conversation) -> TurnAnalysis:
@@ -859,6 +391,71 @@ class _RecordedLedger:
             detail=account_ref(account_id),
         )
         return found
+
+
+# ----------------------------------------------------------------------------------------------
+# The nineteen readers, in the five runs `_steps` asks them in.
+#
+# **This is the fact A2 had to preserve and very nearly did not.** A1's handover said to replace the
+# nineteen interleaved call sites with one `select()`, and that is wrong — measurably, not as a
+# matter of taste. The readers were never consulted as one block. Between them sat branches that
+# are not readers and can also answer the turn, and each one is a sentence that would change
+# meaning if a reader below it were hoisted above it:
+#
+# | between which runs | what sits there |
+# | --- | --- |
+# | 1 → 2 | «gracias», «¿quién eres?», a transfer under way, a category refusal, two Bizums |
+# | 2 → 3 | `_account_activity_request` — a plan or a draft about one account |
+# | 3 → 4 | other accounts, an account follow-up, a bare shop name, a balance, «¿y el |
+# |       | segundo?», six pronoun branches over the last answer, and a referenced result |
+# | 4 → 5 | frustration, a bare correction, the next in a ranking, a year earlier |
+#
+# One `select()` at the top would hand `_average_plan` a sentence `Intent.COURTESY` answers today.
+# So the runs are declared, each is asked where its members were asked, and `select(among=...)`
+# walks the derived order restricted to the run.
+#
+# **Restricting a global order to a subset is only safe while every edge points backwards**, which
+# is true of all five `yields_to` edges in the table and is checked by
+# `test_no_run_yields_to_a_later_one` rather than assumed. `test_the_five_runs_are_the_nineteen`
+# checks the other half: the runs concatenate to `CASCADE` exactly, once each. Those two together
+# are what replaced `test_the_cascade_order_is_still_what_the_handler_does`, which read `_steps`'
+# source because there was no other way to see an order spread over nineteen call sites.
+#
+# The names say what the run is *for*, because that is the only thing that makes a fifth run's
+# position reviewable: a new reader belongs in the run whose question it answers.
+_BEFORE_THE_ASIDES: Final = ("_ratio_request",)
+_ON_A_NAMED_SUBJECT: Final = (
+    "_gambling_plan",
+    "_how_many_payees_plan",
+    "_internal_movement_request",
+)
+_ON_A_COMPARISON: Final = (
+    "_salary_history_plans",
+    "_period_comparison_plans",
+    "_comparison_with_previous_period",
+    "_direct_period_comparison",
+    "_comparison_with_a_named_window",
+)
+_ON_THE_QUERY_IN_VIEW: Final = ("_contextual_follow_up_plan",)
+_ON_THE_SENTENCE_ITSELF: Final = (
+    "_multiple_movement_ranking",
+    "_group_ranking_plan",
+    "_natural_period_aggregate_plan",
+    "_deterministic_breakdown_plan",
+    "_contextual_ranking_plan",
+    "_cumulative_plan",
+    "_recurrence_plan",
+    "_frequency_plan",
+    "_average_plan",
+)
+# In the order `_steps` asks them, which is the tuple `test_the_five_runs_are_the_nineteen` reads.
+RUNS: Final = (
+    _BEFORE_THE_ASIDES,
+    _ON_A_NAMED_SUBJECT,
+    _ON_A_COMPARISON,
+    _ON_THE_QUERY_IN_VIEW,
+    _ON_THE_SENTENCE_ITSELF,
+)
 
 
 class AskFinancialQuestionHandler:
@@ -1187,7 +784,7 @@ class AskFinancialQuestionHandler:
         # several corrections to the previous expense plan, answering "¿con cuál empezamos?".
         # Recognise the closed compound shape first; its branch still executes below, after the
         # conversational asides and transfer workflow have had their normal precedence.
-        relationship = _ratio_request(query)
+        relationship = seam.READERS.select(query, among=_BEFORE_THE_ASIDES)
         relaxed = (
             None
             if relationship is not None
@@ -1313,20 +910,14 @@ class AskFinancialQuestionHandler:
             yield self._declined(early_refusal, was)
             return
 
-        ratio = relationship
-        if isinstance(ratio, RatioDraft):
-            scoped = await self._scoped_ratio_draft(ratio, query)
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                text="¿De qué periodo quieres calcularlo?",
-                question="¿De qué periodo quieres calcularlo?",
-                conversation=was.waiting_for_ratio(scoped),
-                suggestions=["Este mes", "El mes pasado", "Este año"],
-            )
-            return
-        if isinstance(ratio, RatioPlan):
-            yield Stage("querying")
-            yield await self._answer_ratio(query, ratio)
+        if relationship is not None:
+            # Asked far above and answered here, which is the one run whose ask and dispatch are
+            # not in the same place. The ask has to happen before `query_recovery.relaxation`,
+            # because a ratio suppresses it; the answer has to happen after the asides, because
+            # «gracias» is not a ratio question however the sentence reads. Two positions for one
+            # reader, and the comment above the ask is the one that says why.
+            async for step in self._answering(relationship, query, was):
+                yield step
             return
         if was.pending_ratio is not None and intent not in _ASIDES:
             # The pending pair asked only for a period. A different financial question abandons
@@ -1383,64 +974,10 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, past_payment)
             return
 
-        gambling = _gambling_plan(query)
-        if isinstance(gambling, FinancialPlanDraft):
-            question = (
-                "¿De qué periodo quieres que lo compruebe? Buscaré en ocio y en comercios "
-                "cuyo nombre contenga apuesta o bet."
-            )
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                text=question,
-                question="¿De qué periodo quieres que lo compruebe?",
-                conversation=was.with_active(
-                    FinancialClarification(draft=gambling, awaiting=Slot.WINDOW)
-                ),
-                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
-            )
-            return
-        if isinstance(gambling, FinancialPlan):
-            yield Stage("planned", answer_writer.describe(gambling))
-            yield Stage("querying")
-            yield await self._answer(query, gambling)
-            return
-
-        # Before the breakdown and before the model, because both answer it with the wrong number:
-        # the breakdown leads with the money and the planner reads "¿cuántas suscripciones?" as a
-        # count of movements. Named categories only, so "¿qué gastos fijos tengo?" still reaches the
-        # recurrence discovery further down.
-        how_many = _how_many_payees_plan(query)
-        if how_many is not None:
-            yield Stage("planned", answer_writer.describe(how_many))
-            yield Stage("querying")
-            yield await self._how_many_payees(query, how_many)
-            return
-
-        internal = _internal_movement_request(query)
-        if isinstance(internal, FinancialPlanDraft):
-            try:
-                internal_scoped = await self._scoped_internal_draft(internal, query)
-            except AccountScopeNotFoundError:
-                yield AskFinancialQuestionResult(
-                    outcome=Spoken.GUIDANCE.value,
-                    text="No tienes una cuenta de ese tipo en la que buscar traspasos.",
-                    conversation=was,
-                )
-                return
-            question = "¿De qué periodo quieres consultar esos traspasos?"
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                text=question,
-                question=question,
-                conversation=was.with_active(
-                    FinancialClarification(draft=internal_scoped, awaiting=Slot.WINDOW)
-                ),
-                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
-            )
-            return
-        if isinstance(internal, FinancialPlan):
-            yield Stage("querying")
-            yield await self._answer(query, internal)
+        named_subject = seam.READERS.select(query, among=_ON_A_NAMED_SUBJECT)
+        if named_subject is not None:
+            async for step in self._answering(named_subject, query, was):
+                yield step
             return
 
         account_activity = (
@@ -1464,28 +1001,15 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, account_activity)
             return
 
-        salary_history = _salary_history_plans(query)
-        if salary_history is not None:
-            yield Stage("querying")
-            yield await self._compare_salary_history(query, *salary_history)
-            return
-
-        period_comparison = _period_comparison_plans(query)
-        if period_comparison is None:
-            period_comparison = _comparison_with_previous_period(query)
-        if period_comparison is None:
-            period_comparison = _direct_period_comparison(query)
-        if period_comparison is None:
-            # Last, so the cheapest readers answer first. Position is not what makes it correct:
-            # it asks the two readers whose phrases it can also match whether they claim the
-            # sentence, which its docstring explains and the contested-turn measurement requires.
-            period_comparison = _comparison_with_a_named_window(query)
-        if period_comparison is not None:
-            # Two complete, already validated questions are safer context than asking a model to
-            # reconstruct both from "compáralos". Run them again so the comparison uses current
-            # bank data, while the conversation keeps the pair available for another pronoun.
-            yield Stage("querying")
-            yield await self._compare_periods(query, period_comparison)
+        # The five that answer with two figures. `_comparison_with_a_named_window` stood last of
+        # them so the cheapest read first, and its own docstring is where that argument lives; the
+        # order is `stood_at` now and nothing here restates it. What did not survive as a comment is
+        # the four-branch `if period_comparison is None` chain, because a run of readers asked until
+        # one claims is what `select` is.
+        comparison = seam.READERS.select(query, among=_ON_A_COMPARISON)
+        if comparison is not None:
+            async for step in self._answering(comparison, query, was):
+                yield step
             return
 
         if intent is Intent.FINANCIAL_QUERY and account_words.asks_for_other_accounts(
@@ -1634,11 +1158,10 @@ class AskFinancialQuestionHandler:
             yield await self._answer(query, referenced_result)
             return
 
-        contextual = _contextual_follow_up_plan(query)
-        if contextual is not None:
-            yield Stage("planned", answer_writer.describe(contextual))
-            yield Stage("querying")
-            yield await self._answer(query, contextual)
+        in_view = seam.READERS.select(query, among=_ON_THE_QUERY_IN_VIEW)
+        if in_view is not None:
+            async for step in self._answering(in_view, query, was):
+                yield step
             return
 
         if intent is Intent.CORRECTION:
@@ -1701,114 +1224,14 @@ class AskFinancialQuestionHandler:
                 yield await self._answer(query, shifted)
             return
 
-        movement_ranking = _multiple_movement_ranking(query)
-        if movement_ranking is not None:
-            multi_ranking, count = movement_ranking
-            yield Stage("planned", f"{answer_writer.describe(multi_ranking)}, top {count}")
-            yield Stage("querying")
-            yield await self._ranked_many(query, multi_ranking, count)
-            return
-
-        group_ranking = _group_ranking_plan(query)
-        if group_ranking is not None:
-            yield Stage("planned", answer_writer.describe(group_ranking))
-            yield Stage("querying")
-            yield await self._answer(query, group_ranking)
-            return
-
-        natural_period = _natural_period_aggregate_plan(query)
-        if natural_period is not None:
-            yield Stage("planned", answer_writer.describe(natural_period))
-            yield Stage("querying")
-            yield await self._answer(query, natural_period)
-            return
-
-        deterministic = _deterministic_breakdown_plan(query)
-        if isinstance(deterministic, FinancialPlanDraft):
-            comparing = bool(
-                explicit_facts.read(query.sentence, today=query.today).compared_categories
-            )
-            question = (
-                "¿De qué periodo quieres que compare ambos gastos?"
-                if comparing
-                else (
-                    "¿De qué periodo quieres que busque la nómina y la cuenta en la que entró?"
-                    if deterministic.group_by is GroupBy.ACCOUNT
-                    and deterministic.categories == ("SALARY",)
-                    else "¿De qué periodo quieres que haga el desglose?"
-                )
-            )
-            conversation = was.with_active(
-                FinancialClarification(draft=deterministic, awaiting=Slot.WINDOW)
-            )
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                text=question,
-                question=question,
-                conversation=conversation,
-                suggestions=["Este mes", "Este año", "Los últimos 4 meses"],
-            )
-            return
-        if deterministic is not None:
-            yield Stage("planned", answer_writer.describe(deterministic))
-            yield Stage("querying")
-            yield await self._answer(query, deterministic)
-            return
-
-        ranking = _contextual_ranking_plan(query)
-        if ranking is not None:
-            yield Stage("planned", answer_writer.describe(ranking))
-            yield Stage("querying")
-            yield await self._ranked(query, ranking)
-            return
-
-        cumulative = _cumulative_plan(query)
-        if cumulative is not None:
-            yield Stage("planned", answer_writer.describe(cumulative))
-            yield Stage("querying")
-            yield await self._answer(query, cumulative)
-            return
-
-        recurrence = _recurrence_plan(query)
-        if recurrence is not None:
-            yield Stage("planned", answer_writer.describe(recurrence))
-            yield Stage("querying")
-            yield await self._answer(query, recurrence)
-            return
-
-        frequency = _frequency_plan(query)
-        if frequency is not None:
-            yield Stage("planned", answer_writer.describe(frequency))
-            yield Stage("querying")
-            yield await self._answer(query, frequency)
-            return
-
-        average = _average_plan(query)
-        if isinstance(average, FinancialPlanDraft):
-            conversation = (
-                was
-                if isinstance(was.active, PaymentInProgress) and was.active.suspended
-                else was.with_active(FinancialClarification(draft=average, awaiting=Slot.WINDOW))
-            )
-            yield AskFinancialQuestionResult(
-                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
-                text="¿De qué periodo quieres que calcule la media?",
-                question="¿De qué periodo quieres que calcule la media?",
-                conversation=conversation,
-                suggestions=[
-                    "Este mes",
-                    "El mes pasado",
-                    "Los últimos 12 meses",
-                    f"En {query.today.year}",
-                ],
-            )
-            return
-        if average is not None:
-            # Average vocabulary is closed enough to plan without a model. This branch sits before
-            # the legacy guard that used to reject all time-normalised means.
-            yield Stage("planned", answer_writer.describe(average))
-            yield Stage("querying")
-            yield await self._answer(query, average)
+        # The last run, and the only one whose members were already contiguous: nine readers with
+        # nothing between them but each other's dispatch. This is the run the interleaving was
+        # hiding — nine `if plan is not None` blocks that differed in four of the nine and were
+        # identical in the other five.
+        on_the_sentence = seam.READERS.select(query, among=_ON_THE_SENTENCE_ITSELF)
+        if on_the_sentence is not None:
+            async for step in self._answering(on_the_sentence, query, was):
+                yield step
             return
 
         refused = capability_guard.unsupported_reason(query.sentence, self._policy)
@@ -2011,6 +1434,224 @@ class AskFinancialQuestionHandler:
             yield await self._ranked(query, checked)
             return
         yield await self._answer(query, checked)
+
+    # --- what a claim becomes -------------------------------------------------------------------
+    #
+    # **The selection was the easy half.** `select` returns which of the nineteen took the turn;
+    # the eleven methods below are what the turn then *is*, and they are not interchangeable. Nine
+    # of the nineteen readers share one shape — describe the plan, say a query is running, answer
+    # it, which is `_planned_answer` — and each of the other ten differs in something a table
+    # cannot hold: a draft that opens a clarification with its own Spanish question, a pair of
+    # plans splatted into one call, a count in the `planned` stage, an answer method that is not
+    # `_answer`.
+    #
+    # So the dispatch is a **table from reader to shape**, not a shape computed from the plan's
+    # type. Deciding by type was tried on paper and does not survive contact: `_gambling_plan` and
+    # `_average_plan` both return `FinancialPlan | FinancialPlanDraft | None` and their drafts ask
+    # different questions, `_internal_movement_request` returns the same plan type as eight others
+    # and deliberately emits no `planned` stage, and `_multiple_movement_ranking` returns a tuple.
+    # A reader is the thing that knows what its answer means, so the reader is the key.
+    #
+    # `test_every_reader_has_a_shape_to_be_answered_in` is what stops the twentieth reader arriving
+    # with no entry and being silently dropped — which is the one failure this design could have
+    # that the cascade could not.
+    #
+    # **`if isinstance(plan, FinancialPlanDraft): … else the plan` is exact, not a simplification.**
+    # `_steps` wrote the second half as `isinstance(plan, FinancialPlan)` for two readers and as
+    # `is not None` for two others, and all four return `FinancialPlan | FinancialPlanDraft | None`
+    # — `_ratio_request` returns `RatioPlan | RatioDraft | None`. `select` never hands over `None`,
+    # so the union is exhausted by the two branches and the four spellings were one behaviour
+    # written four ways. mypy holds the signatures that make this true.
+
+    async def _answering(
+        self, claimed: Claim, query: AskFinancialQuestionQuery, was: Conversation
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        """Turn one reader's claim into the stages and the answer the cascade produced for it.
+
+        `was` is passed rather than read off `query.conversation`, and they are the same object at
+        every one of the five call sites — every reassignment of `was` in `_steps` is followed by
+        `query = replace(query, conversation=was)`. Passing it is how that stays true by
+        construction instead of by inspection: this method uses exactly the variable the inline
+        block it replaced used.
+        """
+        async for step in _ANSWERING[claimed.reader](self, query, was, claimed.plan):
+            yield step
+
+    async def _a_ratio(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        if isinstance(plan, RatioDraft):
+            scoped = await self._scoped_ratio_draft(plan, query)
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text="¿De qué periodo quieres calcularlo?",
+                question="¿De qué periodo quieres calcularlo?",
+                conversation=was.waiting_for_ratio(scoped),
+                suggestions=["Este mes", "El mes pasado", "Este año"],
+            )
+            return
+        # No `planned` stage, which is not an oversight: a ratio is two questions and
+        # `answer_writer.describe` speaks about one plan. `_answer_ratio` says what it computed.
+        yield Stage("querying")
+        yield await self._answer_ratio(query, plan)
+
+    async def _a_gambling_plan(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        if isinstance(plan, FinancialPlanDraft):
+            question = (
+                "¿De qué periodo quieres que lo compruebe? Buscaré en ocio y en comercios "
+                "cuyo nombre contenga apuesta o bet."
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question="¿De qué periodo quieres que lo compruebe?",
+                conversation=was.with_active(
+                    FinancialClarification(draft=plan, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        async for step in self._planned_answer(query, was, plan):
+            yield step
+
+    async def _a_payee_count(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        yield Stage("planned", answer_writer.describe(plan))
+        yield Stage("querying")
+        yield await self._how_many_payees(query, plan)
+
+    async def _an_internal_movement(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        if isinstance(plan, FinancialPlanDraft):
+            try:
+                internal_scoped = await self._scoped_internal_draft(plan, query)
+            except AccountScopeNotFoundError:
+                yield AskFinancialQuestionResult(
+                    outcome=Spoken.GUIDANCE.value,
+                    text="No tienes una cuenta de ese tipo en la que buscar traspasos.",
+                    conversation=was,
+                )
+                return
+            question = "¿De qué periodo quieres consultar esos traspasos?"
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=was.with_active(
+                    FinancialClarification(draft=internal_scoped, awaiting=Slot.WINDOW)
+                ),
+                suggestions=["Este mes", "Los últimos 3 meses", "Este año"],
+            )
+            return
+        # And no `planned` stage here either, which *is* the odd one out among the plan-shaped
+        # nine. Left exactly as it was: A2 moves code and does not decide that a missing stage was
+        # a bug. If it was one, it is a one-line change with its own measurement.
+        yield Stage("querying")
+        yield await self._answer(query, plan)
+
+    async def _a_salary_history(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        # A pair, splatted: this reader is the only one that answers with two plans rather than a
+        # plan or a draft, which is why its shape cannot be shared with the comparisons it sits
+        # beside in the same run.
+        yield Stage("querying")
+        yield await self._compare_salary_history(query, *plan)
+
+    async def _a_period_comparison(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        # Two complete, already validated questions are safer context than asking a model to
+        # reconstruct both from "compáralos". Run them again so the comparison uses current
+        # bank data, while the conversation keeps the pair available for another pronoun.
+        yield Stage("querying")
+        yield await self._compare_periods(query, plan)
+
+    async def _a_movement_ranking(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        multi_ranking, count = plan
+        yield Stage("planned", f"{answer_writer.describe(multi_ranking)}, top {count}")
+        yield Stage("querying")
+        yield await self._ranked_many(query, multi_ranking, count)
+
+    async def _a_single_movement(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        yield Stage("planned", answer_writer.describe(plan))
+        yield Stage("querying")
+        yield await self._ranked(query, plan)
+
+    async def _a_breakdown(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        if isinstance(plan, FinancialPlanDraft):
+            comparing = bool(
+                explicit_facts.read(query.sentence, today=query.today).compared_categories
+            )
+            question = (
+                "¿De qué periodo quieres que compare ambos gastos?"
+                if comparing
+                else (
+                    "¿De qué periodo quieres que busque la nómina y la cuenta en la que entró?"
+                    if plan.group_by is GroupBy.ACCOUNT and plan.categories == ("SALARY",)
+                    else "¿De qué periodo quieres que haga el desglose?"
+                )
+            )
+            conversation = was.with_active(FinancialClarification(draft=plan, awaiting=Slot.WINDOW))
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text=question,
+                question=question,
+                conversation=conversation,
+                suggestions=["Este mes", "Este año", "Los últimos 4 meses"],
+            )
+            return
+        async for step in self._planned_answer(query, was, plan):
+            yield step
+
+    async def _an_average(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        if isinstance(plan, FinancialPlanDraft):
+            conversation = (
+                was
+                if isinstance(was.active, PaymentInProgress) and was.active.suspended
+                else was.with_active(FinancialClarification(draft=plan, awaiting=Slot.WINDOW))
+            )
+            yield AskFinancialQuestionResult(
+                outcome=PlanningOutcome.NEEDS_CLARIFICATION.value,
+                text="¿De qué periodo quieres que calcule la media?",
+                question="¿De qué periodo quieres que calcule la media?",
+                conversation=conversation,
+                suggestions=[
+                    "Este mes",
+                    "El mes pasado",
+                    "Los últimos 12 meses",
+                    f"En {query.today.year}",
+                ],
+            )
+            return
+        # Average vocabulary is closed enough to plan without a model. This shape runs before the
+        # legacy guard that used to reject all time-normalised means.
+        async for step in self._planned_answer(query, was, plan):
+            yield step
+
+    async def _planned_answer(
+        self, query: AskFinancialQuestionQuery, was: Conversation, plan: Any
+    ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
+        """Describe it, say a query is running, answer it. Nine of the nineteen, spelled once.
+
+        It was spelled nine times in `_steps` — nine identical four-line blocks, which is the part
+        of the interleaving that was pure repetition rather than a difference anybody chose.
+        """
+        yield Stage("planned", answer_writer.describe(plan))
+        yield Stage("querying")
+        yield await self._answer(query, plan)
 
     def _declined(self, capability: str, was: Conversation) -> AskFinancialQuestionResult:
         """A refusal that remembers what it was about.
@@ -4714,6 +4355,42 @@ class AskFinancialQuestionHandler:
         )
 
 
+# Which shape answers which reader. Below the class because the values are its methods, and a table
+# of nineteen names is a thing to read rather than nineteen `elif`s to scroll through.
+#
+# The nine that share `_planned_answer` are the nine whose inline blocks were identical character
+# for character. The other ten each say what is different about them, in the method.
+_ANSWERING: Final[
+    dict[
+        str,
+        Callable[
+            [AskFinancialQuestionHandler, AskFinancialQuestionQuery, Conversation, Any],
+            AsyncIterator[Stage | AskFinancialQuestionResult],
+        ],
+    ]
+] = {
+    "_ratio_request": AskFinancialQuestionHandler._a_ratio,
+    "_gambling_plan": AskFinancialQuestionHandler._a_gambling_plan,
+    "_how_many_payees_plan": AskFinancialQuestionHandler._a_payee_count,
+    "_internal_movement_request": AskFinancialQuestionHandler._an_internal_movement,
+    "_salary_history_plans": AskFinancialQuestionHandler._a_salary_history,
+    "_period_comparison_plans": AskFinancialQuestionHandler._a_period_comparison,
+    "_comparison_with_previous_period": AskFinancialQuestionHandler._a_period_comparison,
+    "_direct_period_comparison": AskFinancialQuestionHandler._a_period_comparison,
+    "_comparison_with_a_named_window": AskFinancialQuestionHandler._a_period_comparison,
+    "_contextual_follow_up_plan": AskFinancialQuestionHandler._planned_answer,
+    "_multiple_movement_ranking": AskFinancialQuestionHandler._a_movement_ranking,
+    "_group_ranking_plan": AskFinancialQuestionHandler._planned_answer,
+    "_natural_period_aggregate_plan": AskFinancialQuestionHandler._planned_answer,
+    "_deterministic_breakdown_plan": AskFinancialQuestionHandler._a_breakdown,
+    "_contextual_ranking_plan": AskFinancialQuestionHandler._a_single_movement,
+    "_cumulative_plan": AskFinancialQuestionHandler._planned_answer,
+    "_recurrence_plan": AskFinancialQuestionHandler._planned_answer,
+    "_frequency_plan": AskFinancialQuestionHandler._planned_answer,
+    "_average_plan": AskFinancialQuestionHandler._an_average,
+}
+
+
 # One sentence per missing capability, keyed by the guard's family name.
 #
 # The guard has carried that name since it was written and nothing read it: every refusal came out
@@ -4769,38 +4446,6 @@ _MISSING_CAPABILITY: Final[dict[str, str]] = {
 # family to the guard cannot silently produce an empty refusal.
 _CANNOT_YET = "Eso no puedo calcularlo todavía."
 
-_AVERAGE_PERIOD_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:el\s+|la\s+)?(?:"
-    r"(?:por|al|cada)\s+dia|(?:por|a\s+la|cada)\s+semana|(?:por|al|cada)\s+mes"
-    r"|diari[oa]|semanal|semanl|semnal|mensual(?:mente)?|mensula|mesnual"
-    r")$"
-)
-_NATURAL_PERIOD_AVERAGE_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:eso\s+)?cuanto\s+(?:sale|seria|es)\s+"
-    r"(?:por|al|a\s+la|cada)\s+(?P<unit>dia|semana|mes)$"
-)
-_AVERAGE_MOVEMENT_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:por\s+(?:movimiento|operacion|compra|pago|cargo|ingreso)s?"
-    r"|(?:el\s+)?ticket\s+medio)$"
-)
-_SALARY_ACCOUNT_FOLLOW_UP: Final = re.compile(
-    r"^(?:en\s+)?la\s+que\s+(?:ingres\w*|cobr\w*)\s+(?:la\s+)?nomina"
-    r"(?:\s+(?:vaya|vamos))?(?:\s+[a-z])?$"
-)
-_ACCOUNT_SELECTION_FOLLOW_UP: Final = re.compile(
-    r"^(?:ahora\s+)?(?:solo|solamente)\b|\b(?:no|menos|excepto|salvo)\s+"
-    r"(?:el|la|los|las|mi|mis)?\s*(?:fondo|hucha|cuenta)\b"
-    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
-)
-_CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
-    r"^(?:(?:y|ahora)\s+)?(?:solo\s+)?en\s+"
-    r"|^(?:ahora\s+)?(?:solo|solamente)\b"
-    r"|^perdona\b.{0,35}\b(?:queria|refiero|referia)\b"
-    r"|^(?:no[\s,]+)?(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\b"
-    r"|^volvamos?\s+a\b"
-    r"|^(?:quedate|dejame|deja)\s+solo\s+con\b"
-)
-_CATEGORY_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+categoria\b")
 _MERCHANT_REFERENCE: Final = re.compile(
     r"\b(?:ese|este|aquel|el\s+mismo)\s+"
     r"(?:comercio|establecimiento|negocio|supermercado|sitio)\b"
@@ -4819,149 +4464,8 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
 )
-# The nouns that name a charge, from the vocabulary that owns them. They were written out here as
-# well and the two copies stayed level only by accident: the rails were missing from both, and each
-# was found on its own. "Bizum" and "transferencia" are also categories, which is what makes the
-# named-category branch necessary — without it the sentence declines and loses the window rather
-# than counting the kind it names.
-_COUNT_FOLLOW_UP: Final = re.compile(
-    rf"^(?:y\s+)?cuant[oa]s?\s+(?:{explicit_facts.CHARGE_NOUNS})\b"
-)
-_SUM_EXPENSE_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:gaste|gastado|pague|pagado|compre|comprado)\b"
-)
-_SUM_INCOME_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?cuanto\s+(?:he\s+)?(?:ingrese|ingresado|cobre|cobrado|recibi|recibido)\b"
-)
-_DIRECTION_ONLY_FOLLOW_UP: Final = re.compile(
-    r"^(?:y\s+)?(?:ahora\s+)?(?:no[\s,]+)?"
-    r"(?:(?:me\s+referia\s+a|queria\s+decir|quise\s+decir|mejor)\s+)?"
-    r"(?:solo\s+)?(?:los?\s+)?(?P<direction>ingresos?|gastos?)$"
-)
-_TOP_MERCHANT_FOLLOW_UP: Final = re.compile(
-    r"\ben\s+que\s+(?:comercio|tienda|sitio|establecimiento)\b.{0,45}"
-    r"\b(?:gast|pag|compr)\w*\b.{0,18}\bmas\b"
-)
-_RANKING_REQUEST: Final = re.compile(
-    r"\b(?:cual|que)\b.{0,30}\b"
-    r"(?:gasto|ingreso|movimiento|compra|pago|cargo|cobro|nomina|sueldo|salario)\b.{0,30}"
-    r"\b(?:mas\s+(?:alto|alta|caro|cara|grande)|mayor)\b"
-)
-# The nouns a breakdown can be asked for. Named once because `_GROUP_RANKING_COUNT` below spells
-# the same list, and there is no reading of this module where the two should differ.
-_GROUP_DIMENSION_NOUNS: Final = r"categorias?|comercios?|tiendas?|establecimientos?|cuentas?"
-# A universally quantified noun is a *scope*, not a dimension: «en todas mis cuentas» says where to
-# look and «todas las categorías» asks for a filter to disappear, and neither asks for one row each.
-# Read as a dimension, "cuál fue mi mayor gasto de julio en todas mis cuentas" came back
-# `group_by=ACCOUNT group_limit=5` and «La cuenta con mayor importe total … es: Cuenta corriente» —
-# a ranking of accounts as the answer to a question about one charge. This recogniser runs ahead of
-# the planner, so nothing downstream ever saw the superlative.
-#
-# The first branch exists only to be *skipped*: it consumes the scope phrase so that
-# `_group_dimension_in` keeps looking for a noun that really is one. Requiring a grouping
-# preposition in front of the noun instead — the shape `explicit_facts._ACCOUNT_BREAKDOWN` uses —
-# cannot work here, because that pattern only reads breakdowns and this one also reads the
-# rankings, which put a number or an article there: «top 3 comercios», «los tres comercios donde
-# más gasté», «las cuentas con más gastos». Twelve of the sixteen ranking sentences the suite
-# covers would have stopped being read. The determiner is no help either, since the scope phrase
-# has one too. The quantifier is the whole difference.
-_GROUP_RANKING_DIMENSION: Final = re.compile(
-    rf"\btod[oa]s?\s+(?:mis|tus|sus|las|los|nuestr[oa]s)\s+(?:{_GROUP_DIMENSION_NOUNS})\b"
-    rf"|\b(?P<dimension>{_GROUP_DIMENSION_NOUNS})\b"
-)
 
 
-def _group_dimension_in(folded: str) -> re.Match[str] | None:
-    """The first noun the sentence uses as a dimension rather than as a scope.
-
-    `finditer` rather than `search`, so a sentence that states the scope before the dimension —
-    "en todas mis cuentas, top 3 comercios" — is read by its second half instead of stopping at
-    the phrase the pattern above is there to discard.
-    """
-    for match in _GROUP_RANKING_DIMENSION.finditer(folded):
-        if match.group("dimension") is not None:
-            return match
-    return None
-
-
-def _named_group_dimension(folded: str) -> GroupBy | None:
-    """Which breakdown the sentence names outright, if it names one.
-
-    Shared by the two recognisers that need it, because they disagreed. `_group_ranking_plan` read
-    "top 2 categorías por ticket medio" as a category ranking and `_average_plan` read the same
-    sentence as a merchant one — it inherited the grouping of the two turns before, which were about
-    comercios, since `explicit_facts` does not treat "top N categorías" as a breakdown request. Only
-    the order of the cascade decided which of the two ran, and a corpus episode whose whole point is
-    that "merchant/category must alter only the named dimension" was passing on that.
-    """
-    match = _group_dimension_in(folded)
-    if match is None:
-        return None
-    word = match.group("dimension")
-    if word.startswith("categor"):
-        return GroupBy.CATEGORY
-    if word.startswith(("comerc", "tienda", "establec")):
-        return GroupBy.MERCHANT
-    if word.startswith("cuenta"):
-        return GroupBy.ACCOUNT
-    return None
-
-
-_GROUP_RANKING_SIGNAL: Final = re.compile(
-    r"\b(?:top|ranking|mas\s+(?:gasto|importe|operaciones|movimientos|compras|pagos)|"
-    r"mas\s+(?:gast|pag|compr)\w*|"
-    r"mayor(?:es)?\s+(?:gasto|importe|ticket|media|promedio)|con\s+mas)\b"
-)
-_GROUP_RANKING_FOLLOW_UP_PREFIX: Final = re.compile(
-    r"^(?:(?:vale|bueno|y|ahora|mejor)(?:\s+|\s*[,;:]\s*))*"
-    r"(?P<request>por\s+.+)$"
-)
-_GROUP_RANKING_FOLLOW_UP_REQUEST: Final = re.compile(
-    r"^por\s+(?:(?:numero|cantidad)\s+de\s+)?"
-    r"(?:ticket\s+medio|importe\s+medio|media|promedio|operaciones|movimientos|compras|pagos|"
-    r"importe|gasto|total)$"
-)
-_GROUP_RANKING_COUNT: Final = re.compile(
-    r"\b(?:top\s*)?(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    rf"(?:{_GROUP_DIMENSION_NOUNS})\b"
-)
-# The same count when the sentence does not glue it to the dimension: "top 25 gastos por categoria"
-# names the number and the dimension in different halves. Read only after the pattern above misses,
-# and only from inside `_group_ranking_plan`, which has already established that a dimension was
-# named -- so a bare number cannot be taken for one here. Without it the sentence fell through to
-# the default of five, which answers a question about twenty-five with five rows and says nothing.
-_GROUP_RANKING_TOP_COUNT: Final = re.compile(
-    r"\btop\s*(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b"
-)
-_GROUP_RANKING_NUMBERS: Final = {
-    "dos": 2,
-    "tres": 3,
-    "cuatro": 4,
-    "cinco": 5,
-    "seis": 6,
-    "siete": 7,
-    "ocho": 8,
-    "nueve": 9,
-    "diez": 10,
-}
-_MULTIPLE_MOVEMENT_RANKING: Final = re.compile(
-    r"\b(?P<count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    r"(?:(?:mayores?|principales?)\s+)?"
-    r"(?:gastos?|ingresos?|movimientos?|compras?|pagos?|cargos?)\b.{0,25}"
-    r"\b(?:mas\s+(?:altos?|grandes?|caros?)|mayores?)\b"
-    r"|\b(?P<leading_count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    r"(?:mayores?|principales?)\s+"
-    r"(?:gastos?|ingresos?|movimientos?|compras?|pagos?|cargos?)\b"
-    r"|\btop\s*(?P<top_count>\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+"
-    r"(?:gastos?|ingresos?|movimientos?|compras?|pagos?|cargos?)\b"
-)
-_ORDERED_MOVEMENT_LIST: Final = re.compile(
-    r"\b(?:gastos|ingresos|movimientos|compras|pagos|cargos)\b.{0,90}"
-    r"\bde\s+(?:mayor(?:es)?\s+a\s+menor(?:es)?"
-    r"|mas\s+altos?\s+a\s+mas\s+bajos?"
-    r"|mas\s+grandes?\s+a\s+mas\s+pequenos?"
-    r"|mas\s+caros?\s+a\s+mas\s+baratos?)\b"
-)
 _COMPARISON_DIFFERENCE: Final = re.compile(
     r"^(?:y\s+)?(?:cuanta|que)\s+diferencia(?:\s+hay)?(?:\s+entre\s+(?:las|esas)\s+dos)?$"
 )
@@ -4971,18 +4475,6 @@ _NEXT_GROUP: Final = re.compile(
 _RANKED_DATE: Final = re.compile(
     r"^(?:y\s+)?(?:esa|ese|esta|este)?\s*,?\s*(?:de\s+)?que\s+fecha\s+(?:es|fue)$"
     r"|^(?:y\s+)?cuando\s+(?:fue|ocurrio|entro|salio)$"
-)
-_PERIOD_COMPARISON_REFERENCE: Final = re.compile(
-    r"^(?:vale\s+|bueno\s+|entonces\s+|y\s+)?(?:"
-    r"compara(?:los|las|melos|melas)?"
-    r"(?:\s+(?:esos?|esas?|los|las)?\s*dos\s+(?:periodos?|meses?|semanas?))?"
-    r"(?:\s+otra\s+vez)?"
-    r"|hazme\s+una\s+comparacion(?:\s+de\s+(?:los|esos)\s+dos)?"
-    r"|(?:en\s+)?(?:cual|que)\s+(?:de\s+los\s+dos\s+)?"
-    r"(?:gaste|he\s+gastado|ingrese|he\s+ingresado|cobre|he\s+cobrado|recibi|he\s+recibido|hubo)\s+mas"
-    r"|(?:cual|que)\s+(?:he\s+)?(?:cobrado|recibido|ingresado|gastado)\s+mas"
-    r"|(?:del|entre\s+el)\s+anterior\s+(?:a|y)\s+este"
-    r")(?:\s+por\s+favor)?$"
 )
 
 
@@ -5032,332 +4524,6 @@ def _only_filters_changed(current: PlannedQuery | None, previous: PlannedQuery) 
     return without_current == without_previous
 
 
-@_recogniser
-def _period_comparison_plans(
-    query: AskFinancialQuestionQuery,
-) -> ComparisonPlan | None:
-    """Resolve a comparison pronoun only when the stored plans differ solely by window."""
-    if not _PERIOD_COMPARISON_REFERENCE.fullmatch(_clean_turn(query.sentence)):
-        return None
-    focus = focus_of(query.conversation)
-    if isinstance(focus, ComparisonFocus):
-        return focus.value
-    if not isinstance(focus, QueryFocus):
-        return None
-    latest = focus.current
-    earlier = focus.previous
-    if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
-        return None
-    if (latest.period, latest.date_range) == (earlier.period, earlier.date_range):
-        return None
-
-    # Every field a question can state. `across_accounts` is deliberately not among them: a plan
-    # is what was *asked*, and after the turn that settled the scope no later sentence names it
-    # again, so the second of two answered periods carries `across_accounts=False` even though its
-    # figures came from every account. Requiring the two to agree refused a comparison the
-    # conversation had already answered twice, over a field neither question mentioned.
-    #
-    # `only_account_id` and `only_account_ids` stay here. Those the sentence *can* state — «cuánto
-    # gasté en la Hucha» — so a disagreement there is two different questions, and relaxing them
-    # too would compare the piggy bank against every account. A scope field the sentence can state
-    # stays strict; a scope field only the conversation can settle does not.
-    scope = (
-        "direction",
-        "categories",
-        "excluded_categories",
-        "merchants",
-        "merchant_terms",
-        "excluded_merchants",
-        "counterparties",
-        "excluded_counterparties",
-        "counterparty_types",
-        "include_internal",
-        "internal_only",
-        "only_account_id",
-        "only_account_ids",
-        "transaction_ids",
-        "transaction_types",
-        "group_limit",
-    )
-    if any(getattr(latest, field_name) != getattr(earlier, field_name) for field_name in scope):
-        return None
-    if latest.transaction_ids:
-        return None
-    if earlier.across_accounts != latest.across_accounts:
-        # One comparison has one scope. `_compare_periods` scopes both operands through `_scoped`
-        # with the same conversation, so the widening either question asked for is what both sides
-        # actually read; `ComparisonPlan` requires its operands to say so, and rightly. Widened
-        # with the helper rather than by setting the flag, so the narrowing being given up goes
-        # with it -- the two agreed on `only_account_id` above, and they still do.
-        earlier = _across_every_account(earlier)
-        latest = _across_every_account(latest)
-
-    # A metric is part of the question, not presentation. Turning both sides into SUM made
-    # "¿en cuál hice más compras?" compare euros and made "¿qué ticket medio fue mayor?" compare
-    # totals. Different metrics are two incompatible questions, so they stay on the ordinary
-    # interpretation path rather than undergoing a conversion nobody requested.
-    if latest.metric is not earlier.metric:
-        return None
-    if latest.metric is Metric.PERIOD_AVERAGE and latest.group_by is not earlier.group_by:
-        return None
-    return ComparisonPlan.between(earlier, latest)
-
-
-@_recogniser
-def _ratio_request(query: AskFinancialQuestionQuery) -> RatioPlan | RatioDraft | None:
-    """A proportion stated completely, or the exact pair waiting for one shared window."""
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    folded = spanish.folded(query.sentence)
-    cleaned = _clean_turn(query.sentence)
-
-    focus = focus_of(query.conversation)
-    pending = focus.value if isinstance(focus, PendingRatioFocus) else None
-    if (
-        pending is not None
-        and facts.window is not None
-        and len(cleaned.split()) <= 10
-        and _RATIO_WINDOW_REPLY.fullmatch(cleaned) is not None
-    ):
-        return pending.with_window(facts.window)
-
-    previous_ratio = focus.value if isinstance(focus, RatioFocus) else None
-    if (
-        previous_ratio is not None
-        and previous_ratio.kind is not RatioKind.PERCENT_CHANGE
-        and facts.window is not None
-        and len(cleaned.split()) <= 6
-        and re.search(r"\b(?:cuanto|cual|que|gast|ingres|cobr|movimientos?)\b", cleaned) is None
-    ):
-        return previous_ratio.with_window(facts.window)
-
-    if _PERCENT_FOLLOW_UP.fullmatch(cleaned):
-        comparison = _stored_percentage_pair(query)
-        if comparison is not None:
-            return RatioPlan(
-                part=comparison.latest,
-                whole=comparison.earlier,
-                kind=RatioKind.PERCENT_CHANGE,
-            )
-        return None
-
-    asks_ratio = _RATIO_WORDS.search(folded) is not None
-    asks_savings = financial_relationships.asks_savings_rate(query.sentence)
-    asks_net_cash_flow = financial_relationships.asks_net_cash_flow(query.sentence)
-    if not asks_ratio and not asks_savings and not asks_net_cash_flow:
-        return None
-
-    if asks_ratio and _DIRECT_PERIOD_COMPARISON.search(folded):
-        comparison = _direct_period_comparison(query)
-        if comparison is not None:
-            return RatioPlan(
-                part=comparison.latest,
-                whole=comparison.earlier,
-                kind=RatioKind.PERCENT_CHANGE,
-            )
-
-    window = facts.window
-    if asks_net_cash_flow:
-        draft = RatioDraft(
-            part=FinancialPlanDraft(direction=Direction.EXPENSE),
-            whole=FinancialPlanDraft(direction=Direction.INCOME),
-            kind=RatioKind.NET_CASH_FLOW,
-        )
-        return draft.with_window(window) if window is not None else draft
-    if asks_savings:
-        draft = RatioDraft(
-            part=FinancialPlanDraft(direction=Direction.EXPENSE),
-            whole=FinancialPlanDraft(direction=Direction.INCOME),
-            kind=RatioKind.SAVINGS_RATE,
-        )
-        return draft.with_window(window) if window is not None else draft
-
-    named = category_words.precisely_named_in(query.sentence)
-    part_categories = tuple(category for category in named if category != "SALARY")
-    names_salary = bool(re.search(r"\b(?:nomina|sueldo|salario)\b", folded))
-    names_income = names_salary or bool(re.search(r"\bingresos?\b", folded))
-    names_expenses = bool(re.search(r"\b(?:mis|los|tus)\s+gastos\b|\bgasto\s+total\b", folded))
-    if not names_income and not names_expenses:
-        return None
-    if not part_categories:
-        # Without the numerator this would silently divide all expenses by themselves and answer
-        # 100 %. An open merchant name also belongs to the semantic path until it can be verified
-        # against actual ledger merchants.
-        return None
-    draft = RatioDraft(
-        part=FinancialPlanDraft(
-            direction=Direction.EXPENSE,
-            categories=part_categories,
-        ),
-        whole=FinancialPlanDraft(
-            direction=Direction.INCOME if names_income else Direction.EXPENSE,
-            categories=("SALARY",) if names_salary else (),
-        ),
-        kind=RatioKind.SHARE,
-    )
-    return draft.with_window(window) if window is not None else draft
-
-
-@_recogniser
-def _frequency_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """A complete cadence question over a grounded category, with a useful default horizon."""
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    if facts.metric is not Metric.FREQUENCY:
-        return None
-    categories = category_words.precisely_named_in(query.sentence)
-    if not categories and re.search(
-        r"\b(?:cuando|que\s+dia|cada\s+cuanto)\b.{0,45}"
-        r"\b(?:me\s+pagan|pagarme|cobro|cobrar)\b",
-        spanish.folded(query.sentence),
-    ):
-        categories = ("SALARY",)
-    if not categories:
-        # Free merchant names remain on the grounded planner path. Treating every unknown noun as
-        # a shop here would turn "cuándo gasto" into one invented merchant filter.
-        return None
-    window = facts.window or RelativePeriod(Period.LAST_N_MONTHS, n=12)
-    return FinancialPlan(
-        direction=facts.direction or _direction_of(categories),
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=categories,
-        metric=Metric.FREQUENCY,
-    )
-
-
-@_recogniser
-def _cumulative_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Build a running calendar total without asking the model to reinterpret arithmetic."""
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    previous = query.conversation.last_plan
-    previous_financial = previous if isinstance(previous, FinancialPlan) else None
-    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
-    unit_follow_up = (
-        previous_financial is not None
-        and previous_financial.metric is Metric.CUMULATIVE
-        and facts.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
-        and folded.startswith(("y ", "ahora ", "por "))
-    )
-    if facts.metric is not Metric.CUMULATIVE and not unit_follow_up:
-        return None
-    # A running total accumulates over calendar buckets, so the grouping *is* the bucket and the
-    # domain refuses a non-temporal one beside CUMULATIVE. "Gasto acumulado por comercio" states
-    # both, and this built the forbidden plan: the constructor below raised straight out of the
-    # handler, and an ordinary Spanish sentence came back 422 invalid_input. Unlike the average
-    # family, the capability guard does not refuse "acumulado", and it runs after this recogniser
-    # anyway — so declining here is what keeps the sentence answerable at all.
-    #
-    # Declining rather than dropping the grouping, which is the same rule `_average_plan` already
-    # follows below: this path exists to answer what it is sure of, and a request for a running
-    # total broken down by shop needs two grouping axes where a plan has one.
-    if facts.group_by is not None and facts.group_by not in {
-        GroupBy.DAY,
-        GroupBy.WEEK,
-        GroupBy.MONTH,
-    }:
-        return None
-    contextual = not _starts_new_financial_scope(query.sentence, today=query.today)
-    if not contextual and not unit_follow_up:
-        previous_financial = None
-    named = category_words.precisely_named_in(query.sentence)
-    if re.search(r"\bingres|\bcobr|\bnomina", folded):
-        direction = Direction.INCOME
-    elif re.search(r"\bgast|\bpag|\bcompr|\bcargo", folded):
-        direction = Direction.EXPENSE
-    elif named:
-        direction = _direction_of(named)
-    elif previous_financial is not None:
-        direction = previous_financial.direction
-    else:
-        direction = Direction.ALL
-    window = facts.window or (
-        previous_financial.period or previous_financial.date_range
-        if previous_financial is not None
-        else RelativePeriod(Period.THIS_YEAR)
-    )
-    return FinancialPlan(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=named or (previous_financial.categories if previous_financial else ()),
-        excluded_categories=(previous_financial.excluded_categories if previous_financial else ()),
-        merchants=previous_financial.merchants if previous_financial else (),
-        merchant_terms=previous_financial.merchant_terms if previous_financial else (),
-        excluded_merchants=previous_financial.excluded_merchants if previous_financial else (),
-        group_by=facts.group_by or GroupBy.MONTH,
-        metric=Metric.CUMULATIVE,
-        include_internal=previous_financial.include_internal if previous_financial else False,
-        internal_only=previous_financial.internal_only if previous_financial else False,
-        across_accounts=previous_financial.across_accounts if previous_financial else False,
-        only_account_id=previous_financial.only_account_id if previous_financial else None,
-        only_account_ids=previous_financial.only_account_ids if previous_financial else (),
-        transaction_types=previous_financial.transaction_types if previous_financial else (),
-    )
-
-
-@_recogniser
-def _recurrence_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Discover periodic expenses from a conservative, complete category scope."""
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    if facts.metric is not Metric.RECURRENCE:
-        return None
-    named = category_words.precisely_named_in(query.sentence)
-    direct_debits_only = explicit_facts.asks_direct_debits(query.sentence)
-    # A bank receipt is already a conservative structured scope. Applying the historical
-    # subscription/rent catalogue as well would silently omit utilities, insurance, tax or loan
-    # receipts. A category explicitly named by the user still narrows the direct debits.
-    categories = named or (() if direct_debits_only else RECURRING_EXPENSE_CATEGORIES)
-    window = facts.window or RelativePeriod(Period.LAST_N_MONTHS, n=12)
-    return FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=categories,
-        metric=Metric.RECURRENCE,
-        transaction_types=(TransactionType.DIRECT_DEBIT,) if direct_debits_only else (),
-    )
-
-
-@_recogniser
-def _how_many_payees_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """How many distinct payees a kind of spending has, and which they are.
-
-    Reported. "¿Qué suscripciones tengo activas?" was answered "36 movimientos en suscripciones en
-    los últimos 12 meses", and the holder said what anybody would: "yo pensaba que tenía solo
-    netflix altafit spoti y steam". Both figures are true and only one is the answer — thirty-six is
-    how many times they were charged, four is how many things they are paying for.
-
-    No new metric and nothing new asked of banking. A breakdown by merchant already returns one
-    group per payee, so the count is the number of groups and the names are their keys. What was
-    missing was a question that asks for it and a sentence that leads with it.
-
-    Exactly one named category, because the question is "how many of *these*". A sentence naming
-    none is either the recurring-expenses discovery below — "¿qué gastos fijos tengo?" — or not
-    this at all, and grouping every merchant the holder ever paid is a list dump, not an answer.
-    """
-    if not explicit_facts.asks_how_many_payees(query.sentence):
-        return None
-    named = category_words.precisely_named_in(query.sentence)
-    if len(named) != 1:
-        return None
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    # A default rather than a question, exactly like the recurring-expenses discovery below.
-    # "Activas ahora mismo" is not a window this service can turn into dates, and the reported
-    # conversation shows what asking costs: "¿de qué periodo?" was answered "en el último año" and
-    # the figure that came back was one the holder did not recognise. The answer names the window,
-    # so narrowing it is one short turn.
-    window = facts.window or RelativePeriod(Period.LAST_N_MONTHS, n=12)
-    return FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=named,
-        # By merchant rather than by counterparty: a subscription is a shop that charges you, and
-        # this is the same dimension the shop rankings already group by.
-        group_by=GroupBy.MERCHANT,
-        metric=Metric.SUM,
-    )
-
-
 def _account_activity_request(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
@@ -5400,108 +4566,6 @@ def _account_activity_request(
     return FinancialPlanDraft(direction=Direction.INCOME, group_by=group_by, metric=metric)
 
 
-@_recogniser
-def _internal_movement_request(
-    query: AskFinancialQuestionQuery,
-) -> FinancialPlan | FinancialPlanDraft | None:
-    """A read of transfers that stayed inside the holder's own account set."""
-    folded = spanish.folded(query.sentence)
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    between_accounts = _INTERNAL_BETWEEN_ACCOUNTS.search(folded) is not None
-    investment = _INVESTMENT_HISTORY.search(folded) is not None
-    named_accounts = account_words.named_in(query.sentence)
-    asks = (
-        re.search(
-            r"\b(?:cuanto|caunto|cuantos|que|cual|cuales|dime|dame|lista|muestrame|ensename)\b",
-            folded,
-        )
-        is not None
-    )
-    names_transfer_history = (
-        re.search(
-            # Singular "traspaso" is also the present-tense verb in "cuánto traspaso al fondo".
-            # Plural nouns and completed forms are history; the ambiguous verb stays on the
-            # established habitual-query path instead of inventing an internal-only request.
-            r"\b(?:traspasos|transferencias?|movid|traspasad|metid|aportad)\w*\b",
-            folded,
-        )
-        is not None
-        # "Pasado" on its own is usually the calendar adjective in "el mes pasado". Only its
-        # completed verb form means money moved to the named account.
-        or re.search(r"\b(?:he|has|ha|hemos|han)\s+pasad\w*\b", folded) is not None
-    )
-    if not investment and not (
-        (between_accounts and _INTERNAL_HISTORY_WORDS.search(folded))
-        or (named_accounts and asks and names_transfer_history)
-    ):
-        return None
-
-    destination = account_words.destination_in(query.sentence)
-    direction = Direction.INCOME if investment or destination else Direction.EXPENSE
-    metric = facts.metric or Metric.SUM
-    group_by = (
-        facts.group_by
-        if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
-        else GroupBy.NONE
-    )
-    if window := facts.window:
-        return FinancialPlan(
-            direction=direction,
-            period=window if isinstance(window, RelativePeriod) else None,
-            date_range=window if isinstance(window, AbsoluteRange) else None,
-            group_by=group_by,
-            metric=metric,
-            include_internal=True,
-            internal_only=True,
-        )
-    return FinancialPlanDraft(
-        direction=direction,
-        group_by=group_by,
-        metric=metric,
-        include_internal=True,
-        internal_only=True,
-    )
-
-
-def _stored_percentage_pair(
-    query: AskFinancialQuestionQuery,
-) -> ComparisonPlan | None:
-    """The two compatible windows behind a bare "en porcentaje"."""
-    focus = focus_of(query.conversation)
-    if isinstance(focus, ComparisonFocus):
-        return focus.value
-    if not isinstance(focus, QueryFocus):
-        return None
-    latest = focus.current
-    earlier = focus.previous
-    if not isinstance(latest, FinancialPlan) or not isinstance(earlier, FinancialPlan):
-        return None
-    if _same_window(latest, earlier) or latest.metric is not earlier.metric:
-        return None
-    scope = (
-        "direction",
-        "categories",
-        "excluded_categories",
-        "merchants",
-        "merchant_terms",
-        "excluded_merchants",
-        "counterparties",
-        "excluded_counterparties",
-        "counterparty_types",
-        "include_internal",
-        "internal_only",
-        "across_accounts",
-        "only_account_id",
-        "only_account_ids",
-        "transaction_ids",
-        "transaction_types",
-        "group_limit",
-    )
-    if any(getattr(latest, field) != getattr(earlier, field) for field in scope):
-        return None
-    return ComparisonPlan.between(earlier, latest)
-
-
 def _distinct_movements(movements: tuple[Movement, ...]) -> tuple[Movement, ...]:
     """Keep evidence from both operands without repeating subset rows in the denominator."""
     found: list[Movement] = []
@@ -5522,47 +4586,6 @@ def _distinct_movements(movements: tuple[Movement, ...]) -> tuple[Movement, ...]
             seen.add(identity)
             found.append(movement)
     return tuple(found)
-
-
-@_recogniser
-def _salary_history_plans(
-    query: AskFinancialQuestionQuery,
-) -> tuple[FinancialPlan, FinancialPlan] | None:
-    """The payroll in view and the twelve complete calendar months immediately before it."""
-    if _SALARY_HISTORY_COMPARISON.search(spanish.folded(query.sentence)) is None:
-        return None
-    latest = query.conversation.last_plan
-    if (
-        not isinstance(latest, FinancialPlan)
-        or latest.categories != ("SALARY",)
-        or latest.transaction_ids
-    ):
-        return None
-    current_window = _calendar_month_window(latest, query.today)
-    if current_window is None:
-        return None
-    history = replace(
-        latest,
-        period=None,
-        date_range=AbsoluteRange(
-            start=date(current_window.start.year - 1, current_window.start.month, 1),
-            end=current_window.start - timedelta(days=1),
-        ),
-        group_by=GroupBy.MONTH,
-        metric=Metric.SUM,
-    )
-    current = replace(
-        latest,
-        period=None,
-        date_range=current_window,
-        group_by=GroupBy.NONE,
-        metric=Metric.SUM,
-    )
-    return current, history
-
-
-def _same_window(left: FinancialPlan, right: FinancialPlan) -> bool:
-    return (left.period, left.date_range) == (right.period, right.date_range)
 
 
 def _with_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> FinancialPlan:
@@ -5599,362 +4622,6 @@ def _with_ratio_execution_scope(plan: FinancialPlan, scoped: FinancialPlan) -> F
     )
 
 
-@_recogniser
-def _comparison_with_previous_period(
-    query: AskFinancialQuestionQuery,
-) -> ComparisonPlan | None:
-    """Compare the plan in view with the immediately preceding calendar period.
-
-    The pronoun supplies the query scope and the sentence supplies only the other window. This is
-    deliberately narrower than inventing a generic date shift: months, weeks and years have
-    calendar boundaries the product already exposes; rolling N-day windows do not have one obvious
-    meaning for "the previous period".
-    """
-    found = _COMPARE_WITH_PREVIOUS_PERIOD.fullmatch(_clean_turn(query.sentence))
-    latest = query.conversation.last_plan
-    if found is None or not isinstance(latest, FinancialPlan) or latest.transaction_ids:
-        return None
-    earlier_window = _previous_calendar_window(latest, found.group("unit"), query.today)
-    if earlier_window is None:
-        return None
-    earlier = replace(
-        latest,
-        period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
-        date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
-    )
-    return ComparisonPlan.between(earlier, latest)
-
-
-@_recogniser
-def _comparison_with_a_named_window(
-    query: AskFinancialQuestionQuery,
-) -> ComparisonPlan | None:
-    """Compare the plan in view against the one window the sentence names.
-
-    «Compáralo con junio», «compáralo con julio de 2025», «compáralo con la semana pasada». The
-    pronoun is one operand and the sentence supplies the other, and that shape had no reader at
-    all: `_period_comparison_plans` needs both operands already answered in the conversation,
-    `_direct_period_comparison` needs both windows in the sentence, and
-    `_comparison_with_previous_period` — the only one that paired the plan in view with a window
-    from the sentence — reads a closed list of calendar-unit nouns followed by "anterior". A month
-    name is not one of them, so a sentence anybody would say fell through to `capability_guard`,
-    whose refusal then recommended «compara mis gastos de julio con junio»: a form that works,
-    which is the tell that what was missing was a shape and not a word.
-
-    **It stands aside for the two readers whose phrases it can also match**, rather than relying
-    on being last in the cascade. Its regex has to overlap theirs — "compáralo con la semana
-    pasada" is one of the sentences this exists for and it matches
-    `_COMPARE_WITH_PREVIOUS_PERIOD`'s unit alternation too, so a disjoint pattern would refuse the
-    property — and an overlap the order silently resolves is the one thing that cascade is
-    measured for not having. So the overlap is removed here instead:
-
-    - `_comparison_with_previous_period` owns "con el mes anterior", which is a unit back from the
-      window in view. Read as a window named outright it would be *last month relative to today*,
-      which after a question about July is July — the same window, and not a comparison. It only
-      declines when the unit does not fit the window in view, and that is exactly when the
-      sentence means the window rather than the step, which is what leaves "con la semana pasada"
-      over a monthly question here.
-    - `_a_comparison_owns_it` owns a tail that names two windows of its own — "compáralo con junio
-      de 2025 y julio" — where taking the first and dropping the second answers half the question
-      with a real figure on it. The same predicate `average`, `natural_period` and
-      `deterministic_breakdown` ask, so "this sentence compares two periods" keeps one definition.
-
-    The plan in view is `latest`: the pronoun is the subject of the sentence, so it is the side
-    whose change is reported, and the window the sentence names is the reference it is measured
-    against. `_comparison_with_previous_period` reads the pair the same way round.
-
-    **Two shapes it refuses**, and neither refusal is spelled out below. Nothing in view is caught
-    by the `isinstance` — one operand of two is stated and the other would have to be invented,
-    which is a clarification and the guard's to make. The same window twice is caught by
-    `ComparisonPlan`, because deriving the second operand from the first makes them identical and
-    `between` returns None; a copy of that invariant here would be a second definition of it.
-    """
-    found = _COMPARE_WITH_A_NAMED_WINDOW.fullmatch(_clean_turn(query.sentence))
-    latest = query.conversation.last_plan
-    if found is None or not isinstance(latest, FinancialPlan) or latest.transaction_ids:
-        return None
-    if latest.period is None and latest.date_range is None:
-        # A plan a model returned with no window at all is no first operand, whatever else it says.
-        return None
-    if _comparison_with_previous_period(query) is not None or _a_comparison_owns_it(query):
-        return None
-
-    said = found.group("window")
-    # "Con el año pasado" after a question about July means July of last year — which is what
-    # `a_year_earlier` says and what "¿y el año anterior?" already answers. Read as a window named
-    # outright it would be the whole of 2025: a real figure, twelve times the question. So the
-    # reader that owns the phrase is asked first, rather than this one growing its own opinion.
-    earlier_window: window_words.Window | None = window_words.a_year_earlier(
-        said, latest.date_range
-    )
-    if earlier_window is None:
-        # A window preposition, because the shape supplies one and `window_words` requires one. A
-        # bare "junio" is not a window to that reader on purpose — in the middle of a sentence it
-        # is as likely to be part of a name — but the fullmatch above has already established that
-        # this fragment is the second operand and nothing else. Same reasoning as `_MONTH_MENTION`,
-        # which accepts bare month names because the connector between two of them supplies the
-        # structure the general reader is missing.
-        earlier_window = window_words.window_in(f"en {said}", today=query.today)
-    if earlier_window is None:
-        return None
-
-    earlier = replace(
-        latest,
-        period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
-        date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
-    )
-    # Deriving the second operand from the first is what keeps the pair comparable: every field in
-    # `ComparisonPlan._SAME_SCOPE` agrees by construction, filters included, so the pronoun means
-    # *that* query and not two bare months. It is also what leaves the same-window refusal where it
-    # belongs — «compáralo con julio» about July builds two identical windows and `between` returns
-    # None, which is `ComparisonPlan`'s invariant and does not want a second copy here.
-    return ComparisonPlan.between(earlier, latest)
-
-
-@_recogniser
-def _direct_period_comparison(
-    query: AskFinancialQuestionQuery,
-) -> ComparisonPlan | None:
-    """Build the common two-window comparison stated completely in one sentence.
-
-    Only closed, paired phrases are accepted. A sentence naming arbitrary dates still belongs to
-    the planner until the date-range grammar can represent both sides without guessing.
-    """
-    folded = spanish.folded(query.sentence)
-    if _DIRECT_PERIOD_COMPARISON.search(folded) is None:
-        return None
-    windows: tuple[window_words.Window, window_words.Window] | None = None
-    named_ranges = window_words.compared_date_ranges(query.sentence, today=query.today)
-    named_months = window_words.compared_calendar_months(query.sentence, today=query.today)
-    named_years = window_words.compared_calendar_years(query.sentence, today=query.today)
-    natural_periods = window_words.compared_natural_periods(query.sentence, today=query.today)
-    if named_ranges is not None:
-        windows = (named_ranges[1], named_ranges[0])
-    elif named_months is not None:
-        # `_compare_periods` writes its `latest` argument first. Reverse mention order here so the
-        # answer follows the user's order: "julio con junio" reads July before June.
-        windows = (named_months[1], named_months[0])
-    elif named_years is not None:
-        windows = (named_years[1], named_years[0])
-    elif natural_periods is not None:
-        windows = (natural_periods[1], natural_periods[0])
-    elif re.search(r"\beste\s+mes\b", folded) and re.search(
-        r"\b(?:(?:el\s+)?mes\s+(?:pasado|anterior)|el\s+(?:pasado|anterior))\b",
-        folded,
-    ):
-        windows = (
-            RelativePeriod(Period.LAST_MONTH),
-            RelativePeriod(Period.THIS_MONTH),
-        )
-    elif re.search(r"\besta\s+semana\b", folded) and re.search(
-        r"\b(?:la\s+)?semana\s+(?:pasada|anterior)\b", folded
-    ):
-        windows = (
-            RelativePeriod(Period.LAST_WEEK),
-            RelativePeriod(Period.THIS_WEEK),
-        )
-    elif re.search(r"\beste\s+ano\b|\ben\s+lo\s+que\s+va\s+de\s+ano\b", folded) and re.search(
-        r"\b(?:el\s+)?ano\s+(?:pasado|anterior)\b", folded
-    ):
-        windows = (
-            window_words.whole_year(query.today.year - 1),
-            RelativePeriod(Period.THIS_YEAR),
-        )
-    if windows is None:
-        return None
-
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    named_categories = category_words.precisely_named_in(query.sentence)
-    if len(named_categories) > 1:
-        # Two categories and two windows describe four possible comparisons. Do not choose one.
-        return None
-    states_subject = re.search(
-        r"\bgast|\bingres|\bincome|\bcobr|\brecib|\bcompr|\bpagu|\bcargo"
-        r"|\bnomina|\bsueldo|\bsalario|\bmovimientos?|\boperaciones?"
-        r"|\bmedia|\bmedio|\bpromedio|\bticket",
-        folded,
-    )
-    previous = (
-        query.conversation.last_plan
-        if states_subject is None and isinstance(query.conversation.last_plan, FinancialPlan)
-        else None
-    )
-    categories = named_categories or (previous.categories if previous is not None else ())
-    metric = facts.metric or (previous.metric if previous is not None else Metric.SUM)
-    group_by = (
-        GroupBy.ACCOUNT
-        if facts.asks_account_breakdown
-        else (
-            facts.group_by
-            if metric is Metric.PERIOD_AVERAGE and facts.group_by is not None
-            else (
-                previous.group_by
-                if metric is Metric.PERIOD_AVERAGE and previous is not None
-                else GroupBy.NONE
-            )
-        )
-    )
-    if metric is Metric.PERIOD_AVERAGE and group_by not in {
-        GroupBy.DAY,
-        GroupBy.WEEK,
-        GroupBy.MONTH,
-    }:
-        return None
-    direction = facts.direction
-    if direction is None:
-        if re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
-            direction = Direction.EXPENSE
-        elif named_categories:
-            direction = _direction_of(named_categories)
-        elif previous is not None:
-            direction = previous.direction
-        else:
-            direction = Direction.ALL
-    base = explicit_facts.enforce_exclusions(
-        FinancialPlan(
-            direction=direction,
-            period=windows[1] if isinstance(windows[1], RelativePeriod) else None,
-            date_range=windows[1] if isinstance(windows[1], AbsoluteRange) else None,
-            categories=categories,
-            excluded_categories=(
-                tuple(
-                    category
-                    for category in previous.excluded_categories
-                    if category not in named_categories
-                )
-                if previous is not None
-                else ()
-            ),
-            merchants=(
-                () if named_categories else (previous.merchants if previous is not None else ())
-            ),
-            excluded_merchants=(
-                ()
-                if named_categories
-                else (previous.excluded_merchants if previous is not None else ())
-            ),
-            group_by=group_by,
-            metric=metric,
-            include_internal=previous.include_internal if previous is not None else False,
-            internal_only=previous.internal_only if previous is not None else False,
-            across_accounts=previous.across_accounts if previous is not None else False,
-            only_account_id=previous.only_account_id if previous is not None else None,
-            only_account_ids=previous.only_account_ids if previous is not None else (),
-        ),
-        facts,
-    )
-    earlier = replace(
-        base,
-        period=windows[0] if isinstance(windows[0], RelativePeriod) else None,
-        date_range=windows[0] if isinstance(windows[0], AbsoluteRange) else None,
-    )
-    return ComparisonPlan.between(earlier, base)
-
-
-def _previous_calendar_window(
-    plan: FinancialPlan, unit: str, today: date
-) -> window_words.Window | None:
-    """The calendar window directly before a compatible plan window."""
-    if unit == "periodo":
-        unit = _calendar_unit_of(plan) or ""
-    if unit == "mes":
-        if plan.period and plan.period.period is Period.THIS_MONTH:
-            return RelativePeriod(Period.LAST_MONTH)
-        if plan.period and plan.period.period is Period.LAST_MONTH:
-            year, month = _month_before(today.year, today.month)
-            year, month = _month_before(year, month)
-            return window_words.whole_month(year, month)
-        if plan.date_range and _is_whole_month(plan.date_range):
-            year, month = _month_before(plan.date_range.start.year, plan.date_range.start.month)
-            return window_words.whole_month(year, month)
-    if unit == "semana":
-        if plan.period and plan.period.period is Period.THIS_WEEK:
-            return RelativePeriod(Period.LAST_WEEK)
-        if plan.date_range and (plan.date_range.end - plan.date_range.start).days == 6:
-            return AbsoluteRange(
-                start=plan.date_range.start - timedelta(days=7),
-                end=plan.date_range.end - timedelta(days=7),
-            )
-    if unit == "ano":
-        if plan.period and plan.period.period is Period.THIS_YEAR:
-            return window_words.whole_year(today.year - 1)
-        if plan.date_range and _is_whole_year(plan.date_range):
-            return window_words.whole_year(plan.date_range.start.year - 1)
-    if unit == "trimestre":
-        if plan.period and plan.period.period is Period.THIS_QUARTER:
-            return RelativePeriod(Period.LAST_QUARTER)
-        if plan.period and plan.period.period is Period.LAST_QUARTER:
-            current = window_words.whole_quarter(today.year, (today.month - 1) // 3 + 1)
-            last_end = current.start - timedelta(days=1)
-            last = window_words.whole_quarter(last_end.year, (last_end.month - 1) // 3 + 1)
-            before = last.start - timedelta(days=1)
-            return window_words.whole_quarter(before.year, (before.month - 1) // 3 + 1)
-        if plan.date_range and _is_whole_quarter(plan.date_range):
-            before = plan.date_range.start - timedelta(days=1)
-            return window_words.whole_quarter(before.year, (before.month - 1) // 3 + 1)
-    if unit == "semestre":
-        if plan.period and plan.period.period is Period.THIS_SEMESTER:
-            return RelativePeriod(Period.LAST_SEMESTER)
-        if plan.period and plan.period.period is Period.LAST_SEMESTER:
-            current = window_words.whole_semester(today.year, 1 if today.month <= 6 else 2)
-            last_end = current.start - timedelta(days=1)
-            last = window_words.whole_semester(last_end.year, 1 if last_end.month <= 6 else 2)
-            before = last.start - timedelta(days=1)
-            return window_words.whole_semester(before.year, 1 if before.month <= 6 else 2)
-        if plan.date_range and _is_whole_semester(plan.date_range):
-            before = plan.date_range.start - timedelta(days=1)
-            return window_words.whole_semester(before.year, 1 if before.month <= 6 else 2)
-    if unit == "quincena":
-        if plan.period and plan.period.period is Period.THIS_FORTNIGHT:
-            return RelativePeriod(Period.LAST_FORTNIGHT)
-        if plan.period and plan.period.period is Period.LAST_FORTNIGHT:
-            current = window_words.whole_fortnight(
-                today.year, today.month, 1 if today.day <= 15 else 2
-            )
-            last_end = current.start - timedelta(days=1)
-            last = window_words.whole_fortnight(
-                last_end.year, last_end.month, 1 if last_end.day <= 15 else 2
-            )
-            before = last.start - timedelta(days=1)
-            return window_words.whole_fortnight(
-                before.year, before.month, 1 if before.day <= 15 else 2
-            )
-        if plan.date_range and _is_whole_fortnight(plan.date_range):
-            before = plan.date_range.start - timedelta(days=1)
-            return window_words.whole_fortnight(
-                before.year, before.month, 1 if before.day <= 15 else 2
-            )
-    if unit == "fin de semana":
-        if plan.period and plan.period.period is Period.THIS_WEEKEND:
-            return RelativePeriod(Period.LAST_WEEKEND)
-        if plan.period and plan.period.period is Period.LAST_WEEKEND:
-            last = _last_completed_weekend(today)
-            return AbsoluteRange(
-                start=last.start - timedelta(days=7),
-                end=last.end - timedelta(days=7),
-            )
-        if plan.date_range and _is_weekend(plan.date_range):
-            return AbsoluteRange(
-                start=plan.date_range.start - timedelta(days=7),
-                end=plan.date_range.end - timedelta(days=7),
-            )
-    return None
-
-
-def _calendar_month_window(plan: FinancialPlan, today: date) -> AbsoluteRange | None:
-    """Resolve only month-sized windows, for comparisons whose unit is one payroll."""
-    if plan.date_range is not None and _is_whole_month(plan.date_range):
-        return plan.date_range
-    if plan.period is None:
-        return None
-    if plan.period.period is Period.THIS_MONTH:
-        return window_words.whole_month(today.year, today.month)
-    if plan.period.period is Period.LAST_MONTH:
-        year, month = _month_before(today.year, today.month)
-        return window_words.whole_month(year, month)
-    return None
-
-
 def _comparison_window_label(plan: FinancialPlan) -> str:
     """A compact natural label for the two sides of a comparison."""
     if plan.date_range is not None and _is_whole_month(plan.date_range):
@@ -5965,1089 +4632,10 @@ def _comparison_window_label(plan: FinancialPlan) -> str:
     return answer_writer.window_of(plan)
 
 
-def _calendar_unit_of(plan: FinancialPlan) -> str | None:
-    if plan.period is not None:
-        return {
-            Period.THIS_MONTH: "mes",
-            Period.LAST_MONTH: "mes",
-            Period.THIS_WEEK: "semana",
-            Period.THIS_YEAR: "ano",
-            Period.THIS_QUARTER: "trimestre",
-            Period.LAST_QUARTER: "trimestre",
-            Period.THIS_SEMESTER: "semestre",
-            Period.LAST_SEMESTER: "semestre",
-            Period.THIS_FORTNIGHT: "quincena",
-            Period.LAST_FORTNIGHT: "quincena",
-            Period.THIS_WEEKEND: "fin de semana",
-            Period.LAST_WEEKEND: "fin de semana",
-        }.get(plan.period.period)
-    if plan.date_range is not None:
-        if _is_whole_month(plan.date_range):
-            return "mes"
-        if _is_whole_year(plan.date_range):
-            return "ano"
-        if _is_whole_quarter(plan.date_range):
-            return "trimestre"
-        if _is_whole_semester(plan.date_range):
-            return "semestre"
-        if _is_whole_fortnight(plan.date_range):
-            return "quincena"
-        if _is_weekend(plan.date_range):
-            return "fin de semana"
-        if (plan.date_range.end - plan.date_range.start).days == 6:
-            return "semana"
-    return None
-
-
-def _month_before(year: int, month: int) -> tuple[int, int]:
-    return (year - 1, 12) if month == 1 else (year, month - 1)
-
-
 def _numbered_month_window(month: int, today: date) -> AbsoluteRange:
     """The most recent occurrence of a numbered month, like the named-month vocabulary."""
     year = today.year if month <= today.month else today.year - 1
     return window_words.whole_month(year, month)
-
-
-def _is_whole_month(window: AbsoluteRange) -> bool:
-    return window == window_words.whole_month(window.start.year, window.start.month)
-
-
-def _is_whole_year(window: AbsoluteRange) -> bool:
-    return window == window_words.whole_year(window.start.year)
-
-
-def _is_whole_quarter(window: AbsoluteRange) -> bool:
-    quarter = (window.start.month - 1) // 3 + 1
-    return window == window_words.whole_quarter(window.start.year, quarter)
-
-
-def _is_whole_semester(window: AbsoluteRange) -> bool:
-    semester = 1 if window.start.month <= 6 else 2
-    return window == window_words.whole_semester(window.start.year, semester)
-
-
-def _is_whole_fortnight(window: AbsoluteRange) -> bool:
-    fortnight = 1 if window.start.day <= 15 else 2
-    return window == window_words.whole_fortnight(window.start.year, window.start.month, fortnight)
-
-
-def _is_weekend(window: AbsoluteRange) -> bool:
-    return (
-        window.start.weekday() == 5
-        and window.end.weekday() == 6
-        and (window.end - window.start).days == 1
-    )
-
-
-def _last_completed_weekend(today: date) -> AbsoluteRange:
-    if today.weekday() <= 4:
-        sunday = today - timedelta(days=today.weekday() + 1)
-    else:
-        current_saturday = today - timedelta(days=today.weekday() - 5)
-        sunday = current_saturday - timedelta(days=6)
-    return AbsoluteRange(start=sunday - timedelta(days=1), end=sunday)
-
-
-# A name in the slot a filter goes in. "¿Cuántas compras hice en Mercadona?" is a question about a
-# shop, and a shop is the one filter the ellipsis branch below cannot represent: it patches the
-# previous query and keeps its categories, so the turn came back counting *restaurant* purchases —
-# a real figure about a different question, which is the failure this service is built around.
-#
-# The length guard cannot see it. That sentence is five words, exactly the limit, and length was
-# never what tells an ellipsis from a complete question: "¿y en gasolina?" is an ellipsis because
-# it introduces nothing this path does not already know, and this one is not because it does.
-#
-# Capitalised, and that is the whole test. Spanish capitalises proper nouns and almost nothing else
-# mid-sentence, so a capital in the "en X" slot is the sentence saying "this is a name" — no
-# vocabulary to maintain and no shop list to be wrong about. Somebody typing all in lower case is
-# not covered here; they are covered by declining to guess further down the path, and the cost of
-# reading the capital as a name when it is not is a turn that reaches the planner, which is the
-# harmless side.
-_A_NAME_IN_A_FILTER_SLOT: Final = re.compile(
-    r"\b(?:en|de|con)\s+(?:el\s+|la\s+|los\s+|las\s+|mi\s+|mis\s+)?([a-z][a-z0-9]{2,})"
-)
-
-
-def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
-    """Whether the sentence names something in a filter slot that no vocabulary here claims."""
-    for word in _A_NAME_IN_A_FILTER_SLOT.findall(spanish.folded(query.sentence)):
-        if category_words.named_in(word) or account_words.named_in(word):
-            continue
-        if explicit_facts.read(word, today=query.today).window is not None:
-            continue
-        return True
-    return False
-
-
-@_recogniser
-def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Patch explicit filters and calculations onto the last validated financial query."""
-    focus = focus_of(query.conversation)
-    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
-    folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    if isinstance(focus, QueryFocus):
-        previous = focus.current
-    elif (
-        isinstance(focus, ComparisonFocus)
-        and facts.window is not None
-        and facts.metric is None
-        and facts.group_by is None
-        and facts.direction is None
-        and not facts.names_a_category
-        and not facts.excluded_categories
-        and not facts.excluded_merchants
-        and continuation_patch.read(query.sentence, today=query.today).status
-        is not continuation_patch.PatchStatus.AMBIGUOUS
-    ):
-        # A window-only turn after a comparison selects one view of the same measure. This is a
-        # comparison operation, not permission for generic patches to mutate one operand.
-        previous = focus.value.latest
-    else:
-        previous = None
-    if not isinstance(previous, FinancialPlan):
-        return None
-
-    # A follow-up over an answer that took two queries belongs to the path that ran both. This is
-    # the general reader, and being general is what made it claim seven turns another recogniser
-    # also claimed — the cascade's order picked the right one every time, and nothing said so.
-    #
-    # "¿Y el mes pasado?" after "¿qué porcentaje de mi nómina se va en alquiler?" is the whole
-    # proportion moved to another month; read here it is the rent side alone, with the income
-    # operand dropped and a real figure left standing where a percentage was asked for. Same for a
-    # savings rate and a net cash flow.
-    if query.conversation.last_ratio is not None or query.conversation.pending_ratio is not None:
-        return None
-
-    # And the sentence itself may belong to a reader that knows more about it than this one does.
-    # "¿Cuánto he movido a la hucha este año?" is a movement between the holder's own accounts, and
-    # read here it comes back EXPENSE where the internal reader says INCOME — the same figure with
-    # the wrong sign in front of it. "En la que ingreso la nómina" names an account, and the
-    # account reader is right about which one for the same reason.
-    #
-    # Asked of those readers rather than of a vocabulary of this one's own, which is the same
-    # choice the comparison guard makes further down: two definitions of "this sentence is about
-    # an internal movement" would drift apart, and only one of them would be maintained.
-    #
-    # Declining on the *state* was tried first and is wrong: `previous.internal_only` takes "¿y el
-    # mes pasado?" away from the only reader that keeps an internal scope, and the answer comes
-    # back as ordinary spending. `internal_movement` claims the sentence that names a movement, not
-    # a bare window over a plan that happens to be internal.
-    if _internal_movement_request(query) is not None or _account_follow_up_plan(query) is not None:
-        return None
-
-    if (
-        previous.metric is Metric.CUMULATIVE
-        and facts.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
-        and len(folded.split()) <= 5
-        and folded.startswith(("y ", "ahora ", "por "))
-    ):
-        return explicit_facts.enforce(replace(previous, group_by=facts.group_by), facts)
-
-    if _CATEGORY_REFERENCE.search(folded):
-        reference = result_reference_of(query.conversation, focus)
-        referenced = reference.category if reference is not None else None
-        if (
-            referenced is None
-            and isinstance(focus, ComparisonFocus)
-            and len(focus.value.latest.categories) == 1
-            and focus.value.latest.categories == focus.value.earlier.categories
-        ):
-            # This is common query scope, not a row referent borrowed from one comparison
-            # operand. ResultReference remains unavailable for comparison focus.
-            referenced = focus.value.latest.categories[0]
-        if referenced is None or category_words.words_for(referenced) is None:
-            return None
-        return explicit_facts.enforce(
-            explicit_facts.reshaped(
-                replace(
-                    previous,
-                    categories=(referenced,),
-                    excluded_categories=tuple(
-                        category
-                        for category in previous.excluded_categories
-                        if category != referenced
-                    ),
-                    merchants=(),
-                    excluded_merchants=(),
-                ),
-                group_by=facts.group_by or GroupBy.NONE,
-                metric=facts.metric or previous.metric,
-            ),
-            facts,
-        )
-
-    if (
-        facts.group_by
-        in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
-        and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
-        and len(folded.split()) <= 7
-        and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
-    ):
-        # "Sepáralo por comercio" changes only the presentation dimension of the query in view.
-        # Sending that three-word patch to a model made it re-create the window and filters, which
-        # is both slower and an opportunity to silently widen the result.
-        return explicit_facts.enforce(
-            replace(
-                previous,
-                group_by=facts.group_by,
-                group_limit=(
-                    None
-                    if facts.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
-                    else previous.group_limit
-                ),
-            ),
-            facts,
-        )
-
-    if facts.excluded_categories or facts.excluded_merchants:
-        # A negative filter patches the validated query in view. No model needs to re-emit the
-        # window, direction and calculation merely to understand "sin alquiler".
-        return explicit_facts.enforce(previous, facts)
-
-    a_unit_back = _A_CALENDAR_UNIT_BACK.fullmatch(folded)
-    if a_unit_back is not None:
-        unit = a_unit_back.group("unit") or a_unit_back.group("year")
-        earlier_window = _previous_calendar_window(previous, unit, query.today)
-        if earlier_window is not None:
-            return replace(
-                previous,
-                period=earlier_window if isinstance(earlier_window, RelativePeriod) else None,
-                date_range=earlier_window if isinstance(earlier_window, AbsoluteRange) else None,
-            )
-
-    # A turn containing only a new window patches the query already on screen. Replanning
-    # "en lo que llevamos de año" from scratch discarded both categories in a comparison.
-    if (
-        facts.window is not None
-        and not facts.names_a_category
-        and continuation_patch.read(query.sentence, today=query.today).status
-        is not continuation_patch.PatchStatus.AMBIGUOUS
-        and facts.metric is None
-        and facts.direction is None
-        and len(folded.split()) <= 8
-        and not _starts_new_financial_scope(query.sentence, today=query.today)
-        and not (_group_dimension_in(folded) and _GROUP_RANKING_SIGNAL.search(folded))
-        and not _A_UNIT_BACK_ANYWHERE.search(folded)
-        and capability_guard.unsupported_reason(query.sentence) is None
-    ):
-        patched = explicit_facts.enforce(previous, facts)
-        logger.info(
-            "turn.window",
-            extra={
-                "explicit": _window_of(patched),
-                "planned": _window_of(previous),
-                "inherited": _window_of(previous),
-            },
-        )
-        return patched
-
-    if facts.asks_comparison_reference and previous.group_by is not GroupBy.NONE:
-        return previous
-
-    if _TOP_MERCHANT_FOLLOW_UP.search(folded):
-        return explicit_facts.enforce(
-            replace(
-                previous,
-                direction=Direction.EXPENSE,
-                merchants=(),
-                merchant_terms=(),
-                group_by=GroupBy.MERCHANT,
-                metric=Metric.SUM,
-            ),
-            facts,
-        )
-
-    named = category_words.precisely_named_in(query.sentence)
-    if named and _CATEGORY_FILTER_FOLLOW_UP.search(folded):
-        group_by = (
-            GroupBy.NONE
-            if previous.group_by is GroupBy.CATEGORY and len(named) == 1
-            else previous.group_by
-        )
-        return explicit_facts.enforce(
-            replace(
-                previous,
-                categories=named,
-                excluded_categories=(),
-                merchants=(),
-                merchant_terms=(),
-                group_by=group_by,
-            ),
-            facts,
-        )
-
-    # These are deliberately short ellipses. A complete question can introduce a merchant or a
-    # category the closed vocabulary does not know, and inheriting the old filters there would
-    # answer a different question with a plausible figure.
-    #
-    # And a complete question is not an ellipsis however short it is, which the window branch above
-    # already says and this one did not. "¿Cuánto gasté el mes pasado?" is five words, so it
-    # reached the sum-follow-up below and became the previous plan with the direction flipped —
-    # after "¿cuánto he invertido en el último año?", that plan is restricted to the fund and to
-    # internal movements only, and flipping it to EXPENSE answers "what did you spend" with what
-    # went into the fund. Two branches of one function disagreed about what an ellipsis is.
-    if (
-        _names_a_filter_this_cannot_read(query)
-        or len(folded.split()) > 5
-        or _starts_new_financial_scope(query.sentence, today=query.today)
-    ):
-        return None
-
-    # Counting a kind the vocabulary *does* know is the exception to the rule below, and it is the
-    # difference between the two reasons a follow-up gets refused. Declining protects the turn that
-    # introduces something this path cannot represent; a named category is not that — it is a
-    # filter, and replacing one filter is what this whole function does.
-    #
-    # Without this, "¿cuántos bizums tengo?" declines the way "¿cuántas compras hice en Mercadona?"
-    # does, and reaches the planner having dropped the window the conversation was in. Two turns
-    # earlier the same question about compras kept it.
-    if named and _COUNT_FOLLOW_UP.search(folded):
-        return explicit_facts.enforce(
-            replace(
-                previous,
-                categories=named,
-                excluded_categories=(),
-                merchants=(),
-                merchant_terms=(),
-                group_by=GroupBy.NONE,
-                metric=Metric.COUNT,
-            ),
-            facts,
-        )
-    if named:
-        return None
-    if _COUNT_FOLLOW_UP.search(folded):
-        return explicit_facts.enforce(replace(previous, metric=Metric.COUNT), facts)
-    if _SUM_EXPENSE_FOLLOW_UP.search(folded):
-        return explicit_facts.enforce(
-            replace(previous, direction=Direction.EXPENSE, metric=Metric.SUM), facts
-        )
-    if _SUM_INCOME_FOLLOW_UP.search(folded):
-        return explicit_facts.enforce(
-            replace(previous, direction=Direction.INCOME, metric=Metric.SUM), facts
-        )
-    direction_only = _DIRECTION_ONLY_FOLLOW_UP.fullmatch(folded)
-    if direction_only:
-        direction = (
-            Direction.INCOME
-            if direction_only.group("direction").startswith("ingreso")
-            else Direction.EXPENSE
-        )
-        return replace(previous, direction=direction)
-    return None
-
-
-_READER_RETURN_FROM_BALANCE: Final = re.compile(
-    r"^(?:(?:vale|bueno|y)(?:\s+|\s*[,;:]\s*))?"
-    r"(?:(?:vuelve|volvamos)\s+(?:a\s+)?(?:la\s+consulta\s+anterior|lo\s+anterior)"
-    r"|volviendo\s+a\s+(?:la\s+consulta\s+anterior|lo\s+de\s+antes))"
-    r"\s*[,;:]\s*(?P<request>\S(?:.*\S)?)$"
-)
-
-
-@dataclass(frozen=True)
-class _QueryForReader:
-    plan: PlannedQuery | None
-    wording: str
-    returned_from_balance: bool = False
-
-
-def _query_for_reader(query: AskFinancialQuestionQuery) -> _QueryForReader:
-    """Select query memory for readers, including an explicit return from a balance aside."""
-    focus = focus_of(query.conversation)
-    if isinstance(focus, QueryFocus):
-        return _QueryForReader(focus.current, query.sentence)
-    if isinstance(focus, BalanceFocus) and focus.suspended_query is not None:
-        returned = _READER_RETURN_FROM_BALANCE.fullmatch(spanish.folded(query.sentence))
-        if returned is not None:
-            return _QueryForReader(
-                focus.suspended_query,
-                returned.group("request"),
-                returned_from_balance=True,
-            )
-    return _QueryForReader(None, query.sentence)
-
-
-@_recogniser
-def _contextual_ranking_plan(query: AskFinancialQuestionQuery) -> TopMovements | None:
-    """Turn a superlative into a ranking while retaining the prior window and filters."""
-    selected = _query_for_reader(query)
-    facts = explicit_facts.read(selected.wording, today=query.today)
-    if facts.asks_top_category or not _RANKING_REQUEST.search(spanish.folded(selected.wording)):
-        return None
-    previous = (
-        None
-        if not selected.returned_from_balance
-        and _starts_new_financial_scope(selected.wording, today=query.today)
-        else selected.plan
-    )
-    window = facts.window or (
-        previous.period or previous.date_range if previous is not None else None
-    )
-    if window is None:
-        return None
-    folded = spanish.folded(selected.wording)
-    if re.search(r"\bingres|\bcobr|\bnomina|\bsueldo|\bsalario", folded):
-        direction = Direction.INCOME
-    elif re.search(r"\bgast|\bpagu|\bcompr|\bcargo", folded):
-        direction = Direction.EXPENSE
-    elif previous is not None:
-        direction = previous.direction
-    else:
-        direction = Direction.ALL
-    named = category_words.precisely_named_in(selected.wording)
-    return TopMovements(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=named or (previous.categories if previous is not None else ()),
-        excluded_categories=(
-            tuple(category for category in previous.excluded_categories if category not in named)
-            if previous is not None
-            else ()
-        ),
-        merchants=() if named else (previous.merchants if previous is not None else ()),
-        merchant_terms=(() if named else (previous.merchant_terms if previous is not None else ())),
-        excluded_merchants=(previous.excluded_merchants if previous is not None else ()),
-        rank=1,
-    )
-
-
-def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Focus the previous query on an account named as a short conversational reply."""
-    context = _query_for_reader(query)
-    previous = (
-        None
-        if not context.returned_from_balance
-        and _starts_new_financial_scope(context.wording, today=query.today)
-        else context.plan
-    )
-    if not isinstance(previous, FinancialPlan) or not account_words.named_in(context.wording):
-        return None
-    folded = spanish.folded(context.wording).strip(" ¿?¡!.,")
-    if not _SALARY_ACCOUNT_FOLLOW_UP.fullmatch(folded) and not _ACCOUNT_SELECTION_FOLLOW_UP.search(
-        folded
-    ):
-        if len(folded.split()) > 4:
-            return None
-        if window_words.window_in(context.wording, today=query.today) is not None:
-            return None
-    selected = replace(previous, group_by=GroupBy.NONE)
-    window = window_words.window_in(context.wording, today=query.today)
-    if window is None:
-        return selected
-    return replace(
-        selected,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-    )
-
-
-@_recogniser
-def _group_ranking_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Rank aggregate groups by the exact metric named in the sentence."""
-    selected = _query_for_reader(query)
-    folded = spanish.folded(selected.wording)
-    dimension_match = _group_dimension_in(folded)
-    previous = selected.plan
-    previous_ranking = (
-        previous
-        if isinstance(previous, FinancialPlan) and previous.group_limit is not None
-        else None
-    )
-    follow_up_match = _GROUP_RANKING_FOLLOW_UP_PREFIX.fullmatch(folded.strip(" ¿?¡!.,;:"))
-    follow_up_request = follow_up_match.group("request") if follow_up_match is not None else None
-    ranking_follow_up = (
-        previous_ranking is not None
-        and follow_up_request is not None
-        and _GROUP_RANKING_FOLLOW_UP_REQUEST.fullmatch(follow_up_request) is not None
-    )
-    if dimension_match is None and not ranking_follow_up:
-        return None
-    if not ranking_follow_up and _GROUP_RANKING_SIGNAL.search(folded) is None:
-        return None
-
-    named_dimension = _named_group_dimension(folded) if dimension_match else None
-    if named_dimension is not None:
-        group_by = named_dimension
-    else:
-        assert previous_ranking is not None
-        group_by = previous_ranking.group_by
-
-    if re.search(r"\b(?:ticket\s+medio|importe\s+medio|media|promedio)\b", folded):
-        metric = Metric.AVERAGE
-    elif re.search(r"\b(?:operaciones|movimientos|compras|pagos)\b", folded):
-        metric = Metric.COUNT
-    elif ranking_follow_up and not re.search(r"\b(?:importe|gasto|total)\b", folded):
-        assert previous_ranking is not None
-        metric = previous_ranking.metric
-    else:
-        metric = Metric.SUM
-
-    count_match = _GROUP_RANKING_COUNT.search(folded) or _GROUP_RANKING_TOP_COUNT.search(folded)
-    if count_match is None:
-        if ranking_follow_up:
-            assert previous_ranking is not None
-            group_limit = previous_ranking.group_limit
-        else:
-            group_limit = 5
-    else:
-        raw_count = count_match.group("count")
-        asked = int(raw_count) if raw_count.isdigit() else _GROUP_RANKING_NUMBERS[raw_count]
-        # Clamped, not refused. Asking for more rows than exist is not a mistake -- "top 25
-        # comercios" on an account with twelve of them is twelve -- and the plan used to raise
-        # InvalidValueError above the ceiling, which turned an answerable question into a failure
-        # somewhere the sentence could no longer explain itself.
-        group_limit = max(1, min(asked, MAX_GROUP_ROWS))
-
-    facts = explicit_facts.read(selected.wording, today=query.today)
-    contextual = (
-        ranking_follow_up
-        or selected.returned_from_balance
-        or not _starts_new_financial_scope(selected.wording, today=query.today)
-    )
-    base = previous_ranking if contextual else None
-    window = facts.window or (
-        base.period or base.date_range if base is not None else RelativePeriod(Period.THIS_YEAR)
-    )
-    named = category_words.precisely_named_in(selected.wording)
-    if re.search(r"\bingres|\bcobr|\bnomina", folded):
-        direction = Direction.INCOME
-    elif base is not None and ranking_follow_up:
-        direction = base.direction
-    else:
-        direction = Direction.EXPENSE
-    return FinancialPlan(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=named or (base.categories if base is not None else ()),
-        excluded_categories=base.excluded_categories if base is not None else (),
-        merchants=base.merchants if base is not None and group_by is not GroupBy.MERCHANT else (),
-        merchant_terms=(
-            base.merchant_terms if base is not None and group_by is not GroupBy.MERCHANT else ()
-        ),
-        excluded_merchants=base.excluded_merchants if base is not None else (),
-        group_by=group_by,
-        metric=metric,
-        group_limit=group_limit,
-        include_internal=base.include_internal if base is not None else False,
-        internal_only=base.internal_only if base is not None else False,
-        across_accounts=(group_by is GroupBy.ACCOUNT) or (base.across_accounts if base else False),
-        only_account_id=None
-        if group_by is GroupBy.ACCOUNT
-        else (base.only_account_id if base else None),
-        only_account_ids=()
-        if group_by is GroupBy.ACCOUNT
-        else (base.only_account_ids if base else ()),
-        transaction_types=base.transaction_types if base is not None else (),
-    )
-
-
-@_recogniser
-def _gambling_plan(
-    query: AskFinancialQuestionQuery,
-) -> FinancialPlan | FinancialPlanDraft | None:
-    """Expenses at betting merchants, with explicit substring rather than exact-name semantics."""
-    folded = spanish.folded(query.sentence)
-    if _GAMBLING.search(folded) is None:
-        return None
-    if not re.search(r"\b(?:gast|pag|movim|operacion|dinero|comercio|casa|ocio)\w*\b", folded):
-        return None
-
-    terms: list[str] = []
-    if re.search(r"\bapuest\w*\b", folded):
-        # The product family, not two exact shops: this covers Casa de Apuestas and Bet365.
-        terms.extend(("apuest", "bet"))
-    for term in ("bet", "casino", "codere", "bwin", "sportium"):
-        if re.search(rf"\b{re.escape(term)}\w*\b", folded) and term not in terms:
-            terms.append(term)
-    window = window_words.window_in(query.sentence, today=query.today)
-    if window is None:
-        return FinancialPlanDraft(
-            direction=Direction.EXPENSE,
-            categories=("LEISURE",),
-            merchant_terms=tuple(terms),
-        )
-    return FinancialPlan(
-        direction=Direction.EXPENSE,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=("LEISURE",),
-        merchant_terms=tuple(terms),
-    )
-
-
-@_recogniser
-def _multiple_movement_ranking(
-    query: AskFinancialQuestionQuery,
-) -> tuple[TopMovements, int] | None:
-    """Several individual movements, distinct from a ranking of aggregate groups."""
-    folded = spanish.folded(query.sentence)
-    found = _MULTIPLE_MOVEMENT_RANKING.search(folded)
-    ordered_list = _ORDERED_MOVEMENT_LIST.search(folded)
-    if found is None and ordered_list is None:
-        return None
-    if found is None:
-        count = MAX_GROUP_RANK
-    else:
-        raw_count = found.group("count") or found.group("leading_count") or found.group("top_count")
-        count = int(raw_count) if raw_count.isdigit() else _GROUP_RANKING_NUMBERS[raw_count]
-    if not 2 <= count <= MAX_GROUP_RANK:
-        return None
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    window = facts.window or RelativePeriod(Period.THIS_YEAR)
-    named = category_words.precisely_named_in(query.sentence)
-    direction = (
-        Direction.INCOME
-        if re.search(r"\bingres|\bcobr|\bnomina|\bsalario|\bsueldo", folded)
-        else Direction.EXPENSE
-    )
-    return (
-        TopMovements(
-            direction=direction,
-            period=window if isinstance(window, RelativePeriod) else None,
-            date_range=window if isinstance(window, AbsoluteRange) else None,
-            categories=named,
-            rank=1,
-        ),
-        count,
-    )
-
-
-# The clitic that makes a breakdown a follow-up. "Desglosa por cuenta" states its own question;
-# "desglósalo por cuenta" says *that one*, and what "that one" is filtered by belongs to it.
-_REFERS_TO_THE_QUERY_IN_VIEW: Final = re.compile(
-    r"\b(?:desglosa|separa|agrupa|divide|reparte)(?:me)?(?:lo|los|la|las)\b"
-)
-
-
-def _a_comparison_owns_it(query: AskFinancialQuestionQuery) -> bool:
-    """Whether the sentence states a two-window comparison, which no single-period reader may take.
-
-    Four of the turns the cascade's order decides are this shape. "¿En qué mes fue mayor mi gasto
-    medio por movimiento, julio o junio?" is read by `average` as July alone; "compara mis gastos
-    de este semestre con el anterior" is read by `natural_period` as this semester alone. Each
-    loser answers about one of the two periods the sentence names — half the question, with a real
-    figure on it, and nothing downstream can tell that the other half is missing.
-
-    Asked of the comparison reader itself rather than of a vocabulary of its own, so "this sentence
-    compares two periods" has one definition instead of two that drift apart. It is a pure function
-    over the query and the cascade already runs it first on these turns: this is that ordering said
-    out loud, in the readers it was silently deciding for.
-    """
-    return _direct_period_comparison(query) is not None
-
-
-@_recogniser
-def _natural_period_aggregate_plan(
-    query: AskFinancialQuestionQuery,
-) -> FinancialPlan | None:
-    """A simple aggregate whose new calendar window and direction are both explicit."""
-    if _a_comparison_owns_it(query):
-        return None
-    window = window_words.natural_period_in(query.sentence, today=query.today)
-    if window is None:
-        return None
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    named = category_words.precisely_named_in(query.sentence)
-    direction = facts.direction
-    if direction is None and re.search(
-        r"\bgast|\bpagu|\bcompr|\bcargos?\b|\bme\s+cobr", spanish.folded(query.sentence)
-    ):
-        direction = Direction.EXPENSE
-    if direction is None and named:
-        direction = _direction_of(named)
-    if direction is None or facts.metric in {
-        Metric.AVERAGE,
-        Metric.PERIOD_AVERAGE,
-        Metric.CUMULATIVE,
-        Metric.FREQUENCY,
-        Metric.RECURRENCE,
-    }:
-        return None
-    plan = FinancialPlan(
-        direction=direction,
-        period=window if isinstance(window, RelativePeriod) else None,
-        date_range=window if isinstance(window, AbsoluteRange) else None,
-        categories=named,
-        group_by=facts.group_by or GroupBy.NONE,
-        metric=facts.metric or Metric.SUM,
-        transaction_types=(TransactionType.DIRECT_DEBIT,) if facts.asks_direct_debits else (),
-    )
-    return explicit_facts.enforce_exclusions(plan, facts)
-
-
-@_recogniser
-def _deterministic_breakdown_plan(
-    query: AskFinancialQuestionQuery,
-) -> FinancialPlan | FinancialPlanDraft | None:
-    """Build the two common breakdowns whose meaning is fully stated by the sentence."""
-    if _a_comparison_owns_it(query):
-        return None
-
-    # "Desglósalo por cuenta" is not fully stated by the sentence: the *lo* is the query in view,
-    # and that query is filtered to the shop the previous answer singled out. This reader builds a
-    # fresh breakdown and drops the shop, so it would answer about the whole category — a real
-    # figure about a wider question than the one asked.
-    #
-    # The one tie of the four that runs the other way. Everywhere else the general follow-up stands
-    # aside for a reader that knows more about the sentence; here it is the one that knows more,
-    # because it keeps what the pronoun is pointing at.
-    previous = query.conversation.last_plan
-    if (
-        _REFERS_TO_THE_QUERY_IN_VIEW.search(spanish.folded(query.sentence))
-        and isinstance(previous, FinancialPlan)
-        and (previous.counterparties or previous.merchants)
-    ):
-        return None
-
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    named_categories = category_words.precisely_named_in(query.sentence)
-    if not (
-        facts.asks_top_category
-        or facts.asks_account_breakdown
-        or (facts.compared_categories and facts.metric is None)
-    ):
-        return None
-
-    previous = (
-        None
-        if _starts_new_financial_scope(query.sentence, today=query.today)
-        else query.conversation.last_plan
-    )
-    previous_financial = previous if isinstance(previous, FinancialPlan) else None
-    window = facts.window or (
-        previous.period or previous.date_range if previous is not None else None
-    )
-    direction = (
-        Direction.EXPENSE
-        if facts.asks_top_category or facts.compared_categories
-        else (previous.direction if previous is not None else (facts.direction or Direction.ALL))
-    )
-    group_by = (
-        GroupBy.CATEGORY
-        if facts.asks_top_category or facts.compared_categories
-        else GroupBy.ACCOUNT
-    )
-    categories = (
-        facts.compared_categories
-        if facts.compared_categories
-        else (
-            ()
-            if facts.asks_top_category
-            else (named_categories or (previous.categories if previous is not None else ()))
-        )
-    )
-    merchants = (
-        ()
-        if facts.asks_top_category or named_categories
-        else (previous.merchants if previous is not None else ())
-    )
-    merchant_terms = (
-        ()
-        if facts.asks_top_category or named_categories
-        else (previous.merchant_terms if previous is not None else ())
-    )
-    excluded_categories = (
-        tuple(
-            category
-            for category in previous.excluded_categories
-            if category not in named_categories
-        )
-        if previous is not None
-        else ()
-    )
-    excluded_merchants = (
-        () if named_categories else (previous.excluded_merchants if previous is not None else ())
-    )
-    include_internal = previous_financial.include_internal if previous_financial else False
-    internal_only = previous_financial.internal_only if previous_financial else False
-    across_accounts = (
-        True
-        if facts.asks_account_breakdown
-        else (previous_financial.across_accounts if previous_financial else False)
-    )
-    only_account_id = (
-        None
-        if facts.asks_account_breakdown
-        else (previous_financial.only_account_id if previous_financial else None)
-    )
-    only_account_ids = (
-        ()
-        if facts.asks_account_breakdown
-        else (previous_financial.only_account_ids if previous_financial else ())
-    )
-    transaction_ids = previous_financial.transaction_ids if previous_financial else ()
-    transaction_types = previous_financial.transaction_types if previous_financial else ()
-    if window is None:
-        return explicit_facts.enforce_exclusions(
-            FinancialPlanDraft(
-                direction=direction,
-                categories=categories,
-                excluded_categories=excluded_categories,
-                merchants=merchants,
-                merchant_terms=merchant_terms,
-                excluded_merchants=excluded_merchants,
-                group_by=group_by,
-                metric=Metric.SUM,
-                include_internal=include_internal,
-                internal_only=internal_only,
-                across_accounts=across_accounts,
-                only_account_id=only_account_id,
-                only_account_ids=only_account_ids,
-                transaction_ids=transaction_ids,
-                transaction_types=transaction_types,
-            ),
-            facts,
-        )
-    return explicit_facts.enforce_exclusions(
-        FinancialPlan(
-            direction=direction,
-            period=window if isinstance(window, RelativePeriod) else None,
-            date_range=window if isinstance(window, AbsoluteRange) else None,
-            categories=categories,
-            excluded_categories=excluded_categories,
-            merchants=merchants,
-            merchant_terms=merchant_terms,
-            excluded_merchants=excluded_merchants,
-            group_by=group_by,
-            metric=Metric.SUM,
-            include_internal=include_internal,
-            internal_only=internal_only,
-            across_accounts=across_accounts,
-            only_account_id=only_account_id,
-            only_account_ids=only_account_ids,
-            transaction_ids=transaction_ids,
-            transaction_types=transaction_types,
-        ),
-        facts,
-    )
-
-
-@_recogniser
-def _average_plan(
-    query: AskFinancialQuestionQuery,
-) -> FinancialPlan | FinancialPlanDraft | None:
-    """Build either kind of average from explicit words, preserving safe conversation context.
-
-    The distinction is arithmetic, not semantic guesswork: AVERAGE divides by matching movements;
-    PERIOD_AVERAGE divides by the DAY/WEEK/MONTH buckets named in the sentence. A missing window is
-    kept as a draft so the next turn can answer it instead of being told the capability is absent.
-    """
-    if _a_comparison_owns_it(query):
-        return None
-    facts = explicit_facts.read(query.sentence, today=query.today)
-    previous = query.conversation.last_plan
-    natural_period = _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
-    if natural_period is not None and isinstance(previous, FinancialPlan):
-        groups = {"dia": GroupBy.DAY, "semana": GroupBy.WEEK, "mes": GroupBy.MONTH}
-        return replace(
-            previous,
-            group_by=groups[natural_period.group("unit")],
-            metric=Metric.PERIOD_AVERAGE,
-        )
-    follow_up = _average_follow_up_plan(query, facts, previous)
-    if follow_up is not None:
-        return follow_up
-    if facts.metric not in {Metric.AVERAGE, Metric.PERIOD_AVERAGE}:
-        return None
-
-    named = category_words.precisely_named_in(query.sentence)
-    previous_categories = previous.categories if previous is not None else ()
-    previous_excluded_categories = previous.excluded_categories if previous is not None else ()
-    previous_merchants = previous.merchants if previous is not None else ()
-    previous_merchant_terms = previous.merchant_terms if previous is not None else ()
-    previous_excluded_merchants = previous.excluded_merchants if previous is not None else ()
-    asks_to_spend = re.search(
-        r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr", spanish.folded(query.sentence)
-    )
-    explicit_direction = facts.direction or (Direction.EXPENSE if asks_to_spend else None)
-    changes_direction = (
-        explicit_direction is not None
-        and previous is not None
-        and explicit_direction is not previous.direction
-    )
-    categories = named or (() if changes_direction else previous_categories)
-    merchants = () if named or changes_direction else previous_merchants
-    merchant_terms = () if named or changes_direction else previous_merchant_terms
-    if named:
-        previous_excluded_categories = tuple(
-            category for category in previous_excluded_categories if category not in named
-        )
-        previous_excluded_merchants = ()
-    direction = explicit_direction
-    direction = direction or (previous.direction if previous is not None else None)
-    if direction is None:
-        direction = _direction_of(categories) if categories else Direction.ALL
-
-    if facts.group_by is not None:
-        group_by = facts.group_by
-    elif (named_dimension := _named_group_dimension(spanish.folded(query.sentence))) is not None:
-        # A dimension the sentence states outright beats anything inherited. "Top 2 categorías por
-        # ticket medio" came in after two turns about comercios and was read as a merchant average,
-        # because `explicit_facts` does not treat that phrasing as a breakdown request and the
-        # grouping was therefore inherited. Only the order of the cascade kept it off the wire.
-        group_by = named_dimension
-    elif (
-        facts.metric is Metric.AVERAGE
-        and isinstance(previous, FinancialPlan)
-        and previous.metric is Metric.PERIOD_AVERAGE
-        and previous.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
-    ):
-        # "Ticket medio" changes the divisor back to movements. A temporal grouping inherited
-        # from the previous period-average would otherwise survive and answer a different question.
-        group_by = GroupBy.NONE
-    elif not named and isinstance(previous, FinancialPlan):
-        group_by = previous.group_by
-    else:
-        group_by = GroupBy.NONE
-
-    # Not defensive, and not about future drift — this fires today. `explicit_facts` reads
-    # "gasto medio mensual por comercio" as PERIOD_AVERAGE grouped by COUNTERPARTY, because the
-    # sentence states both and the grouping cascade puts the shop ahead of the month. The comment
-    # here used to say the pair could not be produced; it can, and this check is the only reason
-    # this recogniser does not build a plan the domain refuses.
-    #
-    # Declining sends it on to the capability guard, whose AVERAGE family owns the refusal: a
-    # per-period average broken down by shop needs two grouping axes and a plan has one.
-    if facts.metric is Metric.PERIOD_AVERAGE and group_by not in {
-        GroupBy.DAY,
-        GroupBy.WEEK,
-        GroupBy.MONTH,
-    }:
-        return None
-
-    window = facts.window
-    if window is None and previous is not None:
-        window = previous.period or previous.date_range
-
-    if window is None:
-        return explicit_facts.enforce(
-            FinancialPlanDraft(
-                direction=direction,
-                categories=categories,
-                excluded_categories=previous_excluded_categories,
-                merchants=merchants,
-                merchant_terms=merchant_terms,
-                excluded_merchants=previous_excluded_merchants,
-                group_by=group_by,
-                metric=facts.metric,
-                include_internal=(
-                    previous.include_internal if isinstance(previous, FinancialPlan) else False
-                ),
-                internal_only=(
-                    previous.internal_only if isinstance(previous, FinancialPlan) else False
-                ),
-                across_accounts=(
-                    previous.across_accounts if isinstance(previous, FinancialPlan) else False
-                ),
-                only_account_id=(
-                    previous.only_account_id if isinstance(previous, FinancialPlan) else None
-                ),
-                only_account_ids=(
-                    previous.only_account_ids if isinstance(previous, FinancialPlan) else ()
-                ),
-            ),
-            facts,
-        )
-    return explicit_facts.enforce(
-        FinancialPlan(
-            direction=direction,
-            period=window if isinstance(window, RelativePeriod) else None,
-            date_range=window if isinstance(window, AbsoluteRange) else None,
-            categories=categories,
-            excluded_categories=previous_excluded_categories,
-            merchants=merchants,
-            merchant_terms=merchant_terms,
-            excluded_merchants=previous_excluded_merchants,
-            group_by=group_by,
-            metric=facts.metric,
-            include_internal=(
-                previous.include_internal if isinstance(previous, FinancialPlan) else False
-            ),
-            internal_only=(
-                previous.internal_only if isinstance(previous, FinancialPlan) else False
-            ),
-            across_accounts=(
-                previous.across_accounts if isinstance(previous, FinancialPlan) else False
-            ),
-            only_account_id=(
-                previous.only_account_id if isinstance(previous, FinancialPlan) else None
-            ),
-            only_account_ids=(
-                previous.only_account_ids if isinstance(previous, FinancialPlan) else ()
-            ),
-        ),
-        facts,
-    )
-
-
-def _average_follow_up_plan(
-    query: AskFinancialQuestionQuery,
-    facts: explicit_facts.ExplicitFacts,
-    previous: PlannedQuery | None,
-) -> FinancialPlan | None:
-    """Apply short, explicit changes to an average without reconstructing it with a model."""
-    if not isinstance(previous, FinancialPlan) or previous.metric not in {
-        Metric.AVERAGE,
-        Metric.PERIOD_AVERAGE,
-    }:
-        return None
-    # A complete average in the new sentence outranks context. This helper only fills the meaning
-    # of elliptical turns such as "¿y al mes?"; applying it to "coste semanal medio" would retain
-    # the old monthly divisor merely because the sentence also changed category.
-    if facts.metric is not None:
-        return None
-
-    folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
-    named = category_words.precisely_named_in(query.sentence)
-    metric = previous.metric
-    group_by = previous.group_by
-
-    if _AVERAGE_PERIOD_FOLLOW_UP.fullmatch(folded) and facts.group_by in {
-        GroupBy.DAY,
-        GroupBy.WEEK,
-        GroupBy.MONTH,
-    }:
-        metric = Metric.PERIOD_AVERAGE
-        group_by = facts.group_by
-    elif _AVERAGE_MOVEMENT_FOLLOW_UP.fullmatch(folded):
-        metric = Metric.AVERAGE
-        if group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
-            group_by = GroupBy.NONE
-    elif not (folded.startswith("y ") and (facts.window is not None or named)):
-        return None
-
-    window = facts.window or previous.period or previous.date_range
-    categories = named or previous.categories
-    direction = facts.direction
-    if direction is None:
-        direction = _direction_of(named) if named else previous.direction
-    return explicit_facts.enforce(
-        FinancialPlan(
-            direction=direction,
-            period=window if isinstance(window, RelativePeriod) else None,
-            date_range=window if isinstance(window, AbsoluteRange) else None,
-            categories=categories,
-            excluded_categories=tuple(
-                category for category in previous.excluded_categories if category not in named
-            ),
-            merchants=() if named else previous.merchants,
-            merchant_terms=() if named else previous.merchant_terms,
-            excluded_merchants=() if named else previous.excluded_merchants,
-            group_by=group_by,
-            metric=metric,
-            include_internal=previous.include_internal,
-            internal_only=previous.internal_only,
-            across_accounts=previous.across_accounts,
-            only_account_id=previous.only_account_id,
-            only_account_ids=previous.only_account_ids,
-        ),
-        facts,
-    )
 
 
 def inherited_window[T: FinancialPlan | FinancialPlanDraft | TopMovements](
@@ -7193,22 +4781,6 @@ def _from_what_the_sentence_said(
         ",".join(named),
     )
     return PlanningResult(outcome=PlanningOutcome.PLANNED, plan=plan)
-
-
-# Categories that are money coming in. Read from the sentence's category rather than guessed from
-# its verb: "¿qué intereses me ha dado la hucha?" has no verb of spending or earning that this
-# service reads, and interest is income by what it *is*.
-_INCOME_CATEGORIES: Final = frozenset({"SALARY", "INTEREST"})
-
-
-def _direction_of(categories: tuple[str, ...]) -> Direction:
-    if all(category in _INCOME_CATEGORIES for category in categories):
-        return Direction.INCOME
-    if any(category in _INCOME_CATEGORIES for category in categories):
-        # A salary and a supermarket in one question. ALL rather than picking, because a signed
-        # total over both is the only figure that is not wrong about one of them.
-        return Direction.ALL
-    return Direction.EXPENSE
 
 
 # Turns that are *about* something else without changing the subject. Each of these already passes
@@ -7579,21 +5151,6 @@ def _field_of(plan: PlannedQuery, name: str) -> str | None:
         return _window_of(plan)
     value = getattr(plan, name, None)
     return None if value is None else str(value.value)
-
-
-def _window_of(plan: PlannedQuery | None) -> str | None:
-    """A window as one short string, for a log line.
-
-    `None` when there is no plan to read one off, which is itself the interesting value: it is
-    what "nothing was inherited" looks like in the record.
-    """
-    if plan is None:
-        return None
-    if plan.period is not None:
-        named = plan.period.period.value
-        return f"{named}:{plan.period.n}" if plan.period.n else named
-    assert plan.date_range is not None  # the plan's own invariant guarantees one
-    return f"{plan.date_range.start}..{plan.date_range.end}"
 
 
 def _spoken(plan: FinancialPlan) -> SpokenPlan:
@@ -8023,337 +5580,3 @@ def _remember_explicit_scope(
     else:
         return query
     return replace(query, conversation=replace(query.conversation, account_selection=selection))
-
-
-# ----------------------------------------------------------------------------------------------
-# The nineteen, as a table.
-#
-# Everything above this line is unchanged by it: `_steps` still asks the readers where it always
-# did, and this is what says *why* that order is the order. `reader_registry` holds the machinery
-# and the argument; this holds the Spanish, because the vocabulary a precondition reads has to be
-# the vocabulary its reader reads, and that lives here.
-#
-# **Preconditions are necessary, never sufficient**, so every one of them is allowed to be lazier
-# than the guard it stands in front of — and several are, deliberately. `internal_movement` claims
-# on three shapes and its row asks only whether the sentence mentions an account, an internal
-# transfer or an investment at all; restating the three shapes here would be a second definition of
-# them, and a second definition is the defect this file keeps finding in its own Spanish. Being
-# lazy costs a call that returns None. Being clever costs a sentence.
-#
-# **All nineteen have one, and none of them says True.** That was the thing to check, because a
-# precondition that always holds is a row that lies. The closest is `contextual_follow_up`, whose
-# precondition is about the *turn* rather than the sentence: it is the general reader, and the only
-# fact that constrains it is that some query is in view. That still refuses every opening turn, and
-# it is exactly why it contends with three of the others.
-def _stated(query: AskFinancialQuestionQuery) -> explicit_facts.ExplicitFacts:
-    """What the sentence says outright, read once for every precondition that wants it.
-
-    The readers each call `explicit_facts.read` again for themselves and this does not stop them —
-    that duplication is Section B's and not this change's. What it stops is nineteen preconditions
-    adding a twentieth reading apiece.
-    """
-    cache = reader_registry.memo_of(query)
-    if "facts" not in cache:
-        cache["facts"] = explicit_facts.read(query.sentence, today=query.today)
-    facts: explicit_facts.ExplicitFacts = cache["facts"]
-    return facts
-
-
-def _asks_a_proportion(query: AskFinancialQuestionQuery) -> bool:
-    focus = focus_of(query.conversation)
-    if isinstance(focus, PendingRatioFocus | RatioFocus):
-        return True
-    folded = spanish.folded(query.sentence)
-    return bool(
-        _PERCENT_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
-        or _RATIO_WORDS.search(folded)
-        or financial_relationships.asks_savings_rate(query.sentence)
-        or financial_relationships.asks_net_cash_flow(query.sentence)
-    )
-
-
-def _names_an_account_movement(query: AskFinancialQuestionQuery) -> bool:
-    folded = spanish.folded(query.sentence)
-    return bool(
-        _INVESTMENT_HISTORY.search(folded)
-        or _INTERNAL_BETWEEN_ACCOUNTS.search(folded)
-        or account_words.named_in(query.sentence)
-    )
-
-
-def _a_plan_is_in_view(query: AskFinancialQuestionQuery) -> bool:
-    return isinstance(query.conversation.last_plan, FinancialPlan)
-
-
-def _asks_a_running_total(query: AskFinancialQuestionQuery) -> bool:
-    previous = query.conversation.last_plan
-    return _stated(query).metric is Metric.CUMULATIVE or (
-        isinstance(previous, FinancialPlan) and previous.metric is Metric.CUMULATIVE
-    )
-
-
-def _asks_an_average(query: AskFinancialQuestionQuery) -> bool:
-    averages = {Metric.AVERAGE, Metric.PERIOD_AVERAGE}
-    if _stated(query).metric in averages:
-        return True
-    previous = query.conversation.last_plan
-    if not isinstance(previous, FinancialPlan):
-        return False
-    return previous.metric in averages or bool(
-        _NATURAL_PERIOD_AVERAGE_FOLLOW_UP.fullmatch(_clean_turn(query.sentence))
-    )
-
-
-def _asks_for_a_breakdown(query: AskFinancialQuestionQuery) -> bool:
-    facts = _stated(query)
-    return bool(
-        facts.asks_top_category
-        or facts.asks_account_breakdown
-        or (facts.compared_categories and facts.metric is None)
-    )
-
-
-def _asks_to_rank_groups(query: AskFinancialQuestionQuery) -> bool:
-    selected = _query_for_reader(query)
-    if _group_dimension_in(spanish.folded(selected.wording)) is not None:
-        return True
-    return isinstance(selected.plan, FinancialPlan) and selected.plan.group_limit is not None
-
-
-def _asks_for_the_biggest_movement(query: AskFinancialQuestionQuery) -> bool:
-    selected = _query_for_reader(query)
-    facts = explicit_facts.read(selected.wording, today=query.today)
-    return not facts.asks_top_category and bool(
-        _RANKING_REQUEST.search(spanish.folded(selected.wording))
-    )
-
-
-def _asks_for_several_movements(query: AskFinancialQuestionQuery) -> bool:
-    folded = spanish.folded(query.sentence)
-    return bool(_MULTIPLE_MOVEMENT_RANKING.search(folded) or _ORDERED_MOVEMENT_LIST.search(folded))
-
-
-READERS: Final = Registry(
-    (
-        Reader(
-            name="_ratio_request",
-            read=_ratio_request,
-            stood_at=1,
-            when=Precondition(
-                "the sentence asks for a proportion, or a proportion is in view",
-                _asks_a_proportion,
-            ),
-        ),
-        Reader(
-            name="_gambling_plan",
-            read=_gambling_plan,
-            stood_at=2,
-            when=Precondition(
-                "the sentence names a betting merchant",
-                lambda query: _GAMBLING.search(spanish.folded(query.sentence)) is not None,
-            ),
-        ),
-        Reader(
-            name="_how_many_payees_plan",
-            read=_how_many_payees_plan,
-            stood_at=3,
-            when=Precondition(
-                "the sentence asks how many things it is paying for",
-                lambda query: explicit_facts.asks_how_many_payees(query.sentence),
-            ),
-            yields_to=("_ratio_request",),
-            because=(
-                "«¿qué porcentaje de mis gastos fue supermercado este mes?» is a proportion, and "
-                "`asks_how_many_payees` reads its «qué parte de» as a count of payees. Both claim "
-                "and only one is the question. Measured on two corpus turns."
-            ),
-        ),
-        Reader(
-            name="_internal_movement_request",
-            read=_internal_movement_request,
-            stood_at=4,
-            when=Precondition(
-                "the sentence names an account, an internal transfer or an investment",
-                _names_an_account_movement,
-            ),
-        ),
-        Reader(
-            name="_salary_history_plans",
-            read=_salary_history_plans,
-            stood_at=5,
-            when=Precondition(
-                "the sentence asks to compare a payroll with its history, over a plan in view",
-                lambda query: (
-                    _SALARY_HISTORY_COMPARISON.search(spanish.folded(query.sentence)) is not None
-                    and _a_plan_is_in_view(query)
-                ),
-            ),
-        ),
-        Reader(
-            name="_period_comparison_plans",
-            read=_period_comparison_plans,
-            stood_at=6,
-            when=Precondition(
-                "the whole turn is a comparison pronoun",
-                lambda query: (
-                    _PERIOD_COMPARISON_REFERENCE.fullmatch(_clean_turn(query.sentence)) is not None
-                ),
-            ),
-        ),
-        Reader(
-            name="_comparison_with_previous_period",
-            read=_comparison_with_previous_period,
-            stood_at=7,
-            when=Precondition(
-                "the whole turn asks for the period before the plan in view",
-                lambda query: (
-                    _COMPARE_WITH_PREVIOUS_PERIOD.fullmatch(_clean_turn(query.sentence)) is not None
-                    and _a_plan_is_in_view(query)
-                ),
-            ),
-        ),
-        Reader(
-            name="_direct_period_comparison",
-            read=_direct_period_comparison,
-            stood_at=8,
-            when=Precondition(
-                "the sentence compares two periods outright",
-                lambda query: (
-                    _DIRECT_PERIOD_COMPARISON.search(spanish.folded(query.sentence)) is not None
-                ),
-            ),
-        ),
-        Reader(
-            name="_comparison_with_a_named_window",
-            read=_comparison_with_a_named_window,
-            stood_at=9,
-            when=Precondition(
-                "the whole turn compares the plan in view with one named window",
-                lambda query: (
-                    _COMPARE_WITH_A_NAMED_WINDOW.fullmatch(_clean_turn(query.sentence)) is not None
-                    and _a_plan_is_in_view(query)
-                ),
-            ),
-        ),
-        Reader(
-            name="_contextual_follow_up_plan",
-            read=_contextual_follow_up_plan,
-            stood_at=10,
-            when=Precondition(
-                "a query is in view for this turn to be about",
-                lambda query: isinstance(
-                    focus_of(query.conversation), QueryFocus | ComparisonFocus
-                ),
-            ),
-        ),
-        Reader(
-            name="_multiple_movement_ranking",
-            read=_multiple_movement_ranking,
-            stood_at=11,
-            when=Precondition(
-                "the sentence asks for several individual movements",
-                _asks_for_several_movements,
-            ),
-        ),
-        Reader(
-            name="_group_ranking_plan",
-            read=_group_ranking_plan,
-            stood_at=12,
-            when=Precondition(
-                "the sentence names a dimension to rank, or a ranking is in view",
-                _asks_to_rank_groups,
-            ),
-        ),
-        Reader(
-            name="_natural_period_aggregate_plan",
-            read=_natural_period_aggregate_plan,
-            stood_at=13,
-            when=Precondition(
-                "the sentence names a natural calendar period",
-                lambda query: (
-                    window_words.natural_period_in(query.sentence, today=query.today) is not None
-                ),
-            ),
-        ),
-        Reader(
-            name="_deterministic_breakdown_plan",
-            read=_deterministic_breakdown_plan,
-            stood_at=14,
-            when=Precondition(
-                "the sentence asks for a breakdown by category or by account",
-                _asks_for_a_breakdown,
-            ),
-            yields_to=("_contextual_follow_up_plan",),
-            because=(
-                "«hazme el desglose por cuenta» and «sepáralos por cuenta» are both a breakdown "
-                "request and an ellipsis, and the ellipsis wins: the follow-up keeps what the "
-                "query in view is filtered by, and this reader builds a fresh plan that drops it. "
-                "Its own `_REFERS_TO_THE_QUERY_IN_VIEW` guard already stands aside on the "
-                "«desglósalo» form; these two are that argument with no clitic to see it by. "
-                "Measured on two corpus turns."
-            ),
-        ),
-        Reader(
-            name="_contextual_ranking_plan",
-            read=_contextual_ranking_plan,
-            stood_at=15,
-            when=Precondition(
-                "the sentence asks which single movement was the biggest",
-                _asks_for_the_biggest_movement,
-            ),
-        ),
-        Reader(
-            name="_cumulative_plan",
-            read=_cumulative_plan,
-            stood_at=16,
-            when=Precondition(
-                "the sentence asks for a running total, or one is in view",
-                _asks_a_running_total,
-            ),
-            yields_to=("_contextual_follow_up_plan",),
-            because=(
-                "«¿y por semana?» over a running total is read by both, and the two have the same "
-                "branch written twice — `unit_follow_up` here, and the CUMULATIVE clause in the "
-                "follow-up reader. The follow-up wins because it patches the plan in view instead "
-                "of rebuilding one. Measured on one corpus turn; the duplication is Section B's."
-            ),
-        ),
-        Reader(
-            name="_recurrence_plan",
-            read=_recurrence_plan,
-            stood_at=17,
-            when=Precondition(
-                "the sentence asks which expenses repeat",
-                lambda query: _stated(query).metric is Metric.RECURRENCE,
-            ),
-        ),
-        Reader(
-            name="_frequency_plan",
-            read=_frequency_plan,
-            stood_at=18,
-            when=Precondition(
-                "the sentence asks how often something happens",
-                lambda query: _stated(query).metric is Metric.FREQUENCY,
-            ),
-        ),
-        Reader(
-            name="_average_plan",
-            read=_average_plan,
-            stood_at=19,
-            when=Precondition(
-                "the sentence asks for an average, or an average is in view",
-                _asks_an_average,
-            ),
-            yields_to=("_contextual_follow_up_plan", "_group_ranking_plan"),
-            because=(
-                "Two different arguments, and both were already written down in prose. Against "
-                "the follow-up: «¿y en gasolina?» after an average is an ellipsis, and the "
-                "follow-up keeps the average's own divisor and filters — nine corpus turns. "
-                "Against the group ranking: «ahora top 2 categorías por ticket medio» is a "
-                "ranking that happens to name a metric, and this reader's own comment says «only "
-                "the order of the cascade kept it off the wire». It is this row that keeps it off "
-                "the wire now. One corpus turn."
-            ),
-        ),
-    )
-)

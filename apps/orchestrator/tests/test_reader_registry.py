@@ -1,10 +1,16 @@
-"""The registry, measured against the cascade it replaces.
+"""The registry, measured against the cascade it replaced.
 
 `reader_registry` turns nineteen readers tried in source order into a table with declared
-preconditions and a derived order. The whole value of doing that alone, before anything moves, is
+preconditions and a derived order. The whole value of doing that alone, before anything moved, is
 this file: **for every sentence we have, the reader the registry picks is the reader the cascade
 picks.** Not asserted — run, over the five planning datasets and every query the 1,167-turn
 conversation corpus actually hands a reader.
+
+A2 moved the readers into `queries/readers/` and made `_steps` dispatch on a claim. Nothing in the
+measurement below changed: `CASCADE` is still the literal order the cascade asked in, and the
+comparison is still the derived order against it. What changed is where the spies go — the seam is
+`readers.seam` and a reader is reached through its row, not through a module attribute of the
+handler — and three tests at the end that check the five runs are that same order.
 
 Three separate properties, because they fail for different reasons and a reader who sees one go red
 should not have to work out which:
@@ -39,16 +45,28 @@ import yaml
 from support import episodes
 
 from finguard_orchestrator.application.queries import ask_financial_question as handler
-from finguard_orchestrator.application.queries.ask_financial_question import (
-    READERS,
-    AskFinancialQuestionQuery,
-)
+from finguard_orchestrator.application.queries import reader_registry
+from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
 from finguard_orchestrator.application.queries.reader_registry import (
     Precondition,
     Registry,
     free_pairs,
 )
+from finguard_orchestrator.application.queries.readers import (
+    READERS,
+    breakdowns,
+    comparisons,
+    follow_up,
+    metrics,
+    rankings,
+    seam,
+    subjects,
+)
 from finguard_orchestrator.domain.models.conversation import Conversation
+
+# The six modules the nineteen live in since A2. Named here so the tests below can ask the modules
+# what they hold rather than asking the handler, which no longer holds any of them.
+READER_MODULES = (subjects, comparisons, follow_up, rankings, breakdowns, metrics)
 
 # The planning harness's own reader for a dataset's `previous:` block, loaded the way
 # `test_evaluation_scoring` already loads it. A second reader here would be a second opinion about
@@ -68,10 +86,12 @@ PLANNING = Path(__file__).parents[1] / "evaluation" / "planning"
 # readers through the corpus below rather than as bare sentences.
 DATASETS = ("dev", "validation", "adversarial", "drift", "metamorphic")
 
-# The order `_steps` asks them in, which until this change was the only thing that decided anything.
+# The order the cascade asked them in, which until A1 was the only thing that decided anything.
 # A literal, because that is exactly the fact under test: deriving it from the table would be
-# comparing the table with itself. `test_the_cascade_order_is_still_what_the_handler_does` is what
-# keeps it honest when somebody moves a call.
+# comparing the table with itself. `test_the_five_runs_are_the_nineteen` is what keeps it honest now
+# that `_steps` declares the order rather than spelling it out in nineteen call sites — and it is
+# also why `stood_at` is not renumbered, since renumbering would make this literal a copy of the
+# thing it is checking.
 CASCADE = (
     "_ratio_request",
     "_gambling_plan",
@@ -140,7 +160,6 @@ def _from_the_corpus() -> list[tuple[str, AskFinancialQuestionQuery]]:
     a reconstruction of the first.
     """
     seen: list[AskFinancialQuestionQuery] = []
-    original = {name: getattr(handler, name) for name in CASCADE}
 
     def spying(reader):
         def spy(query):
@@ -149,13 +168,22 @@ def _from_the_corpus() -> list[tuple[str, AskFinancialQuestionQuery]]:
 
         return spy
 
-    for name in CASCADE:
-        setattr(handler, name, spying(original[name]))
+    # **On the rows, not on the module attributes.** Before A2 this set `handler._ratio_request`
+    # and the cascade picked the spy up as a module global. `_steps` asks `seam.READERS` now, and a
+    # registry row holds the function object directly — so a spy on the module attribute would be
+    # installed somewhere nothing looks, and this would capture nothing while still passing.
+    #
+    # The four nested consultations still call the decorated function directly and are not spied.
+    # They cost nothing: each passes its *caller's* query object unchanged, and the caller was
+    # reached through a row. `test_there_are_enough_sentences_for_this_to_mean_anything` is the
+    # floor that would catch it if that ever stopped being true.
+    spied = Registry(tuple(replace(row, read=spying(row.read)) for row in READERS.readers))
+    previously = seam.READERS
+    seam.READERS = spied
     try:
         episodes.run(episodes.load())
     finally:
-        for name in CASCADE:
-            setattr(handler, name, original[name])
+        seam.READERS = previously
 
     found, keys = [], set()
     for index, query in enumerate(seen):
@@ -196,19 +224,19 @@ def _walked() -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]], d
     cascade: dict[str, tuple[str, ...]] = {}
     registry: dict[str, tuple[str, ...]] = {}
     gates: dict[str, bool] = {}
-    previously = handler.READERS
+    previously = seam.READERS
     try:
         for key, query in SENTENCES:
-            handler.READERS = UNGATED
+            seam.READERS = UNGATED
             ungated = _cold(query)
             cascade[key] = tuple(name for name in CASCADE if UNGATED.ask(name, ungated) is not None)
-            handler.READERS = previously
+            seam.READERS = previously
             gate = _cold(query)
             for name in CASCADE:
                 gates[f"{key}|{name}"] = READERS.worth_asking(name, gate)
             registry[key] = READERS.claimants(_cold(query))
     finally:
-        handler.READERS = previously
+        seam.READERS = previously
     return cascade, registry, gates
 
 
@@ -241,8 +269,8 @@ def test_no_reader_claims_one_turn_twice() -> None:
         if detail is not None:
             claims.append(detail)
 
-    previously, real_record = handler.READERS, handler.record
-    handler.READERS, handler.record = UNGATED, claimed
+    previously, real_record = seam.READERS, seam.record
+    seam.READERS, seam.record = UNGATED, claimed
     try:
         for key, query in SENTENCES:
             claims.clear()
@@ -253,8 +281,8 @@ def test_no_reader_claims_one_turn_twice() -> None:
             if len(claims) != len(set(claims)):
                 doubled.append((key, query.sentence, list(claims)))
     finally:
-        handler.record = real_record
-        handler.READERS = previously
+        seam.record = real_record
+        seam.READERS = previously
 
     assert not doubled, f"readers claiming one turn more than once: {doubled[:5]}"
 
@@ -271,32 +299,82 @@ def test_there_are_enough_sentences_for_this_to_mean_anything() -> None:
 def test_every_reader_is_in_the_registry() -> None:
     """A `@_recogniser` with no row still works — `worth_asking` says yes to a name it does not
     know — and that is a deliberate fallback rather than a place to add the twentieth reader. This
-    is what stops the fallback being how one arrives."""
+    is what stops the fallback being how one arrives.
+
+    **Asked of the six modules rather than of the handler.** Before A2 this scanned `dir(handler)`,
+    because the handler was where a reader was defined. It is now where none of them is, so a scan
+    of it would find nothing and pass by finding no work. Scanning the modules is also strictly
+    stronger: it catches a decorated reader added to `readers/metrics.py` with no row, which is the
+    shape the twentieth would actually arrive in.
+    """
+    # `__module__` rather than `name in module.__dict__`, because two of these modules import a
+    # reader from another to consult it — `follow_up` asks `_internal_movement_request`, `subjects`
+    # asks `_direct_period_comparison` — and an imported name is in `__dict__` too. `wraps` copies
+    # `__module__` off the function it wrapped, so this asks where a reader was *defined*.
     decorated = {
-        name
-        for name in dir(handler)
-        if callable(getattr(handler, name, None))
-        and getattr(getattr(handler, name), "__wrapped__", None) is not None
-        and name.startswith("_")
-        and name in CASCADE
+        f"{getattr(module, name).__module__.rsplit('.', 1)[1]}.{name}"
+        for module in READER_MODULES
+        for name in dir(module)
+        if name.startswith("_")
+        and callable(getattr(module, name, None))
+        and getattr(getattr(module, name), "__wrapped__", None) is not None
+        and getattr(module, name).__module__ == module.__name__
     }
 
     assert set(READERS.order) == set(CASCADE), "the table and the cascade name different readers"
-    assert decorated == set(CASCADE), "a decorated reader the cascade list does not know"
+    assert {entry.split(".", 1)[1] for entry in decorated} == set(CASCADE), (
+        f"a decorated reader the table does not know, or a reader gone missing: {decorated}"
+    )
 
 
-def test_the_cascade_order_is_still_what_the_handler_does() -> None:
-    """`CASCADE` above is a literal and literals rot. The handler's source is the fact it copies,
-    so read it: the readers appear in `_steps` in exactly that order, once each."""
-    source = (Path(handler.__file__).read_text(encoding="utf-8")).split("async def _steps(")[1]
-    body = source.split("\n    async def ")[0]
-    appearing = []
-    for line in body.splitlines():
-        for name in CASCADE:
-            if f"{name}(query)" in line and name not in appearing:
-                appearing.append(name)
+def test_the_five_runs_are_the_nineteen() -> None:
+    """**The test that replaced `test_the_cascade_order_is_still_what_the_handler_does`.**
 
-    assert tuple(appearing) == CASCADE, "the cascade moved and this file still says otherwise"
+    That one read `_steps`' source for nineteen names, because an order spread over nineteen call
+    sites interleaved with fifteen other branches could not be read any other way. A2 removed the
+    interleaving, and the handler declares the order it asks in: five runs of readers, with the
+    branches that are not readers between them.
+
+    So the fact is checkable without parsing anything. The runs concatenate to `CASCADE` exactly,
+    in order and once each — the same claim the deleted test made, about a declaration instead of
+    about source text.
+    """
+    asked = tuple(name for run in handler.RUNS for name in run)
+
+    assert asked == CASCADE, "the runs and the cascade order disagree"
+    assert len(set(asked)) == len(asked), "a reader is in two runs"
+
+
+def test_no_run_yields_to_a_later_one() -> None:
+    """**What makes asking the readers in five runs the same as asking them in one.**
+
+    `select(among=...)` walks the global derived order restricted to a run, so a reader is asked
+    after everything it yields to only while every edge points *backwards* — into its own run or an
+    earlier one. An edge forwards would be a blocker asked after the reader it blocks, silently,
+    with `test_the_derived_order_is_a_topological_sort_of_what_the_rows_declare` still green because
+    the global order would still be a valid sort.
+
+    All five edges in the table point backwards today. This is the rule that says so, and it is the
+    first thing to read if a sixth edge ever turns a corpus turn.
+    """
+    run_of = {name: index for index, run in enumerate(handler.RUNS) for name in run}
+    forwards = [
+        (row.name, earlier)
+        for row in READERS.readers
+        for earlier in row.yields_to
+        if run_of[earlier] > run_of[row.name]
+    ]
+
+    assert not forwards, f"a reader yields to one asked in a later run: {forwards}"
+
+
+def test_every_reader_has_a_shape_to_be_answered_in() -> None:
+    """The dispatch is a table from reader to shape, so a reader with no entry is a `KeyError` on
+    the sentence that finally reaches it — the one failure this design can have that the cascade
+    could not, because there the block and the call were the same nineteen lines."""
+    assert set(handler._ANSWERING) == set(CASCADE), (
+        "a reader with nowhere to go, or a shape for a reader that no longer exists"
+    )
 
 
 def test_the_derived_order_is_a_topological_sort_of_what_the_rows_declare() -> None:
@@ -442,11 +520,16 @@ def _consultations(registry: Registry, *, memoise: bool) -> tuple[int, int]:
     Counted at the two places that mean different things. `consulting` is the seam, so spying on it
     counts *consultations* — the rows in the trace tree. The reader's own first line is
     `_DIRECT_PERIOD_COMPARISON.search`, so spying on that counts *executions* — the work.
+
+    Both spies moved modules in A2 and neither moved seam: `consulting` is read as a global of
+    `readers.seam`, where `_recogniser` now lives, and the pattern is a global of
+    `readers.comparisons`, where the reader that reads it lives. Patching the handler would patch
+    nothing and this would report 19 and 1 for both halves.
     """
     asked: list[str] = []
     ran: list[str] = []
-    real_consulting, real_memo = handler.consulting, handler.reader_registry.memo_of
-    real_pattern, previously = handler._DIRECT_PERIOD_COMPARISON, handler.READERS
+    real_consulting, real_memo = seam.consulting, reader_registry.memo_of
+    real_pattern, previously = comparisons._DIRECT_PERIOD_COMPARISON, seam.READERS
 
     class Counting:
         def search(self, *args, **kwargs):
@@ -456,11 +539,11 @@ def _consultations(registry: Registry, *, memoise: bool) -> tuple[int, int]:
         def fullmatch(self, *args, **kwargs):
             return real_pattern.fullmatch(*args, **kwargs)
 
-    handler.consulting = lambda name: (asked.append(name), real_consulting(name))[1]
-    handler._DIRECT_PERIOD_COMPARISON = Counting()
-    handler.READERS = registry
+    seam.consulting = lambda name: (asked.append(name), real_consulting(name))[1]
+    comparisons._DIRECT_PERIOD_COMPARISON = Counting()
+    seam.READERS = registry
     if not memoise:
-        handler.reader_registry.memo_of = lambda query: {}
+        reader_registry.memo_of = lambda query: {}
     try:
         query = AskFinancialQuestionQuery(
             sentence=ORDINARY, account_id=UUID(int=0), today=date(2026, 7, 15)
@@ -468,10 +551,10 @@ def _consultations(registry: Registry, *, memoise: bool) -> tuple[int, int]:
         for name in CASCADE:
             registry.ask(name, query)
     finally:
-        handler.consulting = real_consulting
-        handler.reader_registry.memo_of = real_memo
-        handler._DIRECT_PERIOD_COMPARISON = real_pattern
-        handler.READERS = previously
+        seam.consulting = real_consulting
+        reader_registry.memo_of = real_memo
+        comparisons._DIRECT_PERIOD_COMPARISON = real_pattern
+        seam.READERS = previously
     return len(asked), len(ran)
 
 

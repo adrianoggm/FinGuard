@@ -997,7 +997,7 @@ def test_a_running_total_by_shop_is_not_a_422(sentence: str) -> None:
     reached `FinancialPlan(group_by=COUNTERPARTY, metric=CUMULATIVE)` and raised out of the
     handler as `invalid_input`, which the edge maps to 422.
     """
-    from finguard_orchestrator.application.queries.ask_financial_question import _cumulative_plan
+    from finguard_orchestrator.application.queries.readers.metrics import _cumulative_plan
 
     assert (
         _cumulative_plan(

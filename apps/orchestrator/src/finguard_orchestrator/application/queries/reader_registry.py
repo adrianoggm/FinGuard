@@ -1,14 +1,14 @@
 """The deterministic readers as a table, and the order derived from it.
 
-`ask_financial_question` has nineteen `@_recogniser` readers, each `f(query) -> plan | None`, and
-until now the only thing that said which one gets a sentence was **where its call sits in a
-7,975-line file**. Position was load-bearing and nothing could read it: adding the twentieth meant
-choosing a line number, and the one property anybody actually wanted — *two readers must not both
-claim a sentence* — was discovered when a corpus turn went wrong.
+There are nineteen `@_recogniser` readers, each `f(query) -> plan | None`, and until A1 the only
+thing that said which one gets a sentence was **where its call sat in a 7,975-line file**. Position
+was load-bearing and nothing could read it: adding the twentieth meant choosing a line number, and
+the one property anybody actually wanted — *two readers must not both claim a sentence* — was
+discovered when a corpus turn went wrong.
 
-This module is the machinery for saying it instead. It holds no readers and no Spanish: the table
-is built in `ask_financial_question` beside the readers it names, because a registry that had to
-import them would import the file that imports it.
+This module is the machinery for saying it instead. It holds no readers and no Spanish: the table is
+assembled in `readers/__init__`, out of rows each reader module declares beside the reader it names,
+because a registry that had to import them would import the modules that import it.
 
 **What a row declares, and why each field is here.**
 
@@ -63,7 +63,7 @@ overlapping without an edge, the rule says so and somebody writes the edge down.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Container, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -116,8 +116,17 @@ class Reader:
     name: str
     read: Callable[[Any], Any]
     when: Precondition
-    # Where this reader sat in the cascade. Preservation, not design — see the module docstring,
-    # and the rule that keeps it inert.
+    # Where this reader sat in the cascade A2 removed. Preservation, not design — see the module
+    # docstring, and the rule that keeps it inert.
+    #
+    # **Frozen at 1..19, and A2 declined the invitation to renumber them.** The handover said
+    # `stood_at` becomes a pure declaration once no source position is left to preserve, which is
+    # true, and `test_the_tiebreak_is_never_the_thing_that_decides` does make renumbering safe for
+    # any pair that cannot both claim. It is still the wrong thing to do here: these numbers are now
+    # the only surviving record of the order 1,341 sentences were measured equivalent against, and
+    # `test_the_registry_picks_what_the_cascade_picks` compares the derived order with a `CASCADE`
+    # literal. Renumbering and re-running it would be comparing the table with itself — the green
+    # would stop being evidence. Renumber when there is a reason to change an order, and measure it.
     stood_at: int
     # Readers that must be asked first, because both can claim the same sentence. Never a default:
     # an empty tuple is the claim that nothing here contends with it.
@@ -199,14 +208,30 @@ class Registry:
         """
         return self._by_name[name].read(query)
 
-    def select(self, query: object) -> Claim | None:
+    def select(self, query: object, among: Container[str] | None = None) -> Claim | None:
         """The reader this turn belongs to, in the derived order.
 
-        The whole point of the table. Today `_steps` still asks the readers where it always did and
-        this runs beside it as the property under test; the move that makes this the only caller is
-        the next step, over a base this has already proved equivalent.
+        The whole point of the table, and since A2 the only way `_steps` asks a reader anything.
+
+        **`among` narrows it to one run of readers, and it is not an optimisation.** The nineteen
+        were never consulted as one block: the cascade interleaved them with branches that are not
+        readers and can also answer the turn — a courtesy, a balance, a bare shop name — so a single
+        `select()` over all nineteen at the top would hand `_average_plan` sentences that
+        `Intent.COURTESY` answers today. The handler declares the runs, asks each one where the
+        cascade asked its members, and this walks the derived order restricted to that run.
+
+        Restricting is safe because the derived order is a *global* order and every edge in the
+        table points backwards: a reader in a later run is asked after everything it yields to,
+        whether or not the blocker is in the same run. `test_no_run_yields_to_a_later_one` is what
+        says that rather than leaving it to be true by luck.
+
+        An unknown name in `among` is not checked here — it would be a set operation on every turn
+        to catch a typo once. `test_the_five_runs_are_the_nineteen` catches it at CI instead, which
+        is where a mistake in a constant belongs.
         """
         for reader in self._order:
+            if among is not None and reader.name not in among:
+                continue
             answer = self.ask(reader.name, query)
             if answer is not None:
                 return Claim(reader=reader.name, plan=answer)

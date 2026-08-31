@@ -72,6 +72,14 @@ from finguard_orchestrator.application.queries import (
     ask_financial_question as handler,
 )
 from finguard_orchestrator.application.queries.list_contacts import ContactRow
+from finguard_orchestrator.application.queries.readers import (
+    breakdowns,
+    comparisons,
+    follow_up,
+    metrics,
+    rankings,
+    subjects,
+)
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
     get_ask_handler,
@@ -818,27 +826,29 @@ def _window(query: FinancialPlan | TopMovements) -> str:
 # Test-only on purpose. Production still short-circuits: evaluating a recogniser that today is
 # unreachable could raise, and a measurement is the right place to find that out.
 
+# Named by module since A2, which is also the answer to "where do I go and read this one": the
+# readers are in `queries/readers/` and only `_account_activity_request` is still the handler's own.
 _RECOGNISERS: tuple[tuple[str, Any], ...] = (
-    ("ratio", handler._ratio_request),
-    ("gambling", handler._gambling_plan),
-    ("internal_movement", handler._internal_movement_request),
+    ("ratio", subjects._ratio_request),
+    ("gambling", subjects._gambling_plan),
+    ("internal_movement", subjects._internal_movement_request),
     ("account_activity", handler._account_activity_request),
-    ("salary_history", handler._salary_history_plans),
-    ("period_comparison", handler._period_comparison_plans),
-    ("previous_period_comparison", handler._comparison_with_previous_period),
-    ("direct_period_comparison", handler._direct_period_comparison),
-    ("named_window_comparison", handler._comparison_with_a_named_window),
-    ("account_follow_up", handler._account_follow_up_plan),
-    ("contextual_follow_up", handler._contextual_follow_up_plan),
-    ("multiple_movement_ranking", handler._multiple_movement_ranking),
-    ("group_ranking", handler._group_ranking_plan),
-    ("natural_period", handler._natural_period_aggregate_plan),
-    ("deterministic_breakdown", handler._deterministic_breakdown_plan),
-    ("contextual_ranking", handler._contextual_ranking_plan),
-    ("cumulative", handler._cumulative_plan),
-    ("recurrence", handler._recurrence_plan),
-    ("frequency", handler._frequency_plan),
-    ("average", handler._average_plan),
+    ("salary_history", comparisons._salary_history_plans),
+    ("period_comparison", comparisons._period_comparison_plans),
+    ("previous_period_comparison", comparisons._comparison_with_previous_period),
+    ("direct_period_comparison", comparisons._direct_period_comparison),
+    ("named_window_comparison", comparisons._comparison_with_a_named_window),
+    ("account_follow_up", follow_up._account_follow_up_plan),
+    ("contextual_follow_up", follow_up._contextual_follow_up_plan),
+    ("multiple_movement_ranking", rankings._multiple_movement_ranking),
+    ("group_ranking", rankings._group_ranking_plan),
+    ("natural_period", breakdowns._natural_period_aggregate_plan),
+    ("deterministic_breakdown", breakdowns._deterministic_breakdown_plan),
+    ("contextual_ranking", rankings._contextual_ranking_plan),
+    ("cumulative", metrics._cumulative_plan),
+    ("recurrence", metrics._recurrence_plan),
+    ("frequency", metrics._frequency_plan),
+    ("average", metrics._average_plan),
 )
 
 

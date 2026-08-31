@@ -8,12 +8,14 @@ import pytest
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionHandler,
     AskFinancialQuestionQuery,
-    _account_follow_up_plan,
+    _query_for_reader,
+)
+from finguard_orchestrator.application.queries.readers.follow_up import _account_follow_up_plan
+from finguard_orchestrator.application.queries.readers.rankings import (
     _contextual_ranking_plan,
     _group_ranking_plan,
-    _query_for_reader,
-    _stored_percentage_pair,
 )
+from finguard_orchestrator.application.queries.readers.subjects import _stored_percentage_pair
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.conversation import Conversation, FinancialClarification
 from finguard_orchestrator.domain.models.planning_context import ContinuationSource
