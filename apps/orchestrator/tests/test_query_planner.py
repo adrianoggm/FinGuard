@@ -618,3 +618,18 @@ async def test_a_clarification_keeps_the_draft_the_same_pair_used_to_destroy() -
     assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
     assert result.draft is not None
     assert result.draft.metric is Metric.SUM
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ("los últimos 0 días", "durante los últimos 5000 días", "en los últimos 100 meses"),
+)
+async def test_an_invalid_explicit_count_is_clarified_without_asking_the_model(
+    sentence: str,
+) -> None:
+    provider = FakeProvider(answer=json.dumps(FULL))
+
+    result = await planner_for(provider).plan(sentence, context=context_for())
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert provider.prompts == []

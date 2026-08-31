@@ -263,3 +263,43 @@ episodes:
         route: COURTESY
       - say: gracias
         route: COURTESY
+
+  - name: every_owned_account_relation_stays_on_the_internal_transfer_rail
+    why: >
+      These five formulations are the whole `own_account_relation` concept. They used to exist
+      only as unit-test examples, so deleting any one of their rows left the behavioural corpus
+      unchanged. Each instruction must enter the holder-only transfer flow without consulting a
+      model; an unrelated balance question then abandons the incomplete instruction before the
+      next formulation is exercised.
+    metrics: [unsafe_action, wrong_tool, unnecessary_model_call]
+    turns:
+      - say: Mueve dinero de una de mis cuentas a otra
+        route: TRANSFER
+        awaiting: ACCOUNT
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: Quiero mover dinero de una cuenta a otr
+        route: TRANSFER
+        awaiting: ACCOUNT
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: Mueve dinero de una cuenta mía a otra cuenta
+        route: TRANSFER
+        awaiting: ACCOUNT
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: Mueve dinero de una cuenta a otra cuenta que también es mía
+        route: TRANSFER
+        awaiting: ACCOUNT
+        no_model: true
+      - say: ¿cuánto tengo?
+        route: BALANCE
+      - say: Mueve dinero de una cuenta a otra, ambas mías
+        route: TRANSFER
+        awaiting: ACCOUNT
+        no_model: true
+      - say: gracias
+        route: COURTESY

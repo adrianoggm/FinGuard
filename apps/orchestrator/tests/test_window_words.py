@@ -581,3 +581,17 @@ def test_neither_new_shape_generalises_past_what_was_measured(sentence: str) -> 
     blind one it replaced. Each of these is refused for a stated reason, not by accident.
     """
     assert window_words.window_in(sentence, today=REFERENCE) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ("los últimos 0 días", "los últimos 5000 días", "durante los últimos 100 meses"),
+)
+def test_an_explicit_count_outside_the_domain_is_distinguished_from_no_window(
+    sentence: str,
+) -> None:
+    assert window_words.has_invalid_counted_window(sentence)
+
+
+def test_the_valid_edge_is_not_marked_invalid() -> None:
+    assert not window_words.has_invalid_counted_window("durante los últimos 366 días")

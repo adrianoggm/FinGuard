@@ -30,6 +30,7 @@ import re
 
 import pytest
 from support import lexicon_corpus
+from support.ratchets import Ceiling
 
 from finguard_orchestrator.domain.services import intent_lexicon, intent_router, spanish
 
@@ -37,6 +38,7 @@ PHRASINGS = intent_lexicon.PHRASINGS
 EVERY_PHRASING = [
     (concept, phrasing) for concept, phrasings in PHRASINGS.items() for phrasing in phrasings
 ]
+UNMEASURED = Ceiling(58, "intent phrasings reached by no evaluation sentence")
 
 # The one slot the table uses, filled the way `intent_router` fills it. A row carrying it is not a
 # regex until it is filled, so every test that compiles a row has to fill it first.
@@ -203,10 +205,10 @@ def test_every_phrasing_is_measured_or_seeded() -> None:
     phrasing that neither the datasets nor the corpus reaches and that names no example of itself is
     vocabulary nobody can review and nothing can break loudly.
 
-    It is deliberately *not* a demand that everything be in a dataset. Eighty of the 168 rows here
-    are unmeasured — `scripts/lexicon_coverage.py` prints the split, and 48 % is worse than
-    `explicit_facts`' 35 % on a module that decides which path a turn takes at all. Closing that is
-    Section C's job, using exactly these seeds.
+    It is deliberately *not* a demand that everything be in a dataset. Fifty-eight of the 168 rows
+    are unmeasured — `scripts/lexicon_coverage.py` prints the split. The earlier 80/168 count
+    omitted the two generated robustness corpora even though their tests execute them. Closing the
+    honest remainder is Section C's job, using exactly these seeds.
     """
     naked = [
         f"{concept}:{phrasing.says}"
@@ -216,6 +218,27 @@ def test_every_phrasing_is_measured_or_seeded() -> None:
     assert not naked, "phrasings with neither a measured sentence nor an example: " + ", ".join(
         naked
     )
+
+
+def test_unmeasured_intent_vocabulary_can_only_shrink() -> None:
+    unmeasured = sorted(
+        f"{concept}:{phrasing.says}"
+        for concept, phrasing in EVERY_PHRASING
+        if not lexicon_corpus.exercises(resolved(phrasing.says))
+    )
+
+    assert not UNMEASURED.exceeded_by(unmeasured), UNMEASURED.exceeded_by(unmeasured)
+
+
+def test_coverage_includes_the_dispatch_and_payment_robustness_corpora() -> None:
+    measured = lexicon_corpus.folded_sentences()
+
+    dispatch = "Quiero saber a qué personas de mi agenda puedo enviarles dinero."
+    assert spanish.folded(dispatch) in measured
+    payment = (
+        "Mira, necesito enviar 15 euros a Javi por bizum y que el concepto sea la comida del sábado"
+    )
+    assert spanish.folded(payment) in measured
 
 
 def test_the_lexicon_is_enumerable_and_nothing_in_it_is_unread() -> None:

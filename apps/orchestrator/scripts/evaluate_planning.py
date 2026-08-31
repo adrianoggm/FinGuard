@@ -39,15 +39,21 @@ a run in March are comparable.
 
 import argparse
 import asyncio
+import hashlib
+import json
+import platform
 import statistics
+import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
 
+import httpx2 as httpx
 import yaml  # type: ignore[import-untyped]
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
@@ -113,6 +119,8 @@ CATEGORIES = (
     "SALARY",
     "TRANSFER_BIZUM",
 )
+
+REPOSITORY = Path(__file__).resolve().parents[2]
 
 FIELDS = (
     "window",
@@ -238,6 +246,13 @@ class Score:
     # Per base as [held, total]. The headline pair rate otherwise gives a base with twelve
     # rewrites six times the influence of one with two; their mean gives every question one vote.
     invariance_by_base: dict[str, list[int]] = field(default_factory=dict)
+    # The same property sliced by capability, plus orthogonal diagnostics for a break.  Outcome
+    # transitions alone are not safety labels: NEEDS_CLARIFICATION -> PLANNED can be a fix or an
+    # unsafe execution depending on the dataset expectation and the field scorer.
+    invariance_by_group: dict[str, list[int]] = field(default_factory=dict)
+    invariance_break_classes: Counter[str] = field(default_factory=Counter)
+    invariance_field_changes: Counter[str] = field(default_factory=Counter)
+    invariance_group_by_transitions: Counter[str] = field(default_factory=Counter)
     # The denominator of the refusal rate: cases the dataset says are answerable. `missed` is the
     # numerator and already exists; without this it could only ever be printed as a bare count.
     answerable: int = 0
@@ -249,6 +264,8 @@ class RobustnessGate:
 
     minimum_macro_pct: float
     maximum_over_refusal_pct: float
+    maximum_unsafe_pct: float = 10.0
+    maximum_invalid_structure: int = 0
 
 
 def robustness_macro_pct(score: Score) -> float | None:
@@ -286,6 +303,18 @@ def robustness_gate_failures(
             failures.append(
                 f"over-refusal {over_refusal:.1f}% is above {gate.maximum_over_refusal_pct:.1f}%"
             )
+    if not score.cases:
+        failures.append("unsafe execution has no case denominator")
+    else:
+        unsafe = 100 * len(score.unsafe) / score.cases
+        if unsafe > gate.maximum_unsafe_pct:
+            failures.append(
+                f"unsafe execution {unsafe:.1f}% is above {gate.maximum_unsafe_pct:.1f}%"
+            )
+    if score.structural > gate.maximum_invalid_structure:
+        failures.append(
+            f"invalid structure {score.structural} is above {gate.maximum_invalid_structure}"
+        )
     return failures
 
 
@@ -298,6 +327,126 @@ def robustness_gate_exit_code(score: Score, metadata: dict[str, Any], gate: Robu
     for problem in broken:
         print(f"    {problem}", file=sys.stderr)
     return 1
+
+
+def _command_output(command: list[str], *, allow_empty: bool = False) -> str | None:
+    """Best-effort provenance: measurement must still run on machines without Git/NVIDIA."""
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=REPOSITORY,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = completed.stdout.strip()
+    return output if output or allow_empty else None
+
+
+def _gpu_snapshot() -> list[dict[str, Any]] | None:
+    raw = _command_output(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    if raw is None:
+        return None
+    fields = (
+        "name",
+        "memory_used_mib",
+        "memory_total_mib",
+        "utilization_pct",
+        "temperature_c",
+    )
+    return [
+        dict(zip(fields, (part.strip() for part in line.split(",")), strict=True))
+        for line in raw.splitlines()
+    ]
+
+
+async def _ollama_snapshot(provider: EvaluationProvider, model: str) -> dict[str, Any] | None:
+    if not isinstance(provider, OllamaLlmProvider):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            tags_response = await client.get(f"{provider._base_url}/api/tags")
+            tags_response.raise_for_status()
+            ps_response = await client.get(f"{provider._base_url}/api/ps")
+            ps_response.raise_for_status()
+        tags = tags_response.json().get("models", [])
+        running = ps_response.json().get("models", [])
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    installed: dict[str, Any] = next(
+        (item for item in tags if item.get("name") == model or item.get("model") == model), {}
+    )
+    resident: dict[str, Any] = next(
+        (item for item in running if item.get("name") == model or item.get("model") == model), {}
+    )
+    return {
+        "digest": installed.get("digest"),
+        "size_bytes": installed.get("size"),
+        "size_vram_bytes": resident.get("size_vram"),
+        "context_length": resident.get("context_length"),
+    }
+
+
+async def _run_manifest(
+    dataset_path: Path, provider: EvaluationProvider, model: str, case_count: int
+) -> dict[str, Any]:
+    commit = _command_output(["git", "rev-parse", "HEAD"])
+    dirty = _command_output(["git", "status", "--porcelain"], allow_empty=True)
+    return {
+        "schema": 1,
+        "model": model,
+        "provider": provider.name,
+        "cases": case_count,
+        "commit": commit,
+        "dirty": bool(dirty) if dirty is not None else None,
+        "corpus_sha256": hashlib.sha256(
+            await asyncio.to_thread(dataset_path.read_bytes)
+        ).hexdigest(),
+        "python": platform.python_version(),
+        "provider_settings": {
+            "timeout_seconds": getattr(provider, "timeout_seconds", None),
+            "context_tokens": getattr(provider, "context_tokens", None),
+            "seed": getattr(provider, "seed", None),
+            "think": getattr(provider, "think", None),
+        },
+        "model_runtime": await _ollama_snapshot(provider, model),
+        "gpu": _gpu_snapshot(),
+    }
+
+
+def _run_summary(score: Score) -> dict[str, Any]:
+    ordered = sorted(score.latencies)
+    p95_index = min(len(ordered) - 1, int(len(ordered) * 0.95)) if ordered else 0
+    macro = robustness_macro_pct(score)
+    return {
+        "schema": 1,
+        "cases": score.cases,
+        "robustness_pair_pct": (
+            100 * score.invariance_held / score.invariance_total if score.invariance_total else None
+        ),
+        "robustness_macro_pct": macro,
+        "unsafe_pct": 100 * len(score.unsafe) / score.cases if score.cases else None,
+        "over_refusal_pct": (
+            100 * len(score.missed) / score.answerable if score.answerable else None
+        ),
+        "invalid_structure": score.structural,
+        "latency_seconds": {
+            "p50": statistics.median(ordered) if ordered else None,
+            "p95": ordered[p95_index] if ordered else None,
+            "max": ordered[-1] if ordered else None,
+            "last_ten_mean": statistics.fmean(score.latencies[-10:]) if ordered else None,
+        },
+        "gpu": _gpu_snapshot(),
+    }
 
 
 def as_plan(spec: dict[str, Any]) -> FinancialPlan:
@@ -786,6 +935,22 @@ def report(model: str, score: Score) -> None:
             print(
                 f"  ROBUSTNESS-MACRO             {macro:5.1f}%   every base question has one vote"
             )
+        if score.invariance_by_group:
+            print("\n  robustness per group")
+            for name, (held, measured) in sorted(score.invariance_by_group.items()):
+                print(f"    {name:20} {held:3}/{measured:<3} {pct(held, measured)}")
+        if score.invariance_break_classes:
+            print("\n  robustness breaks by meaning")
+            for name, count in score.invariance_break_classes.most_common():
+                print(f"    {name:34} {count:3}")
+        if score.invariance_field_changes:
+            print("\n  changed fields")
+            for name, count in score.invariance_field_changes.most_common():
+                print(f"    {name:34} {count:3}")
+        if score.invariance_group_by_transitions:
+            print("\n  groupBy transitions")
+            for name, count in score.invariance_group_by_transitions.most_common():
+                print(f"    {name:34} {count:3}")
         for broken in score.invariance_breaks:
             print(f"    {broken}")
 
@@ -829,7 +994,8 @@ async def run(
     collect: list[tuple[int, int]] | None = None,
     gate: RobustnessGate | None = None,
 ) -> int:
-    data = yaml.safe_load((PLANNING / f"{dataset}.yaml").read_text(encoding="utf-8"))
+    dataset_path = PLANNING / f"{dataset}.yaml"
+    data = yaml.safe_load(dataset_path.read_text(encoding="utf-8"))
     today = data["reference"]
     all_cases = data["cases"]
     malformed = validate_metamorphic_cases(all_cases, today=today)
@@ -841,6 +1007,8 @@ async def run(
             print(f"invalid dataset: {issue}", file=sys.stderr)
         return 2
     cases = all_cases[:limit] if limit else all_cases
+    manifest = await _run_manifest(dataset_path, provider, model, len(cases))
+    print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
 
     planner = LlmQueryPlanner(
         provider,
@@ -879,6 +1047,9 @@ async def run(
         collect.append((score.outcome_right, score.exact))
         if len(collect) == 1:
             report(f"{provider.name}/{model}", score)
+    summary = _run_summary(score)
+    summary["model_runtime"] = await _ollama_snapshot(provider, model)
+    print(f"RUN-SUMMARY {json.dumps(summary, sort_keys=True)}", flush=True)
     if gate is not None:
         return robustness_gate_exit_code(score, data["metadata"], gate)
     return 0
@@ -910,10 +1081,13 @@ def _check_invariance(cases: list[dict[str, Any]], score: Score, *, today: date)
         score.invariance_total += 1
         by_base = score.invariance_by_base.setdefault(str(twin), [0, 0])
         by_base[1] += 1
+        by_group = score.invariance_by_group.setdefault(str(case.get("group", "ungrouped")), [0, 0])
+        by_group[1] += 1
         if before.outcome is not after.outcome:
             score.invariance_breaks.append(
                 f"{case['id']}: base {before.outcome.value}, rewording {after.outcome.value}"
             )
+            _classify_invariance_break(case, before, after, score)
             continue
         if before.plan is None or after.plan is None:
             # Both declined, and declined the same way. A refusal that survives rewording is as
@@ -921,17 +1095,83 @@ def _check_invariance(cases: list[dict[str, Any]], score: Score, *, today: date)
             # accuracy question, and this is not it.
             score.invariance_held += 1
             by_base[0] += 1
+            by_group[0] += 1
             continue
         left, right = actual_fields(before, today), actual_fields(after, today)
         if left.keys() != right.keys():
             score.invariance_breaks.append(f"{case['id']}: rewording changed the shape of the plan")
+            _classify_invariance_break(case, before, after, score)
             continue
         moved = sorted(name for name in left if left[name] != right[name])
         if moved:
             score.invariance_breaks.append(f"{case['id']}: rewording changed {moved}")
+            _classify_invariance_break(
+                case, before, after, score, moved=moved, left=left, right=right
+            )
         else:
             score.invariance_held += 1
             by_base[0] += 1
+            by_group[0] += 1
+
+
+def _case_was_correct(case: dict[str, Any], result: PlanningResult, score: Score) -> bool:
+    """Accuracy of one side of a robustness pair, including plan fields."""
+    expected = case["expect"]
+    wanted = {
+        "plan": PlanningOutcome.PLANNED,
+        "clarification": PlanningOutcome.NEEDS_CLARIFICATION,
+        "unsupported": PlanningOutcome.UNSUPPORTED,
+    }[expected]
+    if result.outcome is not wanted:
+        return False
+    return expected != "plan" or score.right_by_id.get(case["id"], False)
+
+
+def _classify_invariance_break(
+    case: dict[str, Any],
+    before: PlanningResult,
+    after: PlanningResult,
+    score: Score,
+    *,
+    moved: list[str] | None = None,
+    left: dict[str, Any] | None = None,
+    right: dict[str, Any] | None = None,
+) -> None:
+    """Describe a break on accuracy, safety and field axes without conflating them."""
+    base_id = str(case["paraphrase_of"])
+    unsafe_ids = {case_id for case_id, _ in score.unsafe}
+    before_correct = _case_was_correct({**case, "id": base_id}, before, score)
+    after_correct = _case_was_correct(case, after, score)
+    before_unsafe = base_id in unsafe_ids
+    after_unsafe = str(case["id"]) in unsafe_ids
+
+    if before_correct and after_unsafe:
+        score.invariance_break_classes["correct -> unsafe"] += 1
+    if before_unsafe and after_correct:
+        score.invariance_break_classes["unsafe -> correct"] += 1
+    if (
+        case["expect"] == "plan"
+        and before_correct
+        and after.outcome in (PlanningOutcome.NEEDS_CLARIFICATION, PlanningOutcome.UNSUPPORTED)
+    ):
+        score.invariance_break_classes["correct plan -> refusal"] += 1
+    if case["expect"] != "plan" and after.outcome is PlanningOutcome.PLANNED:
+        score.invariance_break_classes["expected refusal -> plan"] += 1
+    if not before_correct and after_correct:
+        score.invariance_break_classes["incorrect -> correct"] += 1
+    if before_correct and not after_correct and not after_unsafe:
+        score.invariance_break_classes["correct -> safe incorrect"] += 1
+    if not before_correct and not after_correct:
+        score.invariance_break_classes["incorrect -> different incorrect"] += 1
+
+    changed = moved or []
+    if changed:
+        score.invariance_field_changes[" + ".join(changed)] += 1
+    if "groupBy" in changed and left is not None and right is not None:
+        transition = f"{left['groupBy']} -> {right['groupBy']}"
+        score.invariance_group_by_transitions[transition] += 1
+        if "metric" in changed:
+            score.invariance_group_by_transitions[f"{transition} + metric"] += 1
 
 
 def _check_paraphrases(cases: list[dict[str, Any]], score: Score) -> None:

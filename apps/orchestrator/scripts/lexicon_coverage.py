@@ -8,7 +8,7 @@
 Before the lexicons this question had no answer short of reading the regexes and imagining
 sentences. The point of a table is that it can be counted, and the number that matters is the one
 below: how many of the phrasings these modules claim to understand are exercised by no sentence in
-`evaluation/planning` or `evaluation/conversations`.
+an evaluation corpus.
 
 That is a coverage figure for the vocabulary, not for the code. A phrasing no measured sentence
 reaches is not dead — users say it, which is why somebody wrote it down — it is *unwatched*: it can
@@ -58,7 +58,13 @@ LEXICONS: dict[str, dict[str, tuple[Phrasing, ...]]] = {
 SLOTS = {intent_lexicon.HOW_MUCH_SLOT: "|".join(spanish.transposed("cuanto"))}
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SENTENCE_KEYS = {"question", "say", "sentence", "text", "utterance", "reply"}
+SENTENCE_KEYS = {"question", "say", "says", "sentence", "text", "utterance", "reply"}
+EVALUATION_FOLDERS = (
+    "evaluation/planning",
+    "evaluation/conversations",
+    "evaluation/paraphrases",
+    "evaluation/payments",
+)
 
 
 def _harvest(node: object, into: list[str]) -> None:
@@ -66,6 +72,8 @@ def _harvest(node: object, into: list[str]) -> None:
         for key, value in node.items():
             if key in SENTENCE_KEYS and isinstance(value, str):
                 into.append(value)
+            elif key in SENTENCE_KEYS and isinstance(value, list):
+                into.extend(item for item in value if isinstance(item, str))
             else:
                 _harvest(value, into)
     elif isinstance(node, list):
@@ -74,9 +82,9 @@ def _harvest(node: object, into: list[str]) -> None:
 
 
 def measured_sentences() -> list[str]:
-    """Every sentence this repository has written down, from both evaluation trees."""
+    """Every sentence this repository has written down in an executed evaluation corpus."""
     found: list[str] = []
-    for folder in ("evaluation/planning", "evaluation/conversations"):
+    for folder in EVALUATION_FOLDERS:
         for path in sorted((ROOT / folder).glob("*.yaml")):
             _harvest(yaml.safe_load(path.read_text(encoding="utf-8")), found)
     return sorted(dict.fromkeys(found))
@@ -174,7 +182,7 @@ def main() -> int:
             f"\nboth tables: {total} phrasings, {covered} exercised by a measured sentence, "
             f"{unwatched} reached by none ({100 * unwatched / total:.0f} %)."
         )
-    print(f"\nmeasured over {len(sentences)} sentences from both evaluation trees.")
+    print(f"\nmeasured over {len(sentences)} sentences from all evaluation corpora.")
     return 0
 
 
