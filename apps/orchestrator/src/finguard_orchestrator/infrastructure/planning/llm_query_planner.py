@@ -41,7 +41,7 @@ from finguard_orchestrator.domain.models.conversation import Slot
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
-from finguard_orchestrator.domain.services import plan_merger
+from finguard_orchestrator.domain.services import plan_merger, window_words
 from finguard_orchestrator.domain.services.plan_merger import Field
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -158,6 +158,14 @@ class LlmQueryPlanner:
         context: PlanningContext,
     ) -> tuple[PlanningResult, bool]:
         """The result, and whether it came from the schema-repair attempt rather than the first."""
+        if window_words.has_invalid_counted_window(sentence):
+            return (
+                PlanningResult.needs_clarification(
+                    "Ese periodo queda fuera del intervalo admitido. "
+                    "¿Cuántos días o meses quieres consultar?"
+                ),
+                False,
+            )
         today = context.today
         previous = context.continuation.plan if context.continuation else None
         force_follow_up = context.continuation.force_follow_up if context.continuation else False
