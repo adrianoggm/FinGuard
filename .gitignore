@@ -36,3 +36,14 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .claude/*
+
+# LaTeX build products. The source of the memoir is versioned; what latexmk derives from it is not,
+# and the PDF least of all — a binary that changes on every compile makes every diff of the text
+# unreadable. Rebuild with `latexmk -pdf docs/memoria-finguard.tex`.
+docs/*.aux
+docs/*.fdb_latexmk
+docs/*.fls
+docs/*.log
+docs/*.out
+docs/*.toc
+docs/*.pdf

@@ -289,15 +289,116 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
             like=("¿Cuál es la mayor de las dos?",),
         ),
     ),
+    # **A bare «entre» used to sit here and it was the one row carrying no comparative frame.**
+    # Every other alternative below names the relating — «compara», «comparación», «frente a», «por
+    # separado», «una y otra», «cuál … mayor», «más … que». «entre» names none: in Spanish it is
+    # overwhelmingly a *range* or a *coordination* word, and «entre A y B» after «cuánto» is the
+    # form that adds A and B together — «entre los dos gastamos 100 €» is one figure, not two.
+    #
+    # Measured before it was removed, over every sentence this repository has written down: five
+    # sentences reached `compares` through «entre» alone, and all five were «cuánto … entre A y B»
+    # asking for a combined total. Not one used it to relate two things, and no sentence needed it
+    # redundantly beside another alternative here. The genuine comparative «entre» is read with its
+    # frame elsewhere and was never this row's work — `financial_relationships` spells out
+    # «diferencia entre mis ingresos y mis gastos», and «entre mis cuentas» belongs to
+    # `account_words`. What this row actually did was turn every one of those five combined totals
+    # into a two-row breakdown, because a non-empty `compared_categories` also hands the sentence to
+    # `readers/breakdowns`, which builds `GroupBy.CATEGORY` outright.
+    #
+    # `_combined_total` in `explicit_facts` is where «entre A y B» is read now, and it reads it as
+    # one total — through the coordinated list itself rather than through the word, which is why
+    # nothing here replaces this row.
     "compares": (
         Phrasing(r"\bcompara"),
         Phrasing(r"\bcomparacion\b", like=("Hazme una comparación de alquiler y súper",)),
         Phrasing(r"\bfrente\s+a\b", like=("Alquiler frente a súper este año",)),
         Phrasing(r"\bpor\s+separado\b", like=("Dame alquiler y súper por separado",)),
         Phrasing(r"\buna\s+y\s+otra\b", like=("¿Cuánto en una y otra?",)),
-        Phrasing(r"\bentre\b"),
         Phrasing(r"\bcual\b.{0,35}\b(?:mayor|menor|mas\s+alt[oa]|mas\s+baj[oa])\b"),
         Phrasing(r"\bmas\b.{0,45}\b(?:o|que)\b"),
+    ),
+    # **The guard the coordinated-list reading lacks, and it is `account_breakdown`'s shape on
+    # purpose.** Every row demands a grouping preposition *before* the dimension noun, because the
+    # noun alone proves nothing: «en las categorías de súper, gasolina y farmacia» enumerates three
+    # filters and asks for one figure, while «por categorías» asks for one row each. An earlier fix
+    # to `_GROUP_RANKING_DIMENSION` failed for exactly the missing half — a bare noun alternation,
+    # so «en todas mis **cuentas**» silently supplied a grouping dimension — and this entry exists
+    # to not repeat it.
+    #
+    # `unlike` carries the enumerations, because "the noun is not enough" is the whole argument and
+    # a comment cannot fail the build. Two of the three are live `category_multiple` paraphrases
+    # whose base asks for a single total, so reading the noun alone as a grouping would break the
+    # pair; the third is the same trap without any dimension noun at all, and `divides_up` below is
+    # what catches that one.
+    "category_breakdown": (
+        Phrasing(
+            r"\bdesglos\w*\s+por\s+(?:cada\s+)?categorias?\b",
+            like=("Desglósalo por categorías",),
+            unlike=("Necesito un desglose del monto que he gastado en ocio y suscripciones",),
+        ),
+        Phrasing(
+            r"\bsepar\w*\s+por\s+(?:cada\s+)?categorias?\b",
+            like=("Dámelo separado por categorías",),
+        ),
+        Phrasing(
+            r"\bagrup\w*\s+por\s+(?:cada\s+)?categorias?\b",
+            like=("Agrúpalo por categoría",),
+        ),
+        Phrasing(
+            r"\bpor\s+(?:cada\s+)?categorias?\b",
+            like=("¿Cuánto gasté por categoría este mes?", "Dámelo por cada categoría"),
+            unlike=(
+                "Necesito información sobre el total de dinero que he consumido este mes en las "
+                "categorías de súper, gasolina y farmacia.",
+                "¿Podría darme el resumen de los gastos que he tenido este mes en las categorías "
+                "de súper, gasolina y farmacia?",
+            ),
+        ),
+        Phrasing(
+            r"\ben\s+cada\s+categoria\b",
+            like=("¿Cuánto en cada categoría?",),
+        ),
+    ),
+    # **A coordinated list asked for apart without ever naming a dimension.** «Del mes pasado,
+    # ¿cuánto fue en gasolina y cuánto en súper?» carries no grouping preposition and no dimension
+    # noun, so `category_breakdown` above cannot see it — and it is unmistakably two figures,
+    # because the interrogative is asked again for the second member. `dev`'s `multi_with_grouping`
+    # is that sentence and it is the one case in the corpus whose written expectation names
+    # `groupBy: CATEGORY` for a bare coordination.
+    #
+    # The repetition is the rule, which is why this is a frame and not a word: one «cuánto» is the
+    # ordinary way to ask for a total, and it is the second one that splits the answer.
+    "members_apart": (
+        Phrasing(
+            r"\bcuant[oa]s?\b.{0,70}\by\s+cuant[oa]s?\b",
+            like=("Del mes pasado, ¿cuánto fue en gasolina y cuánto en súper?",),
+            unlike=("¿Cuánto llevo entre gasolina y transporte público este mes?",),
+        ),
+    ),
+    # **The verbs of dividing, which name the grouping without naming a dimension.** «Desglósame el
+    # gasto», «¿cómo se me va el dinero?», «la distribución de mis gastos» — no preposition, no
+    # dimension noun, and unmistakably a request for rows rather than a figure.
+    #
+    # This is deliberately the same vocabulary as `plan_verifier._DIVIDES_UP`, and the overlap is
+    # the point rather than an oversight. That module's `BREAKDOWN_ANSWERED_AS_ONE_GROUP` refuses a
+    # plan that groups by a dimension it has filtered to one value, and its docstring names the one
+    # repair it will not make: *"drop the grouping and a total is served to somebody who asked for a
+    # distribution … a figure that does not change is precisely how this class of defect reads as
+    # correct."* A `GroupBy.NONE` reading is that exact repair. So on these sentences the reading
+    # stands aside and lets the control speak — the same reason `direction` and `categories` are
+    # refused outright in `explicit_facts`' docstring, applied to the one corner where a grouping
+    # reading could reach a control's sentence.
+    #
+    # `test_the_pin_never_repairs_a_division_the_verifier_would_report` checks the outcome rather
+    # than these spellings, so the two cannot drift apart quietly.
+    "divides_up": (
+        Phrasing(
+            r"\b(?:como|en que)\s+se\s+(?:me\s+)?(?:reparte|reparten|va|van)\b",
+            like=("¿Cómo se reparte mi sueldo este mes?", "¿En qué se me va el dinero?"),
+        ),
+        Phrasing(r"\breparte", like=("Repárteme el gasto de este mes",)),
+        Phrasing(r"\bdesglos", like=("Desglósame el año",)),
+        Phrasing(r"\bdistribu", like=("Quiero la distribución de mis gastos",)),
     ),
     # `income` and `expense` matched the same words and nobody knew, which is the defect this table
     # is built to make visible. They still overlap on «me cobr…», and that overlap is deliberate

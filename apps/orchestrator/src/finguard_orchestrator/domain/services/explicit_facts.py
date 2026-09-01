@@ -41,6 +41,18 @@ the better answer for them and refusing is what happens today:
                  correctly out of words this vocabulary does not know — the subset rule that
                  module argues for, in reverse.
 
+**`group_by` is not on that list, and it was asked the same question before being widened.** The
+test both refusals pass is "would stating this repair a disagreement a control exists to report?"
+For `direction` the answer is yes and the control is `SPENDING_ANSWERED_AS_EVERYTHING`; for
+`categories` it is `CATEGORY_MISREAD`. `plan_verifier` has exactly one rule about a grouping,
+`BREAKDOWN_ANSWERED_AS_ONE_GROUP`, and it only fires on a sentence that *asks how something divides
+up* — so the two are disjoint everywhere except one corner, and `_combined_total` gives that corner
+away rather than taking it. This module already imposes the field five ways besides
+(`_COUNTERPARTY`, `ACCOUNT`, `CATEGORY`, the temporal groups, and `MONTH` for a cumulative), so the
+question was never whether the grouping may be stated; it was whether `NONE` may be, and `NONE`
+alone among the six is stated from an *absence* of instruction rather than the presence of one.
+That is the whole reason `_combined_total` is three vetoes and a floor rather than a word list.
+
 What is left is the window, which nothing checked at all, and the shape of the answer to a
 question about people.
 """
@@ -117,6 +129,11 @@ _TEMPORAL_GROUPS: Final[tuple[tuple[GroupBy, re.Pattern[str]], ...]] = (
 )
 _TOP_CATEGORY: Final = explicit_lexicon.compiled("top_category")
 _ACCOUNT_BREAKDOWN: Final = explicit_lexicon.compiled("account_breakdown")
+# The three vetoes on the coordinated-list reading below, and the reason it is safe to state
+# anything about a grouping the sentence did not spell out. Each is argued at `_combined_total`.
+_CATEGORY_BREAKDOWN: Final = explicit_lexicon.compiled("category_breakdown")
+_MEMBERS_APART: Final = explicit_lexicon.compiled("members_apart")
+_DIVIDES_UP: Final = explicit_lexicon.compiled("divides_up")
 _COMPARISON_REFERENCE: Final = explicit_lexicon.compiled("comparison_reference")
 _COMPARES: Final = explicit_lexicon.compiled("compares")
 _INCOME: Final = explicit_lexicon.compiled("income")
@@ -317,6 +334,63 @@ def _direction(folded: str, *, says_income: bool, says_expense: bool) -> Directi
     return Direction.INCOME if says_income and not says_expense else None
 
 
+def _combined_total(folded: str, *, named_count: int) -> bool:
+    r"""Whether a coordinated list of categories is asking for one figure rather than one each.
+
+    «¿Cuánto gasté en gasolina y transporte público?» was answered with one figure or with two
+    depending on the wording, because nothing arbitrated it. The sentence is genuinely ambiguous in
+    Spanish and there was no rule, so the two halves of a robustness pair disagreed *by
+    construction*: «¿Cuánto llevo entre gasolina y transporte público este mes?» was pinned to a
+    two-row breakdown by the reader, while every rewording of it that dropped the «entre» — and
+    none of the 36 kept it — was left to the model, which planned a plain total. Twenty-four of that
+    group's thirty-one robustness breaks were the single field `groupBy`, and most of them were this
+    one disagreement counted once per paraphrase.
+
+    **A coordinated list with no grouping instruction is one total.** Not because the sentence says
+    so — it does not, and that is the whole difficulty — but because the two errors are not
+    symmetric. A total the user wanted split is recovered by asking «¿y por separado?»; a split
+    nobody asked for makes somebody read five rows and add them by hand, and it costs that turn
+    every single time. So the tie goes to the total, and the sentence decides instead of the model.
+
+    **This is the one field here that states something from an absence, so the absence is checked
+    three ways rather than assumed.** Everything above this in `read`'s cascade already claims the
+    grouping when it is spelled out — «a qué personas», «por comercio», «por cada cuenta», «compara»
+    / «frente a» / «por separado», «¿en qué categoría gasté más?», «al mes», «gasto acumulado». What
+    those miss is three things, and each was found by measurement rather than guessed:
+
+    `_CATEGORY_BREAKDOWN`
+        A grouping preposition before the dimension noun, which is `_ACCOUNT_BREAKDOWN`'s shape and
+        deliberately so. The noun alone proves nothing: «en las categorías de súper, gasolina y
+        farmacia» enumerates three filters and wants one figure, and two corpus paraphrases say
+        exactly that. Requiring the preposition is the half `_GROUP_RANKING_DIMENSION` was missing
+        when «en todas mis **cuentas**» silently supplied a grouping dimension.
+    `_MEMBERS_APART`
+        The coordination asked for apart with no dimension named at all — «¿cuánto fue en gasolina
+        y cuánto en súper?», where the second interrogative is the whole instruction. `dev`'s
+        `multi_with_grouping` is that sentence, and it is the one case in the corpus whose written
+        expectation names `groupBy: CATEGORY` for a bare coordination. Without this veto the rule
+        would contradict a case already in the repository.
+    `_DIVIDES_UP`
+        The verbs of dividing. Here the reading stands aside not because it would be wrong but
+        because it would be a *repair*: `plan_verifier`'s `BREAKDOWN_ANSWERED_AS_ONE_GROUP` refuses
+        a plan that groups by a dimension it filtered to one value, and its docstring names
+        dropping the grouping as the tempting wrong way out. Silently doing that here would settle
+        a disagreement before the control could report it, which is the argument this module's
+        docstring makes for refusing `direction` — so the same answer is given.
+
+    `named_count` rather than the names, because which categories they are is `plan_verifier`'s
+    business and not this rule's. Two is the floor: one category is not a coordination, and
+    claiming a shape for it would be claiming something from silence alone.
+    """
+    if named_count < 2:
+        return False
+    return not (
+        _CATEGORY_BREAKDOWN.search(folded)
+        or _MEMBERS_APART.search(folded)
+        or _DIVIDES_UP.search(folded)
+    )
+
+
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     """The facts this sentence states outright.
 
@@ -340,6 +414,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     )
     asks_count = bool(_COUNT.search(folded))
     asks_cumulative = bool(_CUMULATIVE.search(folded))
+    combined = _combined_total(folded, named_count=len(named))
     per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     window = window_words.window_in(sentence, today=today)
     # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
@@ -358,7 +433,17 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
                 else (
                     GroupBy.CATEGORY
                     if comparison or asks_top_category
-                    else (temporal_group or (GroupBy.MONTH if asks_cumulative else None))
+                    else (
+                        temporal_group
+                        or (
+                            GroupBy.MONTH
+                            if asks_cumulative
+                            # Last, so every grouping the sentence spells out wins over it. See
+                            # `_combined_total`: it states a shape from an absence, and standing at
+                            # the bottom of this cascade is most of what makes that safe.
+                            else (GroupBy.NONE if combined else None)
+                        )
+                    )
                 )
             )
         ),
