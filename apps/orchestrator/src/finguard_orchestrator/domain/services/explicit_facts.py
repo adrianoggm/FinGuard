@@ -47,11 +47,19 @@ For `direction` the answer is yes and the control is `SPENDING_ANSWERED_AS_EVERY
 `categories` it is `CATEGORY_MISREAD`. `plan_verifier` has exactly one rule about a grouping,
 `BREAKDOWN_ANSWERED_AS_ONE_GROUP`, and it only fires on a sentence that *asks how something divides
 up* — so the two are disjoint everywhere except one corner, and `_combined_total` gives that corner
-away rather than taking it. This module already imposes the field five ways besides
-(`_COUNTERPARTY`, `ACCOUNT`, `CATEGORY`, the temporal groups, and `MONTH` for a cumulative), so the
-question was never whether the grouping may be stated; it was whether `NONE` may be, and `NONE`
-alone among the six is stated from an *absence* of instruction rather than the presence of one.
-That is the whole reason `_combined_total` is three vetoes and a floor rather than a word list.
+away rather than taking it. This module already imposes the field four ways besides
+(`_COUNTERPARTY`, `ACCOUNT`, `CATEGORY` and the temporal groups), so the question was never whether
+the grouping may be stated; it was whether `NONE` may be, and `NONE` alone among the five is stated
+from an *absence* of instruction rather than the presence of one. That is the whole reason
+`_combined_total` is three vetoes and a floor rather than a word list.
+
+**A fifth way used to be listed here — `MONTH` for a cumulative — and it was the one entry on that
+list the sentence had not written down.** Every other reading here is a phrase somebody typed; that
+one was a default, supplied because the domain refuses `CUMULATIVE` without a calendar bucket. It
+is gone, and the cascade in `read` argues where the default belongs instead. The paragraph above is
+the test it failed: a value invented here inherits this module's authority to overrule a plan built
+by a reader that saw the whole sentence, and «el gasto acumulado por gasolina» is what that costs —
+a figure returned as a month-by-month series.
 
 What is left is the window, which nothing checked at all, and the shape of the answer to a
 question about people.
@@ -433,17 +441,29 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
                 else (
                     GroupBy.CATEGORY
                     if comparison or asks_top_category
-                    else (
-                        temporal_group
-                        or (
-                            GroupBy.MONTH
-                            if asks_cumulative
-                            # Last, so every grouping the sentence spells out wins over it. See
-                            # `_combined_total`: it states a shape from an absence, and standing at
-                            # the bottom of this cascade is most of what makes that safe.
-                            else (GroupBy.NONE if combined else None)
-                        )
-                    )
+                    # `GroupBy.MONTH if asks_cumulative` stood here, and **`MONTH` was not in
+                    # the sentence.** It was supplied because the domain refuses `CUMULATIVE`
+                    # without a calendar bucket, so the reader filled the hole — and this
+                    # module's whole licence is that it reports what the sentence states. When
+                    # the guess was right nobody noticed; when the sentence said «por
+                    # gasolina», a figure came back a month-by-month series. It also *lost*
+                    # groupings: «el importe acumulado por categoría» named a dimension and
+                    # got `MONTH` instead, because nothing below consults
+                    # `_CATEGORY_BREAKDOWN`.
+                    #
+                    # Nothing needs it here. `readers/metrics._cumulative_plan` already spells
+                    # `facts.group_by or GroupBy.MONTH` at the point it builds a plan, which is
+                    # where a default belongs — visible, local, and owned by whoever decided
+                    # the shape. Everywhere else the pair is offered through `reshaped`, which
+                    # keeps the plan's own grouping when the domain refuses the pair, and
+                    # `financial_plan.metric_without_a_bucket` settles `CUMULATIVE` beside
+                    # `NONE` to `SUM` — the same rows, the same window, the same filters, and
+                    # the figure the sentence actually asked for.
+                    #
+                    # Last, so every grouping the sentence spells out wins over it. See
+                    # `_combined_total`: it states a shape from an absence, and standing at
+                    # the bottom of this cascade is most of what makes that safe.
+                    else (temporal_group or (GroupBy.NONE if combined else None))
                 )
             )
         ),

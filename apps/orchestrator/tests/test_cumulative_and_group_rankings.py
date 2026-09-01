@@ -432,17 +432,24 @@ def test_a_metric_that_needs_no_bucket_is_never_touched(metric: Metric) -> None:
         "¿cuál es mi gasto acumulado este año?",
         "¿cuánto llevaba gastado en mayo?",
         "¿cómo ha ido mi gasto este año?",
+        "¿Cuál es el gasto acumulado por gasolina en el mes actual?",
     ],
 )
-def test_an_accumulation_the_sentence_states_survives_the_settled_pair(sentence: str) -> None:
-    """**The bound on what settling the pair can cost.**
+def test_a_settled_total_survives_a_sentence_that_named_no_bucket(sentence: str) -> None:
+    """**What settling the pair actually produces, and it is meant to survive.**
 
-    `enforce` runs after the planner in both the handler and the evaluation harness, and there the
-    deterministic reader outranks the model. So wherever the sentence really does say "acumulado",
-    the metric comes straight back — with the MONTH bucket the reader supplies — and the settled
-    SUM never survives to be shown. What this rule can reach is only the sentences `_CUMULATIVE`
-    does not know, and there the figure it produces is the one the running total would have ended
-    on.
+    This test used to assert the opposite — that `enforce` put `CUMULATIVE` and a `MONTH` bucket
+    straight back, so the settled `SUM` was never shown. That was true only because `read`
+    *invented* the `MONTH`. It does not any more: the sentences below name no calendar unit, so
+    the reader states no grouping, `reshaped` finds `CUMULATIVE` beside `NONE` refused and keeps
+    the plan it was given, and the total stands.
+
+    That is the figure each of these asks for. «Mi gasto acumulado este año» is a total to date,
+    not twelve subtotals, and the fourth sentence is the one that made the case: «por gasolina»
+    introduces a category, and a question about petrol came back as a month-by-month series.
+
+    `test_a_stated_bucket_is_still_a_running_series` is the other half — where the unit *is* said,
+    the series comes back exactly as before.
     """
     settled = FinancialPlan(
         direction=Direction.EXPENSE,
@@ -453,5 +460,48 @@ def test_an_accumulation_the_sentence_states_survives_the_settled_pair(sentence:
 
     checked = explicit_facts.enforce(settled, explicit_facts.read(sentence, today=TODAY))
 
+    assert checked.metric is Metric.SUM
+    assert checked.group_by is GroupBy.NONE
+
+
+@pytest.mark.parametrize(
+    ("sentence", "group_by"),
+    [
+        ("Muéstrame mi gasto acumulado por mes este año", GroupBy.MONTH),
+        ("el gasto acumulado mes a mes este año", GroupBy.MONTH),
+        ("¿cómo va mi gasto acumulado por mes?", GroupBy.MONTH),
+        ("¿cuánto llevo acumulado por semana?", GroupBy.WEEK),
+    ],
+)
+def test_a_stated_bucket_is_still_a_running_series(sentence: str, group_by: GroupBy) -> None:
+    """The sentences that say which bucket, which are the ones asking for a series.
+
+    Narrowing «acumulado» could have cost these, and they are the reason the rule is "the
+    preposition has to precede a time unit" rather than "drop the word". Each names its unit out
+    loud, so each still reads `CUMULATIVE` over exactly that unit — and `enforce` puts both halves
+    onto a plain total, which is the transition the running series needs to survive.
+
+    «semana a semana» is deliberately not here, and finding out why is worth writing down:
+    `cumulative` reads it, and `temporal_week` does not, where `temporal_month` does spell «mes a
+    mes». So «el gasto acumulado semana a semana» states `CUMULATIVE` and no bucket, and only
+    `_cumulative_plan`'s `or GroupBy.MONTH` decides it — as a *monthly* series for a sentence that
+    said weeks. That asymmetry is older than this change and no sentence here moves it; closing it
+    means adding a phrasing to `temporal_week`, which moves sentences and belongs to its own
+    measurement.
+    """
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.metric is Metric.CUMULATIVE
+    assert facts.group_by is group_by
+
+    checked = explicit_facts.enforce(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_YEAR),
+            metric=Metric.SUM,
+        ),
+        facts,
+    )
+
     assert checked.metric is Metric.CUMULATIVE
-    assert checked.group_by is GroupBy.MONTH
+    assert checked.group_by is group_by
