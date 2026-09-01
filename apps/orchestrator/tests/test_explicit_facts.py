@@ -933,17 +933,52 @@ async def test_a_category_the_sentence_names_is_never_dropped() -> None:
         ("gasto medio mensual por cada cuenta", Metric.PERIOD_AVERAGE, GroupBy.ACCOUNT),
         ("media semanal por comercio", Metric.PERIOD_AVERAGE, GroupBy.COUNTERPARTY),
         ("media diaria por cada cuenta", Metric.PERIOD_AVERAGE, GroupBy.ACCOUNT),
-        ("gasto acumulado por comercio", Metric.CUMULATIVE, GroupBy.COUNTERPARTY),
-        ("gasto acumulado por cada cuenta", Metric.CUMULATIVE, GroupBy.ACCOUNT),
     ],
 )
 def test_a_sentence_states_a_pair_the_domain_forbids(
     sentence: str, metric: Metric, group_by: GroupBy
 ) -> None:
-    """Both halves are read from the one sentence, and the domain refuses them together."""
+    """Both halves are read from the one sentence, and the domain refuses them together.
+
+    The `CUMULATIVE` half of this family used to be here — «gasto acumulado por comercio» read
+    `CUMULATIVE` beside `COUNTERPARTY` — and it is not a pair any more, because «acumulado» with
+    no time unit after it states no series. `test_an_accumulation_by_a_dimension_is_that
+    _dimensions_total` below is where those two sentences went.
+    """
     facts = explicit_facts.read(sentence, today=TODAY)
 
     assert facts.metric is metric
+    assert facts.group_by is group_by
+
+
+@pytest.mark.parametrize(
+    ("sentence", "group_by"),
+    [
+        ("gasto acumulado por comercio", GroupBy.COUNTERPARTY),
+        ("gasto acumulado por cada cuenta", GroupBy.ACCOUNT),
+        ("el importe acumulado por categoria", None),
+    ],
+)
+def test_an_accumulation_by_a_dimension_is_that_dimensions_total(
+    sentence: str, group_by: GroupBy | None
+) -> None:
+    """**The dimension survives and the invented series does not.**
+
+    These read `CUMULATIVE` beside a non-temporal grouping, which is a cross-tabulation a plan
+    cannot hold, so `_cumulative_plan` and `reshaped` both declined and the sentence fell through
+    to the model. None of that was necessary: «por comercio» names a dimension and nothing here
+    names a bucket, so the sentence asks for one figure per shop.
+
+    «el importe acumulado por categoría» is the case that shows the old reading *losing* a
+    grouping rather than only inventing one. Nothing in `read`'s cascade consults
+    `_CATEGORY_BREAKDOWN`, so the stated dimension never reached `group_by` and the invented
+    `MONTH` was returned in its place — a monthly series answering a question about categories.
+    It now states no shape at all and `readers/breakdowns` claims it, which is the reader that
+    knows what «por categoría» means.
+    """
+    facts = explicit_facts.read(sentence, today=TODAY)
+
+    assert facts.metric is None, "no time unit is named, so no running series is stated"
     assert facts.group_by is group_by
 
 

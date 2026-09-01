@@ -178,10 +178,46 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
         Phrasing(r"\bimporte\s+medio\b"),
         Phrasing(r"\bticket\s+medio\b"),
     ),
+    # **«Acumulado» on its own is a total *to date*, and a running series needs the unit said out
+    # loud.** Two rows here claimed the series from words that do not carry it, and the same
+    # sentence showed both: «el gasto acumulado por gasolina en el mes actual» asks for one figure
+    # and came back a month-by-month series.
+    #
+    # The row that read `\b(?:gasto|ingreso|importe|total)\s+acumulad[oa]\b` is gone. It named no
+    # bucket at all, and of the 25 written-down sentences that reached this concept, 24 were
+    # robustness rewordings of ordinary total questions — «mi gasto acumulado en marzo», «el importe
+    # acumulado de mis gastos para este mes», «el total acumulado este mes en las categorías súper,
+    # gasolina y farmacia». Every one of those is a figure, each was read as a series, and each
+    # broke its pair against a base that asks the same thing without the word. The 25th says «por
+    # mes» and is kept by the row below, which is the whole point: the sentences that want a series
+    # say which bucket, and the ones that do not are not asking for one.
+    #
+    # A bare `por` was the other half. Its three siblings all name a period — «mes a mes», «a lo
+    # largo de» — and `por` alone does not: «acumulado **por mes**» introduces a period, «acumulado
+    # **por gasolina**» a category. That is `_GROUP_RANKING_DIMENSION`'s bare-preposition shape,
+    # where «en todas mis **cuentas**» silently supplied a grouping dimension, and the fix is
+    # `_ACCOUNT_BREAKDOWN`'s: the preposition has to precede the noun that makes it temporal. The
+    # units are spelled singular exactly as `temporal_day`, `temporal_week` and `temporal_month`
+    # spell them after their own `por`, so the two tables cannot drift on what «por mes» means.
     "cumulative": (
-        Phrasing(r"\b(?:gasto|ingreso|importe|total)\s+acumulad[oa]\b"),
         Phrasing(
-            r"\bacumulad[oa]\s+(?:por|a\s+lo\s+largo\s+de|mes\s+a\s+mes|semana\s+a\s+semana)\b"
+            r"\bacumulad[oa]\s+(?:por\s+(?:dia|semana|mes|trimestre|ano)"
+            r"|a\s+lo\s+largo\s+de|mes\s+a\s+mes|semana\s+a\s+semana)\b",
+            like=(
+                "Muéstrame mi gasto acumulado por mes este año",
+                "el gasto acumulado mes a mes este año",
+                "¿cómo va mi gasto acumulado por mes?",
+                "¿cuánto llevo acumulado por semana?",
+            ),
+            unlike=(
+                "¿Podría informarme cuál es el gasto acumulado por gasolina y transporte "
+                "colectivo en el mes actual?",
+                "¿Cuál es el monto acumulado por los gastos de gasolina y transporte público "
+                "en el mes en curso?",
+                "Necesito saber el importe acumulado del mes pasado por el alquiler y las "
+                "suscripciones.",
+            ),
+            why="«por» introduces a category as readily as a period; the unit is the difference",
         ),
         Phrasing(
             r"\bcuanto\s+llevaba\s+(?:gastado|ingresado|acumulado)\b",
