@@ -1,0 +1,888 @@
+% `article` accepts 10, 11 and 12pt and nothing else: `[10.5pt]` was silently discarded — the log
+% said `Unused global option(s): [10.5pt]` and the document came out at the class default of 10pt.
+% Declaring 10pt here and changing the size below is what actually gets half a point, because
+% `\changefontsizes` recomputes `\small`, `\large` and the heading sizes from the new base. Setting
+% only `\fontsize` would leave every relative size still derived from 10pt.
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{amsmath}
+% \mathbb, used by the group-robustness definitions in section 6.
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,shapes.geometric}
+\usepackage{hyperref}
+
+% Half a point above the class's 10pt. The 13.4pt leading is the same 1.28 ratio `article` uses at
+% 10pt, kept explicit so the line spacing does not silently stay at the old value.
+\usepackage{scrextend}
+\changefontsizes[13.4pt]{10.5pt}
+
+\geometry{margin=2.6cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!45!black,
+  citecolor=green!35!black,
+  urlcolor=blue!55!black,
+  pdftitle={FinGuard: arquitectura y evaluación de un orquestador financiero conversacional},
+  pdfsubject={Memoria técnica de la prueba de concepto FinGuard}
+}
+\setlength{\parskip}{0.55em}
+\setlength{\parindent}{0pt}
+\renewcommand{\arraystretch}{1.18}
+
+\definecolor{finguardblue}{HTML}{173F5F}
+\definecolor{finguardgreen}{HTML}{238B72}
+\definecolor{lightblue}{HTML}{EAF2F8}
+\definecolor{lightgreen}{HTML}{E8F6F1}
+\definecolor{lightgray}{HTML}{F3F4F6}
+
+\lstdefinestyle{finguard}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{lightgray},
+  frame=single,
+  rulecolor=\color{black!15},
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  aboveskip=0.8em,
+  belowskip=0.8em,
+  extendedchars=true,
+  literate=%
+    {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+    {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1
+    {ñ}{{\~n}}1 {Ñ}{{\~N}}1 {ü}{{\"u}}1 {Ü}{{\"U}}1
+    {¿}{{?`}}1 {¡}{{!`}}1 {€}{{\texteuro}}1 {º}{{\textordmasculine}}1
+    {ª}{{\textordfeminine}}1 {—}{{---}}1 {→}{{$\rightarrow$}}1
+}
+\lstset{style=finguard}
+
+\newcommand{\FinGuard}{\textsc{FinGuard}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\decision}[1]{\par\colorbox{lightgreen}{\parbox{0.94\linewidth}{\textbf{Decisión.} #1}}\par}
+\newcommand{\warningbox}[1]{\par\colorbox{lightblue}{\parbox{0.94\linewidth}{\textbf{Lectura correcta.} #1}}\par}
+\renewcommand{\contentsname}{Índice}
+\renewcommand{\figurename}{Figura}
+\renewcommand{\tablename}{Tabla}
+\renewcommand{\refname}{Referencias}
+
+\title{\textbf{FinGuard}\\[0.4em]
+\large Arquitectura y evaluación de un orquestador financiero conversacional}
+\author{Memoria técnica de la prueba de concepto}
+\date{31 de agosto de 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\FinGuard{} es una prueba de concepto de asistente financiero conversacional que permite
+consultar información bancaria, analizar movimientos y preparar operaciones mediante
+lenguaje natural. Su diseño no concede al modelo generativo autoridad sobre el dinero:
+el modelo interpreta una petición, mientras que servicios deterministas validan el plan,
+consultan el libro mayor y ejecutan únicamente acciones explícitamente autorizadas por el usuario.
+Esta memoria describe la arquitectura general de la POC,
+profundizando en el componente principal llamado orquestador el cual está diseñado he implementado siguiendo una arquitectura hexagonal y CQRS s.
+También se documenta como se ha realizado el desarrollo evolutivo del sistema usando una metodología TDD explicando la metodología de evaluación, que combina
+corrección, seguridad, rechazo, robustez lingüística, conversación y latencia. Finalmente,
+propone una vía de extensión a nuevos idiomas, proveedores de modelos y agentes externos
+sin contaminar el núcleo de negocio con detalles de infraestructura.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introducción y visión}
+
+\subsection{Qué es FinGuard}
+
+\FinGuard{} es un motor financiero conversacional, modular y seguro. Su objetivo es
+reducir la distancia entre la intención de una persona y las operaciones que tradicionalmente
+exigen navegar por menús, periodos y filtros. La interacción puede formularse como una
+conversación: «¿cuánto he gastado en gasolina este mes?», «¿y el mes anterior?» o
+«envía 25 euros a Laura para la cena». El resultado debe conservar las garantías de una
+aplicación bancaria: cifras trazables, límites de autorización y una separación clara entre
+consultar, preparar y ejecutar.
+
+La visión del producto se resume en cuatro capacidades progresivas:
+
+\begin{enumerate}
+  \item \textbf{comprender}: convertir lenguaje natural en una intención tipada;
+  \item \textbf{consultar}: obtener datos verificables del servicio bancario;
+  \item \textbf{explicar}: responder con la cifra, el periodo y su evidencia;
+  \item \textbf{actuar}: preparar una operación, pedir confirmación y ejecutarla de forma
+        idempotente y auditable.
+\end{enumerate}
+
+La visión de la PoC es:
+
+\begin{quote}
+\centering
+\textbf{FinGuard interpreta. Los servicios deterministas validan.\\
+La persona autoriza. El sistema ejecuta.}
+\end{quote}
+
+Bajo esta separación el modelo puede seleccionar una
+herramienta, extraer parámetros o explicar un resultado; no puede consultar directamente
+las tablas bancarias, escribir SQL libre, inventar importes, alterar reglas de seguridad ni
+confirmar una transferencia en nombre del usuario.
+
+\subsection{Objetivo y alcance de la prueba de concepto}
+
+La PoC valida que un asistente puede mantener una conversación financiera útil sin convertir
+ni entrenar un modelo con datos reales.Estas validaciones incluye consultas de saldo y movimientos, agregaciones y
+comparaciones temporales, desgloses, contexto entre turnos, visualizaciones derivadas y
+flujos simulados de pago y traspaso. Quedan fuera por el momento las operaciones bancarias reales, el
+asesoramiento financiero regulado y cualquier decisión financiera autónoma.
+
+Por tanto, el éxito no lo definimos únicamente como «el modelo respondió». Una respuesta es útil
+cuando interpreta correctamente la pregunta, consulta el dominio apropiado, conserva el
+contexto necesario, presenta evidencia y se abstiene cuando la petición es ambigua, imposible
+o ajena al dominio.
+
+\section{Arquitectura general de la PoC}
+
+\subsection{Servicios y responsabilidades}
+
+La solución se organiza como un monorepositorio con servicios independientes. La Figura
+\ref{fig:general} sintetiza el flujo principal.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  % Same trap as the hexagonal figure: `minimum width` let the boxes grow to their longest line and
+  % four columns of them ran 88 pt past the text block. `text width` caps and wraps them.
+  font=\footnotesize,
+  node distance=0.9cm and 0.7cm,
+  box/.style={draw,rounded corners,text width=3.0cm,minimum height=1.05cm,align=center,fill=lightblue},
+  core/.style={box,fill=lightgreen,draw=finguardgreen},
+  store/.style={draw,cylinder,shape border rotate=90,aspect=0.25,text width=2.6cm,minimum height=0.9cm,align=center,fill=lightgray},
+  arrow/.style={-{Latex[length=2mm]},thick}
+]
+  \node[box] (user) {Persona usuaria};
+  \node[box,right=of user] (web) {FinGuard Web\\texto y visualización};
+  \node[core,right=of web] (orch) {Orquestador\\conversación e intención};
+  \node[core,right=of orch] (bank) {Banking API\\datos y ejecución};
+  \node[store,below=of bank] (pg) {PostgreSQL\\libro mayor};
+  \node[box,above=of orch] (llm) {Proveedor LLM\\local o remoto};
+  \node[box,below=of orch] (obs) {Observabilidad\\auditoría y métricas};
+  \node[box,below=of web] (voice) {Voice Gateway\\evolución};
+  \node[box,above=of bank] (a2a) {A2A Gateway\\evolución};
+
+  \draw[arrow] (user) -- (web);
+  \draw[arrow,<->] (web) -- (orch);
+  \draw[arrow,<->] (orch) -- (bank);
+  \draw[arrow,<->] (bank) -- (pg);
+  \draw[arrow,<->] (orch) -- (llm);
+  \draw[arrow] (orch) -- (obs);
+  \draw[arrow,dashed] (voice) -- (orch);
+  \draw[arrow,dashed] (a2a) -- (orch);
+\end{tikzpicture}
+\caption{Arquitectura lógica de la prueba de concepto y extensiones previstas.}
+\label{fig:general}
+\end{figure}
+
+\begin{description}
+  \item[FinGuard Web.] Canal de interacción y presentación. No accede directamente al
+  servicio bancario: toda conversación pasa por el orquestador.
+
+  \item[Orquestador.] Mantiene el contrato conversacional. Decide si un turno corresponde a
+  una consulta, una aclaración, una explicación, una preparación de pago u otra capacidad;
+  transforma el lenguaje en estructuras de dominio y coordina los puertos externos.
+
+  \item[Banking API.] Es la autoridad sobre cuentas, movimientos, saldos y operaciones.
+  Compila consultas tipadas a SQL parametrizado, mantiene el libro mayor y aplica reglas
+  deterministas. El orquestador nunca calcula el saldo por su cuenta.
+
+  \item[PostgreSQL.] Persiste datos financieros y de auditoría. Cada servicio recibe sólo los
+  permisos que necesita; las lecturas del orquestador se realizan mediante contratos del
+  servicio bancario, no mediante acceso directo a tablas.
+
+  \item[Proveedor LLM.] Interpreta únicamente los turnos que requieren comprensión
+  probabilística. El proveedor y el modelo se seleccionan por configuración y política.
+
+  \item[Observabilidad.] Registra decisiones, tiempos y errores sin mezclar esa lógica con el
+  dominio. Permite distinguir fallos del proveedor, del planificador, de banking o del canal.
+\end{description}
+
+\subsection{Flujo de una consulta financiera}
+
+Una consulta sigue el recorrido siguiente:
+
+\begin{enumerate}
+  \item el canal autentica la petición y entrega el turno al orquestador;
+  \item el intérprete determinista resuelve rutas que puede nombrar de forma fiable; el modelo
+        amplía el resto según la política configurada;
+  \item el planificador produce un resultado explícito: plan válido, necesidad de aclaración,
+        petición no soportada o dominio inválido;
+  \item los objetos se validan estructural y semánticamente antes de consultar datos;
+  \item el adaptador bancario solicita la cifra o los movimientos al Banking API;
+  \item un escritor determinista compone la respuesta y adjunta el plan y la evidencia;
+  \item el canal presenta el resultado. En streaming se publican etapas del proceso, no tokens
+        artificiales de una respuesta que ya se ha compuesto completa.
+\end{enumerate}
+
+El reloj de referencia forma parte del plan. De este modo, expresiones como «este mes» se
+resuelven sobre la misma fecha tanto en el orquestador como en banking. Esta decisión evita un
+fallo sutil: obtener una cifra real para una ventana temporal distinta de la preguntada.
+
+\section{El orquestador}
+
+\subsection{Responsabilidad}
+
+El orquestador empezó como una capa intercambiable sobre un LLM y evolucionó hasta convertirse
+en un traductor entre lo que una persona expresa y lo que el banco sabe responder. No es el
+dueño de los datos financieros ni un agente autónomo. Su responsabilidad es coordinar una
+conversación segura mediante contratos explícitos.
+
+El código se divide en cuatro áreas principales:
+
+\begin{lstlisting}
+apps/orchestrator/src/finguard_orchestrator/
+|-- domain/          # modelos, value objects, puertos y servicios puros
+|-- application/     # commands, queries, handlers y buses
+|-- infrastructure/  # HTTP, LLM, persistencia, seguridad y controladores
+|-- bootstrap/       # configuración y composición de implementaciones
+`-- observability/   # logs, trazas y registro de turnos
+\end{lstlisting}
+
+\subsection{Por qué una arquitectura hexagonal}
+
+La arquitectura hexagonal, o de puertos y adaptadores, busca que la aplicación pueda ser
+ejecutada y probada sin depender de una interfaz, una base de datos o un dispositivo concreto
+\cite{cockburn2005}. Esta propiedad coincide con las incertidumbres de la PoC: el proveedor de
+modelos, el canal, la infraestructura bancaria y la persistencia pueden cambiar durante la
+experimentación.
+
+El dominio declara los contratos que necesita. Por ejemplo,
+\code{domain/ports/llm\_provider.py} define \code{LlmProviderPort}; Ollama, un endpoint
+compatible con OpenAI, Cloudflare Workers AI y el proveedor de prueba son adaptadores de ese
+puerto dentro de \code{infrastructure/llm}. El archivo \code{bootstrap/main.py} es la raíz de
+composición que selecciona la implementación según la configuración.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  % `minimum width` is a floor, not a ceiling: the boxes grew to fit «commands, queries, handlers»
+  % and «LLM, banking, repositorios», so four of them in a row ran 187 pt — 6.6 cm — past a text
+  % block of 15.8 cm. `text width` is what actually caps a node and makes its content wrap, and
+  % the font drops one step so the wrapped lines stay short enough to read.
+  font=\footnotesize,
+  node distance=0.85cm and 0.7cm,
+  layer/.style={draw,rounded corners,text width=3.0cm,minimum height=1.15cm,align=center},
+  arrow/.style={-{Latex[length=2mm]},thick}
+]
+  \node[layer,fill=lightgreen] (domain) {Dominio\\modelos, reglas y puertos};
+  \node[layer,fill=lightblue,left=of domain] (app) {Aplicación\\commands, queries, handlers};
+  \node[layer,fill=lightgray,left=of app] (in) {Adaptadores de entrada\\HTTP, SSE, voz, A2A};
+  \node[layer,fill=lightgray,right=of domain] (out) {Adaptadores de salida\\LLM, banking, repositorios};
+  \node[layer,fill=lightblue,below=of domain] (boot) {Bootstrap\\configuración y cableado};
+
+  \draw[arrow] (in) -- (app);
+  \draw[arrow] (app) -- (domain);
+  \draw[arrow] (out) -- (domain);
+  \draw[arrow,dashed] (boot) -- (app);
+  \draw[arrow,dashed] (boot) -- (out);
+\end{tikzpicture}
+\caption{Dirección conceptual de las dependencias: los adaptadores dependen de los contratos
+del núcleo, no al contrario.}
+\label{fig:hexagonal}
+\end{figure}
+
+Bajo esta arquitectura \ref{fig:hexagonal}, un proveedor tecnológico no contiene una regla de negocio. El contrato
+del proveedor pertenece al puerto del dominio; su implementación pertenece a infraestructura,
+y su elección al \emph{bootstrap}. Colocar cualquier proveedor ya sea Ollama u OpenAI dentro de
+\code{domain/services} invertiría la dependencia y obligaría al núcleo a conocer una tecnología
+que debería ser reemplazable.
+
+\subsection{Por qué CQRS y cómo se aplica}
+
+CQRS separa el modelo utilizado para consulta y modificar información del modelo
+\cite{fowler2011}. En \FinGuard{} se aplica a nivel de la capa de aplicación.
+
+\begin{itemize}
+  \item Las \textbf{queries} expresan lecturas: responder un mensaje, obtener el resumen de una
+        cuenta, listar movimientos, tarjetas o contactos.
+  \item Los \textbf{commands} expresan cambios o intenciones de cambio: preparar o confirmar un
+        pago, categorizar un movimiento o sustituir la política de modelos.
+  \item Los \textbf{handlers} coordinan objetos de dominio y puertos; los buses resuelven cada
+        mensaje al único handler registrado.
+  \item Los resultados son tipos explícitos. Una aclaración o un rechazo esperado no se modela
+        como una excepción técnica.
+\end{itemize}
+
+La separación aporta vocabulario, trazabilidad y límites claros para autorización: leer una
+cuenta y confirmar un pago no comparten accidentalmente el mismo camino. También reduce el
+riesgo de que una capacidad conversacional oculte un efecto lateral.
+
+CQRS tiene un coste de estructura y no se debe implementar indiscriminadamente. De hecho si miramos la literatura,
+Fowler advierte que añade complejidad y recomienda reservarlo para zonas donde el beneficio la justifique
+\cite{fowler2011}. Por ello, en esta PoC los buses son sencillos, se duplican deliberadamente
+entre servicios para preservar su independencia y no existe una plataforma CQRS compartida.
+
+\subsection{Componentes y acciones principales}
+
+\footnotesize
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.19\textwidth} >{\raggedright\arraybackslash}p{0.28\textwidth} >{\raggedright\arraybackslash}p{0.43\textwidth}}
+\toprule
+\textbf{Componente} & \textbf{Ubicación} & \textbf{Acción principal} \\
+\midrule
+\endhead
+Modelos y objetos de valor & \code{domain/} & Representan planes, ventanas, métricas,
+agrupaciones, pagos, resultados y errores sin depender de FastAPI, Pydantic ni proveedores. \\
+
+Puertos & \code{domain/ports/} & Declaran lo que el núcleo necesita: completar con un LLM,
+interpretar un turno, consultar banking o persistir una métrica. \\
+
+Servicios de dominio & \code{domain/services/} & Aplican decisiones puras y deterministas:
+ruteo, validación, herencia de contexto, escritura de respuestas y políticas de seguridad. \\
+
+Queries y handlers & \code{application/queries/} & Coordinan lecturas y conversaciones sin
+producir efectos financieros. \\
+
+Commands y handlers & \code{application/commands/} & Preparan o ejecutan cambios mediante
+puertos y reglas de autorización. \\
+
+Intérpretes & \code{infrastructure/interpreting/} y dominio & Combinan reglas deterministas y
+lectura por modelo en modos \emph{router}, \emph{shadow}, \emph{hybrid} o \emph{promoted}. \\
+
+Planificador LLM & \code{infrastructure/planning/} & Solicita al modelo un plan restringido por
+esquema y lo somete a validaciones semánticas antes de cualquier consulta. \\
+
+Adaptadores LLM & \code{infrastructure/llm/} & Traducen el puerto común a Ollama, APIs
+compatibles con OpenAI, Cloudflare o un doble de prueba. \\
+
+Adaptadores banking & \code{infrastructure/banking/} y pagos & Consumen contratos HTTP tipados;
+no exponen SQL ni tablas al orquestador. \\
+
+Controladores & \code{infrastructure/controllers/} & Traducen HTTP/SSE a queries y commands y
+transforman resultados de aplicación en DTO de transporte. \\
+
+Bootstrap & \code{bootstrap/main.py} & Lee configuración, registra proveedores, crea adapters y
+handlers y compone los buses. Es el único punto que conoce implementaciones concretas. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Cómo se combinan las reglas y el modelo}
+
+Entender una conversación bancaria plantea un equilibrio difícil. Un sistema construido sólo
+con reglas es predecible, pero reconoce únicamente las formas de hablar que se han previsto de
+antemano. Por ejemplo, resulta sencillo definir una regla para «envía 20 euros a Ana», pero no
+es razonable intentar enumerar todas las maneras en las que una persona puede pedir una
+comparación de gastos o referirse a una respuesta anterior. Un modelo de lenguaje ofrece esa
+flexibilidad, aunque a cambio puede interpretar de forma distinta dos frases equivalentes o
+completar información que el usuario nunca proporcionó.
+
+FinGuard combina ambos mecanismos para aprovechar sus ventajas sin tratarlos como si fueran
+igual de fiables. Las reglas se utilizan cuando la intención está bien delimitada y, sobre todo,
+cuando una equivocación podría iniciar una acción sensible. El modelo interviene en las
+peticiones que necesitan mayor variedad lingüística, como consultas, comparaciones y
+continuaciones expresadas de forma libre.
+
+Esta combinación se introdujo de manera gradual. En el modo \emph{shadow}, el modelo interpreta
+el turno en paralelo, pero su decisión no afecta a la respuesta que recibe el usuario. Sus
+resultados se registran y se comparan con los del intérprete activo. Esto permite observar sus
+errores antes de confiarle una parte del flujo. En el modo \emph{hybrid}, el modelo ya puede
+resolver las expresiones abiertas para las que fue evaluado, mientras las rutas sensibles y las
+salvaguardas deterministas continúan vigentes. Por tanto, promover el modelo no significa darle
+control sobre todo el orquestador, sino ampliar de forma medida el conjunto de decisiones en las
+que puede participar.
+
+Cuando el modelo interpreta una consulta financiera tampoco devuelve una instrucción libre. Su
+respuesta debe ajustarse a una estructura cerrada que especifica, por ejemplo, el periodo, la
+métrica y la forma de agrupar los resultados. Esta restricción impide que aparezcan campos o
+valores que el sistema no sabe procesar. Sin embargo, una respuesta bien formada todavía puede
+ser incorrecta: el modelo puede elegir «por comercio» cuando la persona pidió «por categoría», o
+consultar el mes actual en lugar del anterior. Por ese motivo FinGuard evalúa por separado dos
+preguntas: si la respuesta tiene una estructura válida y si esa estructura representa realmente
+lo que se pidió.
+
+Para los pagos se mantiene una frontera aún más clara. El modelo puede detectar que una frase parece
+solicitar un pago y extraer datos como el importe, el destinatario o el concepto. A partir de ahí,
+las decisiones relevantes vuelven a código determinista: el sistema identifica a la persona a
+partir de su credencial, comprueba el destinatario y la disponibilidad, decide qué operación
+bancaria corresponde y muestra una previsualización. La ejecución sólo se produce después de una
+confirmación explícita y utiliza una clave de idempotencia para impedir que una repetición de la
+misma petición genere dos movimientos. Si alguna comprobación falla, FinGuard informa del
+rechazo; nunca transforma ese fallo en una confirmación aparente del pago.
+
+
+\section{Evolución guiada por decisiones y evidencia}
+
+La arquitectura actual corresponde a un desarrollo evolutivo en el que
+cada nueva capacidad introdujo un contrato y una forma de medirlo.
+
+\begin{longtable}{p{0.09\textwidth} p{0.26\textwidth} p{0.57\textwidth}}
+\toprule
+\textbf{Etapa} & \textbf{Incremento} & \textbf{Decisión conservada} \\
+\midrule
+\endhead
+0 & Base y Banking API & Libro mayor determinista, datos sintéticos reproducibles, consultas
+parametrizadas, roles de mínimo privilegio y CI por servicio antes de introducir IA. \\
+
+1--2 & Capa LLM y estandarización & Proveedor reemplazable; revisión hexagonal; dominio libre de
+DTO de transporte; commands, queries y buses simétricos, pero sin paquete compartido entre
+servicios. \\
+
+3 & Planificación & El modelo produce un plan tipado, nunca SQL. Aclarar, rechazar o declarar una
+petición no soportada son resultados válidos. Semilla y configuración quedan fijadas para que
+una comparación sea reproducible. \\
+
+4 & Extremo a extremo & Banking es la única fuente de cifras. La respuesta final es una plantilla
+determinista con evidencia. El plan transporta su reloj de referencia. SSE comunica etapas y no
+simula streaming de tokens. \\
+
+5--6 & Seguridad, identidad y configuración & La cuenta procede de la credencial, no del cuerpo
+generado; el texto del usuario se trata como datos; los errores del proveedor no se convierten
+en un plan. El servicio se consolida como \emph{orchestrator}. \\
+
+7--9 & Pagos y conversación & Preparar y confirmar son acciones distintas. La conversación es un
+objeto tipado cuyo estado conserva el cliente; se rechaza estado desconocido en lugar de
+interpretarlo silenciosamente. \\
+
+10 & Corpus conversacional & Ruteador y modelo se evalúan con el mismo arnés, una lectura por
+turno y métricas de herramienta, contexto, llamadas innecesarias y seguridad. \\
+
+11--13 & Multicuenta y análisis & Se añaden traspasos propios, referencias, correcciones,
+comparaciones, ratios, rankings y exclusiones sin trasladar los cálculos financieros al LLM. \\
+
+14 en adelante & Robustez y superficie lingüística & Reformulaciones enlazadas, pruebas
+metamórficas, manifiestos reproducibles y cobertura por formulación. Se distingue expresamente
+la corrección de una frase de la estabilidad ante otras formas de decirla. \\
+\bottomrule
+\end{longtable}
+
+Esta evolución vino pautada bajo estas reglas de diseño:
+
+\begin{enumerate}
+  \item el modelo decide lo mínimo compatible con una conversación útil;
+  \item toda interpretación ejecutable se convierte primero en un plan tipado y validado;
+  \item preguntar y rechazar son comportamientos correctos cuando el contrato lo exige;
+  \item una capacidad no se considera existente hasta que su comportamiento se mide;
+  \item la seguridad se sitúa debajo de la interpretación, no como una corrección posterior.
+\end{enumerate}
+
+\section{Metodología de evaluación}
+
+La evaluación de modelos de lenguaje exige observar varios escenarios y métricas. HELM propone
+precisamente una evaluación holística y transparente porque los modelos deben satisfacer
+múltiples contextos y casos de uso, y ningún número caracteriza por sí solo su comportamiento
+\cite{bommasani2023}. CheckList demuestra además que la exactitud sobre un conjunto de prueba
+puede sobrestimar la generalización y propone evaluar capacidades lingüísticas y tipos de
+comportamiento concretos \cite{ribeiro2020}.
+
+En un producto financiero, dos sistemas con el mismo porcentaje de acierto pueden tener riesgos
+muy distintos. Uno puede preguntar demasiado; otro puede contestar con seguridad una petición
+que debía rechazar. Por ello evaluamos sobre cuatro dimensiones \FinGuard{} :
+
+\begin{itemize}
+  \item \textbf{corrección}: si el resultado responde a la intención;
+  \item \textbf{seguridad}: si un error conduce a una ejecución o cifra indebida;
+  \item \textbf{robustez}: si la interpretación se conserva al reformular;
+  \item \textbf{operación}: si la latencia y los recursos permiten usar el sistema.
+\end{itemize}
+
+\subsection{Conjuntos de evaluación y disciplina experimental}
+
+Los conjuntos tienen funciones distintas:
+
+\begin{description}
+  \item[\code{dev}.] Casos usados durante el desarrollo de prompts, reglas y validadores. Sirve
+  para localizar defectos, no para estimar generalización sin sesgo.
+
+  \item[\code{validation}.] Casos usados para comparar y seleccionar modelos. Por esa razón
+  \textbf{no es un conjunto ciego ni debe denominarse \emph{held out}}.
+
+  \item[\code{adversarial}.] Frases diseñadas para tensionar límites de dominio, ambigüedad,
+  instrucciones y seguridad.
+
+  \item[\code{drift}.] Único conjunto conservado como evaluación ciega frente a las decisiones
+  de selección realizadas hasta este hito.
+
+  \item[\code{metamorphic}.] Transformaciones donde se conoce una relación esperada entre las
+  salidas, aunque no siempre resulte útil escribir un único resultado absoluto. El enfoque
+  procede de las pruebas metamórficas, que derivan nuevos casos y relaciones a partir de casos
+  fuente para afrontar el problema del oráculo \cite{chen1998}.
+
+  \item[\code{paraphrases}.] Cada reformulación declara \code{paraphrase\_of}. El evaluador
+  compara el plan producido para la frase base con el producido para su reformulación; no
+  compara una salida contra la expectativa de la otra. Así mide estabilidad lingüística y no
+  vuelve a medir exactitud con otro nombre.
+
+  \item[Corpus conversacional.] Episodios de varios turnos que verifican ruteo, conservación de
+  contexto, llamadas al modelo y acciones sensibles.
+\end{description}
+
+Los corpus generados se producen fuera de línea, se revisan y se versionan. La CI consume datos
+estáticos y no necesita GPU. Cada ejecución debe registrar el commit, hash del corpus, proveedor,
+modelo y digest, configuración, semilla, GPU, VRAM y marcas temporales. De este modo un cambio de
+resultado puede atribuirse a código, datos, modelo o condiciones de ejecución.
+
+\subsection{Métricas de planificación}
+
+Sea $N$ el número total de casos. Para cada caso se conoce el tipo de resultado esperado y, si
+procede, los campos semánticos del plan.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{0.22\textwidth} p{0.25\textwidth} p{0.45\textwidth}}
+\toprule
+\textbf{Métrica} & \textbf{Definición} & \textbf{Motivación} \\
+\midrule
+\endhead
+\emph{Outcome correct} & Proporción cuyo tipo de resultado coincide: plan, aclaración, rechazo o
+no soportado. & Mide la primera decisión observable sin exigir todavía igualdad campo a campo. \\
+
+Plan exacto & Proporción de planes correctos en todos los campos relevantes. & Evita considerar
+equivalentes dos planes que consultan una ventana, métrica o agrupación distinta. \\
+
+Corrección por campo & Acierto de \code{window}, \code{metric}, \code{groupBy}, filtros y demás
+campos. & Localiza la superficie frágil. Por ejemplo, permite separar transiciones
+\code{MERCHANT}\,$\leftrightarrow$\,\code{CATEGORY}, cambios a \code{NONE} y cambios acompañados
+de métrica. \\
+
+\emph{Unsafe} & Plan ejecutable cuando se debía aclarar/rechazar, o plan con campos que permiten
+mostrar una cifra distinta de la solicitada. & Prioriza los errores que cruzan una frontera de
+seguridad frente a los fallos meramente inconvenientes. \\
+
+Sobre-rechazo & Rechazos o aclaraciones incorrectas entre casos que admitían respuesta:
+$R_{over}=N_{rechazo\ incorrecto}/N_{respondible}$. & Impide mejorar seguridad haciendo que el
+sistema calle ante todo. Complementa el techo de \emph{unsafe}. \\
+
+Estructura inválida & Respuestas que no cumplen el contrato estructural. & Verifica la frontera
+entre proveedor y dominio. Su objetivo de puerta es cero, aunque un esquema válido no pruebe
+corrección semántica. \\
+
+Inventado & Planes que introducen entidades o restricciones ausentes. & Señala respuestas
+plausibles pero no sustentadas por la petición. \\
+
+Diagnóstico por grupo & Las métricas anteriores segmentadas por capacidad: periodos, comercio,
+límites, ruido, seguimiento, etc. & Evita que un promedio elevado oculte una capacidad crítica
+con bajo rendimiento, en línea con la evaluación por capacidades de CheckList
+\cite{ribeiro2020}. \\
+\bottomrule
+\end{longtable}
+
+Las transiciones entre una frase base y su reformulación se clasifican además por seguridad:
+
+\begin{itemize}
+  \item correcta $\rightarrow$ insegura;
+  \item insegura $\rightarrow$ correcta;
+  \item plan correcto $\rightarrow$ rechazo;
+  \item rechazo esperado $\rightarrow$ plan;
+  \item incorrecta $\rightarrow$ incorrecta diferente.
+\end{itemize}
+
+Esta taxonomía evita un error de interpretación: una transición
+\code{NEEDS\_CLARIFICATION} $\rightarrow$ \code{PLANNED} no es peligrosa por definición. Si el
+caso esperaba un plan, puede significar que la reformulación corrigió un fallo de la frase base.
+Sólo se cuenta como riesgo cuando el \emph{scorer} determina que el plan es inseguro.
+
+\subsection{Robustez por pares y robustez macro}
+
+Para una base $b$ con reformulaciones $P_b$, sea $f(x)$ el plan normalizado que produce el
+sistema. La robustez por pares es
+
+\begin{equation}
+R_{pair}=\frac{\sum_b\sum_{p\in P_b}\mathbb{1}[f(p)\equiv f(b)]}
+{\sum_b |P_b|}.
+\end{equation}
+
+Esta métrica concede más peso a las bases con más reformulaciones. Para que cada intención base
+tenga un voto se calcula también
+
+\begin{equation}
+R_{macro}=\frac{1}{|B|}\sum_{b\in B}
+\frac{1}{|P_b|}\sum_{p\in P_b}\mathbb{1}[f(p)\equiv f(b)].
+\end{equation}
+
+Ambas métricas son necesarias. La primera describe todos los pares observados; la segunda evita
+que una familia muy parafraseada domine la decisión de cada prueba. Tampoco sustituyen a la exactitud:
+dos frases pueden producir de forma estable el mismo plan equivocado. Esta separación entre
+resultado absoluto y relaciones entre ejecuciones es coherente con el propósito de las pruebas
+metamórficas \cite{chen1998}.
+
+\subsection{Evaluación conversacional}
+
+La unidad de prueba no siempre es una frase. El corpus conversacional ejecuta episodios completos
+y registra cuatro tasas:
+
+\begin{description}
+  \item[Herramienta incorrecta.] El turno se envía a una capacidad distinta de la necesaria.
+  \item[Contexto perdido.] Una continuación deja de heredar la ventana, cuenta o sujeto que el
+  contrato establece.
+  \item[Llamada innecesaria al modelo.] Una regla determinista podía resolver el turno, pero se
+  incurrió en coste, latencia y variabilidad del proveedor.
+  \item[Acción insegura.] El ruteo permite preparar o ejecutar una acción que no estaba
+  inequívocamente solicitada o autorizada.
+\end{description}
+
+La cobertura del léxico se obtiene de todos los corpus de evaluación, no únicamente de las
+pruebas unitarias del ruteador. Una mutación que elimina cada formulación y vuelve a medir revela
+filas que el comportamiento agregado no alcanza. Este análisis encontró que una parte relevante
+del vocabulario declarado carecía de frases observables; incorporar los corpus de paráfrasis y
+pagos corrigió el instrumento de cobertura antes de usarlo como puerta.
+
+\subsection{Latencia y condiciones de ejecución}
+
+Se registran P50, P95, máximo y las últimas diez latencias, además de proveedor, digest del
+modelo, GPU y VRAM. La mediana representa la experiencia típica, mientras que los percentiles
+altos describen la cola; observar sólo la media puede ocultar degradaciones importantes
+\cite{googleSREslo}.
+
+Esta disciplina surgió de un fallo operativo concreto: con VRAM cercana al límite, una GPU podía
+mostrar baja utilización mientras las peticiones pasaban de pocos segundos a decenas de
+segundos. El timeout del arnés sólo observaba «fallo del proveedor». Sin telemetría de recursos y
+cola de latencia, ese resultado podía confundirse con una regresión semántica.
+
+Por ello, una P50 aislada es citable como descripción de una ejecución, no como promesa general de
+servicio. Una comparación entre modelos sólo es válida si conserva, o registra con claridad, las
+condiciones de ejecución.
+
+\subsection{Línea base de robustez y lectura de resultados}
+
+La primera ejecución completa de robustez con \code{qwen3.5:9b} procesó 472 casos y produjo la
+línea base de la Tabla \ref{tab:baseline}. Estos valores describen esa ejecución y no incorporan
+automáticamente correcciones posteriores.
+
+\begin{table}[htbp]
+\centering
+\caption{Primera línea base completa de robustez.}
+\label{tab:baseline}
+\begin{tabular}{lr}
+\toprule
+\textbf{Métrica} & \textbf{Resultado} \\
+\midrule
+Robustez por par & 306/416 (73,6\,\%) \\
+Robustez macro & 72,2\,\% \\
+Outcome correcto & 377/472 (79,9\,\%) \\
+Inseguros & 40/472 (8,5\,\%) \\
+Sobre-rechazo & 17/296 (5,7\,\%) \\
+Estructura inválida & 0 \\
+Latencia P50 & 3,34 s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La diferencia entre el resultado de desarrollo y una robustez macro del 72,2\,\% mostró que la
+principal debilidad no era la forma estructural del JSON, sino la sensibilidad a cómo se formula
+la misma intención. El desglose hizo visibles dos alarmas: \code{boundary} alcanzó 40,5\,\% y
+\code{merchant} 9,1\,\%. La segunda cifra tiene denominador pequeño y está contaminada por una
+decisión de producto aún abierta: cuando una frase nombra categoría y comercio, ¿qué debe
+significar exactamente «dónde»? No debe convertirse ese 9,1\,\% en un umbral aceptable; primero
+debe fijarse el contrato y después reconstruirse la expectativa.
+
+También se observaron 33 roturas relacionadas con \code{groupBy}. Para convertir ese agregado en
+trabajo técnico se separan en tres clases: \code{MERCHANT}\,$\leftrightarrow$\,\code{CATEGORY},
+cambio a \code{NONE} y cambio de agrupación acompañado por cambio de \code{metric}. Esta
+clasificación distingue una confusión de entidad de un abandono del agrupamiento y de una
+reinterpretación más amplia de la consulta.
+
+El resultado positivo fue igualmente informativo: \code{noise} y
+\code{period\_confusable} llegaron al 100\,\%. Las familias que habían recibido trabajo
+específico sobre ventanas generalizaron a sus reformulaciones. La evaluación no sólo encontró
+defectos; permitió atribuir mejoras a capacidades concretas.
+
+\subsection{Puertas y calibración}
+
+Una puerta no debe fijarse «justo debajo» del mínimo de tres ejecucións: con tan pocas muestras,
+otra ejecución normal puede caer por debajo por variación aleatoria. Antes de observar el resto
+de resultados se define una regla reproducible. Para tres ejecucións con robustez macro
+$r_1,r_2,r_3$:
+
+\begin{align}
+\Delta_r &= \max\left(\max_i r_i-\min_i r_i,\;\delta_{min}\right),\\
+\text{suelo}_{macro} &= \min_i r_i-\Delta_r.
+\end{align}
+
+Para el sobre-rechazo $o_1,o_2,o_3$ se aplica la disciplina simétrica:
+
+\begin{align}
+\Delta_o &= \max\left(\max_i o_i-\min_i o_i,\;\epsilon_{min}\right),\\
+\text{techo}_{over} &= \max_i o_i+\Delta_o.
+\end{align}
+
+Los márgenes mínimos $\delta_{min}$ y $\epsilon_{min}$ se acuerdan antes de mirar las nuevas
+cifras. A estas puertas se añaden dos invariantes: \emph{unsafe} no superior al 10\,\% y cero
+estructuras inválidas. El objetivo de la puerta es detectar regresiones, no afirmar que el nivel
+actual ya sea suficiente para producción.
+
+\subsection{Qué significa cambiar a un modelo más potente}
+
+Un modelo mayor puede mejorar la comprensión de paráfrasis, pero no corrige por sí mismo el
+contrato comercio/categoría, un umbral numérico determinista ni una ruta de pago sin cobertura.
+Los experimentos del proyecto muestran además que el tamaño no mejora todas las familias de
+forma monótona: puede subir el acierto global y empeorar el rechazo seguro o aumentar las
+aclaraciones innecesarias.
+
+La comparación correcta consiste en ejecutar el mismo commit y corpus con manifiestos separados,
+comparar no sólo exactitud sino \emph{unsafe}, sobre-rechazo, robustez por grupo y latencia, y
+mantener \code{drift} sin usar para elegir. El modelo potente es entonces un candidato medido, no
+una explicación retroactiva de los fallos del modelo pequeño.
+
+\section{Escalabilidad y extensibilidad}
+
+\subsection{Nuevos proveedores y modelos}
+
+La extensión a un proveedor adicional no requiere modificar queries, commands ni reglas de
+dominio. El procedimiento esperado es:
+
+\begin{enumerate}
+  \item mantener o ampliar el contrato \code{LlmProviderPort} sólo si aparece una capacidad
+        común y necesaria para el núcleo;
+  \item crear un adaptador en \code{infrastructure/llm/}, por ejemplo
+        \code{new\_provider.py};
+  \item registrar su constructor en la raíz de composición y añadir credenciales y límites a la
+        configuración;
+  \item incorporar proveedor, modelo, digest y parámetros al manifiesto del evaluador;
+  \item ejecutar las mismas matrices antes de promover la política.
+\end{enumerate}
+
+\warningbox{El proveedor no debe implementarse dentro de \code{domain/services}. El dominio
+contiene el puerto que expresa la necesidad; \code{infrastructure/llm} contiene las
+implementaciones tecnológicas; \code{bootstrap} decide cuál se conecta. Esta es precisamente la
+separación que hace reemplazable al proveedor.}
+
+El registro y la política actuales permiten distinguir el modelo que redacta de aquel que
+planifica. Un único selector para ambos trabajos ocultaría dos decisiones con perfiles de coste,
+latencia y riesgo diferentes.
+
+\subsection{Otros idiomas}
+
+Traducir un prompt no basta para internacionalizar un intérprete. Periodos, nombres de meses,
+formas de corrección, elipsis, comercios y ambigüedades cambian con el idioma y el mercado. La
+extensión se plantea mediante \emph{language packs}:
+
+\begin{itemize}
+  \item el dominio conserva conceptos neutrales como ventana, métrica, categoría y agrupación;
+  \item una interfaz única expone léxico, normalización, patrones y construcción de prompts;
+  \item cada locale implementa esa interfaz fuera del núcleo y se selecciona una vez por
+        conversación;
+  \item los prompts se redactan para cada idioma; no se traducen automáticamente en tiempo de
+        ejecución;
+  \item una matriz semántica común garantiza que todos los idiomas soportan el mismo contrato,
+        mientras cada pack añade sus casos lingüísticos propios;
+  \item el corpus conserva locale, región y versión del pack en su manifiesto.
+\end{itemize}
+
+En código, los objetos financieros siguen en \code{domain}; el contrato lingüístico puede vivir
+en \code{domain/ports} o como interfaz estable del módulo de interpretación, y las
+implementaciones \code{es-ES}, \code{en-GB} o \code{pt-PT} en infraestructura. El bootstrap
+inyecta el pack seleccionado. La robustez se reporta por idioma y en macro entre idiomas para
+evitar que el corpus mayor oculte un locale débil.
+
+\subsection{Otros canales y otros agentes}
+
+Voz, A2A y futuros canales son adaptadores de entrada. Todos deben convertirse en el mismo turno
+tipado y atravesar las mismas políticas; no deben duplicar planificación ni autorización. Para
+voz, el gateway resuelve transporte, audio, interrupciones y transcripción, mientras el
+orquestador conserva la semántica financiera.
+
+Para agentes externos, A2A define un estándar de comunicación e interoperabilidad entre agentes
+independientes \cite{a2a2026}. \FinGuard{} puede actuar como servidor para publicar capacidades
+limitadas y como cliente para delegar una tarea. La arquitectura propuesta es un
+\code{a2a-gateway} o adaptador en \code{infrastructure/a2a} que:
+
+\begin{enumerate}
+  \item traduce mensajes y tareas A2A a commands o queries internos;
+  \item publica sólo capacidades explícitas, con identidad, alcance y versión;
+  \item conserva correlación, idempotencia, trazas y evidencia;
+  \item aplica las mismas puertas de confirmación a toda acción financiera;
+  \item trata la respuesta de otro agente como entrada no confiable que debe validarse.
+\end{enumerate}
+
+Un agente externo no obtiene acceso directo al puerto bancario ni se incorpora como servicio de
+dominio. Es un actor exterior conectado mediante un adaptador. Si una colaboración requiere una
+capacidad nueva, primero se expresa como contrato interno y después se implementa la traducción
+del protocolo.
+
+\subsection{Escalado operativo}
+
+La separación actual permite escalar de manera distinta cada cuello de botella: réplicas del
+orquestador para sesiones sin estado de servidor, pools y réplicas de lectura en banking,
+proveedores LLM con límites de concurrencia y colas específicas para trabajo asíncrono. Antes de
+introducir Kubernetes o un broker, la PoC debe medir saturación, errores, latencia de cola y coste
+por petición. La topología se complica cuando una métrica demuestra la necesidad, no sólo porque
+la arquitectura la permita.
+
+En producción sería necesario completar autenticación y autorización reales, gestión de secretos,
+retención de auditoría, límites por usuario y proveedor, pruebas de recuperación, objetivos de
+nivel de servicio y evaluación continua ante cambio de modelo o deriva lingüística.
+
+\section{Conclusiones}
+
+\FinGuard{} demuestra que un asistente financiero útil no necesita conceder autonomía al modelo.
+La arquitectura hexagonal mantiene el dominio aislado de proveedores, protocolos y bases de
+datos; CQRS hace visibles las diferencias entre leer, preparar y modificar; y la raíz de
+composición conserva las decisiones de despliegue en el borde.
+
+El hallazgo principal de la evaluación es metodológico: exactitud, seguridad y robustez son
+propiedades distintas. La validez estructural cero errores no impide interpretar mal una
+agrupación; una alta cifra de desarrollo no garantiza estabilidad ante paráfrasis; y aumentar el
+rechazo puede aparentar seguridad mientras destruye utilidad. Los corpus por capacidades, las
+relaciones metamórficas, la evaluación conversacional y los manifiestos de ejecución convierten
+estas diferencias en evidencia accionable.
+
+La PoC queda preparada para cambiar de modelo, añadir proveedores, incorporar nuevos idiomas y
+exponer capacidades a otros agentes. La condición para escalar sin perder las garantías es
+conservar el sentido de las fronteras: los conceptos y contratos pertenecen al núcleo; las
+tecnologías y protocolos, a adaptadores; la autorización y la ejecución financiera permanecen
+deterministas y medibles.
+
+\clearpage
+\begin{thebibliography}{9}
+
+\bibitem{cockburn2005}
+Alistair Cockburn.
+\newblock \emph{Hexagonal Architecture: The Original 2005 Article}.
+\newblock HaT Technical Report 2005.02, 2005.
+\newblock \url{https://alistair.cockburn.us/hexagonal-architecture/}
+
+\bibitem{fowler2011}
+Martin Fowler.
+\newblock \emph{CQRS}.
+\newblock 2011.
+\newblock \url{https://martinfowler.com/bliki/CQRS.html}
+
+\bibitem{chen1998}
+Tsong Yueh Chen, Shing Chi Cheung y Siu Ming Yiu.
+\newblock \emph{Metamorphic Testing: A New Approach for Generating Next Test Cases}.
+\newblock Technical Report HKUST-CS98-01, Hong Kong University of Science and Technology, 1998.
+\newblock \url{https://www.cse.ust.hk/~scc/publ/CS98-01-metamorphictesting.pdf}
+
+\bibitem{ribeiro2020}
+Marco Tulio Ribeiro, Tongshuang Wu, Carlos Guestrin y Sameer Singh.
+\newblock \emph{Beyond Accuracy: Behavioral Testing of NLP Models with CheckList}.
+\newblock Proceedings of ACL, pp. 4902--4912, 2020.
+\newblock \url{https://aclanthology.org/2020.acl-main.442/}
+
+\bibitem{bommasani2023}
+Rishi Bommasani et al.
+\newblock \emph{Holistic Evaluation of Language Models}.
+\newblock Annals of the New York Academy of Sciences, 1525(1), 2023.
+\newblock \url{https://doi.org/10.1111/nyas.15007}
+
+\bibitem{googleSREslo}
+Google.
+\newblock \emph{Service Level Objectives}, Site Reliability Engineering.
+\newblock Consultado el 31 de agosto de 2026.
+\newblock \url{https://sre.google/sre-book/service-level-objectives/}
+
+\bibitem{a2a2026}
+A2A Protocol Project.
+\newblock \emph{Agent2Agent Protocol Specification}.
+\newblock Linux Foundation, consultado el 31 de agosto de 2026.
+\newblock \url{https://a2a-protocol.org/latest/}
+
+\end{thebibliography}
+
+\end{document}
