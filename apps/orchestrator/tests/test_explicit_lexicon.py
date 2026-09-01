@@ -25,7 +25,13 @@ import re
 import pytest
 from support import lexicon_corpus
 
-from finguard_orchestrator.domain.services import explicit_facts, explicit_lexicon, spanish
+from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.services import (
+    explicit_facts,
+    explicit_lexicon,
+    plan_verifier,
+    spanish,
+)
 
 PHRASINGS = explicit_lexicon.PHRASINGS
 EVERY_PHRASING = [
@@ -167,6 +173,36 @@ def test_the_spending_veto_and_the_spending_assertion_stay_disjoint() -> None:
             f"{phrasing.says!r} asserts EXPENSE and can reach a `gast` sentence, which is the "
             "verifier's refusal to make"
         )
+
+
+def test_the_pin_never_repairs_a_division_the_verifier_would_report() -> None:
+    """`divides_up` duplicates `plan_verifier._DIVIDES_UP`'s vocabulary, so pin the *outcome*.
+
+    `_combined_total` is the one reading here that states a shape from an absence of instruction,
+    and the one place that could go wrong quietly is a sentence which *does* ask how something
+    divides
+    up. `BREAKDOWN_ANSWERED_AS_ONE_GROUP` refuses a plan that groups by a dimension it filtered to
+    one value, and its docstring names dropping the grouping as the repair it will not make: "a
+    total is served to somebody who asked for a distribution … a figure that does not change is
+    precisely how this class of defect reads as correct." A `GroupBy.NONE` reading is that repair.
+
+    Written against the corpus rather than against the two spellings, because the failure mode here
+    is the spellings drifting apart — which a test comparing them to each other would pass right up
+    until one of them stopped matching a real sentence.
+    """
+    divisions = [
+        sentence
+        for sentence in lexicon_corpus.folded_sentences()
+        if plan_verifier._DIVIDES_UP.search(sentence)
+    ]
+    assert divisions, "the corpus no longer exercises the verifier's division vocabulary"
+    repaired = [
+        sentence for sentence in divisions if explicit_facts.read(sentence).group_by is GroupBy.NONE
+    ]
+    assert not repaired, (
+        "these ask how something divides up and the reading answers NONE, settling a "
+        f"disagreement BREAKDOWN_ANSWERED_AS_ONE_GROUP exists to report: {repaired}"
+    )
 
 
 def test_charge_nouns_is_still_a_bare_alternation() -> None:

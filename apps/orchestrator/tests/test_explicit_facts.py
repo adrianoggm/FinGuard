@@ -514,6 +514,117 @@ def test_two_compared_categories_are_both_kept_and_grouped() -> None:
     assert repaired.group_by is GroupBy.CATEGORY
 
 
+def test_a_coordinated_category_list_asks_for_one_total() -> None:
+    """The decision, in the four shapes the corpus actually writes it in.
+
+    «entre A y B» is the one that used to go the other way, and it went there through a bare
+    `\\bentre\\b` in `compares` — so a sentence Spanish reads as "A and B together" was handed to
+    `readers/breakdowns` and answered as two rows.
+    """
+    for sentence in (
+        "¿Cuánto llevo entre gasolina y transporte público este mes?",
+        "¿Cuánto llevo este mes en súper, gasolina y farmacia?",
+        "Me gustaría saber el importe total que he gastado en ocio y suscripciones "
+        "durante este mes.",
+        "¿Cuál es el importe total que he registrado para los gastos de súper, gasolina "
+        "y farmacia este mes?",
+    ):
+        facts = explicit_facts.read(sentence, today=TODAY)
+
+        assert facts.group_by is GroupBy.NONE, sentence
+        assert facts.compared_categories == (), sentence
+
+
+def test_entre_is_a_coordination_and_not_a_comparison() -> None:
+    """It never reached `compares` through a comparative frame, so it no longer reaches it at all.
+
+    Measured over every sentence this repository has written down before the row was removed: five
+    sentences reached `compares` through «entre» alone and all five were combined totals, and none
+    reached it through «entre» beside another alternative. The genuine comparative frames are read
+    where they always were.
+    """
+    combined = explicit_facts.read("¿Cuánto pagué el mes pasado entre alquiler y suscripciones?")
+    assert combined.group_by is GroupBy.NONE
+    assert combined.compared_categories == ()
+
+    for still_a_comparison in (
+        "Compara gasolina frente a restaurantes el mes pasado",
+        "Dame alquiler y súper por separado",
+        "Hazme una comparación de alquiler y súper",
+    ):
+        facts = explicit_facts.read(still_a_comparison, today=TODAY)
+
+        assert facts.group_by is GroupBy.CATEGORY, still_a_comparison
+        assert len(facts.compared_categories) == 2, still_a_comparison
+
+
+def test_a_grouping_instruction_still_outranks_the_coordinated_list() -> None:
+    """The three vetoes, and the whole risk of stating a shape from an absence.
+
+    Each of these names two or more categories and would be pinned to one total by the floor alone.
+    The first spells the grouping out with a preposition and a dimension, the second asks the
+    members apart without naming any dimension at all, and the third is the corner
+    `plan_verifier`'s `BREAKDOWN_ANSWERED_AS_ONE_GROUP` owns.
+    """
+    for sentence in (
+        "¿Cuánto gasté en gasolina y transporte público este mes, desglosado por categorías?",
+        "¿Cuánto he gastado en ocio y suscripciones este mes por categoría?",
+        "¿Cuánto llevo en gasolina y súper en cada categoría este mes?",
+        "Del mes pasado, ¿cuánto fue en gasolina y cuánto en súper?",
+        "Desglósame el gasto de gasolina y súper de este mes",
+        "¿Cómo se reparte mi gasto entre ocio y suscripciones este mes?",
+    ):
+        facts = explicit_facts.read(sentence, today=TODAY)
+
+        assert facts.group_by is not GroupBy.NONE, sentence
+
+
+def test_an_enumeration_of_categories_is_not_a_grouping_instruction() -> None:
+    """«en las categorías de A, B y C» lists filters; «por categorías» asks for a row each.
+
+    The distinction is the preposition, which is why `category_breakdown` is built on
+    `_ACCOUNT_BREAKDOWN`'s shape rather than on the dimension noun. Both sentences below are corpus
+    paraphrases whose base asks for a single figure, so reading the noun alone as a grouping would
+    break the pair — and a bare «desglose» with no dimension is the same trap from the other side,
+    which is why `divides_up` and not `category_breakdown` is what catches it.
+    """
+    for enumeration in (
+        "Necesito información sobre el total de dinero que he consumido este mes en las "
+        "categorías de súper, gasolina y farmacia.",
+        "¿Podría darme el resumen de los gastos que he tenido este mes en las categorías de "
+        "súper, gasolina y farmacia?",
+    ):
+        assert explicit_facts.read(enumeration, today=TODAY).group_by is GroupBy.NONE, enumeration
+
+
+def test_one_category_is_not_a_coordinated_list() -> None:
+    """The floor. A single category with no grouping cue leaves the shape to the model.
+
+    Two is where a coordination begins, and below it the only evidence for `NONE` would be silence
+    — which is the thing this module refuses to read anything out of.
+    """
+    facts = explicit_facts.read("¿Cuánto he gastado en gasolina este mes?", today=TODAY)
+
+    assert facts.group_by is None
+
+
+def test_the_coordinated_total_overrules_an_inherited_grouping() -> None:
+    """What the reading is for: a plan that arrived grouped, made to agree with the sentence."""
+    facts = explicit_facts.read("¿Cuánto llevo entre gasolina y transporte público este mes?")
+    grouped = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_MONTH),
+        categories=("TRANSPORT_FUEL", "TRANSPORT_PUBLIC"),
+        group_by=GroupBy.CATEGORY,
+    )
+
+    repaired = explicit_facts.enforce(grouped, facts)
+
+    assert repaired.group_by is GroupBy.NONE
+    assert repaired.categories == ("TRANSPORT_FUEL", "TRANSPORT_PUBLIC")
+    assert repaired.metric is grouped.metric
+
+
 def test_salary_and_income_words_force_incoming_movements() -> None:
     for sentence in (
         "¿Qué nómina he recibido este año?",
