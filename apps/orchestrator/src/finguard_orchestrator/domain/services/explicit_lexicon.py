@@ -279,6 +279,10 @@ PHRASINGS: Final[dict[str, tuple[Phrasing, ...]]] = {
     ),
     "temporal_week": (
         Phrasing(r"\b(?:por|a\s+la|cada)\s+semana\b"),
+        Phrasing(
+            r"\bsemana\s+a\s+semana\b",
+            like=("el gasto acumulado semana a semana este año",),
+        ),
         Phrasing(r"\b(?:media|promedio)\s+semanal\b", like=("¿Cuál es mi promedio semanal?",)),
         Phrasing(r"\b(?:gasto|importe|coste)\s+semanal\s+medio\b"),
         # The misspellings are measured, not guessed: «semanl» and «semnal» arrived in the corpus.
