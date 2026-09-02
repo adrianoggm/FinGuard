@@ -112,6 +112,27 @@ async def test_monthly_accumulation_fills_empty_months_without_inventing_money()
     assert planner.calls == 0
 
 
+async def test_week_by_week_accumulation_reaches_banking_with_a_weekly_bucket() -> None:
+    """The explicit weekly wording must win before the cumulative reader's monthly default."""
+    ledger = Ledger(
+        QueryAnswer(
+            currency="EUR",
+            total_minor=3_000,
+            movement_count=2,
+            period_start=date(2026, 1, 5),
+            period_end=date(2026, 1, 18),
+            groups=(Group("2026-01-05", 1_000, 1), Group("2026-01-12", 2_000, 1)),
+        )
+    )
+
+    result, planner = await ask("el gasto acumulado semana a semana este año", ledger)
+
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.plans[0].metric is Metric.CUMULATIVE
+    assert ledger.plans[0].group_by is GroupBy.WEEK
+    assert planner.calls == 0
+
+
 async def test_accumulation_keeps_its_metric_when_the_user_changes_calendar_unit() -> None:
     ledger = Ledger(temporal_answer())
     first, _ = await ask("Muéstrame mi gasto acumulado por mes este año", ledger)
@@ -469,6 +490,7 @@ def test_a_settled_total_survives_a_sentence_that_named_no_bucket(sentence: str)
     [
         ("Muéstrame mi gasto acumulado por mes este año", GroupBy.MONTH),
         ("el gasto acumulado mes a mes este año", GroupBy.MONTH),
+        ("el gasto acumulado semana a semana este año", GroupBy.WEEK),
         ("¿cómo va mi gasto acumulado por mes?", GroupBy.MONTH),
         ("¿cuánto llevo acumulado por semana?", GroupBy.WEEK),
     ],
@@ -481,13 +503,9 @@ def test_a_stated_bucket_is_still_a_running_series(sentence: str, group_by: Grou
     loud, so each still reads `CUMULATIVE` over exactly that unit — and `enforce` puts both halves
     onto a plain total, which is the transition the running series needs to survive.
 
-    «semana a semana» is deliberately not here, and finding out why is worth writing down:
-    `cumulative` reads it, and `temporal_week` does not, where `temporal_month` does spell «mes a
-    mes». So «el gasto acumulado semana a semana» states `CUMULATIVE` and no bucket, and only
-    `_cumulative_plan`'s `or GroupBy.MONTH` decides it — as a *monthly* series for a sentence that
-    said weeks. That asymmetry is older than this change and no sentence here moves it; closing it
-    means adding a phrasing to `temporal_week`, which moves sentences and belongs to its own
-    measurement.
+    The paired «mes a mes» and «semana a semana» cases guard the symmetry that matters here: each
+    expression must state its own bucket before `_cumulative_plan` applies its monthly default.
+    Otherwise a weekly request is structurally valid but returns a monthly series.
     """
     facts = explicit_facts.read(sentence, today=TODAY)
 
