@@ -1,10 +1,11 @@
 import pytest
 
-from finguard_orchestrator.application.queries.financial_turn import VisualDataset, VisualRow
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingPatch,
+    VisualDataset,
+    VisualRow,
     merge_encoding_patch,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
@@ -19,7 +20,7 @@ def test_a_breakdown_profile_names_its_dimension_and_measure() -> None:
         ),
     )
 
-    profile = visual_profile_of(dataset, total_minor=35_293)
+    profile = visual_profile_of(dataset, total_minor=35_293, group_by=None)
 
     assert profile.field("dimension").role == "dimension"
     assert profile.field("dimension").cardinality == 2
@@ -42,7 +43,7 @@ def test_a_series_gets_its_own_cardinality_and_makes_this_a_comparison() -> None
         ),
     )
 
-    profile = visual_profile_of(dataset, total_minor=None)
+    profile = visual_profile_of(dataset, total_minor=None, group_by=None)
 
     assert profile.comparison is True
     assert profile.field("series").role == "series"
@@ -62,7 +63,7 @@ def test_a_frequency_dimension_keeps_the_order_the_dataset_built() -> None:
         ),
     )
 
-    profile = visual_profile_of(dataset, total_minor=None)
+    profile = visual_profile_of(dataset, total_minor=None, group_by=None)
 
     assert profile.field("dimension").order == "INPUT"
     assert profile.unit == "count"
@@ -93,7 +94,7 @@ def test_a_recurrence_dataset_carries_two_dimensions() -> None:
         ),
     )
 
-    profile = visual_profile_of(dataset, total_minor=None)
+    profile = visual_profile_of(dataset, total_minor=None, group_by=None)
 
     assert {item.name for item in profile.role("dimension")} == {"dimension", "occurred_at"}
     assert profile.field("occurred_at").type == "temporal"
@@ -107,7 +108,7 @@ def test_a_profile_carries_no_value_from_any_row() -> None:
         rows=(VisualRow(dimension="GROCERIES", value_minor=734_291),),
     )
 
-    profile = visual_profile_of(dataset, total_minor=734_291)
+    profile = visual_profile_of(dataset, total_minor=734_291, group_by=None)
 
     assert "734291" not in repr(profile)
     assert "GROCERIES" not in repr(profile)
@@ -129,11 +130,19 @@ def test_a_month_grouped_dimension_is_temporal_and_a_frequency_one_is_not() -> N
     assert monthly.field("dimension").order == "TEMPORAL"
     assert monthly.temporal() is True
 
-    ungrouped = visual_profile_of(
-        VisualDataset(rows=rows, metric="SUM"), total_minor=None, group_by="NONE"
+    frequency = visual_profile_of(
+        VisualDataset(
+            rows=(
+                VisualRow(dimension="lunes", value_minor=4),
+                VisualRow(dimension="martes", value_minor=9),
+            ),
+            metric="FREQUENCY",
+        ),
+        total_minor=None,
+        group_by="MONTH",
     )
-    assert ungrouped.field("dimension").type == "nominal"
-    assert ungrouped.temporal() is False
+    assert frequency.field("dimension").type == "nominal"
+    assert frequency.field("dimension").order == "INPUT"
 
 
 def _bar_spec() -> ChartSpec:

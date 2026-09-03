@@ -63,6 +63,21 @@ class ChartSpec:
         return self.limit is None or 1 <= self.limit <= 100
 
 
+@dataclass(frozen=True)
+class VisualRow:
+    dimension: str
+    value_minor: int
+    series: str | None = None
+    occurred_at: str | None = None
+
+
+@dataclass(frozen=True)
+class VisualDataset:
+    rows: tuple[VisualRow, ...]
+    metric: str
+    title: str = "Resultados"
+
+
 FieldRole = Literal["dimension", "measure", "series"]
 FieldOrder = Literal["MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"]
 

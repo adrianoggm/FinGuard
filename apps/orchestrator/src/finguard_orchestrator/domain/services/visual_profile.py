@@ -5,13 +5,17 @@ This logic lived inline in `llm_mapper._visualization_to_dto`, feeding
 should not compute domain facts, and the profile is now the *input* to a decision that the
 application makes rather than a summary of one the mapper already made.
 
-**Nothing here reads a value.** Cardinality is a count of distinct labels, `positive` is a
+**Nothing here reads a value.** Cardinality is a count of distinct values, `positive` is a
 comparison against zero, and `verified_total` is an equality. No amount and no dimension label
 survives into the returned object, and a test asserts that with sentinels.
 """
 
-from finguard_orchestrator.application.queries.financial_turn import VisualDataset
-from finguard_orchestrator.domain.models.chart import FieldOrder, VisualField, VisualProfile
+from finguard_orchestrator.domain.models.chart import (
+    FieldOrder,
+    VisualDataset,
+    VisualField,
+    VisualProfile,
+)
 
 # Group keys that name a calendar bucket. Same set `derive_chart` has always used; stated once
 # here so the profile and the floor cannot disagree about what "temporal" means.
@@ -19,6 +23,13 @@ _TEMPORAL_GROUPS = frozenset({"DAY", "WEEK", "MONTH", "PERIOD", "DATE"})
 
 # Metrics whose measure is a number of movements rather than money.
 _COUNTING = frozenset({"COUNT", "FREQUENCY"})
+
+# Metrics whose producer builds its own dimension, and whose chart is built before `group_by` is
+# ever read -- `llm_mapper._chart_for_dataset` early-returns for each of them. Their dimension is
+# nominal whatever the plan grouped by: weekday names, stream names, "Parte"/"Resto". A calendar
+# `group_by` must not relabel it temporal, or this profile would contradict the chart beside it
+# and RATIO_SHARE would lose its donut for having no nominal field left.
+_OWN_DIMENSION = frozenset({"FREQUENCY", "RECURRENCE", "RATIO_SHARE"})
 
 
 def _unit(metric: str) -> str:
@@ -42,7 +53,7 @@ def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
 
 
 def visual_profile_of(
-    dataset: VisualDataset, *, total_minor: int | None, group_by: str | None = None
+    dataset: VisualDataset, *, total_minor: int | None, group_by: str | None
 ) -> VisualProfile:
     """Build the profile from the dataset -- plus `group_by`, which the dataset does not carry.
 
@@ -56,7 +67,7 @@ def visual_profile_of(
     `total_minor`.
     """
     rows = dataset.rows
-    temporal = group_by in _TEMPORAL_GROUPS
+    temporal = group_by in _TEMPORAL_GROUPS and dataset.metric not in _OWN_DIMENSION
     has_series = any(row.series is not None for row in rows)
     has_occurred_at = any(row.occurred_at is not None for row in rows)
 
@@ -68,7 +79,9 @@ def visual_profile_of(
             len({row.dimension for row in rows}),
             _dimension_order(dataset.metric, temporal),
         ),
-        VisualField("value_minor", "quantitative", "measure", len(rows)),
+        VisualField(
+            "value_minor", "quantitative", "measure", len({row.value_minor for row in rows})
+        ),
     ]
     if has_series:
         # `INPUT` and not a magnitude order: a legend of periods reads in the order the producer
