@@ -122,6 +122,27 @@ def test_a_decision_records_where_it_came_from() -> None:
     assert decision.fallback_reason is None  # nothing fell back; the floor was the plan
 
 
+def test_a_decision_refuses_an_unsupported_source() -> None:
+    with pytest.raises(ValueError, match="unsupported visual decision source"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="heuristic",  # type: ignore[arg-type]
+        )
+
+
+def test_a_chosen_model_plan_did_not_fall_back() -> None:
+    """`fallback_reason` is filled only when an attempt was made and failed. `source="llm"` means
+    the model's own plan was chosen, so the two facts together would be a contradiction."""
+    with pytest.raises(ValueError, match="did not fall back"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="llm",
+            fallback_reason="the model declined",
+        )
+
+
 def test_two_rows_carrying_the_same_amount_are_still_two_rows() -> None:
     """The measure's cardinality counts distinct amounts, so it is not a row count. Passing it
     to `derive_chart` would decline this chart for having "one row"."""
