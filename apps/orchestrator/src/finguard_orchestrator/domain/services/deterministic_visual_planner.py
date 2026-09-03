@@ -118,10 +118,10 @@ class DeterministicVisualPlanner:
             return None
         spec = derive_chart(
             group_by="MONTH" if profile.temporal() else "NONE",
-            # The plan's metric when there is one, falling back to the dataset's -- the exact
-            # expression `_chart_for_dataset` used. Not `profile.metric` alone: that is the
-            # dataset's shape marker, and a `COMPARISON` of counts would label its axis "Importe".
-            metric=profile.plan_metric or profile.metric,
+            # `measure_metric()`, not `profile.metric` alone: that is the dataset's shape marker,
+            # and a `COMPARISON` of counts would label its axis "Importe" -- the exact expression
+            # `_chart_for_dataset` used, now named so that mistake has to be written on purpose.
+            metric=profile.measure_metric(),
             # The rows drawn, which is not the measure's cardinality: that counts distinct
             # amounts, and two rows carrying the same amount are still two rows.
             rows=profile.row_count,
