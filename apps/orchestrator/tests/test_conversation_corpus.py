@@ -16,7 +16,7 @@ and would measure the model instead.
 
 import pytest
 from support import episodes
-from support.ratchets import Floor
+from support.ratchets import Ceiling, Floor
 
 CORPUS = episodes.load()
 
@@ -38,6 +38,64 @@ FLOOR = Floor(166, "episodes loaded from evaluation/conversations")
 
 def test_the_corpus_has_not_shrunk() -> None:
     assert not FLOOR.undercut_by(CORPUS), FLOOR.undercut_by(CORPUS)
+
+
+# Episodes still replayed without an account directory, which is a path no deployment runs.
+#
+# It was 169 of 169 and the corpus could not see that: the harness wired no directory at all, so
+# every turn took three branches of `_scoped` written for the handler's legacy callers, no turn had
+# ever seen the account clarification, and `lost_context` read 0.0 % over 1143 turns while the
+# account scope was untested end to end.
+#
+# Six were left, and the note here said all six were the one defect: a scope the service derived
+# for itself, persisted as though the holder had chosen it by an unguarded twin of
+# `_remember_explicit_scope` that ran immediately after the guarded one. That defect is fixed and
+# three came off this list — a question about last month's spending no longer answered from inside
+# an index fund, two bizum-received turns no longer answered from one account, "de mis cuentas"
+# answered from all of them again.
+#
+# The other three were never that defect, and each still reproduces with the fix reverted:
+#
+#   14-averages   `_scope_ranking` reads "la nómina" as the CURRENT alias, the reading `_scoped`
+#                 strips on purpose because it hides payroll paid into another account.
+#   17-internal   turn 3 states «al fondo», which is kept as designed, and turns 5-6 inherit it
+#                 into questions about supermarkets and restaurants. How long a *stated* selection
+#                 lives, not where it came from.
+#   28-compound   a ratio paired with a plain query keeps the settled selection through the first
+#                 operand and loses it before the second, so one sentence answers half a figure
+#                 and half «¿En qué cuenta quieres consultarlo?».
+#
+# Stating those wrong accounts in the expectations would take this number to zero by recording a
+# defect as correct, which is the one way it must never move. Only ever down, and only by a source
+# fix. The reason each of the three is here is written above its `scope: legacy` in the corpus file.
+#
+# `test_a_filter_that_is_doing_something_is_stated` is the instrument that discriminates, not the
+# per-episode tests: an episode whose expectations never mention `accounts` passes with a wrong
+# scope. Under the reverted fix that rule listed ten turns over five episodes; it now lists none.
+LEGACY_SCOPE = Ceiling(3, "episodes still replayed without the account directory")
+
+
+def test_the_corpus_runs_on_the_path_a_deployment_runs() -> None:
+    legacy = [e.name for e in CORPUS if e.scope == episodes.LEGACY]
+
+    assert not LEGACY_SCOPE.exceeded_by(legacy), LEGACY_SCOPE.exceeded_by(legacy)
+
+
+def test_every_episode_declares_a_scope_the_harness_knows() -> None:
+    """A typo in `scope:` must not quietly mean the default, because the default is the one value
+    that hides the account clarification."""
+    unknown = [(e.name, e.scope) for e in CORPUS if e.scope not in episodes.SCOPES]
+
+    assert not unknown, f"episodes declaring a scope nothing implements: {unknown}"
+
+
+def test_some_episodes_reach_the_account_clarification() -> None:
+    """The floor under the other side of `scope`. `settled` is the default precisely so the
+    clarification does not cost 169 preamble turns — which makes it possible for the corpus to end
+    up never reaching it at all, and a corpus that never reached it is where this started."""
+    asking = [e.name for e in CORPUS if e.scope == episodes.UNSET]
+
+    assert len(asking) >= 4, f"only {len(asking)} episodes open with the account scope unsettled"
 
 
 def test_every_episode_is_long_enough_to_be_a_conversation() -> None:

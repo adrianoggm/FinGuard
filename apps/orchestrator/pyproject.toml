@@ -14,6 +14,33 @@ dependencies = [
     # Runtime, not just tests: the Ollama provider and the banking client speak HTTP.
     # See tests/test_dependency_provenance.py for why the name is not a typosquat.
     "httpx2>=2.9",
+    "alembic>=1.14",
+    "sqlalchemy>=2.0",
+    "asyncpg>=0.30",
+    # The three below are the OpenTelemetry adapter, and they are runtime dependencies even though
+    # exporting is off by default: `observability/otel.py` is imported by the composition root on
+    # every start, and making the import conditional would mean the only build that ever exercises
+    # it is the one nobody runs locally. Section 3 of
+    # docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+    #
+    # The SDK, which brings opentelemetry-api with it. Floors rather than pins, because uv.lock is
+    # what actually fixes the version and its hashes — the same argument
+    # tests/test_dependency_provenance.py makes about httpx2. Capped below 2.0 because that is the
+    # next promise the project can break.
+    "opentelemetry-sdk>=1.44,<2",
+    # OTLP over HTTP/protobuf, not gRPC. The collector opens 4317 and 4318 and its config says why
+    # both: compose reaches it by service name, but `just serve-orchestrator` runs on the host and
+    # OTLP/HTTP is what survives the proxies in between. HTTP also keeps grpcio — a large binary
+    # wheel — out of a service whose only other HTTP dependency is httpx2. It brings `requests`,
+    # which is the honest cost of this choice.
+    "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
+    # The inbound span, and the only instrumentation package here. Its own version line is the
+    # `0.<n>b0` series rather than the SDK's, which is upstream's convention and not a pre-release
+    # in the usual sense; the floor names it explicitly so a resolver will accept it.
+    # **Not opentelemetry-instrumentation-httpx**: it patches `httpx`, this service has `httpx2`,
+    # and `import httpx` raises ModuleNotFoundError here. The outbound span goes through the client
+    # factory in infrastructure/banking/client.py, which was built for it.
+    "opentelemetry-instrumentation-fastapi>=0.65b0,<1",
 ]
 
 [dependency-groups]
@@ -51,9 +78,13 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "ASYNC"]
 python_version = "3.12"
 strict = true
 
+[[tool.mypy.overrides]]
+module = "asyncpg"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# This service has no database. What it needs is a local Ollama daemon, which CI
-# does not have, so the marker names that instead of inheriting banking-api's wording.
-markers = ["integration: needs a running Ollama daemon"]
+# Integration tests may need PostgreSQL or a local Ollama daemon; each test states and checks its
+# own dependency before running.
+markers = ["integration: needs a configured local dependency"]
 asyncio_mode = "auto"

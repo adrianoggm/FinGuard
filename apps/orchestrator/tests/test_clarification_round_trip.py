@@ -24,6 +24,8 @@ from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, g
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.conversation import (
+    AccountCandidate,
+    AccountScopeClarification,
     Conversation,
     FinancialClarification,
     Slot,
@@ -241,6 +243,54 @@ def test_a_draft_carrying_something_that_is_not_a_category_is_a_bad_request() ->
 
     assert response.status_code == 422
     assert asking.received is None
+
+
+ASKING_WHICH_ACCOUNT = AskFinancialQuestionResult(
+    outcome="NEEDS_CLARIFICATION",
+    text="¿En qué cuenta quieres consultarlo? Puedes elegir Cuenta corriente o Todas mis cuentas.",
+    question="¿En qué cuenta quieres consultarlo?",
+    # The commonest clarification this service emits. Since the account-scope feature landed, a
+    # holder with more than one account is asked which one before any figure, so this is the
+    # clarification almost every first question produces — and therefore the one most likely to
+    # loop. It is resumable: the plan is already built and travels in `pending_plan`.
+    conversation=Conversation(
+        active=AccountScopeClarification(
+            pending=FinancialPlan(
+                direction=Direction.EXPENSE,
+                period=RelativePeriod(period=Period.THIS_MONTH),
+            ),
+            candidates=(AccountCandidate(ACCOUNT, "Cuenta corriente", "CURRENT"),),
+        )
+    ),
+)
+
+
+def test_the_account_clarification_says_which_slot_it_is_waiting_on() -> None:
+    """The slot travels for this clarification too, and it is the one that could least afford to
+    lose it.
+
+    `awaiting` was null here while `pending_plan` was present, so a question this service asks on
+    almost every first turn reached the client as a clarification that had asked for nothing.
+    Anything counting repeats off the slot — the evaluation harness, and this service's own memory
+    of what it last asked — reads null and sees no question, so the same question can be asked
+    forever on the one path most likely to ask it twice.
+    """
+    client, asking = client_for(ASKING_WHICH_ACCOUNT)
+
+    body = client.post("/v1/questions", json={"question": "¿cuánto llevo gastado hoy?"}).json()
+
+    assert body["conversation"]["workflow"] == Workflow.ACCOUNT_SCOPE.value
+    assert body["conversation"]["pending_plan"] is not None
+    assert body["conversation"]["awaiting"] == Slot.ACCOUNT.value
+
+    # And back in, because a field the client echoes has to be one the payload still accepts.
+    client.post(
+        "/v1/questions",
+        json={"question": "la corriente", "conversation": body["conversation"]},
+    )
+
+    assert asking.received is not None
+    assert asking.received.conversation.awaiting is Slot.ACCOUNT
 
 
 def test_a_plan_with_two_windows_is_a_bad_request() -> None:

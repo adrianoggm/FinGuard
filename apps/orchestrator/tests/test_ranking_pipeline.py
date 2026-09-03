@@ -14,14 +14,23 @@ follow-up is robust because there is nothing left to recognise except "and the n
 """
 
 import uuid
+from dataclasses import replace
 from datetime import date, datetime
 
 from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
+from finguard_orchestrator.application.queries.readers.rankings import (
+    _multiple_movement_ranking,
+)
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Movement, QueryAnswer
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
 
 
@@ -85,7 +94,7 @@ class FakePlanner:
         self._result = result
         self.asked: str | None = None
 
-    async def plan(self, sentence: str, *, today: date, previous: FinancialPlan | None = None):
+    async def plan(self, sentence: str, *, context: PlanningContext):
         self.asked = sentence
         if self._result is None:
             raise AssertionError(f"the model was consulted about {sentence!r}")
@@ -177,6 +186,72 @@ async def test_three_largest_expenses_are_read_as_concrete_ranked_movements() ->
     assert remembered.rank == 3
     assert remembered.categories == ()
     assert remembered.period == THIS_YEAR
+
+
+async def test_top_list_pronoun_reuses_only_the_visible_ranked_rows_without_the_model() -> None:
+    selected = tuple(uuid.UUID(int=index) for index in range(1, 4))
+    rows = tuple(
+        replace(movement, transaction_id=str(transaction_id))
+        for movement, transaction_id in zip((CEPSA, REPSOL, BROADWAY), selected, strict=True)
+    )
+    planner = FakePlanner()
+    ledger = FakeLedger(*rows)
+    ranked = await ask("MuÃ©strame mis tres mayores gastos de este aÃ±o", planner, ledger)
+
+    result = await ask(
+        "Â¿CuÃ¡nto suman esos movimientos?",
+        planner,
+        ledger,
+        conversation=ranked.conversation,
+    )
+
+    assert planner.asked is None
+    assert result.outcome == PlanningOutcome.PLANNED.value
+    assert ledger.aggregates[-1].transaction_ids == selected
+
+
+async def test_unbounded_ordered_expenses_default_to_ten_rows_and_read_the_named_month() -> None:
+    ledger = FakeLedger(CEPSA, REPSOL, BROADWAY)
+
+    result = await ask(
+        "Podrias decirme de abril que gastos he tenido de más grande a mas pequeño ?",
+        FakePlanner(),
+        ledger,
+    )
+
+    assert [ranking.rank for ranking in ledger.rankings] == [1, 2, 3, 4]
+    assert result.movement_count == 3
+    assert result.conversation.last_plan is not None
+    remembered = result.conversation.last_plan
+    assert isinstance(remembered, TopMovements)
+    assert remembered.date_range == AbsoluteRange(date(2026, 4, 1), date(2026, 4, 30))
+    assert "He encontrado 3 gastos en abril de 2026" in result.text
+    assert "no hay 10" in result.text
+
+
+async def test_unbounded_ordered_expenses_reads_all_ten_default_rows_in_rank_order() -> None:
+    rows = tuple(replace(CEPSA, merchant_name=f"Merchant {position}") for position in range(10))
+    ledger = FakeLedger(*rows)
+
+    result = await ask("Lista mis gastos de abril de mayor a menor", FakePlanner(), ledger)
+
+    assert [ranking.rank for ranking in ledger.rankings] == list(range(1, 11))
+    assert result.movement_count == 10
+    assert [movement.merchant_name for movement in result.movements] == [
+        f"Merchant {position}" for position in range(10)
+    ]
+
+
+def _movement_ranking_for(sentence: str) -> tuple[TopMovements, int] | None:
+    return _multiple_movement_ranking(
+        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+    )
+
+
+def test_ordered_movement_recognizer_rejects_singular_and_ascending_requests() -> None:
+    assert _movement_ranking_for("cuál fue el mayor gasto de abril") is None
+    assert _movement_ranking_for("lista mis gastos de menor a mayor") is None
+    assert _movement_ranking_for("ordena mis gastos de más pequeño a más grande") is None
 
 
 async def test_an_incomplete_top_list_remembers_the_last_real_position() -> None:
@@ -330,3 +405,45 @@ async def test_a_sentence_with_its_own_content_is_not_a_continuation() -> None:
 
     assert planner.asked == "¿cuánto gasté en gasolina este año?"
     assert ledger.rankings == []
+
+
+async def test_a_superlative_that_names_its_window_is_not_a_continuation() -> None:
+    """The mirror of the test above, and the one that was missing.
+
+    "¿Cuál fue mi mayor gasto de junio?" after a total names its own subject and its own window, so
+    it is a new question. Read as an ellipsis it became a *window patch* on the previous aggregate —
+    the month was applied, the superlative was dropped, and the answer was June's total presented as
+    June's largest expense. A real figure about a different question, which is the failure this
+    whole path exists to avoid.
+
+    The singular noun is the point. "mis movimientos más altos de junio" already worked, because
+    `movimientos` was in the self-contained vocabulary and `gasto` was not.
+    """
+    aggregate = FinancialPlan(direction=Direction.EXPENSE, period=THIS_YEAR)
+    planner = FakePlanner(PlanningResult.planned(aggregate))
+    ledger = FakeLedger(CEPSA)
+
+    await ask(
+        "¿cuál fue mi mayor gasto de junio?",
+        planner,
+        ledger,
+        conversation=Conversation(last_plan=aggregate),
+    )
+
+    assert planner.asked == "¿cuál fue mi mayor gasto de junio?", (
+        "it has to reach the model: the patch cannot express a rank, so grounding the window "
+        "silently discards the question"
+    )
+
+
+async def test_an_ellipsis_without_a_window_is_still_an_ellipsis() -> None:
+    """The guard on the widening. A movement noun alone does not make a turn self-contained —
+    `_starts_new_financial_scope` also requires a window — so "¿y el gasto?" stays a follow-up and
+    keeps whatever the conversation was about."""
+    previous = FinancialPlan(direction=Direction.EXPENSE, period=THIS_YEAR)
+    planner = FakePlanner(PlanningResult.planned(previous))
+    ledger = FakeLedger(CEPSA)
+
+    await ask("¿y el gasto?", planner, ledger, conversation=Conversation(last_plan=previous))
+
+    assert planner.asked == "¿y el gasto?"

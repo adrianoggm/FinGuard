@@ -2,6 +2,7 @@
 
 episodes:
   - name: highlighted_groups_and_evidence_can_be_reused_without_replanning
+    scope: settled
     why: >
       A pronoun must point to the concrete row or movement identifiers the user just saw, not to
       a merchant guessed by the model or to the broader query that originally produced the list.

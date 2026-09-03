@@ -4,7 +4,9 @@ Queries and commands answer with Results, never with domain objects, so what arr
 here is already flat. This adds the wire format and nothing else.
 """
 
-from uuid import UUID
+from dataclasses import replace
+from typing import Literal
+from uuid import UUID, uuid4
 
 from finguard_orchestrator.application import (
     AccountSummaryResult,
@@ -20,6 +22,16 @@ from finguard_orchestrator.application import (
     SpokenPlan,
     WalletResult,
 )
+from finguard_orchestrator.application.queries.financial_turn import VisualDataset
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    Visualization,
+    VisualProfile,
+    derive_chart,
+)
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -33,23 +45,30 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     CatalogueResponse,
     ChargePayload,
     ChargesResponse,
+    ChartVisualizationResponse,
     ContactPayload,
     ContactsResponse,
     GroupPayload,
     HoldingPayload,
+    KpiVisualizationResponse,
     MessageResponse,
     ModelResponse,
     MovementsResponse,
     PlanPayload,
     PolicyResponse,
     QuestionResponse,
+    SaveCandidate,
     SpokenContactResponse,
     SpokenGroupResponse,
     SpokenMovementResponse,
     SummaryMovementResponse,
+    VisualizationResponse,
     WalletResponse,
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+from finguard_orchestrator.infrastructure.metrics.codec import CodecError
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def _model_to_dto(row: ModelRow) -> ModelResponse:
@@ -186,7 +205,299 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
     )
 
 
-def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
+def _visualization_to_dto(
+    result: AskFinancialQuestionResult,
+) -> VisualizationResponse | None:
+    dataset = result.visual_dataset
+    if dataset is None or not dataset.rows:
+        return None
+
+    rows: list[dict[str, object]] = []
+    for row in dataset.rows:
+        serialized: dict[str, object] = {
+            "dimension": row.dimension,
+            "value_minor": row.value_minor,
+        }
+        if row.series is not None:
+            serialized["series"] = row.series
+        if row.occurred_at is not None:
+            serialized["occurred_at"] = row.occurred_at
+        rows.append(serialized)
+
+    fields = frozenset.intersection(*(frozenset(row) for row in rows))
+    if len(rows) == 1:
+        if not result.explicit_visualization:
+            return None
+        return KpiVisualizationResponse(
+            unit="count" if dataset.metric == "COUNT" else "money",
+            data=rows,
+        )
+
+    spec = _chart_for_dataset(result, fields, len(rows))
+    if spec is None or not spec.valid_for(fields):
+        return None
+    spec = replace(spec, title=_visual_title(result, dataset))
+    presented = present(Visualization(spec=spec, data=tuple(rows)))
+    chart_id = _chart_id(result, spec)
+    unit: Literal["money", "count", "ratio"] = (
+        "count"
+        if dataset.metric in {"COUNT", "FREQUENCY"}
+        else "ratio"
+        if dataset.metric == "RATIO_SHARE"
+        else "money"
+    )
+    return ChartVisualizationResponse(
+        chart_id=chart_id,
+        unit=unit,
+        spec=presented["spec"],
+        data=presented["data"],
+        limit=spec.limit,
+    )
+
+
+def _chart_id(result: AskFinancialQuestionResult, spec: ChartSpec) -> str:
+    return "chart-" + uuid4().hex[:16]
+
+
+def _visual_title(result: AskFinancialQuestionResult, dataset: VisualDataset) -> str:
+    """Return a short, stable Spanish title; never leak planner prose into Vega."""
+    context = result.plan_context
+    direction = {
+        "EXPENSE": "Gastos",
+        "INCOME": "Ingresos",
+        "ALL": "Movimientos",
+    }.get(context.direction if context is not None else "", "Importes")
+    grouping = context.group_by if context is not None else ""
+    dimension = {
+        "MONTH": "mes",
+        "WEEK": "semana",
+        "DAY": "día",
+        "CATEGORY": "categoría",
+        "MERCHANT": "comercio",
+        "COUNTERPARTY": "persona",
+        "ACCOUNT": "cuenta",
+    }.get(grouping, "periodo")
+    period = ""
+    if context is not None:
+        if context.period == "LAST_N_MONTHS" and context.n:
+            period = f"Últimos {context.n} meses"
+        elif context.period == "LAST_N_DAYS" and context.n:
+            period = f"Últimos {context.n} días"
+        elif context.period == "THIS_MONTH":
+            period = "Este mes"
+        elif context.period == "LAST_MONTH":
+            period = "Mes pasado"
+        elif context.period == "THIS_YEAR":
+            period = "Este año"
+    if dataset.metric == "FREQUENCY":
+        subject = "Frecuencia de movimientos"
+    elif dataset.metric == "COUNT":
+        subject = "Movimientos"
+    elif dataset.metric == "AVERAGE":
+        subject = {
+            "Gastos": "Gasto medio",
+            "Ingresos": "Ingreso medio",
+        }.get(direction, "Importe medio")
+    elif dataset.metric == "CUMULATIVE":
+        subject = {
+            "Gastos": "Gasto acumulado",
+            "Ingresos": "Ingreso acumulado",
+        }.get(direction, "Importe acumulado")
+    elif dataset.metric == "RECURRENCE":
+        subject = "Gastos recurrentes"
+    elif dataset.metric == "RATIO_SHARE":
+        subject = "Distribución"
+    else:
+        subject = direction
+    grouped = "" if dataset.metric == "RECURRENCE" else f" por {dimension}"
+    return f"{subject}{grouped}" + (f" · {period}" if period else "")
+
+
+def _remember_visual_context(
+    result: AskFinancialQuestionResult, visualization: VisualizationResponse | None
+) -> AskFinancialQuestionResult:
+    if not isinstance(visualization, ChartVisualizationResponse) or result.visual_dataset is None:
+        return result
+    row_fields = {"dimension", "value_minor"}
+    if any(row.series is not None for row in result.visual_dataset.rows):
+        row_fields.add("series")
+    if any(row.occurred_at is not None for row in result.visual_dataset.rows):
+        row_fields.add("occurred_at")
+    spec = _chart_for_dataset(result, frozenset(row_fields), len(result.visual_dataset.rows))
+    if spec is None:
+        return result
+    spec = replace(spec, title=_visual_title(result, result.visual_dataset))
+    profile = VisualProfile.from_spec(
+        spec,
+        cardinality=len({row.dimension for row in result.visual_dataset.rows}),
+        metric=result.visual_dataset.metric,
+        unit=(
+            "count"
+            if result.visual_dataset.metric in {"COUNT", "FREQUENCY"}
+            else "ratio"
+            if result.visual_dataset.metric == "RATIO_SHARE"
+            else "money"
+        ),
+        positive=all(row.value_minor > 0 for row in result.visual_dataset.rows),
+        mutually_exclusive=all(row.series is None for row in result.visual_dataset.rows),
+        verified_total=(
+            result.visual_dataset.metric == "RATIO_SHARE"
+            or (
+                result.total_minor is not None
+                and sum(row.value_minor for row in result.visual_dataset.rows) == result.total_minor
+            )
+        ),
+    )
+    return replace(
+        result,
+        conversation=result.conversation.with_visual_context(
+            VisualContext(visualization.chart_id, spec, profile)
+        ),
+    )
+
+
+def _chart_for_dataset(
+    result: AskFinancialQuestionResult,
+    fields: frozenset[str],
+    row_count: int,
+) -> ChartSpec | None:
+    dataset = result.visual_dataset
+    if dataset is None:
+        return None
+
+    if dataset.metric == "RECURRENCE":
+        if not {"occurred_at", "dimension", "value_minor"} <= fields:
+            return None
+        encodings: tuple[ChartEncoding, ...] = (
+            ChartEncoding("x", "occurred_at", "temporal", "Fecha"),
+            ChartEncoding("y", "dimension", "nominal", "Recurrente"),
+            ChartEncoding("tooltip", "occurred_at", "temporal"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+        )
+        if "series" in fields:
+            encodings += (ChartEncoding("color", "series", "nominal", "Cadencia"),)
+        return ChartSpec(mark="point", encodings=encodings)
+
+    if dataset.metric == "FREQUENCY":
+        return ChartSpec(
+            mark="bar",
+            encodings=(
+                ChartEncoding("x", "dimension", "nominal", "Día"),
+                ChartEncoding("y", "value_minor", "quantitative", "Movimientos"),
+                ChartEncoding("tooltip", "dimension", "nominal"),
+                ChartEncoding("tooltip", "value_minor", "quantitative"),
+            ),
+            sort="input",
+        )
+
+    if dataset.metric == "RATIO_SHARE":
+        return ChartSpec(
+            mark="bar",
+            encodings=(
+                ChartEncoding("x", "value_minor", "quantitative", "Porcentaje"),
+                ChartEncoding("color", "dimension", "nominal", "Parte"),
+                ChartEncoding("tooltip", "dimension", "nominal"),
+                ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+            ),
+            stack="normalize",
+        )
+
+    group_by = result.plan_context.group_by if result.plan_context is not None else "NONE"
+    metric = result.plan_context.metric if result.plan_context is not None else dataset.metric
+    # A plan that already cut its rows has answered the question of how many to show.
+    ranked = result.plan_context is not None and result.plan_context.group_limit is not None
+    spec = derive_chart(
+        group_by=group_by,
+        metric=metric,
+        rows=row_count,
+        fields=fields,
+        dimension_field="dimension",
+        value_field="value_minor",
+        plan_limited=ranked,
+    )
+    if spec is None or "series" not in fields:
+        return spec
+    return ChartSpec(
+        mark=spec.mark,
+        encodings=spec.encodings + (ChartEncoding("color", "series", "nominal", "Serie"),),
+        stack=spec.stack,
+        sort=spec.sort,
+        responsive=spec.responsive,
+    )
+
+
+def _chart_suggestions(spec: ChartSpec) -> list[str]:
+    """Visual follow-ups this chart will accept, written the way the interpreter reads them.
+
+    Deterministic ones only. `interpret_visual` is a regex over an allow-list, so every line here is
+    a change the service is certain it can make. A chip that gets refused is worse than no chip: it
+    teaches somebody that the chips lie, and then the ones that work go untried too.
+
+    Filters are the obvious omission and they are omitted on measurement, not on suspicion.
+    `excluded_categories` and `excluded_merchants` are on the plan and banking honours them, and the
+    planner reads them correctly when the exclusion arrives in the same sentence as the question.
+    A chip is the other shape: the sentence is nothing but the filter, with the chart's plan behind
+    it. `evaluation/planning/metamorphic.yaml` now asks exactly that, and over three runs with no
+    spread "Sin el alquiler" after a breakdown of last month by category drops both the window and
+    the grouping and plans for today -- a figure, not a clarification. A chip for it is a button
+    that shows a wrong number, so there is no chip until the planner keeps the window.
+    """
+    suggestions = []
+    if spec.limit is not None:
+        suggestions.append("Ver todos")
+    suggestions.append("Ponlo en línea" if spec.mark == "bar" else "Ponlo en barras")
+    temporal = any(item.type == "temporal" for item in spec.encodings if item.channel in {"x", "y"})
+    # Sorting a series by its measure shuffles time, which is not a reordering of anything.
+    if not temporal and spec.sort != "ascending":
+        suggestions.append("Ordena de menor a mayor")
+    return suggestions
+
+
+def question_to_dto(
+    result: AskFinancialQuestionResult,
+    *,
+    holder_reference: str | None = None,
+    metric_tokens: MetricTokenCodec | None = None,
+) -> QuestionResponse:
+    visualization = _visualization_to_dto(result)
+    result = _remember_visual_context(result, visualization)
+    chart_id = (
+        visualization.chart_id if isinstance(visualization, ChartVisualizationResponse) else None
+    )
+    context = next(
+        (
+            item
+            for item in reversed(result.conversation.visual_contexts)
+            if item.chart_id == chart_id
+        ),
+        None,
+    )
+    candidate = None
+    # What makes an answer worth keeping is that it came from a plan and produced a figure. It used
+    # to be that it came with a chart, which meant "cuanto he gastado este mes" -- one number, and
+    # the most obvious metric anybody would save -- was the one answer with no way to save it. The
+    # figure is also what keeps a payment preview out: those carry the last plan too.
+    answered_a_figure = result.total_minor is not None or result.movement_count is not None
+    if (
+        isinstance(result.metric_definition, FinancialPlan)
+        and answered_a_figure
+        and holder_reference is not None
+        and metric_tokens is not None
+    ):
+        # No chart is not the same as a chart the conversation has forgotten: the first saves a
+        # figure, the second would save a spec that is no longer the one on screen.
+        if context is not None or chart_id is None:
+            try:
+                token = metric_tokens.issue(
+                    holder_reference,
+                    SavedMetricDefinition(
+                        result.metric_definition, context.spec if context else None
+                    ),
+                )
+            except CodecError:
+                pass
+            else:
+                candidate = SaveCandidate(chart_id=chart_id, definition_token=token)
     return QuestionResponse(
         outcome=result.outcome,
         text=result.text,
@@ -203,12 +514,14 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
         ],
         currency=result.currency,
         total_minor=result.total_minor,
+        difference_minor=result.difference_minor,
         movement_count=result.movement_count,
         groups=[
             SpokenGroupResponse(
                 key=group.key,
                 total_minor=group.total_minor,
                 movement_count=group.movement_count,
+                value_minor=group.value_minor,
             )
             for group in result.groups
         ],
@@ -227,7 +540,11 @@ def question_to_dto(result: AskFinancialQuestionResult) -> QuestionResponse:
             )
             for movement in result.movements
         ],
-        suggestions=result.suggestions,
+        visualization=visualization,
+        # Never over the planner's own: those recover a question that did not land, and a chip about
+        # bar charts does not belong next to "¿de qué periodo?".
+        suggestions=result.suggestions or (_chart_suggestions(context.spec) if context else []),
+        save_candidate=candidate,
     )
 
 

@@ -1,0 +1,74 @@
+# Grafana datasources, provisioned from this file at boot.
+#
+# The point is that nobody ever opens the UI and clicks "Save & Test". A datasource that
+# needs a human to finish it is not provisioned, it is documented — and it will be missing
+# on the next machine. Grafana reads this on every start, so the file is the truth and the
+# database is a cache of it.
+#
+# Section 5 of docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # PINNED UID, and this is the load-bearing line for section 6. A dashboard JSON in
+    # ../../dashboards/ refers to its datasource by uid; if Grafana were left to generate
+    # one, every machine would generate a different one and every provisioned dashboard
+    # would come up with "datasource not found". Never change this string.
+    uid: finguard-prometheus
+    type: prometheus
+    access: proxy
+    # By service name on the compose network — resolved by Grafana's backend, not the
+    # browser, which is what `access: proxy` means and why the host port is irrelevant here.
+    url: http://prometheus:9090
+    isDefault: true
+    # Not editable in the UI on purpose. Without this a well-meaning edit in the browser
+    # silently diverges from this file and survives until the next container recreate, which
+    # is the worst possible lifetime for a configuration change: long enough to rely on,
+    # short enough to lose.
+    editable: false
+    jsonData:
+      # POST rather than GET so long TraceQL-derived queries and big label matchers do not
+      # hit URL length limits. No downside; GET's only advantage is HTTP caching that
+      # Grafana does not use.
+      httpMethod: POST
+      # Must not exceed the scrape_interval in ../../prometheus/prometheus.yml, or Grafana
+      # asks for a resolution Prometheus never recorded and draws gaps that look like an
+      # outage in the service rather than an artefact of the query.
+      timeInterval: 15s
+      # THIS is what makes "a turn's full waterfall, reachable from any of the above"
+      # (section 6) actually work. An exemplar on a counter carries the trace_id of one
+      # sample; this tells Grafana which datasource to open it in. Three other things have
+      # to line up for the link to resolve: Prometheus must run with exemplar storage on
+      # (a flag in compose.yaml), the collector must not strip exemplars (it does not —
+      # remote write carries them), and section 3 must attach the trace context when it
+      # increments the counter. If the dots never appear, the missing piece is the third.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: finguard-tempo
+
+  - name: Tempo
+    uid: finguard-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # Span -> rate. The other direction from exemplars: from one turn you are looking at,
+      # jump to how often that step behaves this way across all turns. The pair of these two
+      # settings is what makes the split between these two stores invisible to whoever is
+      # reading a panel, which is the only reason the split is acceptable.
+      tracesToMetrics:
+        datasourceUid: finguard-prometheus
+        tags:
+          - key: service.name
+            value: service_name
+      # Streaming search results, matching stream_over_http_enabled in ../../tempo/tempo.yaml.
+      # Both sides have to agree; Grafana falls back to a blocking search if this is off.
+      streamingEnabled:
+        search: true
+      nodeGraph:
+        enabled: true
+      # NOT configured: tracesToLogs. That would need Loki, which is deliberately out of the
+      # first cut — the decision log is span events in this datasource, and the raw JSON logs
+      # stay on stdout. Left absent rather than pointed at nothing.

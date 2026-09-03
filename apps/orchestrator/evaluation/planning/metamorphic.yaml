@@ -109,6 +109,45 @@ cases:
     plan:
       {period: {period: LAST_MONTH}, direction: EXPENSE, categories: [GROCERIES], excludedMerchants: [Carrefour]}
 
+  # Taking one group out of a breakdown that is already on screen. This is the shape of the
+  # follow-up an answer with a chart offers, and it is the one the corpus never covered: the
+  # exclusions above all arrive in the same sentence as the question. Here the sentence is only the
+  # exclusion, and the grouping has to survive it — a follow-up that silently drops `groupBy`
+  # answers with a total while a breakdown is on the screen, which reads as the chart being wrong.
+  - id: exclusion_breakdown_by_category
+    group: metamorphic_exclusion
+    question: ¿Cuánto gasté por categoría el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+
+  - id: exclusion_breakdown_without_rent
+    group: metamorphic_exclusion
+    question: Sin el alquiler
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: CATEGORY}
+    expect: plan
+    metamorph_of: exclusion_breakdown_by_category
+    changes: [excludedCategories]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: CATEGORY, excludedCategories: [HOUSING_RENT]}
+
+  - id: exclusion_breakdown_by_merchant
+    group: metamorphic_exclusion
+    # The corpus's own wording for a merchant breakdown. "Por comercio" in the singular was read as
+    # COUNTERPARTY, which is a fair reading of a phrasing nothing else in the corpus uses.
+    question: ¿En qué comercios he gastado más el mes pasado?
+    expect: plan
+    plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+
+  - id: exclusion_breakdown_except_mercadona
+    group: metamorphic_exclusion
+    question: Excepto Mercadona
+    previous: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
+    expect: plan
+    metamorph_of: exclusion_breakdown_by_merchant
+    changes: [excludedMerchants]
+    plan:
+      {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: MERCHANT, excludedMerchants: [Mercadona]}
+
   # The same mutations over COUNT ensure preservation is not tied to the default SUM metric.
   - id: stable_count_groceries
     group: metamorphic_composed

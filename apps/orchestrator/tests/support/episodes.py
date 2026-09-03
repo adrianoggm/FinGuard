@@ -29,6 +29,14 @@ What each turn may say:
 And what a whole episode may say:
 
     metrics      the ones this episode is meant to exercise, so a run can report per feature
+    scope        which of the holder's accounts this conversation is already about
+
+**The stack is the deployment's, and `scope` is what made that affordable.** Production wires an
+`AccountDirectory` and therefore asks «¿En qué cuenta quieres consultarlo?» before answering any
+unqualified spending question. This harness did not wire one, so every turn here took three
+branches of `_scoped` that no deployment reaches — which is how a real account-scope defect
+survived 1143 turns at "0 % lost context". Declaring the scope once per episode buys the production
+path without a preamble turn in every conversation; see `opening`.
 """
 
 from __future__ import annotations
@@ -64,6 +72,14 @@ from finguard_orchestrator.application.queries import (
     ask_financial_question as handler,
 )
 from finguard_orchestrator.application.queries.list_contacts import ContactRow
+from finguard_orchestrator.application.queries.readers import (
+    breakdowns,
+    comparisons,
+    follow_up,
+    metrics,
+    rankings,
+    subjects,
+)
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
     get_ask_handler,
@@ -90,6 +106,7 @@ from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import (
@@ -241,9 +258,7 @@ class AnyPlan:
     def __init__(self) -> None:
         self.asked: list[str] = []
 
-    async def plan(
-        self, sentence: str, *, previous: FinancialPlan | None = None, **_: object
-    ) -> PlanningResult:
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
         self.asked.append(sentence)
         said = sentence.lower()
         if any(word in said for word in ("mas caro", "más caro", "mas alto", "más alto", "mayor")):
@@ -264,6 +279,7 @@ class AnyPlan:
         # planner is handed `previous` for exactly this, and a stub that threw it away made every
         # turn reaching the model look as though it had lost the thread — so an expectation about
         # one could not state a window without asserting this stub's default instead.
+        previous = context.continuation.plan if context.continuation else None
         inherited = (previous.period or previous.date_range) if previous is not None else None
         window = facts.window or inherited or RelativePeriod(period=Period.LAST_MONTH)
         relative = isinstance(window, RelativePeriod)
@@ -362,6 +378,20 @@ class Accounts:
             as_of=datetime(2026, 8, 5, 9, 30, tzinfo=UTC),
             holdings=HOLDINGS,
         )
+
+
+class Directory:
+    """The holder's account names, which production wires and this harness did not.
+
+    `AskFinancialQuestionHandler` reads the account scope of a question through this port when it
+    has one, and through the account *summary* when it does not — and the two are not the same code.
+    Three branches of `_scoped` exist only for the second case, so a corpus built without a
+    directory replayed 1143 turns through a path no deployment runs: no turn had ever seen the
+    account clarification, stored an `AccountSelection`, or read one back on a later turn.
+    """
+
+    async def all_of(self, *_: object, **__: object) -> tuple[Holding, ...]:
+        return HOLDINGS
 
 
 class Contacts:
@@ -507,12 +537,18 @@ class Stack:
     bank: Bank
 
 
-def a_stack() -> Stack:
+def a_stack(*, directory: bool = True) -> Stack:
+    """The service, wired as a deployment wires it.
+
+    `directory=False` is the shape every episode used to run in, and it is now only reached by the
+    episodes that declare `scope: legacy` — see `opening`.
+    """
     planner, ledger, bank = AnyPlan(), Ledger(), Bank()
     handler = AskFinancialQuestionHandler(
         planner,  # type: ignore[arg-type]
         ledger,  # type: ignore[arg-type]
         accounts=Accounts(),  # type: ignore[arg-type]
+        account_directory=Directory() if directory else None,  # type: ignore[arg-type]
         contacts=Contacts(),
         cards=NoCards(),  # type: ignore[arg-type]
     )
@@ -545,6 +581,31 @@ def a_stack() -> Stack:
     app.state.questions_enabled = True
     app.state.payments_enabled = True
     return Stack(TestClient(app), planner, ledger, bank)
+
+
+# --- which accounts a conversation is about ------------------------------------------------
+#
+# Production holds three accounts and asks which one an unqualified spending question means. That
+# is a real turn — «¿En qué cuenta quieres consultarlo?» — and it costs a thread its first
+# exchange. A corpus that opened every conversation with nothing settled would spend its first turn
+# answering that question 169 times over: the same preamble copied into every episode, proving
+# nothing after the first, and drowning the thing each episode was written for.
+#
+# So an episode says once which accounts it is about and the harness opens the conversation there.
+#
+#   settled   the scope is already every account, which is the state a real thread is in from its
+#             second turn onward. The default, because almost every episode is about something else
+#             and was written as though the scope were not in question.
+#   unset     nothing settled, so the clarification actually happens. `31-account-scope.yaml` is
+#             written on this, because that turn is production behaviour and deserves conversations
+#             of its own rather than a mention in 169 preambles.
+#   legacy    no directory at all. Debt, not a choice — see `LEGACY_SCOPE` in
+#             `tests/test_conversation_corpus.py` for the defect these six are waiting on.
+
+SETTLED = "settled"
+UNSET = "unset"
+LEGACY = "legacy"
+SCOPES = (SETTLED, UNSET, LEGACY)
 
 
 # --- the corpus ------------------------------------------------------------------------------
@@ -589,6 +650,38 @@ class Episode:
     why: str
     turns: tuple[Turn, ...]
     metrics: tuple[str, ...] = ()
+    # Which of the holder's accounts this conversation is already about, once, for the episode.
+    scope: str = SETTLED
+
+
+def opening(episode: Episode) -> dict[str, Any] | None:
+    """The conversation a replay starts from, from what the episode declared.
+
+    A settled `AccountSelection` rather than an extra turn. It is the same state the service stores
+    the moment a holder answers the account question, so an episode opening here resumes a real
+    thread rather than skipping a check: every turn in it still reads that selection back through
+    the directory-backed branch of `_scoped`, which is the branch that had never run.
+
+    `==` and not `is`. Until an episode wrote `scope: settled` out loud, the only settled episodes
+    were the ones that omitted the field and took the dataclass default -- the interned literal, so
+    identity happened to hold. A value read out of YAML is a fresh string, so the first episode to
+    declare the default explicitly opened with nothing settled and every unqualified question in it
+    was answered with the account clarification instead. The typo rule below cannot see this: it
+    compares with `in`, which is `==` all the way down.
+    """
+    return {"account_selection_mode": "ALL"} if _scope_of(episode) == SETTLED else None
+
+
+def a_stack_for(episode: Episode) -> Stack:
+    """The stack this episode replays in. Only `scope: legacy` gets one without a directory."""
+    return a_stack(directory=_scope_of(episode) != LEGACY)
+
+
+def _scope_of(episode: Episode) -> str:
+    """The declared scope, refusing a typo rather than silently meaning `settled`."""
+    if episode.scope not in SCOPES:
+        raise ValueError(f"{episode.name}: scope {episode.scope!r} is not one of {SCOPES}")
+    return episode.scope
 
 
 @dataclass
@@ -651,6 +744,7 @@ def load() -> list[Episode]:
                     name=f"{path.stem}/{raw['name']}",
                     why=raw.get("why", ""),
                     metrics=tuple(raw.get("metrics", ())),
+                    scope=raw.get("scope", SETTLED),
                     turns=tuple(Turn(**{**turn, "say": str(turn["say"])}) for turn in raw["turns"]),
                 )
             )
@@ -720,38 +814,41 @@ def _window(query: FinancialPlan | TopMovements) -> str:
 
 # --- who claims a turn ---------------------------------------------------------------------
 #
-# `_steps` reads a sentence by asking nineteen deterministic recognisers in a fixed order and taking
+# `_steps` reads a sentence by asking twenty deterministic recognisers in a fixed order and taking
 # the first that answers. The order is the design, and it is also invisible: the first one to fire
 # returns, so nothing can observe that a second one would have fired too, with a different query.
 #
 # That is what makes the cascade hard to change. Fixing one turn by moving a branch can silently
 # change another, and there is no measurement that says which turns are sitting on a tie. These
-# nineteen have the same signature — a query in, a reading or None out, no I/O — so asking all of
+# twenty have the same signature — a query in, a reading or None out, no I/O — so asking all of
 # them is a thing a test can just do.
 #
 # Test-only on purpose. Production still short-circuits: evaluating a recogniser that today is
 # unreachable could raise, and a measurement is the right place to find that out.
 
+# Named by module since A2, which is also the answer to "where do I go and read this one": the
+# readers are in `queries/readers/` and only `_account_activity_request` is still the handler's own.
 _RECOGNISERS: tuple[tuple[str, Any], ...] = (
-    ("ratio", handler._ratio_request),
-    ("gambling", handler._gambling_plan),
-    ("internal_movement", handler._internal_movement_request),
+    ("ratio", subjects._ratio_request),
+    ("gambling", subjects._gambling_plan),
+    ("internal_movement", subjects._internal_movement_request),
     ("account_activity", handler._account_activity_request),
-    ("salary_history", handler._salary_history_plans),
-    ("period_comparison", handler._period_comparison_plans),
-    ("previous_period_comparison", handler._comparison_with_previous_period),
-    ("direct_period_comparison", handler._direct_period_comparison),
-    ("account_follow_up", handler._account_follow_up_plan),
-    ("contextual_follow_up", handler._contextual_follow_up_plan),
-    ("multiple_movement_ranking", handler._multiple_movement_ranking),
-    ("group_ranking", handler._group_ranking_plan),
-    ("natural_period", handler._natural_period_aggregate_plan),
-    ("deterministic_breakdown", handler._deterministic_breakdown_plan),
-    ("contextual_ranking", handler._contextual_ranking_plan),
-    ("cumulative", handler._cumulative_plan),
-    ("recurrence", handler._recurrence_plan),
-    ("frequency", handler._frequency_plan),
-    ("average", handler._average_plan),
+    ("salary_history", comparisons._salary_history_plans),
+    ("period_comparison", comparisons._period_comparison_plans),
+    ("previous_period_comparison", comparisons._comparison_with_previous_period),
+    ("direct_period_comparison", comparisons._direct_period_comparison),
+    ("named_window_comparison", comparisons._comparison_with_a_named_window),
+    ("account_follow_up", follow_up._account_follow_up_plan),
+    ("contextual_follow_up", follow_up._contextual_follow_up_plan),
+    ("multiple_movement_ranking", rankings._multiple_movement_ranking),
+    ("group_ranking", rankings._group_ranking_plan),
+    ("natural_period", breakdowns._natural_period_aggregate_plan),
+    ("deterministic_breakdown", breakdowns._deterministic_breakdown_plan),
+    ("contextual_ranking", rankings._contextual_ranking_plan),
+    ("cumulative", metrics._cumulative_plan),
+    ("recurrence", metrics._recurrence_plan),
+    ("frequency", metrics._frequency_plan),
+    ("average", metrics._average_plan),
 )
 
 
@@ -815,8 +912,8 @@ def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
     asked. Precedence is only load-bearing where the readings differ, and those are the turns a
     reordering would silently change the answer to.
     """
-    stack = a_stack()
-    state: dict[str, Any] | None = None
+    stack = a_stack_for(episode)
+    state: dict[str, Any] | None = opening(episode)
     for number, turn in enumerate(episode.turns, start=1):
         claims = claimants(turn.say, state)
         if len(set(claims.values())) > 1:
@@ -859,10 +956,10 @@ def replay(
     any episode — it is a fact about the corpus — and running the conversations twice to learn it
     would double the slowest test in the suite.
     """
-    stack = a_stack()
+    stack = a_stack_for(episode)
     if interpreter is not None:
         app.dependency_overrides[turn_interpreter] = lambda: interpreter
-    conversation: dict[str, Any] | None = None
+    conversation: dict[str, Any] | None = opening(episode)
 
     for number, turn in enumerate(episode.turns, start=1):
         before = len(stack.planner.asked)
@@ -1136,11 +1233,11 @@ async def compare(
     reference = authority or Deterministic()
     report = Agreement()
     for episode in episodes:
-        stack = a_stack()
+        stack = a_stack_for(episode)
         app.dependency_overrides[turn_interpreter] = lambda: _Scored(
             reference, candidate, report, only
         )
-        conversation: dict[str, Any] | None = None
+        conversation: dict[str, Any] | None = opening(episode)
         for turn in episode.turns:
             answered = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}

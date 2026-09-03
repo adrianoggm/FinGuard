@@ -35,8 +35,13 @@ from finguard_orchestrator.domain.models.conversation import (
     PaymentInProgress,
     Slot,
 )
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     FinancialPlanDraft,
@@ -97,12 +102,11 @@ class FakePlanner:
         self,
         sentence: str,
         *,
-        today: date,
-        previous: FinancialPlan | None = None,
-        force_follow_up: bool = False,
+        context: PlanningContext,
     ) -> PlanningResult:
-        self.previous, self.asked = previous, sentence
-        self.force_follow_up = force_follow_up
+        self.previous = context.continuation.plan if context.continuation else None
+        self.asked = sentence
+        self.force_follow_up = bool(context.continuation and context.continuation.force_follow_up)
         return self._result
 
 
@@ -359,9 +363,11 @@ async def test_an_answer_remembers_its_highlighted_merchant_and_evidence_rows() 
         ledger,
     )
 
-    assert result.conversation.referenced_group_by is GroupBy.MERCHANT
-    assert result.conversation.referenced_group_key == "GROCERIES"
-    assert result.conversation.referenced_transaction_ids == (transaction_id,)
+    reference = result.conversation.result_reference
+    assert reference is not None
+    assert reference.group_by is GroupBy.MERCHANT
+    assert reference.group_key == "GROCERIES"
+    assert reference.transaction_ids == (transaction_id,)
 
 
 # --- every outcome reaches the user as something different --------------------------
@@ -901,6 +907,123 @@ async def test_the_stream_ends_with_the_same_answer_the_handler_returns() -> Non
     direct = await handler_for(planned).handle(query)
 
     assert streamed[-1] == direct
+
+
+async def test_result_reference_follow_up_is_identical_in_stream_and_direct_paths() -> None:
+    source = plan(categories=("GROCERIES",), group_by=GroupBy.CATEGORY)
+    conversation = answered_with_result(
+        IDLE,
+        ResultReference(
+            source_query=source,
+            category="GROCERIES",
+            group_by=GroupBy.CATEGORY,
+            group_key="GROCERIES",
+        ),
+    )
+    query = AskFinancialQuestionQuery(
+        sentence="Y esa categoría?",
+        account_id=ACCOUNT,
+        today=TODAY,
+        conversation=conversation,
+    )
+    fallback = PlanningResult.planned(plan(categories=("HEALTH",)))
+
+    streamed = [step async for step in handler_for(fallback).stream(query)]
+    direct = await handler_for(fallback).handle(query)
+
+    assert streamed[-1] == direct
+    assert direct.conversation.last_plan is not None
+    assert direct.conversation.last_plan.categories == ("GROCERIES",)
+
+
+async def test_category_filter_and_highlighted_merchant_remain_distinct_references() -> None:
+    source = plan(categories=("GROCERIES",), group_by=GroupBy.MERCHANT)
+    answer = replace(ANSWER, groups=(Group("Mercadona", 12345, 3),))
+    first = await handler_for(PlanningResult.planned(source), FakeLedger(answer)).handle(
+        AskFinancialQuestionQuery(
+            sentence="x",
+            account_id=ACCOUNT,
+            today=TODAY,
+        )
+    )
+
+    category_ledger = FakeLedger(ANSWER)
+    category = await handler_for(
+        PlanningResult.planned(plan(categories=("HEALTH",))), category_ledger
+    ).handle(
+        AskFinancialQuestionQuery(
+            sentence="Cuánto gasté en esa categoría?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=first.conversation,
+        )
+    )
+    merchant_ledger = FakeLedger(ANSWER)
+    merchant = await handler_for(
+        PlanningResult.planned(plan(merchants=("Otro",))), merchant_ledger
+    ).handle(
+        AskFinancialQuestionQuery(
+            sentence="Cuánto gasté en ese comercio?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=first.conversation,
+        )
+    )
+
+    reference = first.conversation.result_reference
+    assert reference is not None
+    assert reference.category == "GROCERIES"
+    assert reference.group_key == "Mercadona"
+    assert category_ledger.plan is not None
+    assert category_ledger.plan.categories == ("GROCERIES",)
+    assert category_ledger.plan.merchants == ()
+    assert merchant_ledger.plan is not None
+    assert merchant_ledger.plan.categories == ("GROCERIES",)
+    assert merchant_ledger.plan.merchants == ("Mercadona",)
+    assert category.outcome == merchant.outcome == PlanningOutcome.PLANNED.value
+
+
+async def test_dual_references_survive_a_balance_aside_and_explicit_return() -> None:
+    source = plan(categories=("GROCERIES",), group_by=GroupBy.MERCHANT)
+    highlighted = replace(ANSWER, groups=(Group("Mercadona", 12345, 3),))
+    first = await handler_for(PlanningResult.planned(source), FakeLedger(highlighted)).handle(
+        AskFinancialQuestionQuery(sentence="x", account_id=ACCOUNT, today=TODAY)
+    )
+    balance = await handler_for(PlanningResult.planned(plan())).handle(
+        AskFinancialQuestionQuery(
+            sentence="Cuánto saldo tengo?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=first.conversation,
+        )
+    )
+    assert balance.conversation.answered_the_balance
+
+    category_ledger = FakeLedger(ANSWER)
+    await handler_for(PlanningResult.planned(plan()), category_ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="Volviendo a lo de antes: cuánto gasté en esa categoría?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=balance.conversation,
+        )
+    )
+    merchant_ledger = FakeLedger(ANSWER)
+    await handler_for(PlanningResult.planned(plan()), merchant_ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="Volviendo a lo de antes: cuánto gasté en ese comercio?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            conversation=balance.conversation,
+        )
+    )
+
+    assert category_ledger.plan is not None
+    assert category_ledger.plan.categories == ("GROCERIES",)
+    assert category_ledger.plan.merchants == ()
+    assert merchant_ledger.plan is not None
+    assert merchant_ledger.plan.categories == ("GROCERIES",)
+    assert merchant_ledger.plan.merchants == ("Mercadona",)
 
 
 async def test_the_plan_is_streamed_before_any_figure() -> None:

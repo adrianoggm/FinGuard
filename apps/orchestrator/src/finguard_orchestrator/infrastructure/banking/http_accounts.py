@@ -17,6 +17,7 @@ import httpx2 as httpx
 
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import Holding
+from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
 class HttpAccounts:
@@ -29,7 +30,7 @@ class HttpAccounts:
     async def all_of(self, account_id: UUID) -> tuple[Holding, ...]:
         url = f"{self._base_url}/v1/accounts/{account_id}/holder-accounts"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.get(url)
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{url}: {exc}") from exc

@@ -11,11 +11,24 @@
   --ink-soft: #5c6b66;
   --brand: #0d3b33;
   --brand-bright: #14806a;
+  --accent: #14806a;
   --surface: #f4f6f5;
   --card: #ffffff;
   --line: #e3e8e6;
   --out: #b3261e;
   --in: #0f7a4f;
+  /*
+   * Chart marks. Six slots in a fixed order, never cycled, and read by `Chart.tsx` so a chart and
+   * the screen around it are painted from one palette. Slot 1 is the brand teal. --out and --in are
+   * deliberately not in the list: they mean money leaving and money arriving, and a series that
+   * borrows one of them says something about the data that is not true.
+   */
+  --chart-1: #0f8a6d;
+  --chart-2: #b45309;
+  --chart-3: #3b5bdb;
+  --chart-4: #cc79a7;
+  --chart-5: #4d7c0f;
+  --chart-6: #6d28d9;
   --radius: 1.25rem;
   --shadow: 0 0.5rem 1.5rem rgb(13 27 24 / 8%);
   font-family:
@@ -24,6 +37,81 @@
 
 * {
   box-sizing: border-box;
+}
+
+/*
+ * A chart is a card, drawn the way every other card in this app is drawn: flat --card, the shared
+ * hairline, the same corner. It used to have its own gradient and its own border colour, which is
+ * how a chart inside a chat bubble ended up reading as something pasted in from another product.
+ */
+.chart-figure {
+  margin: 0.75rem 0 0;
+}
+
+.chart-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--brand);
+}
+
+.visualization-chart {
+  width: 100%;
+  min-height: 8rem;
+  /* Never `hidden`: a wide chart scrolls rather than losing its last label to a crop. */
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 0.5rem 0.5rem 0.25rem;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.visualization-chart .vega-embed,
+.visualization-chart .vega-embed > svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+}
+
+.chart-fallback {
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+/* Sits under the plot, in the same voice as the caveat under the movements. */
+.chart-sample {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
+.chart-kpi {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  /* --card, not --surface: inside an assistant bubble --surface is the bubble, so the tile had no
+     edge of its own. */
+  background: var(--card);
+}
+
+.chart-kpi span {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visualization-chart,
+  .visualization-chart * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 body {
@@ -159,6 +247,53 @@ body {
   margin-bottom: 1rem;
 }
 
+.card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.metric-list { list-style: none; margin: 0; padding: 0; }
+
+/* A card, not a row. It used to be a name and a strip of buttons on one line; it now carries the
+   period, the answer and a compact chart, so it stacks at every width instead of only on a phone. */
+.metric-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.metric-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.metric-what { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+/* Not editable and not a title: it is the window the service verified, so it is typeset as a note
+   under the name the holder chose rather than competing with it. */
+.metric-period { color: var(--ink-soft); font-size: 0.78rem; }
+.metric-headline { margin: 0; font-size: 0.88rem; line-height: 1.45; }
+.metric-when { margin: 0; color: var(--ink-soft); font-size: 0.72rem; }
+.metric-detail { border-top: 1px dashed var(--line); padding-top: 0.6rem; }
+.metric-actions, .metric-edit { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.metric-edit input, .metric-save input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+
+/* One row under the chart: the name, then the button. It had no layout rule at all, so the input
+   and the button sat against each other with whatever whitespace the markup happened to leave. */
+.metric-save {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.metric-save input { flex: 1 1 8rem; font-family: inherit; font-size: 0.85rem; }
+
+.metric-feedback { margin: 0.6rem 0 0; font-size: 0.8rem; color: var(--ink-soft); }
+.metric-feedback.saved { color: var(--accent); font-weight: 600; }
+.link { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; }
+.link:disabled { color: var(--ink-soft); cursor: not-allowed; opacity: 0.55; }
+
+@media (max-width: 30rem) {
+  .visualization-chart { padding: 0.25rem 0.25rem 0; }
+  .metric-head { flex-direction: column; align-items: flex-start; gap: 0.2rem; }
+  .metric-actions { width: 100%; justify-content: flex-start; gap: 0.7rem; }
+}
+
 .card h2 {
   margin: 0 0 0.75rem;
   font-size: 0.95rem;
@@ -174,6 +309,35 @@ body {
 .card.preview {
   background: #fff8e6;
   border: 1px solid #f0dca8;
+}
+
+/* What a reply to that card could not tell the holder, said beside the buttons that produced it.
+   Both money screens draw this and nothing else does — `.card.preview` is theirs, the chat's
+   preview being a `.bubble`. */
+.card.preview .approval-notice {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.7rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--out);
+  background: #fff;
+  color: var(--out);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+/* Nothing to say yet. The element stays in the tree so the live region exists before its text
+   does; it must not also take up room. */
+.card.preview .approval-notice:empty {
+  display: none;
+}
+
+/* A reply in flight, on the one card where a second tap costs money. It had no disabled styling at
+   all, so both buttons looked live throughout. */
+.card.preview .confirm button:disabled,
+.card.preview .primary:disabled {
+  background: var(--line);
+  color: var(--ink-soft);
+  cursor: default;
 }
 
 /* --- the home screen ------------------------------------------------------------ */
@@ -1134,6 +1298,11 @@ body {
   align-self: flex-start;
   background: var(--surface);
   border-bottom-left-radius: 0.35rem;
+}
+
+.bubble.has-visualization {
+  width: 100%;
+  max-width: 100%;
 }
 
 .bubble.theirs p {

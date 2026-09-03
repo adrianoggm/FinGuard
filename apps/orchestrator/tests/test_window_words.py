@@ -491,3 +491,107 @@ def test_two_compared_windows_are_complete_without_becoming_one_shareable_window
 
     assert window_words.has_complete_window(sentence, today=TODAY)
     assert window_words.has_compared_windows(sentence, today=TODAY)
+
+
+# --- the two shapes the corpus stated plainly and this could not see -------------------
+#
+# Both are held-out cases the model resolved wrongly *while the sentence said the window
+# outright*, and both survived because `window_in` answered None: `explicit_facts.enforce`
+# overrides the model with what the sentence stated, but only for a window this file reads.
+#
+#     "¿Cuánto llevo desde el lunes?"            resolved as a rolling seven days
+#     "¿Qué gasté entre el 10 y el 20 de mayo?"  resolved as the same days last year
+#
+# The corpus reference day. It is a Wednesday, so "desde el lunes" covers three days and a
+# rolling week covers seven — the two readings cannot be confused for one another here.
+REFERENCE = date(2026, 7, 15)
+
+
+def test_since_monday_is_the_week_so_far() -> None:
+    """A week starts on Monday here, so "desde el lunes" *is* THIS_WEEK — the same days, by
+    definition, on whichever day of the week it is said.
+
+    Only Monday. "Desde el martes" names a window the contract has no name for and whose start is
+    ambiguous — this week's Tuesday if it has come round, last week's if it has not — and this
+    file's answer to an ambiguity is None.
+    """
+    assert window_words.window_in("¿Cuánto llevo desde el lunes?", today=REFERENCE) == (
+        RelativePeriod(period=Period.THIS_WEEK)
+    )
+
+
+def test_two_days_of_one_named_month_are_a_range() -> None:
+    """ "Entre el 10 y el 20 de mayo" states both ends, and only the second carries the month —
+    which is why the range reader, which wants a month on each end, never saw it.
+
+    The year is the one every bare month in this file gets: the last time it happened, counting
+    the one under way. Said in July 2026, "de mayo" is May 2026 and not May 2025.
+    """
+    assert window_words.window_in("¿Qué gasté entre el 10 y el 20 de mayo?", today=REFERENCE) == (
+        AbsoluteRange(start=date(2026, 5, 10), end=date(2026, 5, 20))
+    )
+
+
+def test_an_explicit_year_on_a_shared_month_beats_the_one_this_would_have_guessed() -> None:
+    """The reason the trailing year is read rather than ignored. Matching only the prefix of "entre
+    el 10 y el 20 de mayo de 2025" would answer 2026 — a year the sentence had already denied, made
+    authoritative by the very override this reader exists to feed."""
+    assert window_words.window_in(
+        "¿Qué gasté entre el 10 y el 20 de mayo de 2025?", today=REFERENCE
+    ) == AbsoluteRange(start=date(2025, 5, 10), end=date(2025, 5, 20))
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # A weekday that is not the one the week starts on. "Desde el martes" has no name in the
+        # contract and no unambiguous start, and this file's answer to an ambiguity is None.
+        "¿Cuánto llevo desde el martes?",
+        "¿Cuánto llevo desde el viernes?",
+        # Still a Monday, but not this one, or not a window that closes today.
+        "¿Cuánto gasté desde el lunes pasado?",
+        "¿Cuánto gasté desde el lunes anterior?",
+        "¿Cuánto gasté desde el lunes 13?",
+        "¿Cuánto gasté desde el lunes 13 de julio?",
+        "¿Cuánto gasté desde el lunes hasta el viernes?",
+        "¿Cuánto gasté desde el lunes al viernes?",
+        # A single day rather than everything since it.
+        "¿Cuánto gasté el lunes?",
+        # Two numbers and no calendar.
+        "¿Cuánto gasté entre el 10 y el 20?",
+        # Two months and no days: a third of the question either way round.
+        "¿Cuánto gasté entre febrero y marzo?",
+        # A month on each end, which is the other reader's shape and needs its opener.
+        "¿Cuánto gasté entre el 30 de junio y el 1 de junio?",
+        # The same shape said another way. Unmeasured, so still nobody's business here.
+        "¿Cuánto gasté del 10 al 20 de mayo?",
+        # Backwards, and swapping it silently would answer eleven days nobody asked about.
+        "¿Cuánto gasté entre el 20 y el 10 de mayo?",
+        # A day that does not exist.
+        "¿Cuánto gasté entre el 10 y el 32 de mayo?",
+        # One of each shape is two windows, and answering with either is answering neither.
+        "¿Cuánto gasté entre el 1 y el 15 de junio y del 1 de marzo al 15 de abril?",
+    ],
+)
+def test_neither_new_shape_generalises_past_what_was_measured(sentence: str) -> None:
+    """The risk this change carries, written down as the thing that must keep failing.
+
+    `window_in` is consulted on every path and `explicit_facts.enforce` makes whatever it returns
+    beat the model, so a reader that sees a window the sentence did not state is worse than the
+    blind one it replaced. Each of these is refused for a stated reason, not by accident.
+    """
+    assert window_words.window_in(sentence, today=REFERENCE) is None
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ("los últimos 0 días", "los últimos 5000 días", "durante los últimos 100 meses"),
+)
+def test_an_explicit_count_outside_the_domain_is_distinguished_from_no_window(
+    sentence: str,
+) -> None:
+    assert window_words.has_invalid_counted_window(sentence)
+
+
+def test_the_valid_edge_is_not_marked_invalid() -> None:
+    assert not window_words.has_invalid_counted_window("durante los últimos 366 días")

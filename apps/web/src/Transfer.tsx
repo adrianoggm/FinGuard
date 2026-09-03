@@ -14,21 +14,22 @@
  * The investment is offered like any other account and labelled for what it is. Putting money into
  * a fund is a real thing to do; what it must never look like is spending, and the balance beside it
  * is a cost basis rather than a valuation.
+ *
+ * The preview and everything that can happen to it live in `Approval`, shared with Bizum.
  */
 
 import { useMemo, useState } from "react";
 
+import { Approval, replied, type Held, type Reply } from "./Approval";
 import {
   confirm,
   newAttempt,
   transferBetweenAccounts,
-  type Answer,
   type Holding,
   type Summary,
 } from "./api";
 import { accountGlyph, accountName, minorUnits, money } from "./format";
 
-const AWAITING = "AWAITING_CONFIRMATION";
 const PAID = "PAID";
 
 type Props = { summary: Summary | null; onPaid: () => void };
@@ -36,7 +37,7 @@ type Props = { summary: Summary | null; onPaid: () => void };
 export function Transfer({ summary, onPaid }: Props) {
   const [target, setTarget] = useState<Holding | null>(null);
   const [typed, setTyped] = useState("");
-  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [held, setHeld] = useState<Held | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // How many transfers this screen has completed. It exists only to renew the key below: once one
@@ -50,6 +51,7 @@ export function Transfer({ summary, onPaid }: Props) {
   const source = holdings.find((holding) => holding.booked_minor === summary?.booked_minor);
   const destinations = holdings.filter((holding) => holding.account_id !== source?.account_id);
   const amount = minorUnits(typed);
+  const excess = overdraft(summary, amount);
   // A name for this attempt: kept while the destination and the amount stand, so pressing again
   // after a timeout is the same preview and not a second one, and renewed the moment either
   // changes — the bank refuses a key reused for a different payment rather than answering with the
@@ -57,10 +59,14 @@ export function Transfer({ summary, onPaid }: Props) {
   const attempt = useMemo(newAttempt, [target?.account_id, amount, completed]);
 
   async function prepare() {
-    if (!target || amount === null || busy) return;
+    if (!target || amount === null || excess !== null || busy) return;
     setBusy(true);
     try {
-      setAnswer(await transferBetweenAccounts(target.account_id, amount, target.currency, attempt));
+      setHeld({
+        answer: await transferBetweenAccounts(target.account_id, amount, target.currency, attempt),
+        failure: null,
+        again: null,
+      });
       setError(null);
     } catch {
       setError("No he podido preparar el traspaso.");
@@ -69,50 +75,43 @@ export function Transfer({ summary, onPaid }: Props) {
     }
   }
 
-  async function answerPreview(reply: string) {
-    if (!answer?.intent_id || busy) return;
+  async function reply(said: Reply) {
+    const intent = held?.answer.intent_id;
+    if (!intent || busy) return;
     setBusy(true);
-    try {
-      const settled = await confirm(answer.intent_id, reply);
-      setAnswer(settled);
+    const next = await replied(() => confirm(intent, said), {
+      reply: said,
+      standing: held.answer,
+      noun: "traspaso",
+    });
+    setHeld(next);
+    // Only a reply the bank gave a verdict on counts as done, which is exactly `again === null`:
+    // a failure and an unknown outcome both leave something to repeat. Holding the key back in
+    // those two cases is the safe direction — if the confirmation did execute unseen, the next
+    // prepare for the same destination and amount finds that consumed intent and is refused, where
+    // a fresh key would have minted a second transfer.
+    if (next.again === null) {
       setCompleted((done) => done + 1);
-      if (settled.outcome === PAID) onPaid();
-    } catch {
-      setError("No he podido confirmar el traspaso.");
-    } finally {
-      setBusy(false);
+      if (next.answer.outcome === PAID) onPaid();
     }
+    setBusy(false);
   }
 
   function restart() {
-    setAnswer(null);
+    setHeld(null);
     setTarget(null);
     setTyped("");
   }
 
-  if (answer) {
-    const awaiting = answer.outcome === AWAITING;
+  if (held) {
     return (
-      <div className="screen">
-        <h1 className="screen-title">Traspaso</h1>
-        <section className={awaiting ? "card preview" : "card"}>
-          <p>{answer.text}</p>
-          {awaiting ? (
-            <div className="confirm">
-              <button className="yes" disabled={busy} onClick={() => void answerPreview("sí")}>
-                Confirmar
-              </button>
-              <button className="no" disabled={busy} onClick={() => void answerPreview("no")}>
-                Cancelar
-              </button>
-            </div>
-          ) : (
-            <button className="restart" onClick={restart}>
-              Hacer otro
-            </button>
-          )}
-        </section>
-      </div>
+      <Approval
+        title="Traspaso"
+        held={held}
+        busy={busy}
+        onReply={(said) => void reply(said)}
+        onRestart={restart}
+      />
     );
   }
 
@@ -177,9 +176,10 @@ export function Transfer({ summary, onPaid }: Props) {
               {typed && amount === null && (
                 <p className="warn">Escríbelo en euros y céntimos, por ejemplo 12,50.</p>
               )}
+              {excess && <p className="warn">{excess}</p>}
               <button
                 className="primary"
-                disabled={amount === null || busy}
+                disabled={amount === null || excess !== null || busy}
                 onClick={() => void prepare()}
               >
                 {amount === null
@@ -191,5 +191,39 @@ export function Transfer({ summary, onPaid }: Props) {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * The refusal this screen can make itself, said where the amount can still be changed.
+ *
+ * The preview used to offer «Te quedarían -7.776,08 €» over a live Confirmar. Banking does refuse
+ * it — the balance is recomputed at confirmation and `insufficient_funds` raised — so no money
+ * moved. What the holder got was a card asking them to approve something the app already knew would
+ * be refused, showing a balance their account cannot hold, and a round trip through "Cancelar" to
+ * change the number.
+ *
+ * Banking's rule, transcribed: `booked < amount` against the booked balance of the account the
+ * credential names, with no overdraft allowance. This screen already prints that exact figure under
+ * «Desde», so the refusal is made against the number in front of the holder — the strongest form of
+ * honesty available to a client whose copy of a balance can always be a moment stale. Banking still
+ * recomputes and still has the last word; being stale here can only cost a payment that has to be
+ * retried, never one that goes through wrongly.
+ *
+ * Refused before preparing rather than on the preview, because that is where the holder can act:
+ * the amount field is right there. The preview could not do it anyway — `api.ts` drops
+ * `balanceAfterMinor` on the way through, so the card cannot see the balance it is printing.
+ *
+ * A sentence rather than a boolean, so the refusal and the reason it gives cannot drift apart.
+ */
+export function overdraft(summary: Summary | null, amount: number | null): string | null {
+  // The field is labelled € and the amount is parsed as euros. Against an account held in anything
+  // else the comparison is meaningless, and a local refusal built on a meaningless comparison would
+  // block a payment the bank would have taken. That one is the bank's to decide.
+  if (!summary || amount === null || summary.currency !== "EUR") return null;
+  if (amount <= summary.booked_minor) return null;
+  return (
+    `Tienes ${money(summary.booked_minor, summary.currency)} en esta cuenta, ` +
+    `así que no puedes mover ${money(amount)}.`
   );
 }

@@ -327,7 +327,7 @@ cases:
     group: direction
     question: Enséñame todo lo que ha entrado y salido este mes
     expect: plan
-    paraphrase_of: direction_movimientos_all
+    variant_of: direction_movimientos_all
     plan: {period: {period: THIS_MONTH}, direction: ALL}
 
   # --- category_single --------------------------------------------------------------
@@ -571,7 +571,7 @@ cases:
     group: grouping
     question: ¿En qué tiendas he comprado más el mes pasado?
     expect: plan
-    paraphrase_of: group_by_merchant
+    variant_of: group_by_merchant
     plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
 
   - id: group_by_week
@@ -670,7 +670,7 @@ cases:
     group: merchant
     question: ¿En qué comercio gasté más el mes pasado?
     expect: plan
-    paraphrase_of: merchant_top_ranking
+    variant_of: merchant_top_ranking
     plan: {period: {period: LAST_MONTH}, direction: EXPENSE, groupBy: MERCHANT}
 
   # --- follow_up --------------------------------------------------------------------

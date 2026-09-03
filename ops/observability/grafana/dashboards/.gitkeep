@@ -1,0 +1,3 @@
+# Section 6 drops dashboard JSON here; the provider in ../provisioning/dashboards/
+# already points at it. Empty for now, and git does not track empty directories, so this
+# file holds the seam open until there is something to draw.

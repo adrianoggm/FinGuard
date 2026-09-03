@@ -45,6 +45,7 @@ episodes:
         route: COURTESY
 
   - name: the_second_reported_conversation
+    scope: settled
     why: >
       The tail of the same session, where a question about money *arriving* was read as an order to
       send some — and every turn after it lived inside a payment nobody had asked for.

@@ -6,6 +6,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 """
 
 from datetime import date
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -15,15 +16,18 @@ from finguard_orchestrator.domain.constants import (
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
     MAX_GROUP_RANK,
+    MAX_GROUP_ROWS,
     MAX_MERCHANT_LENGTH,
     MAX_PAYMENT_MINOR,
     MAX_PROMPT_LENGTH,
     MAX_RANK,
     MAX_RECIPIENT_NAME,
     MAX_REMEMBERED_TURNS,
+    MAX_SELECTED_ACCOUNTS,
     MAX_SELECTED_TRANSACTIONS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
+    MAX_VISUAL_CONTEXTS,
 )
 from finguard_orchestrator.domain.enums import (
     Action,
@@ -35,7 +39,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
     TransactionType,
 )
-from finguard_orchestrator.domain.models.conversation import Slot, Workflow
+from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
@@ -120,7 +124,7 @@ class PlanPayload(_Payload):
     counterparty_types: list[CounterpartyType] = []
     group_by: GroupBy = GroupBy.NONE
     metric: Metric = Metric.SUM
-    group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_RANK)
+    group_limit: int | None = Field(default=None, ge=1, le=MAX_GROUP_ROWS)
     include_internal: bool = False
     internal_only: bool = False
     across_accounts: bool = False
@@ -175,6 +179,14 @@ _SLOTS_OF: dict[Workflow | None, frozenset[Slot]] = {
     Workflow.FINANCIAL_CLARIFICATION: frozenset(
         {Slot.WINDOW, Slot.YEAR, Slot.CATEGORY, Slot.CORRECTION, Slot.ACCOUNT}
     ),
+    # One question and no more: which of the holder's accounts. The entry was missing entirely
+    # rather than empty, and the difference is a 500: this dict is subscripted, not `.get`, so an
+    # absent workflow is a `KeyError` and not a rejected payload. It stayed latent because the
+    # check short-circuits on a null slot and this state never set one — so the moment the slot
+    # became honest, the commonest clarification in the service stopped being able to cross the
+    # wire. Every member of `Workflow` needs a row here; a test asserts that so the next state
+    # added cannot repeat it.
+    Workflow.ACCOUNT_SCOPE: frozenset({Slot.ACCOUNT}),
     Workflow.UNSUPPORTED_CAPABILITY: frozenset(),
     Workflow.PAYMENT_IN_PROGRESS: frozenset({Slot.AMOUNT, Slot.RECIPIENT, Slot.RECIPIENT_CHOICE}),
     # Two questions and no more: which of the holder's accounts, and how much.
@@ -188,6 +200,12 @@ class AccountAliasPayload(_Payload):
     alias: str = Field(min_length=1, max_length=MAX_ENTITY_ALIAS_LENGTH)
     account_id: UUID
     display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+
+
+class AccountCandidatePayload(_Payload):
+    account_id: UUID
+    display_name: str = Field(min_length=1, max_length=MAX_MERCHANT_LENGTH)
+    kind: str = Field(min_length=1, max_length=32)
 
 
 class CounterpartyAliasPayload(_Payload):
@@ -212,6 +230,102 @@ class TurnPayload(_Payload):
     question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
 
 
+class VisualFieldPayload(_Payload):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    type: Literal["nominal", "quantitative", "temporal"]
+
+
+class VisualProfilePayload(_Payload):
+    fields: list[VisualFieldPayload] = Field(max_length=32)
+    cardinality: int = Field(ge=0, le=10000)
+    metric: str | None = Field(default=None, max_length=32, pattern=r"^[A-Z][A-Z0-9_]*$")
+    unit: Literal["money", "count", "ratio", "unknown"] | None = None
+    positive: bool = False
+    mutually_exclusive: bool = False
+    verified_total: bool = False
+
+
+class VisualContextPayload(_Payload):
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    spec: dict[str, object]
+    profile: VisualProfilePayload
+
+    @model_validator(mode="after")
+    def _value_free_spec(self) -> "VisualContextPayload":
+        forbidden = {"data", "values", "datum", "value", "transform", "calculate"}
+
+        def walk(value: object) -> None:
+            if isinstance(value, dict):
+                if forbidden.intersection(value):
+                    raise ValueError("visual context must be value-free")
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(self.spec)
+        allowed = {
+            "$schema",
+            "mark",
+            "encoding",
+            "title",
+            "width",
+            "height",
+            "stack",
+            "sort",
+            "sort_field",
+            "limit",
+        }
+        if set(self.spec) - allowed:
+            raise ValueError("unknown visual spec key")
+        encoding = self.spec.get("encoding")
+        if not isinstance(encoding, dict) or not encoding:
+            raise ValueError("visual spec needs encoding")
+        fields: set[str] = set()
+        for channel, raw in encoding.items():
+            if channel not in {"x", "y", "color", "tooltip", "theta"}:
+                raise ValueError("unknown visual channel")
+            values = raw if isinstance(raw, list) else [raw]
+            if len(values) > 8:
+                raise ValueError("too many encodings")
+            for item in values:
+                if not isinstance(item, dict) or set(item) - {
+                    "field",
+                    "type",
+                    "title",
+                    "sort",
+                    "stack",
+                }:
+                    raise ValueError("unknown encoding key")
+                if not isinstance(item.get("field"), str) or item.get("type") not in {
+                    "nominal",
+                    "quantitative",
+                    "temporal",
+                }:
+                    raise ValueError("invalid encoding")
+                fields.add(item["field"])
+        profile_types = {item.name: item.type for item in self.profile.fields}
+        if not fields <= set(profile_types):
+            raise ValueError("encoding field absent from profile")
+        for raw in [
+            item
+            for value in encoding.values()
+            for item in (value if isinstance(value, list) else [value])
+        ]:
+            if raw["type"] != profile_types[raw["field"]]:
+                raise ValueError("encoding type differs from profile")
+        if self.spec.get("mark") not in (
+            {"type": "bar"},
+            {"type": "line"},
+            {"type": "area"},
+            {"type": "point"},
+            {"type": "arc", "innerRadius": 55},
+        ):
+            raise ValueError("unsupported visual mark")
+        return self
+
+
 class ConversationPayload(_Payload):
     """Where the conversation is, in one object.
 
@@ -230,6 +344,32 @@ class ConversationPayload(_Payload):
     """
 
     model_config = ConfigDict(protected_namespaces=(), extra="forbid")
+
+    # Which conversation this is, so N turns stop being N unrelated traces. Minted here on the
+    # first turn and echoed back by the client like every field below it — no session, no store,
+    # one more value that round-trips.
+    #
+    # **`extra="forbid"` is what decided the shape of this field, in both directions.**
+    #
+    # Forwards, it is the reason there is nothing to worry about for a client that predates it: a
+    # payload arrives without `conversation_id`, `forbid` has no opinion about an *absent* optional
+    # field, and the mapper mints one. That client keeps working exactly as it did, and its turns
+    # go on being one trace each until it starts echoing the field back — degraded, never broken,
+    # and it needs no version negotiation to cross over. The rule bites the other way round, on a
+    # client that sends a field *we* do not know, which is unchanged.
+    #
+    # Backwards, it is the reason this had to be a declared field at all rather than a key the
+    # client tacks on and we read loosely — and being declared, it had to be typed. That is the
+    # half that matters, because this value makes a round trip through something we do not
+    # control. **Typed `UUID`, it cannot carry anything else.** As a `str` it would be the one
+    # field on this payload a client could fill with the holder's own sentence, and this service
+    # would stamp it onto a span — a content leak through the exact field added to make traces
+    # joinable. Pydantic refuses a non-UUID here with a 422 at the edge, before any of it reaches
+    # a recorder, which makes "an opaque identifier and nothing else" mechanical rather than hoped
+    # for. It is the same argument `_own_words` makes about shape, arriving at the opposite
+    # conclusion about UUIDs for the opposite reason: there a UUID is refused because it would be
+    # a raw *account* id, here it is required because it is the only thing that cannot be prose.
+    conversation_id: UUID | None = None
 
     # Absent when nothing is under way.
     workflow: Workflow | None = None
@@ -260,6 +400,8 @@ class ConversationPayload(_Payload):
     # still scopes every query to the authenticated holder.
     referenced_transaction_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_TRANSACTIONS)
     account_aliases: list["AccountAliasPayload"] = Field(default=[], max_length=MAX_ENTITY_ALIASES)
+    account_selection_mode: AccountSelectionMode | None = None
+    account_selection_ids: list[UUID] = Field(default=[], max_length=MAX_SELECTED_ACCOUNTS)
     counterparty_aliases: list["CounterpartyAliasPayload"] = Field(
         default=[], max_length=MAX_ENTITY_ALIASES
     )
@@ -270,6 +412,7 @@ class ConversationPayload(_Payload):
     # before, taken by whichever branch ran; this is the turn itself, and it is what lets an
     # ellipsis three deep still resolve. Bounded, because it travels on every request.
     turns: list[TurnPayload] = Field(default=[], max_length=MAX_REMEMBERED_TURNS)
+    visual_contexts: list[VisualContextPayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
     # The plan behind the last answered question. Memory rather than a workflow, so it travels
     # alongside whatever is active.
     last_plan: PlanPayload | None = None
@@ -291,6 +434,12 @@ class ConversationPayload(_Payload):
     last_comparison_latest: PlanPayload | None = None
     # FINANCIAL_CLARIFICATION: the reading so far.
     draft: PlanPayload | None = None
+    pending_plan: PlanPayload | None = None
+    pending_requested_count: int | None = Field(default=None, ge=2, le=MAX_GROUP_RANK)
+    pending_explicit_visualization: bool = False
+    account_candidates: list[AccountCandidatePayload] = Field(
+        default=[], max_length=MAX_SELECTED_ACCOUNTS
+    )
     # UNSUPPORTED_CAPABILITY: which capability, so the answer can name it. The rank that used to sit
     # here left with the refusal it served — a ranking is a plan now, and `last_plan.rank` is what
     # "¿y el segundo?" patches.
@@ -339,6 +488,7 @@ class ConversationPayload(_Payload):
         """
         required: dict[Workflow | None, tuple[str, ...]] = {
             Workflow.FINANCIAL_CLARIFICATION: ("draft",),
+            Workflow.ACCOUNT_SCOPE: ("pending_plan", "account_candidates"),
             Workflow.UNSUPPORTED_CAPABILITY: ("capability",),
             Workflow.PAYMENT_IN_PROGRESS: ("payment",),
             # Neither field is required: the state exists precisely while one of them is missing.
@@ -350,6 +500,14 @@ class ConversationPayload(_Payload):
         # improvising a combination this service never sends.
         owned: dict[Workflow | None, frozenset[str]] = {
             Workflow.FINANCIAL_CLARIFICATION: frozenset({"draft"}),
+            Workflow.ACCOUNT_SCOPE: frozenset(
+                {
+                    "pending_plan",
+                    "pending_requested_count",
+                    "pending_explicit_visualization",
+                    "account_candidates",
+                }
+            ),
             Workflow.UNSUPPORTED_CAPABILITY: frozenset({"capability"}),
             Workflow.PAYMENT_IN_PROGRESS: frozenset({"payment", "candidates", "suspended"}),
             Workflow.TRANSFER_IN_PROGRESS: frozenset({"transfer_to", "transfer_amount_minor"}),
@@ -374,6 +532,20 @@ class ConversationPayload(_Payload):
         for name in every - owned[self.workflow]:
             if getattr(self, name):
                 raise ValueError(f"{name} does not belong to {self.workflow or 'an idle'} state")
+
+        if self.pending_requested_count is not None:
+            if self.pending_plan is None or self.pending_plan.action is not Action.RANK_MOVEMENTS:
+                raise ValueError("pendingRequestedCount requires a movement-ranking plan")
+
+        if self.account_selection_mode is None and self.account_selection_ids:
+            raise ValueError("accountSelectionIds require accountSelectionMode")
+        if self.account_selection_mode is AccountSelectionMode.ALL and self.account_selection_ids:
+            raise ValueError("ALL account selection cannot contain ids")
+        if (
+            self.account_selection_mode is AccountSelectionMode.SELECTED
+            and not self.account_selection_ids
+        ):
+            raise ValueError("SELECTED account selection needs ids")
 
         if self.awaiting is not None and self.awaiting not in _SLOTS_OF[self.workflow]:
             raise ValueError(f"{self.workflow or 'an idle state'} never asks for {self.awaiting}")
@@ -412,6 +584,13 @@ class ConversationPayload(_Payload):
         return self
 
 
+class MetricSourcePayload(_Payload):
+    """Signed save authority for one chart already present in the conversation."""
+
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    definition_token: str = Field(min_length=1, max_length=20000)
+
+
 class QuestionRequest(_Payload):
     """A financial question in natural language.
 
@@ -431,12 +610,15 @@ class QuestionRequest(_Payload):
     #
     # Absent on the first turn, and absent means a fresh conversation rather than an error.
     conversation: ConversationPayload | None = None
+    channel: Literal["TEXT", "VOICE"] = "TEXT"
+    metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
 
 
 class SpokenGroupResponse(_Payload):
     key: str
     total_minor: int
     movement_count: int
+    value_minor: int | None = None
 
 
 class SpokenMovementResponse(_Payload):
@@ -452,6 +634,98 @@ class SpokenMovementResponse(_Payload):
     counterparty_name: str | None = None
     counterparty_type: str = "UNKNOWN"
     receipt_category: str | None = None
+
+
+class ChartVisualizationResponse(_Payload):
+    kind: Literal["chart"] = "chart"
+    chart_id: str
+    # Rows remain in minor units at the API boundary. The client uses this semantic unit only
+    # when presenting axes/tooltips, so persisted metric definitions never contain floats.
+    unit: Literal["money", "count", "ratio"] = "money"
+    spec: dict[str, object]
+    data: list[dict[str, object]]
+    # How many rows the chart draws, when it draws fewer than it was given. The number is already
+    # inside `spec` as a rank filter, but reading it back out of a Vega transform string is not a
+    # contract -- and the client needs it to say, under the chart, that it is showing a sample. Null
+    # means every row is drawn, which is also the only case where saying nothing is honest.
+    limit: int | None = None
+
+
+class KpiVisualizationResponse(_Payload):
+    kind: Literal["kpi"] = "kpi"
+    value_field: Literal["value_minor"] = "value_minor"
+    unit: Literal["money", "count"]
+    data: list[dict[str, object]]
+
+
+class VisualizationDerivation(_Payload):
+    source_chart_id: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    )
+    chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    spec: dict[str, object]
+    # Rows the derived plot draws, for the same reason the chart carries one -- and here it is
+    # load-bearing rather than convenient. A derivation is merged onto the source it names, so
+    # without its own value the source's limit survives a change that lifted it: "Ver todos" would
+    # draw all eighteen rows under a caveat still claiming eight.
+    limit: int | None = None
+
+    @model_validator(mode="after")
+    def _strict_spec(self) -> "VisualizationDerivation":
+        if self.chart_id == self.source_chart_id:
+            raise ValueError("a visualization derivation needs a new chart id")
+        if set(self.spec) - {
+            "$schema",
+            "mark",
+            "encoding",
+            "title",
+            "width",
+            "height",
+            "transform",
+        }:
+            raise ValueError("unknown visualization update key")
+        mark = self.spec.get("mark")
+        if not isinstance(mark, dict) or mark.get("type") not in {
+            "bar",
+            "line",
+            "area",
+            "point",
+            "arc",
+        }:
+            raise ValueError("invalid visualization derivation mark")
+        if not isinstance(self.spec.get("encoding"), dict):
+            raise ValueError("visualization derivation needs encoding")
+        if _contains_chart_values(self.spec):
+            raise ValueError("visualization derivations must not contain data or values")
+        return self
+
+
+def _contains_chart_values(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key in {"data", "values"} or _contains_chart_values(item) for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_chart_values(item) for item in value)
+    return False
+
+
+VisualizationResponse = Annotated[
+    ChartVisualizationResponse | KpiVisualizationResponse,
+    Field(discriminator="kind"),
+]
+
+
+class SaveCandidate(_Payload):
+    """Authority to keep this answer as a metric, and the chart it was drawn as if it was one.
+
+    ``chart_id`` is nullable because a figure without a chart is still a metric. It is also what a
+    visual follow-up matches against, so a null one simply never matches -- which is right, since
+    there is no chart to restyle.
+    """
+
+    definition_token: str
+    chart_id: str | None = None
 
 
 class QuestionResponse(_Payload):
@@ -473,10 +747,19 @@ class QuestionResponse(_Payload):
     # above is the same query in words, for a person to read.
     conversation: ConversationPayload | None = None
     currency: str | None = None
+    # The figure this answer's own `text` leads with, and `None` when it has no single one. Never a
+    # signed difference: those are `difference_minor`.
     total_minor: int | None = None
+    # The signed change between two compared figures, on an answer that compares two. Its presence
+    # is also what says the rows in `groups` are the two *operands* of that difference rather than
+    # *parts* of `total_minor` -- so a screen drawing a bar as a share of the total knows not to.
+    # `AskFinancialQuestionResult.difference_minor` carries the argument and the measurement.
+    difference_minor: int | None = None
     movement_count: int | None = None
     groups: list[SpokenGroupResponse] = []
     movements: list[SpokenMovementResponse] = []
+    visualization: VisualizationResponse | None = None
+    visualization_derivation: VisualizationDerivation | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []
@@ -486,6 +769,7 @@ class QuestionResponse(_Payload):
     # Independent read-only requests asked in one turn. Each part keeps its own plan and evidence;
     # only the parent carries the conversation left behind after all parts have run.
     parts: list["QuestionResponse"] = []
+    save_candidate: SaveCandidate | None = None
     # The half-built payment, the refused capability and the recipient choice all live on
     # `conversation` now: they are states of one conversation rather than four independent fields
     # a client had to combine.

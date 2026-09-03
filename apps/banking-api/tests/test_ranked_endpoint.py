@@ -90,6 +90,47 @@ def test_the_rank_reaches_the_use_case(client_and_handler) -> None:
     assert handler.asked.rank == 2
 
 
+@pytest.mark.parametrize(
+    ("scope", "expected_all", "expected_one", "expected_many"),
+    [
+        ({"acrossAccounts": True}, True, None, ()),
+        ({"onlyAccountId": str(uuid.UUID(int=7))}, False, uuid.UUID(int=7), ()),
+        (
+            {"onlyAccountIds": [str(uuid.UUID(int=7)), str(uuid.UUID(int=8))]},
+            False,
+            None,
+            (uuid.UUID(int=7), uuid.UUID(int=8)),
+        ),
+    ],
+)
+def test_ranked_request_preserves_each_account_scope(
+    client_and_handler, scope, expected_all, expected_one, expected_many
+) -> None:
+    client, handler = client_and_handler
+
+    response = client.post("/v1/financial-queries/ranked", json=body(**scope))
+
+    assert response.status_code == 200
+    assert handler.asked is not None
+    assert handler.asked.plan.across_accounts is expected_all
+    assert handler.asked.plan.only_account_id == expected_one
+    assert handler.asked.plan.only_account_ids == expected_many
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"acrossAccounts": True, "onlyAccountId": str(uuid.UUID(int=7))},
+        {"acrossAccounts": True, "onlyAccountIds": [str(uuid.UUID(int=7))]},
+        {"onlyAccountId": str(uuid.UUID(int=7)), "onlyAccountIds": [str(uuid.UUID(int=8))]},
+    ],
+)
+def test_ranked_request_rejects_incompatible_account_scopes(client_and_handler, scope) -> None:
+    client, _ = client_and_handler
+
+    assert client.post("/v1/financial-queries/ranked", json=body(**scope)).status_code == 422
+
+
 def test_the_window_is_resolved_at_the_edge(client_and_handler) -> None:
     """A relative period becomes absolute here, like every other query: the domain sees dates."""
     client, handler = client_and_handler

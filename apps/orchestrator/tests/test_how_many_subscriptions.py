@@ -21,9 +21,13 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFi
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.models.account_summary import AccountSummary
 from finguard_orchestrator.domain.models.card import Wallet
-from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+)
 from finguard_orchestrator.domain.services import explicit_facts
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
@@ -103,6 +107,7 @@ async def ask(  # type: ignore[no-untyped-def]
     sentence: str,
     answer: QueryAnswer = SUBSCRIPTIONS,
     planner: object | None = None,
+    conversation: Conversation = IDLE,
 ):
     planner = planner or ModelMustNotPlan()
     ledger = Ledger(answer)
@@ -114,7 +119,7 @@ async def ask(  # type: ignore[no-untyped-def]
         cards=Cards(),
     ).handle(
         AskFinancialQuestionQuery(
-            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=IDLE
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=conversation
         )
     )
     return result, ledger, planner
@@ -142,6 +147,32 @@ async def test_the_query_is_an_ordinary_merchant_breakdown() -> None:
     assert plan.metric is Metric.SUM
     assert plan.categories == ("SUBSCRIPTIONS",)
     assert plan.direction is Direction.EXPENSE
+
+
+async def test_the_answer_remembers_its_exact_source_and_clears_old_row_references() -> None:
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+    )
+    conversation = answered_with_result(
+        IDLE,
+        ResultReference(
+            previous,
+            category="GROCERIES",
+            group_by=GroupBy.CATEGORY,
+            group_key="GROCERIES",
+            transaction_ids=(uuid.UUID(int=41),),
+        ),
+    )
+
+    result, ledger, planner = await ask("¿cuántas suscripciones tengo?", conversation=conversation)
+
+    assert planner.calls == 0
+    assert result.conversation.last_plan is ledger.plans[0]
+    assert result.conversation.result_reference is not None
+    assert result.conversation.result_reference.source_query is result.conversation.last_plan
+    assert result.conversation.result_reference.category is None
 
 
 async def test_the_misspelling_everybody_writes_is_read() -> None:

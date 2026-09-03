@@ -10,21 +10,23 @@
  * this account's own contacts, so a name matching two people still comes back as a question rather
  * than a guess — which is why picking "Marta Ruiz Gomez" from a list is safe while typing "Marta" is
  * something the service has to interrogate.
+ *
+ * The preview and everything that can happen to it live in `Approval`, shared with Traspaso: this
+ * screen drew that card itself, and so did that one, which is how one silent failure came to be two.
  */
 
 import { useEffect, useMemo, useState } from "react";
 
+import { Approval, replied, type Held, type Reply } from "./Approval";
 import {
   confirm,
   contacts as fetchContacts,
   newAttempt,
   payChosen,
-  type Answer,
   type Contact,
 } from "./api";
 import { initials, minorUnits, money } from "./format";
 
-const AWAITING = "AWAITING_CONFIRMATION";
 const PAID = "PAID";
 
 type Props = { onPaid: () => void };
@@ -33,7 +35,7 @@ export function Bizum({ onPaid }: Props) {
   const [people, setPeople] = useState<Contact[] | null>(null);
   const [chosen, setChosen] = useState<Contact | null>(null);
   const [typed, setTyped] = useState("");
-  const [answer, setAnswer] = useState<Answer | null>(null);
+  const [held, setHeld] = useState<Held | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // How many payments this screen has completed. It exists only to renew the key below: once one
@@ -61,7 +63,11 @@ export function Bizum({ onPaid }: Props) {
     if (!chosen || amount === null || busy) return;
     setBusy(true);
     try {
-      setAnswer(await payChosen(chosen.display_name, amount, attempt));
+      setHeld({
+        answer: await payChosen(chosen.display_name, amount, attempt),
+        failure: null,
+        again: null,
+      });
       setError(null);
     } catch {
       setError("No he podido preparar el pago.");
@@ -70,51 +76,44 @@ export function Bizum({ onPaid }: Props) {
     }
   }
 
-  async function answerPreview(reply: string) {
-    if (!answer?.intent_id || busy) return;
+  async function reply(said: Reply) {
+    const intent = held?.answer.intent_id;
+    if (!intent || busy) return;
     setBusy(true);
-    try {
-      const settled = await confirm(answer.intent_id, reply);
-      setAnswer(settled);
+    const next = await replied(() => confirm(intent, said), {
+      reply: said,
+      standing: held.answer,
+      noun: "pago",
+    });
+    setHeld(next);
+    // Only a reply the bank gave a verdict on counts as done, which is exactly `again === null`:
+    // a failure and an unknown outcome both leave something to repeat. Holding the key back in
+    // those two cases is the safe direction — if the confirmation did execute unseen, the next
+    // prepare for the same recipient and amount finds that consumed intent and is refused, where
+    // a fresh key would have minted a second payment.
+    if (next.again === null) {
       setCompleted((done) => done + 1);
-      if (settled.outcome === PAID) onPaid();
-    } catch {
-      setError("No he podido confirmar el pago.");
-    } finally {
-      setBusy(false);
+      if (next.answer.outcome === PAID) onPaid();
     }
+    setBusy(false);
   }
 
   function restart() {
-    setAnswer(null);
+    setHeld(null);
     setChosen(null);
     setTyped("");
   }
 
   // The preview, and whatever came after it.
-  if (answer) {
-    const awaiting = answer.outcome === AWAITING;
+  if (held) {
     return (
-      <div className="screen">
-        <h1 className="screen-title">Bizum</h1>
-        <section className={awaiting ? "card preview" : "card"}>
-          <p>{answer.text}</p>
-          {awaiting ? (
-            <div className="confirm">
-              <button className="yes" disabled={busy} onClick={() => void answerPreview("sí")}>
-                Confirmar
-              </button>
-              <button className="no" disabled={busy} onClick={() => void answerPreview("no")}>
-                Cancelar
-              </button>
-            </div>
-          ) : (
-            <button className="restart" onClick={restart}>
-              Hacer otro
-            </button>
-          )}
-        </section>
-      </div>
+      <Approval
+        title="Bizum"
+        held={held}
+        busy={busy}
+        onReply={(said) => void reply(said)}
+        onRestart={restart}
+      />
     );
   }
 

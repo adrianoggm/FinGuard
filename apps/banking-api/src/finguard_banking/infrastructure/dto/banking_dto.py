@@ -200,11 +200,22 @@ class RankedMovementRequest(_Body):
     merchants: tuple[str, ...] = ()
     merchant_terms: tuple[str, ...] = ()
     excluded_merchants: tuple[str, ...] = ()
+    across_accounts: bool = False
+    only_account_id: UUID | None = None
+    only_account_ids: tuple[UUID, ...] = Field(default=(), max_length=MAX_SELECTED_ACCOUNTS)
     date_range: DateRangeRequest | None = None
     period: RelativePeriodRequest | None = None
     reporting_timezone: str | None = None
     # 1 is the largest. Bounded because it becomes an OFFSET.
     rank: int = Field(default=1, ge=1, le=MAX_RANK)
+
+    @model_validator(mode="after")
+    def _account_scope(self) -> Self:
+        if self.across_accounts and (self.only_account_id is not None or self.only_account_ids):
+            raise ValueError("acrossAccounts cannot be combined with an account selection")
+        if self.only_account_id is not None and self.only_account_ids:
+            raise ValueError("use onlyAccountId or onlyAccountIds, not both")
+        return self
 
 
 class RankedMovementResponse(_Payload):

@@ -44,6 +44,9 @@ class Scope(StrEnum):
     credential issued to look and not touch does not need it.
     """
 
+    METRICS_READ = "metrics:read"
+    METRICS_WRITE = "metrics:write"
+
     PAYMENTS_PREPARE = "payments:prepare"
     """Build a payment intent and see its preview. Moves no money."""
 

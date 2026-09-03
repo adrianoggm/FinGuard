@@ -180,6 +180,7 @@ export type Candidate = {
 /** Which workflow is under way, if any. */
 export type Workflow =
   | "FINANCIAL_CLARIFICATION"
+  | "ACCOUNT_SCOPE"
   | "UNSUPPORTED_CAPABILITY"
   | "PAYMENT_IN_PROGRESS"
   | "TRANSFER_IN_PROGRESS"
@@ -212,6 +213,13 @@ export type Slot =
  * keep.
  */
 export type ConversationState = {
+  // Which conversation this is. Minted by the service on the first turn and echoed back like
+  // everything else here — there is no session and nothing to store. Declared rather than left to
+  // ride along undeclared: this object is round-tripped whole today, and the day somebody rebuilds
+  // it from its declared fields, a field that was never declared is the one that silently goes.
+  // Dropping it is not a visible failure — every answer still works — it just quietly makes each
+  // turn its own trace again, which is exactly the state it was added to end.
+  conversation_id?: string | null;
   workflow: Workflow | null;
   awaiting: Slot | null;
   // What the last turn asked for even when it left no workflow behind. Round-tripped like the
@@ -231,6 +239,8 @@ export type ConversationState = {
   // User-taught account names. Opaque conversational memory: the server revalidates each account
   // identifier against the authenticated holder before applying it.
   account_aliases?: { alias: string; account_id: string; display_name: string }[];
+  account_selection_mode?: "ALL" | "SELECTED" | null;
+  account_selection_ids?: string[];
   counterparty_aliases?: {
     alias: string;
     counterparty_name: string;
@@ -243,6 +253,20 @@ export type ConversationState = {
   // deep still resolve. Round-tripped like the rest and never read here — rendering the chat uses
   // the messages this client already holds, not the service's copy of them.
   turns?: { sentence: string; outcome: string; plan?: string | null; question?: string | null }[];
+  // Opaque, value-free chart memory. The client echoes it; only the orchestrator interprets it.
+  visual_contexts?: {
+    chart_id: string;
+    spec: Record<string, unknown>;
+    profile: {
+      fields: { name: string; type: "nominal" | "quantitative" | "temporal" }[];
+      cardinality: number;
+      metric?: string | null;
+      unit?: "money" | "count" | "ratio" | "unknown" | null;
+      positive: boolean;
+      mutually_exclusive: boolean;
+      verified_total: boolean;
+    };
+  }[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;
   retry_plan: PlanContext | null;
@@ -255,6 +279,10 @@ export type ConversationState = {
   last_comparison_earlier?: PlanContext | null;
   last_comparison_latest?: PlanContext | null;
   draft: PlanContext | null;
+  pending_plan?: PlanContext | null;
+  pending_requested_count?: number | null;
+  pending_explicit_visualization?: boolean;
+  account_candidates?: { account_id: string; display_name: string; kind: string }[];
   capability: string | null;
   payment: PaymentDraft | null;
   suspended: boolean;
@@ -297,12 +325,47 @@ export type Answer = {
   currency: string | null;
   total_minor: number | null;
   movement_count: number | null;
-  groups: { key: string; total_minor: number; movement_count: number }[];
+  groups: {
+    key: string;
+    total_minor: number;
+    movement_count: number;
+    value_minor?: number | null;
+  }[];
   movements: Movement[];
+  visualization?: Visualization | null;
+  visualization_derivation?: {
+    source_chart_id: string;
+    chart_id: string;
+    spec: Record<string, unknown>;
+    /** Rows the derived plot draws. Replaces the source's, which may have been the point. */
+    limit?: number | null;
+  } | null;
   suggestions: string[];
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
+  /**
+   * Authority to keep this answer in "Mis métricas". `chart_id` is null when the answer is a
+   * figure rather than a chart, which is still a metric and cannot be the target of a restyle.
+   */
+  save_candidate?: { chart_id: string | null; definition_token: string } | null;
 };
+
+export type Visualization =
+  | {
+      kind: "chart";
+      chart_id: string;
+      unit: "money" | "count" | "ratio";
+      spec: Record<string, unknown>;
+      data: Record<string, unknown>[];
+      /** Rows the plot draws, when it draws fewer than `data` holds. Null when it draws them all. */
+      limit?: number | null;
+    }
+  | {
+      kind: "kpi";
+      value_field: "value_minor";
+      unit: "money" | "count";
+      data: Record<string, unknown>[];
+    };
 
 /** Narrow transport boundary for answers arriving through the voice gateway. */
 export function validateVoiceAnswer(value: unknown): Answer {
@@ -316,6 +379,68 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
   const nullableString = (field: unknown) => field === null || typeof field === "string";
   const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
   const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  const containsChartValues = (field: unknown): boolean => {
+    if (Array.isArray(field)) return field.some(containsChartValues);
+    if (!field || typeof field !== "object") return false;
+    return Object.entries(field as Record<string, unknown>).some(
+      ([key, nested]) => key === "data" || key === "values" || containsChartValues(nested),
+    );
+  };
+  const validVisualization = (field: unknown) => {
+    if (field === undefined || field === null) return true;
+    if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+    const item = field as Record<string, unknown>;
+    if (item.kind === "kpi") {
+      if (
+        item.value_field !== "value_minor" ||
+        (item.unit !== "money" && item.unit !== "count") ||
+        !Array.isArray(item.data) || item.data.length !== 1
+      ) return false;
+      const row = item.data[0];
+      return !!row && typeof row === "object" && !Array.isArray(row) &&
+        finiteNumber((row as Record<string, unknown>).value_minor);
+    }
+    const spec = item.spec as Record<string, unknown> | undefined;
+    if (
+      item.kind !== "chart" || !spec || typeof spec !== "object" ||
+      (item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
+      typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
+      typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
+      !Array.isArray(item.data) ||
+      !item.data.every((row) => !!row && typeof row === "object" && !Array.isArray(row)) ||
+      // How many rows the plot draws. It decides whether the chart admits to showing a sample, so
+      // a nonsensical one is refused rather than shrugged at: a zero would draw nothing under a
+      // caveat, and a fraction would be a count that is not one.
+      (item.limit !== undefined && item.limit !== null &&
+        (!Number.isSafeInteger(item.limit) || (item.limit as number) < 1))
+    ) return false;
+    const channels = Object.values(spec.encoding as Record<string, unknown>);
+    const encodedFields = channels.flatMap((channel) =>
+      (Array.isArray(channel) ? channel : [channel]).flatMap((encoding) => {
+        if (!encoding || typeof encoding !== "object" || Array.isArray(encoding)) return [];
+        const encoded = encoding as Record<string, unknown>;
+        return typeof encoded.field === "string" ? [encoded.field] : [];
+      })
+    );
+    return item.data.every((row) =>
+      encodedFields.every((encodedField) => encodedField in (row as Record<string, unknown>))
+    );
+  };
+  const validDerivation = (field: unknown) => {
+    if (field === undefined || field === null) return true;
+    if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+    const item = field as Record<string, unknown>;
+    const spec = item.spec as Record<string, unknown> | undefined;
+    const chartId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+    return typeof item.source_chart_id === "string" && chartId.test(item.source_chart_id) &&
+      typeof item.chart_id === "string" && chartId.test(item.chart_id) &&
+      item.source_chart_id !== item.chart_id && !!spec && typeof spec === "object" &&
+      !!spec.mark && typeof spec.mark === "object" && !Array.isArray(spec.mark) &&
+      !!spec.encoding && typeof spec.encoding === "object" && !Array.isArray(spec.encoding) &&
+      (item.limit === undefined || item.limit === null ||
+        (Number.isSafeInteger(item.limit) && (item.limit as number) >= 1)) &&
+      !containsChartValues(spec);
+  };
   if (
     typeof body.outcome !== "string" || typeof body.text !== "string" ||
     !nullableString(body.question) || !nullableString(body.intent_id) ||
@@ -325,11 +450,14 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     !nullableString(body.currency) || !nullableNumber(body.total_minor) ||
     !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
     !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
+    !validVisualization(body.visualization) ||
+    !validDerivation(body.visualization_derivation) ||
     body.groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
       return typeof item.key !== "string" || !finiteNumber(item.total_minor) ||
-        !finiteNumber(item.movement_count);
+        !finiteNumber(item.movement_count) ||
+        (item.value_minor !== undefined && !nullableNumber(item.value_minor));
     }) || body.suggestions.some((item) => typeof item !== "string") ||
     body.movements.some((movement) => {
       if (!movement || typeof movement !== "object") return true;
@@ -346,6 +474,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
 }
 
 export type Stage = { name: string };
+export type MetricSource = { chart_id: string; definition_token: string };
 
 export class ApiError extends Error {
   constructor(
@@ -395,6 +524,8 @@ export async function* ask(
   sentence: string,
   conversation: ConversationState | null = null,
   attempt?: string,
+  channel: "TEXT" | "VOICE" = "TEXT",
+  metricSources: MetricSource[] = [],
 ): AsyncGenerator<Stage | Answer> {
   const response = await fetch(`${BASE}/v1/questions/stream`, {
     method: "POST",
@@ -406,7 +537,12 @@ export async function* ask(
     // whoever is having it, which is why both parameters exist at all.
     // One object, stored and returned. The service decides what the next state is; this only
     // carries it there and back.
-    body: JSON.stringify({ question: sentence, conversation }),
+    body: JSON.stringify({
+      question: sentence,
+      conversation,
+      channel,
+      metric_sources: channel === "TEXT" ? metricSources : [],
+    }),
   });
   if (!response.ok || !response.body) await readError(response);
 
@@ -431,7 +567,7 @@ export async function* ask(
       if (!data) continue;
       const payload = JSON.parse(data);
       if (payload.type === "stage") yield { name: payload.name } as Stage;
-      else yield payload as Answer;
+      else yield validateVoiceAnswer(payload);
     }
   }
 }
@@ -489,6 +625,56 @@ export type Breakdown = {
   movement_count: number;
   groups: Group[];
 };
+
+export type SavedMetric = {
+  id: string;
+  title: string;
+  position: number;
+  version: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MetricAnswer = SavedMetric & { answer: Answer };
+
+export async function metrics(): Promise<SavedMetric[]> {
+  return (await read<{ metrics: SavedMetric[] }>("/v1/metrics")).metrics;
+}
+
+export async function openMetric(id: string): Promise<MetricAnswer> {
+  return read<MetricAnswer>(`/v1/metrics/${id}`);
+}
+
+export async function deleteMetric(id: string): Promise<void> {
+  const response = await fetch(`${BASE}/v1/metrics/${id}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!response.ok) await readError(response);
+}
+
+export async function renameMetric(id: string, title: string, version: number): Promise<SavedMetric> {
+  const response = await fetch(`${BASE}/v1/metrics/${id}`, {
+    method: "PATCH", headers: { ...headers(), "If-Match": String(version) }, body: JSON.stringify({ title }),
+  });
+  if (!response.ok) await readError(response);
+  return (await response.json()) as SavedMetric;
+}
+
+export async function reorderMetrics(ids: string[]): Promise<void> {
+  const response = await fetch(`${BASE}/v1/metrics/order`, { method: "PUT", headers: headers(), body: JSON.stringify(ids) });
+  if (!response.ok) await readError(response);
+}
+
+export async function saveMetric(title: string, definitionToken: string): Promise<SavedMetric> {
+  const response = await fetch(`${BASE}/v1/metrics`, {
+    method: "POST",
+    headers: headers(newAttempt()),
+    body: JSON.stringify({ title, definition_token: definitionToken }),
+  });
+  if (!response.ok) await readError(response);
+  return (await response.json()) as SavedMetric;
+}
 
 async function read<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE}${path}`, { headers: headers() });

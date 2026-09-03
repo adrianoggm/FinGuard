@@ -193,11 +193,22 @@ class Settings(BaseSettings):
     # demo over seeded data and somebody's real balance are not the same risk. Zero for what
     # deterministic code can guarantee, a number for what a model decides.
     #
-    # As measured today, gate 1 fails on two of eight: unsafe execution is 12.7% against a
-    # bar of 10%, and one invalid structure survives in the adversarial set where the bar is
-    # zero. Both have identified work rather than needing a discovery.
+    # Re-measured 2026-08-28: gate 1 fails on **one** of eight, and it is not the one this
+    # comment used to name. `invalid structure` is 0 on all five sets in every run, so that half
+    # closed and nobody noticed for three weeks. Unsafe execution is 11.4% on the held-out set
+    # against a bar of 10% — it was 7.6% on 2026-08-03, and the 158 planning-path commits in
+    # between are where it moved, not the conversational fixes of the day it was re-measured.
+    #
+    # So a deployment turning this on today is turning on a surface whose own gate does not pass.
+    # compose.yaml does exactly that, deliberately, over seeded data on loopback. Anywhere else
+    # that is a decision somebody has to take out loud.
     questions_enabled: bool
     payments_enabled: bool
+    metrics_enabled: bool = False
+    metrics_signing_keys: tuple[str, ...] = ()
+    metrics_signing_active: str = "default"
+    metrics_max_saved: int = Field(default=50, ge=1, le=50)
+    database_url: str | None = None
 
     # The commit this image was built from, stamped in by the build rather than read from git at
     # runtime — a container has no repository in it. "unknown" is honest for a build that did not
@@ -219,6 +230,60 @@ class Settings(BaseSettings):
     # a record is not configurable and never should be: see the redaction note in observability.py.
     log_level: str = "INFO"
     log_json: bool = True
+
+    # Whether anything is exported, and to where.
+    #
+    # **False by default, and that default is load-bearing.** A test run and a developer's laptop
+    # must not need a collector, so the whole SDK stays unbuilt unless a deployment says otherwise
+    # — `just app` does not pay for the observability profile either, which is the same decision
+    # one layer out.
+    #
+    # What this does *not* switch off is the recording. The decisions of a turn are recorded
+    # whether or not anybody is listening, and only the export asks this question; see the module
+    # docstrings of `observability/decisions.py` and `observability/otel.py`, which both argue it
+    # at length because it is the property six green-but-dead instruments in the last week were
+    # missing. If a flag here ever starts deciding whether a call site executes, that is the
+    # seventh.
+    #
+    # These two have defaults, unlike every operational number above, for the reason the vendor
+    # base URLs do: there is nothing about them a deployment has to state in order to be correct.
+    # Off is a complete configuration.
+    otel_enabled: bool = False
+
+    # The collector's OTLP/HTTP root, without a signal path — `observability/otel.py` appends
+    # `/v1/traces` and `/v1/metrics`, because the HTTP exporter posts to an explicit endpoint
+    # verbatim and a base URL handed straight to it is a 404 on every export that nothing outside
+    # the SDK's own logs would show.
+    #
+    # HTTP and not gRPC, and 4318 and not 4317: the collector opens both and says why — inside
+    # compose the orchestrator reaches it by service name, but `just serve-orchestrator` runs it on
+    # the host, and OTLP/HTTP is the protocol that survives every proxy in between. Loopback, since
+    # that is where compose publishes it (rule 13). A compose deployment overrides this with
+    # http://otel-collector:4318.
+    otel_endpoint: str = "http://127.0.0.1:4318"
+
+    # Whether the deterministic cascade's path is exported as a span per reader consulted.
+    #
+    # **True, and it is only ever asked once `otel_enabled` is already true.** The compound default
+    # is therefore "nothing at all on a laptop or in a test run, and the whole path the moment
+    # somebody turns tracing on" — which is right, because seeing which readers the reasoning fell
+    # through and which called which is the thing they turned it on for. A default of False would
+    # be the fourth flag in a row whose off position is the one everybody has, and this design
+    # document's own lesson is that the configuration that makes instrumentation run is the
+    # configuration nobody has.
+    #
+    # What it costs when it is on: measured, not guessed. An ordinary spending question exports 29
+    # spans with this true and 7 with it false — one `turn`, six decisions, and twenty-two
+    # consultations, being the nineteen readers the cascade asks plus the three it reaches through
+    # another. A compound question pays that whole cost once per clause, and a clause list is
+    # bounded at three. `tests/test_otel.py` asserts the nineteen, so a change to the cascade that
+    # doubles it arrives as a failing number rather than as a Tempo bill.
+    #
+    # What it does *not* switch off is the recording. `decisions.consulting` builds the tree
+    # unconditionally, exactly like `record`, so a turn is still assertable with tracing off; this
+    # decides only whether the tree is drawn. If this flag ever starts deciding whether a call site
+    # executes, that is the seventh green-but-dead instrument.
+    otel_recogniser_spans: bool = True
 
     # The model that turns a sentence into a plan. Separate from the catalogue on
     # purpose: the catalogue chooses who *answers*, and planning is a different job with
@@ -360,6 +425,8 @@ class Settings(BaseSettings):
                 if len(parts) == 5 and parts[4]
                 else [
                     Scope.QUESTIONS_READ.value,
+                    Scope.METRICS_READ.value,
+                    Scope.METRICS_WRITE.value,
                     Scope.ASSISTANT_USE.value,
                     # Relabelling your own movement moves no money and is undone by another
                     # request. A development credential that can read the account can file it.

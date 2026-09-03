@@ -10,12 +10,23 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
-from typing import Any
+from typing import Any, Literal, cast
+from uuid import UUID, uuid4
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
+from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
+    AccountCandidate,
+    AccountScopeClarification,
+    AccountSelection,
     ActiveWorkflow,
     Conversation,
     CounterpartyAlias,
@@ -28,6 +39,9 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     Workflow,
     workflow_of,
+)
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
 )
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -49,6 +63,7 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     draft_to_domain,
     plan_to_domain,
 )
+from finguard_orchestrator.observability import name_the_conversation
 
 
 def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> PlanPayload:
@@ -93,6 +108,103 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
     )
 
 
+def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext, ...]:
+    if payload is None:
+        return ()
+    result: list[VisualContext] = []
+    for item in payload.visual_contexts:
+        raw = item.spec
+        mark = raw.get("mark")
+        if not isinstance(mark, dict) or mark.get("type") not in {
+            "bar",
+            "line",
+            "area",
+            "point",
+            "arc",
+        }:
+            raise ValueError("unsupported visual mark")
+        mark_name = cast(
+            Literal["line", "area", "bar", "point", "donut"],
+            "donut" if mark.get("type") == "arc" else mark["type"],
+        )
+        raw_encoding = raw.get("encoding")
+        if not isinstance(raw_encoding, dict):
+            raise ValueError("visual context needs encoding")
+        encodings: list[ChartEncoding] = []
+        for channel, value in raw_encoding.items():
+            values = value if isinstance(value, list) else [value]
+            for encoded in values:
+                if not isinstance(encoded, dict) or not isinstance(encoded.get("field"), str):
+                    raise ValueError("invalid visual encoding")
+                encodings.append(
+                    ChartEncoding(
+                        cast(Literal["x", "y", "color", "tooltip", "theta"], channel),
+                        encoded["field"],
+                        cast(
+                            Literal["nominal", "quantitative", "temporal"],
+                            encoded.get("type", "nominal"),
+                        ),
+                        encoded.get("title") if isinstance(encoded.get("title"), str) else None,
+                    )
+                )
+        profile = VisualProfile(
+            tuple((field.name, field.type) for field in item.profile.fields),
+            item.profile.cardinality,
+            item.profile.metric,
+            item.profile.unit,
+            item.profile.positive,
+            item.profile.mutually_exclusive,
+            item.profile.verified_total,
+        )
+        title_value = raw.get("title")
+        title = title_value if isinstance(title_value, str) else None
+        sort_field_value = raw.get("sort_field")
+        sort_field = sort_field_value if isinstance(sort_field_value, str) else None
+        limit_value = raw.get("limit")
+        limit = limit_value if isinstance(limit_value, int) else None
+        spec = ChartSpec(
+            mark=mark_name,
+            encodings=tuple(encodings),
+            title=title,
+            stack=cast(Literal["zero", "normalize"] | None, raw.get("stack"))
+            if raw.get("stack") in {"zero", "normalize"}
+            else None,
+            sort=cast(Literal["ascending", "descending", "input"] | None, raw.get("sort"))
+            if raw.get("sort") in {"ascending", "descending", "input"}
+            else None,
+            sort_field=sort_field,
+            limit=limit,
+        )
+        result.append(VisualContext(item.chart_id, spec, profile))
+    return tuple(result)
+
+
+def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
+    encoding: dict[str, object] = {}
+    for item in spec.encodings:
+        value = {
+            "field": item.field,
+            "type": item.type,
+            **({"title": item.title} if item.title else {}),
+        }
+        if item.channel == "tooltip" and item.channel in encoding:
+            previous = encoding[item.channel]
+            encoding[item.channel] = [previous] if isinstance(previous, dict) else []
+            tooltip_values = cast(list[object], encoding[item.channel])
+            tooltip_values.append(value)
+        else:
+            encoding[item.channel] = value
+    return {
+        "mark": {"type": "arc", "innerRadius": 55} if spec.mark == "donut" else {"type": spec.mark},
+        "encoding": encoding,
+        **({"title": spec.title} if spec.title else {}),
+        **({"stack": spec.stack} if spec.stack else {}),
+        **({"sort": spec.sort} if spec.sort else {}),
+        **({"sort_field": spec.sort_field} if spec.sort_field else {}),
+        **({"limit": spec.limit} if spec.limit is not None else {}),
+    }
+
+
 def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
     """The last answered question, whichever kind it was.
 
@@ -111,16 +223,44 @@ def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
             merchants=tuple(payload.merchants),
             merchant_terms=tuple(payload.merchant_terms),
             excluded_merchants=tuple(payload.excluded_merchants),
+            across_accounts=payload.across_accounts,
+            only_account_id=payload.only_account_id,
+            only_account_ids=tuple(payload.only_account_ids),
             rank=payload.rank or 1,
         )
     return plan_to_domain(payload)
+
+
+def _identified(payload: ConversationPayload | None) -> UUID:
+    """Which conversation this is: the one the caller echoed back, or a new one.
+
+    **Minted here because this is the only moment a wire payload becomes a conversation.** There is
+    no session and no store, and this does not invent one: the identifier is a value the client
+    round-trips exactly like the workflow and the plans, and the mapper's existing job is already
+    to fill in the state the client did not send — an absent payload is an idle conversation, and
+    an absent identifier is a first turn.
+
+    **`uuid4` and nothing cleverer, and that is the privacy rule rather than laziness.** An
+    identifier derived from anything — the sentence, the holder, the first plan — would be a
+    function of what somebody typed, and this value ends up on a span attribute where a label is
+    forever. Random is the only mint with no input to leak. It also means two conversations cannot
+    collide into one trace by having started the same way, which a hash of the opening turn would.
+
+    Telling the turn is the second half and belongs in the same breath: a conversation that were
+    identified here and named somewhere else would be two places to forget.
+    """
+    known = payload.conversation_id if payload is not None else None
+    identifier = known or uuid4()
+    name_the_conversation(str(identifier))
+    return identifier
 
 
 def to_domain(payload: ConversationPayload | None) -> Conversation:
     """The conversation a caller echoed back.
 
     An absent payload is an idle conversation rather than an error: the first turn has none, and a
-    client that forgets to send one gets a fresh conversation instead of a rejection.
+    client that forgets to send one gets a fresh conversation instead of a rejection. It gets a
+    fresh *identifier* on the same terms and for the same reason — see `_identified`.
 
     A payload whose `workflow` does not match the fields it carries — PAYMENT_CONFIRMATION with no
     intent, a clarification with no draft — never reaches this function: the payload refuses itself
@@ -128,9 +268,20 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     nobody could have been in is a client bug or an attempt, and silently reinterpreting it as "no
     conversation" tells whoever sent it nothing while discarding whatever was really under way.
     """
-    if payload is None or payload.workflow is None:
+    conversation_id = _identified(payload)
+    if payload is None:
+        return Conversation(conversation_id=conversation_id)
+    if payload.workflow is None:
+        last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
+        last_ratio = _ratio_plan(payload)
+        pending_ratio = _ratio_draft(payload)
+        last_comparison = _comparison_plan(payload)
+        result_reference = _reference_state(
+            payload, last_plan, last_ratio, pending_ratio, last_comparison
+        )
         return Conversation(
-            last_plan=query_to_domain(payload.last_plan) if payload and payload.last_plan else None,
+            conversation_id=conversation_id,
+            last_plan=last_plan,
             prior_plan=(
                 query_to_domain(payload.prior_plan) if payload and payload.prior_plan else None
             ),
@@ -140,58 +291,74 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             # The branch this field exists for. A question asked with nothing half-built behind it
             # comes back exactly here — no workflow — and dropping the slot on the way in is what
             # let the same question be asked forever.
-            last_asked=payload.last_asked if payload else None,
-            answered_the_balance=bool(payload and payload.answered_the_balance),
-            referenced_category=payload.referenced_category if payload else None,
-            referenced_group_by=(
-                payload.referenced_group_by
-                if payload and payload.referenced_group_by is not None
-                else (GroupBy.CATEGORY if payload and payload.referenced_category else None)
-            ),
-            referenced_group_key=(
-                payload.referenced_group_key
-                if payload and payload.referenced_group_key is not None
-                else (payload.referenced_category if payload else None)
-            ),
-            referenced_transaction_ids=(
-                tuple(payload.referenced_transaction_ids) if payload else ()
-            ),
-            last_ratio=_ratio_plan(payload) if payload else None,
-            pending_ratio=_ratio_draft(payload) if payload else None,
-            last_comparison=_comparison_plan(payload) if payload else None,
-            account_aliases=_account_aliases(payload) if payload else (),
-            counterparty_aliases=_counterparty_aliases(payload) if payload else (),
-            recent_payment_rail=payload.recent_payment_rail if payload else None,
-            turns=_turns(payload) if payload else (),
+            last_asked=payload.last_asked,
+            answered_the_balance=payload.answered_the_balance,
+            last_ratio=last_ratio,
+            pending_ratio=pending_ratio,
+            last_comparison=last_comparison,
+            result_reference=result_reference,
+            account_aliases=_account_aliases(payload),
+            counterparty_aliases=_counterparty_aliases(payload),
+            recent_payment_rail=payload.recent_payment_rail,
+            turns=_turns(payload),
+            visual_contexts=_visual_contexts(payload),
+            account_selection=_account_selection(payload) if payload else None,
         )
 
     last_plan = query_to_domain(payload.last_plan) if payload.last_plan else None
     prior_plan = query_to_domain(payload.prior_plan) if payload.prior_plan else None
     retry_plan = query_to_domain(payload.retry_plan) if payload.retry_plan else None
     active = _active(payload)
+    last_ratio = _ratio_plan(payload)
+    pending_ratio = _ratio_draft(payload)
+    last_comparison = _comparison_plan(payload)
+    result_reference = _reference_state(
+        payload, last_plan, last_ratio, pending_ratio, last_comparison
+    )
     return Conversation(
+        conversation_id=conversation_id,
         active=active,
         last_plan=last_plan,
         prior_plan=prior_plan,
         retry_plan=retry_plan,
         last_asked=payload.last_asked,
         answered_the_balance=payload.answered_the_balance,
-        referenced_category=payload.referenced_category,
-        referenced_group_by=(
-            payload.referenced_group_by
-            if payload.referenced_group_by is not None
-            else (GroupBy.CATEGORY if payload.referenced_category else None)
-        ),
-        referenced_group_key=payload.referenced_group_key or payload.referenced_category,
-        referenced_transaction_ids=tuple(payload.referenced_transaction_ids),
-        last_ratio=_ratio_plan(payload),
-        pending_ratio=_ratio_draft(payload),
-        last_comparison=_comparison_plan(payload),
+        last_ratio=last_ratio,
+        pending_ratio=pending_ratio,
+        last_comparison=last_comparison,
+        result_reference=result_reference,
         account_aliases=_account_aliases(payload),
         counterparty_aliases=_counterparty_aliases(payload),
         recent_payment_rail=payload.recent_payment_rail,
         turns=_turns(payload),
+        visual_contexts=_visual_contexts(payload),
+        account_selection=_account_selection(payload),
     )
+
+
+def _reference_state(
+    payload: ConversationPayload,
+    last_plan: FinancialPlan | TopMovements | None,
+    last_ratio: RatioPlan | None,
+    pending_ratio: RatioDraft | None,
+    last_comparison: ComparisonPlan | None,
+) -> ResultReference | None:
+    if (
+        last_ratio is not None
+        or pending_ratio is not None
+        or last_comparison is not None
+        or payload.answered_the_balance
+    ):
+        return None
+    category = payload.referenced_category
+    group_by = payload.referenced_group_by
+    group_key = payload.referenced_group_key
+    ids = tuple(payload.referenced_transaction_ids)
+    if category is None and group_by is None and group_key is None and not ids:
+        return None
+    if last_plan is None:
+        raise InvalidValueError("an explicit result reference needs an answered query")
+    return ResultReference(last_plan, category, group_by, group_key, ids)
 
 
 def _turns(payload: ConversationPayload) -> tuple[Turn, ...]:
@@ -210,6 +377,15 @@ def _turns(payload: ConversationPayload) -> tuple[Turn, ...]:
 def _account_aliases(payload: ConversationPayload) -> tuple[AccountAlias, ...]:
     return tuple(
         AccountAlias(row.alias, row.account_id, row.display_name) for row in payload.account_aliases
+    )
+
+
+def _account_selection(payload: ConversationPayload) -> AccountSelection | None:
+    if payload.account_selection_mode is None:
+        return None
+    return AccountSelection(
+        mode=payload.account_selection_mode,
+        account_ids=tuple(payload.account_selection_ids),
     )
 
 
@@ -234,6 +410,17 @@ def _active(payload: ConversationPayload) -> ActiveWorkflow | None:
             return FinancialClarification(
                 draft=draft_to_domain(payload.draft),
                 awaiting=payload.awaiting or Slot.WINDOW,
+            )
+        case Workflow.ACCOUNT_SCOPE:
+            assert payload.pending_plan is not None
+            return AccountScopeClarification(
+                pending=query_to_domain(payload.pending_plan),
+                candidates=tuple(
+                    AccountCandidate(row.account_id, row.display_name, row.kind)
+                    for row in payload.account_candidates
+                ),
+                requested_count=payload.pending_requested_count,
+                explicit_visualization=payload.pending_explicit_visualization,
             )
         case Workflow.UNSUPPORTED_CAPABILITY:
             assert payload.capability  # the payload's validator requires it
@@ -295,16 +482,23 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     itself now: a half-filled PAYMENT_CONFIRMATION is refused, and constructing one on the way to
     filling it would make this function raise on its own correct output.
     """
+    referenced_category, referenced_group_by, referenced_group_key, referenced_transaction_ids = (
+        _legacy_projection_of(conversation.result_reference)
+    )
     return ConversationPayload.model_validate(
         {
+            # The half of the round trip that makes it one. Without this line the identifier is
+            # minted on every turn and every turn is still its own trace, which is the state this
+            # change exists to end — and nothing would fail, because nothing downstream reads it.
+            "conversation_id": conversation.conversation_id,
             "workflow": workflow_of(conversation.active),
             "awaiting": conversation.awaiting,
             "last_asked": conversation.last_asked,
             "answered_the_balance": conversation.answered_the_balance,
-            "referenced_category": conversation.referenced_category,
-            "referenced_group_by": conversation.referenced_group_by,
-            "referenced_group_key": conversation.referenced_group_key,
-            "referenced_transaction_ids": list(conversation.referenced_transaction_ids),
+            "referenced_category": referenced_category,
+            "referenced_group_by": referenced_group_by,
+            "referenced_group_key": referenced_group_key,
+            "referenced_transaction_ids": referenced_transaction_ids,
             "account_aliases": [
                 {
                     "alias": alias.alias,
@@ -313,6 +507,14 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 }
                 for alias in conversation.account_aliases
             ],
+            "account_selection_mode": (
+                conversation.account_selection.mode if conversation.account_selection else None
+            ),
+            "account_selection_ids": (
+                list(conversation.account_selection.account_ids)
+                if conversation.account_selection
+                else []
+            ),
             "counterparty_aliases": [
                 {
                     "alias": alias.alias,
@@ -330,6 +532,25 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                     "question": turn.question,
                 }
                 for turn in conversation.turns
+            ],
+            "visual_contexts": [
+                {
+                    "chart_id": context.chart_id,
+                    "spec": _context_spec_payload(context.spec),
+                    "profile": {
+                        "fields": [
+                            {"name": name, "type": field_type}
+                            for name, field_type in context.profile.fields
+                        ],
+                        "cardinality": context.profile.cardinality,
+                        "metric": context.profile.metric,
+                        "unit": context.profile.unit,
+                        "positive": context.profile.positive,
+                        "mutually_exclusive": context.profile.mutually_exclusive,
+                        "verified_total": context.profile.verified_total,
+                    },
+                }
+                for context in conversation.visual_contexts
             ],
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
@@ -373,6 +594,22 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
     )
 
 
+def _legacy_projection_of(
+    reference: ResultReference | None,
+) -> tuple[str | None, GroupBy | None, str | None, list[UUID]]:
+    """Project only a canonical reference; stale/absent values become an empty legacy wire."""
+    if reference is None:
+        return None, None, None, []
+    category = reference.category
+    group_by = reference.group_by
+    group_key = reference.group_key
+    if category is not None and group_by is None:
+        group_by, group_key = GroupBy.CATEGORY, category
+    elif group_by is GroupBy.CATEGORY and category is None:
+        category = group_key
+    return category, group_by, group_key, list(reference.transaction_ids)
+
+
 def _ratio_plan(payload: ConversationPayload) -> RatioPlan | None:
     if payload.last_ratio_kind is None:
         return None
@@ -410,6 +647,20 @@ def _active_payload(active: ActiveWorkflow | None) -> dict[str, Any]:
     """The fields that belong to the active state, and only those."""
     if isinstance(active, FinancialClarification):
         return {"draft": plan_payload(active.draft)}
+    if isinstance(active, AccountScopeClarification):
+        return {
+            "pending_plan": plan_payload(active.pending),
+            "pending_requested_count": active.requested_count,
+            "pending_explicit_visualization": active.explicit_visualization,
+            "account_candidates": [
+                {
+                    "account_id": candidate.account_id,
+                    "display_name": candidate.display_name,
+                    "kind": candidate.kind,
+                }
+                for candidate in active.candidates
+            ],
+        }
     if isinstance(active, UnsupportedCapability):
         return {"capability": active.capability}
     if isinstance(active, PaymentInProgress):

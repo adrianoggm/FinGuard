@@ -1,5 +1,14 @@
 episodes:
   - name: typed_relationships_inside_compound_reads
+    # scope: legacy — debt, not a choice, and a *different* defect from the three that came off this
+    # list. Turn 5 pairs a ratio with a plain query, and the settled account selection survives the
+    # ratio half and is gone by the plain half: the sentence comes back as half a figure and half
+    # «¿En qué cuenta quieres consultarlo?», and the conversation's `account_selection` is cleared
+    # to None afterwards. Verified to reproduce identically with and without the fix to
+    # `_remember_explicit_scope`, so nothing about a derived scope being persisted is involved —
+    # a compound read simply does not carry the selection into its second operand.
+    # See LEGACY_SCOPE in tests/test_conversation_corpus.py.
+    scope: legacy
     why: >
       Una relación financiera cerrada sigue siendo una sola petición aunque nombre dos operandos.
       Puede convivir con otra lectura segura, conservar su memoria tras un saldo y aceptar después

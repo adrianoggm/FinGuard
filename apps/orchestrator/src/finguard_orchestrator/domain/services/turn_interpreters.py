@@ -16,11 +16,47 @@ import re
 from typing import Final
 
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import focus_of
+from finguard_orchestrator.domain.models.result_reference import result_reference_of
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import intent_router, spanish
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.observability import Step, Verdict, record
 
 logger = logging.getLogger(__name__)
+
+# Which arrangement read the turn. Three names, fixed here rather than typed at the call sites,
+# for the reason `Step` is an enum: Section 3 makes this a span attribute and a fourth spelling of
+# "hybrid" is a series nothing sums.
+_SHADOW: Final = "shadowed"
+_PROMOTED: Final = "promoted"
+_HYBRID: Final = "hybrid"
+
+
+def _decided(router: Intent, answered: Intent, *, by: str) -> Intent:
+    """Record which intent this turn was read as, and whether a model moved it off the router's.
+
+    The one place this seam is recorded, and it is here rather than in `Deterministic` on purpose:
+    the decision `Step.INTENT` names is *router versus model*, and a deployment with no model has
+    no such decision to make. Recording an agreement between the router and itself would put a
+    turn in the denominator of an override rate that nothing could ever have overridden.
+
+    `changed` and the verdict come from one comparison, which is what keeps this a decision rather
+    than a branch: `answered is not router` is exactly "a model widened this reading", and every
+    other outcome above — a payment the model may not claim, a balance it may not propose, a
+    reading it failed to produce at all — arrives here as the router's own intent and is recorded
+    as the agreement it is.
+    """
+    record(
+        Step.INTENT,
+        Verdict.OVERRODE if answered is not router else Verdict.AGREED,
+        changed=answered is not router,
+        field="intent",
+        was=router.value,
+        now=answered.value,
+        detail=by,
+    )
+    return answered
 
 
 class Deterministic:
@@ -68,6 +104,12 @@ class Shadowed:
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
         decided = await self._authority.interpret(sentence, conversation=conversation)
+        # Recorded before the shadow runs, not after, because the shadow cannot move this and that
+        # is the whole property being defended: whatever it says, the turn is read as `decided`.
+        # `changed` is therefore False on every turn a shadow ever sees, which is the correct
+        # reading of "did this alter what the turn answered" and the reason the disagreement rate
+        # stays where it already is — in `disagreed` and in `turn.interpreted`.
+        _decided(decided, decided, by=_SHADOW)
         self.asked += 1
         try:
             shadowed = await self._shadow.interpret(sentence, conversation=conversation)
@@ -112,6 +154,21 @@ class Promoted:
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
         deterministic = await self._router.interpret(sentence, conversation=conversation)
+        return _decided(
+            deterministic,
+            await self._read(sentence, conversation, deterministic),
+            by=_PROMOTED,
+        )
+
+    async def _read(
+        self, sentence: str, conversation: Conversation, deterministic: Intent
+    ) -> Intent:
+        """Which reading stands. Extracted so the seam above has one exit to record.
+
+        Every path that keeps the router's reading — the payment rule, the model failing, the
+        model proposing a payment — returns `deterministic`, so the comparison in `_decided` is
+        the same one this method makes, expressed once instead of at four returns.
+        """
         if deterministic is Intent.PAYMENT:
             return deterministic
         try:
@@ -158,9 +215,14 @@ def _worth_a_second_read(sentence: str, conversation: Conversation) -> bool:
     is no context for a model to recover.
     """
     folded = spanish.folded(sentence)
-    if _GROUNDED_RESULT_REFERENCE.search(folded) is not None and (
-        conversation.referenced_group_by is not None
-        or bool(conversation.referenced_transaction_ids)
+    reference = result_reference_of(conversation, focus_of(conversation))
+    if (
+        _GROUNDED_RESULT_REFERENCE.search(folded) is not None
+        and reference is not None
+        and (
+            (reference.group_by is not None and reference.group_key is not None)
+            or bool(reference.transaction_ids)
+        )
     ):
         # The previous answer already supplies the missing noun. A model cannot improve on a typed
         # category/merchant/account row or an exact UUID set; it can only redirect the intent.
@@ -207,6 +269,22 @@ class Hybrid:
 
     async def interpret(self, sentence: str, *, conversation: Conversation) -> Intent:
         deterministic = await self._router.interpret(sentence, conversation=conversation)
+        return _decided(
+            deterministic,
+            await self._read(sentence, conversation, deterministic),
+            by=_HYBRID,
+        )
+
+    async def _read(
+        self, sentence: str, conversation: Conversation, deterministic: Intent
+    ) -> Intent:
+        """Which reading stands. Extracted so the seam above has one exit to record.
+
+        Six of the seven returns below hand back the router's own reading — a turn the rules
+        already claimed, a catch-all not worth a second opinion, a model that failed, and the three
+        guards on what a model may propose. Only the last can differ, so `_decided` sees the whole
+        decision in one comparison rather than needing a record at each way out.
+        """
         if deterministic is not Intent.FINANCIAL_QUERY:
             return deterministic
         if not _worth_a_second_read(sentence, conversation):

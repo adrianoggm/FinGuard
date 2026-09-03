@@ -4,6 +4,7 @@ name: finguard
 #   core  skeleton: database + backend APIs
 #   poc   everything that exists: core + skin (web, and later a mobile app)
 #   voice  core + the real-time voice gateway (phase 6)
+#   observability  the trace and metric stack, on its own and additive to any of the above
 #   a2a / events  arrive in their own iterations
 #
 # A single component needs no profile: docker compose up postgres
@@ -54,6 +55,30 @@ services:
       retries: 5
       start_period: 10s
 
+  orchestrator-db-init:
+    image: postgres:18-alpine
+    profiles: ["core", "poc", "voice"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-finguard}
+    command: ["/bin/sh", "/scripts/reconcile-orchestrator.sh"]
+    volumes:
+      - ./infrastructure/postgres/reconcile-orchestrator.sh:/scripts/reconcile-orchestrator.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  orchestrator-migrate:
+    build:
+      context: .
+      dockerfile: apps/orchestrator/Dockerfile
+    profiles: ["core", "poc", "voice"]
+    environment:
+      DATABASE_URL: postgresql://finguard_orchestrator:finguard_orchestrator@postgres:5432/finguard_orchestrator
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      orchestrator-db-init:
+        condition: service_completed_successfully
+
   orchestrator:
     build:
       context: .
@@ -84,6 +109,9 @@ services:
       ORCHESTRATOR_LLM_CATALOGUE_FILE: /app/config/llm.toml
       # The ledger, by service name on the compose network.
       ORCHESTRATOR_BANKING_BASE_URL: http://banking-api:8001
+      ORCHESTRATOR_DATABASE_URL: postgresql://finguard_orchestrator:finguard_orchestrator@postgres:5432/finguard_orchestrator
+      ORCHESTRATOR_METRICS_ENABLED: "true"
+      ORCHESTRATOR_METRICS_SIGNING_KEYS: '["default:ZmluZ3VhcmQtbWV0cmljLWtleS0zMi1ieXRlcy1sb25n"]'
       # The local model runs on the host, not in a container: that is where the GPU is,
       # and 127.0.0.1 inside a container is the container. Nothing leaves the machine.
       ORCHESTRATOR_OLLAMA_BASE_URL: http://host.docker.internal:11434
@@ -128,7 +156,7 @@ services:
       # `payments:confirm` travel together there because the account holder is one person doing
       # two turns — the split exists so a credential *can* be issued with only the first, for an
       # integration that drafts payments somebody else approves.
-      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm"]'
+      ORCHESTRATOR_DEV_TOKENS: '["demo-token-laura-0001:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,metrics:read,metrics:write","demo-token-diego-0002:ES-0002:2db96ca5-d01d-422d-8123-6172dfe1c98e:Atlantic/Canary:questions:read,metrics:read,metrics:write","demo-token-operator:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,assistant:use,assistant:admin,metrics:read,metrics:write","demo-token-laura-pays:ES-0001:08aba04f-2b30-4639-88a6-eac741153ce0:Europe/Madrid:questions:read,movements:categorise,payments:prepare,payments:confirm,metrics:read,metrics:write"]'
     extra_hosts:
       # Linux does not resolve host.docker.internal on its own; Docker Desktop does.
       # Stating it keeps the compose file working on both.
@@ -138,6 +166,8 @@ services:
     ports:
       - "127.0.0.1:${ORCHESTRATOR_PORT:-8000}:8000"
     depends_on:
+      orchestrator-migrate:
+        condition: service_completed_successfully
       banking-api:
         condition: service_healthy
     healthcheck:
@@ -200,6 +230,178 @@ services:
       retries: 5
       start_period: 10s
 
+  # --- observability -----------------------------------------------------------------
+  #
+  # Four services on the `observability` profile, and nothing else references them: no
+  # service outside this block depends_on one of these, and none of these depends_on a
+  # service outside it. That is what makes them genuinely inert — `just app` and `just back`
+  # do not resolve them, do not pull them and do not wait for them. Verify rather than trust
+  # it: `docker compose config --services` with no profile must not list any of the four.
+  #
+  # The dependency direction is the reason it can be that clean. The orchestrator PUSHES to
+  # the collector; nothing here reaches back into the application. So the stack is optional
+  # at runtime as well as at startup — with the profile down, the SDK's exporter fails to
+  # connect, retries and gives up, and the turn is unaffected. Telemetry that can take the
+  # service down with it is worse than no telemetry.
+  #
+  # Separate containers rather than the grafana/otel-lgtm all-in-one image, deliberately:
+  # the point is that this arrangement transfers to a real deployment, and all-in-one hides
+  # exactly the seams (exporter endpoints, retention, provisioning) that have to be
+  # configured there. Config lives in ops/observability/, mounted read-only.
+  #
+  # Every image is pinned to an exact tag. `latest` on four services is four ways for the
+  # stack to break on a morning when nobody changed anything.
+  #
+  # Section 5 of docs/superpowers/specs/2026-08-29-orchestrator-observability-design.md.
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.130.0
+    profiles: ["observability"]
+    # contrib, not the core distribution: the prometheusremotewrite exporter is not in core.
+    # Worth knowing before someone "simplifies" this to the smaller image and finds the
+    # metrics pipeline refuses to load.
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./ops/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      # 4317 gRPC and 4318 HTTP, the OTLP defaults, published on loopback (rule 13).
+      # Published rather than left on the compose network because the orchestrator is run
+      # both ways: `just back` puts it on this network (it would use http://otel-collector:4317),
+      # but `just serve-orchestrator` runs it on the host, and then 127.0.0.1:4317 is the
+      # only address that works. Tempo's own OTLP receiver is deliberately NOT published —
+      # it is the same port number and would collide.
+      - "127.0.0.1:${OTEL_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
+      # The health_check extension. There is no `healthcheck:` below because this image is
+      # distroless — no shell, no wget, nothing for docker to exec (verified: /bin/sh does
+      # not exist in 0.130.0). Publishing the port is how you answer "is the collector up"
+      # from the host instead: curl 127.0.0.1:13133. A Kubernetes readiness probe hits the
+      # same endpoint without needing anything inside the image, which is the point.
+      - "127.0.0.1:${OTEL_HEALTH_PORT:-13133}:13133"
+    depends_on:
+      # Both are export targets, so starting first only avoids a noisy minute of retries —
+      # the collector recovers on its own either way. service_started, not service_healthy,
+      # because tempo has no healthcheck (same distroless reason) and requiring one would
+      # deadlock the profile.
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.8.1
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./ops/observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      # A named volume, not a bind mount, and that is not a style preference. Tempo runs as
+      # uid 10001 and /var/tempo exists in the image owned by 10001, so docker's copy-up
+      # gives a fresh named volume the right ownership and tempo can write. A bind mount to
+      # a host directory gets no copy-up, arrives owned by root, and tempo fails at startup
+      # with a permission error that reads like a config problem. Verified on 2.8.1: wal/
+      # and blocks/ come out 10001-owned.
+      - tempo-data:/var/tempo
+    ports:
+      # Tempo's HTTP API — TraceQL queries, /ready, /status. Grafana reaches it over the
+      # compose network, so this publish is for humans and for the verification in the
+      # commit message: curl the API and confirm a trace is really there.
+      # 3200 is Tempo's own default and is free here.
+      - "127.0.0.1:${TEMPO_PORT:-3200}:3200"
+    # No healthcheck: distroless image, nothing to exec. /ready on 3200 is the real signal
+    # and a deployment's probe can reach it; docker compose just cannot.
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 15 days. The headline number of this design — how often a rule overrode the model and
+      # changed the answer — is only meaningful as a trend, and a fortnight covers "did last
+      # week's change move it". Tempo keeps 72h, so exemplars older than three days lead to a
+      # trace that no longer exists; see the note in ops/observability/tempo/tempo.yaml.
+      - --storage.tsdb.retention.time=15d
+      # The application's metrics are PUSHED here by the collector. Without this flag the
+      # remote write endpoint 404s and the collector logs export failures while Prometheus
+      # looks perfectly healthy — a stack that is green and receiving nothing.
+      - --web.enable-remote-write-receiver
+      # Exemplars are opt-in and off by default. This is the flag that makes "jump from the
+      # override-rate panel to that turn's waterfall" possible at all; without it Prometheus
+      # accepts the exemplars on remote write and silently discards them.
+      - --enable-feature=exemplar-storage
+      # Lets `curl -XPOST /-/reload` apply a scrape config change without restarting and
+      # losing the in-memory head block. Defensible only because nothing here leaves
+      # loopback (rule 13).
+      - --web.enable-lifecycle
+    volumes:
+      - ./ops/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Named volume for the same copy-up reason as tempo: the image owns /prometheus as
+      # uid 65534 (nobody) and a bind mount would arrive root-owned.
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      # This image does have a shell and wget, so unlike tempo and the collector it can say
+      # for itself whether it is ready. The collector waits on this one because a remote
+      # write to a Prometheus that is still replaying its WAL is just retries.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: ["observability"]
+    environment:
+      # Development credentials, and only defensible because of the loopback publish below
+      # (rule 13). Set explicitly rather than left at grafana's admin/admin default, which
+      # triggers the change-password interstitial and makes the API verification below fail
+      # in a way that looks like a provisioning fault.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Anonymous access left OFF on purpose. It would be convenient here and is the habit
+      # that follows a compose file into a deployment; the login is two seconds.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # No phoning home and no update banner, matching tempo's usage_report setting.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      # Read-only: this directory is the source of truth for datasources, and grafana must
+      # not be able to write back over it. Datasources are also marked editable:false inside,
+      # so a change made in the browser is refused rather than silently lost on recreate.
+      - ./ops/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Section 6 drops dashboard JSON in here; the provider is already pointed at it.
+      - ./ops/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      # 3001, NOT grafana's default 3000. 3000 belongs to the web client (`just web`, and
+      # `just app` starts it), and the whole point of this stack is to be up at the same
+      # time as the application it is watching. Sharing the port would mean choosing between
+      # the app and the dashboard of the app.
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   voice-models:
+  # Observability state. Separate volumes so `docker volume rm finguard_tempo-data` throws
+  # away traces without also throwing away the metric history or grafana's own database.
+  tempo-data:
+  prometheus-data:
+  grafana-data:

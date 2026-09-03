@@ -452,6 +452,16 @@ def test_the_two_routes_leave_the_same_state_after_the_same_failure() -> None:
     streamed_client, _, _ = wired({"gasté": PlanningResult.planned(GROCERIES)}, down=True)
     streamed = Chat(streamed_client, streaming=True).say("¿cuánto gasté el mes pasado en el súper?")
 
-    assert plain["conversation"] == streamed["conversation"]
+    # Without the identifier, and this is the point of the test rather than an exception to it:
+    # these are two conversations, started independently, and each one is minted its own identity
+    # on its first turn. Two different ids here is the correct answer — the same one would mean two
+    # holders' turns were about to land in one trace. Everything the *next turn* is built from is
+    # compared, which is what "the same state" means.
+    assert _without_identity(plain["conversation"]) == _without_identity(streamed["conversation"])
+    assert plain["conversation"]["conversation_id"] != streamed["conversation"]["conversation_id"]
     assert plain["suggestions"] == streamed["suggestions"]
     assert plain["outcome"] == streamed["outcome"]
+
+
+def _without_identity(conversation: dict) -> dict:
+    return {key: value for key, value in conversation.items() if key != "conversation_id"}

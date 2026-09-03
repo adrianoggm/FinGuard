@@ -46,7 +46,13 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Spoken
+from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.turn_analysis import (
+    TurnAnalysis,
+    TurnFocus,
+    TurnRelation,
+)
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -207,7 +213,9 @@ def test_the_reading_reaches_the_handler():
 
     client.post("/v1/questions", json={"question": "¿por qué?"})
 
-    assert handler.queries[0].intent is Intent.EXPLAIN_PREVIOUS
+    assert handler.queries[0].analysis == TurnAnalysis(
+        Intent.EXPLAIN_PREVIOUS, TurnRelation.FOLLOW_UP, TurnFocus.LAST_ANSWER
+    )
 
 
 def test_the_streaming_reading_reaches_the_handler():
@@ -217,7 +225,40 @@ def test_the_streaming_reading_reaches_the_handler():
     with client.stream("POST", "/v1/questions/stream", json={"question": "¿por qué?"}) as answer:
         answer.read()
 
-    assert handler.queries[0].intent is Intent.EXPLAIN_PREVIOUS
+    assert handler.queries[0].analysis == TurnAnalysis(
+        Intent.EXPLAIN_PREVIOUS, TurnRelation.FOLLOW_UP, TurnFocus.LAST_ANSWER
+    )
+
+
+def test_normal_and_streaming_routes_handoff_the_same_complete_analysis():
+    reads = CountingInterpreter(Intent.EXPLAIN_PREVIOUS)
+    normal_client, normal_handler, _ = a_client(reads)
+    normal_client.post("/v1/questions", json={"question": "¿por qué?"})
+
+    stream_client, stream_handler, _ = a_client(CountingInterpreter(Intent.EXPLAIN_PREVIOUS))
+    with stream_client.stream(
+        "POST", "/v1/questions/stream", json={"question": "¿por qué?"}
+    ) as answer:
+        answer.read()
+
+    assert normal_handler.queries[0].analysis == stream_handler.queries[0].analysis
+    assert normal_handler.queries[0].intent is None
+    assert stream_handler.queries[0].intent is None
+
+
+def test_query_rejects_discordant_legacy_intent_and_analysis():
+    with pytest.raises(InvalidValueError):
+        AskFinancialQuestionQuery(
+            sentence="¿por qué?",
+            account_id=ACCOUNT,
+            today=TODAY,
+            intent=Intent.FINANCIAL_QUERY,
+            analysis=TurnAnalysis(
+                Intent.EXPLAIN_PREVIOUS,
+                TurnRelation.FOLLOW_UP,
+                TurnFocus.LAST_ANSWER,
+            ),
+        )
 
 
 def test_the_installed_interpreter_decides_whether_this_is_a_payment():

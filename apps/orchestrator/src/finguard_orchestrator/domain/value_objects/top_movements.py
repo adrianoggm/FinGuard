@@ -14,8 +14,9 @@ about the question, which is what stops it depending on how the continuation hap
 """
 
 from dataclasses import dataclass, field, replace
+from uuid import UUID
 
-from finguard_orchestrator.domain.constants import MAX_RANK
+from finguard_orchestrator.domain.constants import MAX_RANK, MAX_SELECTED_ACCOUNTS
 from finguard_orchestrator.domain.enums import Direction
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -39,6 +40,9 @@ class TopMovements:
     merchants: tuple[str, ...] = field(default_factory=tuple)
     merchant_terms: tuple[str, ...] = field(default_factory=tuple)
     excluded_merchants: tuple[str, ...] = field(default_factory=tuple)
+    across_accounts: bool = False
+    only_account_id: UUID | None = None
+    only_account_ids: tuple[UUID, ...] = field(default_factory=tuple)
     # 1 is the largest. Not zero-based: "el primero" is what a person says, and an off-by-one here
     # would answer "the largest" with the second largest.
     rank: int = 1
@@ -50,6 +54,14 @@ class TopMovements:
             raise InvalidValueError("rank must be a whole number")
         if not 1 <= self.rank <= MAX_RANK:
             raise InvalidValueError(f"rank must be between 1 and {MAX_RANK}, got {self.rank}")
+        if self.across_accounts and (self.only_account_id is not None or self.only_account_ids):
+            raise InvalidValueError("acrossAccounts cannot be combined with an account selection")
+        if self.only_account_id is not None and self.only_account_ids:
+            raise InvalidValueError("use onlyAccountId or onlyAccountIds, not both")
+        if len(set(self.only_account_ids)) != len(self.only_account_ids):
+            raise InvalidValueError("onlyAccountIds cannot contain duplicates")
+        if len(self.only_account_ids) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
         check_filters(
             self.categories,
             self.merchants,

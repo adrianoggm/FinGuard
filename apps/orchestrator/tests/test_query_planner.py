@@ -14,7 +14,16 @@ import pytest
 
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period, PlanningOutcome
 from finguard_orchestrator.domain.errors import ProviderFailedError
+from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.planning_context import (
+    ContinuationBase,
+    ContinuationSource,
+    PlanningContext,
+    planning_context,
+)
+from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.services import window_words
+from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -25,6 +34,7 @@ from finguard_orchestrator.infrastructure.planning.plan_schema import (
     NO_CATEGORY,
     build_schema,
 )
+from finguard_orchestrator.infrastructure.planning.prompt import build_prompt
 
 CATEGORIES = ("GROCERIES", "TRANSPORT_FUEL", "HOUSING_RENT")
 TODAY = date(2026, 7, 15)
@@ -53,6 +63,7 @@ class FakeProvider:
         self._answer = answer
         self._failure = failure
         self.schema: dict[str, Any] | None = None
+        self.prompts: list[str] = []
 
     async def complete(
         self,
@@ -63,6 +74,7 @@ class FakeProvider:
         max_output_tokens: int,
         schema: dict[str, Any] | None = None,
     ) -> str:
+        self.prompts.append(prompt)
         self.schema = schema
         if self._failure is not None:
             raise ProviderFailedError(self.name, self._failure)
@@ -91,9 +103,31 @@ def planner_for(provider: FakeProvider) -> LlmQueryPlanner:
     )
 
 
+def context_for(
+    previous: FinancialPlan | None = None, *, force_follow_up: bool = False
+) -> PlanningContext:
+    continuation = (
+        None
+        if previous is None
+        else ContinuationBase(previous, ContinuationSource.LAST_ANSWER, force_follow_up)
+    )
+    analysis = TurnAnalysis(
+        intent=Intent.FINANCIAL_QUERY,
+        relation=TurnRelation.FOLLOW_UP if previous is not None else TurnRelation.NEW_REQUEST,
+        focus=TurnFocus.LAST_ANSWER if previous is not None else TurnFocus.NEW_REQUEST,
+    )
+    return planning_context(
+        Conversation(last_plan=previous),
+        today=TODAY,
+        reporting_timezone="Europe/Madrid",
+        analysis=analysis,
+        continuation=continuation,
+    )
+
+
 async def plan_from(body: dict[str, Any] | str) -> Any:
     raw = body if isinstance(body, str) else json.dumps(body)
-    return await planner_for(FakeProvider(answer=raw)).plan("da igual", today=TODAY)
+    return await planner_for(FakeProvider(answer=raw)).plan("da igual", context=context_for())
 
 
 # --- the schema itself -------------------------------------------------------------
@@ -135,7 +169,7 @@ def test_the_periods_come_from_the_enum() -> None:
 async def test_the_schema_reaches_the_provider() -> None:
     provider = FakeProvider(answer=json.dumps(FULL))
 
-    await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert provider.schema is not None, "the request went out unconstrained"
 
@@ -227,7 +261,7 @@ async def test_text_that_is_not_json_is_structural() -> None:
 async def test_an_invalid_structure_is_retried_once_and_can_recover() -> None:
     provider = SequenceProvider(["not json", json.dumps(FULL)])
 
-    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    result = await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert result.outcome is PlanningOutcome.PLANNED
     assert len(provider.prompts) == 2
@@ -238,7 +272,7 @@ async def test_an_invalid_structure_is_retried_once_and_can_recover() -> None:
 async def test_a_second_invalid_structure_is_returned_without_a_loop() -> None:
     provider = SequenceProvider(["not json", "still not json"])
 
-    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    result = await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert result.outcome is PlanningOutcome.INVALID_STRUCTURE
     assert len(provider.prompts) == 2
@@ -247,7 +281,7 @@ async def test_a_second_invalid_structure_is_returned_without_a_loop() -> None:
 async def test_a_domain_rejection_is_not_retried() -> None:
     provider = SequenceProvider([json.dumps({**FULL, "period": "LAST_DECADE"})])
 
-    result = await planner_for(provider).plan("¿cuánto gasté?", today=TODAY)
+    result = await planner_for(provider).plan("¿cuánto gasté?", context=context_for())
 
     assert result.outcome is PlanningOutcome.INVALID_DOMAIN
     assert len(provider.prompts) == 1
@@ -295,7 +329,9 @@ async def test_an_unparseable_date_is_a_domain_failure() -> None:
 async def test_a_dead_provider_is_an_outcome_not_an_exception() -> None:
     """The caller has to tell the user something whichever way it went, so raising here
     would only move the decision somewhere with less to say."""
-    result = await planner_for(FakeProvider(failure="daemon down")).plan("hola", today=TODAY)
+    result = await planner_for(FakeProvider(failure="daemon down")).plan(
+        "hola", context=context_for()
+    )
 
     assert result.outcome is PlanningOutcome.PROVIDER_ERROR
     assert not result.is_answerable
@@ -420,7 +456,7 @@ async def test_a_follow_up_inherits_the_window_it_was_told_not_to_restate() -> N
     }
 
     result = await planner_for(FakeProvider(answer=json.dumps(body))).plan(
-        "¿y en gasolina?", today=TODAY, previous=previous
+        "¿y en gasolina?", context=context_for(previous)
     )
 
     assert result.outcome is PlanningOutcome.PLANNED
@@ -447,9 +483,7 @@ async def test_a_forced_patch_merges_even_when_the_model_calls_it_a_new_question
 
     result = await planner_for(FakeProvider(answer=json.dumps(body))).plan(
         "¿cuántas veces este año?",
-        today=TODAY,
-        previous=previous,
-        force_follow_up=True,
+        context=context_for(previous, force_follow_up=True),
     )
 
     assert result.outcome is PlanningOutcome.PLANNED
@@ -457,6 +491,35 @@ async def test_a_forced_patch_merges_even_when_the_model_calls_it_a_new_question
     assert result.plan.period == RelativePeriod(Period.THIS_YEAR)
     assert result.plan.categories == ("HOUSING_RENT",)
     assert result.plan.metric is Metric.COUNT
+
+
+async def test_initial_planner_prompt_is_byte_identical_to_build_prompt() -> None:
+    """The context projection must not alter the canonical prompt rendering."""
+    cases = [
+        ("\u00bfcu\u00e1nto gast\u00e9?", None, False),
+        (
+            "\u00bfy en gasolina?",
+            FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH)),
+            False,
+        ),
+        (
+            "este a\u00f1o",
+            FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH)),
+            True,
+        ),
+    ]
+    for sentence, prior, forced in cases:
+        provider = FakeProvider(answer=json.dumps(FULL))
+        await planner_for(provider).plan(
+            sentence, context=context_for(prior, force_follow_up=forced)
+        )
+        assert provider.prompts[0] == build_prompt(
+            sentence,
+            today=TODAY,
+            categories=CATEGORIES,
+            previous=prior,
+            force_follow_up=forced,
+        )
 
 
 async def test_a_plan_with_no_window_asks_for_the_period() -> None:
@@ -504,3 +567,69 @@ async def test_a_window_that_is_wrong_rather_than_missing_is_still_refused() -> 
     result = await plan_from({**FULL, "period": ABSOLUTE, "from": "2026-01-01", "to": "2027-12-31"})
 
     assert result.outcome is PlanningOutcome.INVALID_DOMAIN
+
+
+# The body below is what `qwen3.5:9b` actually returns for "¿Qué llevo gastado en la semana en
+# curso?" and for three sentences like it, recorded rather than imagined. Everything in it is
+# right except that two of its fields cannot both be true.
+
+
+@pytest.mark.parametrize("period", ["THIS_WEEK", "THIS_MONTH", "THIS_YEAR"])
+async def test_a_running_total_the_model_gave_no_buckets_is_a_plain_total(period: str) -> None:
+    """Four held-out cases came back INVALID_DOMAIN on this pair, and the question was
+    "¿qué llevo gastado este mes?" — about as ordinary as this product gets.
+
+    `NONE` is the model saying there is nothing to accumulate over, so the running total it also
+    asked for is a sequence of one entry. `SUM` shows that entry. The window, the direction and
+    the filters are the model's, untouched: this settles which figure is displayed, never which
+    movements it is over.
+    """
+    result = await plan_from({**FULL, "period": period, "groupBy": "NONE", "metric": "CUMULATIVE"})
+
+    assert result.outcome is PlanningOutcome.PLANNED
+    assert result.plan is not None
+    assert result.plan.metric is Metric.SUM
+    assert result.plan.group_by is GroupBy.NONE
+    assert result.plan.direction is Direction.EXPENSE
+    assert result.plan.period == RelativePeriod(period=Period(period))
+
+
+@pytest.mark.parametrize("group_by", ["CATEGORY", "MERCHANT", "COUNTERPARTY", "ACCOUNT"])
+async def test_a_running_total_broken_down_by_something_is_still_refused(group_by: str) -> None:
+    """The line the rule above stops at.
+
+    A grouping that is not `NONE` is a second axis the model asked for, and a plan holds one. The
+    handler's `_cumulative_plan` declines exactly this rather than dropping a half, so the planner
+    may not settle it either — the refusal is the same refusal, arriving by a different road.
+    """
+    result = await plan_from({**FULL, "groupBy": group_by, "metric": "CUMULATIVE"})
+
+    assert result.outcome is PlanningOutcome.INVALID_DOMAIN
+    assert result.reason is not None and "CUMULATIVE requires" in result.reason
+
+
+async def test_a_clarification_keeps_the_draft_the_same_pair_used_to_destroy() -> None:
+    """`_draft` swallows an `InvalidValueError` and returns None, so the identical pair cost the
+    clarification its draft — and the draft is the only thing the reply builds on."""
+    result = await plan_from(
+        {**FULL, "period": "", "groupBy": "NONE", "metric": "CUMULATIVE"},
+    )
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert result.draft is not None
+    assert result.draft.metric is Metric.SUM
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ("los últimos 0 días", "durante los últimos 5000 días", "en los últimos 100 meses"),
+)
+async def test_an_invalid_explicit_count_is_clarified_without_asking_the_model(
+    sentence: str,
+) -> None:
+    provider = FakeProvider(answer=json.dumps(FULL))
+
+    result = await planner_for(provider).plan(sentence, context=context_for())
+
+    assert result.outcome is PlanningOutcome.NEEDS_CLARIFICATION
+    assert provider.prompts == []
