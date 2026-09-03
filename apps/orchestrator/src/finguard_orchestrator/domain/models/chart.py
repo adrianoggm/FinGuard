@@ -5,8 +5,30 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, cast
 
 Mark = Literal["line", "area", "bar", "point", "donut"]
-Channel = Literal["x", "y", "color", "tooltip", "theta"]
+Channel = Literal["x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"]
 FieldType = Literal["nominal", "quantitative", "temporal"]
+Stack = Literal["zero", "normalize", "disabled"]
+
+
+@dataclass(frozen=True)
+class EncodingSort:
+    """How one channel orders itself, which is not always how the chart orders itself.
+
+    `ChartSpec.sort` stays for the single-axis case it already serves. This exists because a
+    breakdown wants its dimension by magnitude *and* its legend in producer order, and one
+    setting cannot carry both.
+    """
+
+    mode: Literal["input", "ascending", "descending"]
+    field: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"input", "ascending", "descending"}:
+            raise ValueError("unsupported sort mode")
+        if self.mode == "input" and self.field is not None:
+            raise ValueError("input order names no field to sort by")
+        if self.field is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.field):
+            raise ValueError("sort fields must be identifiers")
 
 
 @dataclass(frozen=True)
@@ -15,9 +37,10 @@ class ChartEncoding:
     field: str
     type: FieldType
     title: str | None = None
+    sort: EncodingSort | None = None
 
     def __post_init__(self) -> None:
-        if self.channel not in {"x", "y", "color", "tooltip", "theta"}:
+        if self.channel not in {"x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"}:
             raise ValueError("unsupported chart channel")
         if self.type not in {"nominal", "quantitative", "temporal"}:
             raise ValueError("unsupported chart field type")
@@ -30,7 +53,7 @@ class ChartSpec:
     mark: Mark
     encodings: tuple[ChartEncoding, ...]
     title: str | None = None
-    stack: Literal["zero", "normalize"] | None = None
+    stack: Stack | None = None
     sort: Literal["ascending", "descending", "input"] | None = None
     sort_field: str | None = None
     limit: int | None = None
@@ -41,6 +64,13 @@ class ChartSpec:
             raise ValueError("unsupported chart mark")
         if self.mark == "donut" and self.stack is not None:
             raise ValueError("donut cannot be stacked")
+        if self.stack is not None and not any(
+            item.type == "quantitative" and item.channel in {"x", "y"} for item in self.encodings
+        ):
+            # The presenter looks up the stacked channel with a bare `next(...)` and no default,
+            # relying on this invariant to make that lookup safe -- so a spec that carries a stack
+            # with nothing to hang it on is refused here instead of raising `StopIteration` later.
+            raise ValueError("a stacked chart needs a quantitative x or y encoding")
         channels = [item.channel for item in self.encodings if item.channel != "tooltip"]
         if len(channels) != len(set(channels)):
             raise ValueError("chart channels must be unique")

@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingPatch,
+    EncodingSort,
     VisualContext,
     VisualField,
     Visualization,
@@ -490,3 +491,171 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
         ),
     )
     assert _chart_suggestions(temporal) == ["Ponlo en barras"]
+
+
+def test_a_disabled_stack_emits_an_explicit_null_and_not_an_absent_property() -> None:
+    """`stack=None` omits the property, and Vega-Lite's default for a bar with a quantitative
+    measure and a colour series is to **stack**. So `None` means "let Vega-Lite decide" and
+    Vega-Lite decides to stack. Only an explicit null turns it off."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal"),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal"),
+            ChartEncoding("yOffset", "series", "nominal"),
+        ),
+        stack="disabled",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["x"]["stack"] is None
+    assert "yOffset" in emitted["spec"]["encoding"]
+
+
+def test_an_absent_stack_is_still_absent() -> None:
+    """The old behaviour has to stay reachable, because a temporal line needs no stack at all."""
+    spec = ChartSpec(
+        mark="line",
+        encodings=(
+            ChartEncoding("x", "dimension", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert "stack" not in emitted["spec"]["encoding"]["y"]
+
+
+def test_an_offset_is_a_channel_the_vocabulary_knows() -> None:
+    ChartEncoding("xOffset", "series", "nominal")  # must not raise
+    with pytest.raises(ValueError, match="channel"):
+        ChartEncoding("zOffset", "series", "nominal")
+
+
+def test_a_stacked_spec_needs_a_quantitative_x_or_y_encoding() -> None:
+    """`stack` only means something on the axis Vega-Lite draws bars along. The presenter's
+
+    `next(...)` for the stacked channel has no default and raises `StopIteration` if that axis
+    is missing -- so `ChartSpec` refuses the combination at construction instead, and the
+    presenter's bare `next()` is provably safe. A donut cannot exercise this: `mark == "donut"`
+    with a stack is already rejected by the guard above with its own message, so this uses a
+    non-donut mark whose only quantitative encoding is on `theta`.
+    """
+    with pytest.raises(ValueError, match="quantitative"):
+        ChartSpec(
+            mark="point",
+            encodings=(ChartEncoding("theta", "value_minor", "quantitative"),),
+            stack="disabled",
+        )
+
+
+def test_a_chart_can_order_its_dimension_and_its_series_differently() -> None:
+    """`ChartSpec` carries one `sort` and one `sort_field`, so two independent orders were not
+    representable: a breakdown wants its dimension by magnitude and its legend in the order the
+    producer built it. Without a per-encoding sort this design would promise two and ship one."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding(
+                "y",
+                "dimension",
+                "nominal",
+                sort=EncodingSort(mode="descending", field="value_minor"),
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal", sort=EncodingSort(mode="input")),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == {
+        "field": "value_minor",
+        "order": "descending",
+    }
+    assert emitted["spec"]["encoding"]["color"]["sort"] is None  # Vega-Lite's "keep data order"
+
+
+def test_a_sort_field_needs_a_mode_that_uses_one() -> None:
+    with pytest.raises(ValueError, match="input"):
+        EncodingSort(mode="input", field="value_minor")
+
+
+def test_an_encoding_sort_rejects_an_unsupported_mode() -> None:
+    with pytest.raises(ValueError, match="unsupported"):
+        EncodingSort(mode="sideways")  # type: ignore[arg-type]
+
+
+def test_an_encoding_sort_field_must_be_an_identifier() -> None:
+    with pytest.raises(ValueError, match="identifiers"):
+        EncodingSort(mode="ascending", field="not an identifier")
+
+
+def test_a_per_encoding_sort_wins_over_the_chart_wide_sort_for_its_own_channel() -> None:
+    """`ChartSpec.sort`/`sort_field` and a per-encoding `EncodingSort` can now both target the
+    same Vega-Lite channel. Only one `"sort"` property can survive on that channel, and the
+    encoding-level one wins -- it says something more specific about its own channel than the
+    chart-wide default does. See the comment in `present()` where that precedence is decided."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding(
+                "y",
+                "dimension",
+                "nominal",
+                sort=EncodingSort(mode="ascending", field="movement_count"),
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == {
+        "field": "movement_count",
+        "order": "ascending",
+    }
+
+
+def test_a_per_encoding_input_sort_beats_a_colliding_chart_wide_sort() -> None:
+    """`EncodingSort(mode="input")` writes a *present but falsy* `"sort": None`, so the
+    precedence guard in `present()` has to check key membership and not truthiness -- a
+    truthiness check would read that `None` as "nothing claimed this channel" and let the
+    chart-wide `sort`/`sort_field` below overwrite it. This puts `input` on the very channel a
+    colliding chart-wide sort targets, which the previous precedence test did not: that one used
+    a *truthy* per-encoding sort, so a regression to truthiness would have passed it unchanged."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal", sort=EncodingSort(mode="input")),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] is None
+
+
+def test_a_fieldless_encoding_sort_emits_the_bare_order_string() -> None:
+    """The per-encoding translation has three wire shapes: the object form (a field), `null`
+    (`input`), and this one -- a mode with no field, which Vega-Lite takes as a bare order
+    string rather than an object."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal", sort=EncodingSort(mode="ascending")),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == "ascending"
