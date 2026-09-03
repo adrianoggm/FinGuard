@@ -63,6 +63,12 @@ class DeterministicVisualPlanner:
         `max_visible_rows`; reading it here would change what this draws, and this is a move.
         """
         fields = profile.field_names()
+        # `field_names()` is a union of every field any row carries. The mapper's own guard
+        # (`llm_mapper._visualization_to_dto`'s `valid_for(fields)`) checks the *intersection* of
+        # the serialised rows' keys instead, so a `"series" in fields` test below (there are two)
+        # could pass on the union while some row lacks the field the resulting spec then names.
+        # Safe today because `series` is set for every row or none, at every construction site in
+        # `visual_profile_of` -- a dataset that ever set it on only some rows would reopen this.
 
         # Dispatched before `derive_chart`, exactly as the mapper dispatched them. These three
         # metrics build their own dimension -- `visual_profile.py` names them `_OWN_DIMENSION` --
@@ -117,6 +123,10 @@ class DeterministicVisualPlanner:
         if not measure or dimension is None:
             return None
         spec = derive_chart(
+            # `temporal()` is true if *any* dimension-role field is temporal, and `occurred_at`
+            # (added with role="dimension") would make it true here even when `group_by` names no
+            # calendar bucket. Safe today because only RECURRENCE datasets set `occurred_at`
+            # (`visual_profile_of`), and RECURRENCE returns above, before this line is reached.
             group_by="MONTH" if profile.temporal() else "NONE",
             # `measure_metric()`, not `profile.metric` alone: that is the dataset's shape marker,
             # and a `COMPARISON` of counts would label its axis "Importe" -- the exact expression
