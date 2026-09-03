@@ -282,6 +282,38 @@ def test_a_categorical_comparison_groups_its_series_instead_of_stacking_them() -
     assert (f"{dimension_channel}Offset", "series") in channels
 
 
+def test_a_categorical_comparisons_groups_are_still_ranked_by_magnitude() -> None:
+    """Fix round 1, item 3. This task's sort rule runs before Task 7's comparison block, on the
+    same `dimension` local, so a categorical comparison's groups are ranked exactly as an ordinary
+    breakdown's are -- while `color` and the offset, which carry the *series* rather than the
+    dimension, keep the producer's own order. Noticed and flagged in the round-1 report as an
+    unpinned consequence; this is the pin. Same fixture as the grouping test above, so a
+    regression in either rule shows up beside its sibling rather than only in one test."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
+                VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
+                VisualRow(dimension="RESTAURANTS", value_minor=50, series="2026-07"),
+                VisualRow(dimension="RESTAURANTS", value_minor=70, series="2026-06"),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    color = next(e for e in spec.encodings if e.channel == "color")
+    offset = next(e for e in spec.encodings if e.channel in {"xOffset", "yOffset"})
+    assert dimension.sort == EncodingSort(mode="descending", field="value_minor")
+    assert color.sort == EncodingSort(mode="input")
+    assert offset.sort == EncodingSort(mode="input")
+
+
 def test_a_temporal_comparison_keeps_its_plain_colour_and_no_offset() -> None:
     """The other side of the `not profile.temporal()` fork, and until now nothing exercised it:
     every `series=` construction in this suite either hit RECURRENCE's own block above or the

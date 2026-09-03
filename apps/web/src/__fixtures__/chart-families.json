@@ -1,0 +1,430 @@
+[
+  {
+    "name": "breakdown",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "y": {
+          "field": "dimension",
+          "type": "nominal",
+          "title": "Grupo",
+          "sort": {
+            "field": "value_minor",
+            "order": "descending"
+          }
+        },
+        "x": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Importe"
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "nominal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative"
+          }
+        ]
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "ALQUILER",
+        "value_minor": 51300
+      },
+      {
+        "dimension": "GROCERIES",
+        "value_minor": 24908
+      },
+      {
+        "dimension": "ZAPATOS",
+        "value_minor": 1200
+      }
+    ]
+  },
+  {
+    "name": "temporal",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "line"
+      },
+      "encoding": {
+        "x": {
+          "field": "dimension",
+          "type": "temporal",
+          "title": "Periodo"
+        },
+        "y": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Importe"
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "temporal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative"
+          }
+        ]
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "2026-01",
+        "value_minor": 10000
+      },
+      {
+        "dimension": "2026-02",
+        "value_minor": 20000
+      },
+      {
+        "dimension": "2026-03",
+        "value_minor": 15000
+      }
+    ]
+  },
+  {
+    "name": "cumulative",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "area"
+      },
+      "encoding": {
+        "x": {
+          "field": "dimension",
+          "type": "temporal",
+          "title": "Periodo"
+        },
+        "y": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Importe"
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "temporal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative"
+          }
+        ]
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "2026-01",
+        "value_minor": 10000
+      },
+      {
+        "dimension": "2026-02",
+        "value_minor": 30000
+      },
+      {
+        "dimension": "2026-03",
+        "value_minor": 45000
+      }
+    ]
+  },
+  {
+    "name": "frequency",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "x": {
+          "field": "dimension",
+          "type": "nominal",
+          "title": "Día",
+          "sort": null
+        },
+        "y": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Movimientos"
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "nominal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative"
+          }
+        ]
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "Lun",
+        "value_minor": 3
+      },
+      {
+        "dimension": "Mar",
+        "value_minor": 5
+      },
+      {
+        "dimension": "Mié",
+        "value_minor": 2
+      },
+      {
+        "dimension": "Jue",
+        "value_minor": 4
+      },
+      {
+        "dimension": "Vie",
+        "value_minor": 6
+      },
+      {
+        "dimension": "Sáb",
+        "value_minor": 1
+      },
+      {
+        "dimension": "Dom",
+        "value_minor": 0
+      }
+    ]
+  },
+  {
+    "name": "recurrence",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "point"
+      },
+      "encoding": {
+        "x": {
+          "field": "occurred_at",
+          "type": "temporal",
+          "title": "Fecha"
+        },
+        "y": {
+          "field": "dimension",
+          "type": "nominal",
+          "title": "Recurrente"
+        },
+        "tooltip": [
+          {
+            "field": "occurred_at",
+            "type": "temporal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative",
+            "title": "Importe"
+          }
+        ],
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "title": "Cadencia"
+        }
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "Netflix",
+        "value_minor": 1299,
+        "series": "MONTHLY",
+        "occurred_at": "2026-01-05"
+      },
+      {
+        "dimension": "Netflix",
+        "value_minor": 1299,
+        "series": "MONTHLY",
+        "occurred_at": "2026-02-05"
+      },
+      {
+        "dimension": "Spotify",
+        "value_minor": 999,
+        "series": "MONTHLY",
+        "occurred_at": "2026-01-12"
+      }
+    ]
+  },
+  {
+    "name": "ratio_share",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "x": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Porcentaje",
+          "stack": "normalize"
+        },
+        "color": {
+          "field": "dimension",
+          "type": "nominal",
+          "title": "Parte"
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "nominal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative",
+            "title": "Importe"
+          }
+        ]
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "Parte",
+        "value_minor": 7000
+      },
+      {
+        "dimension": "Resto",
+        "value_minor": 3000
+      }
+    ]
+  },
+  {
+    "name": "categorical_comparison",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "y": {
+          "field": "dimension",
+          "type": "nominal",
+          "title": "Grupo",
+          "sort": {
+            "field": "value_minor",
+            "order": "descending"
+          }
+        },
+        "x": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Importe",
+          "stack": null
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "nominal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative"
+          }
+        ],
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "sort": null
+        },
+        "yOffset": {
+          "field": "series",
+          "type": "nominal",
+          "sort": null
+        }
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "GROCERIES",
+        "value_minor": 100,
+        "series": "2026-07"
+      },
+      {
+        "dimension": "GROCERIES",
+        "value_minor": 90,
+        "series": "2026-06"
+      },
+      {
+        "dimension": "RESTAURANTS",
+        "value_minor": 50,
+        "series": "2026-07"
+      },
+      {
+        "dimension": "RESTAURANTS",
+        "value_minor": 70,
+        "series": "2026-06"
+      }
+    ]
+  },
+  {
+    "name": "donut",
+    "spec": {
+      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "mark": {
+        "type": "arc",
+        "innerRadius": 55
+      },
+      "encoding": {
+        "theta": {
+          "field": "value_minor",
+          "type": "quantitative",
+          "title": "Importe"
+        },
+        "color": {
+          "field": "dimension",
+          "type": "nominal",
+          "title": "Parte"
+        },
+        "tooltip": [
+          {
+            "field": "dimension",
+            "type": "nominal"
+          },
+          {
+            "field": "value_minor",
+            "type": "quantitative",
+            "title": "Importe"
+          }
+        ]
+      },
+      "width": "container",
+      "height": 220
+    },
+    "data": [
+      {
+        "dimension": "Alquiler",
+        "value_minor": 60000
+      },
+      {
+        "dimension": "Ocio",
+        "value_minor": 40000
+      }
+    ]
+  }
+]
