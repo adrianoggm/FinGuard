@@ -199,11 +199,12 @@ def build_chart_families() -> list[dict[str, Any]]:
             total_minor=10_000,
         ),
         # Mirrors the grouped-comparison rows built beside `comparison_visual_rows`: a category
-        # per dimension, a window per series.
+        # per dimension, a window per series, and the producer's own metric marker
+        # (`ask_financial_question.py:3318-3320` sets `metric="COMPARISON"` on this dataset).
         _family(
             "categorical_comparison",
             VisualDataset(
-                metric="SUM",
+                metric="COMPARISON",
                 rows=(
                     VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
                     VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
