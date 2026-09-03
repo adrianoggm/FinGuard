@@ -53,7 +53,7 @@ def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
 
 
 def visual_profile_of(
-    dataset: VisualDataset, *, total_minor: int | None, group_by: str | None = None
+    dataset: VisualDataset, *, total_minor: int | None, group_by: str | None
 ) -> VisualProfile:
     """Build the profile from the dataset -- plus `group_by`, which the dataset does not carry.
 
