@@ -30,5 +30,22 @@ describe("every chart family the backend emits", () => {
       ),
     );
     expect(marks).toEqual(new Set(["bar", "line", "area", "point", "arc"]));
+
+    // The mark set alone cannot catch a deleted family: four of the eight share "bar", so
+    // dropping one of them from the exporter still leaves the same five marks behind. Assert
+    // the family names themselves, not just what they render as.
+    const names = new Set(families.map((family) => family.name));
+    expect(names).toEqual(
+      new Set([
+        "breakdown",
+        "temporal",
+        "cumulative",
+        "frequency",
+        "recurrence",
+        "ratio_share",
+        "categorical_comparison",
+        "donut",
+      ]),
+    );
   });
 });
