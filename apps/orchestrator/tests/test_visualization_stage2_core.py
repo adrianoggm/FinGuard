@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingPatch,
+    EncodingSort,
     VisualContext,
     VisualField,
     Visualization,
@@ -549,3 +550,63 @@ def test_a_stacked_spec_needs_a_quantitative_x_or_y_encoding() -> None:
             encodings=(ChartEncoding("theta", "value_minor", "quantitative"),),
             stack="disabled",
         )
+
+
+def test_a_chart_can_order_its_dimension_and_its_series_differently() -> None:
+    """`ChartSpec` carries one `sort` and one `sort_field`, so two independent orders were not
+    representable: a breakdown wants its dimension by magnitude and its legend in the order the
+    producer built it. Without a per-encoding sort this design would promise two and ship one."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding(
+                "y",
+                "dimension",
+                "nominal",
+                sort=EncodingSort(mode="descending", field="value_minor"),
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal", sort=EncodingSort(mode="input")),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == {
+        "field": "value_minor",
+        "order": "descending",
+    }
+    assert emitted["spec"]["encoding"]["color"]["sort"] is None  # Vega-Lite's "keep data order"
+
+
+def test_a_sort_field_needs_a_mode_that_uses_one() -> None:
+    with pytest.raises(ValueError, match="input"):
+        EncodingSort(mode="input", field="value_minor")
+
+
+def test_a_per_encoding_sort_wins_over_the_chart_wide_sort_for_its_own_channel() -> None:
+    """`ChartSpec.sort`/`sort_field` and a per-encoding `EncodingSort` can now both target the
+    same Vega-Lite channel. Only one `"sort"` property can survive on that channel, and the
+    encoding-level one wins -- it says something more specific about its own channel than the
+    chart-wide default does. See the comment in `present()` where that precedence is decided."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding(
+                "y",
+                "dimension",
+                "nominal",
+                sort=EncodingSort(mode="ascending", field="movement_count"),
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == {
+        "field": "movement_count",
+        "order": "ascending",
+    }

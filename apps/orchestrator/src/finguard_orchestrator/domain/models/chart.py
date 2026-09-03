@@ -11,11 +11,33 @@ Stack = Literal["zero", "normalize", "disabled"]
 
 
 @dataclass(frozen=True)
+class EncodingSort:
+    """How one channel orders itself, which is not always how the chart orders itself.
+
+    `ChartSpec.sort` stays for the single-axis case it already serves. This exists because a
+    breakdown wants its dimension by magnitude *and* its legend in producer order, and one
+    setting cannot carry both.
+    """
+
+    mode: Literal["input", "ascending", "descending"]
+    field: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"input", "ascending", "descending"}:
+            raise ValueError("unsupported sort mode")
+        if self.mode == "input" and self.field is not None:
+            raise ValueError("input order names no field to sort by")
+        if self.field is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.field):
+            raise ValueError("sort fields must be identifiers")
+
+
+@dataclass(frozen=True)
 class ChartEncoding:
     channel: Channel
     field: str
     type: FieldType
     title: str | None = None
+    sort: EncodingSort | None = None
 
     def __post_init__(self) -> None:
         if self.channel not in {"x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"}:

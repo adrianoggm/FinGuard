@@ -9,11 +9,20 @@ def present(visualization: Visualization) -> dict[str, Any]:
     """Emit a Vega-Lite spec and the already measured rows as separate properties."""
     encoding: dict[str, Any] = {}
     for item in visualization.spec.encodings:
-        encoded = {
+        encoded: dict[str, Any] = {
             "field": item.field,
             "type": item.type,
             **({"title": item.title} if item.title else {}),
         }
+        if item.sort is not None:
+            # Vega-Lite reads `"sort": null` as "keep the data's order", which is what `input`
+            # means. A named field becomes the object form.
+            if item.sort.mode == "input":
+                encoded["sort"] = None
+            elif item.sort.field is not None:
+                encoded["sort"] = {"field": item.sort.field, "order": item.sort.mode}
+            else:
+                encoded["sort"] = item.sort.mode
         if item.channel == "tooltip" and item.channel in encoding:
             previous = encoding[item.channel]
             encoding[item.channel] = [previous] if isinstance(previous, dict) else previous
@@ -77,15 +86,23 @@ def present(visualization: Visualization) -> dict[str, Any]:
         )
         if nominal is None:
             raise ValueError("a sorted chart needs a categorical or temporal dimension")
-        if visualization.spec.sort_field:
-            spec["encoding"][nominal]["sort"] = {
-                "field": visualization.spec.sort_field,
-                "order": None if visualization.spec.sort == "input" else visualization.spec.sort,
-            }
-        else:
-            spec["encoding"][nominal]["sort"] = (
-                None if visualization.spec.sort == "input" else visualization.spec.sort
-            )
+        # A per-encoding sort wins for its own channel: the loop above already wrote a "sort"
+        # key onto `nominal`'s encoding when that channel's `ChartEncoding.sort` was set, and it
+        # says something more specific about that one channel than this chart-wide default does.
+        # Vega-Lite has one "sort" property per channel, so the spec-level default only applies
+        # where nothing more specific claimed it.
+        if "sort" not in spec["encoding"][nominal]:
+            if visualization.spec.sort_field:
+                spec["encoding"][nominal]["sort"] = {
+                    "field": visualization.spec.sort_field,
+                    "order": (
+                        None if visualization.spec.sort == "input" else visualization.spec.sort
+                    ),
+                }
+            else:
+                spec["encoding"][nominal]["sort"] = (
+                    None if visualization.spec.sort == "input" else visualization.spec.sort
+                )
     return {"spec": spec, "data": list(visualization.data)}
 
 
