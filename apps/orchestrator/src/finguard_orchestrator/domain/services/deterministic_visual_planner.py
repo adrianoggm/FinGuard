@@ -161,8 +161,14 @@ class DeterministicVisualPlanner:
             value_field=measure[0].name,
             plan_limited=profile.plan_limited,
         )
-        # A ranked dimension sorts by its measure. `dimension.order` came from the profile above,
-        # not from `dimension.type`, so this is only ever a per-encoding sort on the one field it
+        # A ranked dimension sorts by its measure -- on its *axis*, not its tooltip. `derive_chart`
+        # always emits a `ChartEncoding("tooltip", dimension_field, ...)` beside the axis encoding
+        # for the same field, and Vega-Lite ignores `sort` on a tooltip channel, so a filter on
+        # `field == dimension.name` alone would write an inert-but-present "sort" onto the wire
+        # there too: invisible on screen, a real, unintended change to what gets sent. `dimension`
+        # is only ever placed on `x` or `y` by `derive_chart`, so restricting to those two channels
+        # is exact, not a heuristic. `dimension.order` came from the profile above, not from
+        # `dimension.type`, so this is only ever a per-encoding sort on the one axis encoding it
         # names -- Task 7's comparison block below adds its own `color`/offset encodings with their
         # own `EncodingSort(mode="input")`, and the two never collide.
         if spec is not None:
@@ -171,7 +177,9 @@ class DeterministicVisualPlanner:
                 spec = replace(
                     spec,
                     encodings=tuple(
-                        replace(item, sort=wanted) if item.field == dimension.name else item
+                        replace(item, sort=wanted)
+                        if item.channel in {"x", "y"} and item.field == dimension.name
+                        else item
                         for item in spec.encodings
                     ),
                 )

@@ -18,6 +18,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     EncodingSort,
     VisualDataset,
+    Visualization,
     VisualProfile,
     VisualRow,
 )
@@ -34,6 +35,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def some_profile() -> VisualProfile:
@@ -416,6 +418,41 @@ def test_sort_for_pins_the_order_to_sort_mapping() -> None:
     assert _sort_for("INPUT", "value_minor") == EncodingSort(mode="input")
     assert _sort_for("TEMPORAL", "value_minor") is None
     assert _sort_for("NONE", "value_minor") is None
+
+
+def test_a_breakdowns_sort_lands_on_the_axis_and_never_the_tooltip() -> None:
+    """Fix round 1, items 1 and 2. `derive_chart` always emits a `tooltip` encoding for the same
+    field as the axis, beside the axis encoding itself -- so a filter on `field == dimension.name`
+    alone catches both: the axis, which is the point, and the tooltip, which is not. Vega-Lite
+    ignores `sort` on a tooltip channel, so a leaked sort there renders identically and is
+    invisible on screen -- which is exactly why it has to be read off `present()`'s own wire
+    output rather than the domain `EncodingSort`, where it never shows up as a distinguishable
+    fact in the first place."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="ALQUILER", value_minor=51_300),
+                VisualRow(dimension="GROCERIES", value_minor=24_908),
+                VisualRow(dimension="ZAPATOS", value_minor=1_200),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    dimension_channel = next(e.channel for e in spec.encodings if e.field == "dimension")
+
+    payload = present(Visualization(spec=spec, data=()))
+
+    assert payload["spec"]["encoding"][dimension_channel]["sort"] == {
+        "field": "value_minor",
+        "order": "descending",
+    }
+    tooltip = payload["spec"]["encoding"]["tooltip"]
+    assert isinstance(tooltip, list)
+    assert all("sort" not in entry for entry in tooltip)
 
 
 @pytest.mark.parametrize(
