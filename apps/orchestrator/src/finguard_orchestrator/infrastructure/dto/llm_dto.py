@@ -620,7 +620,10 @@ class QuestionRequest(_Payload):
     # Circumstances of this turn, not facts about the data -- see `PresentationContext`. Both are
     # optional so an old client that has never heard of either keeps working; `extra="forbid"`
     # above is what makes that safe rather than a loophole, because a viewport nobody declared
-    # (`"WATCH"`) is still rejected rather than silently accepted.
+    # (`"WATCH"`) is still rejected rather than silently accepted. Validated here and carried all
+    # the way to `floor.plan(profile, presentation)` -- but `DeterministicVisualPlanner.plan()`
+    # still does not read `presentation` (its own docstring says so); a later wave's model planner
+    # is what consumes `max_visible_rows`.
     viewport: Literal["MOBILE", "DESKTOP"] = "DESKTOP"
     max_visible_rows: int = Field(default=ROWS_THAT_FIT, ge=1, le=100)
     metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)

@@ -172,9 +172,13 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
         # built fresh from the dataset; this one exists only to validate a patch against the chart
         # it came back with. `role` is derived from `type` because the payload does not carry it,
         # and that derivation is wrong for `series` -- it will read as a dimension. That is bounded
-        # and safe: the only rule that reads a role is the donut's, and a donut requires
-        # `mutually_exclusive`, which is false whenever a series exists. **Do not trust a role on a
-        # round-tripped profile for anything else.**
+        # and safe for the donut rule, the only planner rule that reads a role, because a donut
+        # requires `mutually_exclusive`, which is false whenever a series exists. `to_payload`'s
+        # wire `cardinality` (below) is a second reader of a round-tripped profile's role, and it
+        # is bounded the same way for a different reason: `cardinality` here is the single wire
+        # value copied onto every field two lines below, so whichever field `role("dimension")`
+        # lands on -- the true dimension or a series misread as one -- re-emits that same number.
+        # **Do not trust a role on a round-tripped profile for anything else.**
         #
         # `row_count`, `plan_limited` and `plan_metric` keep their empty values for the same
         # reason and with the same bound. None of the three is on the wire -- `VisualProfilePayload`
