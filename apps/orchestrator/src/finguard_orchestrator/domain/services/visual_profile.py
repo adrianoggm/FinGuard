@@ -20,6 +20,13 @@ _TEMPORAL_GROUPS = frozenset({"DAY", "WEEK", "MONTH", "PERIOD", "DATE"})
 # Metrics whose measure is a number of movements rather than money.
 _COUNTING = frozenset({"COUNT", "FREQUENCY"})
 
+# Metrics whose producer builds its own dimension, and whose chart is built before `group_by` is
+# ever read -- `llm_mapper._chart_for_dataset` early-returns for each of them. Their dimension is
+# nominal whatever the plan grouped by: weekday names, stream names, "Parte"/"Resto". A calendar
+# `group_by` must not relabel it temporal, or this profile would contradict the chart beside it
+# and RATIO_SHARE would lose its donut for having no nominal field left.
+_OWN_DIMENSION = frozenset({"FREQUENCY", "RECURRENCE", "RATIO_SHARE"})
+
 
 def _unit(metric: str) -> str:
     if metric in _COUNTING:
@@ -56,7 +63,7 @@ def visual_profile_of(
     `total_minor`.
     """
     rows = dataset.rows
-    temporal = group_by in _TEMPORAL_GROUPS
+    temporal = group_by in _TEMPORAL_GROUPS and dataset.metric not in _OWN_DIMENSION
     has_series = any(row.series is not None for row in rows)
     has_occurred_at = any(row.occurred_at is not None for row in rows)
 

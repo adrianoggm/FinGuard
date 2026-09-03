@@ -129,11 +129,19 @@ def test_a_month_grouped_dimension_is_temporal_and_a_frequency_one_is_not() -> N
     assert monthly.field("dimension").order == "TEMPORAL"
     assert monthly.temporal() is True
 
-    ungrouped = visual_profile_of(
-        VisualDataset(rows=rows, metric="SUM"), total_minor=None, group_by="NONE"
+    frequency = visual_profile_of(
+        VisualDataset(
+            rows=(
+                VisualRow(dimension="lunes", value_minor=4),
+                VisualRow(dimension="martes", value_minor=9),
+            ),
+            metric="FREQUENCY",
+        ),
+        total_minor=None,
+        group_by="MONTH",
     )
-    assert ungrouped.field("dimension").type == "nominal"
-    assert ungrouped.temporal() is False
+    assert frequency.field("dimension").type == "nominal"
+    assert frequency.field("dimension").order == "INPUT"
 
 
 def _bar_spec() -> ChartSpec:
