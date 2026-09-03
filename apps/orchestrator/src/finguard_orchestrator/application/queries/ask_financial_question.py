@@ -75,12 +75,7 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
-from finguard_orchestrator.domain.models.chart import (
-    DEFAULT_PRESENTATION,
-    PresentationContext,
-    VisualDataset,
-    VisualRow,
-)
+from finguard_orchestrator.domain.models.chart import PresentationContext, VisualDataset, VisualRow
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
     AccountCandidate,
@@ -597,11 +592,10 @@ class AskFinancialQuestionHandler:
                         step.conversation.last_plan, FinancialPlan
                     ):
                         step = replace(step, metric_definition=step.conversation.last_plan)
-                    # The chart, decided once for the turn. `DEFAULT_PRESENTATION` and not the
-                    # request's: Task 3 put `viewport` and `max_visible_rows` on the request DTO,
-                    # and threading them from there to here is its own change -- nothing reads
-                    # them yet, because the floor ignores presentation entirely.
-                    step = _decided_visual(step, self._visual_floor, DEFAULT_PRESENTATION)
+                    # The chart is decided once for the turn using the presentation circumstances
+                    # supplied at the edge. The deterministic floor may currently ignore some of
+                    # them, but the application seam is complete for planners that do not.
+                    step = _decided_visual(step, self._visual_floor, query.presentation)
                 yield step
         finally:
             logger.info(

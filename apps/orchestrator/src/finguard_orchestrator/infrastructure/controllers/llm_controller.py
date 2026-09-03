@@ -67,7 +67,7 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.chart import VisualContext
+from finguard_orchestrator.domain.models.chart import PresentationContext, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -911,6 +911,7 @@ async def _compound_read_reply(
     who: Caller,
     today: date,
     queries: QueryBus,
+    presentation: PresentationContext,
 ) -> QuestionResponse | None:
     """Execute bounded read-only clauses and retain a separately auditable answer for each."""
     ordered = _compound_read_order(clauses, was, today)
@@ -941,6 +942,7 @@ async def _compound_read_reply(
                 account_id=who.account_id,
                 today=today,
                 reporting_timezone=who.reporting_timezone,
+                presentation=presentation,
                 conversation=clause_context,
                 intent=intent,
             )
@@ -1015,6 +1017,15 @@ def _conversation_of(request: QuestionRequest) -> Conversation:
     handler receives typed states whose invariants have already run.
     """
     return conversation_mapper.to_domain(request.conversation)
+
+
+def _presentation_of(request: QuestionRequest) -> PresentationContext:
+    """Translate the validated HTTP circumstances into the application value object once."""
+    return PresentationContext(
+        channel=request.channel,
+        viewport=request.viewport,
+        max_visible_rows=request.max_visible_rows,
+    )
 
 
 async def _continues_a_payment(
@@ -1328,6 +1339,7 @@ async def ask(
     """
     key = attempt
     was = _conversation_of(request)
+    presentation = _presentation_of(request)
 
     visual = interpret_visual(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
@@ -1396,6 +1408,7 @@ async def ask(
             who=who,
             today=today,
             queries=queries,
+            presentation=presentation,
         )
         return compound or _compound_reply(analysis.clauses, was)
     read_as = analysis.intent
@@ -1423,6 +1436,7 @@ async def ask(
             # the two are different dates, and the movements screen and the conversation would
             # disagree about "hoy" on the same phone.
             reporting_timezone=who.reporting_timezone,
+            presentation=presentation,
             conversation=was,
             # The reading this route already made. Handed down rather than made again — see the
             # field. Everything above decided *not* to pay on the strength of it, and the handler
@@ -1473,6 +1487,7 @@ async def ask_streaming(
     """
     key = attempt
     was = _conversation_of(request)
+    presentation = _presentation_of(request)
 
     visual = interpret_visual(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
@@ -1538,6 +1553,7 @@ async def ask_streaming(
             who=who,
             today=today,
             queries=queries,
+            presentation=presentation,
         )
         return _open_payment_events(compound or _compound_reply(analysis.clauses, was))
     read_as = analysis.intent
@@ -1567,6 +1583,7 @@ async def ask_streaming(
         # types into *this* endpoint, so a zone that only reached the other one was a zone the
         # conversation never used.
         reporting_timezone=who.reporting_timezone,
+        presentation=presentation,
         conversation=was,
         analysis=analysis,
     )

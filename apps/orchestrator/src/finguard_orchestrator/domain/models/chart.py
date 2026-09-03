@@ -288,7 +288,7 @@ class EncodingPatch:
     """
 
     mark: Mark | None = None
-    stack: Literal["zero", "normalize"] | None = None
+    stack: Stack | None = None
     sort: Literal["ascending", "descending", "input"] | None = None
     sort_field: str | None = None
     limit: int | None = None
@@ -342,8 +342,8 @@ def merge_encoding_patch(
         raise ValueError("sort field is not present in the chart data")
     mark = cast(Mark, values["mark"])
     title = values["title"] if isinstance(values["title"], str) else None
-    stack = cast(Literal["zero", "normalize"] | None, values["stack"])
-    if stack not in {None, "zero", "normalize"}:
+    stack = cast(Stack | None, values["stack"])
+    if stack not in {None, "zero", "normalize", "disabled"}:
         stack = None
     sort = cast(Literal["ascending", "descending", "input"] | None, values["sort"])
     if sort not in {None, "ascending", "descending", "input"}:
@@ -465,7 +465,16 @@ def derive_chart(
             ChartEncoding("tooltip", dimension_field, "temporal" if temporal else "nominal"),
             ChartEncoding("tooltip", value_field, "quantitative"),
         ),
-        sort="descending" if not temporal else None,
+        # No spec-level `sort` here any more. A bare `"descending"` on a nominal channel is
+        # Vega-Lite's *label* order (Z to A), not the measure -- it was never the ranking this
+        # chart wants, and `DeterministicVisualPlanner.plan`'s own per-encoding `EncodingSort`
+        # (`{"field": "value_minor", "order": "descending"}`) is what actually ranks by magnitude
+        # and wins under `present()`'s precedence. Emitting the bare string anyway meant it sat
+        # inert behind the per-encoding sort on the live path -- and came live again, wrong, the
+        # moment a serialisation boundary that does not carry `EncodingSort` (a conversation's
+        # round-tripped visual memory, a saved metric's encoded chart) dropped the per-encoding
+        # sort and let this string stand in its place.
+        #
         # Only when nobody said a number, and never on a temporal axis, where trimming rows would
         # drop months out of the middle of a series rather than tail off a ranking. If the plan
         # already cut -- somebody asked for their top 25 -- the chart does not cut again: cutting

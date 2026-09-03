@@ -2,7 +2,7 @@
   {
     "name": "breakdown",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "bar"
       },
@@ -53,7 +53,7 @@
   {
     "name": "temporal",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "line"
       },
@@ -100,7 +100,7 @@
   {
     "name": "cumulative",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "area"
       },
@@ -147,7 +147,7 @@
   {
     "name": "frequency",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "bar"
       },
@@ -211,7 +211,7 @@
   {
     "name": "recurrence",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "point"
       },
@@ -270,7 +270,7 @@
   {
     "name": "ratio_share",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "bar"
       },
@@ -315,7 +315,7 @@
   {
     "name": "categorical_comparison",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "bar"
       },
@@ -385,7 +385,7 @@
   {
     "name": "donut",
     "spec": {
-      "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+      "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
       "mark": {
         "type": "arc",
         "innerRadius": 55
