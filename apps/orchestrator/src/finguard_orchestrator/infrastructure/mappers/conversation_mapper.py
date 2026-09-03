@@ -10,7 +10,7 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
@@ -19,6 +19,8 @@ from finguard_orchestrator.domain.models.chart import (
     Channel,
     ChartEncoding,
     ChartSpec,
+    EncodingSort,
+    Stack,
     VisualContext,
     VisualField,
     VisualProfile,
@@ -110,6 +112,22 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
     )
 
 
+def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
+    if not isinstance(raw, dict):
+        return None
+    mode = raw.get("mode")
+    if mode not in {"input", "ascending", "descending"}:
+        return None
+    field = raw.get("field")
+    try:
+        return EncodingSort(
+            cast(Literal["input", "ascending", "descending"], mode),
+            field if isinstance(field, str) else None,
+        )
+    except ValueError:
+        return None
+
+
 def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext, ...]:
     if payload is None:
         return ()
@@ -147,6 +165,7 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
                             encoded.get("type", "nominal"),
                         ),
                         encoded.get("title") if isinstance(encoded.get("title"), str) else None,
+                        _encoding_sort_from_payload(encoded.get("sort")),
                     )
                 )
         # A narrowed reconstruction, and deliberately so. The profile a planner uses is always
@@ -192,8 +211,8 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
             mark=mark_name,
             encodings=tuple(encodings),
             title=title,
-            stack=cast(Literal["zero", "normalize"] | None, raw.get("stack"))
-            if raw.get("stack") in {"zero", "normalize"}
+            stack=cast(Stack | None, raw.get("stack"))
+            if raw.get("stack") in get_args(Stack)
             else None,
             sort=cast(Literal["ascending", "descending", "input"] | None, raw.get("sort"))
             if raw.get("sort") in {"ascending", "descending", "input"}
@@ -205,6 +224,10 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
     return tuple(result)
 
 
+def _encoding_sort_payload(sort: EncodingSort) -> dict[str, object]:
+    return {"mode": sort.mode, **({"field": sort.field} if sort.field is not None else {})}
+
+
 def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
     encoding: dict[str, object] = {}
     for item in spec.encodings:
@@ -212,6 +235,7 @@ def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
             "field": item.field,
             "type": item.type,
             **({"title": item.title} if item.title else {}),
+            **({"sort": _encoding_sort_payload(item.sort)} if item.sort is not None else {}),
         }
         if item.channel == "tooltip" and item.channel in encoding:
             previous = encoding[item.channel]

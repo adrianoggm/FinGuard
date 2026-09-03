@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefiniti
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -39,6 +40,7 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     _chart_suggestions,
     question_to_dto,
 )
+from finguard_orchestrator.infrastructure.metrics.codec import decode_chart, encode_chart
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
@@ -659,3 +661,37 @@ def test_a_fieldless_encoding_sort_emits_the_bare_order_string() -> None:
     emitted = present(Visualization(spec=spec, data=()))
 
     assert emitted["spec"]["encoding"]["y"]["sort"] == "ascending"
+
+
+def test_a_grouped_comparison_survives_round_trips_and_a_follow_up_patch() -> None:
+    profile = visual_profile_of(
+        VisualDataset(
+            rows=(
+                VisualRow("Comida", 12, series="julio"),
+                VisualRow("Comida", 8, series="junio"),
+                VisualRow("Casa", 5, series="julio"),
+                VisualRow("Casa", 4, series="junio"),
+            ),
+            metric="COMPARISON",
+        ),
+        total_minor=None,
+        group_by="CATEGORY",
+        plan_metric="COUNT",
+    )
+    original_spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert original_spec is not None
+    assert original_spec.stack == "disabled"
+
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", original_spec, profile),))
+    restored = to_domain(to_payload(conversation))
+    restored_spec = restored.visual_contexts[0].spec
+    assert restored_spec == original_spec
+    assert decode_chart(encode_chart(original_spec)) == original_spec
+
+    patched = merge_encoding_patch(restored_spec, EncodingPatch(limit=3), profile)
+    quantitative = next(
+        encoding.channel
+        for encoding in patched.encodings
+        if encoding.type == "quantitative" and encoding.channel in {"x", "y"}
+    )
+    assert present_spec(patched)["encoding"][quantitative]["stack"] is None
