@@ -10,8 +10,12 @@ comparison against zero, and `verified_total` is an equality. No amount and no d
 survives into the returned object, and a test asserts that with sentinels.
 """
 
-from finguard_orchestrator.application.queries.financial_turn import VisualDataset
-from finguard_orchestrator.domain.models.chart import FieldOrder, VisualField, VisualProfile
+from finguard_orchestrator.domain.models.chart import (
+    FieldOrder,
+    VisualDataset,
+    VisualField,
+    VisualProfile,
+)
 
 # Group keys that name a calendar bucket. Same set `derive_chart` has always used; stated once
 # here so the profile and the floor cannot disagree about what "temporal" means.

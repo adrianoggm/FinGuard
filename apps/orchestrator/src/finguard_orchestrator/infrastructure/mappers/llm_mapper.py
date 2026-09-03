@@ -22,11 +22,11 @@ from finguard_orchestrator.application import (
     SpokenPlan,
     WalletResult,
 )
-from finguard_orchestrator.application.queries.financial_turn import VisualDataset
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     VisualContext,
+    VisualDataset,
     Visualization,
     derive_chart,
 )

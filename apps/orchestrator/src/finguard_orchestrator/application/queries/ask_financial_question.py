@@ -36,8 +36,6 @@ from finguard_orchestrator.application.queries.financial_turn import (
     SpokenGroup,
     SpokenMovement,
     SpokenPlan,
-    VisualDataset,
-    VisualRow,
     _across_every_account,
     _clean_turn,
     _direction_of,
@@ -77,6 +75,7 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
+from finguard_orchestrator.domain.models.chart import VisualDataset, VisualRow
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
     AccountCandidate,

@@ -32,6 +32,7 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.errors import (
     InvalidValueError,
 )
+from finguard_orchestrator.domain.models.chart import VisualDataset
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     Conversation,
@@ -116,21 +117,6 @@ class SpokenGroup:
     movement_count: int
     # Backend-derived value for the requested metric (never recomputed by clients).
     value_minor: int | None = None
-
-
-@dataclass(frozen=True)
-class VisualRow:
-    dimension: str
-    value_minor: int
-    series: str | None = None
-    occurred_at: str | None = None
-
-
-@dataclass(frozen=True)
-class VisualDataset:
-    rows: tuple[VisualRow, ...]
-    metric: str
-    title: str = "Resultados"
 
 
 @dataclass(frozen=True)

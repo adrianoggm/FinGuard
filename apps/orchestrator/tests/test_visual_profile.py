@@ -1,10 +1,11 @@
 import pytest
 
-from finguard_orchestrator.application.queries.financial_turn import VisualDataset, VisualRow
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingPatch,
+    VisualDataset,
+    VisualRow,
     merge_encoding_patch,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
