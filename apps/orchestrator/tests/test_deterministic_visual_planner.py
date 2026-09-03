@@ -16,6 +16,7 @@ from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     ChartEncoding,
     ChartSpec,
+    EncodingSort,
     VisualDataset,
     VisualProfile,
     VisualRow,
@@ -25,6 +26,7 @@ from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
+    _sort_for,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -327,6 +329,93 @@ def test_a_normalised_share_is_still_stacked() -> None:
     spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
 
     assert spec.stack == "normalize"
+
+
+def test_a_breakdown_sorts_its_categories_by_magnitude() -> None:
+    """The second defect the review names. Ten categories in label order put the largest
+    anywhere, which is the one thing a breakdown exists to show."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="ALQUILER", value_minor=51_300),
+                VisualRow(dimension="GROCERIES", value_minor=24_908),
+                VisualRow(dimension="ZAPATOS", value_minor=1_200),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    assert dimension.sort == EncodingSort(mode="descending", field="value_minor")
+
+
+def test_a_weekday_frequency_keeps_the_order_the_producer_built() -> None:
+    """The counter-test, and the reason the rule reads the profile instead of the field type.
+
+    FREQUENCY never reaches the new rule at all: it early-returns from `plan()` with its order
+    carried at *spec* level (`ChartSpec.sort="input"`), before a `dimension` local is even
+    resolved. So this cannot assert `dimension.sort == EncodingSort(mode="input")` -- that would
+    pass only by accident, for a mechanism the rule does not use, and it would fail (for the
+    wrong reason) the moment FREQUENCY's dispatch changed shape. What actually holds is the
+    early return itself: the chart-wide sort is "input" and the per-encoding sort the new rule
+    would have written is simply never written.
+    """
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="FREQUENCY",
+            rows=(
+                VisualRow(dimension="lunes", value_minor=4),
+                VisualRow(dimension="martes", value_minor=9),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    assert spec.sort == "input"
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    assert dimension.sort is None
+
+
+def test_a_temporal_dimension_is_not_sorted_by_magnitude() -> None:
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="2026-01", value_minor=900),
+                VisualRow(dimension="2026-02", value_minor=100),
+            ),
+        ),
+        total_minor=None,
+        group_by="MONTH",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    assert dimension.sort is None
+
+
+def test_sort_for_pins_the_order_to_sort_mapping() -> None:
+    """`plan()` can only ever hand `_sort_for` `TEMPORAL` or `MEASURE_DESC`: both `INPUT` metrics
+    (FREQUENCY, RECURRENCE) early-return before this rule runs, so the `INPUT` branch is
+    unreachable through `plan()` today. It exists for the wave-3 planner, which may hand any
+    order, so the mapping is pinned here directly rather than left untested."""
+    assert _sort_for("MEASURE_DESC", "value_minor") == EncodingSort(
+        mode="descending", field="value_minor"
+    )
+    assert _sort_for("INPUT", "value_minor") == EncodingSort(mode="input")
+    assert _sort_for("TEMPORAL", "value_minor") is None
+    assert _sort_for("NONE", "value_minor") is None
 
 
 @pytest.mark.parametrize(
