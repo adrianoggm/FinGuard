@@ -233,7 +233,12 @@ def merge_encoding_patch(
     if mark == "donut":
         if not (profile.positive and profile.mutually_exclusive and profile.verified_total):
             raise ValueError("donut requires positive, exclusive parts and a verified total")
-        if not 2 <= profile.cardinality <= 5:
+        # A donut's parts are the nominal dimension's distinct labels -- the field that lands in
+        # `color`. `profile.cardinality` used to be this number directly; now it is per field.
+        nominal_dimension_count = next(
+            (item.cardinality for item in profile.role("dimension") if item.type == "nominal"), 0
+        )
+        if not 2 <= nominal_dimension_count <= 5:
             raise ValueError("donut requires between 2 and 5 parts")
     encodings = spec.encodings
     if mark == "donut":

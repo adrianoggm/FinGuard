@@ -19,6 +19,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     VisualContext,
+    VisualField,
     VisualProfile,
 )
 from finguard_orchestrator.domain.models.contact import Contact
@@ -147,14 +148,28 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
                         encoded.get("title") if isinstance(encoded.get("title"), str) else None,
                     )
                 )
+        # A narrowed reconstruction, and deliberately so. The profile a planner uses is always
+        # built fresh from the dataset; this one exists only to validate a patch against the chart
+        # it came back with. `role` is derived from `type` because the payload does not carry it,
+        # and that derivation is wrong for `series` -- it will read as a dimension. That is bounded
+        # and safe: the only rule that reads a role is the donut's, and a donut requires
+        # `mutually_exclusive`, which is false whenever a series exists. **Do not trust a role on a
+        # round-tripped profile for anything else.**
         profile = VisualProfile(
-            tuple((field.name, field.type) for field in item.profile.fields),
-            item.profile.cardinality,
-            item.profile.metric,
-            item.profile.unit,
-            item.profile.positive,
-            item.profile.mutually_exclusive,
-            item.profile.verified_total,
+            fields=tuple(
+                VisualField(
+                    field.name,
+                    field.type,
+                    "measure" if field.type == "quantitative" else "dimension",
+                    item.profile.cardinality,
+                )
+                for field in item.profile.fields
+            ),
+            metric=item.profile.metric or "SUM",
+            unit=item.profile.unit or "unknown",
+            positive=item.profile.positive,
+            mutually_exclusive=item.profile.mutually_exclusive,
+            verified_total=item.profile.verified_total,
         )
         title_value = raw.get("title")
         title = title_value if isinstance(title_value, str) else None
@@ -539,10 +554,21 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                     "spec": _context_spec_payload(context.spec),
                     "profile": {
                         "fields": [
-                            {"name": name, "type": field_type}
-                            for name, field_type in context.profile.fields
+                            {"name": field.name, "type": field.type}
+                            for field in context.profile.fields
                         ],
-                        "cardinality": context.profile.cardinality,
+                        # The wire payload keeps one dataset-level count, same as before the
+                        # profile carried per-field cardinality. It is the nominal dimension's --
+                        # the field that lands in `color` -- since that is the only cardinality a
+                        # round-tripped profile's donut rule reads.
+                        "cardinality": next(
+                            (
+                                field.cardinality
+                                for field in context.profile.role("dimension")
+                                if field.type == "nominal"
+                            ),
+                            0,
+                        ),
                         "metric": context.profile.metric,
                         "unit": context.profile.unit,
                         "positive": context.profile.positive,
