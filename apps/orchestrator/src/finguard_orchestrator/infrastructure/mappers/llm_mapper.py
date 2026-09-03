@@ -29,7 +29,6 @@ from finguard_orchestrator.domain.models.chart import (
     Visualization,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
-from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -320,18 +319,20 @@ def _remember_visual_context(
 ) -> AskFinancialQuestionResult:
     if not isinstance(visualization, ChartVisualizationResponse) or result.visual_dataset is None:
         return result
-    if result.visual_decision is None:
+    decision = result.visual_decision
+    if decision is None:
+        # Unreachable, and a narrowing rather than a fallback: the only `ChartVisualizationResponse`
+        # this module builds is the one above, and it is built only when a decision exists. If this
+        # ever returns early with a chart in hand, the bug is upstream -- do not decide here.
         return result
-    spec = replace(result.visual_decision.spec, title=_visual_title(result, result.visual_dataset))
-    profile = visual_profile_of(
-        result.visual_dataset,
-        total_minor=result.total_minor,
-        group_by=result.plan_context.group_by if result.plan_context is not None else None,
-    )
+    # The decision's own profile, not a second one built from the same dataset. That second build
+    # is what this function used to do, and it omitted `plan_limited` and `plan_metric`, so the
+    # profile stored on the conversation disagreed with the one the chart was chosen from.
+    spec = replace(decision.spec, title=_visual_title(result, result.visual_dataset))
     return replace(
         result,
         conversation=result.conversation.with_visual_context(
-            VisualContext(visualization.chart_id, spec, profile)
+            VisualContext(visualization.chart_id, spec, decision.profile)
         ),
     )
 

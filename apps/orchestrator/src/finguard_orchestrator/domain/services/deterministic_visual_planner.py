@@ -27,14 +27,22 @@ from finguard_orchestrator.domain.models.chart import (
 
 @dataclass(frozen=True)
 class VisualDecision:
-    """Which chart was chosen, by whom, and why the other one was not.
+    """Which chart was chosen, from what, by whom, and why the other one was not.
 
     `source` is `llm | deterministic` and not `llm | deterministic_fallback`: in the
     deterministic and shadow modes the floor is the *intended* selection rather than a recovery.
     `fallback_reason` is filled only when an attempt was made and failed.
+
+    `profile` is the decision's own input, carried rather than rebuilt. There is exactly one
+    profile per turn because of it: `llm_mapper` used to build a second one from the same dataset
+    for the conversational context, and a second construction is a second set of arguments that
+    can be got wrong -- it was already omitting `plan_limited` and `plan_metric`, the two facts
+    whose absence re-cuts a top-25 to eight and labels an axis of movements "Importe". Wave 3
+    needs it here anyway: comparing a model's plan against the floor's needs the input both saw.
     """
 
     spec: ChartSpec
+    profile: VisualProfile
     source: Literal["llm", "deterministic"]
     rationale: str | None = None
     fallback_reason: str | None = None

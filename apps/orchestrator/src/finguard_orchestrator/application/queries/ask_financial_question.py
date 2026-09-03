@@ -5209,7 +5209,10 @@ def _decided_visual(
     spec = floor.plan(profile, presentation)
     if spec is None:
         return result
-    return replace(result, visual_decision=VisualDecision(spec=spec, source="deterministic"))
+    return replace(
+        result,
+        visual_decision=VisualDecision(spec=spec, profile=profile, source="deterministic"),
+    )
 
 
 def _spoken(plan: FinancialPlan) -> SpokenPlan:

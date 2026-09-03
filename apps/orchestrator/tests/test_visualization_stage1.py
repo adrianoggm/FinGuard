@@ -30,7 +30,11 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+    _remember_visual_context,
+    _visualization_to_dto,
+    question_to_dto,
+)
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
@@ -160,6 +164,25 @@ def test_mapper_uses_typed_series_and_every_encoding_names_a_real_field() -> Non
         for item in (channel if isinstance(channel, list) else [channel])
     }
     assert all(fields <= set(row) for row in dto.visualization.data)
+
+
+def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
+    """One profile per turn, and the identity check is the whole point.
+
+    The mapper used to build a second profile from the same dataset for the conversational
+    context, with two of the plan's facts missing from it -- so the profile a restyle would read
+    disagreed with the one the chart was chosen from. The decision carries its own input now, and
+    a second build is not something this code can express.
+    """
+    result = _result((VisualRow("Comida", 100), VisualRow("Casa", 50)))
+
+    # The two mapper halves in the order `question_to_dto` runs them. Read here rather than off
+    # the response because the response carries the *payload* profile, which has never had these
+    # fields on it -- the domain object this remembers is the one a restyle reads.
+    remembered = _remember_visual_context(result, _visualization_to_dto(result))
+
+    assert result.visual_decision is not None
+    assert remembered.conversation.visual_contexts[0].profile is result.visual_decision.profile
 
 
 def test_mapper_never_infers_a_chart_from_public_groups() -> None:

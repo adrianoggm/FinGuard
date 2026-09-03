@@ -17,6 +17,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     VisualDataset,
+    VisualProfile,
     VisualRow,
 )
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
@@ -31,6 +32,17 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+
+
+def some_profile() -> VisualProfile:
+    return visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(VisualRow("GROCERIES", 24_908), VisualRow("RESTAURANTS", 10_385)),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
 
 
 def some_bar_spec() -> ChartSpec:
@@ -101,7 +113,9 @@ def test_a_temporal_dimension_is_a_line_and_a_cumulative_one_is_an_area() -> Non
 
 
 def test_a_decision_records_where_it_came_from() -> None:
-    decision = VisualDecision(spec=some_bar_spec(), source="deterministic")
+    # `profile` is required: a decision carries the input it was made from, so a chart and
+    # the profile stored beside it cannot come from two different builds.
+    decision = VisualDecision(spec=some_bar_spec(), profile=some_profile(), source="deterministic")
 
     assert decision.source == "deterministic"
     assert decision.rationale is None
