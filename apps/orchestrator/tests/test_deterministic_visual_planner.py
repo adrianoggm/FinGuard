@@ -278,6 +278,36 @@ def test_a_categorical_comparison_groups_its_series_instead_of_stacking_them() -
     assert (f"{dimension_channel}Offset", "series") in channels
 
 
+def test_a_temporal_comparison_keeps_its_plain_colour_and_no_offset() -> None:
+    """The other side of the `not profile.temporal()` fork, and until now nothing exercised it:
+    every `series=` construction in this suite either hit RECURRENCE's own block above or the
+    categorical rule this test is not. A coloured line has nothing for an offset to separate --
+    each series is already its own line -- and nothing for a disabled stack to mean, so this path
+    keeps the plain colour append the categorical rule replaced, unconditionally, as before."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="2026-06", value_minor=100, series="2026"),
+                VisualRow(dimension="2026-07", value_minor=120, series="2026"),
+                VisualRow(dimension="2026-06", value_minor=90, series="2025"),
+                VisualRow(dimension="2026-07", value_minor=95, series="2025"),
+            ),
+        ),
+        total_minor=None,
+        group_by="MONTH",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    assert spec.mark == "line"
+    assert spec.stack is None
+    channels = {(e.channel, e.field) for e in spec.encodings}
+    assert ("color", "series") in channels
+    assert not any(e.channel in {"xOffset", "yOffset"} for e in spec.encodings)
+
+
 def test_a_normalised_share_is_still_stacked() -> None:
     """RATIO_SHARE early-returns from `plan()` before the comparison rule is ever reached, so its
     `normalize` comes from its own family branch rather than the new rule declining to fire. This
