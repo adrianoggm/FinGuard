@@ -52,13 +52,20 @@ def present(visualization: Visualization) -> dict[str, Any]:
             },
             {"filter": f"datum._rank <= {visualization.spec.limit}"},
         ]
-    if visualization.spec.stack:
+    if visualization.spec.stack is not None:
+        # `ChartSpec.__post_init__` guarantees a quantitative x/y encoding whenever `stack` is
+        # set, so this `next()` cannot raise `StopIteration` here.
         quantitative = next(
             item.channel
             for item in visualization.spec.encodings
             if item.type == "quantitative" and item.channel in {"x", "y"}
         )
-        spec["encoding"][quantitative]["stack"] = visualization.spec.stack
+        # `disabled` has to be an explicit null. Omitting the property is what Vega-Lite reads as
+        # "you decide", and for a bar with a colour series it decides to stack -- so the absent
+        # property is the bug, not the fix.
+        spec["encoding"][quantitative]["stack"] = (
+            None if visualization.spec.stack == "disabled" else visualization.spec.stack
+        )
     if visualization.spec.sort:
         nominal = next(
             (

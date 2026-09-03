@@ -490,3 +490,62 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
         ),
     )
     assert _chart_suggestions(temporal) == ["Ponlo en barras"]
+
+
+def test_a_disabled_stack_emits_an_explicit_null_and_not_an_absent_property() -> None:
+    """`stack=None` omits the property, and Vega-Lite's default for a bar with a quantitative
+    measure and a colour series is to **stack**. So `None` means "let Vega-Lite decide" and
+    Vega-Lite decides to stack. Only an explicit null turns it off."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal"),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal"),
+            ChartEncoding("yOffset", "series", "nominal"),
+        ),
+        stack="disabled",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["x"]["stack"] is None
+    assert "yOffset" in emitted["spec"]["encoding"]
+
+
+def test_an_absent_stack_is_still_absent() -> None:
+    """The old behaviour has to stay reachable, because a temporal line needs no stack at all."""
+    spec = ChartSpec(
+        mark="line",
+        encodings=(
+            ChartEncoding("x", "dimension", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert "stack" not in emitted["spec"]["encoding"]["y"]
+
+
+def test_an_offset_is_a_channel_the_vocabulary_knows() -> None:
+    ChartEncoding("xOffset", "series", "nominal")  # must not raise
+    with pytest.raises(ValueError, match="channel"):
+        ChartEncoding("zOffset", "series", "nominal")
+
+
+def test_a_stacked_spec_needs_a_quantitative_x_or_y_encoding() -> None:
+    """`stack` only means something on the axis Vega-Lite draws bars along. The presenter's
+
+    `next(...)` for the stacked channel has no default and raises `StopIteration` if that axis
+    is missing -- so `ChartSpec` refuses the combination at construction instead, and the
+    presenter's bare `next()` is provably safe. A donut cannot exercise this: `mark == "donut"`
+    with a stack is already rejected by the guard above with its own message, so this uses a
+    non-donut mark whose only quantitative encoding is on `theta`.
+    """
+    with pytest.raises(ValueError, match="quantitative"):
+        ChartSpec(
+            mark="point",
+            encodings=(ChartEncoding("theta", "value_minor", "quantitative"),),
+            stack="disabled",
+        )
