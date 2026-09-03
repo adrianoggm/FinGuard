@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import (
+    Channel,
     ChartEncoding,
     ChartSpec,
     VisualContext,
@@ -139,7 +140,7 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
                     raise ValueError("invalid visual encoding")
                 encodings.append(
                     ChartEncoding(
-                        cast(Literal["x", "y", "color", "tooltip", "theta"], channel),
+                        cast(Channel, channel),
                         encoded["field"],
                         cast(
                             Literal["nominal", "quantitative", "temporal"],
