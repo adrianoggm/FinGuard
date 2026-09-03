@@ -584,6 +584,16 @@ def test_a_sort_field_needs_a_mode_that_uses_one() -> None:
         EncodingSort(mode="input", field="value_minor")
 
 
+def test_an_encoding_sort_rejects_an_unsupported_mode() -> None:
+    with pytest.raises(ValueError, match="unsupported"):
+        EncodingSort(mode="sideways")  # type: ignore[arg-type]
+
+
+def test_an_encoding_sort_field_must_be_an_identifier() -> None:
+    with pytest.raises(ValueError, match="identifiers"):
+        EncodingSort(mode="ascending", field="not an identifier")
+
+
 def test_a_per_encoding_sort_wins_over_the_chart_wide_sort_for_its_own_channel() -> None:
     """`ChartSpec.sort`/`sort_field` and a per-encoding `EncodingSort` can now both target the
     same Vega-Lite channel. Only one `"sort"` property can survive on that channel, and the
@@ -610,3 +620,42 @@ def test_a_per_encoding_sort_wins_over_the_chart_wide_sort_for_its_own_channel()
         "field": "movement_count",
         "order": "ascending",
     }
+
+
+def test_a_per_encoding_input_sort_beats_a_colliding_chart_wide_sort() -> None:
+    """`EncodingSort(mode="input")` writes a *present but falsy* `"sort": None`, so the
+    precedence guard in `present()` has to check key membership and not truthiness -- a
+    truthiness check would read that `None` as "nothing claimed this channel" and let the
+    chart-wide `sort`/`sort_field` below overwrite it. This puts `input` on the very channel a
+    colliding chart-wide sort targets, which the previous precedence test did not: that one used
+    a *truthy* per-encoding sort, so a regression to truthiness would have passed it unchanged."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal", sort=EncodingSort(mode="input")),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] is None
+
+
+def test_a_fieldless_encoding_sort_emits_the_bare_order_string() -> None:
+    """The per-encoding translation has three wire shapes: the object form (a field), `null`
+    (`input`), and this one -- a mode with no field, which Vega-Lite takes as a bare order
+    string rather than an object."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal", sort=EncodingSort(mode="ascending")),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == "ascending"

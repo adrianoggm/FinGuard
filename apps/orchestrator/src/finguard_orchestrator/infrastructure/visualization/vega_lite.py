@@ -90,7 +90,9 @@ def present(visualization: Visualization) -> dict[str, Any]:
         # key onto `nominal`'s encoding when that channel's `ChartEncoding.sort` was set, and it
         # says something more specific about that one channel than this chart-wide default does.
         # Vega-Lite has one "sort" property per channel, so the spec-level default only applies
-        # where nothing more specific claimed it.
+        # where nothing more specific claimed it. This depends on the per-encoding loop above
+        # running -- and writing into this same `encoding` dict -- before this block does; if the
+        # two are ever reordered, this guard has to move with the loop or the precedence breaks.
         if "sort" not in spec["encoding"][nominal]:
             if visualization.spec.sort_field:
                 spec["encoding"][nominal]["sort"] = {
