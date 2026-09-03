@@ -347,6 +347,31 @@ def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> No
     assert ratio is not None and ratio.unit == "ratio" and ratio.data[0]["value_minor"] == 1200  # type: ignore[union-attr]
 
 
+def test_a_count_comparison_uses_the_profile_unit_end_to_end() -> None:
+    result = _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="x",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="COUNT"),
+            visual_dataset=VisualDataset(
+                (
+                    VisualRow("Comida", 12, series="julio"),
+                    VisualRow("Comida", 8, series="junio"),
+                    VisualRow("Casa", 5, series="julio"),
+                    VisualRow("Casa", 4, series="junio"),
+                ),
+                "COMPARISON",
+            ),
+        )
+    )
+
+    assert result.visual_decision is not None
+    assert result.visual_decision.profile.unit == "count"
+    response = question_to_dto(result)
+    assert response.visualization is not None
+    assert response.visualization.unit == "count"
+
+
 def test_breakdown_total_verification_requires_complete_total() -> None:
     def mapped(total: int | None, rows: tuple[VisualRow, ...]):
         return question_to_dto(

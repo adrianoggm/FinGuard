@@ -32,10 +32,14 @@ _COUNTING = frozenset({"COUNT", "FREQUENCY"})
 _OWN_DIMENSION = frozenset({"FREQUENCY", "RECURRENCE", "RATIO_SHARE"})
 
 
-def _unit(metric: str) -> str:
-    if metric in _COUNTING:
+def _unit(metric: str, plan_metric: str | None) -> str:
+    # COMPARISON describes the dataset shape, not its measure. Its plan is the authority for
+    # whether the compared values are money or movement counts. Other shape families retain their
+    # own semantics (notably RATIO_SHARE), irrespective of the surrounding plan.
+    measure = plan_metric if metric == "COMPARISON" and plan_metric is not None else metric
+    if measure in _COUNTING:
         return "count"
-    return "ratio" if metric == "RATIO_SHARE" else "money"
+    return "ratio" if measure == "RATIO_SHARE" else "money"
 
 
 def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
@@ -120,7 +124,7 @@ def visual_profile_of(
     return VisualProfile(
         fields=tuple(fields),
         metric=dataset.metric,
-        unit=_unit(dataset.metric),
+        unit=_unit(dataset.metric, plan_metric),
         positive=all(row.value_minor > 0 for row in rows),
         # A series means the rows are slices of one dimension rather than disjoint parts of a
         # whole, so they cannot be the parts a donut claims sum to the total.
