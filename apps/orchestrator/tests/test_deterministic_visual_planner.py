@@ -122,6 +122,27 @@ def test_a_decision_records_where_it_came_from() -> None:
     assert decision.fallback_reason is None  # nothing fell back; the floor was the plan
 
 
+def test_a_decision_refuses_an_unsupported_source() -> None:
+    with pytest.raises(ValueError, match="unsupported visual decision source"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="heuristic",  # type: ignore[arg-type]
+        )
+
+
+def test_a_chosen_model_plan_did_not_fall_back() -> None:
+    """`fallback_reason` is filled only when an attempt was made and failed. `source="llm"` means
+    the model's own plan was chosen, so the two facts together would be a contradiction."""
+    with pytest.raises(ValueError, match="did not fall back"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="llm",
+            fallback_reason="the model declined",
+        )
+
+
 def test_two_rows_carrying_the_same_amount_are_still_two_rows() -> None:
     """The measure's cardinality counts distinct amounts, so it is not a row count. Passing it
     to `derive_chart` would decline this chart for having "one row"."""
@@ -156,10 +177,13 @@ def test_a_plan_that_already_cut_its_rows_is_not_cut_again() -> None:
     ranked = visual_profile_of(dataset, total_minor=None, group_by="MERCHANT", plan_limited=True)
     unranked = visual_profile_of(dataset, total_minor=None, group_by="MERCHANT")
 
-    assert DeterministicVisualPlanner().plan(ranked, DEFAULT_PRESENTATION).limit is None  # type: ignore[union-attr]
-    assert (
-        DeterministicVisualPlanner().plan(unranked, DEFAULT_PRESENTATION).limit == ROWS_THAT_FIT  # type: ignore[union-attr]
-    )
+    ranked_spec = DeterministicVisualPlanner().plan(ranked, DEFAULT_PRESENTATION)
+    unranked_spec = DeterministicVisualPlanner().plan(unranked, DEFAULT_PRESENTATION)
+
+    assert ranked_spec is not None
+    assert unranked_spec is not None
+    assert ranked_spec.limit is None
+    assert unranked_spec.limit == ROWS_THAT_FIT
 
 
 def test_a_comparison_of_counts_labels_its_axis_movements() -> None:

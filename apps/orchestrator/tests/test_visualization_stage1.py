@@ -438,6 +438,25 @@ def test_a_negative_cardinality_is_not_a_count() -> None:
         VisualField("dimension", "nominal", "dimension", -1)
 
 
+def test_a_negative_row_count_is_not_a_count() -> None:
+    """`row_count` is how many rows the chart draws, and a floor reading a negative one would be
+    reading a defect rather than a dataset."""
+    with pytest.raises(ValueError, match="row_count"):
+        VisualProfile(
+            fields=(
+                VisualField("dimension", "nominal", "dimension", 2),
+                VisualField("value_minor", "quantitative", "measure", 2),
+            ),
+            metric="SUM",
+            unit="money",
+            positive=True,
+            mutually_exclusive=True,
+            verified_total=False,
+            comparison=False,
+            row_count=-1,
+        )
+
+
 def test_presentation_is_not_part_of_the_profile() -> None:
     """The profile round-trips through the browser (`conversation.py` validates it coming back),
     so anything put in it becomes wire surface. Viewport and channel are circumstances of one
