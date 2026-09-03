@@ -78,6 +78,11 @@ def test_the_floor_reproduces_todays_chart_for_a_breakdown() -> None:
         ("y", "dimension"),
         ("x", "value_minor"),
     }
+    # No series, so the comparison rule's `if` and the plain-colour `elif` both decline: this
+    # chart takes neither branch, and `derive_chart` never sets a stack of its own. Only the
+    # positive direction of the comparison rule was pinned before -- this is the negative one,
+    # and its absence is exactly how the original defect (an unwanted default stack) survived.
+    assert spec.stack is None
 
 
 def test_the_floor_declines_a_single_row() -> None:
