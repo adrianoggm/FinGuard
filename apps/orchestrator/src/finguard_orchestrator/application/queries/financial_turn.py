@@ -51,6 +51,7 @@ from finguard_orchestrator.domain.services import (
     window_words,
 )
 from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
+from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -276,6 +277,13 @@ class AskFinancialQuestionResult:
     suggestions: list[str] = field(default_factory=list)
     explicit_visualization: bool = False
     visual_dataset: VisualDataset | None = None
+    # Which chart was chosen for `visual_dataset`, and by whom. `None` is "no chart", and it is
+    # the answer for a dataset the floor declined as much as for one nobody asked to draw.
+    #
+    # It is here because the decision used to be taken inside `llm_mapper`, twice per turn -- once
+    # for the response DTO and again for the conversational state -- and a mapper is not somewhere
+    # a model call can live. The application decides; the mapper renders what it is handed.
+    visual_decision: VisualDecision | None = None
     # Internal, typed source for a save candidate. Never serialized as financial data.
     metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
 

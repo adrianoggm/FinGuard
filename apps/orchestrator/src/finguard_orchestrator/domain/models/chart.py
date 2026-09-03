@@ -148,11 +148,36 @@ class VisualProfile:
     mutually_exclusive: bool = False
     verified_total: bool = False
     comparison: bool = False
+    # How many rows the chart draws. Not `measure.cardinality`, which counts *distinct amounts*:
+    # two rows carrying the same amount are still two rows, and a floor reading the cardinality
+    # would decline that chart for having one. It is a shape fact and not a value -- no amount and
+    # no label leaks through a count -- so the "nothing here reads a value" guarantee holds.
+    row_count: int = 0
+    # Whether the plan already cut these rows -- somebody asked for their top 25. The floor reads
+    # it beside `row_count` on one line of `derive_chart`, and without it a ranking of twenty-five
+    # gets cut to eight a second time, answering a question about 25 with 8 and signing the 8 into
+    # the saved metric. A fact about the rows and not about the chart, which is why it is here.
+    plan_limited: bool = False
+    # What the plan measured, when that is not what `metric` above says.
+    #
+    # `metric` is the *dataset's* marker and it is overloaded: sometimes it names the measure
+    # (`SUM`, `COUNT`, `CUMULATIVE`) and sometimes the shape (`COMPARISON`, `RATIO`,
+    # `RATIO_SHARE`, `RECURRENCE`). The shape is what selects a chart family; the measure is what
+    # says whether the axis counts movements or euros. A comparison of two *counts* carries
+    # `metric="COMPARISON"` and `plan_metric="COUNT"`, and reading only the first labels an axis of
+    # movements "Importe" -- measured, 32 charts in this suite, before this field existed.
+    #
+    # `None` means "no plan context", which is exactly what the expression this replaces fell back
+    # on. Unvalidated for the same reason: it is compared against literals, and a marker nobody
+    # recognises has always just meant "none of those".
+    plan_metric: str | None = None
 
     def __post_init__(self) -> None:
         names = [item.name for item in self.fields]
         if len(set(names)) != len(names):
             raise ValueError("duplicate field name in visual profile")
+        if self.row_count < 0:
+            raise ValueError("row_count cannot be negative")
         if not re.fullmatch(r"[A-Z][A-Z0-9_]*", self.metric):
             raise ValueError("visual profile metric must be uppercase")
         if self.unit not in {"money", "count", "ratio", "unknown"}:

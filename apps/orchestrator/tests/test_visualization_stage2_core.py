@@ -8,9 +8,11 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     VisualDataset,
     VisualRow,
+    _decided_visual,
 )
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
     ChartEncoding,
     ChartSpec,
     EncodingPatch,
@@ -22,6 +24,9 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -36,6 +41,16 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
+
+
+def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
+    """The Result as the handler hands it to the mapper.
+
+    The chart is no longer decided inside `question_to_dto`; the application decides it and the
+    Result carries it. This is the handler's own line, called with the handler's own arguments, so
+    a Result built here is the one a live turn produces.
+    """
+    return _decided_visual(result, DeterministicVisualPlanner(), DEFAULT_PRESENTATION)
 
 
 def _base() -> tuple[ChartSpec, VisualProfile]:
@@ -248,13 +263,15 @@ def test_conversation_visual_context_round_trip_is_value_free() -> None:
 
 
 def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
-    result = AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="Resultado",
-        question="gastos por categoría",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-        groups=[SpokenGroup("Comida", 100, 1), SpokenGroup("Casa", 50, 1)],
-        visual_dataset=VisualDataset((VisualRow("Comida", 100), VisualRow("Casa", 50)), "SUM"),
+    result = _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Resultado",
+            question="gastos por categoría",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+            groups=[SpokenGroup("Comida", 100, 1), SpokenGroup("Casa", 50, 1)],
+            visual_dataset=VisualDataset((VisualRow("Comida", 100), VisualRow("Casa", 50)), "SUM"),
+        )
     )
     response = question_to_dto(result)
     assert response.visualization is not None
@@ -284,12 +301,14 @@ def test_visual_interpreter_is_value_free_and_skips_financial_changes() -> None:
 
 
 def test_identical_chart_answers_receive_distinct_ids() -> None:
-    result = AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="x",
-        question="gastos",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-        visual_dataset=VisualDataset((VisualRow("a", 100), VisualRow("b", 50)), "SUM"),
+    result = _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="x",
+            question="gastos",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+            visual_dataset=VisualDataset((VisualRow("a", 100), VisualRow("b", 50)), "SUM"),
+        )
     )
     first = question_to_dto(result).visualization
     second = question_to_dto(result).visualization
@@ -300,21 +319,25 @@ def test_identical_chart_answers_receive_distinct_ids() -> None:
 
 def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> None:
     count = question_to_dto(
-        AskFinancialQuestionResult(
-            outcome="PLANNED",
-            text="x",
-            visual_dataset=VisualDataset(
-                (VisualRow("lunes", 12), VisualRow("martes", 5)), "FREQUENCY"
-            ),
+        _decided(
+            AskFinancialQuestionResult(
+                outcome="PLANNED",
+                text="x",
+                visual_dataset=VisualDataset(
+                    (VisualRow("lunes", 12), VisualRow("martes", 5)), "FREQUENCY"
+                ),
+            )
         )
     ).visualization
     ratio = question_to_dto(
-        AskFinancialQuestionResult(
-            outcome="PLANNED",
-            text="x",
-            visual_dataset=VisualDataset(
-                (VisualRow("Parte", 1200), VisualRow("Resto", 8800)), "RATIO_SHARE"
-            ),
+        _decided(
+            AskFinancialQuestionResult(
+                outcome="PLANNED",
+                text="x",
+                visual_dataset=VisualDataset(
+                    (VisualRow("Parte", 1200), VisualRow("Resto", 8800)), "RATIO_SHARE"
+                ),
+            )
         )
     ).visualization
     assert count is not None and count.unit == "count" and count.data[0]["value_minor"] == 12  # type: ignore[union-attr]
@@ -324,12 +347,14 @@ def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> No
 def test_breakdown_total_verification_requires_complete_total() -> None:
     def mapped(total: int | None, rows: tuple[VisualRow, ...]):
         return question_to_dto(
-            AskFinancialQuestionResult(
-                outcome="PLANNED",
-                text="x",
-                total_minor=total,
-                plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-                visual_dataset=VisualDataset(rows, "SUM"),
+            _decided(
+                AskFinancialQuestionResult(
+                    outcome="PLANNED",
+                    text="x",
+                    total_minor=total,
+                    plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+                    visual_dataset=VisualDataset(rows, "SUM"),
+                )
             )
         ).conversation
 
@@ -337,12 +362,14 @@ def test_breakdown_total_verification_requires_complete_total() -> None:
     absent = mapped(None, (VisualRow("a", 100), VisualRow("b", 50)))
     truncated = mapped(150, (VisualRow("a", 100), VisualRow("b", 20)))
     ratio = question_to_dto(
-        AskFinancialQuestionResult(
-            outcome="PLANNED",
-            text="x",
-            visual_dataset=VisualDataset(
-                (VisualRow("Parte", 100), VisualRow("Resto", 50)), "RATIO_SHARE"
-            ),
+        _decided(
+            AskFinancialQuestionResult(
+                outcome="PLANNED",
+                text="x",
+                visual_dataset=VisualDataset(
+                    (VisualRow("Parte", 100), VisualRow("Resto", 50)), "RATIO_SHARE"
+                ),
+            )
         )
     ).conversation
     assert complete is not None and complete.visual_contexts[0].profile.verified_total

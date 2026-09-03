@@ -53,7 +53,12 @@ def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
 
 
 def visual_profile_of(
-    dataset: VisualDataset, *, total_minor: int | None, group_by: str | None
+    dataset: VisualDataset,
+    *,
+    total_minor: int | None,
+    group_by: str | None,
+    plan_limited: bool = False,
+    plan_metric: str | None = None,
 ) -> VisualProfile:
     """Build the profile from the dataset -- plus `group_by`, which the dataset does not carry.
 
@@ -65,6 +70,12 @@ def visual_profile_of(
     this parameter necessary in the first place. The caller already holds it (`llm_mapper` reads
     `result.plan_context.group_by`) and passes it through, the same way it already passes
     `total_minor`.
+
+    `plan_limited` and `plan_metric` arrive the same way and for the same reason: they are
+    `group_limit is not None` and `metric` on the plan, and no row of the dataset can tell you
+    about either. `plan_metric` matters because `dataset.metric` is overloaded -- a comparison of
+    two counts says `COMPARISON`, and only the plan says the numbers are movements. The defaults
+    are the shape of a dataset nobody grouped, nobody cut, and whose plan is not to hand.
     """
     rows = dataset.rows
     temporal = group_by in _TEMPORAL_GROUPS and dataset.metric not in _OWN_DIMENSION
@@ -119,4 +130,11 @@ def visual_profile_of(
             or (total_minor is not None and sum(row.value_minor for row in rows) == total_minor)
         ),
         comparison=has_series,
+        # The number of rows drawn, which is what `derive_chart` means by `rows`. The measure's
+        # cardinality above is a count of *distinct amounts* and is not this number: two rows
+        # carrying the same amount are two rows. Still value-free -- a count of rows says nothing
+        # about what is in them.
+        row_count=len(rows),
+        plan_limited=plan_limited,
+        plan_metric=plan_metric,
     )

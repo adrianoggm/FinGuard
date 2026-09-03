@@ -9,6 +9,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     VisualDataset,
     VisualRow,
+    _decided_visual,
 )
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
@@ -21,6 +22,9 @@ from finguard_orchestrator.domain.models.chart import (
     Visualization,
     VisualProfile,
     derive_chart,
+)
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -118,13 +122,20 @@ def _result(
     group_by: str = "CATEGORY",
     explicit: bool = False,
 ) -> AskFinancialQuestionResult:
-    return AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="Resultado",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by=group_by, metric=metric),
-        groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
-        explicit_visualization=explicit,
-        visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
+    # Through `_decided_visual`, because the chart is no longer decided by the mapper: the
+    # application decides it and the Result carries it. This is the handler's own line, so what
+    # the mapper is handed here is what a live turn hands it.
+    return _decided_visual(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Resultado",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by=group_by, metric=metric),
+            groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
+            explicit_visualization=explicit,
+            visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
+        ),
+        DeterministicVisualPlanner(),
+        DEFAULT_PRESENTATION,
     )
 
 
