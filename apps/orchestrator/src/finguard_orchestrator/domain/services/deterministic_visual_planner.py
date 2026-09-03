@@ -193,11 +193,18 @@ class DeterministicVisualPlanner:
             # which for a bar with a colour series is to stack; the offset is what separates the
             # bars instead of overlapping them. The offset's axis follows the dimension's, or the
             # groups would be split along the measure.
+            # `derive_chart` also emits a `ChartEncoding("tooltip", dimension_field, ...)` beside
+            # the axis encoding for the same field (see the sort rule's comment above), so a
+            # filter on `field == dimension.name` alone would pick whichever of the two comes
+            # first in the tuple -- today the axis one, by construction order, not by any channel
+            # check. Restricting to `{"x", "y"}` is what actually selects the axis encoding.
             dimension_channel = next(
-                item.channel for item in spec.encodings if item.field == dimension.name
+                item.channel
+                for item in spec.encodings
+                if item.channel in {"x", "y"} and item.field == dimension.name
             )
-            # `derive_chart` only ever puts the dimension on `x` or `y`, but the f-string that
-            # built this before lost that to a bare `str`, which the `Channel` literal refuses.
+            # The f-string that built `offset_channel` before lost its `x`/`y` origin to a bare
+            # `str`, which the `Channel` literal refuses -- hence the explicit annotation below.
             offset_channel: Literal["xOffset", "yOffset"] = (
                 "yOffset" if dimension_channel == "y" else "xOffset"
             )
