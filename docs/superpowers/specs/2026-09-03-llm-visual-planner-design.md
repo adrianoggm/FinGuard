@@ -67,19 +67,33 @@ class VisualField:
     name: str
     type: FieldType                                    # nominal | quantitative | temporal
     role: Literal["dimension", "measure", "series"]
+    cardinality: int                                   # distinct values of *this* field
+    order: Literal["MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"] = "NONE"
 
 @dataclass(frozen=True)
 class VisualProfile:
     fields: tuple[VisualField, ...]
-    cardinality: int
     metric: str
     unit: str                                          # money | count | ratio | unknown
     positive: bool
     mutually_exclusive: bool
     verified_total: bool
     comparison: bool
-    order_semantics: Literal["MEASURE_DESC", "INPUT", "TEMPORAL"]
 ```
+
+**Cardinality belongs to the field, not to the profile.** A single `cardinality` counts the
+dimension and says nothing about the series, and the planner needs both: two series are a
+comparison, fifteen are an unreadable legend. Per-field cardinality is what lets the verifier refuse
+a grouped comparison with too many series rather than drawing one nobody can read.
+
+**Order belongs to the field too, and for a sharper reason.** A chart can need two independent
+orders: the dimension sorted by measure descending while the series is sorted «anterior, actual» —
+a semantic order that has nothing to do with magnitude. One order setting on the profile would
+force the legend to inherit the axis's rule.
+
+**A chart may carry two fields with `role: dimension`.** The RECURRENCE family does: `occurred_at`
+is `temporal` on `x` and `dimension` is `nominal` on `y`. They are told apart by `type`, not by a
+fourth role — which is the same argument that keeps `timestamp` out of the role enum.
 
 **`role` is load-bearing, and not because of the measures.** The dataset's fields are `dimension`,
 `value_minor` and `series`. There is one quantitative field — but **two nominals**, and type alone
@@ -162,11 +176,17 @@ async def test_visual_planner_never_receives_financial_values() -> None:
     assert "193847" not in repr(payload)
     assert "278413" not in repr(payload)
     assert set(payload.profile_keys()) <= {       # and the shape, which is stronger
-        "fields", "cardinality", "metric", "unit",
-        "positive", "mutually_exclusive", "verified_total",
-        "comparison", "order_semantics",
+        "fields", "metric", "unit", "positive",
+        "mutually_exclusive", "verified_total", "comparison",
+    }
+    assert set(payload.field_keys()) <= {         # and the same for each field
+        "name", "type", "role", "cardinality", "order",
     }
 ```
+
+The second assertion exists because `fields` is the one nested structure, and a leak would arrive
+inside it — a `values` list or a `sample` hung off a field would satisfy the outer check and travel
+anyway.
 
 The structural assertion is what proves `rows`, `data`, `total_minor`, `value_minor`, merchant names
 and movement descriptions cannot travel — a sentinel only proves the three values it names.
@@ -225,6 +245,43 @@ stand in for the main dimension; **a measure never goes in `color`**; a donut ne
 nominal dimension in `color` and one measure in `theta`. (An earlier draft said the dimension goes
 in `theta` — backwards. In a donut the *angle is the magnitude*.)
 
+### The matrix is necessary and not sufficient
+
+It says which channels a role *may* take; it cannot say what a chart *is*. Each mark needs its own
+rule, and these are read off the families the mapper already emits:
+
+| mark | the rule |
+| --- | --- |
+| `bar` | the dimension and the measure occupy **opposite axes** — one in `x`, the other in `y` |
+| `line`, `area` | a **temporal** dimension on one axis and the measure on the other |
+| `point` (RECURRENCE) | `occurred_at` temporal on `x`, the nominal dimension on `y`, **the amount only in `tooltip`** |
+| `donut` | measure in `theta`, dimension in `color`, and **no axes and no offsets at all** |
+| grouped comparison | series in `color` **and** the matching offset, with the measure declaring `stack: null` |
+
+**The RECURRENCE row is why "every chart needs a measure on an axis" would be wrong.** That family
+puts `value_minor` in `tooltip` and nowhere else, deliberately: the chart answers *when does this
+repeat*, not *how much*. A rule requiring a measure on an axis would reject a working chart — the
+same trap as "categorical sorts by value" against FREQUENCY.
+
+It also exposes a live hazard worth pinning while we are here: `present()` raises
+`ValueError("a limited chart needs a quantitative measure")` when `limit` is set, and it looks for
+that measure only in `x`, `y` and `theta`. So a RECURRENCE chart that ever acquired a `limit` would
+raise. The verifier must refuse `limit` on a family with no axial measure, rather than leaving the
+presenter to throw.
+
+### Grouped bars: the channels have to agree
+
+An offset is meaningless on its own, and two channels pointing at different fields is a chart that
+draws and misleads. The verifier requires:
+
+```
+dimension on y  →  series on yOffset
+dimension on x  →  series on xOffset
+```
+
+and, if `color` is also present, **it must reference the same `series` field as the offset**. An
+offset with no series field, or `color` and the offset naming different fields, is a rejection.
+
 **A comparison is grouped, never stacked — and `stack=None` does not achieve that.**
 
 The presenter emits `if visualization.spec.stack:`, so `None` means *the property is omitted*, and
@@ -249,25 +306,45 @@ FREQUENCY chart is `ChartEncoding("x", "dimension", "nominal", "Día")` with **`
 that order is lunes→martes→miércoles. A blanket rule would have broken a working chart to fix a
 different one.
 
-> When `order_semantics == "MEASURE_DESC"` the chart must sort by the `measure` field. When it is
-> `INPUT`, the model may not replace a semantic order with an alphabetical or quantitative one. When
-> `TEMPORAL`, the temporal field orders it.
+The rule is stated **per field**, because the dimension and the series can need different orders:
+
+| `field.order` | what it means | the verifier requires |
+| --- | --- | --- |
+| `MEASURE_DESC` | a breakdown or a ranking — magnitude is the point | `sort: "descending"` with `sort_field` naming the `measure` field |
+| `INPUT` | a declared semantic order: weekdays, months, deliberate bands | `sort: "input"`. The model **may not** substitute alphabetical or quantitative order |
+| `TEMPORAL` | dates and periods | the temporal field orders it; an explicit `sort` on another field is refused |
+| `NONE` | ordering the axis does not apply — a donut, or the `point` family | no `sort` is required, and one that contradicts the mark is refused |
+
+`INPUT` is the row that earns the whole enum: FREQUENCY is nominal with `sort="input"` so that
+lunes precedes martes, and a blanket "categorical sorts by value" would have destroyed it.
+
+**The series order is not the dimension's order.** A comparison whose series are «periodo anterior»
+and «periodo actual» wants `INPUT` on the series while the dimension wants `MEASURE_DESC`. One
+setting on the profile would have forced the legend to inherit the axis's rule, which is why this
+moved onto `VisualField`.
 
 **A donut asserts that the parts sum to the whole**, so it requires `mutually_exclusive` **and**
 `verified_total` **and** `positive`. Without those the chart claims something the data does not.
 
-**The compile gate.** `Conversation.test.ts:41` already imports `compile` from vega-lite and compiles
-three manual fixtures — so compilation exists; what does not exist is anything that walks the specs
-the backend actually generates. Two distinct checks, because `compile()` will not necessarily fail
-merely because `$schema` says v5 while the package is v6:
+**The compile gate, and it is two tests rather than one.** `Conversation.test.ts:41` already imports
+`compile` from vega-lite and compiles three manual fixtures — so compilation exists. What does not
+exist is anything that walks the specs the backend actually generates. And the two properties are
+genuinely separate, because **`compile()` will not necessarily fail merely because `$schema` says v5
+while the package is v6**: the compiler does not have to consult that field to pick a version. A
+single "it compiles" test would pass over a stale schema URL forever.
 
 ```ts
+// 1. the declared version is the installed one — asserted, not inferred from a passing compile
 expect(spec.$schema).toBe("https://vega.github.io/schema/vega-lite/v6.json");
+
+// 2. every family the backend can emit compiles under Vega-Lite 6
 expect(() => compile({ ...spec, data: { values: fixture.data } })).not.toThrow();
 ```
 
-The adapter emits `v5.json` today (`vega_lite.py:24`) and the client has `vega-lite ^6.4.3`. That is
-one line plus a test that fails the build if it drifts again.
+The adapter emits `v5.json` today (`vega_lite.py:24`) against `vega-lite ^6.4.3` in the client. The
+version is one line; the gate is what stops it drifting again, and it has to walk **every family** —
+`bar`, `line`, `area`, the `point` recurrence chart, `donut`, the normalised RATIO_SHARE bar and the
+grouped comparison — exported as fixtures from the evaluation run rather than written by hand.
 
 ## Section E — the policy, and both planners at once
 
@@ -372,7 +449,7 @@ instructions, invariance of the financial fields, and consistency of the fallbac
 | wave | work | why |
 | --- | --- | --- |
 | 1 | the profile inverted · `PresentationContext` · the decision leaves the mapper | everything else needs the direction fixed first, and none of it involves a model |
-| 2 | `Stack.disabled` + offsets · `order_semantics` · schema v6 · the compile gate | the floor and the guard rails, so a planner failure lands somewhere better than today |
+| 2 | `Stack.disabled` + offsets · per-field `order` · schema v6 · the compile gate | the floor and the guard rails, so a planner failure lands somewhere better than today |
 | 3 | port · adapter · verifier · policy in `shadow` | the model proposes and nothing is shown yet |
 | 4 | measure, set the budget, promote to `hybrid` | the numbers decide the mode, not the calendar |
 
