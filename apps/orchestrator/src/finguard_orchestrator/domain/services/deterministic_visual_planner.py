@@ -19,6 +19,7 @@ from typing import Literal
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
+    EncodingSort,
     PresentationContext,
     VisualProfile,
     derive_chart,
@@ -140,12 +141,50 @@ class DeterministicVisualPlanner:
             value_field=measure[0].name,
             plan_limited=profile.plan_limited,
         )
-        if spec is not None and "series" in fields:
+        series = profile.role("series")
+        # A series is only equivalent to "this is a comparison" within reach of this code: a
+        # RECURRENCE dataset also carries a series (a cadence), but RECURRENCE returns above,
+        # before this line is ever reached, so the only series that reaches here names a genuine
+        # comparison rather than a cadence.
+        if spec is not None and series and not profile.temporal():
+            # Grouped, and both halves are required: `disabled` stops Vega-Lite's default stack,
+            # which for a bar with a colour series is to stack; the offset is what separates the
+            # bars instead of overlapping them. The offset's axis follows the dimension's, or the
+            # groups would be split along the measure.
+            dimension_channel = next(
+                item.channel for item in spec.encodings if item.field == dimension.name
+            )
+            # `derive_chart` only ever puts the dimension on `x` or `y`, but the f-string that
+            # built this before lost that to a bare `str`, which the `Channel` literal refuses.
+            offset_channel: Literal["xOffset", "yOffset"] = (
+                "yOffset" if dimension_channel == "y" else "xOffset"
+            )
+            spec = replace(
+                spec,
+                stack="disabled",
+                encodings=spec.encodings
+                + (
+                    ChartEncoding(
+                        "color", series[0].name, "nominal", sort=EncodingSort(mode="input")
+                    ),
+                    ChartEncoding(
+                        offset_channel,
+                        series[0].name,
+                        "nominal",
+                        sort=EncodingSort(mode="input"),
+                    ),
+                ),
+            )
+        elif spec is not None and "series" in fields:
             # `replace` and not a rebuild. The mapper listed the fields it carried over -- mark,
             # encodings, stack, sort, responsive -- and so dropped `limit` from every chart that
             # had a series, including the row cut it had just computed one line above.
             # `sort_field` and `title` were never at risk: `derive_chart` never sets `sort_field`,
             # and the mapper applied `title` after this call returned.
+            #
+            # Reached only when the comparison rule above did not fire -- a temporal dimension
+            # with a series, where the lines are already distinguishable by colour and neither an
+            # offset nor a disabled stack means anything on a line/area mark.
             spec = replace(
                 spec,
                 encodings=spec.encodings + (ChartEncoding("color", "series", "nominal", "Serie"),),
