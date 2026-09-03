@@ -1,3 +1,4 @@
+import dataclasses
 from dataclasses import asdict, replace
 
 import pytest
@@ -11,9 +12,11 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 )
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
     ROWS_THAT_FIT,
     ChartEncoding,
     ChartSpec,
+    PresentationContext,
     VisualField,
     Visualization,
     VisualProfile,
@@ -353,3 +356,30 @@ def test_a_measure_must_be_quantitative() -> None:
 def test_a_negative_cardinality_is_not_a_count() -> None:
     with pytest.raises(ValueError, match="cardinality"):
         VisualField("dimension", "nominal", "dimension", -1)
+
+
+def test_presentation_is_not_part_of_the_profile() -> None:
+    """The profile round-trips through the browser (`conversation.py` validates it coming back),
+    so anything put in it becomes wire surface. Viewport and channel are circumstances of one
+    execution, not properties of the data."""
+    profile_keys = {item.name for item in dataclasses.fields(VisualProfile)}
+
+    assert "channel" not in profile_keys
+    assert "viewport" not in profile_keys
+    assert "max_visible_rows" not in profile_keys
+    assert "question" not in profile_keys
+
+
+def test_a_request_that_names_no_viewport_still_has_one() -> None:
+    """The planner cannot wait on a web deployment, so the default is part of the contract."""
+    assert DEFAULT_PRESENTATION.channel == "TEXT"
+    assert DEFAULT_PRESENTATION.viewport == "DESKTOP"
+    assert DEFAULT_PRESENTATION.max_visible_rows == ROWS_THAT_FIT
+
+
+def test_a_mobile_viewport_shows_fewer_rows_than_it_is_asked_for() -> None:
+    context = PresentationContext(channel="TEXT", viewport="MOBILE", max_visible_rows=40)
+
+    assert context.max_visible_rows == 40  # stated wins over guessed
+    with pytest.raises(ValueError, match="max_visible_rows"):
+        PresentationContext(channel="TEXT", viewport="MOBILE", max_visible_rows=0)

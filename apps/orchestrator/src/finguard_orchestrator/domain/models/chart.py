@@ -121,6 +121,16 @@ class VisualField:
             raise ValueError("unsupported visual field order")
 
 
+# Rows a chart draws when nobody said a number. A discrete dimension is one band per row, and at
+# the band height the web uses this is about the height the plot had when it was a fixed box — so it
+# is "what fits" rather than a preference. It is a presentation limit: the rows are all still there,
+# the table under the chart lists every one of them, and the caveat on the chart says so.
+#
+# Declared here, above `VisualProfile`, rather than beside `derive_chart` below, because
+# `DEFAULT_PRESENTATION` needs it too and a domain constant belongs in exactly one place.
+ROWS_THAT_FIT = 8
+
+
 @dataclass(frozen=True)
 class VisualProfile:
     """Value-free facts about the *dataset*, safe to send in a conversation round trip.
@@ -160,6 +170,35 @@ class VisualProfile:
     def temporal(self) -> bool:
         """Whether any dimension is temporal. Not a stored field: it is a question about types."""
         return any(item.type == "temporal" for item in self.role("dimension"))
+
+
+@dataclass(frozen=True)
+class PresentationContext:
+    """The circumstances of *this* execution, which are not facts about the data.
+
+    Deliberately not part of `VisualProfile`: that object is validated coming back from the
+    browser, so a field added to it becomes wire surface and travels on every turn.
+    """
+
+    channel: Literal["TEXT", "VOICE"]
+    viewport: Literal["MOBILE", "DESKTOP"]
+    max_visible_rows: int
+
+    def __post_init__(self) -> None:
+        if self.channel not in {"TEXT", "VOICE"}:
+            raise ValueError("unsupported presentation channel")
+        if self.viewport not in {"MOBILE", "DESKTOP"}:
+            raise ValueError("unsupported viewport")
+        if not 1 <= self.max_visible_rows <= 100:
+            raise ValueError("max_visible_rows must be between 1 and 100")
+
+
+# What a client that says nothing gets. `channel` already exists on the request DTO; `viewport`
+# and `max_visible_rows` are new wire surface, and a default is what stops the visual work from
+# waiting on a web deployment.
+DEFAULT_PRESENTATION: Final = PresentationContext(
+    channel="TEXT", viewport="DESKTOP", max_visible_rows=ROWS_THAT_FIT
+)
 
 
 @dataclass(frozen=True)
@@ -323,13 +362,6 @@ apply_encoding_patch = merge_encoding_patch
 class Visualization:
     spec: ChartSpec
     data: tuple[dict[str, object], ...] = field(default_factory=tuple)
-
-
-# Rows a chart draws when nobody said a number. A discrete dimension is one band per row, and at
-# the band height the web uses this is about the height the plot had when it was a fixed box — so it
-# is "what fits" rather than a preference. It is a presentation limit: the rows are all still there,
-# the table under the chart lists every one of them, and the caveat on the chart says so.
-ROWS_THAT_FIT = 8
 
 
 def derive_chart(

@@ -39,6 +39,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
     TransactionType,
 )
+from finguard_orchestrator.domain.models.chart import ROWS_THAT_FIT
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
@@ -611,6 +612,12 @@ class QuestionRequest(_Payload):
     # Absent on the first turn, and absent means a fresh conversation rather than an error.
     conversation: ConversationPayload | None = None
     channel: Literal["TEXT", "VOICE"] = "TEXT"
+    # Circumstances of this turn, not facts about the data -- see `PresentationContext`. Both are
+    # optional so an old client that has never heard of either keeps working; `extra="forbid"`
+    # above is what makes that safe rather than a loophole, because a viewport nobody declared
+    # (`"WATCH"`) is still rejected rather than silently accepted.
+    viewport: Literal["MOBILE", "DESKTOP"] = "DESKTOP"
+    max_visible_rows: int = Field(default=ROWS_THAT_FIT, ge=1, le=100)
     metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
 
 
