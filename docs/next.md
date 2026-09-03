@@ -352,6 +352,55 @@ Its gates, in the shape the rest of this file uses — zero for what code can gu
 Steps 1–4 of the delivery order in the ADR ship a chart in the chat without any of the persistence;
 if time runs short, that is the half to keep.
 
+**Landed 2026-09-03 on `task/visual-foundation` — the deterministic half. 44 commits, no model call.**
+The plan is [2026-09-03-visual-foundation.md](superpowers/plans/2026-09-03-visual-foundation.md); the
+design it argues from is [the visual planner spec](superpowers/specs/2026-09-03-llm-visual-planner-design.md).
+The chart decision left `llm_mapper` — a mapper cannot host a model call — for an injected
+`DeterministicVisualPlanner` that carries a `VisualDecision(spec, profile, …)` on the result, decided
+once per turn instead of twice. The profile describes the dataset rather than a chart already chosen.
+`PresentationContext` is per-turn circumstance kept out of the round-tripped profile, threaded to the
+floor since `636042d` and not read there yet. The floor's output is honest: `Stack.disabled` reaches the
+wire as an explicit `null` beside an offset channel, a per-encoding `EncodingSort` wins over the
+chart-wide one, a categorical comparison is grouped, a ranked dimension sorts by its measure, and
+`$schema` names the v6 the client installs.
+
+What it found, in the order it hurt:
+
+- **Every breakdown in production was sorted by label, Z→A.** `derive_chart` emitted a bare
+  `sort="descending"`, which Vega-Lite reads on a nominal field as *the values' natural order*, not the
+  measure — confirmed against the installed 6.4.3's own types. Gone; the per-encoding sort ranks.
+- **32 charts would have flipped an axis title from «Movimientos» to «Importe» under a green suite**,
+  because nothing asserted an encoding title. Caught by computing the old and new decisions side by
+  side over the whole suite, not by a test. Two tests now assert titles.
+- **A `ChartSpec` crosses three serialisation boundaries** — `present`, the conversation's visual
+  memory rebuilt for a restyle, the saved-metric codec — and the branch updated one until the
+  whole-branch review found restyled breakdowns reverting to label order. All three carry every field
+  now and a round-trip test pins it. A new spec field is incomplete until all three carry it.
+- **Two instruments measure less than they say.** The conversation corpus reaches `question_to_dto`
+  in **0 of 190** episodes: a green corpus proves routing and nothing about charts. And a hand-copied
+  domain literal (`Channel`) went stale in a wire validator and would have failed every live grouped
+  comparison; the three copies are gone and a test pins the validator to `typing.get_args(Channel)`.
+
+The table's second row is now a CI gate. `scripts/export_chart_fixtures.py` renders one spec per family
+— eight, the donut built directly because the floor never produces one — and
+`apps/web/src/chartFamilies.test.ts` compiles every one under Vega-Lite 6, asserts the declared version,
+the mark set **and the family-name set**, with a staleness test that fails the build when the presenter
+moves and the export does not.
+
+Left for the next branch, smallest first:
+
+1. **One sweep over every remaining hand-copy of a domain literal** — `Mark` and `FieldType` in
+   `metrics/codec.py`, `conversation_mapper.py` and `llm_dto.py`; `interpreter.py`'s `Stack` and `Mark`
+   casts; `llm_dto.py`'s copy of the presenter's mark shapes; `chart.py`'s in-domain repeat of the
+   channel set — to `cast(DomainLiteral, …)` / `get_args(…)`. Closes the class the `Channel` bug belonged to.
+2. Two pre-existing instrument nits: `test_visualization_stage1.py:283` sits at 106 columns behind a
+   trailing pragma ruff exempts; `test_explicit_facts.py:1021` asserts nothing and does not say so.
+3. **The corpus cannot see charts.** Its own task; the exporter and its fixture are the instrument
+   shape to build from.
+4. Wave 3, the LLM visual planner, starts from here: `VisualPlannerPort` shares
+   `plan(profile, presentation)`'s signature, `max_visible_rows` gets its first reader, and every field
+   of a `VisualPlanDraft` crosses the same three boundaries.
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate
