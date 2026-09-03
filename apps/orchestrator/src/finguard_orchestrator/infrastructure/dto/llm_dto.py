@@ -285,7 +285,11 @@ class VisualContextPayload(_Payload):
             raise ValueError("visual spec needs encoding")
         fields: set[str] = set()
         for channel, raw in encoding.items():
-            if channel not in {"x", "y", "color", "tooltip", "theta"}:
+            # Mirrors `Channel` in `domain/models/chart.py`. `xOffset`/`yOffset` are what a
+            # grouped (non-stacked) comparison uses to separate its bars -- the deterministic
+            # planner became the first caller to emit one round-tripping through this payload,
+            # and a stale copy of the channel set here would refuse the chart it just chose.
+            if channel not in {"x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"}:
                 raise ValueError("unknown visual channel")
             values = raw if isinstance(raw, list) else [raw]
             if len(values) > 8:
