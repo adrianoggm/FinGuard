@@ -177,10 +177,13 @@ def test_a_plan_that_already_cut_its_rows_is_not_cut_again() -> None:
     ranked = visual_profile_of(dataset, total_minor=None, group_by="MERCHANT", plan_limited=True)
     unranked = visual_profile_of(dataset, total_minor=None, group_by="MERCHANT")
 
-    assert DeterministicVisualPlanner().plan(ranked, DEFAULT_PRESENTATION).limit is None  # type: ignore[union-attr]
-    assert (
-        DeterministicVisualPlanner().plan(unranked, DEFAULT_PRESENTATION).limit == ROWS_THAT_FIT  # type: ignore[union-attr]
-    )
+    ranked_spec = DeterministicVisualPlanner().plan(ranked, DEFAULT_PRESENTATION)
+    unranked_spec = DeterministicVisualPlanner().plan(unranked, DEFAULT_PRESENTATION)
+
+    assert ranked_spec is not None
+    assert unranked_spec is not None
+    assert ranked_spec.limit is None
+    assert unranked_spec.limit == ROWS_THAT_FIT
 
 
 def test_a_comparison_of_counts_labels_its_axis_movements() -> None:
