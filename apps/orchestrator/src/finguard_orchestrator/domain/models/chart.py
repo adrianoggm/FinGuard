@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Final, Literal, cast
+from typing import Final, Literal, cast, get_args
 
 Mark = Literal["line", "area", "bar", "point", "donut"]
 Channel = Literal["x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"]
@@ -343,7 +343,7 @@ def merge_encoding_patch(
     mark = cast(Mark, values["mark"])
     title = values["title"] if isinstance(values["title"], str) else None
     stack = cast(Stack | None, values["stack"])
-    if stack not in {None, "zero", "normalize", "disabled"}:
+    if stack not in (None, *get_args(Stack)):
         stack = None
     sort = cast(Literal["ascending", "descending", "input"] | None, values["sort"])
     if sort not in {None, "ascending", "descending", "input"}:
