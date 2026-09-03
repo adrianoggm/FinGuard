@@ -142,11 +142,11 @@ class DeterministicVisualPlanner:
             plan_limited=profile.plan_limited,
         )
         series = profile.role("series")
-        # A series is only equivalent to "this is a comparison" within reach of this code: a
-        # RECURRENCE dataset also carries a series (a cadence), but RECURRENCE returns above,
-        # before this line is ever reached, so the only series that reaches here names a genuine
-        # comparison rather than a cadence.
-        if spec is not None and series and not profile.temporal():
+        # `profile.comparison` is `has_series` under a name that reads as "this is a comparison" --
+        # true for RECURRENCE too, since a cadence is a series, which is safe to read here only
+        # because RECURRENCE returns above, before this line is ever reached. Nothing else sets
+        # `comparison` for a reason other than an actual comparison.
+        if spec is not None and profile.comparison and not profile.temporal():
             # Grouped, and both halves are required: `disabled` stops Vega-Lite's default stack,
             # which for a bar with a colour series is to stack; the offset is what separates the
             # bars instead of overlapping them. The offset's axis follows the dimension's, or the
