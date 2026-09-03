@@ -9,6 +9,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     VisualDataset,
     VisualRow,
+    _decided_visual,
 )
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
@@ -22,11 +23,18 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+    _remember_visual_context,
+    _visualization_to_dto,
+    question_to_dto,
+)
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
@@ -116,15 +124,34 @@ def _result(
     *,
     metric: str = "SUM",
     group_by: str = "CATEGORY",
+    group_limit: int | None = None,
+    plan_metric: str | None = None,
     explicit: bool = False,
 ) -> AskFinancialQuestionResult:
-    return AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="Resultado",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by=group_by, metric=metric),
-        groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
-        explicit_visualization=explicit,
-        visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
+    # Through `_decided_visual`, because the chart is no longer decided by the mapper: the
+    # application decides it and the Result carries it. This is the handler's own line, so what
+    # the mapper is handed here is what a live turn hands it.
+    #
+    # `group_limit` and `plan_metric` are the plan's own facts, threaded separately from the
+    # dataset's `metric` -- the wire `_decided_visual` reads to build `plan_limited` and
+    # `plan_metric` on the profile. Every other test call leaves both `None`/default, which
+    # reproduces the old (bare) `SpokenPlan` exactly.
+    return _decided_visual(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Resultado",
+            plan_context=SpokenPlan(
+                direction="EXPENSE",
+                group_by=group_by,
+                metric=plan_metric if plan_metric is not None else metric,
+                group_limit=group_limit,
+            ),
+            groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
+            explicit_visualization=explicit,
+            visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
+        ),
+        DeterministicVisualPlanner(),
+        DEFAULT_PRESENTATION,
     )
 
 
@@ -149,6 +176,25 @@ def test_mapper_uses_typed_series_and_every_encoding_names_a_real_field() -> Non
         for item in (channel if isinstance(channel, list) else [channel])
     }
     assert all(fields <= set(row) for row in dto.visualization.data)
+
+
+def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
+    """One profile per turn, and the identity check is the whole point.
+
+    The mapper used to build a second profile from the same dataset for the conversational
+    context, with two of the plan's facts missing from it -- so the profile a restyle would read
+    disagreed with the one the chart was chosen from. The decision carries its own input now, and
+    a second build is not something this code can express.
+    """
+    result = _result((VisualRow("Comida", 100), VisualRow("Casa", 50)))
+
+    # The two mapper halves in the order `question_to_dto` runs them. Read here rather than off
+    # the response because the response carries the *payload* profile, which has never had these
+    # fields on it -- the domain object this remembers is the one a restyle reads.
+    remembered = _remember_visual_context(result, _visualization_to_dto(result))
+
+    assert result.visual_decision is not None
+    assert remembered.conversation.visual_contexts[0].profile is result.visual_decision.profile
 
 
 def test_mapper_never_infers_a_chart_from_public_groups() -> None:
@@ -245,6 +291,40 @@ def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
     assert visualization.limit == ROWS_THAT_FIT
     # Every row still travels: the limit hides rows from the plot, never from the evidence.
     assert len(visualization.data) == 30
+
+
+def test_a_plan_limited_dataset_is_not_cut_again_through_the_mapper() -> None:
+    """The wire between the plan and the floor, not a hand-built profile.
+
+    `test_a_plan_that_already_cut_its_rows_is_not_cut_again` (deterministic_visual_planner
+    tests) hands the floor a profile it built itself, so it cannot catch `_decided_visual`
+    failing to read `group_limit` off the plan. This one goes through `_result` -> `_decided_visual`
+    -> `question_to_dto`, the same path a live turn takes.
+    """
+    rows = tuple(
+        VisualRow(dimension=f"Comercio {position}", value_minor=1000 - position)
+        for position in range(30)
+    )
+    result = _result(rows, group_by="MERCHANT", group_limit=25)
+    visualization = question_to_dto(result).visualization
+    assert visualization is not None and visualization.kind == "chart"
+    assert visualization.limit is None
+
+
+def test_a_comparison_of_counts_labels_its_axis_movements_through_the_mapper() -> None:
+    """The other defect the brief's `plan()` reintroduced, caught the same way.
+
+    `test_a_comparison_of_counts_labels_its_axis_movements` (deterministic_visual_planner
+    tests) also hands the floor a hand-built profile. This one drives a plan whose `metric`
+    ("COUNT") disagrees with its dataset's shape marker ("COMPARISON") through the mapper, so
+    it fails if `_decided_visual` stops reading `context.metric` into `plan_metric`.
+    """
+    rows = (VisualRow("agosto", 12), VisualRow("julio", 9))
+    result = _result(rows, metric="COMPARISON", plan_metric="COUNT")
+    dto = question_to_dto(result)
+    assert dto.visualization is not None and dto.visualization.kind == "chart"
+    encoding = dto.visualization.spec["encoding"]
+    assert encoding["x"]["title"] == "Movimientos"  # type: ignore[index]
 
 
 def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> None:
@@ -383,3 +463,10 @@ def test_a_mobile_viewport_shows_fewer_rows_than_it_is_asked_for() -> None:
     assert context.max_visible_rows == 40  # stated wins over guessed
     with pytest.raises(ValueError, match="max_visible_rows"):
         PresentationContext(channel="TEXT", viewport="MOBILE", max_visible_rows=0)
+    # The other two rejections. A context is validated because it arrives from a client, and an
+    # unrecognised channel or viewport reaching a rule would be decided by an `else` -- a voice
+    # answer drawn for a screen, silently, because nobody said the word was wrong.
+    with pytest.raises(ValueError, match="viewport"):
+        PresentationContext(channel="TEXT", viewport="WATCH", max_visible_rows=8)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="channel"):
+        PresentationContext(channel="TELEPATHY", viewport="MOBILE", max_visible_rows=8)  # type: ignore[arg-type]

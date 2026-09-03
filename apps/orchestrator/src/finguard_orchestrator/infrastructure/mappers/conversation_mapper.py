@@ -155,6 +155,13 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
         # and safe: the only rule that reads a role is the donut's, and a donut requires
         # `mutually_exclusive`, which is false whenever a series exists. **Do not trust a role on a
         # round-tripped profile for anything else.**
+        #
+        # `row_count`, `plan_limited` and `plan_metric` keep their empty values for the same
+        # reason and with the same bound. None of the three is on the wire -- `VisualProfilePayload`
+        # does not carry them, and a count of rows is not something a browser should be able to
+        # assert -- and none is read by `valid_for` or `merge_encoding_patch`, the only two things
+        # a round-tripped profile is for. The floor never runs on one: it runs on a profile built
+        # fresh from the dataset in the same turn.
         profile = VisualProfile(
             fields=tuple(
                 VisualField(
@@ -170,6 +177,9 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
             positive=item.profile.positive,
             mutually_exclusive=item.profile.mutually_exclusive,
             verified_total=item.profile.verified_total,
+            row_count=0,
+            plan_limited=False,
+            plan_metric=None,
         )
         title_value = raw.get("title")
         title = title_value if isinstance(title_value, str) else None

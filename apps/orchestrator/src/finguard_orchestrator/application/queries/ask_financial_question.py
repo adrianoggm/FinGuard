@@ -75,7 +75,12 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
-from finguard_orchestrator.domain.models.chart import VisualDataset, VisualRow
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    PresentationContext,
+    VisualDataset,
+    VisualRow,
+)
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
     AccountCandidate,
@@ -147,8 +152,13 @@ from finguard_orchestrator.domain.services import (
     turn_analyzer,
     window_words,
 )
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+    VisualDecision,
+)
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
+from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -505,6 +515,10 @@ class AskFinancialQuestionHandler:
         self._accounts = accounts
         self._account_directory = account_directory
         self._contacts = contacts
+        # The chart a rule chooses. Built here rather than taken as a parameter because there is
+        # exactly one of it and it has no dependencies; wave 3 adds the model planner beside it as
+        # a port, and the floor stays separate from it so a shadow run can hold both at once.
+        self._visual_floor = DeterministicVisualPlanner()
 
     # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
     # handler without it would fall back to the planner, which is the bug this exists to fix — and
@@ -583,6 +597,11 @@ class AskFinancialQuestionHandler:
                         step.conversation.last_plan, FinancialPlan
                     ):
                         step = replace(step, metric_definition=step.conversation.last_plan)
+                    # The chart, decided once for the turn. `DEFAULT_PRESENTATION` and not the
+                    # request's: Task 3 put `viewport` and `max_visible_rows` on the request DTO,
+                    # and threading them from there to here is its own change -- nothing reads
+                    # them yet, because the floor ignores presentation entirely.
+                    step = _decided_visual(step, self._visual_floor, DEFAULT_PRESENTATION)
                 yield step
         finally:
             logger.info(
@@ -5150,6 +5169,50 @@ def _field_of(plan: PlannedQuery, name: str) -> str | None:
         return _window_of(plan)
     value = getattr(plan, name, None)
     return None if value is None else str(value.value)
+
+
+def _decided_visual(
+    result: AskFinancialQuestionResult,
+    floor: DeterministicVisualPlanner,
+    presentation: PresentationContext,
+) -> AskFinancialQuestionResult:
+    """Decide the chart once, in the application, where a model call is able to live.
+
+    Every branch of `_steps` passes through the single line in `stream` that calls this, for the
+    same reason the turn record is appended there: forty branches build a result and the decision
+    is the same fact in all of them. It used to be taken in `llm_mapper`, *twice* -- once for the
+    response DTO and again for the conversational state.
+
+    The eligibility guard is stated here because this is where it belongs. A dataset with one row
+    is a KPI and never enters the visual policy at all, which is the precondition that makes
+    "every request that gets this far ends in a ChartSpec" a claim worth holding.
+
+    A function rather than a method so a test can drive the decision without standing up five
+    ports, and `floor` a parameter rather than a construction so wave 3 can hand it a model
+    planner's fallback without this function learning what a model is.
+    """
+    dataset = result.visual_dataset
+    if dataset is None or len(dataset.rows) < 2:
+        return result
+    context = result.plan_context
+    profile = visual_profile_of(
+        dataset,
+        total_minor=result.total_minor,
+        # Both off the plan, and both the values `llm_mapper._chart_for_dataset` read off this
+        # same Result before the decision moved up here: `group_by` says whether "2026-01" is a
+        # calendar bucket rather than a label that looks like one, and `group_limit` says the rows
+        # were already cut by somebody who asked for their top 25.
+        group_by=context.group_by if context is not None else None,
+        plan_limited=context is not None and context.group_limit is not None,
+        plan_metric=context.metric if context is not None else None,
+    )
+    spec = floor.plan(profile, presentation)
+    if spec is None:
+        return result
+    return replace(
+        result,
+        visual_decision=VisualDecision(spec=spec, profile=profile, source="deterministic"),
+    )
 
 
 def _spoken(plan: FinancialPlan) -> SpokenPlan:

@@ -23,15 +23,12 @@ from finguard_orchestrator.application import (
     WalletResult,
 )
 from finguard_orchestrator.domain.models.chart import (
-    ChartEncoding,
     ChartSpec,
     VisualContext,
     VisualDataset,
     Visualization,
-    derive_chart,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
-from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -233,10 +230,14 @@ def _visualization_to_dto(
             data=rows,
         )
 
-    spec = _chart_for_dataset(result, fields, len(rows))
-    if spec is None or not spec.valid_for(fields):
+    # Rendered, not decided. The chart was chosen by the application, once, on a profile built
+    # from this same dataset; `valid_for` stays because these `fields` are the intersection of the
+    # serialized rows rather than the union the profile describes, and a spec naming a field some
+    # row omits cannot be drawn.
+    decision = result.visual_decision
+    if decision is None or not decision.spec.valid_for(fields):
         return None
-    spec = replace(spec, title=_visual_title(result, dataset))
+    spec = replace(decision.spec, title=_visual_title(result, dataset))
     presented = present(Visualization(spec=spec, data=tuple(rows)))
     chart_id = _chart_id(result, spec)
     unit: Literal["money", "count", "ratio"] = (
@@ -318,95 +319,21 @@ def _remember_visual_context(
 ) -> AskFinancialQuestionResult:
     if not isinstance(visualization, ChartVisualizationResponse) or result.visual_dataset is None:
         return result
-    row_fields = {"dimension", "value_minor"}
-    if any(row.series is not None for row in result.visual_dataset.rows):
-        row_fields.add("series")
-    if any(row.occurred_at is not None for row in result.visual_dataset.rows):
-        row_fields.add("occurred_at")
-    spec = _chart_for_dataset(result, frozenset(row_fields), len(result.visual_dataset.rows))
-    if spec is None:
+    decision = result.visual_decision
+    if decision is None:
+        # Unreachable, and a narrowing rather than a fallback: the only `ChartVisualizationResponse`
+        # this module builds is the one above, and it is built only when a decision exists. If this
+        # ever returns early with a chart in hand, the bug is upstream -- do not decide here.
         return result
-    spec = replace(spec, title=_visual_title(result, result.visual_dataset))
-    profile = visual_profile_of(
-        result.visual_dataset,
-        total_minor=result.total_minor,
-        group_by=result.plan_context.group_by if result.plan_context is not None else None,
-    )
+    # The decision's own profile, not a second one built from the same dataset. That second build
+    # is what this function used to do, and it omitted `plan_limited` and `plan_metric`, so the
+    # profile stored on the conversation disagreed with the one the chart was chosen from.
+    spec = replace(decision.spec, title=_visual_title(result, result.visual_dataset))
     return replace(
         result,
         conversation=result.conversation.with_visual_context(
-            VisualContext(visualization.chart_id, spec, profile)
+            VisualContext(visualization.chart_id, spec, decision.profile)
         ),
-    )
-
-
-def _chart_for_dataset(
-    result: AskFinancialQuestionResult,
-    fields: frozenset[str],
-    row_count: int,
-) -> ChartSpec | None:
-    dataset = result.visual_dataset
-    if dataset is None:
-        return None
-
-    if dataset.metric == "RECURRENCE":
-        if not {"occurred_at", "dimension", "value_minor"} <= fields:
-            return None
-        encodings: tuple[ChartEncoding, ...] = (
-            ChartEncoding("x", "occurred_at", "temporal", "Fecha"),
-            ChartEncoding("y", "dimension", "nominal", "Recurrente"),
-            ChartEncoding("tooltip", "occurred_at", "temporal"),
-            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
-        )
-        if "series" in fields:
-            encodings += (ChartEncoding("color", "series", "nominal", "Cadencia"),)
-        return ChartSpec(mark="point", encodings=encodings)
-
-    if dataset.metric == "FREQUENCY":
-        return ChartSpec(
-            mark="bar",
-            encodings=(
-                ChartEncoding("x", "dimension", "nominal", "Día"),
-                ChartEncoding("y", "value_minor", "quantitative", "Movimientos"),
-                ChartEncoding("tooltip", "dimension", "nominal"),
-                ChartEncoding("tooltip", "value_minor", "quantitative"),
-            ),
-            sort="input",
-        )
-
-    if dataset.metric == "RATIO_SHARE":
-        return ChartSpec(
-            mark="bar",
-            encodings=(
-                ChartEncoding("x", "value_minor", "quantitative", "Porcentaje"),
-                ChartEncoding("color", "dimension", "nominal", "Parte"),
-                ChartEncoding("tooltip", "dimension", "nominal"),
-                ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
-            ),
-            stack="normalize",
-        )
-
-    group_by = result.plan_context.group_by if result.plan_context is not None else "NONE"
-    metric = result.plan_context.metric if result.plan_context is not None else dataset.metric
-    # A plan that already cut its rows has answered the question of how many to show.
-    ranked = result.plan_context is not None and result.plan_context.group_limit is not None
-    spec = derive_chart(
-        group_by=group_by,
-        metric=metric,
-        rows=row_count,
-        fields=fields,
-        dimension_field="dimension",
-        value_field="value_minor",
-        plan_limited=ranked,
-    )
-    if spec is None or "series" not in fields:
-        return spec
-    return ChartSpec(
-        mark=spec.mark,
-        encodings=spec.encodings + (ChartEncoding("color", "series", "nominal", "Serie"),),
-        stack=spec.stack,
-        sort=spec.sort,
-        responsive=spec.responsive,
     )
 
 
