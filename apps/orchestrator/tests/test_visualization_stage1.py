@@ -1,5 +1,6 @@
 import dataclasses
 from dataclasses import asdict, replace
+from typing import get_args
 
 import pytest
 
@@ -15,6 +16,7 @@ from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ROWS_THAT_FIT,
+    Channel,
     ChartEncoding,
     ChartSpec,
     PresentationContext,
@@ -30,6 +32,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
+from finguard_orchestrator.infrastructure.dto.llm_dto import VisualContextPayload
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     _remember_visual_context,
     _visualization_to_dto,
@@ -176,6 +179,39 @@ def test_mapper_uses_typed_series_and_every_encoding_names_a_real_field() -> Non
         for item in (channel if isinstance(channel, list) else [channel])
     }
     assert all(fields <= set(row) for row in dto.visualization.data)
+
+
+def test_the_wire_channel_whitelist_matches_the_domain_literal() -> None:
+    """`VisualContextPayload._value_free_spec` used to hand-copy the allowed channel set, and the
+    copy went stale the moment `Channel` grew `xOffset`/`yOffset` -- a live categorical comparison
+    could not complete a turn until the copy was replaced with `get_args(Channel)` (`1924c95`).
+
+    The guard: every channel the domain allows must still validate here. This fails the day
+    someone reintroduces a hand-written copy that omits one, on the commit that does it rather
+    than the first live turn that needs the missing channel."""
+    channels = get_args(Channel)
+    fields = {channel: f"field_{index}" for index, channel in enumerate(channels)}
+
+    payload = VisualContextPayload.model_validate(
+        {
+            "chart_id": "chart-1",
+            "spec": {
+                "mark": {"type": "bar"},
+                "encoding": {
+                    channel: {"field": field_name, "type": "nominal"}
+                    for channel, field_name in fields.items()
+                },
+            },
+            "profile": {
+                "fields": [
+                    {"name": field_name, "type": "nominal"} for field_name in fields.values()
+                ],
+                "cardinality": 2,
+            },
+        }
+    )
+
+    assert payload.chart_id == "chart-1"
 
 
 def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:

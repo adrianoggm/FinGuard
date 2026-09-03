@@ -6,7 +6,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 """
 
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -39,7 +39,7 @@ from finguard_orchestrator.domain.enums import (
     Rail,
     TransactionType,
 )
-from finguard_orchestrator.domain.models.chart import ROWS_THAT_FIT
+from finguard_orchestrator.domain.models.chart import ROWS_THAT_FIT, Channel
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
@@ -284,8 +284,13 @@ class VisualContextPayload(_Payload):
         if not isinstance(encoding, dict) or not encoding:
             raise ValueError("visual spec needs encoding")
         fields: set[str] = set()
+        # Read from the domain's own `Channel` literal instead of a hand-written copy. A copy is
+        # exactly what went stale here before: `xOffset`/`yOffset` landed in `Channel` a task
+        # before this payload's own set learned about them, and the deterministic planner became
+        # the first caller to emit one round-tripping through this payload before anyone noticed.
+        allowed_channels = frozenset(get_args(Channel))
         for channel, raw in encoding.items():
-            if channel not in {"x", "y", "color", "tooltip", "theta"}:
+            if channel not in allowed_channels:
                 raise ValueError("unknown visual channel")
             values = raw if isinstance(raw, list) else [raw]
             if len(values) > 8:

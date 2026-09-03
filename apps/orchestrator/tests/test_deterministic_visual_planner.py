@@ -245,6 +245,55 @@ def test_a_series_keeps_the_limit_the_append_used_to_drop() -> None:
     assert spec.limit == ROWS_THAT_FIT
 
 
+def test_a_categorical_comparison_groups_its_series_instead_of_stacking_them() -> None:
+    """The rubric review names this defect. Stacking two periods adds figures that are not parts
+    of one total: the bar's length becomes a number nobody asked for, and it renders cleanly."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
+                VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
+                VisualRow(dimension="RESTAURANTS", value_minor=50, series="2026-07"),
+                VisualRow(dimension="RESTAURANTS", value_minor=70, series="2026-06"),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    assert spec.stack == "disabled"
+    channels = {(e.channel, e.field) for e in spec.encodings}
+    assert ("color", "series") in channels
+    # The offset must match the dimension's axis: dimension on y means the offset is yOffset.
+    dimension_channel = next(e.channel for e in spec.encodings if e.field == "dimension")
+    assert (f"{dimension_channel}Offset", "series") in channels
+
+
+def test_a_normalised_share_is_still_stacked() -> None:
+    """RATIO_SHARE early-returns from `plan()` before the comparison rule is ever reached, so its
+    `normalize` comes from its own family branch rather than the new rule declining to fire. This
+    proves the rule does not over-reach into a chart it was never meant to touch."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="RATIO_SHARE",
+            rows=(
+                VisualRow(dimension="GROCERIES", value_minor=70),
+                VisualRow(dimension="RESTAURANTS", value_minor=30),
+            ),
+        ),
+        total_minor=100,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec.stack == "normalize"
+
+
 @pytest.mark.parametrize(
     ("metric", "mark", "stack", "sort"),
     (

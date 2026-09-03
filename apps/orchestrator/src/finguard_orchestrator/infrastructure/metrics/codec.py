@@ -20,7 +20,7 @@ from finguard_orchestrator.domain.enums import (
     Period,
     TransactionType,
 )
-from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec
+from finguard_orchestrator.domain.models.chart import Channel, ChartEncoding, ChartSpec
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -138,9 +138,7 @@ def decode_chart(value: object) -> ChartSpec:
             _require(e, {"channel", "field", "type"})
             parsed.append(
                 ChartEncoding(
-                    channel=cast(
-                        Literal["x", "y", "color", "tooltip", "theta"], _str(e, "channel")
-                    ),
+                    channel=cast(Channel, _str(e, "channel")),
                     field=_str(e, "field"),
                     type=cast(Literal["nominal", "quantitative", "temporal"], _str(e, "type")),
                     title=_optional_str(e, "title"),
