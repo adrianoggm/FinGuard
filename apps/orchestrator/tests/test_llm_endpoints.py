@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from support import BACKUP, PRIMARY, catalogue
 
+from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFinancialQuestionQuery
 from finguard_orchestrator.application.bus.command_bus import CommandBus
 from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.commands.replace_llm_policy import (
@@ -26,6 +27,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_query_bus,
 )
 from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 
@@ -210,3 +212,84 @@ def test_ready_says_whether_payments_are_on_without_that_making_it_unready() -> 
 
     assert body["payments"] is app.state.payments_enabled
     assert "payments" not in body["checks"]
+
+
+class _AsksForAPeriod:
+    """A planner that always needs a clarification -- enough to prove `/v1/questions` reached the
+    real pipeline, without scripting a figure this test never checks."""
+
+    async def plan(self, sentence, *, context):
+        return PlanningResult.needs_clarification("¿De qué periodo?")
+
+
+class _UnreachableLedger:
+    async def run(self, plan, *, account_id, today, reporting_timezone, movements=None):
+        raise AssertionError("a clarification turn never reaches the ledger")
+
+    async def ranked(self, ranking, *, account_id, today, reporting_timezone):
+        raise AssertionError("a clarification turn never reaches the ledger")
+
+
+class _UnreachableAccounts:
+    async def of(self, account_id, *, today, reporting_timezone):
+        raise AssertionError("no balance question in this test")
+
+
+class _NoContacts:
+    async def all_of(self, account_id):
+        return ()
+
+
+class _UnreachableCards:
+    async def all_of(self, account_id, *, since, today, timezone):
+        raise AssertionError("no card question in this test")
+
+    async def charges_on(self, account_id, card_id, *, since, today, timezone, limit):
+        raise AssertionError("no card question in this test")
+
+
+def test_a_request_may_state_its_viewport_and_a_request_that_does_not_still_works() -> None:
+    """`extra="forbid"` means a field must be *declared* to be accepted, and declared means an
+    old client that omits it keeps working.
+
+    This file's own fixtures stop short of `/v1/questions`: `_wired` above only wires the admin
+    buses, and questions are off by default (`ORCHESTRATOR_QUESTIONS_ENABLED=false` in
+    `.env.defaults`). So this wires just enough of the real `AskFinancialQuestionHandler` -- a
+    planner that always asks a clarifying question, never a ledger -- to earn a genuine 200.
+    Settling for `without.status_code in {200, 422}` would pass exactly the same way if the
+    planner never ran at all, which is the failure mode an undeclared `viewport` also produces --
+    so the honest assertion here is the outright one.
+    """
+    handler = AskFinancialQuestionHandler(
+        _AsksForAPeriod(),
+        _UnreachableLedger(),
+        accounts=_UnreachableAccounts(),
+        contacts=_NoContacts(),
+        cards=_UnreachableCards(),
+    )
+    queries = QueryBus()
+    queries.register(AskFinancialQuestionQuery, handler)
+    app.dependency_overrides[get_query_bus] = lambda: queries
+    previous_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        without = client.post("/v1/questions", json={"question": "¿cuánto gasté este mes?"})
+        assert without.status_code == 200
+
+        with_viewport = client.post(
+            "/v1/questions",
+            json={
+                "question": "¿cuánto gasté este mes?",
+                "viewport": "MOBILE",
+                "max_visible_rows": 5,
+            },
+        )
+        assert with_viewport.status_code == 200
+
+        rejected = client.post(
+            "/v1/questions",
+            json={"question": "¿cuánto gasté este mes?", "viewport": "WATCH"},
+        )
+        assert rejected.status_code == 422
+    finally:
+        app.state.questions_enabled = previous_enabled
