@@ -383,3 +383,10 @@ def test_a_mobile_viewport_shows_fewer_rows_than_it_is_asked_for() -> None:
     assert context.max_visible_rows == 40  # stated wins over guessed
     with pytest.raises(ValueError, match="max_visible_rows"):
         PresentationContext(channel="TEXT", viewport="MOBILE", max_visible_rows=0)
+    # The other two rejections. A context is validated because it arrives from a client, and an
+    # unrecognised channel or viewport reaching a rule would be decided by an `else` -- a voice
+    # answer drawn for a screen, silently, because nobody said the word was wrong.
+    with pytest.raises(ValueError, match="viewport"):
+        PresentationContext(channel="TEXT", viewport="WATCH", max_visible_rows=8)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="channel"):
+        PresentationContext(channel="TELEPATHY", viewport="MOBILE", max_visible_rows=8)  # type: ignore[arg-type]
