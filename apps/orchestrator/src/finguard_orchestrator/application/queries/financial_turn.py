@@ -32,7 +32,11 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.errors import (
     InvalidValueError,
 )
-from finguard_orchestrator.domain.models.chart import VisualDataset
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    PresentationContext,
+    VisualDataset,
+)
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     Conversation,
@@ -315,6 +319,9 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # without letting a second reading exist on the path a user is actually on.
     intent: Intent | None = None
     analysis: TurnAnalysis | None = None
+    # How this answer will be consumed. It belongs to the execution request rather than to the
+    # dataset profile. Kept last so adding it does not shift established positional callers.
+    presentation: PresentationContext = DEFAULT_PRESENTATION
 
     def __post_init__(self) -> None:
         if (

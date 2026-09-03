@@ -17,6 +17,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingSort,
+    PresentationContext,
     VisualDataset,
     Visualization,
     VisualProfile,
@@ -602,6 +603,15 @@ class _NoCards:
         return ()
 
 
+class _RecordingVisualFloor:
+    def __init__(self) -> None:
+        self.presentations: list[PresentationContext] = []
+
+    def plan(self, profile: VisualProfile, presentation: PresentationContext) -> ChartSpec | None:
+        self.presentations.append(presentation)
+        return DeterministicVisualPlanner().plan(profile, presentation)
+
+
 @pytest.mark.asyncio
 async def test_a_real_turn_carries_the_decision_and_the_mapper_draws_it() -> None:
     """The handler decides and the mapper renders. Both halves, on one turn."""
@@ -619,12 +629,16 @@ async def test_a_real_turn_carries_the_decision_and_the_mapper_draws_it() -> Non
         contacts=_Contacts(),
         cards=_NoCards(),
     )
+    floor = _RecordingVisualFloor()
+    handler._visual_floor = floor  # type: ignore[assignment]
+    presentation = PresentationContext("VOICE", "MOBILE", 5)
 
     result = await handler.handle(
         AskFinancialQuestionQuery(
             sentence="¿Cuánto gasté por categoría el mes pasado?",
             account_id=ACCOUNT,
             today=TODAY,
+            presentation=presentation,
         )
     )
 
@@ -632,5 +646,6 @@ async def test_a_real_turn_carries_the_decision_and_the_mapper_draws_it() -> Non
     assert result.visual_decision is not None
     assert result.visual_decision.source == "deterministic"
     assert result.visual_decision.spec.mark == "bar"
+    assert floor.presentations == [presentation]
     visualization = question_to_dto(result).visualization
     assert visualization is not None and visualization.kind == "chart"
