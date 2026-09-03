@@ -1,5 +1,7 @@
 from dataclasses import asdict, replace
 
+import pytest
+
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
     SpokenGroup,
@@ -12,7 +14,9 @@ from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     ChartEncoding,
     ChartSpec,
+    VisualField,
     Visualization,
+    VisualProfile,
     derive_chart,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -276,3 +280,76 @@ def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
     response = question_to_dto(without_figure, holder_reference="holder", metric_tokens=tokens)
 
     assert response.save_candidate is None
+
+
+def test_a_profile_describes_its_dataset_and_not_a_chart() -> None:
+    """The profile is the planner's input, so it cannot be derived from the chart it decides."""
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 5, "MEASURE_DESC"),
+            VisualField("value_minor", "quantitative", "measure", 5),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+        comparison=False,
+    )
+
+    assert profile.field_names() == frozenset({"dimension", "value_minor"})
+    assert profile.field("value_minor").role == "measure"
+    assert profile.role("measure")[0].name == "value_minor"
+    assert profile.field("nope") is None
+
+
+def test_two_fields_may_share_the_dimension_role_when_their_types_differ() -> None:
+    """RECURRENCE puts `occurred_at` temporal on x and `dimension` nominal on y.
+
+    They are told apart by type, not by a fourth role. A `timestamp` role would be the same
+    fact written twice, which is the defect family this repository keeps finding.
+    """
+    profile = VisualProfile(
+        fields=(
+            VisualField("occurred_at", "temporal", "dimension", 12, "TEMPORAL"),
+            VisualField("dimension", "nominal", "dimension", 3, "INPUT"),
+            VisualField("value_minor", "quantitative", "measure", 12),
+        ),
+        metric="RECURRENCE",
+        unit="money",
+        positive=True,
+        mutually_exclusive=False,
+        verified_total=False,
+        comparison=False,
+    )
+
+    assert len(profile.role("dimension")) == 2
+    assert {item.type for item in profile.role("dimension")} == {"temporal", "nominal"}
+
+
+def test_a_profile_refuses_a_duplicate_field_name() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        VisualProfile(
+            fields=(
+                VisualField("dimension", "nominal", "dimension", 2),
+                VisualField("dimension", "temporal", "dimension", 2),
+            ),
+            metric="SUM",
+            unit="money",
+            positive=True,
+            mutually_exclusive=True,
+            verified_total=False,
+            comparison=False,
+        )
+
+
+def test_a_measure_must_be_quantitative() -> None:
+    """The role's type is a fact about the dataset, not a choice. A nominal measure is a
+    dataset that has been mislabelled, and the planner would inherit the lie."""
+    with pytest.raises(ValueError, match="measure"):
+        VisualField("value_minor", "nominal", "measure", 5)
+
+
+def test_a_negative_cardinality_is_not_a_count() -> None:
+    with pytest.raises(ValueError, match="cardinality"):
+        VisualField("dimension", "nominal", "dimension", -1)
