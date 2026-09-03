@@ -17,7 +17,7 @@ from uuid import UUID
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORIES,
     MAX_CATEGORY_LENGTH,
-    MAX_GROUP_RANK,
+    MAX_GROUP_ROWS,
     MAX_MERCHANT_LENGTH,
     MAX_MERCHANTS,
     MAX_PERIOD_DAYS,
@@ -160,8 +160,8 @@ class FinancialPlan:
         if self.group_limit is not None:
             if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
                 raise InvalidValueError("groupLimit requires a non-temporal grouping")
-            if not 1 <= self.group_limit <= MAX_GROUP_RANK:
-                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_RANK}")
+            if not 1 <= self.group_limit <= MAX_GROUP_ROWS:
+                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_ROWS}")
         check_filters(
             self.categories,
             self.merchants,
@@ -237,17 +237,23 @@ class FinancialPlanDraft:
             raise InvalidValueError(f"at most {MAX_SELECTED_TRANSACTIONS} selected transactions")
         if len(set(self.transaction_types)) != len(self.transaction_types):
             raise InvalidValueError("transactionTypes cannot contain duplicates")
-        if self.metric is Metric.CUMULATIVE and self.group_by not in {
+        # Both time-normalised metrics, and the second one was missing. The draft's rule is that
+        # the *window* is all it relaxes, so a draft accepting PERIOD_AVERAGE beside a merchant
+        # grouping was not a relaxation but a hole: `explicit_facts.enforce` built it without
+        # complaint, `_next_state` stored it on the conversation, and the raise arrived a turn
+        # later when the user answered the clarification and `with_window` finally checked. A
+        # deferred crash on the reply to our own question is strictly worse than refusing here.
+        if self.metric in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE} and self.group_by not in {
             GroupBy.DAY,
             GroupBy.WEEK,
             GroupBy.MONTH,
         }:
-            raise InvalidValueError("CUMULATIVE requires DAY, WEEK or MONTH grouping")
+            raise InvalidValueError(f"{self.metric} requires DAY, WEEK or MONTH grouping")
         if self.group_limit is not None:
             if self.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}:
                 raise InvalidValueError("groupLimit requires a non-temporal grouping")
-            if not 1 <= self.group_limit <= MAX_GROUP_RANK:
-                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_RANK}")
+            if not 1 <= self.group_limit <= MAX_GROUP_ROWS:
+                raise InvalidValueError(f"groupLimit must be between 1 and {MAX_GROUP_ROWS}")
         # The window is the one invariant a draft relaxes. Everything else is checked exactly as
         # the plan checks it, because a draft crosses the wire and comes back: leaving the
         # filters until `with_window` meant a bad category was accepted at the edge and only
@@ -359,6 +365,32 @@ class FinancialPlanDraft:
             transaction_ids=plan.transaction_ids,
             transaction_types=plan.transaction_types,
         )
+
+
+def metric_without_a_bucket(group_by: GroupBy, metric: Metric) -> Metric:
+    """`metric` as it reads when the grouping gives it no calendar bucket to run over.
+
+    Only `CUMULATIVE` beside `NONE` changes, and it becomes `SUM` because that is **the same
+    figure, not a smaller one**: a running total is the sequence of subtotals its buckets produce,
+    and over a single undifferentiated bucket that sequence has exactly one entry — the total. The
+    rows selected, the window, the direction and every filter are untouched, so this settles how
+    one number is presented and never which movements it is about.
+
+    **`PERIOD_AVERAGE` is deliberately absent, and the asymmetry is the whole argument.** "Gasto
+    medio mensual" over an unbucketed year is not the year's total; it is that total over a divisor
+    the sentence named and the plan then failed to carry. No figure settles that reading, so
+    `FinancialPlan.__post_init__` refusing it stays right.
+
+    **A `CUMULATIVE` beside a real grouping is absent for the opposite reason.** `CATEGORY`,
+    `COUNTERPARTY` and `ACCOUNT` each state a second axis, so the pair asks for a running total
+    *and* a breakdown where a plan has one grouping — `explicit_facts.reshaped` and the handler's
+    `_cumulative_plan` both decline it rather than keeping a half, and this may not quietly choose
+    what they refuse to. `NONE` is the one grouping that claims no second axis, which is exactly
+    why it is the one this may settle.
+    """
+    if metric is Metric.CUMULATIVE and group_by is GroupBy.NONE:
+        return Metric.SUM
+    return metric
 
 
 def check_filters(

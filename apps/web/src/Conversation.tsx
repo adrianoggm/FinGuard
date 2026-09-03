@@ -24,10 +24,78 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { ask, createVoiceClient, newAttempt, validateVoiceAnswer, type Answer, type ConversationState } from "./api";
+import { ask, createVoiceClient, newAttempt, saveMetric, validateVoiceAnswer, type Answer, type ConversationState, type MetricSource } from "./api";
 import { day, ibanGroups, money, outgoing, signed } from "./format";
 import { voiceEnabled } from "./api";
 import { VoiceClient, type VoiceEvent, type VoiceStatus } from "./voice";
+import { Chart, chartTitle } from "./Chart";
+
+type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
+
+function chartSource(
+  answer: Answer,
+  chartId: string,
+  inheritedCurrency: string | null = null,
+): { visualization: ChartVisualization; currency: string | null } | null {
+  const currency = answer.currency ?? inheritedCurrency;
+  if (answer.visualization?.kind === "chart" && answer.visualization.chart_id === chartId) {
+    return { visualization: answer.visualization, currency };
+  }
+  for (const part of answer.parts ?? []) {
+    const found = chartSource(part, chartId, currency);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Materialise an additive wire derivation without changing any earlier turn or source rows. */
+export function materializeVisualizationDerivation(turns: Turn[], answer: Answer): Answer {
+  const derivation = answer.visualization_derivation;
+  if (!derivation) return answer;
+  let source: ReturnType<typeof chartSource> = null;
+  for (let index = turns.length - 1; index >= 0 && !source; index -= 1) {
+    const turn = turns[index];
+    if (turn?.who === "assistant") source = chartSource(turn.answer, derivation.source_chart_id);
+  }
+  if (!source) throw new Error("visualization_source_missing");
+  return {
+    ...answer,
+    currency: answer.currency ?? source.currency,
+    visualization: {
+      ...source.visualization,
+      chart_id: derivation.chart_id,
+      spec: derivation.spec,
+      // Never inherited. The derived spec may be the one that lifted the limit -- that is what
+      // "Ver todos" is -- and carrying the source's over would leave a caveat claiming eight rows
+      // under a plot drawing all eighteen.
+      limit: derivation.limit ?? null,
+      // Kept by reference deliberately: a visual derivation changes presentation, never evidence.
+      data: source.visualization.data,
+    },
+  };
+}
+
+export function metricSources(
+  turns: Turn[],
+  conversation: ConversationState | null = null,
+): MetricSource[] {
+  const found = new Map<string, MetricSource>();
+  const collect = (answer: Answer) => {
+    const candidate = answer.save_candidate;
+    // A candidate without a chart is a figure worth keeping and nothing a restyle can target, so
+    // it is never offered back as a visual source.
+    if (candidate?.chart_id) {
+      found.set(candidate.chart_id, { ...candidate, chart_id: candidate.chart_id });
+    }
+    answer.parts?.forEach(collect);
+  };
+  for (const turn of turns) if (turn.who === "assistant") collect(turn.answer);
+  const active = conversation?.visual_contexts?.slice(-5) ?? [];
+  return active.flatMap((context) => {
+    const source = found.get(context.chart_id);
+    return source ? [source] : [];
+  });
+}
 
 /** The stage names the service emits, in words somebody can read. */
 const STAGES: Record<string, string> = {
@@ -107,8 +175,9 @@ export function applyVoiceEvent(
   }
   if (event.type === "assistant.text.final") {
     const answer = validateVoiceAnswer(event.answer);
-    const turns = [...current.turns, { who: "assistant" as const, answer }];
-    return { thread: settled(current, turns, answer, onSettled), stage: null };
+    const rendered = materializeVisualizationDerivation(current.turns, answer);
+    const turns = [...current.turns, { who: "assistant" as const, answer: rendered }];
+    return { thread: settled(current, turns, rendered, onSettled), stage: null };
   }
   if (event.type === "turn.completed") {
     const conversation = event.conversation;
@@ -237,12 +306,19 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
       // idle conversation (paid, cancelled or refused). Calling the bare payment endpoint here
       // returned no conversation state, so `settled` correctly retained the old preview and left
       // the buttons pointing at an intent the bank had already consumed.
-      for await (const step of ask(text, before.conversation, keyFor(text))) {
+      for await (const step of ask(
+        text,
+        before.conversation,
+        keyFor(text),
+        "TEXT",
+        metricSources(before.turns, before.conversation),
+      )) {
         if ("name" in step) setStage(STAGES[step.name] ?? null);
         else {
-          turns.push({ who: "assistant", answer: step });
+          const rendered = materializeVisualizationDerivation(turns, step);
+          turns.push({ who: "assistant", answer: rendered });
           attempt.current = null;
-          onThread(settled(before, [...turns], step, onSettled));
+          onThread(settled(before, turns, rendered, onSettled));
         }
       }
     } catch (failure) {
@@ -500,14 +576,32 @@ function Bubble({ turn }: { turn: Turn }) {
 
   const { answer } = turn;
   const parts = answer.parts ?? [];
+  const hasVisualization = Boolean(
+    answer.visualization || parts.some((part) => part.visualization),
+  );
+  const className = [
+    "bubble",
+    "theirs",
+    answer.outcome === AWAITING ? "preview" : "",
+    hasVisualization ? "has-visualization" : "",
+  ].filter(Boolean).join(" ");
   return (
-    <div className={answer.outcome === AWAITING ? "bubble theirs preview" : "bubble theirs"}>
+    <div className={className}>
       {parts.length > 0 ? (
         <>
           <p>He resuelto {parts.length === 2 ? "las dos consultas" : `${parts.length} consultas`}:</p>
           {parts.map((part, index) => (
             <section className="compound-part" key={index}>
               <p>{part.text}</p>
+              <Chart visualization={part.visualization ?? null} currency={part.currency} />
+              {/* Each part carries its own save authority and always did; this end was dropping it,
+                  so a chart asked for in a compound question was the one chart nobody could keep. */}
+              {part.save_candidate && (
+                <SaveMetricControl
+                  token={part.save_candidate.definition_token}
+                  suggestion={chartTitle(part.visualization ?? null)}
+                />
+              )}
               <AnswerEvidence answer={part} />
             </section>
           ))}
@@ -515,6 +609,13 @@ function Bubble({ turn }: { turn: Turn }) {
       ) : (
         <>
           <p>{answer.text}</p>
+          <Chart visualization={answer.visualization ?? null} currency={answer.currency} />
+          {answer.save_candidate && (
+            <SaveMetricControl
+              token={answer.save_candidate.definition_token}
+              suggestion={chartTitle(answer.visualization ?? null)}
+            />
+          )}
           <AnswerEvidence answer={answer} />
         </>
       )}
@@ -523,7 +624,41 @@ function Bubble({ turn }: { turn: Turn }) {
   );
 }
 
-function AnswerEvidence({ answer }: { answer: Answer }) {
+/**
+ * Keep this chart in "Mis métricas".
+ *
+ * The name is prefilled with the title the service already wrote for the chart, because that is
+ * what the metric is: an empty box asked somebody to name a thing that was named on screen half a
+ * centimetre above the box. It stays editable — a prefilled name is a suggestion, not a decision.
+ */
+function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: string | null }) {
+  const [title, setTitle] = useState(suggestion ?? "");
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const submit = () => {
+    if (!title.trim()) return;
+    setState("saving");
+    void saveMetric(title.trim(), token).then(() => setState("saved")).catch(() => setState("error"));
+  };
+  if (state === "saved") {
+    return <p className="metric-feedback saved">Guardada en «Mis métricas», en Finanzas.</p>;
+  }
+  return <div className="metric-save">
+    <input aria-label="Nombre de la métrica" value={title} maxLength={80}
+      onChange={(event) => setTitle(event.target.value)} placeholder="Nombre de la métrica" />
+    <button className="chip" disabled={state === "saving" || !title.trim()} onClick={submit}>
+      {state === "saving" ? "Guardando…" : "Guardar métrica"}
+    </button>
+    {state === "error" && <span className="metric-feedback" role="alert">No se ha podido guardar.</span>}
+  </div>;
+}
+
+/**
+ * The plan, the movements and the breakdown of one answer, each behind a disclosure.
+ *
+ * Exported because "Mis métricas" opens the same answer and owes the reader the same evidence. A
+ * second table there would be a second opinion about the same figures.
+ */
+export function AnswerEvidence({ answer }: { answer: Answer }) {
   return (
     <>
       {answer.plan && (
@@ -568,14 +703,17 @@ function AnswerEvidence({ answer }: { answer: Answer }) {
         </details>
       )}
       {isBreakdown(answer) && (
+        <details>
+          <summary>{answer.visualization ? "Ver los datos" : "Ver el desglose"}</summary>
         <ul className="groups">
           {answer.groups.map((group) => (
             <li key={group.key}>
-              <span>{group.key}</span>
+              <span>{groupLabel(group.key)}</span>
               <span>{groupFigure(answer, group)}</span>
             </li>
           ))}
         </ul>
+        </details>
       )}
     </>
   );
@@ -595,27 +733,39 @@ function isBreakdown(answer: Answer): boolean {
 }
 
 /** Render each row in the same unit the question asked for. */
-function groupFigure(answer: Answer, group: Answer["groups"][number]): string {
+export function groupFigure(answer: Answer, group: Answer["groups"][number]): string {
   const metric = answer.conversation?.last_plan?.metric;
   if (metric === "COUNT") {
     const noun = group.movement_count === 1 ? "movimiento" : "movimientos";
     return `${group.movement_count} ${noun}`;
   }
   if (metric === "AVERAGE") {
-    const divisor = group.movement_count;
-    const average = divisor > 0 ? roundedMean(group.total_minor, divisor) : 0;
-    return `media ${money(average, answer.currency ?? "EUR")} (${group.movement_count})`;
+    return group.value_minor === null || group.value_minor === undefined
+      ? `media no disponible (${group.movement_count})`
+      : `media ${money(group.value_minor, answer.currency ?? "EUR")} (${group.movement_count})`;
   }
-  return money(group.total_minor, answer.currency ?? "EUR");
+  return money(group.value_minor ?? group.total_minor, answer.currency ?? "EUR");
 }
 
-/** Integer cents, rounded half away from zero like the orchestrator. */
-function roundedMean(total: number, count: number): number {
-  const absolute = Math.abs(total);
-  const units = Math.floor(absolute / count);
-  const remainder = absolute % count;
-  const rounded = units + (remainder * 2 >= count ? 1 : 0);
-  return total < 0 ? -rounded : rounded;
+/** Make backend bucket keys useful in the auditable data disclosure. */
+export function groupLabel(key: string): string {
+  const month = /^(\d{4})-(\d{2})$/.exec(key);
+  if (month && Number(month[2]) >= 1 && Number(month[2]) <= 12) {
+    const date = new Date(Number(month[1]), Number(month[2]) - 1, 1);
+    return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric" }).format(date);
+  }
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (day) {
+    const date = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
+    if (
+      date.getFullYear() === Number(day[1]) &&
+      date.getMonth() === Number(day[2]) - 1 &&
+      date.getDate() === Number(day[3])
+    ) {
+      return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" }).format(date);
+    }
+  }
+  return key;
 }
 
 function message(failure: unknown): string {
@@ -625,6 +775,9 @@ function message(failure: unknown): string {
   if (code === "not_authorised") return "Esta credencial no puede hacer eso.";
   if (code === "not_authenticated") return "No hay credencial. Revisa .env.local.";
   if (code === "feature_disabled") return "Esa parte está desactivada en este despliegue.";
+  if (code === "visualization_source_missing") {
+    return "No encuentro el gráfico original en esta conversación. Vuelve a generarlo para aplicar el cambio.";
+  }
   if (code.includes("Failed to fetch")) return "No puedo hablar con el orquestador.";
   return `No he podido responder (${code}).`;
 }

@@ -12,6 +12,8 @@ COPY apps/orchestrator/pyproject.toml apps/orchestrator/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY apps/orchestrator/src ./src
+COPY apps/orchestrator/migrations ./migrations
+COPY apps/orchestrator/alembic.ini ./alembic.ini
 RUN uv sync --frozen --no-dev
 
 # The operational values, and the only place they exist. The settings fields have no

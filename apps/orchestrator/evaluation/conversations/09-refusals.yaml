@@ -79,6 +79,7 @@ episodes:
         route: COURTESY
 
   - name: contribution_history_is_distinct_from_the_fund_balance
+    scope: settled
     why: >
       Contribution history is the incoming internal leg of transfers into the fund; its balance is
       still a separate cost-basis question and neither may be answered with ordinary income.

@@ -41,6 +41,10 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     slot_for,
 )
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    focused_on_result,
+)
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -211,10 +215,13 @@ FULL = Conversation(
     last_plan=LAST_MONTH,
     prior_plan=THIS_MONTH,
     retry_plan=LAST_MONTH,
-    referenced_category="GROCERIES",
-    referenced_group_by=GroupBy.CATEGORY,
-    referenced_group_key="GROCERIES",
-    referenced_transaction_ids=(uuid.UUID(int=7),),
+    result_reference=ResultReference(
+        LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.CATEGORY,
+        group_key="GROCERIES",
+        transaction_ids=(uuid.UUID(int=7),),
+    ),
     last_asked=Slot.WINDOW,
     answered_the_balance=True,
     last_ratio=SHARE,
@@ -241,10 +248,7 @@ _ANSWERING = {
     "last_plan",
     "prior_plan",
     "retry_plan",
-    "referenced_category",
-    "referenced_group_by",
-    "referenced_group_key",
-    "referenced_transaction_ids",
+    "result_reference",
     "last_asked",
     "answered_the_balance",
     "last_ratio",
@@ -278,9 +282,11 @@ _TRANSITIONS: tuple[tuple[str, Callable[[Conversation], Conversation], set[str]]
     ("awaiting_retry", lambda c: c.awaiting_retry(THIS_MONTH), {"retry_plan"}),
     ("without_retry", lambda c: c.without_retry(), {"retry_plan"}),
     (
-        "with_references",
-        lambda c: c.with_references(group_by=GroupBy.MERCHANT, group_key="Mercadona"),
-        {"referenced_group_by", "referenced_group_key"},
+        "focused_on_result",
+        lambda c: focused_on_result(
+            c, ResultReference(LAST_MONTH, group_by=GroupBy.MERCHANT, group_key="Mercadona")
+        ),
+        {"result_reference"},
     ),
     (
         "waiting_for_ratio",

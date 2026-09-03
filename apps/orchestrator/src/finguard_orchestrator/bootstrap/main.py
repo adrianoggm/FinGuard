@@ -1,4 +1,5 @@
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +41,7 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     ResetLlmPolicyHandler,
 )
+from finguard_orchestrator.application.metrics_executor import financial_metric_executor
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
@@ -77,11 +79,20 @@ from finguard_orchestrator.infrastructure.llm.ollama_llm_provider import OllamaL
 from finguard_orchestrator.infrastructure.llm.openai_compatible_provider import (
     OpenAiCompatibleProvider,
 )
+from finguard_orchestrator.infrastructure.metrics.memory_repository import (
+    MemorySavedMetricRepository,
+)
+from finguard_orchestrator.infrastructure.metrics.postgres_repository import (
+    PostgresSavedMetricRepository,
+)
+from finguard_orchestrator.infrastructure.metrics.router import router as metrics_router
 from finguard_orchestrator.infrastructure.request_log import register_request_logging
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
     StaticTokenIdentity,
 )
 from finguard_orchestrator.observability import configure_logging
+from finguard_orchestrator.observability.otel import configure_tracing, register_turn_recording
 
 # The vendor behind the OpenAI-compatible adapter. A name and a base URL are the whole of
 # what distinguishes one from another, which is why the adapter is not named after this one.
@@ -107,6 +118,22 @@ def create_app() -> FastAPI:
     logging_settings = get_settings()
     configure_logging(level=logging_settings.log_level, as_json=logging_settings.log_json)
 
+    @asynccontextmanager
+    async def lifespan(service: FastAPI) -> AsyncIterator[None]:
+        pool = None
+        if settings.metrics_enabled and settings.database_url:
+            import asyncpg
+
+            pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=5)
+            service.state.metrics_repository = PostgresSavedMetricRepository(
+                pool, settings.metrics_max_saved
+            )
+        try:
+            yield
+        finally:
+            if pool is not None:
+                await pool.close()
+
     app = FastAPI(
         title="FinGuard Assistant API",
         version="0.1.0",
@@ -118,9 +145,14 @@ def create_app() -> FastAPI:
         ],
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     settings = get_settings()
+    if settings.metrics_enabled and (
+        not settings.database_url or not settings.metrics_signing_keys
+    ):
+        raise ValueError("metrics_enabled requires DATABASE_URL and METRICS_SIGNING_KEYS")
     catalogue = settings.catalogue()
     # The registry builds providers with no arguments; the one that needs configuration
     # gets it here, in the only place allowed to know what the deployment looks like.
@@ -343,9 +375,11 @@ def create_app() -> FastAPI:
     app.state.command_bus = command_bus
     # Reached directly by the streaming route: a bus answers once, a stream does not.
     app.state.ask_handler = asking
+    app.state.metrics_executor = financial_metric_executor(banking)
     # Readiness reports on what /v1/questions needs, not on what /v1/messages needs.
     app.state.questions_enabled = settings.questions_enabled
     app.state.payments_enabled = settings.payments_enabled
+    app.state.metrics_enabled = settings.metrics_enabled
     # The vocabulary a screen may offer. The same list the decoder is constrained to, so a
     # category a chip produces is one the assistant can name back.
     app.state.categories = settings.categories
@@ -359,6 +393,22 @@ def create_app() -> FastAPI:
     # Identity, resolved per request. A development adapter today; §12.2 asks for OAuth
     # and that is a swap of this one line.
     app.state.identity = StaticTokenIdentity(settings.callers())
+    # Disabled metrics keep an in-memory adapter for unit tests. Enabled deployments replace it
+    # during lifespan with the assistant-owned PostgreSQL adapter above.
+    app.state.metrics_repository = MemorySavedMetricRepository(settings.metrics_max_saved)
+    configured_metric_keys: dict[str, bytes] = {}
+    for entry in settings.metrics_signing_keys:
+        key_name, separator, key_value = entry.partition(":")
+        if separator:
+            import base64
+
+            configured_metric_keys[key_name] = base64.urlsafe_b64decode(key_value + "=")
+    if settings.metrics_enabled and not configured_metric_keys:
+        raise ValueError("METRICS_SIGNING_KEYS contains no valid signing keys")
+    app.state.metric_tokens = MetricTokenCodec(
+        configured_metric_keys or {"default": b"test-only-disabled-metrics-key-32bytes"},
+        settings.metrics_signing_active if configured_metric_keys else "default",
+    )
 
     # Before the routers, because a rejected preflight never reaches one. The web client cannot
     # call this service at all without it: a browser refuses a cross-origin request unless the
@@ -367,7 +417,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=list(settings.web_origins),
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         # Spelled out rather than "*": the answer to a preflight is a statement about what this
         # service accepts, and a wildcard makes that statement unfalsifiable.
         #
@@ -376,7 +426,7 @@ def create_app() -> FastAPI:
         # and never sends the request at all, so adding it to the client took the whole chat down
         # while every route still answered `curl` perfectly. A wildcard would have hidden that, and
         # would hide the next one too.
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "If-Match"],
     )
 
     # Outermost, so it sees the status a handler's exception turns into and the ones CORS answers
@@ -384,9 +434,23 @@ def create_app() -> FastAPI:
     # for the ones somebody remembered.
     register_request_logging(app)
 
+    # The two halves of the observability adapter, and the order between them is the whole of the
+    # wiring. **Recording is unconditional; exporting is optional** — the middleware that opens a
+    # turn around every request is added whatever the settings say, so the decisions of a live turn
+    # are recorded and assertable with nothing listening, and `configure_tracing` returns having
+    # done nothing at all when `otel_enabled` is false, which is the default.
+    #
+    # The order between these two does not matter, which is worth stating because it looks as
+    # though it should: the FastAPI instrumentation replaces the app's `build_middleware_stack`
+    # rather than adding a middleware, so its inbound span wraps every user middleware whichever
+    # was registered first, and every `turn` span is a child of the request that produced it.
+    register_turn_recording(app)
+    configure_tracing(app, settings=settings)
+
     app.include_router(assistant_router)
     app.include_router(payments_router)
     app.include_router(admin_router)
+    app.include_router(metrics_router)
     register_error_handlers(app)
     return app
 

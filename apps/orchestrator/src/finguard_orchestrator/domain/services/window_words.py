@@ -76,6 +76,22 @@ _NAMED: Final[tuple[tuple[str, Period], ...]] = (
     ("hoy", Period.TODAY),
 )
 
+# "¿Cuánto llevo desde el lunes?" — a window that opens on a weekday and closes today.
+#
+# **Monday and no other weekday, because the week starts there.** "Desde el lunes" covers exactly
+# the days THIS_WEEK covers, on whichever day of the week it is said, so this reads a window the
+# contract already names rather than deriving one from a clock. "Desde el martes" has no name in
+# the contract *and* no unambiguous start — this week's Tuesday when it has come round, last week's
+# when it has not — and an ambiguity is what None is for. It went unread, so a model answered it
+# with a rolling seven days and there was nothing to say otherwise.
+#
+# What follows the word is what decides it is still *this* Monday. "El lunes pasado" is the one
+# before, "el lunes 13" is a date, "el lunes de la semana pasada" is qualified, and "desde el lunes
+# hasta el viernes" closes somewhere that is not today. All four are somebody else's window.
+_SINCE_MONDAY: Final = re.compile(
+    r"\bdesde\s+(?:el\s+)?lunes\b(?!\s+(?:pasado|anterior|de\b|del\b|hasta\b|al\b|a\b|\d))"
+)
+
 # "El año pasado" ends in "el ano", which the table above reads as *this* year. It is matched first
 # and answered as a calendar range, so the phrase can never fall through to the wrong one.
 _THE_YEAR_BEFORE: Final = re.compile(r"\bano\s+(pasado|anterior)\b")
@@ -141,6 +157,28 @@ _DATE_RANGE: Final = re.compile(
     r"\s+(?:al|hasta(?:\s+el)?)\s+"
     rf"(?P<end_day>\d{{1,2}})\s+de\s+(?P<end_month>{'|'.join(_MONTHS)})"
     r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:ano\s+)?(?P<end_year>20\d{2}))?\b"
+)
+
+# "¿Qué gasté entre el 10 y el 20 de mayo?" — both ends of a range inside one named month, with the
+# month written once at the end and understood on both.
+#
+# The reader above wants a month on *each* endpoint, so it never saw this: "entre el 10" is a bare
+# day. The sentence states its window as plainly as any it does read, and answering None left a
+# model free to place the same two days in the wrong year.
+#
+# **Narrow on purpose, in three directions.** Only "entre … y …", so "del 10 al 20 de mayo" — the
+# same shape said another way — is still nobody's business here until it is measured. Only with the
+# month present, because "entre el 10 y el 20" alone names two numbers and no calendar. And the
+# article is required on the first day, which is what keeps amounts out: dates in Spanish carry it
+# ("entre el 10 y el 20 de mayo") and quantities do not ("entre 10 y 20 euros").
+#
+# The trailing year is optional and read when written, for the reason it is optional above: without
+# it the phrase would match the prefix of "entre el 10 y el 20 de mayo de 2025" and answer with a
+# year the sentence had already denied — the precise failure a widened reader is dangerous for.
+_SHARED_MONTH_RANGE: Final = re.compile(
+    rf"\bentre\s+el\s+(?P<start_day>\d{{1,2}})\s+y\s+(?:el\s+)?(?P<end_day>\d{{1,2}})"
+    rf"\s+de\s+(?P<month>{'|'.join(_MONTHS)})"
+    r"(?:\s+(?:de|del)\s+(?:el\s+)?(?:ano\s+)?(?P<year>20\d{2}))?\b"
 )
 _SAME_RANGE_LAST_YEAR: Final = re.compile(
     r"\b(?:con|contra|frente\s+a(?:l)?|versus|vs)\s+"
@@ -247,8 +285,8 @@ _THIS_ONE: Final = re.compile(r"(de\s+)?(este|esta|el\s+actual|la\s+actual|actua
 # Either position accepts digits or a written cardinal, because "los dos últimos meses" was the same
 # silent one, and half of a fix to a wrong number is not one.
 _COUNTED: Final = re.compile(
-    r"(?:(?P<before>\d{1,3}|[a-z]+)\s+)?ultim[oa]s?\s+"
-    r"(?:(?P<after>\d{1,3}|[a-z]+)\s+)?(?P<unit>dias?|meses|mes|anos|ano)\b",
+    r"(?:(?P<before>\d+|[a-z]+)\s+)?ultim[oa]s?\s+"
+    r"(?:(?P<after>\d+|[a-z]+)\s+)?(?P<unit>dias?|meses|mes|anos|ano)\b",
     re.IGNORECASE,
 )
 
@@ -269,6 +307,26 @@ def _how_many(counted: re.Match[str]) -> int:
         if value is not None and value > 0:
             return value
     return 1
+
+
+def has_invalid_counted_window(sentence: str) -> bool:
+    """Whether a stated relative count is outside the domain instead of merely absent.
+
+    `window_in` must keep returning ``None`` for this case, but that value alone cannot tell a
+    caller whether there was no recognised window or a recognised, impossible one. Keeping this
+    distinction prevents the model from accepting "5000 days" under one paraphrase after asking
+    for a correction under another.
+    """
+    counted = _COUNTED.search(spanish.folded(sentence))
+    if counted is None:
+        return False
+    count = _how_many(counted)
+    unit = counted.group("unit")
+    try:
+        RelativePeriod(period=_UNIT[unit], n=count * _MONTHS_PER.get(unit, 1))
+    except InvalidValueError:
+        return True
+    return False
 
 
 _UNIT: Final[dict[str, Period]] = {
@@ -597,11 +655,21 @@ def compared_calendar_years(
 
 
 def date_range_in(sentence: str, *, today: date) -> AbsoluteRange | None:
-    """One exact, past range, only when the sentence contains exactly one."""
-    matches = tuple(_DATE_RANGE.finditer(spanish.folded(sentence)))
-    if len(matches) != 1:
+    """One exact, past range, only when the sentence contains exactly one.
+
+    Two spellings of the same thing: a month on each endpoint, or one month at the end doing for
+    both. They are counted together rather than one after the other, because "exactly one" is this
+    reader's whole guarantee — a sentence carrying one of each states two windows, and answering
+    with either of them is answering a question nobody asked.
+    """
+    folded = spanish.folded(sentence)
+    matches = tuple(_DATE_RANGE.finditer(folded))
+    shared = tuple(_SHARED_MONTH_RANGE.finditer(folded))
+    if len(matches) + len(shared) != 1:
         return None
-    return _range_from(matches[0], today)
+    if matches:
+        return _range_from(matches[0], today)
+    return _shared_month_range_from(shared[0], today)
 
 
 def compared_date_ranges(
@@ -650,30 +718,76 @@ def has_complete_window(sentence: str, *, today: date) -> bool:
 
 
 def _range_from(match: re.Match[str], today: date) -> AbsoluteRange | None:
-    start_month = _MONTH_NUMBER[match.group("start_month")]
-    end_month = _MONTH_NUMBER[match.group("end_month")]
     written_start_year = match.group("start_year")
     written_end_year = match.group("end_year")
+    return _range_between(
+        start_day=int(match.group("start_day")),
+        start_month=_MONTH_NUMBER[match.group("start_month")],
+        end_day=int(match.group("end_day")),
+        end_month=_MONTH_NUMBER[match.group("end_month")],
+        written_start_year=int(written_start_year) if written_start_year is not None else None,
+        written_end_year=int(written_end_year) if written_end_year is not None else None,
+        today=today,
+    )
 
+
+def _shared_month_range_from(match: re.Match[str], today: date) -> AbsoluteRange | None:
+    """ "Entre el 10 y el 20 de mayo": one month, written once, standing for both endpoints.
+
+    Through the same arithmetic as the two-month form rather than beside it. The year a range with
+    none written gets — the last time its end happened, counting the one under way — is a rule this
+    file already holds in one place, and the whole reason this shape is worth teaching is that a
+    model put these two days in the wrong year. A second copy of that rule is how the two answers
+    start to disagree.
+    """
+    month = _MONTH_NUMBER[match.group("month")]
+    written = match.group("year")
+    year = int(written) if written is not None else None
+    return _range_between(
+        start_day=int(match.group("start_day")),
+        start_month=month,
+        end_day=int(match.group("end_day")),
+        end_month=month,
+        written_start_year=year,
+        written_end_year=year,
+        today=today,
+    )
+
+
+def _range_between(
+    *,
+    start_day: int,
+    start_month: int,
+    end_day: int,
+    end_month: int,
+    written_start_year: int | None,
+    written_end_year: int | None,
+    today: date,
+) -> AbsoluteRange | None:
+    """Two endpoints and whichever years the sentence wrote down, as the range they bound.
+
+    A year nobody wrote is the last time that end came round, counting the one under way — the
+    convention `_year_of` states for a bare month, and the reason "el 10 al 20 de mayo" said in
+    July is this May. The other end follows it across January when the months run backwards.
+    """
     if written_start_year is not None:
-        start_year = int(written_start_year)
+        start_year = written_start_year
     elif written_end_year is not None:
-        end_year = int(written_end_year)
-        start_year = end_year - int(start_month > end_month)
+        start_year = written_end_year - int(start_month > end_month)
     else:
-        end_this_year = _safe_date(today.year, end_month, int(match.group("end_day")))
+        end_this_year = _safe_date(today.year, end_month, end_day)
         if end_this_year is None:
             return None
-        end_year = today.year if end_this_year <= today else today.year - 1
-        start_year = end_year - int(start_month > end_month)
+        last_time = today.year if end_this_year <= today else today.year - 1
+        start_year = last_time - int(start_month > end_month)
 
     if written_end_year is not None:
-        end_year = int(written_end_year)
-    elif written_start_year is not None:
+        end_year = written_end_year
+    else:
         end_year = start_year + int(end_month < start_month)
 
-    start = _safe_date(start_year, start_month, int(match.group("start_day")))
-    end = _safe_date(end_year, end_month, int(match.group("end_day")))
+    start = _safe_date(start_year, start_month, start_day)
+    end = _safe_date(end_year, end_month, end_day)
     if start is None or end is None or end < start or end > today:
         return None
     try:
@@ -772,6 +886,12 @@ def window_in(
             # `n` is bounded by the domain, so "los últimos 5000 días" is not a window this can
             # build. None sends it to the model, which is better than a reader that raises.
             return None
+
+    if _SINCE_MONDAY.search(folded):
+        # Last of the readers and only just before the table, because everything above states a
+        # window more precisely than a weekday does: a sentence that also names a month, a year or
+        # an explicit range said the more particular thing and keeps it.
+        return RelativePeriod(period=Period.THIS_WEEK)
 
     for phrase, period in _NAMED:
         if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", folded):

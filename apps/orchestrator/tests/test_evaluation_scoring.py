@@ -19,7 +19,7 @@ import pytest
 import yaml
 from pydantic import SecretStr
 
-from finguard_orchestrator.domain.enums import Direction, Metric, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Metric, Period
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
@@ -247,6 +247,259 @@ def test_the_dataset_validator_catches_a_false_locality_claim() -> None:
     issues = evaluate.validate_metamorphic_cases(cases, today=TODAY)
 
     assert "declares ['window'], expected plans change ['metric']" in issues[0]
+
+
+def paraphrase_pair() -> list[dict[str, object]]:
+    """One base and one rewording of it, saying the same thing."""
+    plan = {"period": {"period": "LAST_MONTH"}, "direction": "EXPENSE"}
+    return [
+        {"id": "base", "expect": "plan", "question": "¿Cuánto gasté el mes pasado?", "plan": plan},
+        {
+            "id": "said_differently",
+            "expect": "plan",
+            "question": "Dime el total de mis gastos del mes anterior",
+            "paraphrase_of": "base",
+            "plan": plan,
+        },
+    ]
+
+
+def invariance(base: PlanningResult, rewording: PlanningResult):
+    score = evaluate.Score(results_by_id={"base": base, "said_differently": rewording})
+    evaluate._check_invariance(paraphrase_pair(), score, today=TODAY)
+    return score
+
+
+def test_a_rewording_that_produces_the_same_plan_holds_the_property() -> None:
+    score = invariance(spending(), spending())
+
+    assert (score.invariance_held, score.invariance_total) == (1, 1)
+    assert score.invariance_breaks == []
+
+
+def test_a_rewording_that_moves_a_field_breaks_the_property() -> None:
+    """The defect the whole corpus exists to find: the same question, a different answer."""
+    score = invariance(spending(), spending(Direction.ALL))
+
+    assert (score.invariance_held, score.invariance_total) == (0, 1)
+    assert "rewording changed ['direction']" in score.invariance_breaks[0]
+
+
+def test_a_rewording_the_system_declines_breaks_the_property() -> None:
+    """A refusal is an answer, and a refusal that only some phrasings trigger is the same bug."""
+    score = invariance(spending(), PlanningResult.needs_clarification("¿de qué periodo?"))
+
+    assert score.invariance_held == 0
+    assert "base PLANNED, rewording NEEDS_CLARIFICATION" in score.invariance_breaks[0]
+
+
+def test_two_identically_wrong_plans_are_robust() -> None:
+    """The distinction that makes this a second number rather than a second accuracy score.
+
+    Both sides answer a spending question with `ALL`, so both are wrong and the dataset's own
+    expectation is missed twice. The property still holds: one fix to the base fixes the rewording
+    too, which is exactly what is *not* true of a set that answers the base correctly and the
+    rewording wrongly.
+    """
+    score = invariance(spending(Direction.ALL), spending(Direction.ALL))
+
+    assert (score.invariance_held, score.invariance_total) == (1, 1)
+
+
+def test_two_refusals_are_robust_even_when_the_dataset_wanted_a_plan() -> None:
+    declined = PlanningResult.needs_clarification("¿de qué periodo?")
+
+    score = invariance(declined, declined)
+
+    assert (score.invariance_held, score.invariance_total) == (1, 1)
+
+
+def test_robustness_crosses_outcome_changes_with_accuracy_and_safety() -> None:
+    cases = paraphrase_pair()
+    score = evaluate.Score()
+    evaluate.judge(cases[0], spending(), score, TODAY)
+    evaluate.judge(cases[1], PlanningResult.needs_clarification("¿de qué periodo?"), score, TODAY)
+
+    evaluate._check_invariance(cases, score, today=TODAY)
+
+    assert score.invariance_break_classes == {
+        "correct plan -> refusal": 1,
+        "correct -> safe incorrect": 1,
+    }
+    assert score.invariance_by_group == {"ungrouped": [0, 1]}
+
+
+def test_expected_refusal_to_plan_is_marked_unsafe_not_assumed_from_the_transition() -> None:
+    cases = [
+        {"id": "base", "expect": "clarification", "question": "¿cuánto cuesta Netflix?"},
+        {
+            "id": "rewrite",
+            "expect": "clarification",
+            "question": "¿cuál es el precio de Netflix?",
+            "paraphrase_of": "base",
+        },
+    ]
+    score = evaluate.Score()
+    evaluate.judge(cases[0], PlanningResult.needs_clarification("¿precio o gasto?"), score, TODAY)
+    evaluate.judge(cases[1], spending(), score, TODAY)
+
+    evaluate._check_invariance(cases, score, today=TODAY)
+
+    assert score.invariance_break_classes == {
+        "correct -> unsafe": 1,
+        "expected refusal -> plan": 1,
+    }
+
+
+def test_group_by_breaks_name_the_transition_and_metric_coupling() -> None:
+    cases = paraphrase_pair()
+    for case in cases:
+        case["plan"]["groupBy"] = "MERCHANT"
+    base = PlanningResult.planned(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            group_by=GroupBy.MERCHANT,
+            metric=Metric.SUM,
+        )
+    )
+    rewrite = PlanningResult.planned(
+        FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            group_by=GroupBy.CATEGORY,
+            metric=Metric.COUNT,
+        )
+    )
+    score = evaluate.Score()
+    evaluate.judge(cases[0], base, score, TODAY)
+    evaluate.judge(cases[1], rewrite, score, TODAY)
+
+    evaluate._check_invariance(cases, score, today=TODAY)
+
+    assert score.invariance_field_changes == {"groupBy + metric": 1}
+    assert score.invariance_group_by_transitions == {
+        "MERCHANT -> CATEGORY": 1,
+        "MERCHANT -> CATEGORY + metric": 1,
+    }
+
+
+def test_a_paraphrase_that_edited_its_expectation_is_a_dataset_error() -> None:
+    """The rule `drift.yaml` states in prose: the plan is copied from the source, never invented."""
+    cases = paraphrase_pair()
+    cases[1]["plan"] = {"period": {"period": "THIS_MONTH"}, "direction": "EXPENSE"}
+
+    issues = evaluate.validate_paraphrase_cases(cases)
+
+    assert "plan differs from base, which it may not" in issues[0]
+
+
+def test_a_paraphrase_that_is_the_same_sentence_is_a_dataset_error() -> None:
+    """A pair of identical sentences is 1/1 robust for free and measures nothing."""
+    cases = paraphrase_pair()
+    cases[1]["question"] = cases[0]["question"]
+
+    issues = evaluate.validate_paraphrase_cases(cases)
+
+    assert issues == ["said_differently: the same sentence as base"]
+
+
+def test_the_refusal_rate_has_a_denominator_of_answerable_cases() -> None:
+    """`missed` was a bare count, and a bare count cannot be a gate bar.
+
+    An unsupported case that is correctly refused must not enter the denominator: refusing what
+    the dataset itself refuses is the system working.
+    """
+    score = evaluate.Score()
+    answerable = {
+        "id": "answerable",
+        "expect": "plan",
+        "question": "¿Cuánto gasté el mes pasado?",
+        "plan": {"period": {"period": "LAST_MONTH"}, "direction": "EXPENSE"},
+    }
+    refusable = {"id": "out_of_scope", "expect": "unsupported", "question": "¿Qué tiempo hace?"}
+
+    evaluate.judge(answerable, PlanningResult.needs_clarification("¿de qué mes?"), score, TODAY)
+    evaluate.judge(
+        refusable, PlanningResult.unsupported("no es una pregunta de dinero"), score, TODAY
+    )
+
+    assert (len(score.missed), score.answerable) == (1, 1)
+
+
+def complete_robustness_score(rewording: PlanningResult | None = None) -> evaluate.Score:
+    score = invariance(spending(), rewording or spending())
+    score.cases = 2
+    score.answerable = 2
+    return score
+
+
+def test_a_complete_robustness_measurement_can_pass_the_gate() -> None:
+    score = complete_robustness_score()
+    metadata = {"base_count": 1, "paraphrase_count": 1}
+    gate = evaluate.RobustnessGate(100.0, 0.0)
+
+    assert evaluate.robustness_gate_exit_code(score, metadata, gate) == 0
+
+
+def test_a_deliberately_broken_plan_makes_the_gate_exit_nonzero(capsys) -> None:  # noqa: ANN001
+    """Sensitivity control: the gate is red when one produced plan stops matching its twin."""
+    score = complete_robustness_score(spending(Direction.ALL))
+    metadata = {"base_count": 1, "paraphrase_count": 1}
+    gate = evaluate.RobustnessGate(100.0, 0.0)
+
+    assert evaluate.robustness_gate_exit_code(score, metadata, gate) == 1
+    assert "macro robustness 0.0% is below 100.0%" in capsys.readouterr().err
+
+
+def test_a_partial_run_cannot_pass_the_robustness_gate() -> None:
+    score = complete_robustness_score()
+    metadata = {"base_count": 2, "paraphrase_count": 8}
+
+    broken = evaluate.robustness_gate_failures(score, metadata, evaluate.RobustnessGate(0.0, 100.0))
+
+    assert "executed 2/10 cases" in broken
+    assert "measured 1/8 paraphrase pairs" in broken
+    assert "measured 1/2 paraphrase bases" in broken
+
+
+def test_the_robustness_gate_keeps_the_safety_and_structure_limits() -> None:
+    score = complete_robustness_score()
+    score.unsafe = [("base", "wrong plan")]
+    score.structural = 1
+    metadata = {"base_count": 1, "paraphrase_count": 1}
+
+    broken = evaluate.robustness_gate_failures(score, metadata, evaluate.RobustnessGate(0.0, 100.0))
+
+    assert "unsafe execution 50.0% is above 10.0%" in broken
+    assert "invalid structure 1 is above 0" in broken
+
+
+def test_machine_summary_keeps_tail_latency_and_release_invariants() -> None:
+    score = evaluate.Score(
+        cases=2,
+        unsafe=[("unsafe", "wrong")],
+        missed=["missed"],
+        answerable=2,
+        structural=0,
+        latencies=[1.0, 3.0],
+        invariance_total=1,
+        invariance_held=1,
+        invariance_by_base={"base": [1, 1]},
+    )
+
+    summary = evaluate._run_summary(score)
+
+    assert summary["robustness_macro_pct"] == 100.0
+    assert summary["unsafe_pct"] == 50.0
+    assert summary["over_refusal_pct"] == 50.0
+    assert summary["invalid_structure"] == 0
+    assert summary["latency_seconds"] == {
+        "p50": 2.0,
+        "p95": 3.0,
+        "max": 3.0,
+        "last_ten_mean": 2.0,
+    }
 
 
 def provider_settings(**changes: object) -> SimpleNamespace:

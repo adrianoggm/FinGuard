@@ -58,6 +58,7 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
 from finguard_orchestrator.domain.models.contact import Contact
+from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.services import query_recovery
@@ -152,9 +153,9 @@ class Planner:
         self.asked: list[str] = []
         self.inherited: list[FinancialPlan | TopMovements | None] = []
 
-    async def plan(self, sentence: str, *, previous=None, **_: object) -> PlanningResult:  # type: ignore[no-untyped-def]
+    async def plan(self, sentence: str, *, context: PlanningContext) -> PlanningResult:
         self.asked.append(sentence)
-        self.inherited.append(previous)
+        self.inherited.append(context.continuation.plan if context.continuation else None)
         for fragment, result in self._script.items():
             if fragment in sentence.lower():
                 return result

@@ -1,0 +1,9 @@
+# Intentionally empty, and it has to exist — same reason as ../plugins/.gitkeep: the
+# read-only mount replaces the image's provisioning tree, and a missing alerting/ directory
+# makes Grafana log an error at every boot.
+#
+# Empty is also the correct content. This stack answers questions somebody is already asking;
+# it does not page anybody, and ops/observability/prometheus/prometheus.yml has no rule files
+# for the same reason. When there is an alert worth waking up for — the override rate on a
+# step moving sharply would be the first candidate — it is provisioned here rather than
+# clicked into the browser.

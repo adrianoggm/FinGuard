@@ -11,6 +11,7 @@ than reinterpreted into half a state.
 """
 
 import uuid
+from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
@@ -31,6 +32,10 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
+    AccountCandidate,
+    AccountScopeClarification,
+    AccountSelection,
+    AccountSelectionMode,
     Conversation,
     FinancialClarification,
     PaymentConfirmation,
@@ -40,6 +45,12 @@ from finguard_orchestrator.domain.models.conversation import (
     UnsupportedCapability,
     Workflow,
 )
+from finguard_orchestrator.domain.models.planning_context import focus_of
+from finguard_orchestrator.domain.models.result_reference import (
+    ResultReference,
+    answered_with_result,
+    result_reference_of,
+)
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -48,7 +59,8 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioKind, RatioPlan
-from finguard_orchestrator.infrastructure.dto.llm_dto import ConversationPayload
+from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.dto.llm_dto import _SLOTS_OF, ConversationPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
 LAST_MONTH = FinancialPlan(
@@ -69,14 +81,74 @@ RUIZ = Contact(uuid.UUID(int=1), "Marta Ruiz Gomez", "+34600111222")
 
 def there_and_back(conversation: Conversation) -> Conversation:
     """Out to the wire, through JSON, and back — including the serialisation, because a field that
-    survives the mapper and not `model_dump` is still lost."""
+    survives the mapper and not `model_dump` is still lost.
+
+    The identifier is put back the way it went out, and every test below is about *state*. It is
+    not an exemption: `conversation_id` is minted by `to_domain` when the payload does not carry
+    one, so a conversation built in a test and sent through here legitimately comes back with an
+    identity it did not have. Normalising it here rather than in each assertion keeps that one
+    difference from reading as "some field survived and one did not" in thirty diffs, and the
+    round trip it actually has to make is asserted on its own, below.
+    """
     payload = mapper.to_payload(conversation)
     echoed = ConversationPayload.model_validate(payload.model_dump(mode="json"))
-    return mapper.to_domain(echoed)
+    return replace(mapper.to_domain(echoed), conversation_id=conversation.conversation_id)
 
 
 def test_an_idle_conversation_survives() -> None:
     assert there_and_back(IDLE) == IDLE
+
+
+def test_an_absent_payload_is_an_idle_conversation() -> None:
+    assert replace(mapper.to_domain(None), conversation_id=None) == IDLE
+
+
+# --- and the one field that is minted rather than echoed ---------------------------------------
+
+
+def test_a_conversation_the_client_has_never_seen_is_given_an_identity() -> None:
+    """The first turn. There is no session and no store, so the identifier has to be minted at the
+    one moment a payload becomes a conversation, and it has to leave with the answer or the second
+    turn is a second conversation."""
+    first = mapper.to_domain(None)
+
+    assert first.conversation_id is not None
+    assert mapper.to_payload(first).conversation_id == first.conversation_id
+
+
+def test_two_first_turns_are_two_conversations() -> None:
+    """Minted with `uuid4`, so nothing about the turn can make two of them collide into one
+    trace. A hash of the opening sentence would put every "hola" in the same conversation."""
+    assert mapper.to_domain(None).conversation_id != mapper.to_domain(None).conversation_id
+
+
+def test_an_identity_the_client_echoes_back_is_kept() -> None:
+    """The round trip that makes N turns one trace instead of N."""
+    started = mapper.to_domain(None)
+
+    assert there_and_back(started).conversation_id == started.conversation_id
+
+
+def test_a_client_that_predates_the_field_is_not_refused() -> None:
+    """**What `extra="forbid"` decided.** It rejects fields we do not know; it has no opinion about
+    an optional field a caller leaves out. So a client written before this shipped keeps working
+    untouched — it just gets a fresh identity every turn, and its turns go on being one trace each
+    until it starts echoing the field back. Degraded, never broken, and no version negotiation."""
+    old_shape = ConversationPayload.model_validate({"answered_the_balance": True})
+
+    assert old_shape.conversation_id is None
+    assert mapper.to_domain(old_shape).conversation_id is not None
+
+
+def test_an_identity_that_is_not_an_identifier_is_refused_at_the_edge() -> None:
+    """The other half of what `extra="forbid"` forced: the field had to be *declared*, and being
+    declared it had to be typed. Typed `UUID`, this is the one field on the payload a client
+    cannot fill with the holder's own sentence — which matters because this value is the one that
+    ends up on a span attribute. Pydantic refuses it here, before any of it reaches a recorder."""
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(
+            {"conversation_id": "¿cuánto le he pagado a Marta Solís Vega?"}
+        )
 
 
 def test_the_memory_of_the_last_answer_survives() -> None:
@@ -122,27 +194,87 @@ def test_a_group_ranking_limit_survives_the_client_round_trip() -> None:
 
 
 def test_a_highlighted_category_survives_the_client_round_trip() -> None:
-    out = IDLE.answered(LAST_MONTH, referenced_category="GROCERIES")
+    reference = ResultReference(
+        source_query=LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.CATEGORY,
+        group_key="GROCERIES",
+    )
+    out = answered_with_result(IDLE, reference)
 
     back = there_and_back(out)
+    projected = mapper.to_payload(back)
 
-    assert back.referenced_category == "GROCERIES"
+    assert back.result_reference == reference
+    assert projected.referenced_category == "GROCERIES"
 
 
 def test_a_typed_group_and_its_evidence_survive_the_client_round_trip() -> None:
     evidence = (uuid.UUID(int=21), uuid.UUID(int=22))
-    out = IDLE.answered(
-        LAST_MONTH,
-        referenced_group_by=GroupBy.MERCHANT,
-        referenced_group_key="Mercadona",
-        referenced_transaction_ids=evidence,
+    reference = ResultReference(
+        source_query=LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.MERCHANT,
+        group_key="Mercadona",
+        transaction_ids=evidence,
     )
+    out = answered_with_result(IDLE, reference)
 
     back = there_and_back(out)
+    projected = mapper.to_payload(back)
 
-    assert back.referenced_group_by is GroupBy.MERCHANT
-    assert back.referenced_group_key == "Mercadona"
-    assert back.referenced_transaction_ids == evidence
+    assert back.result_reference == reference
+    assert projected.referenced_group_by is GroupBy.MERCHANT
+    assert projected.referenced_group_key == "Mercadona"
+    assert projected.referenced_category == "GROCERIES"
+    assert projected.referenced_transaction_ids == list(evidence)
+
+
+def test_the_typed_result_projection_is_equivalent_after_the_legacy_wire_round_trip() -> None:
+    reference = ResultReference(
+        source_query=LAST_MONTH,
+        category="GROCERIES",
+        group_by=GroupBy.CATEGORY,
+        group_key="GROCERIES",
+        transaction_ids=(uuid.UUID(int=21), uuid.UUID(int=22)),
+    )
+    out = answered_with_result(IDLE, reference)
+
+    back = there_and_back(out)
+    projected = mapper.to_payload(back)
+
+    assert back.result_reference == reference
+    assert result_reference_of(back, focus_of(back)) == reference
+    assert projected.referenced_group_by is GroupBy.CATEGORY
+    assert projected.referenced_group_key == "GROCERIES"
+    assert projected.referenced_transaction_ids == [uuid.UUID(int=21), uuid.UUID(int=22)]
+
+
+def test_a_legacy_category_row_without_repeated_category_is_canonicalized() -> None:
+    unfiltered = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(period=Period.THIS_YEAR),
+        group_by=GroupBy.CATEGORY,
+    )
+    payload = mapper.to_payload(IDLE.answered(unfiltered)).model_copy(
+        update={
+            "referenced_category": None,
+            "referenced_group_by": GroupBy.CATEGORY,
+            "referenced_group_key": "GROCERIES",
+        }
+    )
+
+    back = mapper.to_domain(payload)
+
+    assert back.result_reference is not None
+    assert back.result_reference.source_query is back.last_plan
+    assert back.result_reference.category is None
+    assert back.result_reference.group_by is GroupBy.CATEGORY
+    assert back.result_reference.group_key == "GROCERIES"
+    projected = mapper.to_payload(back)
+    assert projected.referenced_category == "GROCERIES"
+    assert projected.referenced_group_by is GroupBy.CATEGORY
+    assert projected.referenced_group_key == "GROCERIES"
 
 
 def test_a_partial_group_reference_is_not_valid_conversation_state() -> None:
@@ -245,6 +377,68 @@ def test_a_percentage_waiting_only_for_its_window_survives() -> None:
     assert back.last_asked is Slot.WINDOW
 
 
+@pytest.mark.parametrize("special", ["ratio", "pending_ratio", "comparison", "balance"])
+def test_special_focus_discards_incoming_legacy_reference(special: str) -> None:
+    evidence = (uuid.UUID(int=31),)
+    reference_fields = {
+        "referenced_category": "GROCERIES",
+        "referenced_group_by": GroupBy.MERCHANT,
+        "referenced_group_key": "Mercadona",
+        "referenced_transaction_ids": evidence,
+    }
+    if special == "ratio":
+        part = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("GROCERIES",),
+        )
+        ratio = RatioPlan(
+            part=part,
+            whole=FinancialPlan(
+                direction=Direction.INCOME,
+                period=RelativePeriod(Period.LAST_MONTH),
+            ),
+            kind=RatioKind.SHARE,
+        )
+        conversation = IDLE.answered_ratio(ratio)
+    elif special == "pending_ratio":
+        draft = RatioDraft(
+            part=FinancialPlanDraft(direction=Direction.EXPENSE),
+            whole=FinancialPlanDraft(direction=Direction.INCOME),
+            kind=RatioKind.SHARE,
+        )
+        conversation = IDLE.answered(LAST_MONTH).waiting_for_ratio(draft)
+    elif special == "comparison":
+        earlier = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.LAST_MONTH),
+            categories=("GROCERIES",),
+        )
+        latest = FinancialPlan(
+            direction=Direction.EXPENSE,
+            period=RelativePeriod(Period.THIS_MONTH),
+            categories=("GROCERIES",),
+        )
+        comparison = ComparisonPlan.between(earlier, latest)
+        assert comparison is not None
+        conversation = IDLE.answered_comparison(comparison)
+    else:
+        conversation = replace(IDLE.answered(LAST_MONTH), answered_the_balance=True)
+
+    raw = mapper.to_payload(conversation).model_dump()
+    raw.update(reference_fields)
+    payload = ConversationPayload.model_validate(raw)
+
+    back = mapper.to_domain(payload)
+    projected = mapper.to_payload(back)
+
+    assert back.result_reference is None
+    assert projected.referenced_category is None
+    assert projected.referenced_group_by is None
+    assert projected.referenced_group_key is None
+    assert projected.referenced_transaction_ids == []
+
+
 @pytest.mark.parametrize("missing", ["kind", "part", "whole"])
 def test_a_partial_percentage_pair_is_not_valid_conversation_state(missing: str) -> None:
     plan = mapper.plan_payload(LAST_MONTH)
@@ -296,6 +490,63 @@ def test_an_explicit_account_scope_survives_the_client_round_trip() -> None:
     back = there_and_back(IDLE.answered(scoped))
 
     assert back.last_plan == scoped
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        AccountSelection(AccountSelectionMode.ALL),
+        AccountSelection(AccountSelectionMode.SELECTED, (uuid.UUID(int=7), uuid.UUID(int=8))),
+    ],
+)
+def test_account_selection_survives_the_client_round_trip(selection: AccountSelection) -> None:
+    assert there_and_back(Conversation(account_selection=selection)).account_selection == selection
+
+
+def test_account_scope_clarification_with_ranked_many_survives_round_trip() -> None:
+    ranking = TopMovements(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_MONTH),
+        rank=1,
+    )
+    pending = AccountScopeClarification(
+        pending=ranking,
+        requested_count=10,
+        candidates=(
+            AccountCandidate(uuid.UUID(int=7), "Hucha", "SAVINGS"),
+            AccountCandidate(uuid.UUID(int=8), "Cuenta corriente", "CURRENT"),
+        ),
+        explicit_visualization=True,
+    )
+    back = there_and_back(IDLE.with_active(pending))
+    assert back.active == pending
+
+
+def test_every_workflow_says_which_slots_it_can_be_waiting_on() -> None:
+    """`_SLOTS_OF` is subscripted, not `.get`, so a workflow with no row is a `KeyError` — an HTTP
+    500 on the way out, for a conversation this service itself produced.
+
+    ACCOUNT_SCOPE had no row for as long as the state existed, and the only reason nobody saw it
+    is that the check short-circuits on a null slot and that state never reported one. The two
+    defects hid each other: the missing slot kept the missing row unreachable, and the missing row
+    was waiting to turn the slot into a crash the moment it became honest. This closes the pair, so
+    the next state added has to declare its questions instead of finding out in production.
+    """
+    assert set(_SLOTS_OF) == {*Workflow, None}
+
+
+def test_account_scope_payload_rejects_count_for_aggregate_plan() -> None:
+    payload = mapper.to_payload(
+        IDLE.with_active(
+            AccountScopeClarification(
+                pending=LAST_MONTH,
+                candidates=(AccountCandidate(uuid.UUID(int=7), "Hucha", "SAVINGS"),),
+            )
+        )
+    ).model_dump(mode="json")
+    payload["pending_requested_count"] = 3
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(payload)
 
 
 def test_a_query_waiting_for_a_bank_retry_survives_without_becoming_an_answer() -> None:
@@ -431,8 +682,9 @@ def test_the_memory_survives_alongside_a_workflow() -> None:
 
 def test_no_payload_is_an_idle_conversation() -> None:
     """The first turn has none, and a client that forgets it gets a fresh conversation rather than a
-    rejection — the sentence is still answerable."""
-    assert mapper.to_domain(None) == IDLE
+    rejection — the sentence is still answerable. Idle in every field but its identity, which is
+    minted here precisely because this is the first turn."""
+    assert replace(mapper.to_domain(None), conversation_id=None) == IDLE
 
 
 @pytest.mark.parametrize(

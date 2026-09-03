@@ -42,6 +42,7 @@ import hashlib
 import json
 import logging
 import logging.config
+from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any, Final
 from uuid import UUID
@@ -55,12 +56,60 @@ request_id: ContextVar[str] = ContextVar("request_id", default="-")
 # The keys every record carries, whatever emitted it. Anything else arrives through `extra`.
 _ALWAYS: Final = ("levelname", "name", "message")
 
+# Where the trace and span a record was emitted inside come from, when anything is tracing.
+#
+# **A slot rather than an import.** The design has exactly one module that may import
+# OpenTelemetry, and it is not this one — so `observability/otel.py` installs the real source
+# during set-up and this file keeps working, and keeps being testable, with no SDK anywhere near
+# it. It is a plain module-level callable and not a `ContextVar` because it is a property of the
+# process, decided once at the composition root; the per-request part is inside whatever it calls.
+TraceSource = Callable[[], tuple[str, str] | None]
+
+
+def _untraced() -> tuple[str, str] | None:
+    """The default, and what a test run gets: nothing is tracing, so there is no trace to name."""
+    return None
+
+
+_trace_context: TraceSource = _untraced
+
+
+def use_trace_context(source: TraceSource) -> None:
+    """Called by `observability.otel` once the SDK exists. Never by anything else."""
+    global _trace_context
+    _trace_context = source
+
 
 class RequestId(logging.Filter):
     """Stamps the current request onto every record, including the ones from libraries."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id.get()
+        return True
+
+
+class TraceContext(logging.Filter):
+    """Stamps the trace and span onto every record, so a log line and a trace find each other.
+
+    **Why this rather than a second correlation scheme.** `request_id` already ties this service's
+    own records together, and it is honoured across to banking — but it means nothing to Tempo,
+    which indexes by trace id. Without these two fields, getting from a log line to the turn's
+    waterfall means finding the request id in a span attribute somebody remembered to set. With
+    them it is a copy and a paste into Tempo's search box.
+
+    A filter and not a formatter change so the value is captured **when the record is created**,
+    which for anything logged inside a span is the only moment the context is still current. The
+    formatter runs on the handler's terms and, for a queue or a thread, on somebody else's.
+
+    Absent rather than zeroed when nothing is tracing. See `_current_trace_context` in `otel`:
+    thirty-two zeros look like an identifier and correlate nothing, and a false correlation is
+    worse than a missing one because only one of the two is visible to whoever is reading.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        found = _trace_context()
+        if found is not None:
+            record.trace_id, record.span_id = found
         return True
 
 
@@ -80,6 +129,15 @@ class JsonLines(logging.Formatter):
             "event": record.getMessage(),
             "request_id": getattr(record, "request_id", "-"),
         }
+        # Beside `request_id` because they answer the same question — "what else belongs to this?"
+        # — and omitted entirely when nothing is tracing rather than emitted empty. A line with no
+        # `trace_id` key says there was no trace; a line with `trace_id: ""` says there was one and
+        # it was lost, and those are different facts. With tracing off, every line in this service
+        # is byte-for-byte what it was before this field existed.
+        for key in ("trace_id", "span_id"):
+            value = getattr(record, key, None)
+            if value:
+                payload[key] = value
         payload.update(_extras(record))
         if record.exc_info:
             payload["error"] = self.formatException(record.exc_info)
@@ -90,6 +148,12 @@ def _extras(record: logging.LogRecord) -> dict[str, Any]:
     """Whatever the call site passed in `extra`, and nothing the machinery added."""
     standard = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {
         "request_id",
+        # Stamped by the filters above and placed by `format`, so they are the machinery's and not
+        # a call site's `extra`. Without these two here they would be emitted twice over — once
+        # where `format` puts them and once from this dict — and the second copy would decide the
+        # order, which is a diff in every log line for no reason anybody could find.
+        "trace_id",
+        "span_id",
         "message",
         "asctime",
         "taskName",
@@ -115,7 +179,13 @@ def configure_logging(*, level: str = "INFO", as_json: bool = True) -> None:
             # Uvicorn configures its own loggers before this runs, and taking them over is the
             # point: two formats interleaved in one stream is a stream nothing can parse.
             "disable_existing_loggers": False,
-            "filters": {"request_id": {"()": RequestId}},
+            # Both always, whether or not anything is tracing. The trace filter reads a slot that
+            # returns None until `observability.otel` fills it, so an untraced process pays one
+            # function call per record and every line comes out exactly as it did before.
+            "filters": {
+                "request_id": {"()": RequestId},
+                "trace_context": {"()": TraceContext},
+            },
             "formatters": {
                 "json": {"()": JsonLines},
                 "text": {
@@ -127,7 +197,7 @@ def configure_logging(*, level: str = "INFO", as_json: bool = True) -> None:
                     "class": "logging.StreamHandler",
                     "stream": "ext://sys.stdout",
                     "formatter": "json" if as_json else "text",
-                    "filters": ["request_id"],
+                    "filters": ["request_id", "trace_context"],
                 }
             },
             "root": {"handlers": ["stdout"], "level": level},
@@ -140,4 +210,4 @@ def configure_logging(*, level: str = "INFO", as_json: bool = True) -> None:
     )
 
 
-__all__ = ["account_ref", "configure_logging", "request_id"]
+__all__ = ["account_ref", "configure_logging", "request_id", "use_trace_context"]

@@ -36,6 +36,7 @@ from finguard_orchestrator.domain.errors import (
 )
 from finguard_orchestrator.domain.models.payment_result import PaymentPreview, PaymentReceipt
 from finguard_orchestrator.domain.value_objects.payment_request import PaymentRequest
+from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 # Banking's codes. Matched on these and never on its sentences.
 CONTACT_NOT_FOUND = "contact_not_found"
@@ -105,7 +106,7 @@ class HttpPayments:
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.post(url, json=json, headers=headers)
         except httpx.HTTPError as exc:
             # Unknown, not "did not happen". For a confirmation this is the one case where the

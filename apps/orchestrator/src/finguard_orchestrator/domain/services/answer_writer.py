@@ -375,6 +375,12 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
     Spanish, from the vocabulary the prompt already uses: GROCERIES is an identifier and
     "supermercado" is what the user said. A category nobody wrote words for falls back to its
     identifier — worse than a name, much better than an invented one.
+
+    **An exclusion that cannot have changed the figure is not named here.** It used to be, and the
+    sentence claimed a filter the ledger could not act on: "sin contar el alquiler" over a
+    supermarket ranking produced ", sin alquiler" above three identical rows. What the plan is
+    still carrying is said by `inert_exclusion_note` instead, as the truth about the figure rather
+    than as a filter on it.
     """
     transaction_types = getattr(plan, "transaction_types", ())
     direct_debits_only = transaction_types == (TransactionType.DIRECT_DEBIT,)
@@ -392,8 +398,13 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
         included = " entre tus recibos domiciliados"
     else:
         included = ""
+    inert = inert_exclusions(plan)
     excluded_names = (
-        *tuple(category_words.name_of(category) for category in plan.excluded_categories),
+        *tuple(
+            category_words.name_of(category)
+            for category in plan.excluded_categories
+            if category not in inert
+        ),
         *plan.excluded_merchants,
         *excluded_counterparties,
     )
@@ -404,6 +415,59 @@ def filter_of(plan: FinancialPlan | TopMovements) -> str:
         if included
         else f" sin {listed(excluded_names)}"
     )
+
+
+def inert_exclusions(plan: FinancialPlan | TopMovements) -> tuple[str, ...]:
+    """The excluded categories that cannot have changed this figure, as ledger identifiers.
+
+    `categories` is an inclusive filter: a plan carrying one counts nothing outside it, so
+    excluding a category it does not contain cannot remove a movement. `check_filters` already
+    refuses a category that is both included and excluded, so in practice a category filter makes
+    every exclusion beside it inert — and the membership test is still written out, as a second
+    lock on that door. If a plan ever did carry both, calling it inert would deny a change the
+    reader can see in the number.
+
+    Only `categories` decides it, and that restraint is the load-bearing half. With no category
+    filter, "sin contar el alquiler" removes rent for real: 975,97 € against 1.895,97 €, 27
+    movements against 28. A plan filtered by shop or by counterparty says nothing about which
+    categories its movements carry, so "sin alquiler" over "en Mercadona" is not provably inert
+    either. Both keep today's behaviour, which names the exclusion and claims nothing more.
+
+    The patch still applies the exclusion — `PlanPatch.apply_to` is unchanged, because the
+    instruction is real and matters the day the category filter widens. This is only what lets the
+    answer stop claiming a filter that cannot have moved the figure.
+    """
+    if not plan.categories:
+        return ()
+    return tuple(
+        category for category in plan.excluded_categories if category not in plan.categories
+    )
+
+
+def inert_exclusion_note(plan: FinancialPlan | TopMovements) -> str:
+    """Why this figure is the same as the one above it, or "" when the exclusion could have bitten.
+
+    Said in the same category vocabulary as the answer, and deliberately without an article:
+    `name_of` returns "alquiler", "nómina" and "suscripciones", and no single article agrees with
+    all three. Joined with "ni", which is how Spanish enumerates under a negation — "no hay
+    alquiler y ocio" reads as a claim about the pair rather than about each of them.
+    """
+    inert = inert_exclusions(plan)
+    if not inert:
+        return ""
+    left_out = " ni ".join(category_words.name_of(category) for category in inert)
+    counted = listed(tuple(category_words.name_of(c) for c in plan.categories))
+    return f"No hay {left_out} en {counted}, así que la cifra no cambia."
+
+
+def _inert_note(plan: FinancialPlan | TopMovements) -> str:
+    """The note as its own line, the way every other note is appended under an answer.
+
+    Empty for an answer that states no number: "no he encontrado movimientos" has no figure for
+    "la cifra no cambia" to be about, and the invitation to widen the search is the whole answer.
+    """
+    note = inert_exclusion_note(plan)
+    return f"\n{note}" if note else ""
 
 
 def listed(names: tuple[str, ...]) -> str:
@@ -493,14 +557,17 @@ def ranked(movement: Movement | None, ranking: TopMovements) -> str:
 
     if ranking.rank == 1:
         noun = "ingreso" if ranking.direction is Direction.INCOME else "gasto"
-        about = f"{filter_of(ranking)} {window_of(ranking)}"
-        return f"Tu mayor {noun}{about} fue de {amount}: {what}, el {when}."
+        about = f"{filter_of(ranking)} {_conversational_window_of(ranking)}"
+        note = _inert_note(ranking)
+        return f"Tu mayor {noun}{about} fue de {amount}: {what}, el {when}.{note}"
+    # No note here for the same reason there is no filter and no window: "el segundo" is read
+    # directly under the answer it follows, which already said what the exclusion did.
     return f"{_position(ranking.rank)} fue de {amount}: {what}, el {when}."
 
 
 def ranked_many(movements: tuple[Movement, ...], ranking: TopMovements, *, requested: int) -> str:
     """Several concrete ranking rows, each already selected by banking."""
-    about = f"{filter_of(ranking)} {window_of(ranking)}"
+    about = f"{filter_of(ranking)} {_conversational_window_of(ranking)}"
     if not movements:
         return f"No he encontrado movimientos{about} para construir ese ranking."
     noun = "gasto" if ranking.direction is Direction.EXPENSE else "ingreso"
@@ -516,7 +583,7 @@ def ranked_many(movements: tuple[Movement, ...], ranking: TopMovements, *, reque
         amount = money(movement.amount_minor, movement.currency)
         what = movement.merchant_name or movement.description
         lines.append(f"  {position}. {what}: {amount}, el {_spoken_date(movement.occurred_at)}")
-    return f"{head}\n" + "\n".join(lines)
+    return f"{head}\n" + "\n".join(lines) + _inert_note(ranking)
 
 
 def recent_movements(count: int) -> str:
@@ -592,6 +659,21 @@ def window_of(plan: FinancialPlan | TopMovements) -> str:
         # months".
         return "en el último día" if day else "en el último mes"
     return f"en los últimos {count} {'días' if day else 'meses'}"
+
+
+def _conversational_window_of(plan: FinancialPlan | TopMovements) -> str:
+    """Use a natural month label only in concrete movement-ranking answers."""
+    if plan.date_range is not None:
+        start = plan.date_range.start
+        end = plan.date_range.end
+        if (
+            start.day == 1
+            and (end + timedelta(days=1)).day == 1
+            and start.month == end.month
+            and start.year == end.year
+        ):
+            return f"en {month_name(start.year, start.month)}"
+    return window_of(plan)
 
 
 def describe(plan: FinancialPlan | TopMovements) -> str:
@@ -708,6 +790,9 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     accumulating = plan.metric is Metric.CUMULATIVE
     # What the figure is of. Empty for a question that named no filter, which is most of them.
     about = filter_of(plan)
+    # Why the figure is the same as the one above it, when a follow-up excluded something the
+    # category filter was never counting. Empty for every other answer, which is most of them.
+    inert_note = _inert_note(plan)
 
     if answer.is_empty:
         # "Gastaste 0" and "no encontré nada" read the same and mean different things.
@@ -747,11 +832,11 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         if answer.movement_count == 1:
             return (
                 f"El movimiento encontrado {window} está en "
-                f"{account.key}: {_figure(account, answer, plan.metric)}."
+                f"{account.key}: {_figure(account, answer, plan.metric)}.{inert_note}"
             )
         return (
             f"Todos los {answer.movement_count} {noun} encontrados {window} están en "
-            f"{account.key}: {_figure(account, answer, plan.metric)}."
+            f"{account.key}: {_figure(account, answer, plan.metric)}.{inert_note}"
         )
     elif plan.group_by is GroupBy.ACCOUNT:
         head = f"El desglose por cuenta {window} es:"
@@ -796,7 +881,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
         head = f"{total}{about} {window}, en {answer.movement_count} {noun}."
 
     if not _is_breakdown(answer):
-        return head
+        return f"{head}{inert_note}"
 
     visible = ranked_groups if ranked_groups is not None else answer.groups
     shown = visible[:MAX_SPOKEN_GROUPS]
@@ -806,7 +891,7 @@ def write(answer: QueryAnswer, plan: FinancialPlan) -> str:
     )
     rest = len(visible) - len(shown)
     tail = f"\n  · y {rest} más" if rest > 0 else ""
-    return f"{head}\n{lines}{tail}"
+    return f"{head}\n{lines}{tail}{inert_note}"
 
 
 def internal_transfers(answer: QueryAnswer, plan: FinancialPlan) -> str:
@@ -976,6 +1061,7 @@ def when(
     """
     window = window_of(plan)
     about = filter_of(plan)
+    note = _inert_note(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window}."
 
@@ -985,10 +1071,12 @@ def when(
     if not pattern.complete:
         return (
             f"{count} {noun}{about} {window}, pero son demasiados movimientos para calcular "
-            "la frecuencia sin extrapolar. Prueba con un periodo más corto."
+            f"la frecuencia sin extrapolar. Prueba con un periodo más corto.{note}"
         )
     if count == 1:
-        return f"Sólo ocurrió una vez{about} {window}; todavía no hay intervalos que comparar."
+        return (
+            f"Sólo ocurrió una vez{about} {window}; todavía no hay intervalos que comparar.{note}"
+        )
     if pattern.monthly:
         assert pattern.day_of_month_min is not None and pattern.day_of_month_max is not None
         on = (
@@ -999,7 +1087,7 @@ def when(
                 f"y el {pattern.day_of_month_max}"
             )
         )
-        return f"{count} {noun}{about} {window}: una al mes, {on}."
+        return f"{count} {noun}{about} {window}: una al mes, {on}.{note}"
 
     interval = pattern.median_interval_days
     assert interval is not None
@@ -1016,7 +1104,7 @@ def when(
         if pattern.usual_weekday is not None
         else ""
     )
-    return f"{count} {noun}{about} {window}: {cadence}{weekday}."
+    return f"{count} {noun}{about} {window}: {cadence}{weekday}.{note}"
 
 
 def recurring_expenses(
@@ -1025,6 +1113,7 @@ def recurring_expenses(
     """Describe only periodic patterns supported by the complete bounded movement set."""
     window = window_of(plan)
     about = filter_of(plan)
+    note = _inert_note(plan)
     if answer.is_empty:
         return f"No he encontrado movimientos{about} {window} con los que buscar recurrencias."
 
@@ -1032,7 +1121,8 @@ def recurring_expenses(
     if not analysis.complete:
         return (
             f"Hay {analysis.movement_count} movimientos{about} {window}, demasiados para detectar "
-            "gastos recurrentes sin extrapolar. Prueba con un periodo más corto o una categoría."
+            f"gastos recurrentes sin extrapolar. Prueba con un periodo más corto o una "
+            f"categoría.{note}"
         )
     if not analysis.candidates:
         return (
@@ -1052,7 +1142,7 @@ def recurring_expenses(
     noun = "patrón" if len(analysis.candidates) == 1 else "patrones"
     return (
         f"He detectado {len(analysis.candidates)} {noun} de gasto recurrente{about} {window}:\n"
-        f"{lines}{tail}"
+        f"{lines}{tail}{note}"
     )
 
 

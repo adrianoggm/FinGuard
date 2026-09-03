@@ -29,19 +29,23 @@ the sentence is filling, so the reply no longer has to be a self-contained phras
 
 from dataclasses import dataclass, replace
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from finguard_orchestrator.domain.constants import (
     MAX_ENTITY_ALIAS_LENGTH,
     MAX_ENTITY_ALIASES,
+    MAX_GROUP_RANK,
     MAX_MERCHANT_LENGTH,
     MAX_REMEMBERED_TURNS,
-    MAX_SELECTED_TRANSACTIONS,
+    MAX_SELECTED_ACCOUNTS,
     MAX_TURN_NOTE,
     MAX_TURN_SENTENCE,
+    MAX_VISUAL_CONTEXTS,
 )
-from finguard_orchestrator.domain.enums import CounterpartyType, GroupBy, Rail
+from finguard_orchestrator.domain.enums import CounterpartyType, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -51,6 +55,9 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft, PaymentField
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioDraft, RatioPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+
+if TYPE_CHECKING:
+    from finguard_orchestrator.domain.models.result_reference import ResultReference
 
 # What a sentence can turn into and a follow-up can inherit from. Declared here as well as on
 # the planning result because both need the pair named, and importing one from the other would
@@ -124,6 +131,40 @@ class AccountAlias:
             raise InvalidValueError("aliased account name has an invalid length")
 
 
+class AccountSelectionMode(StrEnum):
+    ALL = "ALL"
+    SELECTED = "SELECTED"
+
+
+@dataclass(frozen=True)
+class AccountSelection:
+    """Persistent, holder-grounded account scope for subsequent questions."""
+
+    mode: AccountSelectionMode
+    account_ids: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.mode is AccountSelectionMode.ALL and self.account_ids:
+            raise InvalidValueError("ALL account selection cannot contain account ids")
+        if self.mode is AccountSelectionMode.SELECTED and not self.account_ids:
+            raise InvalidValueError("SELECTED account selection needs account ids")
+        if len(set(self.account_ids)) != len(self.account_ids):
+            raise InvalidValueError("account selection cannot contain duplicates")
+        if len(self.account_ids) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} selected accounts")
+
+
+@dataclass(frozen=True)
+class AccountCandidate:
+    account_id: UUID
+    display_name: str
+    kind: str
+
+    def __post_init__(self) -> None:
+        if not self.display_name.strip() or not self.kind.strip():
+            raise InvalidValueError("account candidate needs display name and kind")
+
+
 @dataclass(frozen=True)
 class CounterpartyAlias:
     """A user phrase grounded to a real, typed other side of a ledger movement."""
@@ -154,6 +195,7 @@ class Workflow(StrEnum):
     # and the two questions it can ask are which account and how much.
     TRANSFER_IN_PROGRESS = "TRANSFER_IN_PROGRESS"
     PAYMENT_CONFIRMATION = "PAYMENT_CONFIRMATION"
+    ACCOUNT_SCOPE = "ACCOUNT_SCOPE"
 
 
 class Slot(StrEnum):
@@ -186,6 +228,30 @@ class FinancialClarification:
 
     draft: FinancialPlanDraft
     awaiting: Slot = Slot.WINDOW
+
+
+@dataclass(frozen=True)
+class AccountScopeClarification:
+    pending: PlannedQuery
+    candidates: tuple[AccountCandidate, ...]
+    requested_count: int | None = None
+    explicit_visualization: bool = False
+    awaiting: Slot = Slot.ACCOUNT
+
+    def __post_init__(self) -> None:
+        if not self.candidates:
+            raise InvalidValueError("account clarification needs candidates")
+        if len(self.candidates) > MAX_SELECTED_ACCOUNTS:
+            raise InvalidValueError(f"at most {MAX_SELECTED_ACCOUNTS} account candidates")
+        candidate_ids = tuple(candidate.account_id for candidate in self.candidates)
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise InvalidValueError("account clarification candidates cannot repeat")
+        if self.requested_count is not None and self.requested_count < 2:
+            raise InvalidValueError("requested ranking count must be at least two")
+        if self.requested_count is not None and self.requested_count > MAX_GROUP_RANK:
+            raise InvalidValueError(f"requested ranking count cannot exceed {MAX_GROUP_RANK}")
+        if self.requested_count is not None and not isinstance(self.pending, TopMovements):
+            raise InvalidValueError("requested ranking count requires a movement ranking")
 
 
 @dataclass(frozen=True)
@@ -262,6 +328,7 @@ class PaymentConfirmation:
 
 type ActiveWorkflow = (
     FinancialClarification
+    | AccountScopeClarification
     | UnsupportedCapability
     | PaymentInProgress
     | TransferInProgress
@@ -278,7 +345,23 @@ class Conversation:
     it round-trips one value.
     """
 
+    # Which conversation this is. There are still no sessions and no store: the identifier is
+    # minted on the first turn by the edge that maps the payload, travels back to the client with
+    # everything else, and comes home on the next turn — the same rule as every field below it.
+    #
+    # **Nothing in this file, and nothing in the pipeline, may branch on it.** It is not state the
+    # reasoning reads; it exists so that N turns of one conversation stop being N unrelated traces.
+    # It lives on the conversation rather than beside it because the alternative was stamping it
+    # onto fifteen `to_payload` call sites in the controller, and the fifteenth would be the one
+    # that forgot — which is the failure mode this whole value replaced.
+    #
+    # `None` for a conversation nobody mapped from the wire: `IDLE` is a module-level singleton and
+    # a default factory here would mint one identifier at import time and hand the same one to
+    # every conversation in the process, which is worse than having none.
+    conversation_id: UUID | None = None
+
     active: ActiveWorkflow | None = None
+    account_selection: AccountSelection | None = None
     # The last answered question, whichever kind it was. An aggregate and a ranking are both
     # things a follow-up inherits from — "¿y en gasolina?" narrows either — so this is the union
     # rather than a field per kind, which would let both be set and neither mean anything.
@@ -290,19 +373,8 @@ class Conversation:
     # payment may coexist with it, and retrying must execute this exact plan instead of asking the
     # model to interpret "reintenta" as a new financial question.
     retry_plan: PlannedQuery | None = None
-    # A category the last answer explicitly singled out (for example the largest group). The plan
-    # alone remembers that a category breakdown was run, but not which row the answer called
-    # "the one where you spent most". This small referent makes "esa categoría" resolvable without
-    # storing financial results or asking a model to guess a row.
-    referenced_category: str | None = None
-    # The concrete row the last answer put in focus. Unlike `referenced_category`, this also
-    # covers merchant and account breakdowns, while keeping only an identifier/name and never the
-    # amount shown beside it. Both fields are one optional value and therefore travel together.
-    referenced_group_by: GroupBy | None = None
-    referenced_group_key: str | None = None
-    # Exact ledger rows displayed as evidence by the last aggregate answer. This lets a later
-    # "esos movimientos" select what was actually on screen instead of rerunning the broad query.
-    referenced_transaction_ids: tuple[UUID, ...] = ()
+    # Canonical, source-bound referent. Its wire projection lives in ConversationPayload.
+    result_reference: "ResultReference | None" = None
     # What the last turn asked for. Memory too, and it exists because `awaiting` cannot cover this:
     # a clarification records its slot on the workflow, and a question asked with nothing
     # half-built behind it leaves no workflow to record it on. Without this, that question can be
@@ -338,29 +410,22 @@ class Conversation:
     # so unlike every field above it there is no branch deciding what survives — which is what the
     # fields above it kept getting wrong.
     turns: tuple[Turn, ...] = ()
+    # Structural chart contexts only; rows and financial values stay in the browser.
+    visual_contexts: tuple[VisualContext, ...] = ()
 
     def __post_init__(self) -> None:
-        if (self.referenced_group_by is None) != (self.referenced_group_key is None):
-            raise InvalidValueError("a referenced group needs both its dimension and key")
-        if self.referenced_group_by not in {
-            None,
-            GroupBy.CATEGORY,
-            GroupBy.MERCHANT,
-            GroupBy.COUNTERPARTY,
-            GroupBy.ACCOUNT,
-        }:
-            raise InvalidValueError(
-                "only category, merchant, counterparty and account rows can be referenced"
-            )
-        if self.referenced_group_key is not None:
-            if not self.referenced_group_key.strip():
-                raise InvalidValueError("a referenced group key cannot be blank")
-            if len(self.referenced_group_key) > MAX_MERCHANT_LENGTH:
-                raise InvalidValueError("referenced group key is too long")
-        if len(set(self.referenced_transaction_ids)) != len(self.referenced_transaction_ids):
-            raise InvalidValueError("referenced transaction ids must be unique")
-        if len(self.referenced_transaction_ids) > MAX_SELECTED_TRANSACTIONS:
-            raise InvalidValueError("too many referenced transaction ids")
+        import re
+
+        if len(self.visual_contexts) > MAX_VISUAL_CONTEXTS:
+            raise InvalidValueError("too many visual contexts")
+        ids = [item.chart_id for item in self.visual_contexts]
+        if len(set(ids)) != len(ids) or any(
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value) for value in ids
+        ):
+            raise InvalidValueError("visual chart ids must be unique bounded identifiers")
+        for context in self.visual_contexts:
+            if not context.spec.valid_for(context.profile.field_names()):
+                raise InvalidValueError("visual context spec is incompatible with its profile")
         folded_aliases = tuple(alias.alias.casefold().strip() for alias in self.account_aliases)
         if len(self.account_aliases) > MAX_ENTITY_ALIASES:
             raise InvalidValueError("too many account aliases")
@@ -375,6 +440,23 @@ class Conversation:
             raise InvalidValueError("counterparty aliases must be unique")
         if len(self.turns) > MAX_REMEMBERED_TURNS:
             raise InvalidValueError("too many remembered turns")
+        if (
+            self.result_reference is not None
+            and self.result_reference.source_query is not self.last_plan
+        ):
+            raise InvalidValueError("a result reference needs its exact source query")
+
+    def with_visual_context(self, context: VisualContext) -> "Conversation":
+        """Remember a structural chart context, newest last, without any chart rows."""
+        contexts = tuple(item for item in self.visual_contexts if item.chart_id != context.chart_id)
+        return replace(self, visual_contexts=(*contexts, context)[-MAX_VISUAL_CONTEXTS:])
+
+    def visual_context(self, chart_id: str | None = None) -> VisualContext | None:
+        if not self.visual_contexts:
+            return None
+        if chart_id is None:
+            return self.visual_contexts[-1]
+        return next((item for item in self.visual_contexts if item.chart_id == chart_id), None)
 
     def with_turn(self, turn: Turn) -> "Conversation":
         """Record what this turn did, dropping the oldest once the log is full.
@@ -406,8 +488,22 @@ class Conversation:
 
         Read off the state rather than off the question's wording, which is the point: the sentence
         is written by a model, and "de este" only means something against the slot.
+
+        `AccountScopeClarification` was missing from this list for as long as the state existed. It
+        declares `awaiting = Slot.ACCOUNT` on itself, so the field was right and only this reader
+        was wrong — and since it is the one reader, the slot never reached the wire and never
+        reached anything counting repeats. That mattered more than the other four put together:
+        the account question is what a holder with more than one account is asked before any
+        figure, so it is the clarification this service emits most often and the one most likely
+        to be asked twice.
         """
-        if isinstance(self.active, FinancialClarification | PaymentInProgress | TransferInProgress):
+        if isinstance(
+            self.active,
+            FinancialClarification
+            | AccountScopeClarification
+            | PaymentInProgress
+            | TransferInProgress,
+        ):
             return self.active.awaiting
         if isinstance(self.active, PaymentConfirmation):
             return Slot.CONFIRMATION
@@ -519,23 +615,10 @@ class Conversation:
             last_plan=None,
             last_ratio=None,
             last_comparison=None,
-            # Replaced by whatever this answer put in focus, never inherited: a referent from the
-            # previous result points at rows this answer never showed.
-            referenced_category=None,
-            referenced_group_by=None,
-            referenced_group_key=None,
-            referenced_transaction_ids=(),
+            result_reference=None,
         )
 
-    def answered(
-        self,
-        plan: PlannedQuery,
-        *,
-        referenced_category: str | None = None,
-        referenced_group_by: GroupBy | None = None,
-        referenced_group_key: str | None = None,
-        referenced_transaction_ids: tuple[UUID, ...] = (),
-    ) -> "Conversation":
+    def answered(self, plan: PlannedQuery) -> "Conversation":
         """Remember a financial answer and close only the workflow that answer resolves.
 
         A suspended payment belongs to the conversation before this answer and deliberately stepped
@@ -547,45 +630,18 @@ class Conversation:
             last_plan=plan,
             # Asking the same question twice must not push the plan behind it out of memory.
             prior_plan=self.prior_plan if plan == self.last_plan else self.last_plan,
-            referenced_category=referenced_category,
-            referenced_group_by=referenced_group_by,
-            referenced_group_key=referenced_group_key,
-            referenced_transaction_ids=referenced_transaction_ids,
-        )
-
-    def with_references(
-        self,
-        *,
-        group_by: GroupBy | None = None,
-        group_key: str | None = None,
-        transaction_ids: tuple[UUID, ...] | None = None,
-    ) -> "Conversation":
-        """Focus an already answered result without changing the query behind it."""
-        return replace(
-            self,
-            referenced_category=(
-                group_key if group_by is GroupBy.CATEGORY else self.referenced_category
-            ),
-            referenced_group_by=group_by,
-            referenced_group_key=group_key,
-            referenced_transaction_ids=(
-                self.referenced_transaction_ids if transaction_ids is None else transaction_ids
-            ),
         )
 
     def waiting_for_ratio(self, draft: RatioDraft) -> "Conversation":
         """Remember both operands while asking for their shared period."""
         return replace(self, last_asked=Slot.WINDOW, pending_ratio=draft)
 
-    def answered_comparison(
-        self, plan: ComparisonPlan, *, referenced_category: str | None = None
-    ) -> "Conversation":
+    def answered_comparison(self, plan: ComparisonPlan) -> "Conversation":
         """Keep the compatible pair as one value while exposing both legacy plan slots."""
         return replace(
             self._answering(),
             last_plan=plan.latest,
             prior_plan=plan.earlier,
-            referenced_category=referenced_category,
             last_comparison=plan,
         )
 
@@ -595,9 +651,6 @@ class Conversation:
             self._answering(),
             last_plan=plan.part,
             prior_plan=plan.whole,
-            referenced_category=(
-                plan.part.categories[0] if len(plan.part.categories) == 1 else None
-            ),
             last_ratio=plan,
         )
 
@@ -627,6 +680,8 @@ def workflow_of(active: "ActiveWorkflow | None") -> Workflow | None:
     match active:
         case FinancialClarification():
             return Workflow.FINANCIAL_CLARIFICATION
+        case AccountScopeClarification():
+            return Workflow.ACCOUNT_SCOPE
         case UnsupportedCapability():
             return Workflow.UNSUPPORTED_CAPABILITY
         case PaymentInProgress():
@@ -654,6 +709,10 @@ IDLE = Conversation()
 __all__ = [
     "IDLE",
     "AccountAlias",
+    "AccountCandidate",
+    "AccountScopeClarification",
+    "AccountSelection",
+    "AccountSelectionMode",
     "CounterpartyAlias",
     "ActiveWorkflow",
     "Conversation",

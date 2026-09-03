@@ -97,6 +97,9 @@ _OTHER_ACCOUNTS: Final = re.compile(
     r"\b(?:las?|los?)\s+(?:otras?|demas)\s+cuentas?\b"
     r"|\bcuentas?\s+(?:restantes?|que\s+faltan)\b"
 )
+_ALL_ACCOUNTS: Final = re.compile(
+    r"\b(?:todas?\s+(?:mis|las)?\s+cuentas?|en\s+todas\s+(?:mis|las)?\s+cuentas?)\b"
+)
 _ALIAS_DEFINITION: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(
         r"\bcuando\s+diga\s+(?P<alias>[a-z0-9][a-z0-9 -]{0,47}?)\s*,?\s*"
@@ -215,6 +218,14 @@ def asks_for_other_accounts(sentence: str) -> bool:
     the application layer's job.
     """
     return _OTHER_ACCOUNTS.search(spanish.folded(sentence)) is not None
+
+
+def asks_for_all_accounts(sentence: str) -> bool:
+    """Whether the sentence explicitly selects the holder's complete account set."""
+    folded = spanish.folded(sentence)
+    if "entre mis cuentas" in folded or "entre nuestras cuentas" in folded:
+        return False
+    return _ALL_ACCOUNTS.search(folded) is not None
 
 
 def destination_in(sentence: str) -> tuple[str, ...]:

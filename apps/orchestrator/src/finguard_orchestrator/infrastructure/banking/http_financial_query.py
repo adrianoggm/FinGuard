@@ -22,6 +22,7 @@ from finguard_orchestrator.domain.errors import BankingUnavailableError, QueryRe
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.top_movements import TopMovements
+from finguard_orchestrator.infrastructure.banking.client import banking_client
 
 
 class HttpFinancialQuery:
@@ -65,7 +66,7 @@ class HttpFinancialQuery:
         )
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.post(f"{self._base_url}/v1/financial-queries", json=body)
         except httpx.HTTPError as exc:
             raise BankingUnavailableError(f"{self._base_url}: {exc}") from exc
@@ -108,7 +109,7 @@ class HttpFinancialQuery:
         )
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with banking_client(timeout=self.timeout_seconds) as client:
                 response = await client.post(
                     f"{self._base_url}/v1/financial-queries/ranked", json=body
                 )
@@ -137,7 +138,7 @@ class HttpFinancialQuery:
         """Whether the ledger answers. Every figure comes from there, so a service that
         cannot reach it is not ready however healthy its own process looks."""
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
+            async with banking_client(timeout=2.0) as client:
                 response = await client.get(f"{self._base_url}/ready")
                 return response.status_code == 200
         except httpx.HTTPError:
@@ -161,6 +162,9 @@ RANKED_FIELDS: Final = frozenset(
         "period",
         "reportingTimezone",
         "rank",
+        "acrossAccounts",
+        "onlyAccountId",
+        "onlyAccountIds",
     }
 )
 
@@ -197,6 +201,9 @@ def ranked_body(
     body = to_body(
         FinancialPlan(
             direction=ranking.direction,
+            across_accounts=ranking.across_accounts,
+            only_account_id=ranking.only_account_id,
+            only_account_ids=ranking.only_account_ids,
             period=ranking.period,
             date_range=ranking.date_range,
             categories=ranking.categories,

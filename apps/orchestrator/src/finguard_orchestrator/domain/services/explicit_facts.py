@@ -30,11 +30,36 @@ the better answer for them and refusing is what happens today:
     direction    `SPENDING_ANSWERED_AS_EVERYTHING` refuses a spending question planned as ALL.
                  Silently rewriting it to EXPENSE would also be the pipeline quietly repairing a
                  prompt injection instead of reporting it, and the refusal is the control that
-                 test exists for.
+                 test exists for. **Still true of every sentence that rule can see**: it reads the
+                 stem `gast`, and the only thing this module states EXPENSE for is `_LEAVING` —
+                 «me cobraron» and «me he dejado», neither of which contains `gast`. The refusal
+                 and the reading are disjoint by construction rather than by luck, and the
+                 `leaving` entry of `explicit_lexicon` argues where that boundary is and what it
+                 refuses to be widened to.
     categories   `CATEGORY_MISREAD` refuses a plan filtered by something the sentence did not
                  name. *Setting* the filter instead would drop the categories the model read
                  correctly out of words this vocabulary does not know — the subset rule that
                  module argues for, in reverse.
+
+**`group_by` is not on that list, and it was asked the same question before being widened.** The
+test both refusals pass is "would stating this repair a disagreement a control exists to report?"
+For `direction` the answer is yes and the control is `SPENDING_ANSWERED_AS_EVERYTHING`; for
+`categories` it is `CATEGORY_MISREAD`. `plan_verifier` has exactly one rule about a grouping,
+`BREAKDOWN_ANSWERED_AS_ONE_GROUP`, and it only fires on a sentence that *asks how something divides
+up* — so the two are disjoint everywhere except one corner, and `_combined_total` gives that corner
+away rather than taking it. This module already imposes the field four ways besides
+(`_COUNTERPARTY`, `ACCOUNT`, `CATEGORY` and the temporal groups), so the question was never whether
+the grouping may be stated; it was whether `NONE` may be, and `NONE` alone among the five is stated
+from an *absence* of instruction rather than the presence of one. That is the whole reason
+`_combined_total` is three vetoes and a floor rather than a word list.
+
+**A fifth way used to be listed here — `MONTH` for a cumulative — and it was the one entry on that
+list the sentence had not written down.** Every other reading here is a phrase somebody typed; that
+one was a default, supplied because the domain refuses `CUMULATIVE` without a calendar bucket. It
+is gone, and the cascade in `read` argues where the default belongs instead. The paragraph above is
+the test it failed: a value invented here inherits this module's authority to overrule a plan built
+by a reader that saw the whole sentence, and «el gasto acumulado por gasolina» is what that costs —
+a figure returned as a month-by-month series.
 
 What is left is the window, which nothing checked at all, and the shape of the answer to a
 question about people.
@@ -52,7 +77,13 @@ from finguard_orchestrator.domain.enums import (
     Period,
     TransactionType,
 )
-from finguard_orchestrator.domain.services import category_words, spanish, window_words
+from finguard_orchestrator.domain.errors import InvalidValueError
+from finguard_orchestrator.domain.services import (
+    category_words,
+    explicit_lexicon,
+    spanish,
+    window_words,
+)
 from finguard_orchestrator.domain.services.window_words import Window
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -66,178 +97,84 @@ from finguard_orchestrator.domain.value_objects.top_movements import TopMovement
 # is a list of ledger counterparties. Keeping this named separately prevents PERSON from falling
 # back to the compatibility-only merchant dimension.
 _COUNTERPARTY: Final = GroupBy.COUNTERPARTY
-_ASKS_WHO: Final = re.compile(
-    r"\ba\s+(?:que\s+(?:personas?|gente|contactos?)|quien(?:es)?)\b"
-    r"|\bde\s+que\s+empresa\b"
-    r"|\bque\s+empresas?\b"
-)
-_MERCHANT_BREAKDOWN: Final = re.compile(
-    r"\b(?:desglos\w*|separ\w*|agrup\w*)\s+(?:lo\s+)?por\s+"
-    r"(?:comercios?|tiendas?|establecimientos?|negocios?)\b"
-    r"|\bpor\s+(?:cada\s+)?(?:comercio|tienda|establecimiento|negocio)\b"
+_ASKS_WHO: Final = explicit_lexicon.compiled("asks_who")
+_MERCHANT_BREAKDOWN: Final = explicit_lexicon.compiled("merchant_breakdown")
+
+_WIDENS: Final = explicit_lexicon.compiled("widens")
+
+# The anchor and the `.+` are the rule, and they are why this is not simply a list of words: what
+# makes the turn a correction-with-replacement is that the rejection *opens* the sentence and
+# something follows it. The openings themselves are vocabulary and live in the lexicon.
+_REJECTS: Final = re.compile(
+    rf"^({explicit_lexicon.alternation('rejects_opening')})\b.+"
+    rf"|{explicit_lexicon.alternation('rejects_replacement')}"
 )
 
-# A correction that widens rather than narrows. "¿Y en general?" is a real thing to say, and it is
-# the one case where a filter disappearing is what the user asked for.
-_WIDENS: Final = re.compile(
-    r"\ben general\b|\ben total\b|\bsin filtr|\bde todo\b|\btodas? las categor"
-)
+_ASKS_WHEN: Final = explicit_lexicon.compiled("asks_when")
 
-# A turn that rejects the previous answer and supplies the replacement in the same breath: "no, los
-# últimos 12 meses no; durante todo el año 2025". The intent router's `_CORRECTING` deliberately
-# does not cover this — it looks for a rejection *without* a replacement — so the sentence is
-# planned as an ordinary follow-up, which is right. What it also needs is for the fields it did not
-# mention to survive, and that is what this flag is for.
-_REJECTS: Final = re.compile(r"^(no|mejor|en realidad|que va)\b.+|\bsino\b|\bmas bien\b")
+_RECURRENCE: Final = explicit_lexicon.compiled("recurrence")
+_DIRECT_DEBIT_QUERY: Final = explicit_lexicon.compiled("direct_debit_query")
 
-# A question about *when*, not about how much. Two of them in one reported conversation:
-#
-#     "¿Cuándo me suelen ingresar la nómina?"        → 17.383,97 €
-#     "¿Cuándo suelo ir al supermercado a comprar?"  → 3.508,91 €
-#
-# Both figures were correct and neither was an answer. The dates were on screen underneath, in the
-# movement list — the question had been answered and the headline said something else.
-#
-# "Cuánto" is excluded by the word boundary rather than by luck: they differ by one letter and the
-# sentence is folded before it gets here, so `cuando` cannot match inside `cuanto`.
-_ASKS_WHEN: Final = re.compile(
-    r"\bcuando\b|\bcada\s+cuanto\b|\bque\s+dias?\b|\bcon\s+que\s+frecuencia\b"
-    r"|\bcada\s+cuantos\s+dias\b|\bsuelo\s+ir\b|\ben\s+que\s+fechas?\b"
-)
-
-_RECURRENCE: Final = re.compile(
-    r"\b(?:gastos?|pagos?|cargos?|recibos?|cobros?|cuotas?)\s+"
-    r"(?:fijos?|recurrentes?|periodicos?)\b"
-    r"|\b(?:que|cuales)\b.{0,35}\b(?:gastos?|pagos?|cargos?|recibos?)\b.{0,25}"
-    r"\b(?:se\s+repiten|son\s+recurrentes?|son\s+periodicos?)\b"
-    r"|\b(?:suscripciones?|alquiler(?:es)?|recibos?)\b.{0,35}"
-    r"\b(?:cada|todos?)\s+(?:los\s+)?mes(?:es)?\b"
-    r"|\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b"
-    r"|\b(?:que|cuales|muestra(?:me)?|ensena(?:me)?)\b.{0,25}"
-    r"\b(?:mis\s+)?(?:recibos?|adeudos?)\b"
-    # "¿Qué suscripciones tengo?" used to be here, and it is answered better one recogniser up:
-    # `asks_how_many_payees` names them and leads with how many there are, where this discovers a
-    # pattern and leads with money. Two recognisers claiming one sentence is a tie decided by the
-    # order of a cascade, and the measurement that counts those exists so it stays at twelve.
-    r"|\b(?:que|cuales)\b.{0,25}\b(?:pagos?|cargos?)\b.{0,25}"
-    r"\btodos?\s+los\s+meses\b"
-)
-_DIRECT_DEBIT_QUERY: Final = re.compile(
-    r"\b(?:recibos?\s+domiciliados?|domiciliaciones?|adeudos?\s+domiciliados?)\b"
-    r"|\b(?:mis|los|estos|esos)\s+recibos?\b"
-)
-
-_AVERAGE: Final = re.compile(r"\b(media|medio|promedio)\b|\bimporte\s+medio\b|\bticket\s+medio\b")
-_CUMULATIVE: Final = re.compile(
-    r"\b(?:gasto|ingreso|importe|total)\s+acumulad[oa]\b"
-    r"|\bacumulad[oa]\s+(?:por|a\s+lo\s+largo\s+de|mes\s+a\s+mes|semana\s+a\s+semana)\b"
-    r"|\bcuanto\s+llevaba\s+(?:gastado|ingresado|acumulado)\b"
-    r"|\bcomo\s+(?:iba|fue|ha\s+ido)\s+(?:mi\s+)?(?:gasto|ingreso)\b"
-)
-# **The number has to agree, because three of these nouns are also verbs.** The interrogative and
-# the noun each carried their own optional `s`, so a singular "cuánto" beside a singular "pago"
-# matched — and "¿cuánto pago de alquiler?" came back "3 movimientos en alquiler el mes pasado".
-# Asked how much, told how many, with a real figure of the wrong kind on it. The same held for
-# "cuánto ingreso" and "cuánto cargo": in each, the noun the count rule is looking for is spelled
-# exactly like the first person of the verb that asks for an amount.
-#
-# So the plural is required on both sides. "Cuántos pagos" counts, "cuánto pago" does not, and
-# nothing else has to be enumerated for it: the agreement *is* the rule. `veces` needs no partner
-# spelling because it has no singular anybody says.
-_COUNT: Final = re.compile(
-    r"\bcuant[oa]s\s+(?:veces|movimientos|operaciones|compras|pagos|cargos|ingresos)\b"
-    r"|\b(?:numero|cantidad)\s+de\s+"
-    r"(?:movimientos?|operaciones?|compras?|pagos?|cargos?|ingresos?)\b"
-    r"|\b(?:mas|menos)\s+(?:movimientos?|operaciones?|compras?|pagos?|cargos?)\b"
-)
-_TYPICAL_AMOUNT: Final = re.compile(
-    r"\b(?:suelo|solemos)\s+(?:gast|pag|compr|cobr)\w*\b"
-    r"|\b(?:gast|pag|compr|cobr)\w*\s+(?:normalmente|habitualmente)\b"
-)
-_PER_MOVEMENT_AVERAGE: Final = re.compile(
-    r"\b(?:media|promedio|importe\s+medio|ticket\s+medio)\s+"
-    r"(?:por|de\s+cada)\s+(?:cada\s+)?(?:movimiento|operacion|compra|pago|cargo|ingreso)s?\b"
-)
+_AVERAGE: Final = explicit_lexicon.compiled("average")
+# Was written inline inside `asks_recurrence`, which is why nothing could enumerate it and nothing
+# noticed it is a strict subset of `_ASKS_AN_AMOUNT` below. Named here so both are countable; the
+# two are still separate, because merging them would move sentences.
+_AGGREGATE_WORDS: Final = re.compile(rf"\b(?:{explicit_lexicon.alternation('aggregate_words')})\b")
+_CUMULATIVE: Final = explicit_lexicon.compiled("cumulative")
+_COUNT: Final = explicit_lexicon.compiled("count")
+_TYPICAL_AMOUNT: Final = explicit_lexicon.compiled("typical_amount")
+_PER_MOVEMENT_AVERAGE: Final = explicit_lexicon.compiled("per_movement_average")
+# Read inside `read`, where "anual ... por mes" supplies both the horizon and the divisor. Inline
+# before, so it too was a phrase the system knew and nothing could list.
+_ANNUAL: Final = explicit_lexicon.compiled("annual")
+# The order is the rule and so it stays here: `read` takes the first group whose words appear, so
+# a sentence saying both "al día" and "mensual" is a daily question. The words themselves are three
+# lexicon entries.
 _TEMPORAL_GROUPS: Final[tuple[tuple[GroupBy, re.Pattern[str]], ...]] = (
-    (
-        GroupBy.DAY,
-        re.compile(
-            r"\b(?:por|al|cada)\s+dia\b|\b(?:media|promedio)\s+diari[oa]\b"
-            r"|\b(?:gasto|importe|coste)\s+diari[oa]\s+medi[oa]\b"
-            r"|\b(?:y\s+)?(?:el\s+)?diari[oa]\b"
-        ),
-    ),
-    (
-        GroupBy.WEEK,
-        re.compile(
-            r"\b(?:por|a\s+la|cada)\s+semana\b|\b(?:media|promedio)\s+semanal\b"
-            r"|\b(?:gasto|importe|coste)\s+semanal\s+medio\b"
-            r"|\b(?:y\s+)?(?:el\s+)?(?:semanal|semanl|semnal)\b"
-        ),
-    ),
-    (
-        GroupBy.MONTH,
-        re.compile(
-            r"\b(?:por|al|cada)\s+mes\b|\bmes\s+a\s+mes\b|"
-            r"\b(?:media|promedio|gasto\s+medio|importe\s+medio|coste\s+medio)\s+mensual\b"
-            r"|\b(?:gasto|importe|coste)\s+mensual\s+medio\b|\bmensualmente\b"
-            r"|\b(?:movimientos?|operaciones?|compras?|pagos?|cargos?)\s+mensual(?:es)?\b"
-            r"|\b(?:y\s+)?(?:el\s+)?(?:mensual|mensula|mesnual)\b"
-        ),
-    ),
+    (GroupBy.DAY, explicit_lexicon.compiled("temporal_day")),
+    (GroupBy.WEEK, explicit_lexicon.compiled("temporal_week")),
+    (GroupBy.MONTH, explicit_lexicon.compiled("temporal_month")),
 )
-_TOP_CATEGORY: Final = re.compile(
-    r"\b(?:en\s+)?qu[ée]\s+categor[íi]a\b.{0,55}\b(?:gast|pag|compr)\w*\b.{0,20}\bm[áa]s\b"
-    r"|\bqu[ée]\s+categor[íi]a\s+es\s+la\s+que\b.{0,45}\bm[áa]s\b"
-    r"|\bd[oó]nde\b.{0,35}\b(?:gast|pag|compr)\w*\b.{0,15}\bm[áa]s\b"
-)
-_ACCOUNT_BREAKDOWN: Final = re.compile(
-    r"\bdesglos\w*\s+por\s+(?:cada\s+)?cuentas?\b"
-    r"|\b(?:por|separad[oa]\s+por)\s+cada\s+cuenta\b"
-    r"|\b(?:ingresos?|income|gastos?|movimientos?)\s+de\s+cada\s+cuenta\b"
-    r"|\bseparad[oa]\s+por\s+cuentas?\b"
-    r"|\bsepar\w*\s+por\s+cuentas?\b"
-    r"|\b(?:en|a)\s+(?:que|cual)\s+cuenta\b"
-)
-_COMPARISON_REFERENCE: Final = re.compile(
-    r"\bcu[áa]l\s+de\s+(?:las|estas|esas)\s+dos\b.{0,30}"
-    r"\b(?:mayor|menor|m[áa]s\s+alt[oa]|m[áa]s\s+baj[oa])\b"
-    r"|\bcu[áa]l\s+(?:es|fue)\s+(?:la\s+)?(?:mayor|menor)\s+de\s+las\s+dos\b"
-)
-_COMPARES: Final = re.compile(
-    r"\bcompara|\bcomparacion\b|\bfrente\s+a\b|\bpor\s+separado\b|\buna\s+y\s+otra\b"
-    r"|\bentre\b|\bcual\b.{0,35}\b(?:mayor|menor|mas\s+alt[oa]|mas\s+baj[oa])\b"
-    r"|\bmas\b.{0,45}\b(?:o|que)\b"
-)
-_INCOME: Final = re.compile(
-    r"\bingres(?:ar|amos|o|os|e|ado|aron)\b|\bcobr(?:ar|amos|e|ado|aron|os?)\b"
-    r"|\brecibi(?:do)?\b"
-    r"|\bincome\b|\bnomina\b|\bsueldo\b|\bsalario\b|\bme\s+(?:ha\s+)?entrado\b"
-)
-_EXPENSE: Final = re.compile(r"\bgast|\bpagu|\bcompr|\bcargo|\bme\s+cobr")
+_TOP_CATEGORY: Final = explicit_lexicon.compiled("top_category")
+_ACCOUNT_BREAKDOWN: Final = explicit_lexicon.compiled("account_breakdown")
+# The three vetoes on the coordinated-list reading below, and the reason it is safe to state
+# anything about a grouping the sentence did not spell out. Each is argued at `_combined_total`.
+_CATEGORY_BREAKDOWN: Final = explicit_lexicon.compiled("category_breakdown")
+_MEMBERS_APART: Final = explicit_lexicon.compiled("members_apart")
+_DIVIDES_UP: Final = explicit_lexicon.compiled("divides_up")
+_COMPARISON_REFERENCE: Final = explicit_lexicon.compiled("comparison_reference")
+_COMPARES: Final = explicit_lexicon.compiled("compares")
+_INCOME: Final = explicit_lexicon.compiled("income")
+_EXPENSE: Final = explicit_lexicon.compiled("expense")
+# Which of these two may *assert* a direction and which may only *veto* one is the reader's
+# decision, not the vocabulary's, and it is argued at `_direction` below. The lexicon carries why
+# each phrase sits on the side it does.
+_LEAVING: Final = explicit_lexicon.compiled("leaving")
+# **Not vocabulary, and the one pattern here that would be actively wrong to tabulate.** It is the
+# module's only capture group, and what it captures depends on the *order* its markers are tried in.
+# `sin(?:\s+contar|\s+incluir)?` is greedy, so «sin contar el alquiler» takes the longer marker and
+# leaves "el alquiler" as the tail; on «sin contar», with nothing after the verb, `\s+(?P<tail>.+)$`
+# cannot match and the optional group backtracks to a bare `sin`, leaving "contar" as the tail —
+# which is exactly the case `_NOT_A_MERCHANT` names "contar" for.
+#
+# Split into a list of markers, that behaviour survives only as long as nobody reorders the list,
+# and a lexicon whose rows must stay in a particular order to keep working is a parser with a
+# table's manners. So the markers stay welded to the extractor that reads them.
 _EXCLUSION_TAIL: Final = re.compile(
     r"\b(?:sin(?:\s+contar|\s+incluir)?|quitando|excepto|salvo|menos"
     r"|no\s+(?:contamos|cuentes|incluimos|incluyas|metas))\s+(?P<tail>.+)$"
 )
+# Also not vocabulary: a rewriter rather than a recogniser, and the words in it are the date grammar
+# `window_words` owns. The lexicon is for words a sentence *says*; this is for a clause it strips.
 _TRAILING_WINDOW: Final = re.compile(
     r"\s+(?:durante\s+|en\s+)?(?:este|esta|el|la|los|las)\s+"
     r"(?:mes|ano|semana|dia|ultim\w+).*$"
 )
-_NOT_A_MERCHANT: Final = frozenset(
-    {
-        "categoria",
-        "categorias",
-        "gasto",
-        "gastos",
-        "ingreso",
-        "ingresos",
-        "movimiento",
-        "movimientos",
-        "todo",
-        "todos",
-        "nada",
-    }
-)
+_NOT_A_MERCHANT: Final = frozenset(explicit_lexicon.NOT_A_MERCHANT)
+# The anchor is the rule: these words disqualify a tail by *opening* it, and one appearing later is
+# no evidence at all — «sin contar El Corte Inglés algo» is not a vague exclusion. The words are a
+# lexicon entry; `^` and the boundary are not.
+_VAGUE_TAIL: Final = re.compile(rf"^(?:{explicit_lexicon.alternation('vague_tail')})\b")
 
 
 def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> tuple[str, ...]:
@@ -246,6 +183,11 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     Merchant names are data, so there is no catalogue to match. This therefore accepts only a
     compact tail and leaves longer clauses to the planner. Category exclusions win when present;
     otherwise "sin Mercadona" is the unambiguous free-text case this path exists for.
+
+    A tail that names no shop is not a merchant exclusion, and saying so here is what keeps
+    `capability_guard`'s CATEGORY_EXCLUSION family honest: the guard exempts itself whenever this
+    returns something, so anything vague accepted here becomes an unrefused query carrying a filter
+    that matches nothing. See `_NOT_A_MERCHANT` and `_VAGUE_TAIL`.
     """
     if excluded_categories:
         return ()
@@ -264,6 +206,8 @@ def _excluded_merchants(sentence: str, excluded_categories: tuple[str, ...]) -> 
     if not tail or len(tail) > 140 or len(tail.split()) > 5:
         return ()
     if set(tail.split()) <= _NOT_A_MERCHANT:
+        return ()
+    if _VAGUE_TAIL.match(tail):
         return ()
     return (tail,)
 
@@ -296,9 +240,7 @@ def asks_recurrence(sentence: str) -> bool:
     # "Cuánto pago en recibos domiciliados" names the same banking rail but asks for a sum, not
     # pattern discovery. The direct-debit fact is retained separately and applied to that plan.
     asks_for_aggregate = bool(
-        _AVERAGE.search(folded)
-        or _COUNT.search(folded)
-        or re.search(r"\b(?:cuanto|importe|total|suma)\b", folded)
+        _AVERAGE.search(folded) or _COUNT.search(folded) or _AGGREGATE_WORDS.search(folded)
     )
     return not asks_for_aggregate
 
@@ -313,40 +255,24 @@ def asks_direct_debits(sentence: str) -> bool:
 # subscriptions and thirty-six movements, and answering the second is a real figure for a question
 # nobody asked. It was reported exactly that way — "yo pensaba que tenía solo netflix altafit spoti
 # y steam".
-_HOW_MANY_PAYEES: Final = re.compile(r"\b(?:cuantas|cuantos|cuales|que)\b(?![a-z])")
-
-# The verbs that make it a question about *having* rather than about spending. Without one of these
-# "¿qué gasté en suscripciones?" would be read as a list of payees.
-_HAS_THEM: Final = re.compile(
-    r"\b(?:tengo|tienes|tenemos|hay|mantengo|pago|pagas|activas?|activos?"
-    # The possessive is one of these too: "¿cuáles son mis suscripciones?" asks exactly this and
-    # names no verb of having at all.
-    r"|mis|contratadas?|contratados?|dadas?\s+de\s+alta)\b"
+#
+# The trailing `(?![a-z])` is structure, not a word: it stops a folded interrogative being found
+# inside a longer token.
+_HOW_MANY_PAYEES: Final = re.compile(
+    rf"\b(?:{explicit_lexicon.alternation('how_many_payees')})\b(?![a-z])"
 )
+_HAS_THEM: Final = re.compile(rf"\b(?:{explicit_lexicon.alternation('has_them')})\b")
 
-# Words naming the charge rather than the payee. "¿Cuántos pagos tengo en suscripciones?" is asking
-# how many times, which is COUNT and already answered.
-#
-# The rails belong here and were missing. "¿Cuántos bizums tengo?" is how many times, and it came
-# back as how many *people* this holder has ever sent one to, over twelve months instead of the
-# window the conversation was in — a real figure about something else, in the middle of an episode
-# whose whole subject is that "tengo" counts.
-#
-# Only the rails are added, and "domiciliaciones" and "suscripciones" deliberately are not: those
-# name the arrangement at least as often as the charge, and a question about how many of *them* you
-# have is the payee count this path exists for. A bizum is never an arrangement.
-#
 # Exported, because the same nouns decide the same thing in the query handler's count follow-up and
 # were kept there by hand. They stayed level only because one change happened to touch both: the
-# rails were missing from each, and each was found separately.
-CHARGE_NOUNS: Final = (
-    r"movimientos?|veces|compras?|pagos?|cargos?|recibos?|cobros?|operaciones?|transacciones?"
-    r"|bi[xz]ums?|transferencias?|traspasos?"
-)
+# rails were missing from each, and each was found separately. `readers/follow_up.py` interpolates
+# this string into a pattern of its own, so it stays a string and keeps its exact spelling; the
+# nouns in it, and why the rails are there and the arrangements are not, are a lexicon entry.
+CHARGE_NOUNS: Final = explicit_lexicon.alternation("charge_nouns")
 _THE_CHARGE_NOT_THE_PAYEE: Final = re.compile(rf"\b(?:{CHARGE_NOUNS})\b")
 
 # Asking for money, which is never this however it is phrased.
-_ASKS_AN_AMOUNT: Final = re.compile(r"\b(?:cuanto|importe|total|suma|gaste|gastado|gasto|pague)\b")
+_ASKS_AN_AMOUNT: Final = re.compile(rf"\b(?:{explicit_lexicon.alternation('asks_an_amount')})\b")
 
 
 def asks_how_many_payees(sentence: str) -> bool:
@@ -394,6 +320,85 @@ class ExplicitFacts:
     asks_direct_debits: bool = False
 
 
+def _direction(folded: str, *, says_income: bool, says_expense: bool) -> Direction | None:
+    r"""Which way the money moved, or no opinion — the specific reading asked first.
+
+    The order is the whole rule. «me cobraron» matches `_INCOME` on `cobraron` and `_EXPENSE` on
+    `me cobr`, so **both flags are true**, and any rule phrased as "X and not Y" answers None for
+    it whichever way round X and Y are put. The symmetric version of the line this replaced is not
+    a fix for it; it is the same `None` reached from the other side.
+
+    What separates the two readings is not which pattern fired but which one read more of the
+    sentence. `\bme\s+cobr` names the pronoun that reverses the verb and `\bcobr…` does not, so
+    «cobré» is money arriving and «me cobraron» is money leaving on the strength of two characters
+    the general pattern cannot see. Hence: consult the specific pattern, and only then the pair.
+
+    The second clause is the old line, unchanged, and its `not says_expense` still does exactly the
+    work it always did — «compara mis ingresos y gastos» states both directions and gets None,
+    because a reader with no way to tell which was meant has no business picking one.
+    """
+    if _LEAVING.search(folded):
+        return Direction.EXPENSE
+    return Direction.INCOME if says_income and not says_expense else None
+
+
+def _combined_total(folded: str, *, named_count: int) -> bool:
+    r"""Whether a coordinated list of categories is asking for one figure rather than one each.
+
+    «¿Cuánto gasté en gasolina y transporte público?» was answered with one figure or with two
+    depending on the wording, because nothing arbitrated it. The sentence is genuinely ambiguous in
+    Spanish and there was no rule, so the two halves of a robustness pair disagreed *by
+    construction*: «¿Cuánto llevo entre gasolina y transporte público este mes?» was pinned to a
+    two-row breakdown by the reader, while every rewording of it that dropped the «entre» — and
+    none of the 36 kept it — was left to the model, which planned a plain total. Twenty-four of that
+    group's thirty-one robustness breaks were the single field `groupBy`, and most of them were this
+    one disagreement counted once per paraphrase.
+
+    **A coordinated list with no grouping instruction is one total.** Not because the sentence says
+    so — it does not, and that is the whole difficulty — but because the two errors are not
+    symmetric. A total the user wanted split is recovered by asking «¿y por separado?»; a split
+    nobody asked for makes somebody read five rows and add them by hand, and it costs that turn
+    every single time. So the tie goes to the total, and the sentence decides instead of the model.
+
+    **This is the one field here that states something from an absence, so the absence is checked
+    three ways rather than assumed.** Everything above this in `read`'s cascade already claims the
+    grouping when it is spelled out — «a qué personas», «por comercio», «por cada cuenta», «compara»
+    / «frente a» / «por separado», «¿en qué categoría gasté más?», «al mes», «gasto acumulado». What
+    those miss is three things, and each was found by measurement rather than guessed:
+
+    `_CATEGORY_BREAKDOWN`
+        A grouping preposition before the dimension noun, which is `_ACCOUNT_BREAKDOWN`'s shape and
+        deliberately so. The noun alone proves nothing: «en las categorías de súper, gasolina y
+        farmacia» enumerates three filters and wants one figure, and two corpus paraphrases say
+        exactly that. Requiring the preposition is the half `_GROUP_RANKING_DIMENSION` was missing
+        when «en todas mis **cuentas**» silently supplied a grouping dimension.
+    `_MEMBERS_APART`
+        The coordination asked for apart with no dimension named at all — «¿cuánto fue en gasolina
+        y cuánto en súper?», where the second interrogative is the whole instruction. `dev`'s
+        `multi_with_grouping` is that sentence, and it is the one case in the corpus whose written
+        expectation names `groupBy: CATEGORY` for a bare coordination. Without this veto the rule
+        would contradict a case already in the repository.
+    `_DIVIDES_UP`
+        The verbs of dividing. Here the reading stands aside not because it would be wrong but
+        because it would be a *repair*: `plan_verifier`'s `BREAKDOWN_ANSWERED_AS_ONE_GROUP` refuses
+        a plan that groups by a dimension it filtered to one value, and its docstring names
+        dropping the grouping as the tempting wrong way out. Silently doing that here would settle
+        a disagreement before the control could report it, which is the argument this module's
+        docstring makes for refusing `direction` — so the same answer is given.
+
+    `named_count` rather than the names, because which categories they are is `plan_verifier`'s
+    business and not this rule's. Two is the floor: one category is not a coordination, and
+    claiming a shape for it would be claiming something from silence alone.
+    """
+    if named_count < 2:
+        return False
+    return not (
+        _CATEGORY_BREAKDOWN.search(folded)
+        or _MEMBERS_APART.search(folded)
+        or _DIVIDES_UP.search(folded)
+    )
+
+
 def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     """The facts this sentence states outright.
 
@@ -417,12 +422,13 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     )
     asks_count = bool(_COUNT.search(folded))
     asks_cumulative = bool(_CUMULATIVE.search(folded))
+    combined = _combined_total(folded, named_count=len(named))
     per_movement = bool(_PER_MOVEMENT_AVERAGE.search(folded))
     window = window_words.window_in(sentence, today=today)
     # "anual ... por mes" gives both the horizon and the divisor. It means the trailing twelve
     # months unless a more precise year/window was written, in which case that explicit window won
     # above. This is a duration, not a forecast.
-    if window is None and asks_average and re.search(r"\banual(?:es)?\b", folded):
+    if window is None and asks_average and _ANNUAL.search(folded):
         window = RelativePeriod(period=Period.LAST_N_MONTHS, n=12)
     return ExplicitFacts(
         window=window,
@@ -435,7 +441,29 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
                 else (
                     GroupBy.CATEGORY
                     if comparison or asks_top_category
-                    else (temporal_group or (GroupBy.MONTH if asks_cumulative else None))
+                    # `GroupBy.MONTH if asks_cumulative` stood here, and **`MONTH` was not in
+                    # the sentence.** It was supplied because the domain refuses `CUMULATIVE`
+                    # without a calendar bucket, so the reader filled the hole — and this
+                    # module's whole licence is that it reports what the sentence states. When
+                    # the guess was right nobody noticed; when the sentence said «por
+                    # gasolina», a figure came back a month-by-month series. It also *lost*
+                    # groupings: «el importe acumulado por categoría» named a dimension and
+                    # got `MONTH` instead, because nothing below consults
+                    # `_CATEGORY_BREAKDOWN`.
+                    #
+                    # Nothing needs it here. `readers/metrics._cumulative_plan` already spells
+                    # `facts.group_by or GroupBy.MONTH` at the point it builds a plan, which is
+                    # where a default belongs — visible, local, and owned by whoever decided
+                    # the shape. Everywhere else the pair is offered through `reshaped`, which
+                    # keeps the plan's own grouping when the domain refuses the pair, and
+                    # `financial_plan.metric_without_a_bucket` settles `CUMULATIVE` beside
+                    # `NONE` to `SUM` — the same rows, the same window, the same filters, and
+                    # the figure the sentence actually asked for.
+                    #
+                    # Last, so every grouping the sentence spells out wins over it. See
+                    # `_combined_total`: it states a shape from an absence, and standing at
+                    # the bottom of this cascade is most of what makes that safe.
+                    else (temporal_group or (GroupBy.NONE if combined else None))
                 )
             )
         ),
@@ -460,7 +488,7 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
                 )
             )
         ),
-        direction=Direction.INCOME if says_income and not says_expense else None,
+        direction=_direction(folded, says_income=says_income, says_expense=says_expense),
         compared_categories=named if comparison else (),
         excluded_categories=excluded_categories,
         excluded_merchants=excluded_merchants_in(sentence),
@@ -475,6 +503,38 @@ def read(sentence: str, *, today: date | None = None) -> ExplicitFacts:
     )
 
 
+def reshaped[P: FinancialPlan | FinancialPlanDraft](
+    plan: P, *, group_by: GroupBy, metric: Metric
+) -> P:
+    """`plan` under this grouping and this metric, or unchanged where the domain refuses the pair.
+
+    **A grouping and a metric are decided together or not at all.** Setting one and inheriting the
+    other builds a shape nobody asked for, and the domain is right to refuse it: `PERIOD_AVERAGE`
+    and `CUMULATIVE` both spend the plan's only grouping axis on their own calendar buckets, so
+    either one beside a merchant grouping is a request for a cross-tabulation the schema cannot
+    hold. It takes no contradictory sentence to reach — after "¿cuál es mi gasto medio mensual?"
+    the follow-up "esos cinco" resets the grouping to `NONE` while the average is inherited, and
+    the two arrive one at a time from two different turns.
+
+    `group_limit` is a rider on `group_by` rather than a value of its own: "los 5 comercios donde
+    más gasto" limits *that* grouping, and the domain refuses a limit beside a temporal one. So it
+    travels with the field it qualifies, exactly as the window's two fields already do — offered
+    first with the limit, then without it.
+
+    Which shape the domain accepts is the domain's to say, which is why this offers rather than
+    decides. Restating "PERIOD_AVERAGE needs a temporal grouping" here would be a second copy of
+    an invariant to keep level with the first, and this file's whole subject is readers that drift.
+
+    Unchanged is the answer of last resort, and `enforce` argues why it is the right one.
+    """
+    for group_limit in (plan.group_limit, None):
+        try:
+            return replace(plan, group_by=group_by, metric=metric, group_limit=group_limit)
+        except InvalidValueError:
+            continue
+    return plan
+
+
 def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
     plan: T, facts: ExplicitFacts
 ) -> T:
@@ -486,6 +546,20 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
 
     A ranking takes the window and not the grouping: `TopMovements` has none, and "a qué personas"
     is not a question about one movement.
+
+    **This is total: it returns a plan for every sentence, and never raises.** It used to raise,
+    and «gasto medio mensual por comercio» is the sentence that showed it. The reader takes both
+    halves of that sentence — a per-period average, and a grouping by shop — and the domain refuses
+    them together, because `PERIOD_AVERAGE` spends the plan's only grouping axis on its own buckets
+    and a question needing two axes has no representation here. Nothing about the Spanish is
+    confused; it is the schema that cannot hold the answer.
+
+    Raising was wrong wherever it happened. Twenty of the twenty-five call sites are deterministic
+    recognisers whose contract on failure is "return None and let the planner try", so an
+    `InvalidValueError` from here does not become a refusal — it becomes a 422 on a sentence
+    somebody typed, from a layer whose whole job is to make the plan agree with them.
+
+    What happens when the sentence and the plan cannot both be satisfied is argued at the end.
     """
     if facts.window is not None:
         # As a pair, never one at a time: a plan carries exactly one of the two, so setting a range
@@ -496,16 +570,9 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
             date_range=facts.window if isinstance(facts.window, AbsoluteRange) else None,
         )
     plan = enforce_exclusions(plan, facts)
-    if facts.asks_direct_debits:
-        if isinstance(plan, FinancialPlan):
-            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
-        elif isinstance(plan, FinancialPlanDraft):
-            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
-    if facts.group_by is not None and isinstance(plan, FinancialPlan | FinancialPlanDraft):
-        plan = replace(plan, group_by=facts.group_by)
     if isinstance(plan, FinancialPlan | FinancialPlanDraft):
-        if facts.metric is not None:
-            plan = replace(plan, metric=facts.metric)
+        if facts.asks_direct_debits:
+            plan = replace(plan, transaction_types=(TransactionType.DIRECT_DEBIT,))
         if facts.direction is not None:
             plan = replace(plan, direction=facts.direction)
         if facts.compared_categories:
@@ -517,6 +584,41 @@ def enforce[T: FinancialPlan | FinancialPlanDraft | TopMovements](
                     if category not in plan.excluded_categories
                 ),
             )
+    if (facts.group_by is not None or facts.metric is not None) and isinstance(
+        plan, FinancialPlan | FinancialPlanDraft
+    ):
+        return reshaped(
+            plan,
+            group_by=plan.group_by if facts.group_by is None else facts.group_by,
+            metric=plan.metric if facts.metric is None else facts.metric,
+        )
+    # Reached when the sentence stated no shape at all, when the plan is a ranking that has none —
+    # and, the case this is written for, when the domain refused every shape offered above. Then
+    # there is no plan that agrees with the sentence and nothing here to enforce, so **the plan's
+    # own grouping and metric stand, together.**
+    #
+    # The alternative is to keep the half of the pair that fits and drop the other, and that is
+    # the one outcome worth refusing outright. After "¿cuál es mi gasto medio mensual?" → 850 €/mes,
+    # the follow-up "¿y por comercio?" would keep the grouping, drop `PERIOD_AVERAGE` to a total,
+    # and answer with per-shop *totals over the window* — a real figure, correctly computed, for a
+    # question nobody asked, and indistinguishable from the right answer to everything downstream.
+    # `plan_verifier` has no rule that compares the sentence's grouping to the plan's, so nothing
+    # would catch it. Leaving the pair alone answers the previous question again instead, which is
+    # visibly unhelpful rather than quietly wrong — and `answer_writer` describes the plan, so the
+    # headline still says "gasto medio mensual" and the user can see they were not split by shop.
+    #
+    # Which half is "stated more strongly" is not a question the sentence answers, so ranking them
+    # would be a guess wearing this module's authority — and this module exists precisely because
+    # the model was allowed to guess about things the user had written down.
+    #
+    # The cost is real and is not hidden: a fact the sentence stated is ignored. It is bounded by
+    # who reaches here. A sentence that states the whole forbidden pair by itself is a capability
+    # the domain does not have, and is refused before a plan exists — `capability_guard`'s AVERAGE
+    # family already refuses every `PERIOD_AVERAGE` one, and `_cumulative_plan` declines the
+    # `CUMULATIVE` ones rather than building them. What is left here is the other case: one half
+    # inherited from an earlier turn, where the plan being kept came from a reader that saw the
+    # whole sentence, and the honest report is "I have not changed the question" rather than a
+    # number about a different one.
     return plan
 
 
@@ -534,13 +636,16 @@ def enforce_exclusions[T: FinancialPlan | FinancialPlanDraft | TopMovements](
             excluded_categories=excluded,
         )
     if facts.excluded_merchants:
-        folded_excluded = {merchant.casefold() for merchant in facts.excluded_merchants}
+        # Stripped as well as folded, because `check_filters` compares the two lists that way. A
+        # plan carrying " Mercadona " kept it while the exclusion was added beside it, and the
+        # invariant that refuses a name on both lists then rejected a plan this had just built.
+        folded_excluded = {merchant.strip().casefold() for merchant in facts.excluded_merchants}
         plan = replace(
             plan,
             merchants=tuple(
                 merchant
                 for merchant in plan.merchants
-                if merchant.casefold() not in folded_excluded
+                if merchant.strip().casefold() not in folded_excluded
             ),
             excluded_merchants=tuple(
                 dict.fromkeys((*plan.excluded_merchants, *facts.excluded_merchants))

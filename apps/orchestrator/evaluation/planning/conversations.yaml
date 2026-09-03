@@ -570,6 +570,21 @@ conversations:
         expect_shape: MOVEMENT
         not_says: comparo
 
+  - id: a_superlative_that_states_its_own_month
+    why: >
+      A movement rather than an aggregate, like the case above, and an absolute month rather than
+      a named period — which is the spread this group exists for. It reaches a planner at all only
+      since `_SELF_CONTAINED_FINANCIAL_QUESTION` learned the singular movement nouns: while `gasto`
+      was missing from that list the sentence was read as an ellipsis, so the month was applied to
+      the *previous* question as a window patch and the superlative was thrown away. The month is
+      ours to demand; that the answer is one charge and not a total is the model's reading, so the
+      shape carries it.
+    turns:
+      - say: ¿cuál fue mi mayor gasto de junio?
+        expect_plan:
+          window: 2026-06-01..2026-06-30
+        expect_shape: MOVEMENT
+
   - id: show_me_the_movements
     why: >
       A list rather than a figure, and a counted window rather than a named one — "los últimos 4
@@ -794,6 +809,20 @@ conversations:
         must_keep: [window]
         must_change: [categories]
 
+  - id: a_category_follow_up_after_a_balance_has_no_spending_base
+    why: >
+      A balance is the answer in focus even though the last successful movement query remains in
+      conversation memory. "¿Y en restaurantes?" is therefore handed to the planner without that
+      spending plan as a continuation base: if it can answer, restaurants must replace fuel; if it
+      asks for a period, it must not silently revive the old month merely because it is mirrored in
+      `last_plan`.
+    turns:
+      - say: ¿cuánto gasté en gasolina el mes pasado?
+      - say: ¿cuánto tengo?
+        expect: BALANCE
+      - say: ¿y en restaurantes?
+        must_change: [categories]
+
   - id: a_no_that_is_correcting_and_not_cancelling
     why: >
       "No, en gasolina" opens with a refusal and is not one: it is a correction of the category of
@@ -855,6 +884,22 @@ conversations:
           window: THIS_MONTH
         must_change: [categories]
 
+  - id: an_account_and_a_month_both_stated_outright
+    why: >
+      The shape every unqualified spending question turns into once the holder has answered «¿En
+      qué cuenta quieres consultarlo?» — account and window both named in one sentence — and
+      nothing here measured it, because the conversation corpus had no account directory and so
+      never asked that question in the first place. The window is stated, so it is ours to enforce;
+      the category follow-up may not move it.
+    turns:
+      - say: ¿cuánto gasté en la hucha el mes pasado?
+        expect_plan:
+          window: LAST_MONTH
+        expect_shape: TOTAL
+      - say: ¿Y cuánto en gasolina?
+        must_keep: [window]
+        must_change: [categories]
+
   - id: a_correction_that_names_an_account_and_no_period
     why: >
       "Quería saber lo de la hucha" corrects what the last answer was about without saying when. The
@@ -865,6 +910,29 @@ conversations:
       - say: ¿cuánto gasté el mes pasado?
       - say: quería saber lo de la hucha
         must_keep: [window]
+
+  - id: a_superlative_scoped_to_every_account
+    why: >
+      A superlative and the all-accounts scope phrase in one sentence, which is where the
+      deterministic path used to answer instead of handing over. «en todas mis cuentas» supplied a
+      grouping dimension to a bare noun alternation, so "¿cuál fue mi mayor gasto de julio en todas
+      mis cuentas?" was answered «La cuenta con mayor importe total … es: Cuenta corriente» and the
+      planner never saw the question at all.
+
+      The first turn is the asymmetry that hid the defect for a thousand corpus turns: the same
+      noun, the same scope phrase, no ranking signal, and the reading was always right. Both belong
+      here rather than only in the routing corpus, because the account subset is not one of the
+      eight fields this checker knows — so what the pair pins is the half it can, the month, and
+      the answer shape that says a superlative is one charge and a total is a figure.
+    turns:
+      - say: ¿cuánto gasté en julio en todas mis cuentas?
+        expect_plan:
+          window: 2026-07-01..2026-07-31
+        expect_shape: TOTAL
+      - say: ¿cuál fue mi mayor gasto de julio en todas mis cuentas?
+        expect_plan:
+          window: 2026-07-01..2026-07-31
+        expect_shape: MOVEMENT
 
   - id: a_compound_question_after_an_absolute_month
     why: >
