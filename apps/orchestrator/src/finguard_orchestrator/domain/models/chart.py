@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 Mark = Literal["line", "area", "bar", "point", "donut"]
 Channel = Literal["x", "y", "color", "tooltip", "theta"]
@@ -63,51 +63,88 @@ class ChartSpec:
         return self.limit is None or 1 <= self.limit <= 100
 
 
+FieldRole = Literal["dimension", "measure", "series"]
+FieldOrder = Literal["MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"]
+
+_ROLE_TYPES: Final[dict[FieldRole, frozenset[str]]] = {
+    # The role's type is a fact about the dataset rather than a choice. A `measure` that is not
+    # quantitative is a mislabelled dataset, and every rule downstream would inherit the lie.
+    "measure": frozenset({"quantitative"}),
+    "series": frozenset({"nominal"}),
+    "dimension": frozenset({"nominal", "temporal"}),
+}
+
+
+@dataclass(frozen=True)
+class VisualField:
+    """One column of the dataset, described so a planner can choose a channel for it.
+
+    `role` exists because `type` cannot carry it. The dataset has two nominal fields --
+    `dimension` and `series` -- and nothing in their type says which is the axis and which is the
+    colour split. `cardinality` is per field for the same reason: two series are a comparison and
+    fifteen are an unreadable legend, and a single count on the profile could not tell them apart.
+    """
+
+    name: str
+    type: FieldType
+    role: FieldRole
+    cardinality: int
+    order: FieldOrder = "NONE"
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.name):
+            raise ValueError("visual fields must be identifiers")
+        if self.type not in {"nominal", "quantitative", "temporal"}:
+            raise ValueError("unsupported visual field type")
+        if self.role not in _ROLE_TYPES:
+            raise ValueError("unsupported visual field role")
+        if self.type not in _ROLE_TYPES[self.role]:
+            raise ValueError(f"a {self.role} cannot be {self.type}")
+        if self.cardinality < 0:
+            raise ValueError("cardinality cannot be negative")
+        if self.order not in {"MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"}:
+            raise ValueError("unsupported visual field order")
+
+
 @dataclass(frozen=True)
 class VisualProfile:
-    """Value-free facts about a chart, safe to send in a conversation round trip."""
+    """Value-free facts about the *dataset*, safe to send in a conversation round trip.
 
-    fields: tuple[tuple[str, FieldType], ...]
-    cardinality: int
-    metric: str | None = None
-    unit: str | None = None
+    It used to be derived from a `ChartSpec` through `from_spec`, which is backwards for a planner:
+    the profile is the input to the chart decision, not a summary of its output. Nothing ephemeral
+    belongs here -- not the question, not the viewport -- because `conversation.py` validates this
+    object coming back from the browser, so anything added to it becomes wire surface.
+    """
+
+    fields: tuple[VisualField, ...]
+    metric: str
+    unit: str
     positive: bool = False
     mutually_exclusive: bool = False
     verified_total: bool = False
+    comparison: bool = False
 
     def __post_init__(self) -> None:
-        if self.cardinality < 0 or len({name for name, _ in self.fields}) != len(self.fields):
-            raise ValueError("visual profile fields/cardinality are invalid")
-        if self.metric is not None and not re.fullmatch(r"[A-Z][A-Z0-9_]*", self.metric):
+        names = [item.name for item in self.fields]
+        if len(set(names)) != len(names):
+            raise ValueError("duplicate field name in visual profile")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", self.metric):
             raise ValueError("visual profile metric must be uppercase")
-        if self.unit is not None and self.unit not in {"money", "count", "ratio", "unknown"}:
+        if self.unit not in {"money", "count", "ratio", "unknown"}:
             raise ValueError("unsupported visual profile unit")
 
-    @classmethod
-    def from_spec(
-        cls,
-        spec: ChartSpec,
-        *,
-        cardinality: int = 0,
-        metric: str | None = None,
-        unit: str | None = None,
-        positive: bool = False,
-        mutually_exclusive: bool = False,
-        verified_total: bool = False,
-    ) -> "VisualProfile":
-        typed_fields = tuple(dict((item.field, item.type) for item in spec.encodings).items())
-        return cls(
-            typed_fields,
-            cardinality,
-            metric,
-            unit,
-            positive,
-            mutually_exclusive,
-            verified_total,
-        )
-
     def field_names(self) -> frozenset[str]:
-        return frozenset(name for name, _ in self.fields)
+        return frozenset(item.name for item in self.fields)
+
+    def field(self, name: str) -> VisualField | None:
+        return next((item for item in self.fields if item.name == name), None)
+
+    def role(self, role: FieldRole) -> tuple[VisualField, ...]:
+        return tuple(item for item in self.fields if item.role == role)
+
+    def temporal(self) -> bool:
+        """Whether any dimension is temporal. Not a stored field: it is a question about types."""
+        return any(item.type == "temporal" for item in self.role("dimension"))
 
 
 @dataclass(frozen=True)
@@ -196,7 +233,12 @@ def merge_encoding_patch(
     if mark == "donut":
         if not (profile.positive and profile.mutually_exclusive and profile.verified_total):
             raise ValueError("donut requires positive, exclusive parts and a verified total")
-        if not 2 <= profile.cardinality <= 5:
+        # A donut's parts are the nominal dimension's distinct labels -- the field that lands in
+        # `color`. `profile.cardinality` used to be this number directly; now it is per field.
+        nominal_dimension_count = next(
+            (item.cardinality for item in profile.role("dimension") if item.type == "nominal"), 0
+        )
+        if not 2 <= nominal_dimension_count <= 5:
             raise ValueError("donut requires between 2 and 5 parts")
     encodings = spec.encodings
     if mark == "donut":

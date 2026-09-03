@@ -15,6 +15,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     EncodingPatch,
     VisualContext,
+    VisualField,
     Visualization,
     VisualProfile,
     merge_encoding_patch,
@@ -45,15 +46,18 @@ def _base() -> tuple[ChartSpec, VisualProfile]:
             ChartEncoding("y", "dimension", "nominal"),
         ),
     )
-    return spec, VisualProfile.from_spec(
-        spec,
-        cardinality=3,
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
         metric="SUM",
         unit="money",
         positive=True,
         mutually_exclusive=True,
         verified_total=True,
     )
+    return spec, profile
 
 
 def test_patch_is_atomic_and_rejects_unknown_fields() -> None:
@@ -68,10 +72,16 @@ def test_donut_requires_valid_profile_and_rewrites_channels() -> None:
     donut = merge_encoding_patch(spec, EncodingPatch(mark="donut"), profile)
     assert donut.mark == "donut"
     assert {item.channel for item in donut.encodings} == {"theta", "color"}
+    invalid = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 1),
+            VisualField("value_minor", "quantitative", "measure", 1),
+        ),
+        metric="SUM",
+        unit="money",
+    )
     with pytest.raises(ValueError):
-        merge_encoding_patch(
-            spec, EncodingPatch(mark="donut"), VisualProfile.from_spec(spec, cardinality=1)
-        )
+        merge_encoding_patch(spec, EncodingPatch(mark="donut"), invalid)
 
 
 def test_ratio_share_can_become_a_donut_and_return_to_bars() -> None:
@@ -83,9 +93,11 @@ def test_ratio_share_can_become_a_donut_and_return_to_bars() -> None:
         ),
         stack="normalize",
     )
-    profile = VisualProfile.from_spec(
-        spec,
-        cardinality=2,
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 2),
+            VisualField("value_minor", "quantitative", "measure", 2),
+        ),
         metric="RATIO_SHARE",
         unit="money",
         positive=True,
@@ -151,7 +163,14 @@ def test_temporal_chart_supports_bar_then_value_sort_follow_ups() -> None:
             ChartEncoding("y", "value_minor", "quantitative", "Importe"),
         ),
     )
-    profile = VisualProfile.from_spec(spec, cardinality=13, metric="SUM", unit="money")
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "temporal", "dimension", 13, "TEMPORAL"),
+            VisualField("value_minor", "quantitative", "measure", 13),
+        ),
+        metric="SUM",
+        unit="money",
+    )
     conversation = Conversation(visual_contexts=(VisualContext("chart-months", spec, profile),))
 
     bars = interpret_visual("ponlo en barras", conversation.visual_contexts)

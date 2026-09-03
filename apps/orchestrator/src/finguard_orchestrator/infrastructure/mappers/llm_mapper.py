@@ -28,10 +28,10 @@ from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     VisualContext,
     Visualization,
-    VisualProfile,
     derive_chart,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
@@ -327,26 +327,10 @@ def _remember_visual_context(
     if spec is None:
         return result
     spec = replace(spec, title=_visual_title(result, result.visual_dataset))
-    profile = VisualProfile.from_spec(
-        spec,
-        cardinality=len({row.dimension for row in result.visual_dataset.rows}),
-        metric=result.visual_dataset.metric,
-        unit=(
-            "count"
-            if result.visual_dataset.metric in {"COUNT", "FREQUENCY"}
-            else "ratio"
-            if result.visual_dataset.metric == "RATIO_SHARE"
-            else "money"
-        ),
-        positive=all(row.value_minor > 0 for row in result.visual_dataset.rows),
-        mutually_exclusive=all(row.series is None for row in result.visual_dataset.rows),
-        verified_total=(
-            result.visual_dataset.metric == "RATIO_SHARE"
-            or (
-                result.total_minor is not None
-                and sum(row.value_minor for row in result.visual_dataset.rows) == result.total_minor
-            )
-        ),
+    profile = visual_profile_of(
+        result.visual_dataset,
+        total_minor=result.total_minor,
+        group_by=result.plan_context.group_by if result.plan_context is not None else None,
     )
     return replace(
         result,
