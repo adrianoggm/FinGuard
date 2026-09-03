@@ -202,8 +202,9 @@ def test_a_comparison_of_counts_labels_its_axis_movements() -> None:
 def test_a_series_keeps_the_limit_the_append_used_to_drop() -> None:
     """The colour channel is appended to a spec `derive_chart` already built. The old append
     rebuilt `ChartSpec` field by field -- mark, encodings, stack, sort, responsive -- and so
-    silently dropped `limit`, `sort_field` and `title` on every dataset that had a series.
-    `dataclasses.replace` is the whole fix."""
+    silently dropped `limit` on every dataset that had a series. (`sort_field` and `title`
+    were never reachable: `derive_chart` never sets `sort_field`, and the mapper applied
+    `title` after the call returned.) `dataclasses.replace` is the whole fix."""
     rows = tuple(
         VisualRow(dimension=f"Comercio {position}", value_minor=1_000 - position, series=window)
         for window in ("agosto", "julio")

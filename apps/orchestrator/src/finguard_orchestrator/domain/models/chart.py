@@ -142,6 +142,8 @@ class VisualProfile:
     """
 
     fields: tuple[VisualField, ...]
+    # The dataset's *shape* marker (`COMPARISON`, `RATIO`, `RATIO_SHARE`, `RECURRENCE`, ...), not
+    # always the measure. An axis title wants `measure_metric()` below, not this field directly.
     metric: str
     unit: str
     positive: bool = False
@@ -195,6 +197,16 @@ class VisualProfile:
     def temporal(self) -> bool:
         """Whether any dimension is temporal. Not a stored field: it is a question about types."""
         return any(item.type == "temporal" for item in self.role("dimension"))
+
+    def measure_metric(self) -> str:
+        """The plan's metric when there is one, falling back to the dataset's shape marker.
+
+        This is what an axis title should read, never `metric` alone: `metric` is overloaded
+        between the dataset's shape and its measure, and `plan_metric` is the one fact that tells
+        them apart. Writing `profile.metric` here is the exact mistake that labelled 32 charts'
+        axes "Importe" for a count -- this accessor exists so that mistake cannot be written again.
+        """
+        return self.plan_metric or self.metric
 
 
 @dataclass(frozen=True)

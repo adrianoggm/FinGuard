@@ -118,10 +118,10 @@ class DeterministicVisualPlanner:
             return None
         spec = derive_chart(
             group_by="MONTH" if profile.temporal() else "NONE",
-            # The plan's metric when there is one, falling back to the dataset's -- the exact
-            # expression `_chart_for_dataset` used. Not `profile.metric` alone: that is the
-            # dataset's shape marker, and a `COMPARISON` of counts would label its axis "Importe".
-            metric=profile.plan_metric or profile.metric,
+            # `measure_metric()`, not `profile.metric` alone: that is the dataset's shape marker,
+            # and a `COMPARISON` of counts would label its axis "Importe" -- the exact expression
+            # `_chart_for_dataset` used, now named so that mistake has to be written on purpose.
+            metric=profile.measure_metric(),
             # The rows drawn, which is not the measure's cardinality: that counts distinct
             # amounts, and two rows carrying the same amount are still two rows.
             rows=profile.row_count,
@@ -132,9 +132,10 @@ class DeterministicVisualPlanner:
         )
         if spec is not None and "series" in fields:
             # `replace` and not a rebuild. The mapper listed the fields it carried over -- mark,
-            # encodings, stack, sort, responsive -- and so dropped `limit`, `sort_field` and
-            # `title` from every chart that had a series, including the row cut it had just
-            # computed one line above.
+            # encodings, stack, sort, responsive -- and so dropped `limit` from every chart that
+            # had a series, including the row cut it had just computed one line above.
+            # `sort_field` and `title` were never at risk: `derive_chart` never sets `sort_field`,
+            # and the mapper applied `title` after this call returned.
             spec = replace(
                 spec,
                 encodings=spec.encodings + (ChartEncoding("color", "series", "nominal", "Serie"),),
