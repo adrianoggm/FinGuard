@@ -20,10 +20,30 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingSort,
+    FieldOrder,
     PresentationContext,
     VisualProfile,
     derive_chart,
 )
+
+
+def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
+    """The per-encoding sort a dimension's `order` asks for, or `None` to leave it alone.
+
+    The order comes from the profile, never from the field's type. FREQUENCY is nominal and
+    deliberately `INPUT`: its dimension is weekday names in producer order, and sorting those by
+    magnitude destroys the only thing that chart is for -- but FREQUENCY never calls this
+    function, because it early-returns from `plan()` before `dimension` is even resolved. Within
+    `plan()`'s reach, `order` is only ever `TEMPORAL` or `MEASURE_DESC`: both `INPUT` metrics
+    (FREQUENCY, RECURRENCE) early-return, so this `INPUT` branch is unreachable through `plan()`
+    today. It exists for the wave-3 planner, which may hand any order, and is pinned by a direct
+    test rather than left untested because of that.
+    """
+    if order == "MEASURE_DESC":
+        return EncodingSort(mode="descending", field=measure_name)
+    if order == "INPUT":
+        return EncodingSort(mode="input")
+    return None
 
 
 @dataclass(frozen=True)
@@ -141,6 +161,28 @@ class DeterministicVisualPlanner:
             value_field=measure[0].name,
             plan_limited=profile.plan_limited,
         )
+        # A ranked dimension sorts by its measure -- on its *axis*, not its tooltip. `derive_chart`
+        # always emits a `ChartEncoding("tooltip", dimension_field, ...)` beside the axis encoding
+        # for the same field, and Vega-Lite ignores `sort` on a tooltip channel, so a filter on
+        # `field == dimension.name` alone would write an inert-but-present "sort" onto the wire
+        # there too: invisible on screen, a real, unintended change to what gets sent. `dimension`
+        # is only ever placed on `x` or `y` by `derive_chart`, so restricting to those two channels
+        # is exact, not a heuristic. `dimension.order` came from the profile above, not from
+        # `dimension.type`, so this is only ever a per-encoding sort on the one axis encoding it
+        # names -- Task 7's comparison block below adds its own `color`/offset encodings with their
+        # own `EncodingSort(mode="input")`, and the two never collide.
+        if spec is not None:
+            wanted = _sort_for(dimension.order, measure[0].name)
+            if wanted is not None:
+                spec = replace(
+                    spec,
+                    encodings=tuple(
+                        replace(item, sort=wanted)
+                        if item.channel in {"x", "y"} and item.field == dimension.name
+                        else item
+                        for item in spec.encodings
+                    ),
+                )
         series = profile.role("series")
         # `profile.comparison` is `has_series` under a name that reads as "this is a comparison" --
         # true for RECURRENCE too, since a cadence is a series, which is safe to read here only

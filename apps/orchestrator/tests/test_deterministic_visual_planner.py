@@ -16,7 +16,9 @@ from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     ChartEncoding,
     ChartSpec,
+    EncodingSort,
     VisualDataset,
+    Visualization,
     VisualProfile,
     VisualRow,
 )
@@ -25,6 +27,7 @@ from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
+    _sort_for,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -32,6 +35,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def some_profile() -> VisualProfile:
@@ -78,6 +82,11 @@ def test_the_floor_reproduces_todays_chart_for_a_breakdown() -> None:
         ("y", "dimension"),
         ("x", "value_minor"),
     }
+    # No series, so the comparison rule's `if` and the plain-colour `elif` both decline: this
+    # chart takes neither branch, and `derive_chart` never sets a stack of its own. Only the
+    # positive direction of the comparison rule was pinned before -- this is the negative one,
+    # and its absence is exactly how the original defect (an unwanted default stack) survived.
+    assert spec.stack is None
 
 
 def test_the_floor_declines_a_single_row() -> None:
@@ -273,6 +282,36 @@ def test_a_categorical_comparison_groups_its_series_instead_of_stacking_them() -
     assert (f"{dimension_channel}Offset", "series") in channels
 
 
+def test_a_temporal_comparison_keeps_its_plain_colour_and_no_offset() -> None:
+    """The other side of the `not profile.temporal()` fork, and until now nothing exercised it:
+    every `series=` construction in this suite either hit RECURRENCE's own block above or the
+    categorical rule this test is not. A coloured line has nothing for an offset to separate --
+    each series is already its own line -- and nothing for a disabled stack to mean, so this path
+    keeps the plain colour append the categorical rule replaced, unconditionally, as before."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="2026-06", value_minor=100, series="2026"),
+                VisualRow(dimension="2026-07", value_minor=120, series="2026"),
+                VisualRow(dimension="2026-06", value_minor=90, series="2025"),
+                VisualRow(dimension="2026-07", value_minor=95, series="2025"),
+            ),
+        ),
+        total_minor=None,
+        group_by="MONTH",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    assert spec.mark == "line"
+    assert spec.stack is None
+    channels = {(e.channel, e.field) for e in spec.encodings}
+    assert ("color", "series") in channels
+    assert not any(e.channel in {"xOffset", "yOffset"} for e in spec.encodings)
+
+
 def test_a_normalised_share_is_still_stacked() -> None:
     """RATIO_SHARE early-returns from `plan()` before the comparison rule is ever reached, so its
     `normalize` comes from its own family branch rather than the new rule declining to fire. This
@@ -292,6 +331,128 @@ def test_a_normalised_share_is_still_stacked() -> None:
     spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
 
     assert spec.stack == "normalize"
+
+
+def test_a_breakdown_sorts_its_categories_by_magnitude() -> None:
+    """The second defect the review names. Ten categories in label order put the largest
+    anywhere, which is the one thing a breakdown exists to show."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="ALQUILER", value_minor=51_300),
+                VisualRow(dimension="GROCERIES", value_minor=24_908),
+                VisualRow(dimension="ZAPATOS", value_minor=1_200),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    assert dimension.sort == EncodingSort(mode="descending", field="value_minor")
+
+
+def test_a_weekday_frequency_keeps_the_order_the_producer_built() -> None:
+    """The counter-test, and the reason the rule reads the profile instead of the field type.
+
+    FREQUENCY never reaches the new rule at all: it early-returns from `plan()` with its order
+    carried at *spec* level (`ChartSpec.sort="input"`), before a `dimension` local is even
+    resolved. So this cannot assert `dimension.sort == EncodingSort(mode="input")` -- that would
+    pass only by accident, for a mechanism the rule does not use, and it would fail (for the
+    wrong reason) the moment FREQUENCY's dispatch changed shape. What actually holds is the
+    early return itself: the chart-wide sort is "input" and the per-encoding sort the new rule
+    would have written is simply never written.
+    """
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="FREQUENCY",
+            rows=(
+                VisualRow(dimension="lunes", value_minor=4),
+                VisualRow(dimension="martes", value_minor=9),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    assert spec.sort == "input"
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    assert dimension.sort is None
+
+
+def test_a_temporal_dimension_is_not_sorted_by_magnitude() -> None:
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="2026-01", value_minor=900),
+                VisualRow(dimension="2026-02", value_minor=100),
+            ),
+        ),
+        total_minor=None,
+        group_by="MONTH",
+    )
+
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+
+    assert spec is not None
+    dimension = next(e for e in spec.encodings if e.field == "dimension")
+    assert dimension.sort is None
+
+
+def test_sort_for_pins_the_order_to_sort_mapping() -> None:
+    """`plan()` can only ever hand `_sort_for` `TEMPORAL` or `MEASURE_DESC`: both `INPUT` metrics
+    (FREQUENCY, RECURRENCE) early-return before this rule runs, so the `INPUT` branch is
+    unreachable through `plan()` today. It exists for the wave-3 planner, which may hand any
+    order, so the mapping is pinned here directly rather than left untested."""
+    assert _sort_for("MEASURE_DESC", "value_minor") == EncodingSort(
+        mode="descending", field="value_minor"
+    )
+    assert _sort_for("INPUT", "value_minor") == EncodingSort(mode="input")
+    assert _sort_for("TEMPORAL", "value_minor") is None
+    assert _sort_for("NONE", "value_minor") is None
+
+
+def test_a_breakdowns_sort_lands_on_the_axis_and_never_the_tooltip() -> None:
+    """Fix round 1, items 1 and 2. `derive_chart` always emits a `tooltip` encoding for the same
+    field as the axis, beside the axis encoding itself -- so a filter on `field == dimension.name`
+    alone catches both: the axis, which is the point, and the tooltip, which is not. Vega-Lite
+    ignores `sort` on a tooltip channel, so a leaked sort there renders identically and is
+    invisible on screen -- which is exactly why it has to be read off `present()`'s own wire
+    output rather than the domain `EncodingSort`, where it never shows up as a distinguishable
+    fact in the first place."""
+    profile = visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow(dimension="ALQUILER", value_minor=51_300),
+                VisualRow(dimension="GROCERIES", value_minor=24_908),
+                VisualRow(dimension="ZAPATOS", value_minor=1_200),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    dimension_channel = next(e.channel for e in spec.encodings if e.field == "dimension")
+
+    payload = present(Visualization(spec=spec, data=()))
+
+    assert payload["spec"]["encoding"][dimension_channel]["sort"] == {
+        "field": "value_minor",
+        "order": "descending",
+    }
+    tooltip = payload["spec"]["encoding"]["tooltip"]
+    assert isinstance(tooltip, list)
+    assert all("sort" not in entry for entry in tooltip)
 
 
 @pytest.mark.parametrize(
