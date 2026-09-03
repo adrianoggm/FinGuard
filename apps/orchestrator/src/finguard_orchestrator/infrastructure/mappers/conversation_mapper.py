@@ -560,7 +560,9 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                         # The wire payload keeps one dataset-level count, same as before the
                         # profile carried per-field cardinality. It is the nominal dimension's --
                         # the field that lands in `color` -- since that is the only cardinality a
-                        # round-tripped profile's donut rule reads.
+                        # round-tripped profile's donut rule reads. It is 0 whenever the chart's
+                        # dimension is temporal rather than nominal -- read that as "not a donut's
+                        # business", never as "no rows": the rows are still all there.
                         "cardinality": next(
                             (
                                 field.cardinality
