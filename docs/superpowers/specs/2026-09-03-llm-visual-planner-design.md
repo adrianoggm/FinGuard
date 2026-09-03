@@ -87,9 +87,16 @@ comparison, fifteen are an unreadable legend. Per-field cardinality is what lets
 a grouped comparison with too many series rather than drawing one nobody can read.
 
 **Order belongs to the field too, and for a sharper reason.** A chart can need two independent
-orders: the dimension sorted by measure descending while the series is sorted «anterior, actual» —
-a semantic order that has nothing to do with magnitude. One order setting on the profile would
-force the legend to inherit the axis's rule.
+orders: the dimension sorted by measure descending while the series keeps the order the dataset
+built it in — an order that has nothing to do with magnitude. One setting on the profile would force
+the legend to inherit the axis's rule.
+
+**And `INPUT` means the data's order, not a semantic one.** An earlier draft claimed it would give
+«anterior, actual»; it gives whatever the producer built, and the producer builds
+`series=latest_window` before `series=earlier_window` (`ask_financial_question.py:3201`), so today
+that order is **actual first**. If a comparison wants a different one, the dataset producer has to
+establish it or the series needs an explicit declared domain. `INPUT` preserves; it does not
+prescribe.
 
 **A chart may carry two fields with `role: dimension`.** The RECURRENCE family does: `occurred_at`
 is `temporal` on `x` and `dimension` is `nominal` on `y`. They are told apart by `type`, not by a
@@ -211,11 +218,24 @@ class ProposedEncoding:
     channel: str                               # plain str, like `mark`
     field: str
     type: str
+    sort: ProposedSort | None = None           # per encoding, see below
+
+@dataclass(frozen=True)
+class ProposedSort:
+    mode: str                                  # input | ascending | descending
+    field: str | None = None
 ```
 
 Every enumerated field is a plain `str` on purpose. `ChartEncoding` validates channel and type in
 its own `__post_init__`, so typing them here would move the refusal back into the adapter — which is
 the whole thing this split exists to prevent.
+
+**The sort has to live on the encoding, and this is a change to the domain model.** `ChartSpec`
+carries a single `sort` and `sort_field` today, so the per-field orders this design asks for are not
+representable: it cannot say *dimension by measure descending* and *series in data order* at once.
+So `ChartEncoding` gains the same optional `sort`, and `ChartSpec.sort`/`sort_field` remain for the
+single-axis case they already serve. Without this the design would promise two orders and ship one —
+the same shape as `stack=None` promising to unstack.
 
 If the port returned `ChartSpec`, `__post_init__` would **raise on a bad model output** — turning a
 model error into an exception in the adapter instead of a rejection in the domain. Plain strings put
@@ -263,11 +283,46 @@ puts `value_minor` in `tooltip` and nowhere else, deliberately: the chart answer
 repeat*, not *how much*. A rule requiring a measure on an axis would reject a working chart — the
 same trap as "categorical sorts by value" against FREQUENCY.
 
-It also exposes a live hazard worth pinning while we are here: `present()` raises
-`ValueError("a limited chart needs a quantitative measure")` when `limit` is set, and it looks for
-that measure only in `x`, `y` and `theta`. So a RECURRENCE chart that ever acquired a `limit` would
-raise. The verifier must refuse `limit` on a family with no axial measure, rather than leaving the
-presenter to throw.
+### The type the model proposes must be the type the profile holds
+
+`valid_for()` checks that a charted field **exists**; it does not check that it kept its meaning. So
+`{"field": "value_minor", "type": "nominal"}` or `{"field": "dimension", "type": "quantitative"}`
+would pass, compile, and draw a chart that is semantically false. The verifier requires equality:
+
+```
+proposed.field == profile_field.name   and   proposed.type == profile_field.type
+```
+
+and pins the role's type, which is a fact about the dataset rather than a choice:
+
+| role | type |
+| --- | --- |
+| `measure` | always `quantitative` |
+| `series` | today always `nominal` |
+| `dimension` | `nominal` or `temporal` |
+
+### `limit` is a ranking transform, so it belongs to one family only
+
+`present()` emits a window-rank transform over an axial measure and filters to the top N. That is
+correct for one shape and wrong for every other, and the RECURRENCE exception was only the loudest
+case:
+
+| family | what `limit` does to it |
+| --- | --- |
+| temporal `line`/`area` | drops intermediate periods and **connects points that are no longer consecutive** |
+| grouped comparison | can keep one series of a category and delete its pair |
+| `donut` | removes parts of a total the chart claims is whole |
+| RATIO_SHARE normalised bar | breaks the composition it exists to show |
+| `point` RECURRENCE | finds no axial measure and **raises** |
+
+So the safe rule is narrow and stated positively:
+
+> `limit` is permitted only on a **categorical `bar` with a single series whose dimension has
+> `order = MEASURE_DESC`**. Everywhere else the verifier refuses it, until a transform exists that
+> preserves whole groups.
+
+Refusing is what keeps the presenter from throwing, rather than leaving a `ValueError` to escape from
+a rendering function.
 
 ### Grouped bars: the channels have to agree
 
@@ -372,18 +427,31 @@ failure would make the review's requested "fallback reason" unwritable. This is 
 own argument — *"a single boolean would collapse cases that need different answers and carry very
 different risk"* — applied again:
 
-The port returns `VisualPlanDraft | None` and raises the three failures; the **policy** is what
-resolves any of them into a `ChartSpec`, because only the policy holds the floor:
+The port returns `VisualPlanDraft | None` and raises the three failures; the **policy** resolves any
+of them into a `ChartSpec`, because only the policy holds the floor. **And the mode belongs in this
+table**, because a valid proposal in `shadow` is still not what the user sees:
 
-| what the port does | what the policy records | what the user gets |
-| --- | --- | --- |
-| returns a draft that verifies | `selected_source: llm` | the model's chart |
-| returns `None` | `fallback_reason: abstention` | the floor's chart |
-| raises `VisualPlannerTimeout` | `fallback_reason: timeout` | the floor's chart |
-| raises `VisualPlannerUnavailable` | `fallback_reason: provider_error` | the floor's chart |
-| returns a draft the verifier refuses | `fallback_reason: invalid_proposal` | the floor's chart |
+| mode | the model's result | `accepted` | `selected_source` | what the user gets |
+| --- | --- | :---: | --- | --- |
+| `deterministic` | not run | false | `deterministic` | the floor |
+| `shadow` | valid | **false** | `deterministic` | **the floor** |
+| `hybrid` | valid and passes the gates | true | `llm` | the model's chart |
+| `hybrid` | valid but fails a gate | false | `deterministic` | the floor |
+| any | abstention, error or rejection | false | `deterministic` | the floor |
 
-Every row ends in a chart. The column that matters for evaluation is the middle one.
+`selected_source` is `llm | deterministic`, **not `llm | deterministic_fallback`**: in
+`deterministic` and `shadow` the floor is the *intended* selection, not a recovery.
+`fallback_reason` is filled only when an attempt was actually made and actually failed —
+`abstention`, `timeout`, `provider_error` or `invalid_proposal`. In `shadow` it stays empty even
+though the floor was shown, because nothing fell back.
+
+**Every request that reaches the policy ends in a `ChartSpec`, and that needs its precondition
+said out loud.** `DeterministicVisualPlanner.plan()` returns `ChartSpec | None`, so the guarantee is
+not universal:
+
+> Every request that enters the visual policy **after passing the eligibility guard** ends in a
+> `ChartSpec`. Answers with no dataset, with zero rows, or carrying a single figure never enter the
+> policy and keep their present behaviour as text or a KPI.
 
 **The rollout reuses a ladder the repository already has.** `turn_interpreters.py` runs
 `deterministic → shadow → hybrid → promoted` for the intent router, with the same problem: a
@@ -402,15 +470,21 @@ budget is spent before the floor answers. That is why shadow comes first.
 
 ## Section F — what is recorded
 
-Eight fields per turn, hung off the decision record the observability work already built:
+**Seven fields per turn**, hung off the decision record the observability work already built:
 
 ```
 proposed · valid · accepted · changed_from_baseline
-suitable · selected_source · fallback_reason · latency_ms
+selected_source · fallback_reason · latency_ms
 ```
 
-`selected_source` is `llm | deterministic_fallback`; `fallback_reason` is
-`abstention | timeout | provider_error | invalid_proposal`.
+**`suitable` is not one of them, and an earlier draft was wrong to list it.** Suitability is a
+comparison against a human-annotated expectation, so the application cannot know it while the turn
+is running, and a runtime field for it would be a number the service invents about its own quality.
+It belongs to the evaluation, computed afterwards:
+
+```
+suitable = compare(decision, annotated_expectation)
+```
 
 **`changed_from_baseline` compares canonicalised specs.** Reordering encodings or changing a title
 is not a different visual decision, and counting it as one would inflate the number that is supposed
