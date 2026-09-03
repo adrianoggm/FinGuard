@@ -80,8 +80,24 @@ def test_donut_requires_valid_profile_and_rewrites_channels() -> None:
         metric="SUM",
         unit="money",
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="positive, exclusive parts and a verified total"):
         merge_encoding_patch(spec, EncodingPatch(mark="donut"), invalid)
+    # `invalid` above never reaches the cardinality bound at all -- it fails the
+    # positive/mutually_exclusive/verified_total gate first. This one clears that gate with a
+    # single part, so it is the case that actually exercises "between 2 and 5".
+    one_part = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 1),
+            VisualField("value_minor", "quantitative", "measure", 1),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+    )
+    with pytest.raises(ValueError, match="between 2 and 5"):
+        merge_encoding_patch(spec, EncodingPatch(mark="donut"), one_part)
 
 
 def test_ratio_share_can_become_a_donut_and_return_to_bars() -> None:
