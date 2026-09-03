@@ -522,6 +522,10 @@ def test_a_mobile_viewport_shows_fewer_rows_than_it_is_asked_for() -> None:
     # unrecognised channel or viewport reaching a rule would be decided by an `else` -- a voice
     # answer drawn for a screen, silently, because nobody said the word was wrong.
     with pytest.raises(ValueError, match="viewport"):
-        PresentationContext(channel="TEXT", viewport="WATCH", max_visible_rows=8)  # type: ignore[arg-type]
+        PresentationContext(  # type: ignore[arg-type]
+            channel="TEXT", viewport="WATCH", max_visible_rows=8
+        )
     with pytest.raises(ValueError, match="channel"):
-        PresentationContext(channel="TELEPATHY", viewport="MOBILE", max_visible_rows=8)  # type: ignore[arg-type]
+        PresentationContext(  # type: ignore[arg-type]
+            channel="TELEPATHY", viewport="MOBILE", max_visible_rows=8
+        )
