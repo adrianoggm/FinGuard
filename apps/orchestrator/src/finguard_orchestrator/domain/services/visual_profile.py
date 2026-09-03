@@ -5,7 +5,7 @@ This logic lived inline in `llm_mapper._visualization_to_dto`, feeding
 should not compute domain facts, and the profile is now the *input* to a decision that the
 application makes rather than a summary of one the mapper already made.
 
-**Nothing here reads a value.** Cardinality is a count of distinct labels, `positive` is a
+**Nothing here reads a value.** Cardinality is a count of distinct values, `positive` is a
 comparison against zero, and `verified_total` is an equality. No amount and no dimension label
 survives into the returned object, and a test asserts that with sentinels.
 """
@@ -79,7 +79,9 @@ def visual_profile_of(
             len({row.dimension for row in rows}),
             _dimension_order(dataset.metric, temporal),
         ),
-        VisualField("value_minor", "quantitative", "measure", len(rows)),
+        VisualField(
+            "value_minor", "quantitative", "measure", len({row.value_minor for row in rows})
+        ),
     ]
     if has_series:
         # `INPUT` and not a magnitude order: a legend of periods reads in the order the producer
