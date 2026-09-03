@@ -30,7 +30,7 @@ def present(visualization: Visualization) -> dict[str, Any]:
         else:
             encoding[item.channel] = encoded
     spec: dict[str, Any] = {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "mark": (
             {"type": "arc", "innerRadius": 55}
             if visualization.spec.mark == "donut"
