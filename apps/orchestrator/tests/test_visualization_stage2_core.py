@@ -35,7 +35,11 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 )
 from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
 from finguard_orchestrator.infrastructure.dto.llm_dto import VisualizationDerivation
-from finguard_orchestrator.infrastructure.mappers.conversation_mapper import to_domain, to_payload
+from finguard_orchestrator.infrastructure.mappers.conversation_mapper import (
+    _encoding_sort_from_payload,
+    to_domain,
+    to_payload,
+)
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     _chart_suggestions,
     question_to_dto,
@@ -263,6 +267,11 @@ def test_conversation_visual_context_round_trip_is_value_free() -> None:
     restored = to_domain(payload)
     assert restored.visual_contexts[0].chart_id == "chart-1"
     assert restored.visual_contexts[0].spec.fields() == spec.fields()
+    # The old-client case: `_base()`'s spec carries neither `stack` nor `sort`, so the wire
+    # payload never has those keys either -- and `to_domain` must still complete the turn rather
+    # than require them.
+    assert restored.visual_contexts[0].spec.stack is None
+    assert restored.visual_contexts[0].spec.sort is None
 
 
 def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
@@ -686,6 +695,17 @@ def test_a_fieldless_encoding_sort_emits_the_bare_order_string() -> None:
     emitted = present(Visualization(spec=spec, data=()))
 
     assert emitted["spec"]["encoding"]["y"]["sort"] == "ascending"
+
+
+def test_encoding_sort_from_payload_is_a_tripwire_not_a_filter() -> None:
+    """`VisualContextPayload._value_free_spec` is the guard now: it constructs `EncodingSort`
+    itself and refuses an unsupported mode with a 422 before `to_domain` ever runs. So a
+    `ValueError` reaching `_encoding_sort_from_payload` is no longer a caller's malformed
+    request -- every caller's is stopped at the DTO -- it is the guard and the domain rule it
+    enforces coming apart, and this is the tripwire that proves it surfaces rather than being
+    caught and turned back into a silent `None`, the way it used to be."""
+    with pytest.raises(ValueError, match="unsupported sort mode"):
+        _encoding_sort_from_payload({"mode": "sideways"})
 
 
 def test_a_grouped_comparison_survives_round_trips_and_a_follow_up_patch() -> None:
