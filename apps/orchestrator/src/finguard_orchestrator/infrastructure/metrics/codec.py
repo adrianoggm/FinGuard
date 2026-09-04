@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingSort,
+    SortMode,
     Stack,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
@@ -128,7 +129,7 @@ def _decode_encoding_sort(value: object) -> EncodingSort | None:
     obj = _object(value, {"mode", "field"})
     _require(obj, {"mode"})
     return EncodingSort(
-        cast(Literal["input", "ascending", "descending"], _str(obj, "mode")),
+        cast(SortMode, _str(obj, "mode")),
         _optional_str(obj, "field"),
     )
 
@@ -172,9 +173,7 @@ def decode_chart(value: object) -> ChartSpec:
             encodings=tuple(parsed),
             title=_optional_str(obj, "title"),
             stack=cast(Stack | None, _optional_str(obj, "stack")),
-            sort=cast(
-                Literal["ascending", "descending", "input"] | None, _optional_str(obj, "sort")
-            ),
+            sort=cast(SortMode | None, _optional_str(obj, "sort")),
             sort_field=_optional_str(obj, "sort_field"),
             limit=_optional_int(obj, "limit"),
             responsive=_bool(obj, "responsive"),

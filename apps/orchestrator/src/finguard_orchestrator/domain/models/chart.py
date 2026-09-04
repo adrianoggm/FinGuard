@@ -299,7 +299,7 @@ class EncodingPatch:
 
     mark: Mark | None = None
     stack: Stack | None = None
-    sort: Literal["ascending", "descending", "input"] | None = None
+    sort: SortMode | None = None
     sort_field: str | None = None
     limit: int | None = None
     title: str | None = None
@@ -355,8 +355,8 @@ def merge_encoding_patch(
     stack = cast(Stack | None, values["stack"])
     if stack not in (None, *get_args(Stack)):
         stack = None
-    sort = cast(Literal["ascending", "descending", "input"] | None, values["sort"])
-    if sort not in {None, "ascending", "descending", "input"}:
+    sort = cast(SortMode | None, values["sort"])
+    if sort not in (None, *get_args(SortMode)):
         sort = None
     sort_field = values["sort_field"] if isinstance(values["sort_field"], str) else None
     if values["stack"] is not None and not any(item.channel == "color" for item in spec.encodings):
