@@ -352,7 +352,7 @@ Its gates, in the shape the rest of this file uses — zero for what code can gu
 Steps 1–4 of the delivery order in the ADR ship a chart in the chat without any of the persistence;
 if time runs short, that is the half to keep.
 
-**Landed 2026-09-03 on `task/visual-foundation` — the deterministic half. 44 commits, no model call.**
+**Landed 2026-09-03 on `task/visual-foundation` — the deterministic half. No model call.**
 The plan is [2026-09-03-visual-foundation.md](superpowers/plans/2026-09-03-visual-foundation.md); the
 design it argues from is [the visual planner spec](superpowers/specs/2026-09-03-llm-visual-planner-design.md).
 The chart decision left `llm_mapper` — a mapper cannot host a model call — for an injected
@@ -397,9 +397,19 @@ Left for the next branch, smallest first:
    trailing pragma ruff exempts; `test_explicit_facts.py:1021` asserts nothing and does not say so.
 3. **The corpus cannot see charts.** Its own task; the exporter and its fixture are the instrument
    shape to build from.
-4. Wave 3, the LLM visual planner, starts from here: `VisualPlannerPort` shares
-   `plan(profile, presentation)`'s signature, `max_visible_rows` gets its first reader, and every field
-   of a `VisualPlanDraft` crosses the same three boundaries.
+4. Wave 3, the LLM visual planner, starts from here — and the floor is **not** an implementation of
+   the port. The spec's `VisualPlannerPort.plan(question, profile, presentation, budget_seconds)` is
+   async and returns a `VisualPlanDraft | None`; the floor's `plan(profile, presentation)` is sync and
+   returns a `ChartSpec | None`. `VisualPlanningPolicy` is what holds both. `max_visible_rows` gets
+   its first reader there, and every field of a `VisualPlanDraft` crosses the same three boundaries.
+5. **Invalid visual payloads are dropped silently, not refused.** `_encoding_sort_from_payload`
+   returns `None` for an unknown `mode` and swallows `EncodingSort`'s `ValueError`; `to_domain` maps
+   an unknown `stack` to `None`; and `_value_free_spec` validates keys, mark and channels but not the
+   *values* of `stack`, `sort` or `sort_field`. So `{"sort": {"mode": "sideways"}}` is a 200 that
+   quietly forgets the order. FinGuard's own payloads are valid, so nothing round-trips wrong today —
+   but the rule the mapper states for itself is "everything coming in is input", and input that fails
+   a domain type should be a 422. Absent key → `None`; present and valid → the domain object; present
+   and invalid → refused at the DTO. Close this before a probabilistic planner produces drafts.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
