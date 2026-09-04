@@ -79,8 +79,10 @@ class DeterministicVisualPlanner:
     def plan(self, profile: VisualProfile, presentation: PresentationContext) -> ChartSpec | None:
         """Today's chart, from the profile alone.
 
-        `presentation` is deliberately unread here. The parameter exists because wave 3's
-        `VisualPlannerPort` shares this signature, and the model planner is what will consume
+        `presentation` is deliberately unread here. The parameter exists so `VisualPlanningPolicy`
+        can hand the floor and the model planner the same inputs -- not because this is an
+        implementation of `VisualPlannerPort`, whose `plan` is async, also takes the question and a
+        budget, and returns a draft rather than a spec. The model planner is what will consume
         `max_visible_rows`; reading it here would change what this draws, and this is a move.
         """
         fields = profile.field_names()

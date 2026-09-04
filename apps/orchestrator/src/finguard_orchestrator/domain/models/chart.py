@@ -8,6 +8,16 @@ Mark = Literal["line", "area", "bar", "point", "donut"]
 Channel = Literal["x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"]
 FieldType = Literal["nominal", "quantitative", "temporal"]
 Stack = Literal["zero", "normalize", "disabled"]
+# Named once so `EncodingSort.mode` and `ChartSpec.sort` share one definition instead of two
+# copies drifting apart -- the failure mode `Channel`/`get_args(Channel)` already had in
+# `VisualContextPayload._value_free_spec` before `get_args` replaced a hand-written copy there.
+SortMode = Literal["input", "ascending", "descending"]
+
+# The identifier shape every field name -- a chart field, a visual field, a sort field -- must
+# have. Promoted to a module constant so `VisualContextPayload._value_free_spec`
+# (infrastructure) can enforce the same rule on a wire `sort_field` instead of writing a second
+# copy of this pattern.
+FIELD_NAME_PATTERN: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -19,15 +29,15 @@ class EncodingSort:
     setting cannot carry both.
     """
 
-    mode: Literal["input", "ascending", "descending"]
+    mode: SortMode
     field: str | None = None
 
     def __post_init__(self) -> None:
-        if self.mode not in {"input", "ascending", "descending"}:
+        if self.mode not in get_args(SortMode):
             raise ValueError("unsupported sort mode")
         if self.mode == "input" and self.field is not None:
             raise ValueError("input order names no field to sort by")
-        if self.field is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.field):
+        if self.field is not None and not FIELD_NAME_PATTERN.fullmatch(self.field):
             raise ValueError("sort fields must be identifiers")
 
 
@@ -44,7 +54,7 @@ class ChartEncoding:
             raise ValueError("unsupported chart channel")
         if self.type not in {"nominal", "quantitative", "temporal"}:
             raise ValueError("unsupported chart field type")
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.field):
+        if not FIELD_NAME_PATTERN.fullmatch(self.field):
             raise ValueError("chart fields must be identifiers")
 
 
@@ -54,7 +64,7 @@ class ChartSpec:
     encodings: tuple[ChartEncoding, ...]
     title: str | None = None
     stack: Stack | None = None
-    sort: Literal["ascending", "descending", "input"] | None = None
+    sort: SortMode | None = None
     sort_field: str | None = None
     limit: int | None = None
     responsive: bool = True
@@ -137,7 +147,7 @@ class VisualField:
     order: FieldOrder = "NONE"
 
     def __post_init__(self) -> None:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.name):
+        if not FIELD_NAME_PATTERN.fullmatch(self.name):
             raise ValueError("visual fields must be identifiers")
         if self.type not in {"nominal", "quantitative", "temporal"}:
             raise ValueError("unsupported visual field type")
