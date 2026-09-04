@@ -10,7 +10,7 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
@@ -20,6 +20,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingSort,
+    SortMode,
     Stack,
     VisualContext,
     VisualField,
@@ -113,19 +114,21 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
 
 
 def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
-    if not isinstance(raw, dict):
+    """One encoding's `sort`, trusting the DTO to have already refused anything invalid.
+
+    `VisualContextPayload._value_free_spec` now constructs `EncodingSort` itself and lets its
+    `ValueError` become a 422 before this ever runs, so a payload that reaches `to_domain` has a
+    `sort` that is either absent (`raw is None`) or exactly the dict `EncodingSort` accepts. This
+    used to filter instead of trust -- catching that same `ValueError` and returning `None` -- so
+    a caller's `{"mode": "sideways"}` silently became "no sort" instead of a refusal. A
+    `ValueError` reaching here now is not a caller's mistake: it is the DTO's guard and the domain
+    rule it enforces coming apart, and it is left to propagate rather than caught and hidden.
+    """
+    if raw is None:
         return None
-    mode = raw.get("mode")
-    if mode not in {"input", "ascending", "descending"}:
-        return None
+    assert isinstance(raw, dict)
     field = raw.get("field")
-    try:
-        return EncodingSort(
-            cast(Literal["input", "ascending", "descending"], mode),
-            field if isinstance(field, str) else None,
-        )
-    except ValueError:
-        return None
+    return EncodingSort(cast(SortMode, raw["mode"]), field if isinstance(field, str) else None)
 
 
 def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext, ...]:
@@ -211,16 +214,19 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
         sort_field = sort_field_value if isinstance(sort_field_value, str) else None
         limit_value = raw.get("limit")
         limit = limit_value if isinstance(limit_value, int) else None
+        # `stack` and `sort` used to be filtered here -- an unrecognised value silently became
+        # `None` instead of being refused. `VisualContextPayload._value_free_spec` is the guard
+        # now (`stack in get_args(Stack)`, `sort in get_args(SortMode)`), so what reaches this
+        # point is already either absent or a member of the domain's own set; this only tells
+        # "absent" from "present" and casts, it does not filter.
+        raw_stack = raw.get("stack")
+        raw_sort = raw.get("sort")
         spec = ChartSpec(
             mark=mark_name,
             encodings=tuple(encodings),
             title=title,
-            stack=cast(Stack | None, raw.get("stack"))
-            if raw.get("stack") in get_args(Stack)
-            else None,
-            sort=cast(Literal["ascending", "descending", "input"] | None, raw.get("sort"))
-            if raw.get("sort") in {"ascending", "descending", "input"}
-            else None,
+            stack=cast(Stack, raw_stack) if raw_stack is not None else None,
+            sort=cast(SortMode, raw_sort) if raw_sort is not None else None,
             sort_field=sort_field,
             limit=limit,
         )

@@ -214,6 +214,97 @@ def test_the_wire_channel_whitelist_matches_the_domain_literal() -> None:
     assert payload.chart_id == "chart-1"
 
 
+def _visual_context_dict(
+    *,
+    stack: object = None,
+    sort: object = None,
+    sort_field: object = None,
+    y_sort: object = None,
+) -> dict[str, object]:
+    """A minimal, otherwise-valid `VisualContextPayload` body. Each of `stack`/`sort`/
+    `sort_field`/a `y`-channel `sort` is left off unless a test names it, so a test that sends
+    exactly one bad value proves `_value_free_spec` refused *that* value -- not some unrelated
+    shape mistake."""
+    encoding: dict[str, object] = {
+        "x": {"field": "value_minor", "type": "quantitative"},
+        "y": {"field": "dimension", "type": "nominal"},
+    }
+    if y_sort is not None:
+        encoding["y"] = {**encoding["y"], "sort": y_sort}  # type: ignore[dict-item]
+    spec: dict[str, object] = {"mark": {"type": "bar"}, "encoding": encoding}
+    if stack is not None:
+        spec["stack"] = stack
+    if sort is not None:
+        spec["sort"] = sort
+    if sort_field is not None:
+        spec["sort_field"] = sort_field
+    return {
+        "chart_id": "chart-1",
+        "spec": spec,
+        "profile": {
+            "fields": [
+                {"name": "value_minor", "type": "quantitative"},
+                {"name": "dimension", "type": "nominal"},
+            ],
+            "cardinality": 2,
+        },
+    }
+
+
+def test_an_encoding_sort_with_an_unsupported_mode_is_refused_at_the_dto() -> None:
+    """`conversation_mapper._encoding_sort_from_payload` used to catch `EncodingSort`'s own
+    `ValueError` and return `None`, so `{"sort": {"mode": "sideways"}}` silently became "no sort"
+    and the turn completed as a 200. The DTO is the guard now: it constructs `EncodingSort`
+    itself, right here, and lets that same `ValueError` become a 422."""
+    with pytest.raises(ValueError, match="sort mode"):
+        VisualContextPayload.model_validate(_visual_context_dict(y_sort={"mode": "sideways"}))
+
+
+def test_an_encoding_sort_of_input_with_a_field_is_refused_at_the_dto() -> None:
+    """`input` means "keep producer order" -- naming a field to sort by contradicts it."""
+    with pytest.raises(ValueError, match="input"):
+        VisualContextPayload.model_validate(
+            _visual_context_dict(y_sort={"mode": "input", "field": "value_minor"})
+        )
+
+
+def test_an_encoding_sort_field_that_is_not_an_identifier_is_refused_at_the_dto() -> None:
+    with pytest.raises(ValueError, match="identifier"):
+        VisualContextPayload.model_validate(
+            _visual_context_dict(y_sort={"mode": "descending", "field": "not an identifier"})
+        )
+
+
+def test_an_unsupported_stack_is_refused_at_the_dto() -> None:
+    """`_value_free_spec` checked the allowed key set, the mark, the channels and the encoding
+    count -- never the *value* of `stack`. `conversation_mapper.to_domain` silently turned an
+    unrecognised one into `None`, so `{"stack": "sideways"}` was a 200 that dropped the stack
+    instead of refusing it."""
+    with pytest.raises(ValueError, match="stack"):
+        VisualContextPayload.model_validate(_visual_context_dict(stack="sideways"))
+
+
+def test_an_unsupported_spec_level_sort_is_refused_at_the_dto() -> None:
+    with pytest.raises(ValueError, match="sort mode"):
+        VisualContextPayload.model_validate(_visual_context_dict(sort="sideways"))
+
+
+def test_a_non_identifier_sort_field_is_refused_at_the_dto() -> None:
+    with pytest.raises(ValueError, match="identifier"):
+        VisualContextPayload.model_validate(_visual_context_dict(sort_field="42abc"))
+
+
+def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
+    """The old-client case: a caller that has never heard of `stack`/`sort`/`sort_field`/a
+    per-encoding `sort` sends none of them, and the payload still validates -- absence is never
+    treated as an invalid value. `test_conversation_visual_context_round_trip_is_value_free` (in
+    `test_visualization_stage2_core.py`) carries this same case all the way through
+    `conversation_mapper.to_domain` and asserts the reconstructed spec's `stack`/`sort` are
+    `None`."""
+    payload = VisualContextPayload.model_validate(_visual_context_dict())
+    assert payload.chart_id == "chart-1"
+
+
 def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
     """One profile per turn, and the identity check is the whole point.
 
