@@ -385,8 +385,10 @@ class Settings(BaseSettings):
     visual_planner: VisualMode = "deterministic"
     # Spent before the floor answers, so it is added latency on every turn the model runs. Set from
     # the P95 of `latency_ms` in the evaluation, not chosen; generous here so shadow measures the
-    # model rather than the budget.
-    visual_planner_budget_seconds: float = 6.0
+    # model rather than the budget. `gt=0`: `VisualPlanningPolicy.__init__` refuses a non-positive
+    # budget with a bare `ValueError` and no field name, so an operator's `0` is caught here, at
+    # load, with a named validation error, rather than during `create_app()`.
+    visual_planner_budget_seconds: float = Field(default=6.0, gt=0)
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

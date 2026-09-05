@@ -54,7 +54,7 @@ class Step(StrEnum):
     `decisions_total{step}` a fixed-width thing a dashboard can enumerate.
 
     It also makes the list arguable. A seam earns a place here only because a defect has hidden in
-    it or plainly could; adding an eleventh should be a diff somebody has to justify, not a string
+    it or plainly could; adding a twelfth should be a diff somebody has to justify, not a string
     that appears one day in a panel nobody built.
     """
 
@@ -96,8 +96,8 @@ class Verdict(StrEnum):
     """Which way a decision went.
 
     Bounded for the same reason `Step` is: this is the second label on the headline counter. Five
-    words cover the ten seams because the seams all do one of five things — leave a value alone,
-    replace it, take the turn, refuse the turn, or fail to produce anything at all.
+    words cover the eleven seams because the seams all do one of five things — leave a value
+    alone, replace it, take the turn, refuse the turn, or fail to produce anything at all.
     """
 
     AGREED = "agreed"

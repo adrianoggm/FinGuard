@@ -520,7 +520,7 @@ def test_the_record_is_reached_by_reference_not_by_reading_the_variable() -> Non
     assert len(held.sealed().decisions) == 1
 
 
-# --- the ten seams fit ------------------------------------------------------------------------
+# --- the eleven seams fit ---------------------------------------------------------------------
 
 
 def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
