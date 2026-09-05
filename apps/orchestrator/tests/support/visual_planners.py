@@ -14,6 +14,11 @@ from finguard_orchestrator.domain.models.visual_plan import (
     ProposedSort,
     VisualPlanDraft,
 )
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 
 # Shared by the policy and seam tests, so a change to "what a breakdown looks like" is one edit.
@@ -31,6 +36,22 @@ VERTICAL_DRAFT = VisualPlanDraft(
         ProposedEncoding("y", "value_minor", "quantitative"),
     ),
 )
+
+
+def default_policy() -> VisualPlanningPolicy:
+    """The deterministic policy a handler builds when nobody hands it one.
+
+    Written out identically in `test_visualization_stage1.py`, `test_visualization_stage2_core.py`
+    and `test_visual_decision_seam.py` before this move; one home for it here, exported (no leading
+    underscore) because all three import it.
+    """
+    return VisualPlanningPolicy(
+        model=None,
+        fallback=DeterministicVisualPlanner(),
+        verifier=verify,
+        mode="deterministic",
+        budget_seconds=1.0,
+    )
 
 
 @dataclass

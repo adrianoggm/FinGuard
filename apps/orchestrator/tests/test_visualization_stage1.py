@@ -3,6 +3,7 @@ from dataclasses import asdict, replace
 from typing import get_args
 
 import pytest
+from support.visual_planners import default_policy
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -25,11 +26,6 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
-from finguard_orchestrator.domain.services.deterministic_visual_planner import (
-    DeterministicVisualPlanner,
-)
-from finguard_orchestrator.domain.services.visual_plan_verifier import verify
-from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -124,17 +120,6 @@ def test_deterministic_defaults_distinguish_time_cumulative_and_categories() -> 
     assert categorical.encodings[0].channel == "y"
 
 
-def _default_policy() -> VisualPlanningPolicy:
-    """The deterministic policy a handler builds when nobody hands it one."""
-    return VisualPlanningPolicy(
-        model=None,
-        fallback=DeterministicVisualPlanner(),
-        verifier=verify,
-        mode="deterministic",
-        budget_seconds=1.0,
-    )
-
-
 async def _result(
     rows: tuple[VisualRow, ...] | None,
     *,
@@ -166,7 +151,7 @@ async def _result(
             explicit_visualization=explicit,
             visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
         ),
-        _default_policy(),
+        default_policy(),
         DEFAULT_PRESENTATION,
         "",
     )
