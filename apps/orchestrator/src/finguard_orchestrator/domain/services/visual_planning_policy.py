@@ -55,6 +55,10 @@ class VisualPlanningPolicy:
     ) -> VisualDecision | None:
         floor = None
         if self._mode != "promoted":
+            # `promoted` trades the floor's own decline (a one-row or measure-less profile) for
+            # not paying for the baseline (R2): the eligibility guard that would normally refuse
+            # such a profile runs only in the other three modes here, and is the application's
+            # precondition of entering the policy at all, not this method's job to re-derive.
             floor = self._fallback.plan(profile, presentation)
             if floor is None:
                 return None  # the floor declines (one row, no measure): nothing to fall back to

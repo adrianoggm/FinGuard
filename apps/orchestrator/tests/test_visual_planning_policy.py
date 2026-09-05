@@ -15,8 +15,8 @@ from support.visual_planners import (
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualDataset, VisualRow
+from finguard_orchestrator.domain.models.visual_plan import FallbackReason, VisualMode, canonical
 from finguard_orchestrator.domain.models.visual_plan import ProposedEncoding as E
-from finguard_orchestrator.domain.models.visual_plan import VisualMode, canonical
 from finguard_orchestrator.domain.models.visual_plan import VisualPlanDraft as D
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
@@ -26,12 +26,28 @@ from finguard_orchestrator.domain.services.visual_planning_policy import VisualP
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 
 SIDEWAYS = D("sideways", (E("x", "dimension", "nominal"),))
+# The three modes that attempt the model at all -- `deterministic` never reaches the try block,
+# so a `fallback_reason` assertion against one of the four outcomes would never apply to it.
+MODES_THAT_ATTEMPT_THE_MODEL = tuple(
+    mode for mode in get_args(VisualMode) if mode != "deterministic"
+)
 
 
-def policy(model, mode, budget=1.0):
+class _CountingFloor(DeterministicVisualPlanner):
+    """Proves R2's eager/lazy split by counting, not by inferring it from a side effect."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def plan(self, profile, presentation):
+        self.calls += 1
+        return super().plan(profile, presentation)
+
+
+def policy(model, mode, budget=1.0, fallback=None):
     return VisualPlanningPolicy(
         model=model,
-        fallback=DeterministicVisualPlanner(),
+        fallback=fallback if fallback is not None else DeterministicVisualPlanner(),
         verifier=verify,
         mode=mode,
         budget_seconds=budget,
@@ -62,6 +78,17 @@ async def test_deterministic_never_runs_the_model() -> None:
         and decision.proposed is False
         and decision.accepted is False
     )
+    assert canonical(decision.spec) == canonical(
+        DeterministicVisualPlanner().plan(PROFILE, DEFAULT_PRESENTATION)
+    )
+    # This is the row where every optional field stays at its default: nothing was attempted.
+    assert (
+        decision.valid,
+        decision.latency_ms,
+        decision.proposed_spec,
+        decision.changed_from_baseline,
+        decision.fallback_reason,
+    ) == (False, None, None, None, None)
 
 
 @pytest.mark.parametrize("mode", get_args(VisualMode))
@@ -90,11 +117,18 @@ async def test_shadow_runs_both_and_shows_the_floor() -> None:
 
 
 async def test_hybrid_shows_a_valid_proposal() -> None:
-    decision = await policy(ScriptedVisualPlanner(VERTICAL), "hybrid").decide(
+    floor = _CountingFloor()
+    decision = await policy(ScriptedVisualPlanner(VERTICAL), "hybrid", fallback=floor).decide(
         "q", PROFILE, DEFAULT_PRESENTATION
     )
     assert decision.accepted and decision.source == "llm"
     assert canonical(decision.spec) == canonical(verify(VERTICAL, PROFILE))
+    # R2's eager half: `hybrid` always computes the floor, even when it accepts the model's own
+    # chart -- the baseline number Section G measures must exist on every accepted turn too.
+    assert decision.changed_from_baseline is True
+    assert decision.valid is True
+    assert canonical(decision.proposed_spec) == canonical(decision.spec)
+    assert floor.calls == 1
 
 
 async def test_hybrid_falls_back_on_a_rejected_proposal_and_names_the_rule() -> None:
@@ -128,6 +162,7 @@ async def test_a_providers_own_timeout_is_told_apart_from_the_budget() -> None:
     assert decision.proposed is True
 
 
+@pytest.mark.parametrize("mode", MODES_THAT_ATTEMPT_THE_MODEL)
 @pytest.mark.parametrize(
     ("outcome", "reason"),
     [
@@ -136,25 +171,80 @@ async def test_a_providers_own_timeout_is_told_apart_from_the_budget() -> None:
         (0.5, "timeout"),
     ],
 )
-async def test_the_three_failures_are_told_apart(outcome, reason) -> None:
-    decision = await policy(ScriptedVisualPlanner(outcome), "hybrid", budget=0.05).decide(
+async def test_the_three_failures_are_told_apart(outcome, reason, mode) -> None:
+    """Nine rows: each of the three causes, in each of the three modes that attempt the model at
+    all. `shadow` and `promoted` were previously untested here -- only `hybrid` was -- so
+    `promoted`'s lazy floor recovery (the only reason that code path exists) had zero coverage."""
+    decision = await policy(ScriptedVisualPlanner(outcome), mode, budget=0.05).decide(
         "q", PROFILE, DEFAULT_PRESENTATION
     )
+    floor = DeterministicVisualPlanner().plan(PROFILE, DEFAULT_PRESENTATION)
     assert decision.source == "deterministic" and decision.fallback_reason == reason
     # A timeout never learns whether the provider was reached; the other two did reach it.
     assert decision.proposed is (reason != "timeout")
+    assert decision.proposed_spec is None
+    assert decision.valid is False
+    assert decision.changed_from_baseline is None
+    assert canonical(decision.spec) == canonical(floor)
+
+
+async def test_every_fallback_reason_is_reachable() -> None:
+    """One turn per `FallbackReason` value, collected into a set and checked against `get_args` --
+    a fifth reason string invented elsewhere, or one of these four silently dropped, shows up as a
+    set mismatch instead of nothing at all."""
+    outcomes = (None, ProviderFailedError("test-model", "down"), 0.5, SIDEWAYS)
+    reasons = set()
+    for outcome in outcomes:
+        decision = await policy(ScriptedVisualPlanner(outcome), "hybrid", budget=0.05).decide(
+            "q", PROFILE, DEFAULT_PRESENTATION
+        )
+        reasons.add(decision.fallback_reason)
+    assert reasons == set(get_args(FallbackReason))
 
 
 async def test_promoted_does_not_pay_for_the_baseline() -> None:
-    decision = await policy(ScriptedVisualPlanner(VERTICAL), "promoted").decide(
+    """The direct proof of R2's lazy half: a `promoted` branch that computed the floor and then
+    discarded the comparison would still pass the old `changed_from_baseline is None` assertion --
+    only counting the floor's own calls proves the laziness rather than a consequence of it."""
+    floor = _CountingFloor()
+    decision = await policy(ScriptedVisualPlanner(VERTICAL), "promoted", fallback=floor).decide(
         "q", PROFILE, DEFAULT_PRESENTATION
     )
     assert decision.accepted and decision.changed_from_baseline is None
+    assert floor.calls == 0
+
+
+async def test_promoted_pays_for_the_baseline_when_the_model_fails() -> None:
+    """R2's other half: `promoted` computes the floor exactly when it needs one to fall back to,
+    never eagerly."""
+    floor = _CountingFloor()
+    decision = await policy(ScriptedVisualPlanner(None), "promoted", fallback=floor).decide(
+        "q", PROFILE, DEFAULT_PRESENTATION
+    )
+    assert decision.source == "deterministic" and decision.fallback_reason == "abstention"
+    assert floor.calls == 1
+
+
+async def test_promoted_trusts_the_eligibility_guard() -> None:
+    """`promoted` never computes the floor unless the model fails (R2), so the one-row decline
+    the floor would otherwise offer never runs -- a profile the floor itself refuses still gets
+    the model's own chart in this one mode. The eligibility guard is the application's job
+    (Section E states it as a precondition of entering the policy at all); this pins the exception
+    rather than leaving it silent, per `test_a_single_row_never_reaches_the_policy` below."""
+    one = visual_profile_of(
+        VisualDataset(metric="SUM", rows=(VisualRow("A", 1),)), total_minor=None, group_by="NONE"
+    )
+    decision = await policy(ScriptedVisualPlanner(VERTICAL), "promoted").decide(
+        "q", one, DEFAULT_PRESENTATION
+    )
+    assert decision.source == "llm"
 
 
 async def test_a_single_row_never_reaches_the_policy() -> None:
-    """The eligibility guard lives in the application; the policy still refuses to invent a chart
-    the floor would not draw, and returns None like the floor does."""
+    """The eligibility guard lives in the application; in `deterministic`, `shadow` and `hybrid` --
+    the three modes that compute the floor -- the policy still refuses to invent a chart the floor
+    would not draw, and returns None like the floor does. `promoted` does not: see
+    `test_promoted_trusts_the_eligibility_guard` above."""
     one = visual_profile_of(
         VisualDataset(metric="SUM", rows=(VisualRow("A", 1),)), total_minor=None, group_by="NONE"
     )
