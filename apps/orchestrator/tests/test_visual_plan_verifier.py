@@ -197,6 +197,16 @@ def test_a_type_error_shaped_draft_becomes_structure_not_an_exception() -> None:
     assert rule_of(verify(ranked_bar(limit="5"), breakdown())) == "structure"
 
 
+def test_an_unrecognised_stack_or_sort_is_refused() -> None:
+    """Fix round 2, item 7. `ChartSpec.__post_init__` checked `mark` against its literal values
+    but never `stack` against `get_args(Stack)` or `sort` against `get_args(SortMode)`, so an
+    unrecognised value passed `_structure` and reached the wire verbatim -- the DTO refuses this
+    on the wire path (`stack in get_args(Stack)`), but the model-proposed path relied on a check
+    at `ChartSpec` that was not there."""
+    assert rule_of(verify(ranked_bar(stack="upside_down"), breakdown())) == "structure"
+    assert rule_of(verify(ranked_bar(sort="sideways"), breakdown())) == "structure"
+
+
 def test_an_absent_field_and_a_wrong_type_are_refused() -> None:
     assert (
         rule_of(
