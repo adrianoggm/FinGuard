@@ -494,12 +494,13 @@ by re-running the model, which is a different run. Neither spec carries a value:
 mark, channels, fields, types, per-encoding order, stack and limit, and drops titles and encoding
 order.
 
-In the code that landed (Task 5), the seven fields and both canonical specs live on the in-process
-`VisualDecision` value — which is what `scripts/evaluate_visual.py` reads — and in one structured
-log line, `visual_planner.decision`, correlated to the turn by request and trace id. The `Decision`
-record itself carries the fixed four-slot summary (`field`, `was`, `now`, `detail`) that every seam
-records, because its shape is deliberately not widened per seam; the OTel span for `visual_planner`
-therefore carries the summary, not the seven fields.
+**In the code that landed (Task 5), these live on one value and one log line.** The seven fields and
+both canonical specs are carried on the in-process `VisualDecision` value — which is what
+`scripts/evaluate_visual.py` reads — and on one structured log line, `visual_planner.decision`,
+correlated to the turn by request and trace id. The `Decision` record itself carries the fixed
+four-slot summary (`field`, `was`, `now`, `detail`) that every seam records, because its shape is
+deliberately not widened per seam; the OTel span for `visual_planner` therefore carries the summary,
+not the seven fields.
 
 **`changed_from_baseline` compares canonicalised specs.** Reordering encodings or changing a title
 is not a different visual decision, and counting it as one would inflate the number that is supposed
