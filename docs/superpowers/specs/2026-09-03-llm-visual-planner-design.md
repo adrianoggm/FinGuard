@@ -276,6 +276,7 @@ rule, and these are read off the families the mapper already emits:
 | `line`, `area` | a **temporal** dimension on one axis and the measure on the other |
 | `point` (RECURRENCE) | `occurred_at` temporal on `x`, the nominal dimension on `y`, **the amount only in `tooltip`** |
 | `donut` | measure in `theta`, dimension in `color`, and **no axes and no offsets at all** |
+| normalised `bar` (RATIO_SHARE) | `stack: "normalize"`, the measure on **one** axis, the nominal dimension in `color`, **no opposite axis and no offsets** — one composed bar whose parts are the dimension's values. An earlier version of this table omitted the row, and a verifier faithful to it refused the floor's own RATIO_SHARE chart, which would have made that family's baseline unmeasurable |
 | grouped comparison | series in `color` **and** the matching offset, with the measure declaring `stack: null` |
 
 **The RECURRENCE row is why "every chart needs a measure on an axis" would be wrong.** That family
@@ -285,7 +286,7 @@ same trap as "categorical sorts by value" against FREQUENCY.
 
 ### The type the model proposes must be the type the profile holds
 
-`valid_for()` checks that a charted field **exists**; it does not check that it kept its meaning. So
+`valid_for()` checks that a charted field **exists**; it does not check that it kept its meaning. **A sort field is a field**: `sort_field` and every encoding's `sort.field` must exist in the profile too — a sort naming an absent field reaches the presenter as a column the data does not have, and `merge_encoding_patch` already refuses exactly that on the user-patch path. So
 `{"field": "value_minor", "type": "nominal"}` or `{"field": "dimension", "type": "quantitative"}`
 would pass, compile, and draw a chart that is semantically false. The verifier requires equality:
 
@@ -368,7 +369,7 @@ The rule is stated **per field**, because the dimension and the series can need 
 | `MEASURE_DESC` | a breakdown or a ranking — magnitude is the point | `sort: "descending"` with `sort_field` naming the `measure` field |
 | `INPUT` | a declared semantic order: weekdays, months, deliberate bands | `sort: "input"`. The model **may not** substitute alphabetical or quantitative order |
 | `TEMPORAL` | dates and periods | the temporal field orders it; an explicit `sort` on another field is refused |
-| `NONE` | ordering the axis does not apply — a donut, or the `point` family | no `sort` is required, and one that contradicts the mark is refused |
+| `NONE` | ordering the axis does not apply — a donut, or the `point` family | no `sort` is required, and one that contradicts the mark is refused. **The RECURRENCE dimension is `NONE`**: `visual_profile_of` derives it so (an earlier version gave it `INPUT`, which would have forced a `sort: "input"` the floor never emitted), and the floor's point chart carries no sort |
 
 `INPUT` is the row that earns the whole enum: FREQUENCY is nominal with `sort="input"` so that
 lunes precedes martes, and a blanket "categorical sorts by value" would have destroyed it.
