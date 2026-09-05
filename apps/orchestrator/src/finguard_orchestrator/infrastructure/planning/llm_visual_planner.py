@@ -37,7 +37,6 @@ class LlmVisualPlanner:
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
         self._schema = visual_schema()
-        self.last_prompt: str | None = None
 
     async def plan(
         self,
@@ -48,7 +47,6 @@ class LlmVisualPlanner:
         budget_seconds: float,
     ) -> VisualPlanDraft | None:
         prompt = build_visual_prompt(question, profile, presentation)
-        self.last_prompt = prompt
         answer = await self._complete(prompt)
         parsed = _parse(answer)
         if parsed is None:
