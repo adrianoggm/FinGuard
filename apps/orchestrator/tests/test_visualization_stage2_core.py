@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import pytest
+from support.visual_planners import default_policy
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -28,8 +29,6 @@ from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefiniti
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
-from finguard_orchestrator.domain.services.visual_plan_verifier import verify
-from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -52,17 +51,6 @@ from finguard_orchestrator.infrastructure.visualization.interpreter import inter
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
 
 
-def _default_policy() -> VisualPlanningPolicy:
-    """The deterministic policy a handler builds when nobody hands it one."""
-    return VisualPlanningPolicy(
-        model=None,
-        fallback=DeterministicVisualPlanner(),
-        verifier=verify,
-        mode="deterministic",
-        budget_seconds=1.0,
-    )
-
-
 async def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
     """The Result as the handler hands it to the mapper.
 
@@ -70,7 +58,7 @@ async def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionRe
     Result carries it. This is the handler's own line, called with the handler's own arguments, so
     a Result built here is the one a live turn produces.
     """
-    return await _decided_visual(result, _default_policy(), DEFAULT_PRESENTATION, "")
+    return await _decided_visual(result, default_policy(), DEFAULT_PRESENTATION, "")
 
 
 def _base() -> tuple[ChartSpec, VisualProfile]:
