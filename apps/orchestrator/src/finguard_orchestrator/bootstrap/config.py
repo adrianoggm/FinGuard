@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from finguard_orchestrator.domain.models.visual_plan import VisualMode
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.guard_policy import GuardPolicy
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -376,6 +377,16 @@ class Settings(BaseSettings):
     # read is the operator's call rather than a value shipped in a settings class; and on today's
     # numbers there is no case for flipping it.
     turn_interpreter: Literal["router", "shadow", "hybrid", "model"] = "router"
+
+    # The visual planner's ladder, the same four rungs the turn interpreter climbs. `shadow` runs
+    # the model beside the floor and shows the floor, which is how the baseline comparison is
+    # collected before anything is risked. Promotion is a measured decision (docs/next.md), not a
+    # default: this stays `deterministic` until three runs of `just evaluate-visual` say otherwise.
+    visual_planner: VisualMode = "deterministic"
+    # Spent before the floor answers, so it is added latency on every turn the model runs. Set from
+    # the P95 of `latency_ms` in the evaluation, not chosen; generous here so shadow measures the
+    # model rather than the budget.
+    visual_planner_budget_seconds: float = 6.0
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a
