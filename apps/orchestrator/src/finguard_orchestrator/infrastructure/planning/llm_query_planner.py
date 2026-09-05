@@ -61,7 +61,7 @@ from finguard_orchestrator.observability import Step, Verdict, record
 
 logger = logging.getLogger(__name__)
 
-_STRUCTURE_REPAIR: Final = (
+STRUCTURE_REPAIR: Final = (
     "\n\nYour previous response did not satisfy the required JSON schema. "
     "Return only one JSON object that matches the supplied schema exactly."
 )
@@ -195,7 +195,7 @@ class LlmQueryPlanner:
         # exact schema are sufficient, and the second result is still validated without coercion.
         logger.warning("planner.invalid_structure retrying=true")
         try:
-            repaired = await self._complete(prompt + _STRUCTURE_REPAIR)
+            repaired = await self._complete(prompt + STRUCTURE_REPAIR)
         except ProviderFailedError as exc:
             return PlanningResult.provider_error(str(exc)), True
         return (
