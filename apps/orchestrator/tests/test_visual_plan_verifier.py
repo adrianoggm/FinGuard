@@ -436,6 +436,25 @@ def test_limit_refuses_a_series_and_an_unranked_dimension() -> None:
     assert rule_of(verify(not_measure_desc, frequency())) == "limit"
 
 
+@pytest.mark.parametrize(("plan_limited", "expected_rule"), [(False, None), (True, "limit")])
+def test_limit_refuses_a_ranking_the_plan_already_limited(
+    plan_limited: bool, expected_rule: str | None
+) -> None:
+    """Fix round 1, finding 5b: the model cannot be trusted to obey the prompt's "do not limit
+    again" prose on its own -- a domain rule can. Same draft both times; only `plan_limited`
+    changes, so this isolates the one new branch from the family checks above it."""
+    profile = visual_profile_of(
+        VisualDataset(metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))),
+        total_minor=None,
+        group_by="NONE",
+        plan_limited=plan_limited,
+    )
+    result = verify(ranked_bar(limit=5), profile)
+    assert rule_of(result) == expected_rule
+    if expected_rule is None:
+        assert isinstance(result, ChartSpec)
+
+
 def test_order_follows_the_profile_not_the_type() -> None:
     by_value = D(
         "bar",

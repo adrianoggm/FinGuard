@@ -260,6 +260,13 @@ def _grouped(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
 def _limit(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
     if spec.limit is None:
         return None
+    if profile.plan_limited:
+        # The model cannot be trusted to obey the prompt's "never limit again" prose; a domain
+        # rule can. Without this, a ranking the plan already cut to its own top N gets cut a
+        # second time, answering a question about 25 with 8 and signing the 8 into the record.
+        return Rejection(
+            "limit", "the plan already limited these rows; a second cut would double-truncate"
+        )
     dimension = next((f for f in profile.role("dimension") if f.type == "nominal"), None)
     wrong_family = (
         spec.mark != "bar"
