@@ -486,6 +486,13 @@ It belongs to the evaluation, computed afterwards:
 suitable = compare(decision, annotated_expectation)
 ```
 
+**Plus the canonicalised proposed and shown specs**, hung off the same record. Without them
+`changed_from_baseline = true` says that something changed and not what it changed *to*, so
+suitability could not be annotated from the record afterwards — it would have to be reconstructed
+by re-running the model, which is a different run. Neither spec carries a value: `canonical()` keeps
+mark, channels, fields, types, per-encoding order, stack and limit, and drops titles and encoding
+order.
+
 **`changed_from_baseline` compares canonicalised specs.** Reordering encodings or changing a title
 is not a different visual decision, and counting it as one would inflate the number that is supposed
 to prove the planner adds something.
@@ -507,6 +514,9 @@ Three numbers, and none of them is "it worked":
 - **Suitability** — whether the chosen chart is the one a person would have chosen. Needs annotated
   judgement; over the robustness corpus's 56 bases that is an afternoon, not a month.
 - **Latency and fallback reason**, by the four causes.
+- **A result that must carry no chart is a case.** A single figure never enters the policy; the
+  evaluation asserts that it stayed out, because a planner that decorates a KPI fails quietly and
+  no validity number would show it.
 
 **The 416 rewordings are a free visual-robustness test, grouped by expected equivalence.** Not every
 paraphrase should produce the same chart: some add an explicit visual instruction and *should* differ.
