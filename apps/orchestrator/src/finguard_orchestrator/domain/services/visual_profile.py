@@ -47,12 +47,17 @@ def _dimension_order(metric: str, temporal: bool) -> FieldOrder:
 
     FREQUENCY is the row that earns this function: its dimension is nominal weekday names in the
     order the producer built them, and sorting those by magnitude destroys the only thing the
-    chart is for. RECURRENCE likewise names streams rather than ranking them.
+    chart is for. RECURRENCE is `NONE`, not `INPUT`: its dimension is the `y` axis of a `point`
+    chart, and Section D puts the whole `point` family under `NONE` -- ordering the axis does not
+    apply. An earlier version of this function gave it `INPUT`, which would have forced a
+    `sort: "input"` the floor never emits.
     """
     if temporal:
         return "TEMPORAL"
-    if metric in {"FREQUENCY", "RECURRENCE"}:
+    if metric == "FREQUENCY":
         return "INPUT"
+    if metric == "RECURRENCE":
+        return "NONE"
     return "MEASURE_DESC"
 
 

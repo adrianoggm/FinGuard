@@ -1,5 +1,7 @@
 """One test per rule, plus the one that matters most: the floor's own chart verifies."""
 
+import pytest
+
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartSpec,
@@ -66,6 +68,66 @@ def share():
     )
 
 
+def frequency():
+    return visual_profile_of(
+        VisualDataset(metric="FREQUENCY", rows=(VisualRow("lunes", 4), VisualRow("martes", 9))),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
+def recurrence_with_series():
+    """Mirrors `ask_financial_question.py`'s own construction: one row per recurring charge,
+    carrying the counterparty as `dimension`, the cadence as `series`, and the date it last
+    landed as `occurred_at`."""
+    return visual_profile_of(
+        VisualDataset(
+            metric="RECURRENCE",
+            rows=(
+                VisualRow(
+                    dimension="Netflix",
+                    value_minor=1_299,
+                    series="MENSUAL",
+                    occurred_at="2026-07-03",
+                ),
+                VisualRow(
+                    dimension="Spotify",
+                    value_minor=1_099,
+                    series="MENSUAL",
+                    occurred_at="2026-07-05",
+                ),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
+def temporal_comparison():
+    """A comparison over calendar months: `profile.temporal()` and `profile.comparison` both
+    hold at once, the combination `_grouped` must not mistake for a categorical one."""
+    return visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow("2026-01", 100, series="A"),
+                VisualRow("2026-02", 200, series="A"),
+            ),
+        ),
+        total_minor=None,
+        group_by="MONTH",
+    )
+
+
+def twelve_row_breakdown():
+    """More rows than `ROWS_THAT_FIT`, so the floor's own chart carries a `limit`."""
+    return visual_profile_of(
+        VisualDataset(metric="SUM", rows=tuple(VisualRow(f"CAT_{i}", 100 + i) for i in range(12))),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
 def ranked_bar(**overrides):
     fields = dict(
         mark="bar",
@@ -82,9 +144,27 @@ def rule_of(result) -> str | None:
     return result.rule if isinstance(result, Rejection) else None
 
 
-def test_the_floors_own_chart_verifies_as_itself() -> None:
-    """If the verifier refused what the floor draws, the baseline would be uncomparable."""
-    profile = breakdown()
+_FLOOR_FAMILIES = {
+    "breakdown": breakdown,
+    "temporal_line": monthly,
+    "frequency": frequency,
+    "ratio_share": share,
+    "recurrence_with_series": recurrence_with_series,
+    "grouped_comparison": comparison,
+    "temporal_comparison": temporal_comparison,
+    "limited_breakdown": twelve_row_breakdown,
+}
+
+
+@pytest.mark.parametrize("build_profile", _FLOOR_FAMILIES.values(), ids=_FLOOR_FAMILIES.keys())
+def test_the_floors_own_chart_verifies_as_itself(build_profile) -> None:
+    """If the verifier refused what the floor draws, the baseline would be uncomparable.
+
+    Every family the floor can emit, not just the plain breakdown a first pass tested: the
+    normalised RATIO_SHARE bar, RECURRENCE's point chart with a series, a categorical grouped
+    comparison, a temporal one, and a breakdown large enough to carry the floor's own `limit`.
+    """
+    profile = build_profile()
     floor = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
     assert floor is not None
     draft = D(
@@ -109,6 +189,12 @@ def test_structure_is_the_first_rule() -> None:
         rule_of(verify(ranked_bar(encodings=(E("zOffset", "dimension", "nominal"),)), breakdown()))
         == "structure"
     )
+
+
+def test_a_type_error_shaped_draft_becomes_structure_not_an_exception() -> None:
+    """Catching is not repairing: `field=None`, `limit="5"` and `encodings=None` raise
+    `TypeError` rather than `ValueError`, and used to escape `verify` as exceptions."""
+    assert rule_of(verify(ranked_bar(limit="5"), breakdown())) == "structure"
 
 
 def test_an_absent_field_and_a_wrong_type_are_refused() -> None:
@@ -178,6 +264,36 @@ def test_a_bar_needs_opposite_axes_and_a_line_needs_time() -> None:
     assert isinstance(verify(line_over_months, monthly()), ChartSpec)
 
 
+def test_point_refuses_the_amount_off_tooltip_and_a_non_nominal_y() -> None:
+    accepted = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+    )
+    assert isinstance(verify(accepted, recurrence_with_series()), ChartSpec)
+    amount_in_theta = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal"),
+            E("theta", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(amount_in_theta, recurrence_with_series())) == "mark"
+    non_nominal_y = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "occurred_at", "temporal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(non_nominal_y, recurrence_with_series())) == "mark"
+
+
 def test_a_donut_needs_the_three_claims() -> None:
     # RATIO_SHARE derives MEASURE_DESC for its dimension, so the legend carries the ranking too.
     donut = D(
@@ -189,6 +305,32 @@ def test_a_donut_needs_the_three_claims() -> None:
     )
     assert isinstance(verify(donut, share()), ChartSpec)
     assert rule_of(verify(donut, breakdown())) == "donut_claims"  # no verified total
+
+
+def _normalised_bar(**overrides):
+    fields = dict(
+        mark="bar",
+        encodings=(E("x", "value_minor", "quantitative"), E("color", "dimension", "nominal")),
+        stack="normalize",
+    )
+    fields.update(overrides)
+    return D(**fields)
+
+
+def test_a_normalised_bar_claims_the_same_thing_a_donut_does() -> None:
+    """Fix round 2, item 3, paired with item 2: both are "the normalised bar is a composition".
+    `mark != "donut"` alone let a breakdown with `verified_total=False` -- refused as a donut for
+    exactly that -- draw as a normalised bar instead, and a comparison's series are not disjoint
+    parts of one whole (`mutually_exclusive=False`) yet still composed into one 100% bar."""
+    assert rule_of(verify(_normalised_bar(), breakdown())) == "donut_claims"  # no verified total
+    assert rule_of(verify(_normalised_bar(), comparison())) == "donut_claims"  # not exclusive
+
+
+def test_limit_refuses_a_normalised_bar() -> None:
+    """Fix round 2, item 2, paired with item 3. A normalised bar is a `bar`, so `mark != "bar"`
+    alone let `limit` through onto it too -- the presenter's rank-and-filter transform over a
+    composition, exactly the row Section D's limit table names."""
+    assert rule_of(verify(_normalised_bar(limit=3), share())) == "limit"
 
 
 def test_a_grouped_comparison_needs_offset_and_disabled_stack() -> None:
@@ -214,6 +356,23 @@ def test_a_grouped_comparison_needs_offset_and_disabled_stack() -> None:
     assert rule_of(verify(wrong_axis, comparison())) == "grouped"
 
 
+def test_two_offsets_are_refused() -> None:
+    """Only `offsets[0]` used to be compared against `color`, so a draft carrying both
+    `xOffset` and `yOffset` slipped through with the second one unchecked."""
+    both_offsets = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+            E("color", "series", "nominal", S("input")),
+            E("xOffset", "series", "nominal", S("input")),
+            E("yOffset", "series", "nominal", S("input")),
+        ),
+        stack="disabled",
+    )
+    assert rule_of(verify(both_offsets, comparison())) == "grouped"
+
+
 def test_limit_belongs_to_one_family() -> None:
     assert isinstance(verify(ranked_bar(limit=5), breakdown()), ChartSpec)
     assert (
@@ -231,12 +390,30 @@ def test_limit_belongs_to_one_family() -> None:
     )
 
 
-def test_order_follows_the_profile_not_the_type() -> None:
-    frequency = visual_profile_of(
-        VisualDataset(metric="FREQUENCY", rows=(VisualRow("lunes", 4), VisualRow("martes", 9))),
-        total_minor=None,
-        group_by="NONE",
+def test_limit_refuses_a_series_and_an_unranked_dimension() -> None:
+    """`test_limit_belongs_to_one_family` only ever exercised `mark != "bar"`; the other two ways
+    to fail "categorical bar, single series, MEASURE_DESC only" want their own drafts."""
+    with_series = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+            E("color", "series", "nominal", S("input")),
+            E("yOffset", "series", "nominal", S("input")),
+        ),
+        stack="disabled",
+        limit=5,
     )
+    assert rule_of(verify(with_series, comparison())) == "limit"
+    not_measure_desc = D(
+        "bar",
+        (E("x", "dimension", "nominal", S("input")), E("y", "value_minor", "quantitative")),
+        limit=5,
+    )
+    assert rule_of(verify(not_measure_desc, frequency())) == "limit"
+
+
+def test_order_follows_the_profile_not_the_type() -> None:
     by_value = D(
         "bar",
         (
@@ -244,10 +421,134 @@ def test_order_follows_the_profile_not_the_type() -> None:
             E("y", "value_minor", "quantitative"),
         ),
     )
-    assert rule_of(verify(by_value, frequency)) == "order"
+    assert rule_of(verify(by_value, frequency())) == "order"
     in_order = D(
         "bar", (E("x", "dimension", "nominal", S("input")), E("y", "value_minor", "quantitative"))
     )
-    assert isinstance(verify(in_order, frequency), ChartSpec)
+    assert isinstance(verify(in_order, frequency()), ChartSpec)
     unranked = D("bar", (E("y", "dimension", "nominal"), E("x", "value_minor", "quantitative")))
     assert rule_of(verify(unranked, breakdown())) == "order"  # MEASURE_DESC wants the ranking
+
+
+def test_measure_desc_off_axis_may_omit_its_sort_but_not_contradict_it() -> None:
+    """Fix round 2, item 4. `if held.order == "MEASURE_DESC" and is_axis_dimension:` headed an
+    `elif` chain, so an off-axis field fell out with no check at all when it had a sort of its
+    own: a legend ranked ascending -- backwards from what `MEASURE_DESC` means -- was
+    unrefusable, on a normalised bar and on a donut alike."""
+    backwards_bar = _normalised_bar(
+        encodings=(
+            E("x", "value_minor", "quantitative"),
+            E("color", "dimension", "nominal", S("ascending", "value_minor")),
+        )
+    )
+    assert rule_of(verify(backwards_bar, share())) == "order"
+    backwards_donut = D(
+        "donut",
+        (
+            E("theta", "value_minor", "quantitative"),
+            E("color", "dimension", "nominal", S("ascending", "value_minor")),
+        ),
+    )
+    assert rule_of(verify(backwards_donut, share())) == "order"
+
+
+def test_frequency_with_no_sort_at_all_is_refused() -> None:
+    """Fix round 1, I3: `INPUT` requires an explicit `input` sort, or Vega-Lite alphabetises the
+    weekday axis -- domingo, jueves, lunes -- destroying the only thing the chart is for."""
+    no_sort = D("bar", (E("x", "dimension", "nominal"), E("y", "value_minor", "quantitative")))
+    assert rule_of(verify(no_sort, frequency())) == "order"
+
+
+def test_a_temporal_axis_refuses_a_chart_wide_sort_by_another_field() -> None:
+    """Fix round 1, I3: a monthly line ranked chart-wide by magnitude is the same "an explicit
+    sort on another field is refused" the per-encoding branch already enforces, read off the
+    spec-wide property instead of the encoding's own."""
+    ranked_wide = D(
+        "line",
+        (E("x", "dimension", "temporal"), E("y", "value_minor", "quantitative")),
+        sort="descending",
+        sort_field="value_minor",
+    )
+    assert rule_of(verify(ranked_wide, monthly())) == "order"
+
+
+def test_a_chart_wide_sort_targets_the_presenters_axis_pick_not_sort_fields_name() -> None:
+    """Fix round 2, item 1. `present()` (`vega_lite.py`) picks the first nominal/temporal x/y
+    encoding and writes the chart-wide sort onto it regardless of what `sort_field` names --
+    `sort_field` is the key to sort *by*, never the target. Comparing `sort_field` against
+    `item.field` (fix round 1's reading) let a chart-wide sort naming a real, different field
+    (`occurred_at`) read as not targeting `dimension` at all, though the presenter lands it there:
+    `dimension` is listed first and is nominal, so it is the presenter's pick, and its `NONE`
+    order refuses being targeted regardless of what the sort ranks by."""
+    reproducer = D(
+        "point",
+        (
+            E("y", "dimension", "nominal"),
+            E("x", "occurred_at", "temporal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="occurred_at",
+    )
+    assert rule_of(verify(reproducer, recurrence_with_series())) == "order"
+
+
+def test_none_refuses_a_sort_whether_per_encoding_or_chart_wide() -> None:
+    """Fix round 1, I3: RECURRENCE's `y` dimension is `NONE` (Section D puts the whole `point`
+    family there), so neither an encoding's own sort nor the chart-wide one may target it."""
+    encoding_sort = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(encoding_sort, recurrence_with_series())) == "order"
+    # No `sort_field`: the presenter's fallback then targets *every* nominal/temporal axis field
+    # at once (`occurred_at` and `dimension` both qualify on a `point` chart), so `occurred_at`'s
+    # own `TEMPORAL` order reads this as sorting itself -- fine -- while `dimension`'s `NONE`
+    # still refuses being targeted at all, isolating the one rejection this test is for.
+    chart_wide_sort = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+    )
+    assert rule_of(verify(chart_wide_sort, recurrence_with_series())) == "order"
+
+
+def test_a_series_keeps_its_own_order_even_when_the_dimension_ranks() -> None:
+    """Fix round 1, I2: the series' order is not the dimension's. A comparison whose legend
+    carries a descending-by-value sort is authorised today, though `series` fields are always
+    `INPUT` -- a declared order the model may not substitute a magnitude ranking for."""
+    grouped = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+            E("color", "series", "nominal", S("descending", "value_minor")),
+            E("yOffset", "series", "nominal", S("input")),
+        ),
+        stack="disabled",
+    )
+    assert rule_of(verify(grouped, comparison())) == "order"
+
+
+def test_an_unknown_sort_field_is_refused() -> None:
+    """Fix round 1, I4: a sort field is a field too. `sort_field`/`sort.field` naming a column
+    the profile does not have reaches the presenter the same way an unknown encoding field would,
+    and `merge_encoding_patch` already refuses exactly that on the user-patch path."""
+    unknown_chart_wide = ranked_bar(sort="input", sort_field="mercadona_gasto_4500")
+    assert rule_of(verify(unknown_chart_wide, breakdown())) == "fields"
+    unknown_per_encoding = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "mercadona_gasto_4500")),
+            E("x", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(unknown_per_encoding, breakdown())) == "fields"
