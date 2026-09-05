@@ -373,3 +373,68 @@ def test_order_follows_the_profile_not_the_type() -> None:
     assert isinstance(verify(in_order, frequency()), ChartSpec)
     unranked = D("bar", (E("y", "dimension", "nominal"), E("x", "value_minor", "quantitative")))
     assert rule_of(verify(unranked, breakdown())) == "order"  # MEASURE_DESC wants the ranking
+
+
+def test_frequency_with_no_sort_at_all_is_refused() -> None:
+    """Fix round 1, I3: `INPUT` requires an explicit `input` sort, or Vega-Lite alphabetises the
+    weekday axis -- domingo, jueves, lunes -- destroying the only thing the chart is for."""
+    no_sort = D("bar", (E("x", "dimension", "nominal"), E("y", "value_minor", "quantitative")))
+    assert rule_of(verify(no_sort, frequency())) == "order"
+
+
+def test_a_temporal_axis_refuses_a_chart_wide_sort_by_another_field() -> None:
+    """Fix round 1, I3: a monthly line ranked chart-wide by magnitude is the same "an explicit
+    sort on another field is refused" the per-encoding branch already enforces, read off the
+    spec-wide property instead of the encoding's own."""
+    ranked_wide = D(
+        "line",
+        (E("x", "dimension", "temporal"), E("y", "value_minor", "quantitative")),
+        sort="descending",
+        sort_field="value_minor",
+    )
+    assert rule_of(verify(ranked_wide, monthly())) == "order"
+
+
+def test_none_refuses_a_sort_whether_per_encoding_or_chart_wide() -> None:
+    """Fix round 1, I3: RECURRENCE's `y` dimension is `NONE` (Section D puts the whole `point`
+    family there), so neither an encoding's own sort nor the chart-wide one may target it."""
+    encoding_sort = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(encoding_sort, recurrence_with_series())) == "order"
+    # No `sort_field`: the presenter's fallback then targets *every* nominal/temporal axis field
+    # at once (`occurred_at` and `dimension` both qualify on a `point` chart), so `occurred_at`'s
+    # own `TEMPORAL` order reads this as sorting itself -- fine -- while `dimension`'s `NONE`
+    # still refuses being targeted at all, isolating the one rejection this test is for.
+    chart_wide_sort = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+    )
+    assert rule_of(verify(chart_wide_sort, recurrence_with_series())) == "order"
+
+
+def test_a_series_keeps_its_own_order_even_when_the_dimension_ranks() -> None:
+    """Fix round 1, I2: the series' order is not the dimension's. A comparison whose legend
+    carries a descending-by-value sort is authorised today, though `series` fields are always
+    `INPUT` -- a declared order the model may not substitute a magnitude ranking for."""
+    grouped = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+            E("color", "series", "nominal", S("descending", "value_minor")),
+            E("yOffset", "series", "nominal", S("input")),
+        ),
+        stack="disabled",
+    )
+    assert rule_of(verify(grouped, comparison())) == "order"

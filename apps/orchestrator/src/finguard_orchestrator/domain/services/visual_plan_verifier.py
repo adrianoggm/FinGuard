@@ -253,25 +253,36 @@ def _limit(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
 
 
 def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
+    """Ordering is a property of the *field*, and the series' order is not the dimension's.
+
+    Runs over every `dimension` **or** `series` role field: a comparison's legend (`color`,
+    its offset) can carry its own `INPUT` order even while the axis dimension it sits beside
+    wants `MEASURE_DESC` -- one setting on the profile would have forced the legend to inherit
+    the axis's rule, which is why `order` lives on `VisualField` rather than on the profile.
+    """
     measure = profile.role("measure")
     measure_name = measure[0].name if measure else None
     for item in spec.encodings:
         if item.channel == "tooltip":
             continue
         held = profile.field(item.field)
-        if held is None or held.role != "dimension":
+        if held is None or held.role not in {"dimension", "series"}:
             continue
         sort = item.sort
+        # The chart-wide sort targets this field when `sort_field` names it explicitly, or when
+        # `sort_field` is omitted and this is the dimension on an axis -- the presenter's own
+        # fallback target (`vega_lite.py`'s `present()` always resolves the spec-wide sort onto
+        # whichever x/y encoding is nominal or temporal, never onto a `color`/offset legend).
+        is_axis_dimension = item.channel in _AXES and held.role == "dimension"
         chart_wide = spec.sort is not None and (
-            spec.sort_field == item.field or spec.sort_field is None
+            spec.sort_field == item.field or (spec.sort_field is None and is_axis_dimension)
         )
-        # A dimension can rank by magnitude without being on an axis at all: the normalised
-        # RATIO_SHARE bar places its `MEASURE_DESC` dimension in `color`, and the floor never
-        # sorts it there. Requiring the rank regardless of channel refused that chart against
-        # itself -- the requirement is really about an *axis*, which reorders itself the moment
-        # nothing says otherwise, the same reasoning `INPUT` already carries below.
-        on_axis = item.channel in _AXES
-        if held.order == "MEASURE_DESC" and on_axis:
+        if held.order == "MEASURE_DESC" and is_axis_dimension:
+            # Scoped to the axis for the same reason `INPUT` is below: an axis reorders itself
+            # the moment nothing says otherwise, which is what the ranking requirement is against.
+            # The floor's own normalised RATIO_SHARE bar places its `MEASURE_DESC` dimension in
+            # `color`, never on an axis, and never sorts it -- a requirement that reached every
+            # `MEASURE_DESC` field regardless of channel refused that chart against itself.
             ranked = sort is not None and sort.mode == "descending" and sort.field == measure_name
             ranked_wide = spec.sort == "descending" and spec.sort_field == measure_name
             if not (ranked or ranked_wide):
@@ -283,9 +294,23 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
             wrong_chart_sort = chart_wide and spec.sort != "input"
             if wrong_encoding_sort or wrong_chart_sort:
                 return Rejection("order", f"{item.field} keeps the producer's order")
+            # An axis reorders itself the moment nothing says otherwise -- Vega-Lite alphabetises
+            # a nominal domain with no explicit sort. A legend (`color`/an offset) is never an
+            # axis, and the floor's own RECURRENCE-with-series chart never sorts its `color`, so
+            # the requirement stops at the axis rather than at every `INPUT` field.
+            has_input_sort = (sort is not None and sort.mode == "input") or (
+                chart_wide and spec.sort == "input"
+            )
+            if is_axis_dimension and not has_input_sort:
+                return Rejection("order", f"{item.field} keeps the producer's order")
         elif held.order == "TEMPORAL":
             if sort is not None and sort.field not in (None, item.field):
-                return Rejection("order", f"{item.field} is ordered by time, not by {sort.field}")
-        elif held.order == "NONE" and sort is not None:
+                return Rejection("order", "sort names an unknown field")
+            if spec.sort is not None and not chart_wide:
+                # The chart-wide sort names a field other than this one and does not fall back
+                # to it either -- the same "an explicit sort on another field is refused" the
+                # per-encoding branch above enforces, read off the spec-wide property instead.
+                return Rejection("order", "sort names an unknown field")
+        elif held.order == "NONE" and (sort is not None or chart_wide):
             return Rejection("order", f"ordering does not apply to {item.field} on a {spec.mark}")
     return None
