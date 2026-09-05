@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
+from finguard_orchestrator.domain.models.visual_plan import FallbackReason
 
 
 def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
@@ -66,13 +67,29 @@ class VisualDecision:
     profile: VisualProfile
     source: Literal["llm", "deterministic"]
     rationale: str | None = None
-    fallback_reason: str | None = None
+    fallback_reason: FallbackReason | None = None
+    proposed: bool = False
+    """An attempt was made: the model was called and returned a draft (or abstained)."""
+    valid: bool = False
+    """The draft passed the verifier."""
+    accepted: bool = False
+    """What the user sees is the model's chart. Implies `source == "llm"`."""
+    changed_from_baseline: bool | None = None
+    """The verified proposal differs from the floor on `canonical()`. None when the floor was
+    not computed (promoted) or there was no verified proposal to compare."""
+    latency_ms: int | None = None
+    proposed_spec: ChartSpec | None = None
+    """The verified proposal, whatever was shown -- so suitability can be annotated afterwards
+    from the record rather than reconstructed from a `changed` flag."""
+    rejected_rule: str | None = None
 
     def __post_init__(self) -> None:
         if self.source not in {"llm", "deterministic"}:
             raise ValueError("unsupported visual decision source")
         if self.fallback_reason is not None and self.source == "llm":
             raise ValueError("a chosen model plan did not fall back")
+        if self.accepted != (self.source == "llm"):
+            raise ValueError("accepted means the model's chart is what is shown")
 
 
 class DeterministicVisualPlanner:

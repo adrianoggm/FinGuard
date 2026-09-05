@@ -153,6 +153,23 @@ def test_a_chosen_model_plan_did_not_fall_back() -> None:
         )
 
 
+def test_accepted_means_the_model_chart_is_shown() -> None:
+    """`accepted` implies `source == "llm"` and nothing else: the third invariant, checked after
+    the two above so an unsupported source or a contradicted fallback_reason still raises its own
+    message first."""
+    with pytest.raises(ValueError, match="accepted means"):
+        VisualDecision(spec=some_bar_spec(), profile=some_profile(), source="llm", accepted=False)
+    with pytest.raises(ValueError, match="accepted means"):
+        VisualDecision(
+            spec=some_bar_spec(), profile=some_profile(), source="deterministic", accepted=True
+        )
+    # The row the invariant must not break: an accepted model chart is legal.
+    decision = VisualDecision(
+        spec=some_bar_spec(), profile=some_profile(), source="llm", accepted=True
+    )
+    assert decision.fallback_reason is None
+
+
 def test_two_rows_carrying_the_same_amount_are_still_two_rows() -> None:
     """The measure's cardinality counts distinct amounts, so it is not a row count. Passing it
     to `derive_chart` would decline this chart for having "one row"."""
