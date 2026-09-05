@@ -496,7 +496,7 @@ def as_plan(spec: dict[str, Any]) -> FinancialPlan:
     )
 
 
-def _provider(
+def build_provider(
     name: str,
     base_url: str | None,
     think: bool | str,
@@ -1597,7 +1597,7 @@ def _pace(args: argparse.Namespace) -> float:
 
 async def _evaluate(args: argparse.Namespace) -> int:
     try:
-        provider = _provider(args.provider, args.base_url, args.think, args.timeout)
+        provider = build_provider(args.provider, args.base_url, args.think, args.timeout)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

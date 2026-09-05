@@ -1,15 +1,43 @@
-"""One assertion: the shipped default is `deterministic`, asked of the class.
+"""Four arrangements of the same one decision: whether a model is built at all.
 
-`visual_planner` is not yet wired into `bootstrap/main.py` -- that is Task 6's last commit, once
-`LlmVisualPlanner` exists to give the other three rungs an implementation -- so there is no
-`create_app()` case to parametrize the way `test_who_reads_a_turn_is_configurable.py` does for
-`turn_interpreter`. What already exists and needs pinning is the property this whole plan's
-argument rests on: no model call anywhere until an operator asks for one. A future edit that
-flipped the default to `shadow` would put a model call on every charted turn and fail nothing
-without this.
+`visual_planner` was wired into `bootstrap/main.py` in Task 6's last commit, once
+`LlmVisualPlanner` existed to give the other three rungs an implementation. Asserted through
+`create_app` rather than by calling `VisualPlanningPolicy` directly, the same reason
+`test_who_reads_a_turn_is_configurable.py` gives for `turn_interpreter`: what could break is the
+wiring itself -- a `VisualPlanningPolicy(model=..., fallback=...)` with an adapter built under the
+wrong mode type-checks, starts, and quietly puts a model call on every charted turn.
 """
 
-from finguard_orchestrator.bootstrap.config import Settings
+import pytest
+
+from finguard_orchestrator.application import AskFinancialQuestionQuery
+from finguard_orchestrator.bootstrap.config import Settings, get_settings
+from finguard_orchestrator.bootstrap.main import create_app
+from finguard_orchestrator.infrastructure.planning.llm_visual_planner import LlmVisualPlanner
+
+
+@pytest.mark.parametrize(
+    ("mode", "builds_adapter"),
+    [("deterministic", False), ("shadow", True), ("hybrid", True), ("promoted", True)],
+)
+def test_the_setting_chooses_whether_a_model_is_built(
+    monkeypatch, mode: str, builds_adapter: bool
+) -> None:  # noqa: ANN001
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER", mode)
+    # Built once and cached, which is right for a service and wrong for a test about what a
+    # different deployment would build.
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+    finally:
+        get_settings.cache_clear()
+
+    # Asserted through create_app because what could break is the wiring: private attributes read
+    # bare rather than through a public accessor nothing else needs.
+    handler = app.state.query_bus._handlers[AskFinancialQuestionQuery]
+    policy = handler._visual_policy
+    assert policy is not None and policy._mode == mode
+    assert isinstance(policy._model, LlmVisualPlanner) is builds_adapter
 
 
 def test_the_rules_are_what_ships() -> None:

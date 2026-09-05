@@ -260,7 +260,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from evaluate_planning import _provider  # noqa: E402
+from evaluate_planning import build_provider  # noqa: E402
 from handover_cases import cases  # noqa: E402
 
 FIELDS = ("window", "direction", "categories", "merchants", "group_by", "metric")
@@ -460,7 +460,7 @@ async def run(arguments: argparse.Namespace, plans: dict[str, Any]) -> int:
         ]
         where = f"BASELINE always-right · {arguments.group} · {len(verdicts)} cases"
     else:
-        provider = _provider(arguments.provider, arguments.base_url, arguments.think, None)
+        provider = build_provider(arguments.provider, arguments.base_url, arguments.think, None)
         # Paced from the limit the provider actually enforces. This was `--rpm`, and requests a
         # minute is not what Groq counts — it counts tokens, so a number that worked at one answer
         # budget returns 429 at another and the next person to run this rediscovers that. Given the

@@ -28,7 +28,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from evaluate_planning import CATEGORIES, _planned, _provider  # noqa: E402
+from evaluate_planning import CATEGORIES, _planned, build_provider  # noqa: E402
 from handover_cases import cases  # noqa: E402
 
 # The reference day the corpus is written against. Read from the same place the cases are, so a
@@ -75,7 +75,7 @@ async def run(arguments: argparse.Namespace) -> dict[str, Any]:
         chosen = chosen[: arguments.limit]
 
     planner = LlmQueryPlanner(
-        _provider(arguments.provider, arguments.base_url, arguments.think, None),
+        build_provider(arguments.provider, arguments.base_url, arguments.think, None),
         model=arguments.model,
         temperature=0.0,
         max_output_tokens=384,
