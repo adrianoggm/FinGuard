@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 class Step(StrEnum):
-    """The seams that decide something. Ten, not forty.
+    """The seams that decide something. Eleven, not forty.
 
     An enum rather than a free string because Section 3 turns this into a metric label, and a
     label whose values are typed by hand at ten call sites is an unbounded-cardinality metric
@@ -87,6 +87,9 @@ class Step(StrEnum):
 
     OUTCOME = "outcome"
     """The turn's `PlanningOutcome`, and whether a figure was actually shown."""
+
+    VISUAL_PLANNER = "visual_planner"
+    """Which chart was shown and by whom, and -- in shadow -- whether the model's differed."""
 
 
 class Verdict(StrEnum):
