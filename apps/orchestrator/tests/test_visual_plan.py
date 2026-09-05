@@ -1,7 +1,15 @@
 """The proposal vocabulary: plain strings on purpose, and the equality the baseline uses."""
 
-from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec, EncodingSort
-from finguard_orchestrator.domain.models.visual_plan import (  # noqa: F401
+import pytest
+
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    EncodingSort,
+    SortMode,
+    Stack,
+)
+from finguard_orchestrator.domain.models.visual_plan import (
     ProposedEncoding,
     ProposedSort,
     Rejection,
@@ -15,11 +23,15 @@ def test_a_draft_accepts_any_string_because_the_domain_refuses_later() -> None:
     turn a model error into an adapter exception, which is the split this type exists to prevent."""
     draft = VisualPlanDraft(
         mark="sideways",
-        encodings=(ProposedEncoding("zOffset", "dimension", "nominal"),),
+        encodings=(
+            ProposedEncoding("zOffset", "dimension", "nominal", sort=ProposedSort(mode="sideways")),
+        ),
         stack="upside_down",
     )
     assert draft.mark == "sideways"
     assert draft.encodings[0].channel == "zOffset"
+    assert draft.encodings[0].sort is not None
+    assert draft.encodings[0].sort.mode == "sideways"
 
 
 def test_a_rejection_names_its_rule() -> None:
@@ -50,6 +62,7 @@ def test_canonical_ignores_titles_and_encoding_order() -> None:
 
 def test_canonical_sees_a_different_mark_channel_or_sort() -> None:
     base = canonical(_bar(titled=False))
+    different_mark = ChartSpec(mark="line", encodings=_bar(titled=False).encodings)
     swapped = ChartSpec(
         mark="bar",
         encodings=(
@@ -71,8 +84,37 @@ def test_canonical_sees_a_different_mark_channel_or_sort() -> None:
             ChartEncoding("tooltip", "dimension", "nominal"),
         ),
     )
+    assert canonical(different_mark) != base  # the mark is a decision
     assert canonical(swapped) != base  # orientation is a decision
     assert canonical(unsorted) != base  # the sort is a decision
+
+
+@pytest.mark.parametrize(
+    ("stack", "sort", "sort_field", "limit"),
+    [
+        ("disabled", None, None, None),
+        (None, "descending", None, None),
+        (None, "descending", "value_minor", None),
+        (None, None, None, 5),
+    ],
+    ids=["stack", "sort", "sort_field", "limit"],
+)
+def test_canonical_sees_stack_sort_sort_field_and_limit(
+    stack: Stack | None, sort: SortMode | None, sort_field: str | None, limit: int | None
+) -> None:
+    """The docstring claims stack, the chart-wide sort/sort_field and limit are decisions; no
+    test varied any of them. `sort_field` cannot be set without `sort`
+    (`ChartSpec.__post_init__` enforces it), so that case carries both."""
+    base_spec = _bar(titled=False)
+    changed = ChartSpec(
+        mark=base_spec.mark,
+        encodings=base_spec.encodings,
+        stack=stack,
+        sort=sort,
+        sort_field=sort_field,
+        limit=limit,
+    )
+    assert canonical(changed) != canonical(base_spec)
 
 
 def test_canonical_stays_comparable_when_two_tooltips_differ_only_by_sort() -> None:
