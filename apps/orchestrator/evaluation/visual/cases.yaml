@@ -56,6 +56,13 @@
   dataset: ratio_share
   question: ¿Qué parte de mis ingresos se va en alquiler?
   suitable_marks: [bar, donut]
+- id: ratio_share_as_donut
+  group: ratio_share
+  dataset: ratio_share
+  question: ¿Qué parte de mis ingresos se va en alquiler? Enséñamelo como un donut
+  paraphrase_of: share_of_total
+  visual_instruction: true
+  suitable_marks: [donut, bar]     # the total is verified here, so a donut proposal can pass the verifier -- this is the one instructed case whose compliance the run can observe
 - id: comparison_two_months
   group: comparison
   dataset: categorical_comparison

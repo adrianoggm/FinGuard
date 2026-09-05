@@ -49,6 +49,7 @@ def _decision(spec, *, valid=True, changed=True, ms=1200, reason=None):
 
 def test_every_case_names_a_known_dataset_and_a_resolvable_twin() -> None:
     cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
+    assert len(cases) == 16
     ids = {c.id for c in cases}
     for case in cases:
         assert case.dataset == "none" or case.dataset in FAMILY_DATASETS
