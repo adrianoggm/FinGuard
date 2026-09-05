@@ -1,5 +1,7 @@
 """One test per rule, plus the one that matters most: the floor's own chart verifies."""
 
+import pytest
+
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartSpec,
@@ -66,6 +68,66 @@ def share():
     )
 
 
+def frequency():
+    return visual_profile_of(
+        VisualDataset(metric="FREQUENCY", rows=(VisualRow("lunes", 4), VisualRow("martes", 9))),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
+def recurrence_with_series():
+    """Mirrors `ask_financial_question.py`'s own construction: one row per recurring charge,
+    carrying the counterparty as `dimension`, the cadence as `series`, and the date it last
+    landed as `occurred_at`."""
+    return visual_profile_of(
+        VisualDataset(
+            metric="RECURRENCE",
+            rows=(
+                VisualRow(
+                    dimension="Netflix",
+                    value_minor=1_299,
+                    series="MENSUAL",
+                    occurred_at="2026-07-03",
+                ),
+                VisualRow(
+                    dimension="Spotify",
+                    value_minor=1_099,
+                    series="MENSUAL",
+                    occurred_at="2026-07-05",
+                ),
+            ),
+        ),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
+def temporal_comparison():
+    """A comparison over calendar months: `profile.temporal()` and `profile.comparison` both
+    hold at once, the combination `_grouped` must not mistake for a categorical one."""
+    return visual_profile_of(
+        VisualDataset(
+            metric="SUM",
+            rows=(
+                VisualRow("2026-01", 100, series="A"),
+                VisualRow("2026-02", 200, series="A"),
+            ),
+        ),
+        total_minor=None,
+        group_by="MONTH",
+    )
+
+
+def twelve_row_breakdown():
+    """More rows than `ROWS_THAT_FIT`, so the floor's own chart carries a `limit`."""
+    return visual_profile_of(
+        VisualDataset(metric="SUM", rows=tuple(VisualRow(f"CAT_{i}", 100 + i) for i in range(12))),
+        total_minor=None,
+        group_by="NONE",
+    )
+
+
 def ranked_bar(**overrides):
     fields = dict(
         mark="bar",
@@ -82,9 +144,27 @@ def rule_of(result) -> str | None:
     return result.rule if isinstance(result, Rejection) else None
 
 
-def test_the_floors_own_chart_verifies_as_itself() -> None:
-    """If the verifier refused what the floor draws, the baseline would be uncomparable."""
-    profile = breakdown()
+_FLOOR_FAMILIES = {
+    "breakdown": breakdown,
+    "temporal_line": monthly,
+    "frequency": frequency,
+    "ratio_share": share,
+    "recurrence_with_series": recurrence_with_series,
+    "grouped_comparison": comparison,
+    "temporal_comparison": temporal_comparison,
+    "limited_breakdown": twelve_row_breakdown,
+}
+
+
+@pytest.mark.parametrize("build_profile", _FLOOR_FAMILIES.values(), ids=_FLOOR_FAMILIES.keys())
+def test_the_floors_own_chart_verifies_as_itself(build_profile) -> None:
+    """If the verifier refused what the floor draws, the baseline would be uncomparable.
+
+    Every family the floor can emit, not just the plain breakdown a first pass tested: the
+    normalised RATIO_SHARE bar, RECURRENCE's point chart with a series, a categorical grouped
+    comparison, a temporal one, and a breakdown large enough to carry the floor's own `limit`.
+    """
+    profile = build_profile()
     floor = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
     assert floor is not None
     draft = D(
@@ -178,6 +258,36 @@ def test_a_bar_needs_opposite_axes_and_a_line_needs_time() -> None:
     assert isinstance(verify(line_over_months, monthly()), ChartSpec)
 
 
+def test_point_refuses_the_amount_off_tooltip_and_a_non_nominal_y() -> None:
+    accepted = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+    )
+    assert isinstance(verify(accepted, recurrence_with_series()), ChartSpec)
+    amount_in_theta = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "dimension", "nominal"),
+            E("theta", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(amount_in_theta, recurrence_with_series())) == "mark"
+    non_nominal_y = D(
+        "point",
+        (
+            E("x", "occurred_at", "temporal"),
+            E("y", "occurred_at", "temporal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(non_nominal_y, recurrence_with_series())) == "mark"
+
+
 def test_a_donut_needs_the_three_claims() -> None:
     # RATIO_SHARE derives MEASURE_DESC for its dimension, so the legend carries the ranking too.
     donut = D(
@@ -232,11 +342,6 @@ def test_limit_belongs_to_one_family() -> None:
 
 
 def test_order_follows_the_profile_not_the_type() -> None:
-    frequency = visual_profile_of(
-        VisualDataset(metric="FREQUENCY", rows=(VisualRow("lunes", 4), VisualRow("martes", 9))),
-        total_minor=None,
-        group_by="NONE",
-    )
     by_value = D(
         "bar",
         (
@@ -244,10 +349,10 @@ def test_order_follows_the_profile_not_the_type() -> None:
             E("y", "value_minor", "quantitative"),
         ),
     )
-    assert rule_of(verify(by_value, frequency)) == "order"
+    assert rule_of(verify(by_value, frequency())) == "order"
     in_order = D(
         "bar", (E("x", "dimension", "nominal", S("input")), E("y", "value_minor", "quantitative"))
     )
-    assert isinstance(verify(in_order, frequency), ChartSpec)
+    assert isinstance(verify(in_order, frequency()), ChartSpec)
     unranked = D("bar", (E("y", "dimension", "nominal"), E("x", "value_minor", "quantitative")))
     assert rule_of(verify(unranked, breakdown())) == "order"  # MEASURE_DESC wants the ranking

@@ -90,6 +90,11 @@ def _on(spec: ChartSpec, channel: str) -> ChartEncoding | None:
 
 
 def _mark(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
+    # `theta` takes a measure and only with `donut` (Section D). The matrix's role/channel table
+    # cannot say this -- it does not know about marks -- so it is a per-mark rule.
+    if spec.mark != "donut" and any(item.channel == "theta" for item in spec.encodings):
+        return Rejection("mark", "theta belongs only to a donut")
+
     x, y = _on(spec, "x"), _on(spec, "y")
     roles = {item.field: profile.field(item.field) for item in spec.encodings}
 
@@ -100,7 +105,30 @@ def _mark(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         return held.role if held is not None else None
 
     if spec.mark == "bar":
-        if {role_on(x), role_on(y)} != {"dimension", "measure"}:
+        if spec.stack == "normalize":
+            # The normalised RATIO_SHARE bar: the measure on **one** axis, the nominal dimension
+            # in `color`, no opposite axis and no offsets -- one composed bar whose parts are the
+            # dimension's values. An earlier version of this table omitted the row, and a verifier
+            # faithful to it refused the floor's own RATIO_SHARE chart.
+            color = _on(spec, "color")
+            axes = [item for item in (x, y) if item is not None]
+            measure_axis = next((item for item in axes if role_on(item) == "measure"), None)
+            has_offset = any(item.channel in _OFFSETS for item in spec.encodings)
+            wrong_shape = (
+                len(axes) != 1
+                or measure_axis is None
+                or color is None
+                or role_on(color) != "dimension"
+                or color.type != "nominal"
+                or has_offset
+            )
+            if wrong_shape:
+                return Rejection(
+                    "mark",
+                    "a normalised bar puts the measure on one axis and the dimension in "
+                    "color, with no opposite axis and no offsets",
+                )
+        elif {role_on(x), role_on(y)} != {"dimension", "measure"}:
             return Rejection("mark", "a bar puts the dimension and the measure on opposite axes")
     elif spec.mark in {"line", "area"}:
         axes = [item for item in (x, y) if item is not None]
@@ -114,9 +142,16 @@ def _mark(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
             )
     elif spec.mark == "point":
         wrong_x = x is None or x.field != "occurred_at" or x.type != "temporal"
-        if wrong_x or role_on(y) != "dimension":
-            return Rejection("mark", "a point chart puts occurred_at on x and the dimension on y")
-        if any(item.channel in _AXES and role_on(item) == "measure" for item in spec.encodings):
+        wrong_y = y is None or role_on(y) != "dimension" or y.type != "nominal"
+        if wrong_x or wrong_y:
+            return Rejection(
+                "mark", "a point chart puts occurred_at on x and the nominal dimension on y"
+            )
+        amount_channels = _AXES | {"theta"}
+        if any(
+            item.channel in amount_channels and role_on(item) == "measure"
+            for item in spec.encodings
+        ):
             return Rejection("mark", "a point chart carries the amount only in tooltip")
     elif spec.mark == "donut":
         theta, color = _on(spec, "theta"), _on(spec, "color")
@@ -215,7 +250,13 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         chart_wide = spec.sort is not None and (
             spec.sort_field == item.field or spec.sort_field is None
         )
-        if held.order == "MEASURE_DESC":
+        # A dimension can rank by magnitude without being on an axis at all: the normalised
+        # RATIO_SHARE bar places its `MEASURE_DESC` dimension in `color`, and the floor never
+        # sorts it there. Requiring the rank regardless of channel refused that chart against
+        # itself -- the requirement is really about an *axis*, which reorders itself the moment
+        # nothing says otherwise, the same reasoning `INPUT` already carries below.
+        on_axis = item.channel in _AXES
+        if held.order == "MEASURE_DESC" and on_axis:
             ranked = sort is not None and sort.mode == "descending" and sort.field == measure_name
             ranked_wide = spec.sort == "descending" and spec.sort_field == measure_name
             if not (ranked or ranked_wide):
