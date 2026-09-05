@@ -430,6 +430,28 @@ def test_order_follows_the_profile_not_the_type() -> None:
     assert rule_of(verify(unranked, breakdown())) == "order"  # MEASURE_DESC wants the ranking
 
 
+def test_measure_desc_off_axis_may_omit_its_sort_but_not_contradict_it() -> None:
+    """Fix round 2, item 4. `if held.order == "MEASURE_DESC" and is_axis_dimension:` headed an
+    `elif` chain, so an off-axis field fell out with no check at all when it had a sort of its
+    own: a legend ranked ascending -- backwards from what `MEASURE_DESC` means -- was
+    unrefusable, on a normalised bar and on a donut alike."""
+    backwards_bar = _normalised_bar(
+        encodings=(
+            E("x", "value_minor", "quantitative"),
+            E("color", "dimension", "nominal", S("ascending", "value_minor")),
+        )
+    )
+    assert rule_of(verify(backwards_bar, share())) == "order"
+    backwards_donut = D(
+        "donut",
+        (
+            E("theta", "value_minor", "quantitative"),
+            E("color", "dimension", "nominal", S("ascending", "value_minor")),
+        ),
+    )
+    assert rule_of(verify(backwards_donut, share())) == "order"
+
+
 def test_frequency_with_no_sort_at_all_is_refused() -> None:
     """Fix round 1, I3: `INPUT` requires an explicit `input` sort, or Vega-Lite alphabetises the
     weekday axis -- domingo, jueves, lunes -- destroying the only thing the chart is for."""

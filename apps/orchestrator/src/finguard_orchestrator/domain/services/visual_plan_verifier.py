@@ -306,15 +306,20 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         # presenter would apply it here regardless.
         is_axis_dimension = item.channel in _AXES and held.role == "dimension"
         chart_wide = spec.sort is not None and is_axis_dimension
-        if held.order == "MEASURE_DESC" and is_axis_dimension:
-            # Scoped to the axis for the same reason `INPUT` is below: an axis reorders itself
-            # the moment nothing says otherwise, which is what the ranking requirement is against.
-            # The floor's own normalised RATIO_SHARE bar places its `MEASURE_DESC` dimension in
-            # `color`, never on an axis, and never sorts it -- a requirement that reached every
-            # `MEASURE_DESC` field regardless of channel refused that chart against itself.
+        if held.order == "MEASURE_DESC":
+            # The *requirement* is scoped to the axis for the same reason `INPUT`'s is below: an
+            # axis reorders itself the moment nothing says otherwise, which is what the ranking
+            # requirement is against. The floor's own normalised RATIO_SHARE bar places its
+            # `MEASURE_DESC` dimension in `color`, never on an axis, and never sorts it -- a
+            # requirement that reached every `MEASURE_DESC` field regardless of channel refused
+            # that chart against itself. But gating the whole check on `is_axis_dimension` (an
+            # `elif`, so an off-axis field skipped it entirely) meant an off-axis field's sort, if
+            # it had one, was never checked either: a `color` legend ranked *ascending* --
+            # backwards from what `MEASURE_DESC` means -- was unrefusable. Off-axis, a sort may be
+            # omitted; a sort that is there may not contradict the rank.
             ranked = sort is not None and sort.mode == "descending" and sort.field == measure_name
             ranked_wide = spec.sort == "descending" and spec.sort_field == measure_name
-            if not (ranked or ranked_wide):
+            if not (ranked or ranked_wide) and (is_axis_dimension or sort is not None):
                 return Rejection(
                     "order", f"{item.field} ranks by magnitude: descending by {measure_name}"
                 )
