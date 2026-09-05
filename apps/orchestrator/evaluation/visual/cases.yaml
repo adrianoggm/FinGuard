@@ -1,0 +1,85 @@
+# Visual evaluation. Three numbers and none of them is "it worked" -- see the spec, Section G.
+# `dataset` names a shape in scripts/export_chart_fixtures.py FAMILY_DATASETS; the shape is what
+# the model sees, the question is the only other input. `suitable_marks` is annotated by hand.
+- id: breakdown_where_most
+  group: breakdown
+  dataset: breakdown
+  question: ¿En qué he gastado más este mes?
+  suitable_marks: [bar]
+- id: breakdown_where_most_p1
+  group: breakdown
+  dataset: breakdown
+  question: Dime dónde se me va más dinero este mes
+  paraphrase_of: breakdown_where_most
+  suitable_marks: [bar]
+- id: breakdown_where_most_p2
+  group: breakdown
+  dataset: breakdown
+  question: ¿Cuáles son mis mayores gastos del mes?
+  paraphrase_of: breakdown_where_most
+  suitable_marks: [bar]
+- id: breakdown_as_donut
+  group: breakdown
+  dataset: breakdown
+  question: ¿En qué he gastado más este mes? Enséñamelo como un donut
+  paraphrase_of: breakdown_where_most
+  visual_instruction: true
+  suitable_marks: [donut, bar]     # the profile has no verified total, so bar is what a careful analyst falls back to
+- id: temporal_evolution
+  group: temporal
+  dataset: temporal
+  question: ¿Cómo ha evolucionado mi gasto mes a mes?
+  suitable_marks: [line, area, bar]
+- id: temporal_evolution_p1
+  group: temporal
+  dataset: temporal
+  question: Muéstrame el gasto de cada mes
+  paraphrase_of: temporal_evolution
+  suitable_marks: [line, area, bar]
+- id: cumulative_running
+  group: cumulative
+  dataset: cumulative
+  question: ¿Cuánto llevo acumulado mes a mes?
+  suitable_marks: [area, line]
+- id: frequency_weekday
+  group: frequency
+  dataset: frequency
+  question: ¿Qué día de la semana gasto más veces?
+  suitable_marks: [bar]
+- id: recurrence_streams
+  group: recurrence
+  dataset: recurrence
+  question: ¿Qué gastos recurrentes tengo?
+  suitable_marks: [point]
+- id: share_of_total
+  group: ratio_share
+  dataset: ratio_share
+  question: ¿Qué parte de mis ingresos se va en alquiler?
+  suitable_marks: [bar, donut]
+- id: comparison_two_months
+  group: comparison
+  dataset: categorical_comparison
+  question: Compara mis gastos de este mes con los del anterior por categoría
+  suitable_marks: [bar]
+- id: comparison_two_months_p1
+  group: comparison
+  dataset: categorical_comparison
+  question: ¿En qué categorías he gastado más que el mes pasado?
+  paraphrase_of: comparison_two_months
+  suitable_marks: [bar]
+- id: ranking_top3
+  group: ranking
+  dataset: breakdown
+  plan_limited: true  # the rows are already the answer's top N: a proposal that limits again is refused (verifier rule `limit`, Task 6 fix); the valid answer is a plain ranked bar
+  question: ¿Cuáles son mis tres mayores gastos?
+  suitable_marks: [bar]
+- id: no_chart_single_figure
+  group: no_chart
+  dataset: none
+  question: ¿Cuánto he gastado este mes?
+  expect_chart: false
+- id: no_chart_balance
+  group: no_chart
+  dataset: none
+  question: ¿Cuánto dinero tengo?
+  expect_chart: false

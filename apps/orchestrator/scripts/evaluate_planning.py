@@ -396,7 +396,7 @@ async def _ollama_snapshot(provider: EvaluationProvider, model: str) -> dict[str
     }
 
 
-async def _run_manifest(
+async def run_manifest(
     dataset_path: Path, provider: EvaluationProvider, model: str, case_count: int
 ) -> dict[str, Any]:
     commit = _command_output(["git", "rev-parse", "HEAD"])
@@ -1007,7 +1007,7 @@ async def run(
             print(f"invalid dataset: {issue}", file=sys.stderr)
         return 2
     cases = all_cases[:limit] if limit else all_cases
-    manifest = await _run_manifest(dataset_path, provider, model, len(cases))
+    manifest = await run_manifest(dataset_path, provider, model, len(cases))
     print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
 
     planner = LlmQueryPlanner(
