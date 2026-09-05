@@ -438,3 +438,19 @@ def test_a_series_keeps_its_own_order_even_when_the_dimension_ranks() -> None:
         stack="disabled",
     )
     assert rule_of(verify(grouped, comparison())) == "order"
+
+
+def test_an_unknown_sort_field_is_refused() -> None:
+    """Fix round 1, I4: a sort field is a field too. `sort_field`/`sort.field` naming a column
+    the profile does not have reaches the presenter the same way an unknown encoding field would,
+    and `merge_encoding_patch` already refuses exactly that on the user-patch path."""
+    unknown_chart_wide = ranked_bar(sort="input", sort_field="mercadona_gasto_4500")
+    assert rule_of(verify(unknown_chart_wide, breakdown())) == "fields"
+    unknown_per_encoding = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "mercadona_gasto_4500")),
+            E("x", "value_minor", "quantitative"),
+        ),
+    )
+    assert rule_of(verify(unknown_per_encoding, breakdown())) == "fields"

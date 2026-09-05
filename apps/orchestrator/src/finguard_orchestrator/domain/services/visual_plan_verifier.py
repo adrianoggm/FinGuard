@@ -63,8 +63,22 @@ def _structure(draft: VisualPlanDraft) -> ChartSpec | Rejection:
 
 
 def _fields(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
-    missing = sorted(spec.fields() - profile.field_names())
-    return Rejection("fields", f"unknown field {missing[0]}") if missing else None
+    names = profile.field_names()
+    if spec.fields() - names:
+        return Rejection("fields", "unknown field")
+    # A sort field is a field too: `sort_field` and every encoding's `sort.field` must exist in
+    # the profile, or the name reaches the presenter as a column the data does not have --
+    # `merge_encoding_patch` already refuses exactly that on the user-patch path.
+    named_sorts = {
+        item.sort.field
+        for item in spec.encodings
+        if item.sort is not None and item.sort.field is not None
+    }
+    if spec.sort_field is not None:
+        named_sorts.add(spec.sort_field)
+    if named_sorts - names:
+        return Rejection("fields", "sort names an unknown field")
+    return None
 
 
 def _types(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
