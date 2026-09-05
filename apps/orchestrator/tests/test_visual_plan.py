@@ -89,32 +89,46 @@ def test_canonical_sees_a_different_mark_channel_or_sort() -> None:
     assert canonical(unsorted) != base  # the sort is a decision
 
 
+_default_base = _bar(titled=False)
+# The sort_field case needs its own base: comparing against `_default_base` (sort=None) would
+# change `sort` too, and the `sort` case above already proves *that* delta. A canonical() that
+# never read `spec.sort_field` would still pass such a comparison, because `sort` alone moved.
+_sort_field_base = ChartSpec(
+    mark=_default_base.mark, encodings=_default_base.encodings, sort="descending"
+)
+
+
 @pytest.mark.parametrize(
-    ("stack", "sort", "sort_field", "limit"),
+    ("base", "stack", "sort", "sort_field", "limit"),
     [
-        ("disabled", None, None, None),
-        (None, "descending", None, None),
-        (None, "descending", "value_minor", None),
-        (None, None, None, 5),
+        (_default_base, "disabled", None, None, None),
+        (_default_base, None, "descending", None, None),
+        (_sort_field_base, None, "descending", "value_minor", None),
+        (_default_base, None, None, None, 5),
     ],
     ids=["stack", "sort", "sort_field", "limit"],
 )
 def test_canonical_sees_stack_sort_sort_field_and_limit(
-    stack: Stack | None, sort: SortMode | None, sort_field: str | None, limit: int | None
+    base: ChartSpec,
+    stack: Stack | None,
+    sort: SortMode | None,
+    sort_field: str | None,
+    limit: int | None,
 ) -> None:
     """The docstring claims stack, the chart-wide sort/sort_field and limit are decisions; no
     test varied any of them. `sort_field` cannot be set without `sort`
-    (`ChartSpec.__post_init__` enforces it), so that case carries both."""
-    base_spec = _bar(titled=False)
+    (`ChartSpec.__post_init__` enforces it), so that case is compared against `_sort_field_base`
+    -- a base that already carries `sort="descending"` -- so the pair differs only in
+    `sort_field`, isolating it rather than merely carrying it alongside `sort`."""
     changed = ChartSpec(
-        mark=base_spec.mark,
-        encodings=base_spec.encodings,
+        mark=base.mark,
+        encodings=base.encodings,
         stack=stack,
         sort=sort,
         sort_field=sort_field,
         limit=limit,
     )
-    assert canonical(changed) != canonical(base_spec)
+    assert canonical(changed) != canonical(base)
 
 
 def test_canonical_stays_comparable_when_two_tooltips_differ_only_by_sort() -> None:
