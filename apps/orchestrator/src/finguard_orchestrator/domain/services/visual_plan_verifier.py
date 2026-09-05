@@ -287,14 +287,15 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         if held is None or held.role not in {"dimension", "series"}:
             continue
         sort = item.sort
-        # The chart-wide sort targets this field when `sort_field` names it explicitly, or when
-        # `sort_field` is omitted and this is the dimension on an axis -- the presenter's own
-        # fallback target (`vega_lite.py`'s `present()` always resolves the spec-wide sort onto
-        # whichever x/y encoding is nominal or temporal, never onto a `color`/offset legend).
+        # `present()` (`vega_lite.py:96-107`) picks the first nominal/temporal x/y encoding and
+        # writes the chart-wide sort onto *that* channel, unconditionally -- `sort_field` is the
+        # key to sort by, never the target, so it names a different field far more often than it
+        # names this one (a magnitude ranking's `sort_field` is the measure). Comparing it against
+        # `item.field` (fix round 1's reading) meant a chart-wide sort whose `sort_field` named
+        # some other real field looked like it was not targeting this axis at all, when the
+        # presenter would apply it here regardless.
         is_axis_dimension = item.channel in _AXES and held.role == "dimension"
-        chart_wide = spec.sort is not None and (
-            spec.sort_field == item.field or (spec.sort_field is None and is_axis_dimension)
-        )
+        chart_wide = spec.sort is not None and is_axis_dimension
         if held.order == "MEASURE_DESC" and is_axis_dimension:
             # Scoped to the axis for the same reason `INPUT` is below: an axis reorders itself
             # the moment nothing says otherwise, which is what the ranking requirement is against.
@@ -323,12 +324,17 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
                 return Rejection("order", f"{item.field} keeps the producer's order")
         elif held.order == "TEMPORAL":
             if sort is not None and sort.field not in (None, item.field):
-                return Rejection("order", "sort names an unknown field")
-            if spec.sort is not None and not chart_wide:
-                # The chart-wide sort names a field other than this one and does not fall back
-                # to it either -- the same "an explicit sort on another field is refused" the
-                # per-encoding branch above enforces, read off the spec-wide property instead.
-                return Rejection("order", "sort names an unknown field")
+                return Rejection("order", f"{item.field} is ordered by time, not by {sort.field}")
+            # `chart_wide` alone no longer says *which* field the chart-wide sort ranks by --
+            # only that it lands on this axis -- so the "another field" check has to read
+            # `spec.sort_field` directly: naming this field (or nothing) is a direction choice on
+            # the field's own values, Section D's TEMPORAL row allows that; naming another one is
+            # exactly "an explicit sort on another field", the same violation the per-encoding
+            # branch above refuses.
+            if chart_wide and spec.sort_field not in (None, item.field):
+                return Rejection(
+                    "order", f"{item.field} is ordered by time, not by {spec.sort_field}"
+                )
         elif held.order == "NONE" and (sort is not None or chart_wide):
             return Rejection("order", f"ordering does not apply to {item.field} on a {spec.mark}")
     return None

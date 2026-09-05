@@ -424,6 +424,27 @@ def test_a_temporal_axis_refuses_a_chart_wide_sort_by_another_field() -> None:
     assert rule_of(verify(ranked_wide, monthly())) == "order"
 
 
+def test_a_chart_wide_sort_targets_the_presenters_axis_pick_not_sort_fields_name() -> None:
+    """Fix round 2, item 1. `present()` (`vega_lite.py`) picks the first nominal/temporal x/y
+    encoding and writes the chart-wide sort onto it regardless of what `sort_field` names --
+    `sort_field` is the key to sort *by*, never the target. Comparing `sort_field` against
+    `item.field` (fix round 1's reading) let a chart-wide sort naming a real, different field
+    (`occurred_at`) read as not targeting `dimension` at all, though the presenter lands it there:
+    `dimension` is listed first and is nominal, so it is the presenter's pick, and its `NONE`
+    order refuses being targeted regardless of what the sort ranks by."""
+    reproducer = D(
+        "point",
+        (
+            E("y", "dimension", "nominal"),
+            E("x", "occurred_at", "temporal"),
+            E("tooltip", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="occurred_at",
+    )
+    assert rule_of(verify(reproducer, recurrence_with_series())) == "order"
+
+
 def test_none_refuses_a_sort_whether_per_encoding_or_chart_wide() -> None:
     """Fix round 1, I3: RECURRENCE's `y` dimension is `NONE` (Section D puts the whole `point`
     family there), so neither an encoding's own sort nor the chart-wide one may target it."""
