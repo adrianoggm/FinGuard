@@ -1,8 +1,8 @@
 """Does the model choose a chart a person would have chosen, and does it differ from the floor?
 
-One run is not a number: the planner is not bit-reproducible at temperature 0 (`--repeat`'s own
-help says so), and a contended GPU changes its answers. Run three times with the GPU alone and take
-the minimum, the way `calibrate_robustness_gate.py` does for robustness.
+One run is not a number: the planner is not bit-reproducible at temperature 0, and a contended GPU
+changes its answers. Run three times with the GPU alone and take the minimum, the way
+`calibrate_robustness_gate.py` does for robustness.
 
     uv run python scripts/evaluate_visual.py --provider ollama --model qwen3.5:9b
 """
@@ -133,6 +133,10 @@ class Stability:
     held: int = 0
     instructed: int = 0
     sensitive: int = 0
+    skipped: int = 0
+    """Pairs dropped because one side (or both) had no verified proposal -- neither `pairs` nor
+    `instructed` counts these, so without this a run where the model's proposals are mostly
+    rejected prints a stability of 0/0 that reads as a result rather than as missing data."""
     breaks: list[str] = field(default_factory=list)
 
 
@@ -143,6 +147,7 @@ def stability(cases: list[Case], proposals: dict[str, Any]) -> Stability:
             continue
         mine, twin = proposals.get(case.id), proposals.get(case.paraphrase_of)
         if mine is None or twin is None:
+            out.skipped += 1
             continue
         same = canonical(mine) == canonical(twin)
         if case.visual_instruction:
@@ -178,6 +183,23 @@ def _percentiles(latencies: list[int]) -> tuple[float | None, float | None]:
 
 def _report(results: Results, stable: Stability) -> str:
     p50, p95 = _percentiles(results.latencies)
+    latency = f"{p50:.0f} / {p95:.0f}" if p50 is not None and p95 is not None else "... / ..."
+    latency += "   <- P95 is the budget candidate"
+    timeouts = results.fallback_reasons.get("timeout", 0)
+    if timeouts:
+        # Included in the P50/P95 above, not excluded from it -- `evaluate_planning`'s formula is
+        # shared for consistency (finding 8). A censored run otherwise reads as "6s is enough" when
+        # the model needed more: this count is what tells a reader the P95 is self-fulfilling.
+        latency += f" ({timeouts} at the budget ceiling)"
+
+    held = f"{stable.held} / {stable.pairs}"
+    sensitive = f"{stable.sensitive} / {stable.instructed}"
+    if stable.skipped:
+        # One counter, not split by pair kind: it tells a reader "0/0 is missing data, not a
+        # result" on whichever of the two rows would otherwise read as a clean measurement.
+        held += f" ({stable.skipped} pairs had no proposal)"
+        sensitive += f" ({stable.skipped} instructed had no proposal)"
+
     rows = [
         ("cases entering the policy", str(results.entered)),
         ("validity", f"{results.valid} / {results.entered}"),
@@ -188,14 +210,10 @@ def _report(results: Results, stable: Stability) -> str:
             f"{results.valid_suitable_changed} / {results.entered}"
             "   <- the figure that carries the argument",
         ),
-        ("stability under equivalent paraphrase", f"{stable.held} / {stable.pairs}"),
-        ("sensitivity to a visual instruction", f"{stable.sensitive} / {stable.instructed}"),
+        ("stability under equivalent paraphrase", held),
+        ("sensitivity to a visual instruction", sensitive),
         ("no-chart cases kept out", f"{results.no_chart_held} / {results.no_chart_total}"),
-        (
-            "latency P50 / P95 (ms)",
-            f"{p50 if p50 is not None else '...'} / {p95 if p95 is not None else '...'}"
-            "   <- P95 is the budget candidate",
-        ),
+        ("latency P50 / P95 (ms)", latency),
         (
             "fallback reasons",
             f"{dict(results.fallback_reasons)}; rejected rules {dict(results.rejected_rules)}",
@@ -203,7 +221,45 @@ def _report(results: Results, stable: Stability) -> str:
     ]
     lines = ["| measure | value |", "| --- | --- |"]
     lines += [f"| {measure} | {value} |" for measure, value in rows]
+    report = "\n".join(lines) + "\n"
+    if stable.breaks:
+        # The single most useful diagnostic a paraphrase run produces: which pair broke, not just
+        # how many. Listed under the stability row rather than folded into the table, since a
+        # table cell is the wrong shape for a variable-length list.
+        report += "\nStability breaks:\n" + "\n".join(f"- {line}" for line in stable.breaks) + "\n"
+    return report
+
+
+def _group_table(results: Results) -> str:
+    """Per-group counters, so a promote-to-hybrid decision can see which groups the model helps
+    or hurts on -- `Results.by_group` was computed and thrown away before this existed."""
+    lines = [
+        "| group | entered | valid | suitable | valid_suitable_changed |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for group in sorted(results.by_group):
+        counts = results.by_group[group]
+        lines.append(
+            f"| {group} | {counts.get('entered', 0)} | {counts.get('valid', 0)} | "
+            f"{counts.get('suitable', 0)} | {counts.get('valid_suitable_changed', 0)} |"
+        )
     return "\n".join(lines) + "\n"
+
+
+def _sample_line(cases: list[Case]) -> str:
+    """The instrument's own size, computed from the loaded cases and never hard-coded -- so the
+    header cannot drift from `cases.yaml` the way a written-out number would."""
+    entering = sum(1 for case in cases if case.expect_chart)
+    pairs = sum(
+        1 for case in cases if case.paraphrase_of is not None and not case.visual_instruction
+    )
+    instructed = sum(
+        1 for case in cases if case.paraphrase_of is not None and case.visual_instruction
+    )
+    return (
+        f"{len(cases)} cases · {entering} enter the policy · "
+        f"{pairs} equivalent paraphrase pairs · {instructed} instructed"
+    )
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -257,18 +313,40 @@ async def run(args: argparse.Namespace) -> int:
 
     stable = stability(cases, proposals)
     report = _report(results, stable)
-    print(report)
+    group_table = _group_table(results)
+    sample = _sample_line(cases)
+    print(f"{sample}\n\n{report}\n## Per group\n\n{group_table}")
 
     VISUAL.mkdir(parents=True, exist_ok=True)
     (VISUAL / "RESULTS.md").write_text(
         "# Visual planner evaluation\n\n"
+        f"{sample}\n\n"
         "One run is not a number -- see the script's own docstring. Run three times with the "
         "GPU alone and take the minimum before treating any of these as a release figure.\n\n"
-        f"{report}",
+        f"{report}\n"
+        "## Per group\n\n"
+        f"{group_table}",
         encoding="utf-8",
     )
     (VISUAL / "last-run.json").write_text(
-        json.dumps({"manifest": manifest, "cases": records}, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {
+                "manifest": manifest,
+                "by_group": {group: dict(counts) for group, counts in results.by_group.items()},
+                "stability": {
+                    "pairs": stable.pairs,
+                    "held": stable.held,
+                    "instructed": stable.instructed,
+                    "sensitive": stable.sensitive,
+                    "skipped": stable.skipped,
+                    "breaks": stable.breaks,
+                },
+                "cases": records,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return 0

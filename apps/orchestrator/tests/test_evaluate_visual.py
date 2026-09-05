@@ -88,6 +88,19 @@ def test_stability_holds_for_paraphrases_and_is_sensitive_to_an_instruction() ->
     assert stability.instructed == 1 and stability.sensitive == 0
 
 
+def test_stability_counts_a_pair_with_no_proposal_as_skipped() -> None:
+    cases = [
+        evaluate_visual.Case(id="base", group="breakdown", dataset="breakdown", question="q"),
+        evaluate_visual.Case(
+            id="twin", group="breakdown", dataset="breakdown", question="q2", paraphrase_of="base"
+        ),
+    ]
+    proposals = {"base": _bar("y")}  # "twin"'s proposal is missing
+    stability = evaluate_visual.stability(cases, proposals)
+    assert stability.skipped == 1
+    assert stability.pairs == 0 and stability.held == 0
+
+
 def test_a_no_chart_case_is_suitable_when_nothing_was_drawn() -> None:
     cases = evaluate_visual.load_cases(Path("evaluation/visual/cases.yaml"))
     results = evaluate_visual.Results()
