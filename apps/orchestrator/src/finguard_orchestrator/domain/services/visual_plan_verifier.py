@@ -188,11 +188,17 @@ def _mark(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
 
 
 def _donut_claims(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
-    if spec.mark != "donut":
+    # A normalised bar claims the same thing a donut does -- one whole, composed of these parts
+    # -- just drawn as a single 100% bar instead of a circle. `mark != "donut"` alone let a
+    # breakdown with `verified_total=False` (the donut is refused for exactly this) draw as a
+    # normalised bar instead, and a comparison's series (`mutually_exclusive=False`: its rows are
+    # not disjoint parts of one whole) compose into one bar the same way.
+    if spec.mark != "donut" and spec.stack != "normalize":
         return None
     if not (profile.positive and profile.mutually_exclusive and profile.verified_total):
         return Rejection(
-            "donut_claims", "a donut asserts positive, exclusive parts of a verified whole"
+            "donut_claims",
+            "a donut or a normalised bar asserts positive, exclusive parts of a verified whole",
         )
     return None
 
@@ -258,6 +264,10 @@ def _limit(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
     dimension = next((f for f in profile.role("dimension") if f.type == "nominal"), None)
     wrong_family = (
         spec.mark != "bar"
+        # A normalised bar is a `bar`, so `mark != "bar"` alone let `limit` through onto it too --
+        # the presenter's rank-and-filter transform over a composition, exactly the row Section
+        # D's limit table names.
+        or spec.stack == "normalize"
         or profile.role("series")
         or dimension is None
         or dimension.order != "MEASURE_DESC"

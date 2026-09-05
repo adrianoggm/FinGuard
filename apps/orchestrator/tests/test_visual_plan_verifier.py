@@ -307,6 +307,32 @@ def test_a_donut_needs_the_three_claims() -> None:
     assert rule_of(verify(donut, breakdown())) == "donut_claims"  # no verified total
 
 
+def _normalised_bar(**overrides):
+    fields = dict(
+        mark="bar",
+        encodings=(E("x", "value_minor", "quantitative"), E("color", "dimension", "nominal")),
+        stack="normalize",
+    )
+    fields.update(overrides)
+    return D(**fields)
+
+
+def test_a_normalised_bar_claims_the_same_thing_a_donut_does() -> None:
+    """Fix round 2, item 3, paired with item 2: both are "the normalised bar is a composition".
+    `mark != "donut"` alone let a breakdown with `verified_total=False` -- refused as a donut for
+    exactly that -- draw as a normalised bar instead, and a comparison's series are not disjoint
+    parts of one whole (`mutually_exclusive=False`) yet still composed into one 100% bar."""
+    assert rule_of(verify(_normalised_bar(), breakdown())) == "donut_claims"  # no verified total
+    assert rule_of(verify(_normalised_bar(), comparison())) == "donut_claims"  # not exclusive
+
+
+def test_limit_refuses_a_normalised_bar() -> None:
+    """Fix round 2, item 2, paired with item 3. A normalised bar is a `bar`, so `mark != "bar"`
+    alone let `limit` through onto it too -- the presenter's rank-and-filter transform over a
+    composition, exactly the row Section D's limit table names."""
+    assert rule_of(verify(_normalised_bar(limit=3), share())) == "limit"
+
+
 def test_a_grouped_comparison_needs_offset_and_disabled_stack() -> None:
     grouped = D(
         "bar",
