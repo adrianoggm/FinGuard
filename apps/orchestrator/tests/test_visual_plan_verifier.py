@@ -274,6 +274,8 @@ def test_point_refuses_the_amount_off_tooltip_and_a_non_nominal_y() -> None:
         ),
     )
     assert isinstance(verify(accepted, recurrence_with_series()), ChartSpec)
+    # Refused via the top-of-function "theta belongs only to a donut" check, not the point
+    # family's own rule below -- `theta` never reaches a non-donut mark's own checks at all.
     amount_in_theta = D(
         "point",
         (
@@ -324,6 +326,17 @@ def test_a_normalised_bar_claims_the_same_thing_a_donut_does() -> None:
     parts of one whole (`mutually_exclusive=False`) yet still composed into one 100% bar."""
     assert rule_of(verify(_normalised_bar(), breakdown())) == "donut_claims"  # no verified total
     assert rule_of(verify(_normalised_bar(), comparison())) == "donut_claims"  # not exclusive
+
+
+def test_a_normalised_bar_refuses_the_wrong_shape() -> None:
+    """Fix round 2, item 6: no test set `stack="normalize"` and expected `_mark`'s new arm to
+    refuse it. Both axes populated is the opposite of "no opposite axis"."""
+    both_axes = D(
+        "bar",
+        (E("x", "value_minor", "quantitative"), E("y", "dimension", "nominal")),
+        stack="normalize",
+    )
+    assert rule_of(verify(both_axes, share())) == "mark"
 
 
 def test_limit_refuses_a_normalised_bar() -> None:

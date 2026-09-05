@@ -165,11 +165,10 @@ def _mark(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
             return Rejection(
                 "mark", "a point chart puts occurred_at on x and the nominal dimension on y"
             )
-        amount_channels = _AXES | {"theta"}
-        if any(
-            item.channel in amount_channels and role_on(item) == "measure"
-            for item in spec.encodings
-        ):
+        # No `theta` in the channels checked here: the top-of-function check already refuses it
+        # on any non-donut mark, point included, before this branch is ever reached, so `theta`
+        # never appears in `spec.encodings` by the time this line runs.
+        if any(item.channel in _AXES and role_on(item) == "measure" for item in spec.encodings):
             return Rejection("mark", "a point chart carries the amount only in tooltip")
     elif spec.mark == "donut":
         theta, color = _on(spec, "theta"), _on(spec, "color")
