@@ -10,6 +10,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import V
 _SPEC = importlib.util.spec_from_file_location(
     "evaluate_visual", Path(__file__).resolve().parents[1] / "scripts" / "evaluate_visual.py"
 )
+assert _SPEC and _SPEC.loader
 evaluate_visual = importlib.util.module_from_spec(_SPEC)
 sys.modules["evaluate_visual"] = evaluate_visual
 _SPEC.loader.exec_module(evaluate_visual)
@@ -47,16 +48,29 @@ def _decision(spec, *, valid=True, changed=True, ms=1200, reason=None):
 
 
 def test_every_case_names_a_known_dataset_and_a_resolvable_twin() -> None:
-    cases = evaluate_visual.load_cases(Path("evaluation/visual/cases.yaml"))
+    cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
+    assert len(cases) == 16
     ids = {c.id for c in cases}
     for case in cases:
         assert case.dataset == "none" or case.dataset in FAMILY_DATASETS
         assert case.paraphrase_of is None or case.paraphrase_of in ids
         assert case.expect_chart is False or case.suitable_marks
+    # `plan_limited` defaults to False, so if the YAML key were lost, renamed or mis-indented,
+    # load_cases would still return a case and every assertion above would still pass -- while
+    # `ranking_top3` measures nothing on the GPU. This is the one line that would catch that.
+    assert {c.id for c in cases if c.plan_limited} == {"ranking_top3"}
+
+
+def test_the_limited_case_gets_a_limited_profile() -> None:
+    cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
+    by_id = {c.id: c for c in cases}
+    assert evaluate_visual._profile_for(by_id["ranking_top3"]).plan_limited is True
+    assert evaluate_visual._profile_for(by_id["breakdown_where_most"]).plan_limited is False
+    assert evaluate_visual._profile_for(by_id["no_chart_balance"]).row_count == 1
 
 
 def test_the_judge_counts_validity_suitability_and_the_figure_that_matters() -> None:
-    cases = evaluate_visual.load_cases(Path("evaluation/visual/cases.yaml"))
+    cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
     by_id = {c.id: c for c in cases}
     results = evaluate_visual.Results()
     evaluate_visual.judge(
@@ -76,7 +90,7 @@ def test_the_judge_counts_validity_suitability_and_the_figure_that_matters() -> 
 
 
 def test_stability_holds_for_paraphrases_and_is_sensitive_to_an_instruction() -> None:
-    cases = evaluate_visual.load_cases(Path("evaluation/visual/cases.yaml"))
+    cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
     proposals = {
         "breakdown_where_most": _bar("y"),
         "breakdown_where_most_p1": _bar("y"),
@@ -102,7 +116,7 @@ def test_stability_counts_a_pair_with_no_proposal_as_skipped() -> None:
 
 
 def test_a_no_chart_case_is_suitable_when_nothing_was_drawn() -> None:
-    cases = evaluate_visual.load_cases(Path("evaluation/visual/cases.yaml"))
+    cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
     results = evaluate_visual.Results()
     evaluate_visual.judge(next(c for c in cases if c.id == "no_chart_single_figure"), None, results)
     assert results.no_chart_total == 1 and results.no_chart_held == 1

@@ -273,6 +273,13 @@ async def run(args: argparse.Namespace) -> int:
         print(f"{args.provider} did not answer", file=sys.stderr)
         return 2
 
+    # Unbudgeted, on purpose: `VisualPlanningPolicy` wraps every call below in a `budget_seconds`
+    # timeout, and on a fresh GPU session Ollama must load a 9B model on its first `complete` --
+    # which routinely takes far longer than that budget. Without this, case 1 is recorded as a
+    # `timeout` fallback with a censored latency and no proposal, and because it is the twin of
+    # two paraphrase pairs, both pairs are then silently dropped by `stability`'s own skip too.
+    await provider.complete("ok", model=args.model, temperature=0.0, max_output_tokens=1)
+
     manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
     print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
 
