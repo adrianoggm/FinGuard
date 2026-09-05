@@ -191,6 +191,12 @@ def test_structure_is_the_first_rule() -> None:
     )
 
 
+def test_a_type_error_shaped_draft_becomes_structure_not_an_exception() -> None:
+    """Catching is not repairing: `field=None`, `limit="5"` and `encodings=None` raise
+    `TypeError` rather than `ValueError`, and used to escape `verify` as exceptions."""
+    assert rule_of(verify(ranked_bar(limit="5"), breakdown())) == "structure"
+
+
 def test_an_absent_field_and_a_wrong_type_are_refused() -> None:
     assert (
         rule_of(
@@ -356,6 +362,29 @@ def test_limit_belongs_to_one_family() -> None:
         )
         == "limit"
     )
+
+
+def test_limit_refuses_a_series_and_an_unranked_dimension() -> None:
+    """`test_limit_belongs_to_one_family` only ever exercised `mark != "bar"`; the other two ways
+    to fail "categorical bar, single series, MEASURE_DESC only" want their own drafts."""
+    with_series = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+            E("color", "series", "nominal", S("input")),
+            E("yOffset", "series", "nominal", S("input")),
+        ),
+        stack="disabled",
+        limit=5,
+    )
+    assert rule_of(verify(with_series, comparison())) == "limit"
+    not_measure_desc = D(
+        "bar",
+        (E("x", "dimension", "nominal", S("input")), E("y", "value_minor", "quantitative")),
+        limit=5,
+    )
+    assert rule_of(verify(not_measure_desc, frequency())) == "limit"
 
 
 def test_order_follows_the_profile_not_the_type() -> None:

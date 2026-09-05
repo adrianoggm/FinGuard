@@ -58,7 +58,11 @@ def _structure(draft: VisualPlanDraft) -> ChartSpec | Rejection:
             sort_field=draft.sort_field,
             limit=draft.limit,
         )
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
+        # Catching is not repairing: `field=None`, `limit="5"`, `encodings=None` raise `TypeError`
+        # rather than `ValueError` (a `None`/wrong-shaped argument reaching `re.fullmatch` or a
+        # comparison, not a value `__post_init__` recognised and refused on purpose), and would
+        # otherwise escape `verify` as an exception instead of becoming this rejection.
         return Rejection("structure", str(exc))
 
 
