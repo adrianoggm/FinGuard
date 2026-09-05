@@ -72,6 +72,13 @@ class ChartSpec:
     def __post_init__(self) -> None:
         if self.mark not in {"line", "area", "bar", "point", "donut"}:
             raise ValueError("unsupported chart mark")
+        # `mark` above and `sort` below were each checked against a literal set of their own
+        # values; `stack` and `sort` were not -- an unrecognised value passed `_structure`
+        # (`visual_plan_verifier.py`) and reached the wire verbatim, the one path the DTO's own
+        # `stack in get_args(Stack)` / `sort in get_args(SortMode)` guard does not cover, because
+        # nothing here checked membership at all.
+        if self.stack is not None and self.stack not in get_args(Stack):
+            raise ValueError("unsupported chart stack")
         if self.mark == "donut" and self.stack is not None:
             raise ValueError("donut cannot be stacked")
         if self.stack is not None and not any(
@@ -86,6 +93,8 @@ class ChartSpec:
             raise ValueError("chart channels must be unique")
         if self.limit is not None and not 1 <= self.limit <= 100:
             raise ValueError("chart limit must be between 1 and 100")
+        if self.sort is not None and self.sort not in get_args(SortMode):
+            raise ValueError("unsupported chart sort")
         if self.sort_field is not None and self.sort is None:
             raise ValueError("sort_field requires sort")
 

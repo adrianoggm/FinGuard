@@ -65,4 +65,21 @@ def canonical(spec: ChartSpec) -> tuple[object, ...]:
             for item in spec.encodings
         )
     )
-    return (spec.mark, encodings, spec.stack, spec.sort, spec.sort_field, spec.limit)
+    # `present()` (`infrastructure/visualization/vega_lite.py`) picks the first nominal/temporal
+    # x/y encoding and writes the chart-wide sort onto it only when that channel carries no
+    # per-encoding sort of its own -- a per-encoding sort always wins on the wire. A spec whose
+    # axis dimension is already sorted per-encoding draws identically whatever `spec.sort` /
+    # `spec.sort_field` say, so counting them as a decision there would report a change that
+    # never reaches the presenter.
+    axis = next(
+        (
+            item
+            for item in spec.encodings
+            if item.channel in {"x", "y"} and item.type in {"nominal", "temporal"}
+        ),
+        None,
+    )
+    axis_has_own_sort = axis is not None and axis.sort is not None
+    chart_sort = None if axis_has_own_sort else spec.sort
+    chart_sort_field = None if axis_has_own_sort else spec.sort_field
+    return (spec.mark, encodings, spec.stack, chart_sort, chart_sort_field, spec.limit)
