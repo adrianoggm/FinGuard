@@ -73,3 +73,30 @@ def test_canonical_sees_a_different_mark_channel_or_sort() -> None:
     )
     assert canonical(swapped) != base  # orientation is a decision
     assert canonical(unsorted) != base  # the sort is a decision
+
+
+def test_canonical_stays_comparable_when_two_tooltips_differ_only_by_sort() -> None:
+    """`ChartSpec.__post_init__` enforces channel uniqueness everywhere except `tooltip`, so two
+    tooltip encodings can share field and type and differ only in `sort`. Sorting a bare `None`
+    against a 2-tuple used to raise `TypeError` here -- unreachable today, but `canonical()` runs
+    inside `changed_from_baseline` on every shadow turn, so a comparison that can raise is a
+    fallback that can crash."""
+    one_sorted = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal"),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("tooltip", "dimension", "nominal", sort=EncodingSort(mode="input")),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+        ),
+    )
+    neither_sorted = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal"),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+        ),
+    )
+    assert canonical(one_sorted) != canonical(neither_sorted)

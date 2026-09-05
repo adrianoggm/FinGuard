@@ -59,7 +59,8 @@ def canonical(spec: ChartSpec) -> tuple[object, ...]:
                 item.channel,
                 item.field,
                 item.type,
-                (item.sort.mode, item.sort.field) if item.sort is not None else None,
+                item.sort.mode if item.sort is not None else "",
+                (item.sort.field or "") if item.sort is not None else "",
             )
             for item in spec.encodings
         )
