@@ -45,12 +45,18 @@ from finguard_orchestrator.application.metrics_executor import financial_metric_
 from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
+from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
 from finguard_orchestrator.domain.services.turn_interpreters import (
     Deterministic,
     Hybrid,
     Promoted,
     Shadowed,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.infrastructure import (
     HttpAccounts,
     HttpAccountSummary,
@@ -86,6 +92,7 @@ from finguard_orchestrator.infrastructure.metrics.postgres_repository import (
     PostgresSavedMetricRepository,
 )
 from finguard_orchestrator.infrastructure.metrics.router import router as metrics_router
+from finguard_orchestrator.infrastructure.planning.llm_visual_planner import LlmVisualPlanner
 from finguard_orchestrator.infrastructure.request_log import register_request_logging
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.security.static_token_identity import (
@@ -258,6 +265,21 @@ def create_app() -> FastAPI:
         base_url=settings.banking_base_url,
         timeout_seconds=settings.banking_timeout_seconds,
     )
+    visual_model: VisualPlannerPort | None = None
+    if settings.visual_planner != "deterministic":
+        visual_model = LlmVisualPlanner(
+            planner_provider,
+            model=settings.planner_model,
+            temperature=settings.planner_temperature,
+            max_output_tokens=settings.planner_max_output_tokens,
+        )
+    visual_policy = VisualPlanningPolicy(
+        model=visual_model,
+        fallback=DeterministicVisualPlanner(),
+        verifier=verify,
+        mode=settings.visual_planner,
+        budget_seconds=settings.visual_planner_budget_seconds,
+    )
     asking = AskFinancialQuestionHandler(
         LlmQueryPlanner(
             planner_provider,
@@ -281,6 +303,7 @@ def create_app() -> FastAPI:
         # live path this is unreachable — it is here so the handler and the edge cannot end up
         # reading a sentence two different ways when somebody adds a third caller.
         interpreter=interpreter,
+        visual_policy=visual_policy,
     )
     query_bus.register(AskFinancialQuestionQuery, asking)
     # The home screen's figures. Same service, no model: the plan is built in the adapter.
