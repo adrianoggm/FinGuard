@@ -324,6 +324,23 @@ def test_a_grouped_comparison_needs_offset_and_disabled_stack() -> None:
     assert rule_of(verify(wrong_axis, comparison())) == "grouped"
 
 
+def test_two_offsets_are_refused() -> None:
+    """Only `offsets[0]` used to be compared against `color`, so a draft carrying both
+    `xOffset` and `yOffset` slipped through with the second one unchecked."""
+    both_offsets = D(
+        "bar",
+        (
+            E("y", "dimension", "nominal", S("descending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+            E("color", "series", "nominal", S("input")),
+            E("xOffset", "series", "nominal", S("input")),
+            E("yOffset", "series", "nominal", S("input")),
+        ),
+        stack="disabled",
+    )
+    assert rule_of(verify(both_offsets, comparison())) == "grouped"
+
+
 def test_limit_belongs_to_one_family() -> None:
     assert isinstance(verify(ranked_bar(limit=5), breakdown()), ChartSpec)
     assert (

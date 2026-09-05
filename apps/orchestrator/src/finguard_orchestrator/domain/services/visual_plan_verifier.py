@@ -180,42 +180,57 @@ def _donut_claims(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
 
 
 def _dimension_axis(spec: ChartSpec, profile: VisualProfile) -> ChartEncoding | None:
-    """The encoding on `x`/`y` whose field is a `dimension`, or `None` if there is none.
+    """The encoding on `x`/`y` whose field is a `dimension`, preferring a nominal one.
 
     Not inlined into `_grouped`'s `next(...)` -- that put `profile.field(i.field).role` on one
     line, and `profile.field` returns `VisualField | None`: a fresh call per item, so mypy cannot
     carry a truthiness check on one call over to the attribute access on another.
+
+    Prefers a nominal candidate over a temporal one instead of whichever axis draft order lists
+    first: a RECURRENCE profile's `occurred_at` (temporal, role `dimension`) and `dimension`
+    (nominal) can both be axis-placed at once, and it is the nominal one a grouped comparison's
+    own rule cares about, not whichever the model listed first.
     """
-    for item in spec.encodings:
-        if item.channel not in _AXES:
-            continue
-        held = profile.field(item.field)
-        if held is not None and held.role == "dimension":
-            return item
-    return None
+    candidates = [
+        item
+        for item in spec.encodings
+        if item.channel in _AXES
+        and (held := profile.field(item.field)) is not None
+        and held.role == "dimension"
+    ]
+    nominal = next((item for item in candidates if item.type == "nominal"), None)
+    return nominal if nominal is not None else next(iter(candidates), None)
 
 
 def _grouped(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
     series = {item.name for item in profile.role("series")}
     offsets = [item for item in spec.encodings if item.channel in _OFFSETS]
-    for item in offsets:
-        if item.field not in series:
-            return Rejection("grouped", "an offset takes only a series field")
+    # No "offset names a non-series field" check here: `_matrix` already refuses any channel in
+    # `_OFFSETS` for a role/type pair other than `("series", "nominal")`, so an offset reaching
+    # this rule always names a series field -- the check this replaced could never fire.
+    if len(offsets) > 1:
+        return Rejection("grouped", "a comparison offsets one axis, not both")
     color = _on(spec, "color")
     if offsets and color is not None and color.field != offsets[0].field:
         return Rejection("grouped", "color and the offset must name the same series")
     uses_series = any(item.field in series for item in spec.encodings if item.channel != "tooltip")
-    if spec.mark == "bar" and uses_series and not profile.temporal():
+    if spec.mark == "bar" and uses_series:
+        # Not `not profile.temporal()`: that is true for *any* dimension-role field being
+        # temporal, and a RECURRENCE profile's `occurred_at` makes it true even when the field
+        # actually placed on the axis is the nominal `dimension` -- which would let a stacked,
+        # offset-less bar through on a RECURRENCE profile. The axis encoding's own type is what
+        # decides whether this is a categorical grouped comparison.
         dimension = _dimension_axis(spec, profile)
-        wanted = _OFFSET_FOR[dimension.channel] if dimension is not None else None
-        if wanted is None or _on(spec, wanted) is None:
-            return Rejection(
-                "grouped", "a grouped comparison needs the offset on the dimension's axis"
-            )
-        if spec.stack != "disabled":
-            return Rejection(
-                "grouped", "a comparison is grouped, never stacked: stack must be disabled"
-            )
+        if dimension is not None and dimension.type == "nominal":
+            wanted = _OFFSET_FOR[dimension.channel]
+            if _on(spec, wanted) is None:
+                return Rejection(
+                    "grouped", "a grouped comparison needs the offset on the dimension's axis"
+                )
+            if spec.stack != "disabled":
+                return Rejection(
+                    "grouped", "a comparison is grouped, never stacked: stack must be disabled"
+                )
     return None
 
 
