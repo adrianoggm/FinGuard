@@ -28,6 +28,8 @@ from finguard_orchestrator.domain.models.chart import (
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -122,7 +124,18 @@ def test_deterministic_defaults_distinguish_time_cumulative_and_categories() -> 
     assert categorical.encodings[0].channel == "y"
 
 
-def _result(
+def _default_policy() -> VisualPlanningPolicy:
+    """The deterministic policy a handler builds when nobody hands it one."""
+    return VisualPlanningPolicy(
+        model=None,
+        fallback=DeterministicVisualPlanner(),
+        verifier=verify,
+        mode="deterministic",
+        budget_seconds=1.0,
+    )
+
+
+async def _result(
     rows: tuple[VisualRow, ...] | None,
     *,
     metric: str = "SUM",
@@ -139,7 +152,7 @@ def _result(
     # dataset's `metric` -- the wire `_decided_visual` reads to build `plan_limited` and
     # `plan_metric` on the profile. Every other test call leaves both `None`/default, which
     # reproduces the old (bare) `SpokenPlan` exactly.
-    return _decided_visual(
+    return await _decided_visual(
         AskFinancialQuestionResult(
             outcome="PLANNED",
             text="Resultado",
@@ -153,14 +166,15 @@ def _result(
             explicit_visualization=explicit,
             visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
         ),
-        DeterministicVisualPlanner(),
+        _default_policy(),
         DEFAULT_PRESENTATION,
+        "",
     )
 
 
-def test_mapper_uses_typed_series_and_every_encoding_names_a_real_field() -> None:
+async def test_mapper_uses_typed_series_and_every_encoding_names_a_real_field() -> None:
     dto = question_to_dto(
-        _result(
+        await _result(
             (
                 VisualRow("Comida", 100, series="agosto"),
                 VisualRow("Comida", 80, series="julio"),
@@ -305,7 +319,7 @@ def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
     assert payload.chart_id == "chart-1"
 
 
-def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
+async def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
     """One profile per turn, and the identity check is the whole point.
 
     The mapper used to build a second profile from the same dataset for the conversational
@@ -313,7 +327,7 @@ def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None
     disagreed with the one the chart was chosen from. The decision carries its own input now, and
     a second build is not something this code can express.
     """
-    result = _result((VisualRow("Comida", 100), VisualRow("Casa", 50)))
+    result = await _result((VisualRow("Comida", 100), VisualRow("Casa", 50)))
 
     # The two mapper halves in the order `question_to_dto` runs them. Read here rather than off
     # the response because the response carries the *payload* profile, which has never had these
@@ -324,21 +338,21 @@ def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None
     assert remembered.conversation.visual_contexts[0].profile is result.visual_decision.profile
 
 
-def test_mapper_never_infers_a_chart_from_public_groups() -> None:
-    assert question_to_dto(_result(None)).visualization is None
+async def test_mapper_never_infers_a_chart_from_public_groups() -> None:
+    assert question_to_dto(await _result(None)).visualization is None
 
 
-def test_explicit_single_row_is_a_kpi_and_never_a_vega_mark() -> None:
-    dto = question_to_dto(_result((VisualRow("total", 1234),), explicit=True))
+async def test_explicit_single_row_is_a_kpi_and_never_a_vega_mark() -> None:
+    dto = question_to_dto(await _result((VisualRow("total", 1234),), explicit=True))
     assert dto.visualization is not None
     assert dto.visualization.kind == "kpi"
     assert dto.visualization.value_field == "value_minor"
     assert dto.visualization.data == [{"dimension": "total", "value_minor": 1234}]
 
 
-def test_share_ratio_is_a_normalized_bar_bound_to_verified_operands() -> None:
+async def test_share_ratio_is_a_normalized_bar_bound_to_verified_operands() -> None:
     dto = question_to_dto(
-        _result(
+        await _result(
             (VisualRow("Parte", 25), VisualRow("Resto", 75)),
             metric="RATIO_SHARE",
         )
@@ -348,9 +362,9 @@ def test_share_ratio_is_a_normalized_bar_bound_to_verified_operands() -> None:
     assert dto.visualization.spec["encoding"]["x"]["stack"] == "normalize"  # type: ignore[index]
 
 
-def test_frequency_keeps_weekday_input_order_and_recurrence_is_a_timeline() -> None:
+async def test_frequency_keeps_weekday_input_order_and_recurrence_is_a_timeline() -> None:
     frequency = question_to_dto(
-        _result(
+        await _result(
             tuple(VisualRow(day, count) for day, count in (("Lun", 2), ("Mar", 0))),
             metric="FREQUENCY",
         )
@@ -360,7 +374,7 @@ def test_frequency_keeps_weekday_input_order_and_recurrence_is_a_timeline() -> N
     assert frequency.visualization.spec["encoding"]["x"]["sort"] is None  # type: ignore[index]
 
     recurrence = question_to_dto(
-        _result(
+        await _result(
             (
                 VisualRow("Netflix", 1299, series="MONTHLY", occurred_at="2026-07-01"),
                 VisualRow("Netflix", 1299, series="MONTHLY", occurred_at="2026-08-01"),
@@ -406,13 +420,13 @@ def test_a_wide_breakdown_draws_what_fits_and_yields_to_a_number_somebody_said()
     assert _spec("MONTH", 30).limit is None
 
 
-def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
+async def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
     """The number is in the Vega transform already, but a client should not have to parse that."""
     rows = tuple(
         VisualRow(dimension=f"Comercio {position}", value_minor=1000 - position)
         for position in range(30)
     )
-    result = _result(rows, group_by="MERCHANT")
+    result = await _result(rows, group_by="MERCHANT")
     visualization = question_to_dto(result).visualization
     assert visualization is not None and visualization.kind == "chart"
     assert visualization.limit == ROWS_THAT_FIT
@@ -420,7 +434,7 @@ def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
     assert len(visualization.data) == 30
 
 
-def test_a_plan_limited_dataset_is_not_cut_again_through_the_mapper() -> None:
+async def test_a_plan_limited_dataset_is_not_cut_again_through_the_mapper() -> None:
     """The wire between the plan and the floor, not a hand-built profile.
 
     `test_a_plan_that_already_cut_its_rows_is_not_cut_again` (deterministic_visual_planner
@@ -432,13 +446,13 @@ def test_a_plan_limited_dataset_is_not_cut_again_through_the_mapper() -> None:
         VisualRow(dimension=f"Comercio {position}", value_minor=1000 - position)
         for position in range(30)
     )
-    result = _result(rows, group_by="MERCHANT", group_limit=25)
+    result = await _result(rows, group_by="MERCHANT", group_limit=25)
     visualization = question_to_dto(result).visualization
     assert visualization is not None and visualization.kind == "chart"
     assert visualization.limit is None
 
 
-def test_a_comparison_of_counts_labels_its_axis_movements_through_the_mapper() -> None:
+async def test_a_comparison_of_counts_labels_its_axis_movements_through_the_mapper() -> None:
     """The other defect the brief's `plan()` reintroduced, caught the same way.
 
     `test_a_comparison_of_counts_labels_its_axis_movements` (deterministic_visual_planner
@@ -447,14 +461,14 @@ def test_a_comparison_of_counts_labels_its_axis_movements_through_the_mapper() -
     it fails if `_decided_visual` stops reading `context.metric` into `plan_metric`.
     """
     rows = (VisualRow("agosto", 12), VisualRow("julio", 9))
-    result = _result(rows, metric="COMPARISON", plan_metric="COUNT")
+    result = await _result(rows, metric="COMPARISON", plan_metric="COUNT")
     dto = question_to_dto(result)
     assert dto.visualization is not None and dto.visualization.kind == "chart"
     encoding = dto.visualization.spec["encoding"]
     assert encoding["x"]["title"] == "Movimientos"  # type: ignore[index]
 
 
-def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> None:
+async def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> None:
     """What makes an answer keepable is a plan and a figure, not a chart.
 
     "Cuanto he gastado este mes" is one number, so it has no chart -- and it is the most obvious
@@ -464,7 +478,7 @@ def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> 
     tokens = MetricTokenCodec({"active": b"z" * 32}, "active")
     plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
     figure = replace(
-        _result(None),
+        await _result(None),
         total_minor=48945,
         movement_count=12,
         metric_definition=plan,
@@ -481,11 +495,11 @@ def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> 
     assert saved.chart is None
 
 
-def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
+async def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
     """A payment preview carries the last plan too, and it is not a metric."""
     plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
     tokens = MetricTokenCodec({"active": b"z" * 32}, "active")
-    without_figure = replace(_result(None), metric_definition=plan)
+    without_figure = replace(await _result(None), metric_definition=plan)
 
     response = question_to_dto(without_figure, holder_reference="holder", metric_tokens=tokens)
 

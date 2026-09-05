@@ -30,6 +30,8 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     VisualDecision,
     _sort_for,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -647,7 +649,13 @@ async def test_a_real_turn_carries_the_decision_and_the_mapper_draws_it() -> Non
         cards=_NoCards(),
     )
     floor = _RecordingVisualFloor()
-    handler._visual_floor = floor  # type: ignore[assignment]
+    handler._visual_policy = VisualPlanningPolicy(  # type: ignore[assignment]
+        model=None,
+        fallback=floor,  # type: ignore[arg-type]
+        verifier=verify,
+        mode="deterministic",
+        budget_seconds=1.0,
+    )
     presentation = PresentationContext("VOICE", "MOBILE", 5)
 
     result = await handler.handle(

@@ -280,8 +280,8 @@ def test_a_bare_word_still_gets_through_and_that_is_the_honest_limit() -> None:
 def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
     """Two of the six slots are structurally incapable of leaking, which is half the reason they
     are enums. The other half is that Section 3 makes them metric labels."""
-    assert len(Step) == 10, "the design argues ten seams; an eleventh should be a diff to justify"
-    assert len({step.value for step in Step}) == 10, "two seams sharing a label share a time series"
+    assert len(Step) == 11, "the design argues eleven seams; a twelfth should be a diff to justify"
+    assert len({step.value for step in Step}) == 11, "two seams sharing a label share a time series"
     assert set(Verdict) == {
         Verdict.AGREED,
         Verdict.OVERRODE,
@@ -526,7 +526,7 @@ def test_the_record_is_reached_by_reference_not_by_reading_the_variable() -> Non
 def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
     """Section 2's condition for touching the 7000-line file is one call per seam with no
     branching of its own. This is that condition, checked against the shape before the file is
-    opened: each of the ten, with the facts the design's table says it carries.
+    opened: each of the eleven, with the facts the design's table says it carries.
 
     `planner` is the seam that added `detail`. It records an outcome *and* the model that produced
     it, and those are not a before and an after — without a slot for the actor either `now` becomes
@@ -589,12 +589,21 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             now=PlanningOutcome.PLANNED.value,
             detail="figure",
         )
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.OVERRODE,
+            changed=True,
+            field="chart",
+            was="deterministic",
+            now="llm",
+            detail="accepted",
+        )
         turn.outcome = PlanningOutcome.PLANNED.value
 
     sealed = turn.sealed()
-    assert {decision.step for decision in sealed.decisions} == set(Step), "all ten fit"
+    assert {decision.step for decision in sealed.decisions} == set(Step), "all eleven fit"
     assert all(REDACTED not in everything_in(TurnRecord((d,))) for d in sealed.decisions)
-    assert len(sealed.changed) == 8, "eight of the ten altered the answer in this example"
+    assert len(sealed.changed) == 9, "nine of the eleven altered the answer in this example"
 
 
 # --- the package move -------------------------------------------------------------------------
