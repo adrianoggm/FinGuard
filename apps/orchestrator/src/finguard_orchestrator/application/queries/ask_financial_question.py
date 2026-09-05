@@ -5285,7 +5285,9 @@ def _record_visual(decision: VisualDecision) -> None:
             "selected_source": decision.source,
             "fallback_reason": decision.fallback_reason,
             "latency_ms": decision.latency_ms,
-            "proposed_spec": canonical(decision.proposed_spec) if decision.proposed_spec else None,
+            "proposed_spec": (
+                canonical(decision.proposed_spec) if decision.proposed_spec is not None else None
+            ),
             "shown_spec": canonical(decision.spec),
         },
     )
