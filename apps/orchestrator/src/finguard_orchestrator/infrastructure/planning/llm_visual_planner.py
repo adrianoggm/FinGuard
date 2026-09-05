@@ -8,6 +8,7 @@ floor to fall back to.
 """
 
 import json
+import logging
 from typing import Any
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
@@ -23,6 +24,8 @@ from finguard_orchestrator.infrastructure.planning.visual_prompt import (
     build_visual_prompt,
     visual_schema,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LlmVisualPlanner:
@@ -49,6 +52,11 @@ class LlmVisualPlanner:
         answer = await self._complete(prompt)
         parsed = _parse(answer)
         if parsed is None:
+            # Never echo malformed provider text into the repair prompt or the log: the
+            # exact schema is sufficient, and the second result is still validated without
+            # coercion. Mirrors `llm_query_planner.py`'s own repair log -- no user text, no
+            # model text, ever.
+            logger.warning("visual_planner.invalid_structure retrying=true")
             answer = await self._complete(prompt + STRUCTURE_REPAIR)
             parsed = _parse(answer)
             if parsed is None:
@@ -65,12 +73,46 @@ class LlmVisualPlanner:
         )
 
 
+# The three keys `visual_schema()` marks `required` on an encoding item, and the one key it marks
+# `required` on a `sort` object. A missing one is a structure failure, never a fabricated `"None"`
+# string built by `str(item.get(...))` -- the model wrote no channel, and the record should not
+# claim it wrote `"None"` (finding 13).
+_ENCODING_REQUIRED = ("channel", "field", "type")
+
+
+def _encodings_are_well_formed(encodings: object) -> bool:
+    if not isinstance(encodings, list):
+        return False
+    for item in encodings:
+        if not isinstance(item, dict) or not all(key in item for key in _ENCODING_REQUIRED):
+            return False
+        sort = item.get("sort")
+        if isinstance(sort, dict) and "mode" not in sort:
+            return False
+    return True
+
+
 def _parse(answer: str) -> dict[str, Any] | None:
     try:
         parsed = json.loads(answer)
     except ValueError:
         return None
-    return parsed if isinstance(parsed, dict) and "encodings" in parsed else None
+    if not isinstance(parsed, dict):
+        return None
+    if "mark" in parsed and parsed["mark"] is None:
+        # Abstention, however tersely it was written. Checked before the structural gate below
+        # so a minimal `{"mark": null}` reads as the abstention it is rather than failing
+        # `"encodings" in parsed` and being recorded as a provider error (finding 9).
+        return {"mark": None, "encodings": []}
+    if "encodings" not in parsed or not _encodings_are_well_formed(parsed["encodings"]):
+        return None
+    limit = parsed.get("limit")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)):
+        # A limit the adapter cannot read is a structure failure, not a silently dropped or
+        # coerced value (finding 1): `isinstance(True, int)` is `True` in Python, so `bool` is
+        # excluded explicitly or a JSON boolean would become `limit=1`.
+        return None
+    return parsed
 
 
 def _draft(parsed: dict[str, Any]) -> VisualPlanDraft | None:
@@ -94,6 +136,8 @@ def _draft(parsed: dict[str, Any]) -> VisualPlanDraft | None:
         sort=parsed.get("sort"),
         sort_field=parsed.get("sort_field"),
         stack=parsed.get("stack"),
-        limit=parsed.get("limit") if isinstance(parsed.get("limit"), int) else None,
+        # The type is now guaranteed by `_parse`'s own gate -- passed through unconditionally,
+        # never coerced (finding 1).
+        limit=parsed.get("limit"),
         rationale=parsed.get("rationale") if isinstance(parsed.get("rationale"), str) else None,
     )
