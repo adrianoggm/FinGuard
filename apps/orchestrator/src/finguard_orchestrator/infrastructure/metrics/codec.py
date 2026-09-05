@@ -20,7 +20,14 @@ from finguard_orchestrator.domain.enums import (
     Period,
     TransactionType,
 )
-from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec
+from finguard_orchestrator.domain.models.chart import (
+    Channel,
+    ChartEncoding,
+    ChartSpec,
+    EncodingSort,
+    SortMode,
+    Stack,
+)
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -90,6 +97,10 @@ def decode_plan(value: object) -> FinancialPlan:
     raise CodecError("unknown plan kind")
 
 
+def _encode_sort(sort: EncodingSort) -> dict[str, Any]:
+    return {"mode": sort.mode, **({"field": sort.field} if sort.field is not None else {})}
+
+
 def encode_chart(chart: ChartSpec) -> dict[str, Any]:
     result: dict[str, Any] = {
         "mark": chart.mark,
@@ -99,6 +110,7 @@ def encode_chart(chart: ChartSpec) -> dict[str, Any]:
                 "field": e.field,
                 "type": e.type,
                 **({"title": e.title} if e.title is not None else {}),
+                **({"sort": _encode_sort(e.sort)} if e.sort is not None else {}),
             }
             for e in chart.encodings
         ],
@@ -109,6 +121,17 @@ def encode_chart(chart: ChartSpec) -> dict[str, Any]:
         if value is not None:
             result[name] = value
     return {"version": VERSION, **result}
+
+
+def _decode_encoding_sort(value: object) -> EncodingSort | None:
+    if value is None:
+        return None
+    obj = _object(value, {"mode", "field"})
+    _require(obj, {"mode"})
+    return EncodingSort(
+        cast(SortMode, _str(obj, "mode")),
+        _optional_str(obj, "field"),
+    )
 
 
 def decode_chart(value: object) -> ChartSpec:
@@ -134,26 +157,23 @@ def decode_chart(value: object) -> ChartSpec:
     try:
         parsed: list[ChartEncoding] = []
         for item in encodings:
-            e = _object(item, {"channel", "field", "type", "title"})
+            e = _object(item, {"channel", "field", "type", "title", "sort"})
             _require(e, {"channel", "field", "type"})
             parsed.append(
                 ChartEncoding(
-                    channel=cast(
-                        Literal["x", "y", "color", "tooltip", "theta"], _str(e, "channel")
-                    ),
+                    channel=cast(Channel, _str(e, "channel")),
                     field=_str(e, "field"),
                     type=cast(Literal["nominal", "quantitative", "temporal"], _str(e, "type")),
                     title=_optional_str(e, "title"),
+                    sort=_decode_encoding_sort(e.get("sort")),
                 )
             )
         return ChartSpec(
             mark=cast(Literal["line", "area", "bar", "point", "donut"], _str(obj, "mark")),
             encodings=tuple(parsed),
             title=_optional_str(obj, "title"),
-            stack=cast(Literal["zero", "normalize"] | None, _optional_str(obj, "stack")),
-            sort=cast(
-                Literal["ascending", "descending", "input"] | None, _optional_str(obj, "sort")
-            ),
+            stack=cast(Stack | None, _optional_str(obj, "stack")),
+            sort=cast(SortMode | None, _optional_str(obj, "sort")),
             sort_field=_optional_str(obj, "sort_field"),
             limit=_optional_int(obj, "limit"),
             responsive=_bool(obj, "responsive"),

@@ -16,9 +16,14 @@ from uuid import UUID, uuid4
 from finguard_orchestrator.domain.enums import Action, GroupBy, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
 from finguard_orchestrator.domain.models.chart import (
+    Channel,
     ChartEncoding,
     ChartSpec,
+    EncodingSort,
+    SortMode,
+    Stack,
     VisualContext,
+    VisualField,
     VisualProfile,
 )
 from finguard_orchestrator.domain.models.contact import Contact
@@ -108,6 +113,24 @@ def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> Pla
     )
 
 
+def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
+    """One encoding's `sort`, trusting the DTO to have already refused anything invalid.
+
+    `VisualContextPayload._value_free_spec` now constructs `EncodingSort` itself and lets its
+    `ValueError` become a 422 before this ever runs, so a payload that reaches `to_domain` has a
+    `sort` that is either absent (`raw is None`) or exactly the dict `EncodingSort` accepts. This
+    used to filter instead of trust -- catching that same `ValueError` and returning `None` -- so
+    a caller's `{"mode": "sideways"}` silently became "no sort" instead of a refusal. A
+    `ValueError` reaching here now is not a caller's mistake: it is the DTO's guard and the domain
+    rule it enforces coming apart, and it is left to propagate rather than caught and hidden.
+    """
+    if raw is None:
+        return None
+    assert isinstance(raw, dict)
+    field = raw.get("field")
+    return EncodingSort(cast(SortMode, raw["mode"]), field if isinstance(field, str) else None)
+
+
 def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext, ...]:
     if payload is None:
         return ()
@@ -138,23 +161,52 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
                     raise ValueError("invalid visual encoding")
                 encodings.append(
                     ChartEncoding(
-                        cast(Literal["x", "y", "color", "tooltip", "theta"], channel),
+                        cast(Channel, channel),
                         encoded["field"],
                         cast(
                             Literal["nominal", "quantitative", "temporal"],
                             encoded.get("type", "nominal"),
                         ),
                         encoded.get("title") if isinstance(encoded.get("title"), str) else None,
+                        _encoding_sort_from_payload(encoded.get("sort")),
                     )
                 )
+        # A narrowed reconstruction, and deliberately so. The profile a planner uses is always
+        # built fresh from the dataset; this one exists only to validate a patch against the chart
+        # it came back with. `role` is derived from `type` because the payload does not carry it,
+        # and that derivation is wrong for `series` -- it will read as a dimension. That is bounded
+        # and safe for the donut rule, the only planner rule that reads a role, because a donut
+        # requires `mutually_exclusive`, which is false whenever a series exists. `to_payload`'s
+        # wire `cardinality` (below) is a second reader of a round-tripped profile's role, and it
+        # is bounded the same way for a different reason: `cardinality` here is the single wire
+        # value copied onto every field two lines below, so whichever field `role("dimension")`
+        # lands on -- the true dimension or a series misread as one -- re-emits that same number.
+        # **Do not trust a role on a round-tripped profile for anything else.**
+        #
+        # `row_count`, `plan_limited` and `plan_metric` keep their empty values for the same
+        # reason and with the same bound. None of the three is on the wire -- `VisualProfilePayload`
+        # does not carry them, and a count of rows is not something a browser should be able to
+        # assert -- and none is read by `valid_for` or `merge_encoding_patch`, the only two things
+        # a round-tripped profile is for. The floor never runs on one: it runs on a profile built
+        # fresh from the dataset in the same turn.
         profile = VisualProfile(
-            tuple((field.name, field.type) for field in item.profile.fields),
-            item.profile.cardinality,
-            item.profile.metric,
-            item.profile.unit,
-            item.profile.positive,
-            item.profile.mutually_exclusive,
-            item.profile.verified_total,
+            fields=tuple(
+                VisualField(
+                    field.name,
+                    field.type,
+                    "measure" if field.type == "quantitative" else "dimension",
+                    item.profile.cardinality,
+                )
+                for field in item.profile.fields
+            ),
+            metric=item.profile.metric or "SUM",
+            unit=item.profile.unit or "unknown",
+            positive=item.profile.positive,
+            mutually_exclusive=item.profile.mutually_exclusive,
+            verified_total=item.profile.verified_total,
+            row_count=0,
+            plan_limited=False,
+            plan_metric=None,
         )
         title_value = raw.get("title")
         title = title_value if isinstance(title_value, str) else None
@@ -162,21 +214,28 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
         sort_field = sort_field_value if isinstance(sort_field_value, str) else None
         limit_value = raw.get("limit")
         limit = limit_value if isinstance(limit_value, int) else None
+        # `stack` and `sort` used to be filtered here -- an unrecognised value silently became
+        # `None` instead of being refused. `VisualContextPayload._value_free_spec` is the guard
+        # now (`stack in get_args(Stack)`, `sort in get_args(SortMode)`), so what reaches this
+        # point is already either absent or a member of the domain's own set; this only tells
+        # "absent" from "present" and casts, it does not filter.
+        raw_stack = raw.get("stack")
+        raw_sort = raw.get("sort")
         spec = ChartSpec(
             mark=mark_name,
             encodings=tuple(encodings),
             title=title,
-            stack=cast(Literal["zero", "normalize"] | None, raw.get("stack"))
-            if raw.get("stack") in {"zero", "normalize"}
-            else None,
-            sort=cast(Literal["ascending", "descending", "input"] | None, raw.get("sort"))
-            if raw.get("sort") in {"ascending", "descending", "input"}
-            else None,
+            stack=cast(Stack, raw_stack) if raw_stack is not None else None,
+            sort=cast(SortMode, raw_sort) if raw_sort is not None else None,
             sort_field=sort_field,
             limit=limit,
         )
         result.append(VisualContext(item.chart_id, spec, profile))
     return tuple(result)
+
+
+def _encoding_sort_payload(sort: EncodingSort) -> dict[str, object]:
+    return {"mode": sort.mode, **({"field": sort.field} if sort.field is not None else {})}
 
 
 def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
@@ -186,6 +245,7 @@ def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
             "field": item.field,
             "type": item.type,
             **({"title": item.title} if item.title else {}),
+            **({"sort": _encoding_sort_payload(item.sort)} if item.sort is not None else {}),
         }
         if item.channel == "tooltip" and item.channel in encoding:
             previous = encoding[item.channel]
@@ -539,10 +599,23 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                     "spec": _context_spec_payload(context.spec),
                     "profile": {
                         "fields": [
-                            {"name": name, "type": field_type}
-                            for name, field_type in context.profile.fields
+                            {"name": field.name, "type": field.type}
+                            for field in context.profile.fields
                         ],
-                        "cardinality": context.profile.cardinality,
+                        # The wire payload keeps one dataset-level count, same as before the
+                        # profile carried per-field cardinality. It is the nominal dimension's --
+                        # the field that lands in `color` -- since that is the only cardinality a
+                        # round-tripped profile's donut rule reads. It is 0 whenever the chart's
+                        # dimension is temporal rather than nominal -- read that as "not a donut's
+                        # business", never as "no rows": the rows are still all there.
+                        "cardinality": next(
+                            (
+                                field.cardinality
+                                for field in context.profile.role("dimension")
+                                if field.type == "nominal"
+                            ),
+                            0,
+                        ),
                         "metric": context.profile.metric,
                         "unit": context.profile.unit,
                         "positive": context.profile.positive,

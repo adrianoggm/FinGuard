@@ -7,6 +7,7 @@ from typing import Literal, cast
 
 from finguard_orchestrator.domain.models.chart import (
     EncodingPatch,
+    SortMode,
     VisualContext,
     merge_encoding_patch,
 )
@@ -140,7 +141,7 @@ def interpret_visual(
         EncodingPatch(
             mark=cast(Literal["line", "area", "bar", "point", "donut"] | None, mark),
             stack=cast(Literal["zero", "normalize"] | None, stack),
-            sort=cast(Literal["ascending", "descending", "input"] | None, sort),
+            sort=cast(SortMode | None, sort),
             sort_field=sort_field,
             limit=limit,
             changed=changed,

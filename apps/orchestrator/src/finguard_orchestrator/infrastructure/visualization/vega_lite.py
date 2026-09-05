@@ -9,11 +9,20 @@ def present(visualization: Visualization) -> dict[str, Any]:
     """Emit a Vega-Lite spec and the already measured rows as separate properties."""
     encoding: dict[str, Any] = {}
     for item in visualization.spec.encodings:
-        encoded = {
+        encoded: dict[str, Any] = {
             "field": item.field,
             "type": item.type,
             **({"title": item.title} if item.title else {}),
         }
+        if item.sort is not None:
+            # Vega-Lite reads `"sort": null` as "keep the data's order", which is what `input`
+            # means. A named field becomes the object form.
+            if item.sort.mode == "input":
+                encoded["sort"] = None
+            elif item.sort.field is not None:
+                encoded["sort"] = {"field": item.sort.field, "order": item.sort.mode}
+            else:
+                encoded["sort"] = item.sort.mode
         if item.channel == "tooltip" and item.channel in encoding:
             previous = encoding[item.channel]
             encoding[item.channel] = [previous] if isinstance(previous, dict) else previous
@@ -21,7 +30,7 @@ def present(visualization: Visualization) -> dict[str, Any]:
         else:
             encoding[item.channel] = encoded
     spec: dict[str, Any] = {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
         "mark": (
             {"type": "arc", "innerRadius": 55}
             if visualization.spec.mark == "donut"
@@ -52,13 +61,20 @@ def present(visualization: Visualization) -> dict[str, Any]:
             },
             {"filter": f"datum._rank <= {visualization.spec.limit}"},
         ]
-    if visualization.spec.stack:
+    if visualization.spec.stack is not None:
+        # `ChartSpec.__post_init__` guarantees a quantitative x/y encoding whenever `stack` is
+        # set, so this `next()` cannot raise `StopIteration` here.
         quantitative = next(
             item.channel
             for item in visualization.spec.encodings
             if item.type == "quantitative" and item.channel in {"x", "y"}
         )
-        spec["encoding"][quantitative]["stack"] = visualization.spec.stack
+        # `disabled` has to be an explicit null. Omitting the property is what Vega-Lite reads as
+        # "you decide", and for a bar with a colour series it decides to stack -- so the absent
+        # property is the bug, not the fix.
+        spec["encoding"][quantitative]["stack"] = (
+            None if visualization.spec.stack == "disabled" else visualization.spec.stack
+        )
     if visualization.spec.sort:
         nominal = next(
             (
@@ -70,15 +86,25 @@ def present(visualization: Visualization) -> dict[str, Any]:
         )
         if nominal is None:
             raise ValueError("a sorted chart needs a categorical or temporal dimension")
-        if visualization.spec.sort_field:
-            spec["encoding"][nominal]["sort"] = {
-                "field": visualization.spec.sort_field,
-                "order": None if visualization.spec.sort == "input" else visualization.spec.sort,
-            }
-        else:
-            spec["encoding"][nominal]["sort"] = (
-                None if visualization.spec.sort == "input" else visualization.spec.sort
-            )
+        # A per-encoding sort wins for its own channel: the loop above already wrote a "sort"
+        # key onto `nominal`'s encoding when that channel's `ChartEncoding.sort` was set, and it
+        # says something more specific about that one channel than this chart-wide default does.
+        # Vega-Lite has one "sort" property per channel, so the spec-level default only applies
+        # where nothing more specific claimed it. This depends on the per-encoding loop above
+        # running -- and writing into this same `encoding` dict -- before this block does; if the
+        # two are ever reordered, this guard has to move with the loop or the precedence breaks.
+        if "sort" not in spec["encoding"][nominal]:
+            if visualization.spec.sort_field:
+                spec["encoding"][nominal]["sort"] = {
+                    "field": visualization.spec.sort_field,
+                    "order": (
+                        None if visualization.spec.sort == "input" else visualization.spec.sort
+                    ),
+                }
+            else:
+                spec["encoding"][nominal]["sort"] = (
+                    None if visualization.spec.sort == "input" else visualization.spec.sort
+                )
     return {"spec": spec, "data": list(visualization.data)}
 
 
