@@ -1,4 +1,4 @@
-"""The ten seams, each asserted on the decision it actually produces.
+"""The eleven seams, each asserted on the decision it actually produces.
 
 Section 1 built the record and proved it holds a decision. This is the file that proves the
 pipeline *puts* one there — which is the half that rots. Six times in the last week this repository
@@ -153,7 +153,12 @@ class FakeLedger:
             currency="EUR",
             total_minor=189_597,
             movement_count=12,
-            groups=(Group("Elena", 4_656, 2),),
+            # Two groups, not one: a single-row breakdown is a KPI and never reaches the visual
+            # planner at all (section 11 below), so the default double has to clear that bar for
+            # every section that shares it -- including the full-request test at
+            # `test_the_seams_record_into_the_turn_the_application_opened`, which is exactly the
+            # "reachable from a real request" evidence that seam needs.
+            groups=(Group("Elena", 4_656, 2), Group("Marco", 3_200, 1)),
         )
 
     async def ranked(self, ranking, *, account_id, today, reporting_timezone):
@@ -375,6 +380,7 @@ def test_the_seams_record_into_the_turn_the_application_opened(route: str) -> No
         Step.PLAN_VERIFIER,
         Step.LEDGER,
         Step.OUTCOME,
+        Step.VISUAL_PLANNER,
     }
 
 
@@ -896,6 +902,28 @@ async def test_every_turn_records_exactly_one_outcome() -> None:
     ):
         _, sealed = await turn_for(sentence, plan)
         assert len(sealed.where(Step.OUTCOME)) == 1, sentence
+
+
+# --- 11 · visual_planner -----------------------------------------------------------------------
+
+
+async def test_visual_planner_records_the_deterministic_default_on_a_real_turn() -> None:
+    """The seam this task adds is reachable from `_steps`, not only from a direct call to
+    `_decided_visual` -- which is the one thing this file's own docstring rules out as evidence.
+
+    `handler_for` builds a handler with no `visual_policy`, so it carries the deterministic-mode
+    default `AskFinancialQuestionHandler.__init__` constructs; `FakeLedger`'s two groups are what
+    clear the one-row-is-a-KPI guard and let the turn reach the policy at all.
+    """
+    _, sealed = await turn_for(
+        STATES_WINDOW_AND_DIRECTION,
+        FinancialPlan(direction=Direction.INCOME, period=FIVE_MONTHS),
+    )
+
+    decision = only(sealed, Step.VISUAL_PLANNER)
+    assert decision.verdict is Verdict.AGREED
+    assert decision.changed is False
+    assert decision.detail == "not_run"
 
 
 # --- recording is unconditional ----------------------------------------------------------------
