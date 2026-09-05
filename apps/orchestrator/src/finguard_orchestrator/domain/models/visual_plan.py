@@ -7,8 +7,16 @@ refusal back into the adapter, and a model error would become an exception where
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 from finguard_orchestrator.domain.models.chart import ChartSpec
+
+# The policy's closed sets. Defined here, not in `visual_planning_policy.py`, so
+# `VisualDecision.fallback_reason` (`deterministic_visual_planner.py`) can be typed by the same
+# name the policy constructs it from -- the policy already imports this module, so typing the
+# field the other way round would be the cycle, not this one.
+VisualMode = Literal["deterministic", "shadow", "hybrid", "promoted"]
+FallbackReason = Literal["abstention", "timeout", "provider_error", "invalid_proposal"]
 
 
 @dataclass(frozen=True)

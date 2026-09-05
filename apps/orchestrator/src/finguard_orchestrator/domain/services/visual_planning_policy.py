@@ -10,19 +10,22 @@ unwritable -- `PlanningOutcome`'s own argument.
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Literal
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import ChartSpec, PresentationContext, VisualProfile
-from finguard_orchestrator.domain.models.visual_plan import Rejection, VisualPlanDraft, canonical
+from finguard_orchestrator.domain.models.visual_plan import (
+    FallbackReason,
+    Rejection,
+    VisualMode,
+    VisualPlanDraft,
+    canonical,
+)
 from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
 )
 
-VisualMode = Literal["deterministic", "shadow", "hybrid", "promoted"]
-FallbackReason = Literal["abstention", "timeout", "provider_error", "invalid_proposal"]
 Verifier = Callable[[VisualPlanDraft, VisualProfile], ChartSpec | Rejection]
 
 

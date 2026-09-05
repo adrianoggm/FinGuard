@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
+from finguard_orchestrator.domain.models.visual_plan import FallbackReason
 
 
 def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
@@ -66,7 +67,7 @@ class VisualDecision:
     profile: VisualProfile
     source: Literal["llm", "deterministic"]
     rationale: str | None = None
-    fallback_reason: str | None = None
+    fallback_reason: FallbackReason | None = None
     proposed: bool = False
     """An attempt was made: the model was called and returned a draft (or abstained)."""
     valid: bool = False
