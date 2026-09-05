@@ -8,33 +8,56 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     VisualDataset,
     VisualRow,
+    _decided_visual,
 )
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
     ChartEncoding,
     ChartSpec,
     EncodingPatch,
+    EncodingSort,
     VisualContext,
+    VisualField,
     Visualization,
     VisualProfile,
     merge_encoding_patch,
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
+from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
 from finguard_orchestrator.infrastructure.dto.llm_dto import VisualizationDerivation
-from finguard_orchestrator.infrastructure.mappers.conversation_mapper import to_domain, to_payload
+from finguard_orchestrator.infrastructure.mappers.conversation_mapper import (
+    _encoding_sort_from_payload,
+    to_domain,
+    to_payload,
+)
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     _chart_suggestions,
     question_to_dto,
 )
+from finguard_orchestrator.infrastructure.metrics.codec import decode_chart, encode_chart
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
+
+
+def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
+    """The Result as the handler hands it to the mapper.
+
+    The chart is no longer decided inside `question_to_dto`; the application decides it and the
+    Result carries it. This is the handler's own line, called with the handler's own arguments, so
+    a Result built here is the one a live turn produces.
+    """
+    return _decided_visual(result, DeterministicVisualPlanner(), DEFAULT_PRESENTATION)
 
 
 def _base() -> tuple[ChartSpec, VisualProfile]:
@@ -45,15 +68,18 @@ def _base() -> tuple[ChartSpec, VisualProfile]:
             ChartEncoding("y", "dimension", "nominal"),
         ),
     )
-    return spec, VisualProfile.from_spec(
-        spec,
-        cardinality=3,
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
         metric="SUM",
         unit="money",
         positive=True,
         mutually_exclusive=True,
         verified_total=True,
     )
+    return spec, profile
 
 
 def test_patch_is_atomic_and_rejects_unknown_fields() -> None:
@@ -68,10 +94,32 @@ def test_donut_requires_valid_profile_and_rewrites_channels() -> None:
     donut = merge_encoding_patch(spec, EncodingPatch(mark="donut"), profile)
     assert donut.mark == "donut"
     assert {item.channel for item in donut.encodings} == {"theta", "color"}
-    with pytest.raises(ValueError):
-        merge_encoding_patch(
-            spec, EncodingPatch(mark="donut"), VisualProfile.from_spec(spec, cardinality=1)
-        )
+    invalid = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 1),
+            VisualField("value_minor", "quantitative", "measure", 1),
+        ),
+        metric="SUM",
+        unit="money",
+    )
+    with pytest.raises(ValueError, match="positive, exclusive parts and a verified total"):
+        merge_encoding_patch(spec, EncodingPatch(mark="donut"), invalid)
+    # `invalid` above never reaches the cardinality bound at all -- it fails the
+    # positive/mutually_exclusive/verified_total gate first. This one clears that gate with a
+    # single part, so it is the case that actually exercises "between 2 and 5".
+    one_part = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 1),
+            VisualField("value_minor", "quantitative", "measure", 1),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+    )
+    with pytest.raises(ValueError, match="between 2 and 5"):
+        merge_encoding_patch(spec, EncodingPatch(mark="donut"), one_part)
 
 
 def test_ratio_share_can_become_a_donut_and_return_to_bars() -> None:
@@ -83,9 +131,11 @@ def test_ratio_share_can_become_a_donut_and_return_to_bars() -> None:
         ),
         stack="normalize",
     )
-    profile = VisualProfile.from_spec(
-        spec,
-        cardinality=2,
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 2),
+            VisualField("value_minor", "quantitative", "measure", 2),
+        ),
         metric="RATIO_SHARE",
         unit="money",
         positive=True,
@@ -151,7 +201,14 @@ def test_temporal_chart_supports_bar_then_value_sort_follow_ups() -> None:
             ChartEncoding("y", "value_minor", "quantitative", "Importe"),
         ),
     )
-    profile = VisualProfile.from_spec(spec, cardinality=13, metric="SUM", unit="money")
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "temporal", "dimension", 13, "TEMPORAL"),
+            VisualField("value_minor", "quantitative", "measure", 13),
+        ),
+        metric="SUM",
+        unit="money",
+    )
     conversation = Conversation(visual_contexts=(VisualContext("chart-months", spec, profile),))
 
     bars = interpret_visual("ponlo en barras", conversation.visual_contexts)
@@ -210,16 +267,23 @@ def test_conversation_visual_context_round_trip_is_value_free() -> None:
     restored = to_domain(payload)
     assert restored.visual_contexts[0].chart_id == "chart-1"
     assert restored.visual_contexts[0].spec.fields() == spec.fields()
+    # The old-client case: `_base()`'s spec carries neither `stack` nor `sort`, so the wire
+    # payload never has those keys either -- and `to_domain` must still complete the turn rather
+    # than require them.
+    assert restored.visual_contexts[0].spec.stack is None
+    assert restored.visual_contexts[0].spec.sort is None
 
 
 def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
-    result = AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="Resultado",
-        question="gastos por categoría",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-        groups=[SpokenGroup("Comida", 100, 1), SpokenGroup("Casa", 50, 1)],
-        visual_dataset=VisualDataset((VisualRow("Comida", 100), VisualRow("Casa", 50)), "SUM"),
+    result = _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Resultado",
+            question="gastos por categoría",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+            groups=[SpokenGroup("Comida", 100, 1), SpokenGroup("Casa", 50, 1)],
+            visual_dataset=VisualDataset((VisualRow("Comida", 100), VisualRow("Casa", 50)), "SUM"),
+        )
     )
     response = question_to_dto(result)
     assert response.visualization is not None
@@ -249,12 +313,14 @@ def test_visual_interpreter_is_value_free_and_skips_financial_changes() -> None:
 
 
 def test_identical_chart_answers_receive_distinct_ids() -> None:
-    result = AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="x",
-        question="gastos",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-        visual_dataset=VisualDataset((VisualRow("a", 100), VisualRow("b", 50)), "SUM"),
+    result = _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="x",
+            question="gastos",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+            visual_dataset=VisualDataset((VisualRow("a", 100), VisualRow("b", 50)), "SUM"),
+        )
     )
     first = question_to_dto(result).visualization
     second = question_to_dto(result).visualization
@@ -265,36 +331,67 @@ def test_identical_chart_answers_receive_distinct_ids() -> None:
 
 def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> None:
     count = question_to_dto(
-        AskFinancialQuestionResult(
-            outcome="PLANNED",
-            text="x",
-            visual_dataset=VisualDataset(
-                (VisualRow("lunes", 12), VisualRow("martes", 5)), "FREQUENCY"
-            ),
+        _decided(
+            AskFinancialQuestionResult(
+                outcome="PLANNED",
+                text="x",
+                visual_dataset=VisualDataset(
+                    (VisualRow("lunes", 12), VisualRow("martes", 5)), "FREQUENCY"
+                ),
+            )
         )
     ).visualization
     ratio = question_to_dto(
-        AskFinancialQuestionResult(
-            outcome="PLANNED",
-            text="x",
-            visual_dataset=VisualDataset(
-                (VisualRow("Parte", 1200), VisualRow("Resto", 8800)), "RATIO_SHARE"
-            ),
+        _decided(
+            AskFinancialQuestionResult(
+                outcome="PLANNED",
+                text="x",
+                visual_dataset=VisualDataset(
+                    (VisualRow("Parte", 1200), VisualRow("Resto", 8800)), "RATIO_SHARE"
+                ),
+            )
         )
     ).visualization
     assert count is not None and count.unit == "count" and count.data[0]["value_minor"] == 12  # type: ignore[union-attr]
     assert ratio is not None and ratio.unit == "ratio" and ratio.data[0]["value_minor"] == 1200  # type: ignore[union-attr]
 
 
+def test_a_count_comparison_uses_the_profile_unit_end_to_end() -> None:
+    result = _decided(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="x",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="COUNT"),
+            visual_dataset=VisualDataset(
+                (
+                    VisualRow("Comida", 12, series="julio"),
+                    VisualRow("Comida", 8, series="junio"),
+                    VisualRow("Casa", 5, series="julio"),
+                    VisualRow("Casa", 4, series="junio"),
+                ),
+                "COMPARISON",
+            ),
+        )
+    )
+
+    assert result.visual_decision is not None
+    assert result.visual_decision.profile.unit == "count"
+    response = question_to_dto(result)
+    assert response.visualization is not None
+    assert response.visualization.unit == "count"
+
+
 def test_breakdown_total_verification_requires_complete_total() -> None:
     def mapped(total: int | None, rows: tuple[VisualRow, ...]):
         return question_to_dto(
-            AskFinancialQuestionResult(
-                outcome="PLANNED",
-                text="x",
-                total_minor=total,
-                plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
-                visual_dataset=VisualDataset(rows, "SUM"),
+            _decided(
+                AskFinancialQuestionResult(
+                    outcome="PLANNED",
+                    text="x",
+                    total_minor=total,
+                    plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+                    visual_dataset=VisualDataset(rows, "SUM"),
+                )
             )
         ).conversation
 
@@ -302,12 +399,14 @@ def test_breakdown_total_verification_requires_complete_total() -> None:
     absent = mapped(None, (VisualRow("a", 100), VisualRow("b", 50)))
     truncated = mapped(150, (VisualRow("a", 100), VisualRow("b", 20)))
     ratio = question_to_dto(
-        AskFinancialQuestionResult(
-            outcome="PLANNED",
-            text="x",
-            visual_dataset=VisualDataset(
-                (VisualRow("Parte", 100), VisualRow("Resto", 50)), "RATIO_SHARE"
-            ),
+        _decided(
+            AskFinancialQuestionResult(
+                outcome="PLANNED",
+                text="x",
+                visual_dataset=VisualDataset(
+                    (VisualRow("Parte", 100), VisualRow("Resto", 50)), "RATIO_SHARE"
+                ),
+            )
         )
     ).conversation
     assert complete is not None and complete.visual_contexts[0].profile.verified_total
@@ -428,3 +527,216 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
         ),
     )
     assert _chart_suggestions(temporal) == ["Ponlo en barras"]
+
+
+def test_a_disabled_stack_emits_an_explicit_null_and_not_an_absent_property() -> None:
+    """`stack=None` omits the property, and Vega-Lite's default for a bar with a quantitative
+    measure and a colour series is to **stack**. So `None` means "let Vega-Lite decide" and
+    Vega-Lite decides to stack. Only an explicit null turns it off."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal"),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal"),
+            ChartEncoding("yOffset", "series", "nominal"),
+        ),
+        stack="disabled",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["x"]["stack"] is None
+    assert "yOffset" in emitted["spec"]["encoding"]
+
+
+def test_an_absent_stack_is_still_absent() -> None:
+    """The old behaviour has to stay reachable, because a temporal line needs no stack at all."""
+    spec = ChartSpec(
+        mark="line",
+        encodings=(
+            ChartEncoding("x", "dimension", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert "stack" not in emitted["spec"]["encoding"]["y"]
+
+
+def test_an_offset_is_a_channel_the_vocabulary_knows() -> None:
+    ChartEncoding("xOffset", "series", "nominal")  # must not raise
+    with pytest.raises(ValueError, match="channel"):
+        ChartEncoding("zOffset", "series", "nominal")
+
+
+def test_a_stacked_spec_needs_a_quantitative_x_or_y_encoding() -> None:
+    """`stack` only means something on the axis Vega-Lite draws bars along. The presenter's
+
+    `next(...)` for the stacked channel has no default and raises `StopIteration` if that axis
+    is missing -- so `ChartSpec` refuses the combination at construction instead, and the
+    presenter's bare `next()` is provably safe. A donut cannot exercise this: `mark == "donut"`
+    with a stack is already rejected by the guard above with its own message, so this uses a
+    non-donut mark whose only quantitative encoding is on `theta`.
+    """
+    with pytest.raises(ValueError, match="quantitative"):
+        ChartSpec(
+            mark="point",
+            encodings=(ChartEncoding("theta", "value_minor", "quantitative"),),
+            stack="disabled",
+        )
+
+
+def test_a_chart_can_order_its_dimension_and_its_series_differently() -> None:
+    """`ChartSpec` carries one `sort` and one `sort_field`, so two independent orders were not
+    representable: a breakdown wants its dimension by magnitude and its legend in the order the
+    producer built it. Without a per-encoding sort this design would promise two and ship one."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding(
+                "y",
+                "dimension",
+                "nominal",
+                sort=EncodingSort(mode="descending", field="value_minor"),
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal", sort=EncodingSort(mode="input")),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == {
+        "field": "value_minor",
+        "order": "descending",
+    }
+    assert emitted["spec"]["encoding"]["color"]["sort"] is None  # Vega-Lite's "keep data order"
+
+
+def test_a_sort_field_needs_a_mode_that_uses_one() -> None:
+    with pytest.raises(ValueError, match="input"):
+        EncodingSort(mode="input", field="value_minor")
+
+
+def test_an_encoding_sort_rejects_an_unsupported_mode() -> None:
+    with pytest.raises(ValueError, match="unsupported"):
+        EncodingSort(mode="sideways")  # type: ignore[arg-type]
+
+
+def test_an_encoding_sort_field_must_be_an_identifier() -> None:
+    with pytest.raises(ValueError, match="identifiers"):
+        EncodingSort(mode="ascending", field="not an identifier")
+
+
+def test_a_per_encoding_sort_wins_over_the_chart_wide_sort_for_its_own_channel() -> None:
+    """`ChartSpec.sort`/`sort_field` and a per-encoding `EncodingSort` can now both target the
+    same Vega-Lite channel. Only one `"sort"` property can survive on that channel, and the
+    encoding-level one wins -- it says something more specific about its own channel than the
+    chart-wide default does. See the comment in `present()` where that precedence is decided."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding(
+                "y",
+                "dimension",
+                "nominal",
+                sort=EncodingSort(mode="ascending", field="movement_count"),
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == {
+        "field": "movement_count",
+        "order": "ascending",
+    }
+
+
+def test_a_per_encoding_input_sort_beats_a_colliding_chart_wide_sort() -> None:
+    """`EncodingSort(mode="input")` writes a *present but falsy* `"sort": None`, so the
+    precedence guard in `present()` has to check key membership and not truthiness -- a
+    truthiness check would read that `None` as "nothing claimed this channel" and let the
+    chart-wide `sort`/`sort_field` below overwrite it. This puts `input` on the very channel a
+    colliding chart-wide sort targets, which the previous precedence test did not: that one used
+    a *truthy* per-encoding sort, so a regression to truthiness would have passed it unchanged."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal", sort=EncodingSort(mode="input")),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] is None
+
+
+def test_a_fieldless_encoding_sort_emits_the_bare_order_string() -> None:
+    """The per-encoding translation has three wire shapes: the object form (a field), `null`
+    (`input`), and this one -- a mode with no field, which Vega-Lite takes as a bare order
+    string rather than an object."""
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("y", "dimension", "nominal", sort=EncodingSort(mode="ascending")),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+    )
+
+    emitted = present(Visualization(spec=spec, data=()))
+
+    assert emitted["spec"]["encoding"]["y"]["sort"] == "ascending"
+
+
+def test_encoding_sort_from_payload_is_a_tripwire_not_a_filter() -> None:
+    """`VisualContextPayload._value_free_spec` is the guard now: it constructs `EncodingSort`
+    itself and refuses an unsupported mode with a 422 before `to_domain` ever runs. So a
+    `ValueError` reaching `_encoding_sort_from_payload` is no longer a caller's malformed
+    request -- every caller's is stopped at the DTO -- it is the guard and the domain rule it
+    enforces coming apart, and this is the tripwire that proves it surfaces rather than being
+    caught and turned back into a silent `None`, the way it used to be."""
+    with pytest.raises(ValueError, match="unsupported sort mode"):
+        _encoding_sort_from_payload({"mode": "sideways"})
+
+
+def test_a_grouped_comparison_survives_round_trips_and_a_follow_up_patch() -> None:
+    profile = visual_profile_of(
+        VisualDataset(
+            rows=(
+                VisualRow("Comida", 12, series="julio"),
+                VisualRow("Comida", 8, series="junio"),
+                VisualRow("Casa", 5, series="julio"),
+                VisualRow("Casa", 4, series="junio"),
+            ),
+            metric="COMPARISON",
+        ),
+        total_minor=None,
+        group_by="CATEGORY",
+        plan_metric="COUNT",
+    )
+    original_spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert original_spec is not None
+    assert original_spec.stack == "disabled"
+
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", original_spec, profile),))
+    restored = to_domain(to_payload(conversation))
+    restored_spec = restored.visual_contexts[0].spec
+    assert restored_spec == original_spec
+    assert decode_chart(encode_chart(original_spec)) == original_spec
+
+    patched = merge_encoding_patch(restored_spec, EncodingPatch(limit=3), profile)
+    quantitative = next(
+        encoding.channel
+        for encoding in patched.encodings
+        if encoding.type == "quantitative" and encoding.channel in {"x", "y"}
+    )
+    assert present_spec(patched)["encoding"][quantitative]["stack"] is None

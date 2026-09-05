@@ -34,6 +34,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     reporting_today,
 )
 from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.models.chart import PresentationContext
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.scope import Scope
 
@@ -112,3 +113,21 @@ def test_both_endpoints_agree_about_the_day_and_the_zone() -> None:
     direct, streamed = handler.queries
     assert direct.reporting_timezone == streamed.reporting_timezone
     assert direct.today == streamed.today == TODAY
+
+
+@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream"])
+def test_both_question_endpoints_carry_the_exact_presentation_context(route: str) -> None:
+    client, handler = canarian_client()
+
+    response = client.post(
+        route,
+        json={
+            "question": "Cuanto gaste hoy?",
+            "channel": "VOICE",
+            "viewport": "MOBILE",
+            "max_visible_rows": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    assert handler.queries[0].presentation == PresentationContext("VOICE", "MOBILE", 5)

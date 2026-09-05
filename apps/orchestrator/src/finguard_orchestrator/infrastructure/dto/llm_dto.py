@@ -6,7 +6,7 @@ core — before this, `LlmPolicy` was both the domain object and the request bod
 """
 
 from datetime import date
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -38,6 +38,14 @@ from finguard_orchestrator.domain.enums import (
     Period,
     Rail,
     TransactionType,
+)
+from finguard_orchestrator.domain.models.chart import (
+    FIELD_NAME_PATTERN,
+    ROWS_THAT_FIT,
+    Channel,
+    EncodingSort,
+    SortMode,
+    Stack,
 )
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
@@ -283,8 +291,13 @@ class VisualContextPayload(_Payload):
         if not isinstance(encoding, dict) or not encoding:
             raise ValueError("visual spec needs encoding")
         fields: set[str] = set()
+        # Read from the domain's own `Channel` literal instead of a hand-written copy. A copy is
+        # exactly what went stale here before: `xOffset`/`yOffset` landed in `Channel` a task
+        # before this payload's own set learned about them, and the deterministic planner became
+        # the first caller to emit one round-tripping through this payload before anyone noticed.
+        allowed_channels = frozenset(get_args(Channel))
         for channel, raw in encoding.items():
-            if channel not in {"x", "y", "color", "tooltip", "theta"}:
+            if channel not in allowed_channels:
                 raise ValueError("unknown visual channel")
             values = raw if isinstance(raw, list) else [raw]
             if len(values) > 8:
@@ -304,6 +317,25 @@ class VisualContextPayload(_Payload):
                     "temporal",
                 }:
                     raise ValueError("invalid encoding")
+                # A per-encoding sort is refused by constructing the domain type it will become,
+                # not by hand-copying its rules: `EncodingSort.__post_init__` already refuses an
+                # unsupported mode, an `input` order with a field, and a field that is not an
+                # identifier, and repeating those checks here is exactly the kind of second copy
+                # that went stale before (`1924c95`, on `Channel`). The two `isinstance` guards
+                # below exist only so a non-string `mode`/`field` fails with a 422 instead of an
+                # unhandled `TypeError` reaching `EncodingSort` (an unhashable `mode` breaks the
+                # `in` check inside `__post_init__`, and a non-string `field` breaks
+                # `re.fullmatch`).
+                sort_raw = item.get("sort")
+                if sort_raw is not None:
+                    if not isinstance(sort_raw, dict) or set(sort_raw) - {"mode", "field"}:
+                        raise ValueError("unsupported sort object")
+                    mode, field = sort_raw.get("mode"), sort_raw.get("field")
+                    if not isinstance(mode, str):
+                        raise ValueError("sort mode must be a string")
+                    if field is not None and not isinstance(field, str):
+                        raise ValueError("sort field must be a string")
+                    EncodingSort(cast(SortMode, mode), field)
                 fields.add(item["field"])
         profile_types = {item.name: item.type for item in self.profile.fields}
         if not fields <= set(profile_types):
@@ -323,6 +355,22 @@ class VisualContextPayload(_Payload):
             {"type": "arc", "innerRadius": 55},
         ):
             raise ValueError("unsupported visual mark")
+        # `stack`, spec-level `sort` and `sort_field` used to be read back by
+        # `conversation_mapper.to_domain` with a silent `else None` on anything unrecognised --
+        # a caller's typo was accepted and dropped rather than refused. They are checked against
+        # the same domain sources the mapper already used to filter with (`get_args(Stack)`,
+        # `get_args(SortMode)`, the field-identifier pattern) so the two never drift apart.
+        stack = self.spec.get("stack")
+        if stack is not None and stack not in get_args(Stack):
+            raise ValueError("unsupported stack")
+        sort = self.spec.get("sort")
+        if sort is not None and sort not in get_args(SortMode):
+            raise ValueError("unsupported sort mode")
+        sort_field = self.spec.get("sort_field")
+        if sort_field is not None and (
+            not isinstance(sort_field, str) or not FIELD_NAME_PATTERN.fullmatch(sort_field)
+        ):
+            raise ValueError("sort_field must be an identifier")
         return self
 
 
@@ -611,6 +659,15 @@ class QuestionRequest(_Payload):
     # Absent on the first turn, and absent means a fresh conversation rather than an error.
     conversation: ConversationPayload | None = None
     channel: Literal["TEXT", "VOICE"] = "TEXT"
+    # Circumstances of this turn, not facts about the data -- see `PresentationContext`. Both are
+    # optional so an old client that has never heard of either keeps working; `extra="forbid"`
+    # above is what makes that safe rather than a loophole, because a viewport nobody declared
+    # (`"WATCH"`) is still rejected rather than silently accepted. Validated here and carried all
+    # the way to `floor.plan(profile, presentation)` -- but `DeterministicVisualPlanner.plan()`
+    # still does not read `presentation` (its own docstring says so); a later wave's model planner
+    # is what consumes `max_visible_rows`.
+    viewport: Literal["MOBILE", "DESKTOP"] = "DESKTOP"
+    max_visible_rows: int = Field(default=ROWS_THAT_FIT, ge=1, le=100)
     metric_sources: list[MetricSourcePayload] = Field(default=[], max_length=MAX_VISUAL_CONTEXTS)
 
 

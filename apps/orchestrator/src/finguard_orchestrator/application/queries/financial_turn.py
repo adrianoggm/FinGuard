@@ -32,6 +32,11 @@ from finguard_orchestrator.domain.enums import (
 from finguard_orchestrator.domain.errors import (
     InvalidValueError,
 )
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    PresentationContext,
+    VisualDataset,
+)
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
     Conversation,
@@ -50,6 +55,7 @@ from finguard_orchestrator.domain.services import (
     window_words,
 )
 from finguard_orchestrator.domain.services.capability_guard import MOVEMENT_NOUNS
+from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -116,21 +122,6 @@ class SpokenGroup:
     movement_count: int
     # Backend-derived value for the requested metric (never recomputed by clients).
     value_minor: int | None = None
-
-
-@dataclass(frozen=True)
-class VisualRow:
-    dimension: str
-    value_minor: int
-    series: str | None = None
-    occurred_at: str | None = None
-
-
-@dataclass(frozen=True)
-class VisualDataset:
-    rows: tuple[VisualRow, ...]
-    metric: str
-    title: str = "Resultados"
 
 
 @dataclass(frozen=True)
@@ -290,6 +281,13 @@ class AskFinancialQuestionResult:
     suggestions: list[str] = field(default_factory=list)
     explicit_visualization: bool = False
     visual_dataset: VisualDataset | None = None
+    # Which chart was chosen for `visual_dataset`, and by whom. `None` is "no chart", and it is
+    # the answer for a dataset the floor declined as much as for one nobody asked to draw.
+    #
+    # It is here because the decision used to be taken inside `llm_mapper`, twice per turn -- once
+    # for the response DTO and again for the conversational state -- and a mapper is not somewhere
+    # a model call can live. The application decides; the mapper renders what it is handed.
+    visual_decision: VisualDecision | None = None
     # Internal, typed source for a save candidate. Never serialized as financial data.
     metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
 
@@ -321,6 +319,9 @@ class AskFinancialQuestionQuery(Query[AskFinancialQuestionResult]):
     # without letting a second reading exist on the path a user is actually on.
     intent: Intent | None = None
     analysis: TurnAnalysis | None = None
+    # How this answer will be consumed. It belongs to the execution request rather than to the
+    # dataset profile. Kept last so adding it does not shift established positional callers.
+    presentation: PresentationContext = DEFAULT_PRESENTATION
 
     def __post_init__(self) -> None:
         if (

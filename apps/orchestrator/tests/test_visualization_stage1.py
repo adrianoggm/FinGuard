@@ -1,4 +1,8 @@
+import dataclasses
 from dataclasses import asdict, replace
+from typing import get_args
+
+import pytest
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -6,20 +10,34 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     SpokenPlan,
     VisualDataset,
     VisualRow,
+    _decided_visual,
 )
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
     ROWS_THAT_FIT,
+    Channel,
     ChartEncoding,
     ChartSpec,
+    PresentationContext,
+    VisualField,
     Visualization,
+    VisualProfile,
     derive_chart,
+)
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.infrastructure.mappers.llm_mapper import question_to_dto
+from finguard_orchestrator.infrastructure.dto.llm_dto import VisualContextPayload
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+    _remember_visual_context,
+    _visualization_to_dto,
+    question_to_dto,
+)
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
@@ -109,15 +127,34 @@ def _result(
     *,
     metric: str = "SUM",
     group_by: str = "CATEGORY",
+    group_limit: int | None = None,
+    plan_metric: str | None = None,
     explicit: bool = False,
 ) -> AskFinancialQuestionResult:
-    return AskFinancialQuestionResult(
-        outcome="PLANNED",
-        text="Resultado",
-        plan_context=SpokenPlan(direction="EXPENSE", group_by=group_by, metric=metric),
-        groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
-        explicit_visualization=explicit,
-        visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
+    # Through `_decided_visual`, because the chart is no longer decided by the mapper: the
+    # application decides it and the Result carries it. This is the handler's own line, so what
+    # the mapper is handed here is what a live turn hands it.
+    #
+    # `group_limit` and `plan_metric` are the plan's own facts, threaded separately from the
+    # dataset's `metric` -- the wire `_decided_visual` reads to build `plan_limited` and
+    # `plan_metric` on the profile. Every other test call leaves both `None`/default, which
+    # reproduces the old (bare) `SpokenPlan` exactly.
+    return _decided_visual(
+        AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Resultado",
+            plan_context=SpokenPlan(
+                direction="EXPENSE",
+                group_by=group_by,
+                metric=plan_metric if plan_metric is not None else metric,
+                group_limit=group_limit,
+            ),
+            groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
+            explicit_visualization=explicit,
+            visual_dataset=VisualDataset(rows=rows, metric=metric) if rows is not None else None,
+        ),
+        DeterministicVisualPlanner(),
+        DEFAULT_PRESENTATION,
     )
 
 
@@ -142,6 +179,149 @@ def test_mapper_uses_typed_series_and_every_encoding_names_a_real_field() -> Non
         for item in (channel if isinstance(channel, list) else [channel])
     }
     assert all(fields <= set(row) for row in dto.visualization.data)
+
+
+def test_the_wire_channel_whitelist_matches_the_domain_literal() -> None:
+    """`VisualContextPayload._value_free_spec` used to hand-copy the allowed channel set, and the
+    copy went stale the moment `Channel` grew `xOffset`/`yOffset` -- a live categorical comparison
+    could not complete a turn until the copy was replaced with `get_args(Channel)` (`1924c95`).
+
+    The guard: every channel the domain allows must still validate here. This fails the day
+    someone reintroduces a hand-written copy that omits one, on the commit that does it rather
+    than the first live turn that needs the missing channel."""
+    channels = get_args(Channel)
+    fields = {channel: f"field_{index}" for index, channel in enumerate(channels)}
+
+    payload = VisualContextPayload.model_validate(
+        {
+            "chart_id": "chart-1",
+            "spec": {
+                "mark": {"type": "bar"},
+                "encoding": {
+                    channel: {"field": field_name, "type": "nominal"}
+                    for channel, field_name in fields.items()
+                },
+            },
+            "profile": {
+                "fields": [
+                    {"name": field_name, "type": "nominal"} for field_name in fields.values()
+                ],
+                "cardinality": 2,
+            },
+        }
+    )
+
+    assert payload.chart_id == "chart-1"
+
+
+def _visual_context_dict(
+    *,
+    stack: object = None,
+    sort: object = None,
+    sort_field: object = None,
+    y_sort: object = None,
+) -> dict[str, object]:
+    """A minimal, otherwise-valid `VisualContextPayload` body. Each of `stack`/`sort`/
+    `sort_field`/a `y`-channel `sort` is left off unless a test names it, so a test that sends
+    exactly one bad value proves `_value_free_spec` refused *that* value -- not some unrelated
+    shape mistake."""
+    encoding: dict[str, object] = {
+        "x": {"field": "value_minor", "type": "quantitative"},
+        "y": {"field": "dimension", "type": "nominal"},
+    }
+    if y_sort is not None:
+        encoding["y"] = {**encoding["y"], "sort": y_sort}  # type: ignore[dict-item]
+    spec: dict[str, object] = {"mark": {"type": "bar"}, "encoding": encoding}
+    if stack is not None:
+        spec["stack"] = stack
+    if sort is not None:
+        spec["sort"] = sort
+    if sort_field is not None:
+        spec["sort_field"] = sort_field
+    return {
+        "chart_id": "chart-1",
+        "spec": spec,
+        "profile": {
+            "fields": [
+                {"name": "value_minor", "type": "quantitative"},
+                {"name": "dimension", "type": "nominal"},
+            ],
+            "cardinality": 2,
+        },
+    }
+
+
+def test_an_encoding_sort_with_an_unsupported_mode_is_refused_at_the_dto() -> None:
+    """`conversation_mapper._encoding_sort_from_payload` used to catch `EncodingSort`'s own
+    `ValueError` and return `None`, so `{"sort": {"mode": "sideways"}}` silently became "no sort"
+    and the turn completed as a 200. The DTO is the guard now: it constructs `EncodingSort`
+    itself, right here, and lets that same `ValueError` become a 422."""
+    with pytest.raises(ValueError, match="sort mode"):
+        VisualContextPayload.model_validate(_visual_context_dict(y_sort={"mode": "sideways"}))
+
+
+def test_an_encoding_sort_of_input_with_a_field_is_refused_at_the_dto() -> None:
+    """`input` means "keep producer order" -- naming a field to sort by contradicts it."""
+    with pytest.raises(ValueError, match="input"):
+        VisualContextPayload.model_validate(
+            _visual_context_dict(y_sort={"mode": "input", "field": "value_minor"})
+        )
+
+
+def test_an_encoding_sort_field_that_is_not_an_identifier_is_refused_at_the_dto() -> None:
+    with pytest.raises(ValueError, match="identifier"):
+        VisualContextPayload.model_validate(
+            _visual_context_dict(y_sort={"mode": "descending", "field": "not an identifier"})
+        )
+
+
+def test_an_unsupported_stack_is_refused_at_the_dto() -> None:
+    """`_value_free_spec` checked the allowed key set, the mark, the channels and the encoding
+    count -- never the *value* of `stack`. `conversation_mapper.to_domain` silently turned an
+    unrecognised one into `None`, so `{"stack": "sideways"}` was a 200 that dropped the stack
+    instead of refusing it."""
+    with pytest.raises(ValueError, match="stack"):
+        VisualContextPayload.model_validate(_visual_context_dict(stack="sideways"))
+
+
+def test_an_unsupported_spec_level_sort_is_refused_at_the_dto() -> None:
+    with pytest.raises(ValueError, match="sort mode"):
+        VisualContextPayload.model_validate(_visual_context_dict(sort="sideways"))
+
+
+def test_a_non_identifier_sort_field_is_refused_at_the_dto() -> None:
+    with pytest.raises(ValueError, match="identifier"):
+        VisualContextPayload.model_validate(_visual_context_dict(sort_field="42abc"))
+
+
+def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
+    """The old-client case: a caller that has never heard of `stack`/`sort`/`sort_field`/a
+    per-encoding `sort` sends none of them, and the payload still validates -- absence is never
+    treated as an invalid value. `test_conversation_visual_context_round_trip_is_value_free` (in
+    `test_visualization_stage2_core.py`) carries this same case all the way through
+    `conversation_mapper.to_domain` and asserts the reconstructed spec's `stack`/`sort` are
+    `None`."""
+    payload = VisualContextPayload.model_validate(_visual_context_dict())
+    assert payload.chart_id == "chart-1"
+
+
+def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
+    """One profile per turn, and the identity check is the whole point.
+
+    The mapper used to build a second profile from the same dataset for the conversational
+    context, with two of the plan's facts missing from it -- so the profile a restyle would read
+    disagreed with the one the chart was chosen from. The decision carries its own input now, and
+    a second build is not something this code can express.
+    """
+    result = _result((VisualRow("Comida", 100), VisualRow("Casa", 50)))
+
+    # The two mapper halves in the order `question_to_dto` runs them. Read here rather than off
+    # the response because the response carries the *payload* profile, which has never had these
+    # fields on it -- the domain object this remembers is the one a restyle reads.
+    remembered = _remember_visual_context(result, _visualization_to_dto(result))
+
+    assert result.visual_decision is not None
+    assert remembered.conversation.visual_contexts[0].profile is result.visual_decision.profile
 
 
 def test_mapper_never_infers_a_chart_from_public_groups() -> None:
@@ -240,6 +420,40 @@ def test_the_wire_carries_the_limit_so_the_client_can_admit_to_it() -> None:
     assert len(visualization.data) == 30
 
 
+def test_a_plan_limited_dataset_is_not_cut_again_through_the_mapper() -> None:
+    """The wire between the plan and the floor, not a hand-built profile.
+
+    `test_a_plan_that_already_cut_its_rows_is_not_cut_again` (deterministic_visual_planner
+    tests) hands the floor a profile it built itself, so it cannot catch `_decided_visual`
+    failing to read `group_limit` off the plan. This one goes through `_result` -> `_decided_visual`
+    -> `question_to_dto`, the same path a live turn takes.
+    """
+    rows = tuple(
+        VisualRow(dimension=f"Comercio {position}", value_minor=1000 - position)
+        for position in range(30)
+    )
+    result = _result(rows, group_by="MERCHANT", group_limit=25)
+    visualization = question_to_dto(result).visualization
+    assert visualization is not None and visualization.kind == "chart"
+    assert visualization.limit is None
+
+
+def test_a_comparison_of_counts_labels_its_axis_movements_through_the_mapper() -> None:
+    """The other defect the brief's `plan()` reintroduced, caught the same way.
+
+    `test_a_comparison_of_counts_labels_its_axis_movements` (deterministic_visual_planner
+    tests) also hands the floor a hand-built profile. This one drives a plan whose `metric`
+    ("COUNT") disagrees with its dataset's shape marker ("COMPARISON") through the mapper, so
+    it fails if `_decided_visual` stops reading `context.metric` into `plan_metric`.
+    """
+    rows = (VisualRow("agosto", 12), VisualRow("julio", 9))
+    result = _result(rows, metric="COMPARISON", plan_metric="COUNT")
+    dto = question_to_dto(result)
+    assert dto.visualization is not None and dto.visualization.kind == "chart"
+    encoding = dto.visualization.spec["encoding"]
+    assert encoding["x"]["title"] == "Movimientos"  # type: ignore[index]
+
+
 def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from() -> None:
     """What makes an answer keepable is a plan and a figure, not a chart.
 
@@ -276,3 +490,133 @@ def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
     response = question_to_dto(without_figure, holder_reference="holder", metric_tokens=tokens)
 
     assert response.save_candidate is None
+
+
+def test_a_profile_describes_its_dataset_and_not_a_chart() -> None:
+    """The profile is the planner's input, so it cannot be derived from the chart it decides."""
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 5, "MEASURE_DESC"),
+            VisualField("value_minor", "quantitative", "measure", 5),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+        comparison=False,
+    )
+
+    assert profile.field_names() == frozenset({"dimension", "value_minor"})
+    assert profile.field("value_minor").role == "measure"
+    assert profile.role("measure")[0].name == "value_minor"
+    assert profile.field("nope") is None
+
+
+def test_two_fields_may_share_the_dimension_role_when_their_types_differ() -> None:
+    """RECURRENCE puts `occurred_at` temporal on x and `dimension` nominal on y.
+
+    They are told apart by type, not by a fourth role. A `timestamp` role would be the same
+    fact written twice, which is the defect family this repository keeps finding.
+    """
+    profile = VisualProfile(
+        fields=(
+            VisualField("occurred_at", "temporal", "dimension", 12, "TEMPORAL"),
+            VisualField("dimension", "nominal", "dimension", 3, "INPUT"),
+            VisualField("value_minor", "quantitative", "measure", 12),
+        ),
+        metric="RECURRENCE",
+        unit="money",
+        positive=True,
+        mutually_exclusive=False,
+        verified_total=False,
+        comparison=False,
+    )
+
+    assert len(profile.role("dimension")) == 2
+    assert {item.type for item in profile.role("dimension")} == {"temporal", "nominal"}
+
+
+def test_a_profile_refuses_a_duplicate_field_name() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        VisualProfile(
+            fields=(
+                VisualField("dimension", "nominal", "dimension", 2),
+                VisualField("dimension", "temporal", "dimension", 2),
+            ),
+            metric="SUM",
+            unit="money",
+            positive=True,
+            mutually_exclusive=True,
+            verified_total=False,
+            comparison=False,
+        )
+
+
+def test_a_measure_must_be_quantitative() -> None:
+    """The role's type is a fact about the dataset, not a choice. A nominal measure is a
+    dataset that has been mislabelled, and the planner would inherit the lie."""
+    with pytest.raises(ValueError, match="measure"):
+        VisualField("value_minor", "nominal", "measure", 5)
+
+
+def test_a_negative_cardinality_is_not_a_count() -> None:
+    with pytest.raises(ValueError, match="cardinality"):
+        VisualField("dimension", "nominal", "dimension", -1)
+
+
+def test_a_negative_row_count_is_not_a_count() -> None:
+    """`row_count` is how many rows the chart draws, and a floor reading a negative one would be
+    reading a defect rather than a dataset."""
+    with pytest.raises(ValueError, match="row_count"):
+        VisualProfile(
+            fields=(
+                VisualField("dimension", "nominal", "dimension", 2),
+                VisualField("value_minor", "quantitative", "measure", 2),
+            ),
+            metric="SUM",
+            unit="money",
+            positive=True,
+            mutually_exclusive=True,
+            verified_total=False,
+            comparison=False,
+            row_count=-1,
+        )
+
+
+def test_presentation_is_not_part_of_the_profile() -> None:
+    """The profile round-trips through the browser (`conversation.py` validates it coming back),
+    so anything put in it becomes wire surface. Viewport and channel are circumstances of one
+    execution, not properties of the data."""
+    profile_keys = {item.name for item in dataclasses.fields(VisualProfile)}
+
+    assert "channel" not in profile_keys
+    assert "viewport" not in profile_keys
+    assert "max_visible_rows" not in profile_keys
+    assert "question" not in profile_keys
+
+
+def test_a_request_that_names_no_viewport_still_has_one() -> None:
+    """The planner cannot wait on a web deployment, so the default is part of the contract."""
+    assert DEFAULT_PRESENTATION.channel == "TEXT"
+    assert DEFAULT_PRESENTATION.viewport == "DESKTOP"
+    assert DEFAULT_PRESENTATION.max_visible_rows == ROWS_THAT_FIT
+
+
+def test_a_mobile_viewport_shows_fewer_rows_than_it_is_asked_for() -> None:
+    context = PresentationContext(channel="TEXT", viewport="MOBILE", max_visible_rows=40)
+
+    assert context.max_visible_rows == 40  # stated wins over guessed
+    with pytest.raises(ValueError, match="max_visible_rows"):
+        PresentationContext(channel="TEXT", viewport="MOBILE", max_visible_rows=0)
+    # The other two rejections. A context is validated because it arrives from a client, and an
+    # unrecognised channel or viewport reaching a rule would be decided by an `else` -- a voice
+    # answer drawn for a screen, silently, because nobody said the word was wrong.
+    with pytest.raises(ValueError, match="viewport"):
+        PresentationContext(  # type: ignore[arg-type]
+            channel="TEXT", viewport="WATCH", max_visible_rows=8
+        )
+    with pytest.raises(ValueError, match="channel"):
+        PresentationContext(  # type: ignore[arg-type]
+            channel="TELEPATHY", viewport="MOBILE", max_visible_rows=8
+        )
