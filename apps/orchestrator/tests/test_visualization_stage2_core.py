@@ -28,6 +28,8 @@ from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefiniti
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -50,14 +52,25 @@ from finguard_orchestrator.infrastructure.visualization.interpreter import inter
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
 
 
-def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
+def _default_policy() -> VisualPlanningPolicy:
+    """The deterministic policy a handler builds when nobody hands it one."""
+    return VisualPlanningPolicy(
+        model=None,
+        fallback=DeterministicVisualPlanner(),
+        verifier=verify,
+        mode="deterministic",
+        budget_seconds=1.0,
+    )
+
+
+async def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
     """The Result as the handler hands it to the mapper.
 
     The chart is no longer decided inside `question_to_dto`; the application decides it and the
     Result carries it. This is the handler's own line, called with the handler's own arguments, so
     a Result built here is the one a live turn produces.
     """
-    return _decided_visual(result, DeterministicVisualPlanner(), DEFAULT_PRESENTATION)
+    return await _decided_visual(result, _default_policy(), DEFAULT_PRESENTATION, "")
 
 
 def _base() -> tuple[ChartSpec, VisualProfile]:
@@ -274,8 +287,8 @@ def test_conversation_visual_context_round_trip_is_value_free() -> None:
     assert restored.visual_contexts[0].spec.sort is None
 
 
-def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
-    result = _decided(
+async def test_chart_response_emits_id_and_structural_context_without_rows() -> None:
+    result = await _decided(
         AskFinancialQuestionResult(
             outcome="PLANNED",
             text="Resultado",
@@ -312,8 +325,8 @@ def test_visual_interpreter_is_value_free_and_skips_financial_changes() -> None:
     assert mixed is not None and mixed.patch is None and mixed.explanation is not None
 
 
-def test_identical_chart_answers_receive_distinct_ids() -> None:
-    result = _decided(
+async def test_identical_chart_answers_receive_distinct_ids() -> None:
+    result = await _decided(
         AskFinancialQuestionResult(
             outcome="PLANNED",
             text="x",
@@ -329,9 +342,9 @@ def test_identical_chart_answers_receive_distinct_ids() -> None:
     assert first.chart_id != second.chart_id
 
 
-def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> None:
+async def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> None:
     count = question_to_dto(
-        _decided(
+        await _decided(
             AskFinancialQuestionResult(
                 outcome="PLANNED",
                 text="x",
@@ -342,7 +355,7 @@ def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> No
         )
     ).visualization
     ratio = question_to_dto(
-        _decided(
+        await _decided(
             AskFinancialQuestionResult(
                 outcome="PLANNED",
                 text="x",
@@ -356,8 +369,8 @@ def test_chart_unit_declares_count_and_ratio_without_changing_minor_rows() -> No
     assert ratio is not None and ratio.unit == "ratio" and ratio.data[0]["value_minor"] == 1200  # type: ignore[union-attr]
 
 
-def test_a_count_comparison_uses_the_profile_unit_end_to_end() -> None:
-    result = _decided(
+async def test_a_count_comparison_uses_the_profile_unit_end_to_end() -> None:
+    result = await _decided(
         AskFinancialQuestionResult(
             outcome="PLANNED",
             text="x",
@@ -381,10 +394,10 @@ def test_a_count_comparison_uses_the_profile_unit_end_to_end() -> None:
     assert response.visualization.unit == "count"
 
 
-def test_breakdown_total_verification_requires_complete_total() -> None:
-    def mapped(total: int | None, rows: tuple[VisualRow, ...]):
+async def test_breakdown_total_verification_requires_complete_total() -> None:
+    async def mapped(total: int | None, rows: tuple[VisualRow, ...]):
         return question_to_dto(
-            _decided(
+            await _decided(
                 AskFinancialQuestionResult(
                     outcome="PLANNED",
                     text="x",
@@ -395,11 +408,11 @@ def test_breakdown_total_verification_requires_complete_total() -> None:
             )
         ).conversation
 
-    complete = mapped(150, (VisualRow("a", 100), VisualRow("b", 50)))
-    absent = mapped(None, (VisualRow("a", 100), VisualRow("b", 50)))
-    truncated = mapped(150, (VisualRow("a", 100), VisualRow("b", 20)))
+    complete = await mapped(150, (VisualRow("a", 100), VisualRow("b", 50)))
+    absent = await mapped(None, (VisualRow("a", 100), VisualRow("b", 50)))
+    truncated = await mapped(150, (VisualRow("a", 100), VisualRow("b", 20)))
     ratio = question_to_dto(
-        _decided(
+        await _decided(
             AskFinancialQuestionResult(
                 outcome="PLANNED",
                 text="x",

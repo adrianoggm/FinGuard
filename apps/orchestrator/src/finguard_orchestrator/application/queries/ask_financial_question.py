@@ -114,6 +114,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnFocus,
     TurnRelation,
 )
+from finguard_orchestrator.domain.models.visual_plan import canonical
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
@@ -153,6 +154,8 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_interpreters import Deterministic
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -490,6 +493,7 @@ class AskFinancialQuestionHandler:
         card_days: int = DEFAULT_CARD_DAYS,
         read_attempts: int = DEFAULT_BANK_READ_ATTEMPTS,
         interpreter: TurnInterpreterPort | None = None,
+        visual_policy: VisualPlanningPolicy | None = None,
     ) -> None:
         self._planner = planner
         # Wrapped here rather than at the composition root, so a handler built directly — by a
@@ -510,10 +514,18 @@ class AskFinancialQuestionHandler:
         self._accounts = accounts
         self._account_directory = account_directory
         self._contacts = contacts
-        # The chart a rule chooses. Built here rather than taken as a parameter because there is
-        # exactly one of it and it has no dependencies; wave 3 adds the model planner beside it as
-        # a port, and the floor stays separate from it so a shadow run can hold both at once.
-        self._visual_floor = DeterministicVisualPlanner()
+        # The chart a rule chooses, wrapped in the policy that also knows how to hold a model
+        # planner beside it. A handler built without one — every test that does not care, and any
+        # composition root that has not wired a model yet — gets the deterministic floor and
+        # nothing else, which is today's behaviour unchanged.
+        self._visual_policy = visual_policy or VisualPlanningPolicy(
+            model=None,
+            fallback=DeterministicVisualPlanner(),
+            verifier=verify,
+            mode="deterministic",
+            # Unused in deterministic mode; the policy refuses a non-positive budget outright.
+            budget_seconds=1.0,
+        )
 
     # `accounts` is keyword-only and has no default on purpose. A balance question that reached a
     # handler without it would fall back to the planner, which is the bug this exists to fix — and
@@ -595,7 +607,9 @@ class AskFinancialQuestionHandler:
                     # The chart is decided once for the turn using the presentation circumstances
                     # supplied at the edge. The deterministic floor may currently ignore some of
                     # them, but the application seam is complete for planners that do not.
-                    step = _decided_visual(step, self._visual_floor, query.presentation)
+                    step = await _decided_visual(
+                        step, self._visual_policy, query.presentation, query.sentence
+                    )
                 yield step
         finally:
             logger.info(
@@ -5165,10 +5179,11 @@ def _field_of(plan: PlannedQuery, name: str) -> str | None:
     return None if value is None else str(value.value)
 
 
-def _decided_visual(
+async def _decided_visual(
     result: AskFinancialQuestionResult,
-    floor: DeterministicVisualPlanner,
+    policy: VisualPlanningPolicy,
     presentation: PresentationContext,
+    question: str,
 ) -> AskFinancialQuestionResult:
     """Decide the chart once, in the application, where a model call is able to live.
 
@@ -5182,8 +5197,12 @@ def _decided_visual(
     "every request that gets this far ends in a ChartSpec" a claim worth holding.
 
     A function rather than a method so a test can drive the decision without standing up five
-    ports, and `floor` a parameter rather than a construction so wave 3 can hand it a model
+    ports, and `policy` a parameter rather than a construction so wave 3 can hand it a model
     planner's fallback without this function learning what a model is.
+
+    `question` is passed through to the policy and nowhere else: it reaches the model the way the
+    financial planner already sends it, and never the record below, whose every slot is service
+    vocabulary.
     """
     dataset = result.visual_dataset
     if dataset is None or len(dataset.rows) < 2:
@@ -5200,12 +5219,75 @@ def _decided_visual(
         plan_limited=context is not None and context.group_limit is not None,
         plan_metric=context.metric if context is not None else None,
     )
-    spec = floor.plan(profile, presentation)
-    if spec is None:
+    decision = await policy.decide(question, profile, presentation)
+    if decision is None:
         return result
-    return replace(
-        result,
-        visual_decision=VisualDecision(spec=spec, profile=profile, source="deterministic"),
+    _record_visual(decision)
+    return replace(result, visual_decision=decision)
+
+
+def _record_visual(decision: VisualDecision) -> None:
+    """One `record()` per turn that entered the policy, in the design's own vocabulary.
+
+    `changed` is whether the model's chart is what got shown -- only an accepted proposal in
+    hybrid/promoted does that. Shadow always shows the floor, so it is `AGREED`/`changed=False`
+    even on the run where the model's own proposal differed; `detail` is where that comparison
+    lives, because `was`/`now` say what was shown, not what was tried.
+    """
+    if not decision.proposed and decision.fallback_reason is None:
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            now="deterministic",
+            detail="not_run",
+        )
+    elif decision.accepted:
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.OVERRODE,
+            changed=True,
+            field="chart",
+            was="deterministic",
+            now="llm",
+            detail="accepted",
+        )
+    elif decision.fallback_reason is not None:
+        detail: str = decision.fallback_reason
+        if decision.rejected_rule is not None:
+            detail = f"invalid_proposal:{decision.rejected_rule}"
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.FAILED,
+            changed=False,
+            field="chart",
+            now="deterministic",
+            detail=detail,
+        )
+    else:
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            was="deterministic",
+            now="deterministic",
+            detail="shadow:changed" if decision.changed_from_baseline else "shadow:same",
+        )
+    logger.info(
+        "visual_planner.decision",
+        extra={
+            "proposed": decision.proposed,
+            "valid": decision.valid,
+            "accepted": decision.accepted,
+            "changed_from_baseline": decision.changed_from_baseline,
+            "selected_source": decision.source,
+            "fallback_reason": decision.fallback_reason,
+            "latency_ms": decision.latency_ms,
+            "proposed_spec": canonical(decision.proposed_spec) if decision.proposed_spec else None,
+            "shown_spec": canonical(decision.spec),
+        },
     )
 
 
