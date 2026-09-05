@@ -10,6 +10,7 @@ unwritable -- `PlanningOutcome`'s own argument.
 import asyncio
 import time
 from collections.abc import Callable
+from typing import get_args
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import ChartSpec, PresentationContext, VisualProfile
@@ -39,6 +40,10 @@ class VisualPlanningPolicy:
         mode: VisualMode,
         budget_seconds: float,
     ) -> None:
+        if mode not in get_args(VisualMode):
+            raise ValueError("unsupported visual planning mode")
+        if budget_seconds <= 0:
+            raise ValueError("the visual budget must be positive")
         self._model = model
         self._fallback = fallback
         self._verifier = verifier
@@ -54,19 +59,39 @@ class VisualPlanningPolicy:
             if floor is None:
                 return None  # the floor declines (one row, no measure): nothing to fall back to
         if self._mode == "deterministic" or self._model is None:
-            assert floor is not None
+            # `promoted` left `floor` unset above (R2); the no-model path still has to show
+            # something, so it is computed here rather than asserted into existence -- the state
+            # is reachable (`promoted` with no model wired), not a bug an assert should catch.
+            if floor is None:
+                floor = self._fallback.plan(profile, presentation)
+                if floor is None:
+                    return None
             return VisualDecision(spec=floor, profile=profile, source="deterministic")
 
+        # `self._model` is narrowed non-None by the branch above; captured into a local so the
+        # nested coroutine below closes over a plain `VisualPlannerPort`, not an `Optional` mypy
+        # would widen `self._model` back to inside a new function scope.
+        model = self._model
         started = time.monotonic()
         proposed_spec: ChartSpec | None = None
         rejected: Rejection | None = None
         reason: FallbackReason | None = None
         proposed = False
+
+        async def _call() -> VisualPlanDraft | None:
+            try:
+                return await model.plan(
+                    question, profile, presentation, budget_seconds=self._budget
+                )
+            except TimeoutError as exc:
+                # The provider's own timeout, never the budget's: `wait_for`'s cancellation
+                # reaches this coroutine as `CancelledError`, not `TimeoutError`, so this cannot
+                # mask a real budget expiry -- only a `TimeoutError` the adapter itself raises
+                # (its own socket/connect timeout) is caught here.
+                raise ProviderFailedError("visual", str(exc)) from exc
+
         try:
-            draft = await asyncio.wait_for(
-                self._model.plan(question, profile, presentation, budget_seconds=self._budget),
-                timeout=self._budget,
-            )
+            draft = await asyncio.wait_for(_call(), timeout=self._budget)
             proposed = True
             if draft is None:
                 reason = "abstention"
@@ -79,6 +104,14 @@ class VisualPlanningPolicy:
         except TimeoutError:
             reason = "timeout"
         except ProviderFailedError:
+            proposed = True
+            reason = "provider_error"
+        except Exception:
+            # Deliberately broad, mirroring `turn_interpreters.py:116`: the adapter that parses a
+            # model's answer does not exist yet, and whatever it throws while doing so -- malformed
+            # JSON, a missing key -- is a fact about the experiment, not about this turn. The floor
+            # is the availability guarantee, and no adapter exception may take it down. Safe for
+            # `CancelledError`, a `BaseException` since 3.8, which this clause never sees.
             proposed = True
             reason = "provider_error"
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -99,6 +132,8 @@ class VisualPlanningPolicy:
             spec=shown,
             profile=profile,
             source="llm" if accept else "deterministic",
+            # `draft.rationale` is never read: it is model-written free text that can echo the
+            # question back, and the question must never reach a record (Section E's guarantee).
             fallback_reason=reason,
             proposed=proposed,
             valid=proposed_spec is not None,
