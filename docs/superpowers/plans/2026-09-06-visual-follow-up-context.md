@@ -848,6 +848,56 @@ git add apps/orchestrator/src/finguard_orchestrator/application/queries/ask_fina
 git commit -m "feat(visual): every charted turn records its follow-up kind and changes nothing else"
 ```
 
+
+**Controller addition (2026-09-06, from Task 5's review — the blocker's trap, guarded end to end):** add one more test to `tests/test_visual_follow_up.py`, driven through the handler like the others:
+
+```python
+async def test_a_reshape_turn_records_the_follow_up_reader_at_most_once(seam_turn) -> None:
+    """The classifier consults the follow-up reader's undecorated body (Task 5 fix), so the cascade's
+    own @_recogniser call is the only one that may record a claim. Two CLAIMED rows for one reader
+    in one turn is the regression tests/test_reader_registry.py's invariant exists to forbid."""
+    # The handler's deterministic analyser labels this turn NEW_REQUEST (probed at 11c1f54), so the
+    # reshape gate never opens unless the edge's analysis is handed in, as production does:
+    _, sealed = await turn_for("Solo restaurantes", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP)
+    claims = [d for d in sealed.decisions if d.step is Step.RECOGNISER and d.detail == "contextual_follow_up_plan"]
+    assert len(claims) <= 1
+    (kind,) = sealed.where(Step.VISUAL_FOLLOW_UP)
+    assert kind.now == "ANALYTICAL_RESHAPE"
+```
+
+(If the real cascade classifies «Solo restaurantes» through a different reader first and the follow-up reader is never reached, `claims` is `[]` and the assertion still holds — the point is "never two".) Also note for the docstrings you write: the reshape reader 4.1 consults is `contextual_follow_up_plan`'s body, a deliberate substitution for §5's `continuation_patch.read()`.
+
+---
+
+### Controller ruling (2026-09-06): the twelfth seam also records on the controller's visual short-circuit
+
+**Why.** `llm_controller.py` returns `_visual_only_response(...)` the moment `interpret_visual` claims — at both the question route (~l.1364) and the streaming route (~l.1512) — **without calling the handler**. A handler-only record would therefore never see a real `PRESENTATION_ONLY` turn (nor a mixed one) in production; it would record only the turns the interpreter declined. The record must be emitted where every visual turn actually passes.
+
+**What changes in this task.**
+1. Put the record's vocabulary in ONE place: a helper in `application/queries/readers/visual_follow_up.py`:
+
+```python
+def record_visual_follow_up(follow_up: VisualFollowUp) -> None:
+    """One Decision on the existing record; the kind and claimant are service vocabulary."""
+    record(
+        Step.VISUAL_FOLLOW_UP,
+        Verdict.AGREED,
+        changed=False,
+        field="visual_follow_up",
+        now=follow_up.kind,
+        detail=follow_up.claimant,
+    )
+```
+
+   The handler's `_record_visual_follow_up(query, analysis, was)` classifies and then calls this helper (it no longer calls `record` itself). Importing `record`/`Step`/`Verdict` from `finguard_orchestrator.observability` into an `application/` reader module is allowed (application may import observability; check how `ask_financial_question.py` imports them and mirror it).
+2. In `llm_controller.py`, at BOTH `if visual is not None:` branches, before building the response, call
+   `record_visual_follow_up(VisualFollowUp("AMBIGUOUS", "both") if visual.mixed else VisualFollowUp("PRESENTATION_ONLY", "interpret_visual"))`
+   (`VisualIntent.mixed` is Task 5's fix-round addition). Nothing else on those paths changes — the response is built exactly as before.
+3. Tests: drive the restyle endpoint the way `tests/test_visualization_stage2_core.py` does — inside `recording_turn()` if the route does not open one itself (check `grep -rn recording_turn src` first; if the middleware opens it per request, use the app-level test client and read the sealed record the way `tests/test_decisions_call_sites.py`'s streaming test does) — and assert one `Step.VISUAL_FOLLOW_UP` row with `now == "PRESENTATION_ONLY"`, `detail == "interpret_visual"` for «Ordénalo de mayor a menor», and `now == "AMBIGUOUS"`, `detail == "both"` for «Ponlo en barras y solo restaurantes». Also assert the response itself is unchanged from a run without a recording turn (the no-visible-change constraint, now on this path too).
+4. `test_decisions_call_sites.py` section 12 stays as written (the handler path). Commit 2's message may say "recorded where every visual turn passes: the handler and the controller's short-circuit".
+
+**Resolved (controller, 2026-09-06):** the recording turn is opened per request by the OTel middleware (`observability/otel.py:481`), not by the routes. So in production the controller's visual short-circuit is inside a recording turn already; in a test that calls the route function directly (the stage2_core pattern), wrap the call in `with recording_turn() as turn:` yourself and read `turn.sealed()`. No app-level client is needed.
+
 ---
 
 ### Task 7: The roadmap says what 4.1 did and did not do

@@ -8,8 +8,14 @@ from uuid import UUID
 
 import pytest
 from support.visual_planners import BREAKDOWN_PROFILE
+from test_decisions_call_sites import ACCOUNT as CS_ACCOUNT
+from test_decisions_call_sites import TODAY as CS_TODAY
+from test_decisions_call_sites import FakeLedger, handler_for, turn_for
 
-from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
+from finguard_orchestrator.application.queries.financial_turn import (
+    AskFinancialQuestionQuery,
+    AskFinancialQuestionResult,
+)
 from finguard_orchestrator.application.queries.readers.visual_follow_up import classify
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
@@ -24,9 +30,16 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.controllers import llm_controller
+from finguard_orchestrator.infrastructure.controllers.llm_controller import ask as ask_question
+from finguard_orchestrator.infrastructure.controllers.llm_controller import ask_streaming
+from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.visualization.interpreter import VisualIntent
-from finguard_orchestrator.observability import recording_turn
+from finguard_orchestrator.observability import Step, TurnRecord, Verdict, recording_turn
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
@@ -101,32 +114,31 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
 
 
 def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
-    """`classify` must not route through the `@_recogniser` seam: a read-only classifier that
-    records a RECOGNISER/CLAIMED decision, or memoises the *outer* reader's own name onto the
-    frozen query, is not pure, and the module docstring says it is.
+    """`classify` must not route through any `@_recogniser` seam — directly, as
+    `contextual_follow_up_plan` once was, or through a nested consultation, as
+    `_internal_movement_request` once was inside `read_contextual_follow_up`. A read-only
+    classifier that records a RECOGNISER/CLAIMED decision, or leaves so much as one attribute on
+    the frozen query it was handed, is not pure, and the module docstring says it is.
 
-    `_internal_movement_request` is a nested consultation `read_contextual_follow_up` has always
-    made, regardless of this task, and is not what this test is about; `contextual_follow_up_plan`
-    and its precondition key are — they are the seam this classifier must never enter, and were
-    both present (along with a recorded decision) before the split into an undecorated body.
+    Three sentences, three different claimants, so the seam has three different doors to sneak in
+    through: a reshape ("Solo restaurantes"), a presentation change ("Ponlo apilado"), and a
+    sentence that makes the *nested* `_internal_movement_request` claim ("Cuanto he movido entre
+    mis cuentas") — which used to record a decision even though `classify` itself never claims
+    anything for it (the overall result is UNRELATED; `read_contextual_follow_up` declines once its
+    nested check claims).
     """
-    reshape_query = _query("Solo restaurantes")
-    with recording_turn() as turn:
-        result = classify(reshape_query, FOLLOW_UP, CHARTED)
-    assert result == VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")
-    assert turn.sealed().decisions == ()
-    reshape_memo = getattr(reshape_query, "_finguard_reader_memo", {})
-    assert "contextual_follow_up_plan" not in reshape_memo
-    assert "when:contextual_follow_up_plan" not in reshape_memo
-
-    presentation_query = _query("Ponlo apilado")
-    with recording_turn() as turn:
-        result = classify(presentation_query, FOLLOW_UP, CHARTED)
-    assert result == VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
-    assert turn.sealed().decisions == ()
-    presentation_memo = getattr(presentation_query, "_finguard_reader_memo", {})
-    assert "contextual_follow_up_plan" not in presentation_memo
-    assert "when:contextual_follow_up_plan" not in presentation_memo
+    for sentence, expected in (
+        ("Solo restaurantes", VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")),
+        ("Ponlo apilado", VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")),
+        ("Cuanto he movido entre mis cuentas", VisualFollowUp("UNRELATED", "none")),
+    ):
+        query = _query(sentence)
+        before = dict(vars(query))
+        with recording_turn() as turn:
+            result = classify(query, FOLLOW_UP, CHARTED)
+        assert result == expected, sentence
+        assert turn.sealed().decisions == (), sentence
+        assert dict(vars(query)) == before, sentence
 
 
 def test_every_kind_and_claimant_is_reachable() -> None:
@@ -151,3 +163,202 @@ def test_the_reader_never_reads_amounts() -> None:
 
     source = inspect.getsource(module)
     assert "visual_dataset" not in source and "amount" not in source
+
+
+# --- the twelfth seam: recorded where every visual turn passes --------------------------------
+
+
+@pytest.fixture
+def seam_turn():
+    """`seam_turn(sentence, conversation)` drives the handler under `recording_turn()` the way
+    `tests/test_visual_decision_seam.py` does, returning the sealed `TurnRecord`."""
+
+    async def _seam_turn(sentence: str, conversation: Conversation) -> TurnRecord:
+        _, sealed = await turn_for(sentence, PREVIOUS, conversation=conversation)
+        return sealed
+
+    return _seam_turn
+
+
+@pytest.fixture
+def handler_turn():
+    async def _handler_turn(
+        sentence: str, conversation: Conversation
+    ) -> AskFinancialQuestionResult:
+        """The same turn with NO recording turn open — `record()` is a no-op outside one."""
+        handler = handler_for(PREVIOUS, FakeLedger())
+        return await handler.handle(
+            AskFinancialQuestionQuery(
+                sentence=sentence,
+                account_id=CS_ACCOUNT,
+                today=CS_TODAY,
+                conversation=conversation,
+            )
+        )
+
+    return _handler_turn
+
+
+async def test_a_charted_turn_records_its_kind_and_claimant(seam_turn) -> None:
+    sealed = await seam_turn("Ordenalo de mayor a menor", CHARTED)
+    (decision,) = sealed.where(Step.VISUAL_FOLLOW_UP)
+    assert (decision.verdict, decision.changed, decision.field) == (
+        Verdict.AGREED,
+        False,
+        "visual_follow_up",
+    )
+    assert (decision.was, decision.now, decision.detail) == (
+        None,
+        "PRESENTATION_ONLY",
+        "interpret_visual",
+    )
+
+
+async def test_a_turn_without_a_chart_records_no_visual_follow_up(seam_turn) -> None:
+    sealed = await seam_turn("¿Cuánto gasté en mayo?", IDLE)
+    assert sealed.where(Step.VISUAL_FOLLOW_UP) == ()
+
+
+@pytest.mark.parametrize("kind", get_args(VisualFollowUpKind))
+async def test_every_kind_is_a_record_row(seam_turn, monkeypatch, kind) -> None:
+    """The handler imports `classify`/`record_visual_follow_up` inside `_record_visual_follow_up`
+    itself rather than at module level (see that function's own docstring: a module-level import
+    here pulls `infrastructure.visualization.interpreter` into `application/__init__.py`'s own
+    import chain, and `infrastructure/__init__.py` imports `llm_controller.py`, which imports
+    `application` back), so there is no `ask_financial_question.classify_visual_follow_up`
+    attribute to patch. Patching the reader's own `classify` reaches the same call, since the
+    deferred import re-reads the module's current attribute every time the handler calls it."""
+    import finguard_orchestrator.application.queries.readers.visual_follow_up as reader_module
+
+    monkeypatch.setattr(
+        reader_module,
+        "classify",
+        lambda query, analysis, conversation: VisualFollowUp(kind, "none"),
+    )
+    sealed = await seam_turn("x", CHARTED)
+    (decision,) = sealed.where(Step.VISUAL_FOLLOW_UP)
+    assert decision.now == kind and decision.changed is False
+
+
+async def test_the_classification_changes_nothing_visible(handler_turn) -> None:
+    """The plan's headline constraint: the same turn, recorded and unrecorded, is the same
+    answer."""
+    recorded, _ = await turn_for("Ordenalo de mayor a menor", PREVIOUS, conversation=CHARTED)
+    unrecorded = await handler_turn("Ordenalo de mayor a menor", CHARTED)
+    assert recorded == unrecorded
+
+
+async def test_a_reshape_turn_records_the_follow_up_reader_at_most_once(seam_turn) -> None:
+    """The classifier consults the follow-up reader's undecorated body (Task 5 fix), so the
+    cascade's own @_recogniser call is the only one that may record a claim. Two CLAIMED rows
+    for one reader in one turn is the regression tests/test_reader_registry.py's invariant
+    exists to forbid."""
+    # The handler's deterministic analyser labels this turn NEW_REQUEST (probed at 11c1f54), so
+    # the reshape gate never opens unless the edge's analysis is handed in, as production does:
+    _, sealed = await turn_for(
+        "Solo restaurantes", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP
+    )
+    claims = [
+        d
+        for d in sealed.decisions
+        if d.step is Step.RECOGNISER and d.detail == "contextual_follow_up_plan"
+    ]
+    assert len(claims) <= 1
+    (kind,) = sealed.where(Step.VISUAL_FOLLOW_UP)
+    assert kind.now == "ANALYTICAL_RESHAPE"
+
+
+# --- the twelfth seam, on the controller's own visual short-circuit ----------------------------
+#
+# `llm_controller.py` answers a claimed visual turn -- `interpret_visual` returning non-None -- at
+# both the question route and the streaming route without ever calling the handler, so a record
+# planted only in `ask_financial_question.py` would never see a real PRESENTATION_ONLY or AMBIGUOUS
+# turn in production. These tests drive the route *functions* directly rather than through an
+# app-level TestClient: the recording turn is opened per request by the OTel middleware
+# (`observability/otel.py:481`), not by the route, so a test calling the route function bypasses
+# that middleware and has to open one itself -- exactly `recording_turn()`, the same value the
+# middleware would have supplied.
+
+_WHO = Caller(
+    holder_reference="ES-0001", account_id=ACCOUNT, scopes=frozenset({Scope.QUESTIONS_READ})
+)
+# Fixed rather than left to mint: `conversation_mapper.to_domain` mints a fresh `conversation_id`
+# for a payload that arrives without one, and that randomness has nothing to do with recording.
+_CONVERSATION_ID = UUID("22222222-2222-2222-2222-222222222222")
+# `_visual_only_response`'s restyle path mints its own chart_id and turn_id on every call
+# (`llm_controller._derived_context`, `uuid.uuid4()`) regardless of whether a turn is being
+# recorded -- pinned here for the same reason `_CONVERSATION_ID` is.
+_MINTED_ID = UUID("33333333-3333-3333-3333-333333333333")
+
+
+def _charted_request(sentence: str) -> QuestionRequest:
+    payload = conversation_mapper.to_payload(CHARTED).model_copy(
+        update={"conversation_id": _CONVERSATION_ID}
+    )
+    return QuestionRequest(question=sentence, conversation=payload)
+
+
+async def _drive_question_route(sentence: str) -> QuestionResponse:
+    return await ask_question(
+        _charted_request(sentence),
+        _WHO,
+        queries=None,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=None,
+        metrics_on=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("sentence", "kind", "claimant"),
+    [
+        ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
+        ("Ponlo en barras y solo restaurantes", "AMBIGUOUS", "both"),
+    ],
+)
+async def test_the_controllers_visual_short_circuit_records_the_kind_and_claimant(
+    sentence, kind, claimant
+) -> None:
+    """The question route never reaches the handler for a claimed visual turn, and the twelfth
+    seam is recorded here anyway -- the same vocabulary, the same helper."""
+    with recording_turn() as turn:
+        await _drive_question_route(sentence)
+    (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
+    assert (decision.now, decision.detail, decision.changed) == (kind, claimant, False)
+
+
+async def test_the_streaming_routes_short_circuit_records_it_too() -> None:
+    """The second branch this task touches. The record happens before the SSE body is ever
+    built, so nothing here has to drain the stream to see it."""
+    with recording_turn() as turn:
+        await ask_streaming(
+            _charted_request("Ordénalo de mayor a menor"),
+            _WHO,
+            asking=None,
+            today=CS_TODAY,
+            commands=None,
+            payments_on=False,
+            queries=None,
+            attempt="x",
+            reads=None,
+            metric_tokens=None,
+            metrics_on=False,
+        )
+    (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
+    assert (decision.now, decision.detail) == ("PRESENTATION_ONLY", "interpret_visual")
+
+
+async def test_the_controllers_visual_response_is_unchanged_by_recording(monkeypatch) -> None:
+    """No visible change, on the controller's own short-circuit: the caller gets exactly the same
+    response whether or not a recording turn happens to be open around it."""
+    monkeypatch.setattr(llm_controller.uuid, "uuid4", lambda: _MINTED_ID)
+
+    with recording_turn():
+        recorded = await _drive_question_route("Ordénalo de mayor a menor")
+    unrecorded = await _drive_question_route("Ordénalo de mayor a menor")
+
+    assert recorded == unrecorded

@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 class Step(StrEnum):
-    """The seams that decide something. Eleven, not forty.
+    """The seams that decide something. Twelve, not forty.
 
     An enum rather than a free string because Section 3 turns this into a metric label, and a
     label whose values are typed by hand at ten call sites is an unbounded-cardinality metric
@@ -54,7 +54,7 @@ class Step(StrEnum):
     `decisions_total{step}` a fixed-width thing a dashboard can enumerate.
 
     It also makes the list arguable. A seam earns a place here only because a defect has hidden in
-    it or plainly could; adding a twelfth should be a diff somebody has to justify, not a string
+    it or plainly could; adding a thirteenth should be a diff somebody has to justify, not a string
     that appears one day in a panel nobody built.
     """
 
@@ -91,12 +91,16 @@ class Step(StrEnum):
     VISUAL_PLANNER = "visual_planner"
     """Which chart was shown and by whom, and -- in shadow -- whether the model's differed."""
 
+    VISUAL_FOLLOW_UP = "visual_follow_up"
+    """What a turn wants from the chart it follows — recorded before anything is changed, so the
+    readers' agreement can be measured before a model is trusted with the disagreement."""
+
 
 class Verdict(StrEnum):
     """Which way a decision went.
 
     Bounded for the same reason `Step` is: this is the second label on the headline counter. Five
-    words cover the eleven seams because the seams all do one of five things — leave a value
+    words cover the twelve seams because the seams all do one of five things — leave a value
     alone, replace it, take the turn, refuse the turn, or fail to produce anything at all.
     """
 

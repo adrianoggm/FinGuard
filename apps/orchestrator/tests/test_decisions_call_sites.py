@@ -1,4 +1,4 @@
-"""The eleven seams, each asserted on the decision it actually produces.
+"""The twelve seams, each asserted on the decision it actually produces.
 
 Section 1 built the record and proved it holds a decision. This is the file that proves the
 pipeline *puts* one there — which is the half that rots. Six times in the last week this repository
@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from support.visual_planners import BREAKDOWN_PROFILE
 
 import finguard_orchestrator
 from finguard_orchestrator.application import (
@@ -54,11 +55,15 @@ from finguard_orchestrator.domain.enums import (
 )
 from finguard_orchestrator.domain.errors import BankingUnavailableError, ProviderFailedError
 from finguard_orchestrator.domain.models.card import Wallet
-from finguard_orchestrator.domain.models.conversation import Conversation
+from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
+from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.planning_context import planning_context
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.turn_interpreters import (
     Deterministic,
@@ -73,6 +78,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.domain.value_objects.scope import Scope
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import LlmQueryPlanner
 from finguard_orchestrator.infrastructure.planning.plan_schema import NO_CATEGORY
 from finguard_orchestrator.observability import (
@@ -115,6 +121,21 @@ PLANNED_BODY: dict[str, Any] = {
     "groupBy": "NONE",
     "metric": "SUM",
 }
+
+# A conversation with a chart already in context, for the twelfth seam. `test_the_seams_record_
+# into_the_turn_the_application_opened` needs it too -- a real HTTP turn only records
+# `visual_follow_up` when the conversation it arrives with already holds a chart -- so it is built
+# once here rather than duplicated in section 12 below.
+_CHART_SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
+assert _CHART_SPEC is not None
+CHART_IN_CONTEXT = IDLE.with_visual_context(
+    VisualContext("chart-1", _CHART_SPEC, BREAKDOWN_PROFILE)
+)
+# The wire form, JSON-safe, so it can ride inside a `TestClient.post(json=...)` body directly.
+# Built from `IDLE`, not from a prior turn's response: no `last_plan`, no `active`, nothing but the
+# one chart differs from a fresh conversation, so this cannot change how any other seam in this
+# file reads the turn it is added to.
+CHART_IN_CONTEXT_PAYLOAD = conversation_mapper.to_payload(CHART_IN_CONTEXT).model_dump(mode="json")
 
 
 # --- the doubles ------------------------------------------------------------------------------
@@ -363,7 +384,16 @@ def test_the_seams_record_into_the_turn_the_application_opened(route: str) -> No
     """
     client, seen = wired(FinancialPlan(direction=Direction.INCOME, period=FIVE_MONTHS))
 
-    response = client.post(route, json={"question": STATES_WINDOW_AND_DIRECTION})
+    # A chart already in context, so the twelfth seam has one to read too -- `CHART_IN_CONTEXT`
+    # carries nothing else (no `last_plan`, no `active`), so every other seam below still fires
+    # exactly the way it did before this turn had a chart in context.
+    response = client.post(
+        route,
+        json={
+            "question": STATES_WINDOW_AND_DIRECTION,
+            "conversation": CHART_IN_CONTEXT_PAYLOAD,
+        },
+    )
 
     assert response.status_code == 200
     if route.endswith("/stream"):
@@ -381,6 +411,7 @@ def test_the_seams_record_into_the_turn_the_application_opened(route: str) -> No
         Step.LEDGER,
         Step.OUTCOME,
         Step.VISUAL_PLANNER,
+        Step.VISUAL_FOLLOW_UP,
     }
 
 
@@ -924,6 +955,24 @@ async def test_visual_planner_records_the_deterministic_default_on_a_real_turn()
     assert decision.verdict is Verdict.AGREED
     assert decision.changed is False
     assert decision.detail == "not_run"
+
+
+# --- 12 · visual_follow_up ----------------------------------------------------------------------
+
+
+async def test_visual_follow_up_records_unrelated_for_an_ordinary_question() -> None:
+    """The twelfth seam, reachable from a real turn: a chart is already in context and the
+    question has nothing to do with it, so the reader names UNRELATED."""
+    _, sealed = await turn_for(
+        STATES_WINDOW_AND_DIRECTION,
+        FinancialPlan(direction=Direction.INCOME, period=FIVE_MONTHS),
+        conversation=CHART_IN_CONTEXT,
+    )
+
+    decision = only(sealed, Step.VISUAL_FOLLOW_UP)
+    assert decision.verdict is Verdict.AGREED
+    assert decision.changed is False
+    assert decision.now == "UNRELATED"
 
 
 # --- recording is unconditional ----------------------------------------------------------------
