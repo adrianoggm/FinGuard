@@ -29,6 +29,7 @@ from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefiniti
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -47,7 +48,6 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 )
 from finguard_orchestrator.infrastructure.metrics.codec import decode_chart, encode_chart
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
-from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
 
 

@@ -12,6 +12,7 @@ from test_decisions_call_sites import ACCOUNT as CS_ACCOUNT
 from test_decisions_call_sites import TODAY as CS_TODAY
 from test_decisions_call_sites import FakeLedger, handler_for, turn_for
 
+from finguard_orchestrator.application.queries import ask_financial_question
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionQuery,
     AskFinancialQuestionResult,
@@ -30,6 +31,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -38,7 +40,6 @@ from finguard_orchestrator.infrastructure.controllers.llm_controller import ask 
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask_streaming
 from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
-from finguard_orchestrator.infrastructure.visualization.interpreter import VisualIntent
 from finguard_orchestrator.observability import Step, TurnRecord, Verdict, recording_turn
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
@@ -221,18 +222,12 @@ async def test_a_turn_without_a_chart_records_no_visual_follow_up(seam_turn) -> 
 
 @pytest.mark.parametrize("kind", get_args(VisualFollowUpKind))
 async def test_every_kind_is_a_record_row(seam_turn, monkeypatch, kind) -> None:
-    """The handler imports `classify`/`record_visual_follow_up` inside `_record_visual_follow_up`
-    itself rather than at module level (see that function's own docstring: a module-level import
-    here pulls `infrastructure.visualization.interpreter` into `application/__init__.py`'s own
-    import chain, and `infrastructure/__init__.py` imports `llm_controller.py`, which imports
-    `application` back), so there is no `ask_financial_question.classify_visual_follow_up`
-    attribute to patch. Patching the reader's own `classify` reaches the same call, since the
-    deferred import re-reads the module's current attribute every time the handler calls it."""
-    import finguard_orchestrator.application.queries.readers.visual_follow_up as reader_module
-
+    """`_record_visual_follow_up` imports `classify` at module level now (the interpreter it once
+    reached through `readers.visual_follow_up` lives in `domain/services/` and no longer cycles
+    back through `infrastructure`), so the name to patch is the ordinary one: where it is used."""
     monkeypatch.setattr(
-        reader_module,
-        "classify",
+        ask_financial_question,
+        "classify_visual_follow_up",
         lambda query, analysis, conversation: VisualFollowUp(kind, "none"),
     )
     sealed = await seam_turn("x", CHARTED)
