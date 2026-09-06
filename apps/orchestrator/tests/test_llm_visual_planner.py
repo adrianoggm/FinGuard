@@ -9,6 +9,7 @@ from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     Channel,
+    FieldOrder,
     FieldType,
     Mark,
     SortMode,
@@ -111,6 +112,15 @@ def test_every_mark_and_channel_is_named_in_the_prompt() -> None:
     prompt = build_visual_prompt("q", PROFILE, DEFAULT_PRESENTATION)
     assert all(mark in prompt for mark in get_args(Mark))
     assert all(channel in prompt for channel in get_args(Channel))
+
+
+def test_every_order_is_named_in_the_prompt() -> None:
+    """I1: `FieldOrder` has four members and the prose named three of them -- `NONE` appeared
+    zero times, though `profile_payload` emits it for the RECURRENCE dimension and every measure,
+    and `_order`'s `NONE` branch (`visual_plan_verifier.py`) refuses any sort on such a field with
+    no rule given to the model for it."""
+    prompt = build_visual_prompt("q", PROFILE, DEFAULT_PRESENTATION)
+    assert all(order in prompt for order in get_args(FieldOrder))
 
 
 def test_a_question_cannot_close_its_own_fence() -> None:

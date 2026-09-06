@@ -108,6 +108,8 @@ put the series on color and the matching offset, and set stack to "disabled".
 
 A dimension with order MEASURE_DESC ranks by the measure (descending): set sort to "descending"
 and sort_field to that measure field's own name. Order INPUT keeps the given order (sort "input").
+Order NONE means ordering does not apply: set no sort for that field, and no chart-wide sort
+either. Set either a per-encoding sort on a field or the chart-wide sort/sort_field, never both.
 Order TEMPORAL is a line or area over time. A dataset whose fields include occurred_at is a point
 chart: occurred_at (temporal) on x, the nominal dimension on y, and the measure in tooltip only --
 nowhere else. A normalised composition is a bar with stack "normalize", the measure on one axis,
