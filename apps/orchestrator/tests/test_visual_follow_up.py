@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import get_args
 from uuid import UUID
@@ -83,7 +84,7 @@ ROWS = [
     ("Hola", NEW, "UNRELATED", "none"),
     # both a data change ("restaurantes") and a format change ("barras") in one turn: the
     # interpreter's own mixed refusal, read as AMBIGUOUS before the table below is ever reached.
-    ("Ponlo en barras y solo restaurantes", FOLLOW_UP, "AMBIGUOUS", "both"),
+    ("Ponlo en barras y solo restaurantes", FOLLOW_UP, "AMBIGUOUS", "presentation+reshape"),
     # An unqualified "por que" or a bare "responsable"/"explica" used to read every one of these
     # as a drill-down; none of them names anything about the chart in context.
     ("¿Por qué no me funciona la app?", FOLLOW_UP, "UNRELATED", "none"),
@@ -114,7 +115,9 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
         module, "_visual_intent", lambda query, conversation: VisualIntent(None, None)
     )
     monkeypatch.setattr(module, "_drill_down_claims", lambda query, analysis: True)
-    assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp("AMBIGUOUS", "both")
+    assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp(
+        "AMBIGUOUS", "presentation+drill"
+    )
 
 
 # --- I-1: the controller's short-circuit asks classify's own table too -----------------------
@@ -122,9 +125,9 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
 CLAIMED_ROWS = [
     # Each of these three also matches the drill-down lexicon below -- the pair the two-way
     # hand-built mapping in llm_controller.py could never see (I-1).
-    ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "both"),
-    ("qué movimientos hay, ponlo en barras", "AMBIGUOUS", "both"),
-    ("enséñame las compras apiladas", "AMBIGUOUS", "both"),
+    ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "presentation+drill"),
+    ("qué movimientos hay, ponlo en barras", "AMBIGUOUS", "presentation+drill"),
+    ("enséñame las compras apiladas", "AMBIGUOUS", "presentation+drill"),
     ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
 ]
 
@@ -142,7 +145,9 @@ def test_classify_claimed_visual_reads_the_interpreters_own_mixed_refusal() -> N
     lexicon -- `intent.mixed` short-circuits `classify_claimed_visual` the same way it
     short-circuits `classify`."""
     mixed = VisualIntent(None, None, "explanation", mixed=True)
-    assert classify_claimed_visual(mixed, "cualquier cosa") == VisualFollowUp("AMBIGUOUS", "both")
+    assert classify_claimed_visual(mixed, "cualquier cosa") == VisualFollowUp(
+        "AMBIGUOUS", "presentation+reshape"
+    )
 
 
 def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
@@ -174,15 +179,32 @@ def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
 
 
 def test_every_kind_and_claimant_is_reachable() -> None:
-    """Every kind and claimant `classify` can produce is produced at least once here — through
-    `classify` itself over ROWS, plus the forced AMBIGUOUS case above for the pair no sentence in
-    ROWS happens to force. Collected from `classify`'s own results rather than from `row[2]`/
-    `row[3]`, so a `classify` that stopped producing a kind ROWS claims would fail here too."""
+    """Every kind and claimant `classify`/`classify_claimed_visual` can produce is produced at
+    least once here, through real (unmocked) calls: `classify` itself over ROWS gives the single
+    claimants and `presentation+reshape` (the mixed row); `classify_claimed_visual` is asked
+    directly for its own two AMBIGUOUS returns -- a mixed intent (`presentation+reshape` again)
+    and an I-1 sentence that matches the drill lexicon (`presentation+drill`).
+
+    The assertion is deliberately NOT a union of `get_args(Claimant)` back into what was produced
+    -- that union would make any `+`-shaped member of `Claimant` pass whether or not anything ever
+    produces it. Instead it takes the *difference*: `reshape+drill` is the one documented member
+    nothing here (or in production) can reach, because `classify`'s own drill-before-reshape
+    precedence (`reshape = not drill and ...`) makes drill and reshape mutually exclusive. Any
+    other unreached member -- including a new pair added to `Claimant` without a reader to produce
+    it -- fails this assertion instead of passing silently."""
     produced = [classify(_query(sentence), analysis, CHARTED) for sentence, analysis, _, _ in ROWS]
     kinds = {result.kind for result in produced} | {"AMBIGUOUS"}
-    claimants = {result.claimant for result in produced} | {"both"}
+    claimants = {result.claimant for result in produced}
+
+    mixed_intent = VisualIntent(None, None, "explanation", mixed=True)
+    claimants.add(classify_claimed_visual(mixed_intent, "cualquier cosa").claimant)
+    lexicon_sentence = CLAIMED_ROWS[0][0]
+    lexicon_intent = interpret_visual(lexicon_sentence, CHARTED.visual_contexts)
+    assert lexicon_intent is not None
+    claimants.add(classify_claimed_visual(lexicon_intent, lexicon_sentence).claimant)
+
     assert kinds == set(get_args(VisualFollowUpKind))
-    assert claimants == set(get_args(Claimant))
+    assert set(get_args(Claimant)) - claimants == {"reshape+drill"}
 
 
 def test_the_reader_never_reads_amounts() -> None:
@@ -366,10 +388,10 @@ async def _drive_question_route(sentence: str) -> QuestionResponse:
     ("sentence", "kind", "claimant"),
     [
         ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
-        ("Ponlo en barras y solo restaurantes", "AMBIGUOUS", "both"),
+        ("Ponlo en barras y solo restaurantes", "AMBIGUOUS", "presentation+reshape"),
         # I-1: interpret_visual claims this sentence non-mixed, but it also matches the drill
         # lexicon -- the pair the old hand-built two-way mapping recorded as PRESENTATION_ONLY.
-        ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "both"),
+        ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "presentation+drill"),
     ],
 )
 async def test_the_controllers_visual_short_circuit_records_the_kind_and_claimant(
@@ -414,3 +436,119 @@ async def test_the_controllers_visual_response_is_unchanged_by_recording(monkeyp
     unrecorded = await _drive_question_route("Ordénalo de mayor a menor")
 
     assert recorded == unrecorded
+
+
+# --- Task 6: an AMBIGUOUS short-circuit asks instead of guessing -------------------------------
+#
+# Before this task, a claimed visual turn always went to `_visual_only_response`: the mixed
+# sentence surfaced the interpreter's own refusal (`VISUAL_INCOMPATIBLE`), and the I-1 drill
+# sentence was silently restyled (`VISUAL_UPDATED`) because `interpret_visual` alone had already
+# claimed it. Both are the silent guess §5 says AMBIGUOUS exists to replace with a question.
+
+
+class _UnreachableQueries:
+    """A `Queries` double for the ask path: any call means the short-circuit fell through to the
+    handler and its ledger, which the AMBIGUOUS branch must never do."""
+
+    def __init__(self) -> None:
+        self.ran: list[object] = []
+
+    async def ask(self, query: object) -> object:
+        self.ran.append(query)
+        raise AssertionError("the AMBIGUOUS ask path must never reach the query bus")
+
+
+ASK_ROWS = [
+    # I-1: the drill lexicon also matches this sentence -- the pair a silent restyle used to hide.
+    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill"),
+    # The interpreter's own mixed refusal -- a data change and a format change in one turn.
+    ("Ponlo en barras y solo restaurantes", "presentation+reshape"),
+]
+
+
+@pytest.mark.parametrize(("sentence", "claimant"), ASK_ROWS)
+async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(sentence, claimant) -> None:
+    """§5's row: a claimed turn two readers agree on gets a question, not a guess -- zero ledger
+    calls, the conversation returned exactly as it arrived (nothing merged), and the one
+    VISUAL_FOLLOW_UP row the recording seam always writes for a claimed turn."""
+    fake_queries = _UnreachableQueries()
+    request = _charted_request(sentence)
+    with recording_turn() as turn:
+        response = await ask_question(
+            request,
+            _WHO,
+            queries=fake_queries,
+            today=CS_TODAY,
+            commands=None,
+            payments_on=False,
+            attempt="x",
+            reads=None,
+            metric_tokens=None,
+            metrics_on=False,
+        )
+
+    assert response.outcome == "VISUAL_AMBIGUOUS"
+    assert response.text == llm_controller._ASK[claimant]
+    assert response.conversation == request.conversation
+    assert fake_queries.ran == []
+    (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
+    assert (decision.now, decision.detail) == ("AMBIGUOUS", claimant)
+
+
+async def test_the_streaming_routes_ambiguous_short_circuit_asks_too() -> None:
+    """The second branch this task touches: the SSE body's one `answer` event carries the
+    question, not a restyle -- drained here because, unlike the recording-only streaming test
+    above, what the answer actually says is exactly what changed."""
+    fake_queries = _UnreachableQueries()
+    sentence = "muéstrame los movimientos ordenados de mayor a menor"
+    request = _charted_request(sentence)
+    with recording_turn() as turn:
+        streamed = await ask_streaming(
+            request,
+            _WHO,
+            asking=None,
+            today=CS_TODAY,
+            commands=None,
+            payments_on=False,
+            queries=fake_queries,
+            attempt="x",
+            reads=None,
+            metric_tokens=None,
+            metrics_on=False,
+        )
+        chunks = [chunk async for chunk in streamed.body_iterator]
+
+    body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+    (line,) = [line for line in body.splitlines() if line.startswith("data: ")]
+    payload = json.loads(line.removeprefix("data: "))
+    assert payload["type"] == "answer"
+    assert payload["outcome"] == "VISUAL_AMBIGUOUS"
+    assert payload["text"] == llm_controller._ASK["presentation+drill"]
+    assert fake_queries.ran == []
+    (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
+    assert (decision.now, decision.detail) == ("AMBIGUOUS", "presentation+drill")
+
+
+async def test_a_presentation_only_short_circuit_still_updates_through_the_controller() -> None:
+    """Regression: a non-ambiguous claimed turn still restyles as it did before this task, through
+    the same branch point that now also has to recognise AMBIGUOUS."""
+    response = await _drive_question_route("Ordénalo de mayor a menor")
+    assert response.outcome == "VISUAL_UPDATED"
+
+
+def test_every_ambiguous_claimant_classify_claimed_visual_can_return_has_a_text() -> None:
+    """`_ASK` is keyed by the two pairs `classify_claimed_visual` can actually produce (I-1's own
+    docstring): this derives them from the function's own outputs, on a mixed intent and on an
+    I-1 sentence, rather than hand-listing the pairs again -- so an unreachable pair can never
+    `KeyError` into a 500 in production."""
+    mixed_intent = VisualIntent(None, None, "explanation", mixed=True)
+    mixed = classify_claimed_visual(mixed_intent, "cualquier cosa")
+    assert mixed.kind == "AMBIGUOUS"
+    assert mixed.claimant in llm_controller._ASK
+
+    lexicon_sentence = "muéstrame los movimientos ordenados de mayor a menor"
+    lexicon_intent = interpret_visual(lexicon_sentence, CHARTED.visual_contexts)
+    assert lexicon_intent is not None
+    drill = classify_claimed_visual(lexicon_intent, lexicon_sentence)
+    assert drill.kind == "AMBIGUOUS"
+    assert drill.claimant in llm_controller._ASK
