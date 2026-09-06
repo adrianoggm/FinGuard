@@ -240,11 +240,11 @@ def stability(cases: list[Case], proposals: dict[str, Any]) -> Stability:
             else:
                 out.skipped_pairs += 1
             continue
-        same = canonical(mine) == canonical(twin)
         if case.visual_instruction:
             out.instructed += 1
             out.sensitive += instruction_holds(mine, case.instruction_effect)
         else:
+            same = canonical(mine) == canonical(twin)
             out.pairs += 1
             out.held += same
             if not same:

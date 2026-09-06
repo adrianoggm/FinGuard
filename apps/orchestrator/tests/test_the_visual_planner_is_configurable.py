@@ -5,7 +5,8 @@
 `create_app` rather than by calling `VisualPlanningPolicy` directly, the same reason
 `test_who_reads_a_turn_is_configurable.py` gives for `turn_interpreter`: what could break is the
 wiring itself -- a `VisualPlanningPolicy(model=..., fallback=...)` with an adapter built under the
-wrong mode type-checks, starts, and quietly puts a model call on every charted turn.
+wrong mode type-checks, starts, and quietly puts a model call on every charted turn. And three more
+about *which* model and sampling the adapter is built with, and that a blank setting is unset.
 """
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from finguard_orchestrator.application import AskFinancialQuestionQuery
 from finguard_orchestrator.bootstrap.config import Settings, get_settings
 from finguard_orchestrator.bootstrap.main import create_app
+from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.planning.llm_visual_planner import LlmVisualPlanner
 
 
@@ -75,6 +77,7 @@ def test_the_visual_planner_takes_its_own_model_and_sampling_when_named(monkeypa
     monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER", "shadow")
     monkeypatch.setenv("ORCHESTRATOR_PLANNER_TEMPERATURE", "0.3")
     monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_MODEL", "other:1b")
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_PROVIDER", "echo")
     monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_TEMPERATURE", "0.0")
     monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_MAX_OUTPUT_TOKENS", "512")
     get_settings.cache_clear()
@@ -88,7 +91,9 @@ def test_the_visual_planner_takes_its_own_model_and_sampling_when_named(monkeypa
             0.0,
             512,
         )
+        assert isinstance(visual._provider, EchoLlmProvider)
         assert handler._planner._model == settings.planner_model  # untouched
+        assert not isinstance(handler._planner._provider, EchoLlmProvider)
     finally:
         get_settings.cache_clear()
 

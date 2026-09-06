@@ -340,7 +340,7 @@ def test_an_answer_outside_the_schema_is_refused_whole(answer: dict) -> None:
     assert parse_visual_answer(json.dumps(answer)) is None
 
 
-def test_the_answer_model_accepts_exactly_the_schema_enums() -> None:
+def test_the_answer_model_accepts_every_schema_enum() -> None:
     """Both are built from the same `Literal`s; this pins that nobody re-types one of them."""
     props = visual_schema()["properties"]
     encoding = props["encodings"]["items"]["properties"]
