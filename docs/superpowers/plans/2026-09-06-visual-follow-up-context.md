@@ -559,6 +559,15 @@ ROWS = [
     ("Enséñame los movimientos responsables", FOLLOW_UP, "DRILL_DOWN", "drill_down_reader"),
     ("¿Cuánto gasté en mayo?", NEW, "UNRELATED", "none"),
     ("Hola", NEW, "UNRELATED", "none"),
+    # both a data change ("restaurantes") and a format change ("barras") in one turn: the
+    # interpreter's own mixed refusal, read as AMBIGUOUS before the table above is ever reached.
+    ("Ponlo en barras y solo restaurantes", FOLLOW_UP, "AMBIGUOUS", "both"),
+    # An unqualified "por que" or a bare "responsable"/"explica" used to read every one of these
+    # as a drill-down; none of them names anything about the chart in context.
+    ("¿Por qué no me funciona la app?", FOLLOW_UP, "UNRELATED", "none"),
+    ("Explica el plan", FOLLOW_UP, "UNRELATED", "none"),
+    ("¿Qué compras puedo hacer con 100 euros?", FOLLOW_UP, "UNRELATED", "none"),
+    ("el responsable de la nómina", FOLLOW_UP, "UNRELATED", "none"),
 ]
 
 
@@ -677,7 +686,9 @@ def _reshape_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis) ->
 
 
 def _drill_down_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis) -> bool:
-    return analysis.relation is TurnRelation.FOLLOW_UP and _DRILL_DOWN.search(fold(query.sentence)) is not None
+    if analysis.relation is not TurnRelation.FOLLOW_UP or analysis.focus is not TurnFocus.LAST_ANSWER:
+        return False
+    return _DRILL_DOWN.search(fold(query.sentence)) is not None
 
 
 def classify(
@@ -690,31 +701,30 @@ def classify(
     presentation = _presentation_claims(query, conversation)
     drill = _drill_down_claims(query, analysis)
     reshape = not drill and _reshape_claims(query, analysis)
-    claims = [
-        name
-        for name, claimed in (
-            ("interpret_visual", presentation),
-            ("follow_up_plan", reshape),
-            ("drill_down_reader", drill),
-        )
-        if claimed
-    ]
-    if len(claims) > 1:
+    if sum((presentation, reshape, drill)) > 1:
         return VisualFollowUp("AMBIGUOUS", "both")
-    if not claims:
-        return VisualFollowUp("UNRELATED", "none")
-    (claimant,) = claims
-    kind = {
-        "interpret_visual": "PRESENTATION_ONLY",
-        "follow_up_plan": "ANALYTICAL_RESHAPE",
-        "drill_down_reader": "DRILL_DOWN",
-    }[claimant]
-    return VisualFollowUp(kind, claimant)  # type: ignore[arg-type]
+    if presentation:
+        return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
+    if reshape:
+        return VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")
+    if drill:
+        return VisualFollowUp("DRILL_DOWN", "drill_down_reader")
+    return VisualFollowUp("UNRELATED", "none")
 ```
 
-If mypy rejects the dict lookup's `str` for the `Literal` (it will), replace the dict with three explicit `if` branches returning literal kinds — no `type: ignore`.
+Three explicit branches rather than a dict keyed by claimant name: a dict would map a plain `str`
+back onto the `Literal` kind and claimant fields, which mypy strict rejects without a
+`type: ignore`; three branches keep every return a literal mypy can check without one.
 
 **Reader order note (write it as a comment):** drill-down is checked before reshape because «¿por qué agosto es tan alto?» is also a FOLLOW_UP on the last answer; the lexicon is the more specific reader and wins, which is why `reshape` is computed as `not drill and ...`.
+
+**Not this table's problem, but adjacent — named so the next reader of this plan does not
+reinvent it:** the controller's visual short-circuit answers a claimed `interpret_visual` *before*
+any `TurnAnalysis` exists, so it cannot call `classify` (which requires one). It has its own entry
+point instead, `classify_claimed_visual(intent: VisualIntent, sentence: str) -> VisualFollowUp` in
+this same module — added by the whole-branch fix wave's commit 2 (I-1), once the review found that
+the short-circuit's own hand-built two-way mapping could not see the presentation+drill pair
+`classify`'s table already handles.
 
 - [ ] **Step 4: Run to verify they pass**
 
