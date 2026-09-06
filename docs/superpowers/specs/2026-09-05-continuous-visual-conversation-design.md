@@ -122,19 +122,25 @@ class VisualContext:
     chart_id: str
     spec: ChartSpec
     profile: VisualProfile
-    decision: VisualDecision            # source, proposed_spec, fallback_reason — Wave 3's record
-    source_plan: FinancialPlan | ComparisonPlan | RatioPlan   # the plan whose result this charted
-    evidence_ids: tuple[UUID, ...]      # the movements behind the figures, as the answer already has
-    derived_from: str | None            # the chart this reshaped or drilled from
-    turn_id: UUID
+    decision: VisualDecision | None = None      # source, proposed_spec, fallback_reason — turn-local
+    source_plan: FinancialPlan | ComparisonPlan | RatioPlan | None = None   # the plan this charted
+    evidence_ids: tuple[UUID, ...] = ()   # the movements behind the figures, turn-local like decision
+    derived_from: str | None = None       # the chart this reshaped or drilled from
+    turn_id: UUID | None = None           # minted where the chart is made; None after a round-trip
 ```
 
-The wire payload (`VisualContextPayload`) grows **only** `derived_from` and `turn_id`; `decision`,
-`source_plan` and `evidence_ids` are server-side, reconstructed from the conversation store, because
-the foundation's rule stands: a round-tripped profile is a narrowed reconstruction and the wire is not
-where authority lives. The context can answer: which question produced the chart, which plan produced
-its data, which fields the result has, which chart was accepted and from whom, which evidence backs
-each figure, in which turn.
+The wire payload (`VisualContextPayload`) grows **only** `derived_from` and `turn_id`. `decision`,
+`source_plan` and `evidence_ids` are **turn-local**: the orchestrator keeps no conversation store —
+the conversation itself is the wire payload — so they are populated in the turn that makes or derives
+the chart and come back `None` / `()` after a round-trip. What a later turn can still recover is what
+the conversation already carries: `last_plan` for the newest chart's plan and the `referenced_*`
+reference for the last answer's evidence. The foundation's rule stands: a round-tripped profile is a
+narrowed reconstruction and the wire is not where authority lives. `source_plan` is typed
+`FinancialPlan | ComparisonPlan | RatioPlan | None` and copied from the result's `metric_definition`;
+`evidence_ids` are the plan's `transaction_ids` when it carries them; `turn_id` is a UUID minted where
+the chart is made — no turn identifier exists elsewhere in the service. The context can answer: which
+question produced the chart, which plan produced its data, which fields the result has, which chart
+was accepted and from whom, which evidence backs each figure, in which turn.
 
 **Invariant.** A visual follow-up may change the presentation; it can never, on its own, change the
 financial question or its figures.

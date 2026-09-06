@@ -405,6 +405,19 @@ Left for the next branch, smallest first:
 5. ~~**Invalid visual payloads are dropped silently, not refused.**~~ CLOSED — `61cdb7a` (the
    visual-context DTO refuses an invalid stack/sort/sort_field) and `434567f` (the conversation
    mapper stops silently dropping an invalid stack/sort).
+6. **`llm_mapper`'s field guard checks the intersection where the profile advertises the
+   union.** `llm_mapper.py:233-238` checks a model's proposal against the serialised rows'
+   *intersection* of keys, while `VisualProfile.field_names()` is the *union*
+   (`deterministic_visual_planner.py:106-111` documents why). The floor names only fields it
+   guards, so this has been safe by construction; a model in `hybrid`/`promoted` may place any
+   advertised field on any channel, and a field some row omits then makes the chart vanish
+   silently rather than crash. Close this before promoting either mode.
+7. **A `VisualFloorPort` Protocol, parked rather than added now.** `VisualPlanningPolicy.fallback`
+   is typed as the concrete `DeterministicVisualPlanner`, which is honest today — there is
+   exactly one floor, and it is deliberately not an implementation of `VisualPlannerPort` (sync,
+   takes no question or budget, returns a spec rather than a draft). Wave 4 adds `source="patch"`
+   and a third producer of specs; if that produces a second floor-shaped collaborator, the
+   Protocol becomes mandatory and should land with it, not before.
 
 **2026-09-06 — wave 3 landed with the planner shipped off.** `ORCHESTRATOR_VISUAL_PLANNER=deterministic`
 is the shipped setting, so no model call happens in production; `shadow` is the mode the three
