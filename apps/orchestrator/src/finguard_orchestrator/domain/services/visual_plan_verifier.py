@@ -149,6 +149,13 @@ def _mark(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         elif {role_on(x), role_on(y)} != {"dimension", "measure"}:
             return Rejection("mark", "a bar puts the dimension and the measure on opposite axes")
     elif spec.mark in {"line", "area"}:
+        if spec.stack == "normalize":
+            # Section D gives `normalize` to `bar` alone. `_donut_claims` gates on
+            # `stack == "normalize"` mark-agnostically, so without this a `line`/`area` whose
+            # profile is positive, mutually exclusive and verified-total slipped through it --
+            # and the only shape that can qualify with no series is a single-series 100% band
+            # that says nothing, drawn as a line whose stack is simply inert.
+            return Rejection("mark", f"normalize composes a bar, not a {spec.mark}")
         axes = [item for item in (x, y) if item is not None]
         has_temporal_axis = any(item.type == "temporal" for item in axes)
         roles_match = {role_on(x), role_on(y)} == {"dimension", "measure"}
