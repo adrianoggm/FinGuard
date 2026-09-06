@@ -257,6 +257,10 @@ class VisualContextPayload(_Payload):
     chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     spec: dict[str, object]
     profile: VisualProfilePayload
+    derived_from: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    )
+    turn_id: UUID | None = None
 
     @model_validator(mode="after")
     def _value_free_spec(self) -> "VisualContextPayload":
