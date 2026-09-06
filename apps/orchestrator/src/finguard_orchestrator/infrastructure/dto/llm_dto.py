@@ -257,6 +257,10 @@ class VisualContextPayload(_Payload):
     chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     spec: dict[str, object]
     profile: VisualProfilePayload
+    derived_from: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    )
+    turn_id: UUID | None = None
 
     @model_validator(mode="after")
     def _value_free_spec(self) -> "VisualContextPayload":
@@ -371,6 +375,19 @@ class VisualContextPayload(_Payload):
             not isinstance(sort_field, str) or not FIELD_NAME_PATTERN.fullmatch(sort_field)
         ):
             raise ValueError("sort_field must be an identifier")
+        return self
+
+    @model_validator(mode="after")
+    def _derived_from_is_not_self(self) -> "VisualContextPayload":
+        # `VisualContext.__post_init__` (`chart.py`) already refuses this, but a bare `ValueError`
+        # raised there, reached from `conversation_mapper.to_domain`, is neither a `DomainError`
+        # nor a pydantic `ValidationError` -- the two exception types `error_handlers.py` maps to a
+        # 422 -- so it fell through as an unhandled 500 instead. Checked here, at the wire boundary,
+        # the same collision becomes the `ValidationError` pydantic already turns into a 422, same
+        # as every other refused `VisualContextPayload` field. The domain check stays: this is the
+        # edge's own refusal, not a replacement for the last line of defence.
+        if self.derived_from is not None and self.derived_from == self.chart_id:
+            raise ValueError("derived_from cannot name the chart itself")
         return self
 
 

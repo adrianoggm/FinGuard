@@ -2,7 +2,14 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Final, Literal, cast, get_args
+from typing import TYPE_CHECKING, Final, Literal, cast, get_args
+from uuid import UUID
+
+if TYPE_CHECKING:  # the decision and the plans import this module; only the annotation needs them
+    from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
+    from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
+    from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+    from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 
 Mark = Literal["line", "area", "bar", "point", "donut"]
 Channel = Literal["x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"]
@@ -305,15 +312,39 @@ DEFAULT_PRESENTATION: Final = PresentationContext(
 )
 
 
+CHART_ID_PATTERN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
 @dataclass(frozen=True)
 class VisualContext:
+    """A chart the conversation remembers, and how it came to be.
+
+    The first three fields are the chart; they are positional so every existing construction
+    stands. The rest is Wave 4's record of provenance. `decision`, `source_plan` and
+    `evidence_ids` are turn-local — the service keeps no conversation store, so a round trip
+    brings them back empty — while `derived_from` and `turn_id` travel on the wire, because a
+    later turn needs them to resolve «el gráfico anterior» and to say in which turn it was made.
+    """
+
     chart_id: str
     spec: ChartSpec
     profile: VisualProfile
+    decision: "VisualDecision | None" = None
+    source_plan: "FinancialPlan | ComparisonPlan | RatioPlan | None" = None
+    evidence_ids: tuple[UUID, ...] = ()
+    derived_from: str | None = None
+    turn_id: UUID | None = None
 
     def __post_init__(self) -> None:
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", self.chart_id):
+        if not CHART_ID_PATTERN.fullmatch(self.chart_id):
             raise ValueError("invalid chart id")
+        if self.derived_from is not None:
+            if not CHART_ID_PATTERN.fullmatch(self.derived_from):
+                raise ValueError("derived_from must be a chart id")
+            if self.derived_from == self.chart_id:
+                raise ValueError("derived_from cannot name the chart itself")
+        if any(not isinstance(item, UUID) for item in self.evidence_ids):
+            raise TypeError("evidence ids are UUIDs")
 
 
 @dataclass(frozen=True)

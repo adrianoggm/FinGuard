@@ -1,9 +1,11 @@
 import dataclasses
 from dataclasses import asdict, replace
 from typing import get_args
+from uuid import uuid4
 
 import pytest
-from support.visual_planners import default_policy
+from pydantic import ValidationError
+from support.visual_planners import BREAKDOWN_PROFILE, default_policy
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -21,16 +23,26 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     PresentationContext,
+    VisualContext,
     VisualField,
     Visualization,
     VisualProfile,
     derive_chart,
 )
+from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+    VisualDecision,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.infrastructure.dto.llm_dto import VisualContextPayload
+from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    ConversationPayload,
+    VisualContextPayload,
+)
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     _remember_visual_context,
     _visualization_to_dto,
@@ -38,6 +50,9 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 )
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
+
+SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
+assert SPEC is not None
 
 
 def test_chart_references_only_result_fields_and_never_values() -> None:
@@ -302,6 +317,59 @@ def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
     `None`."""
     payload = VisualContextPayload.model_validate(_visual_context_dict())
     assert payload.chart_id == "chart-1"
+
+
+def test_the_wire_carries_derived_from_and_turn_id_and_nothing_server_side() -> None:
+    """§13: no wire authority -- decision, plan and evidence never travel; origin and turn do."""
+    turn = uuid4()
+    decision = VisualDecision(spec=SPEC, profile=BREAKDOWN_PROFILE, source="deterministic")
+    context = VisualContext(
+        "chart-2",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        decision=decision,
+        evidence_ids=(uuid4(),),
+        derived_from="chart-1",
+        turn_id=turn,
+    )
+    conversation = IDLE.with_visual_context(context)
+    payload = conversation_mapper.to_payload(conversation)
+    (item,) = payload.visual_contexts
+    assert (item.derived_from, item.turn_id) == ("chart-1", turn)
+    assert not hasattr(item, "decision") and not hasattr(item, "source_plan")
+    assert not hasattr(item, "evidence_ids")
+    back = conversation_mapper.to_domain(payload)
+    (restored,) = back.visual_contexts
+    assert (restored.derived_from, restored.turn_id) == ("chart-1", turn)
+    assert (restored.decision, restored.source_plan, restored.evidence_ids) == (None, None, ())
+
+
+def test_an_absent_origin_round_trips_as_none() -> None:
+    conversation = IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
+    payload = conversation_mapper.to_payload(conversation)
+    (item,) = payload.visual_contexts
+    assert (item.derived_from, item.turn_id) == (None, None)
+    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
+    assert (restored.derived_from, restored.turn_id) == (None, None)
+
+
+def test_an_invalid_origin_on_the_wire_is_refused() -> None:
+    payload = conversation_mapper.to_payload(
+        IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
+    )
+    raw = payload.model_dump(mode="json")
+    raw["visual_contexts"][0]["derived_from"] = "not a chart id!"
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(raw)
+
+
+def test_a_chart_cannot_claim_to_derive_from_itself_on_the_wire() -> None:
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
+    payload = conversation_mapper.to_payload(IDLE.with_visual_context(context))
+    raw = payload.model_dump(mode="json")
+    raw["visual_contexts"][0]["derived_from"] = context.chart_id
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(raw)
 
 
 async def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:

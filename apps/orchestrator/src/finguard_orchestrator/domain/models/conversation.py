@@ -45,7 +45,7 @@ from finguard_orchestrator.domain.constants import (
 )
 from finguard_orchestrator.domain.enums import CounterpartyType, Rail
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.chart import VisualContext
+from finguard_orchestrator.domain.models.chart import CHART_ID_PATTERN, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
@@ -414,14 +414,10 @@ class Conversation:
     visual_contexts: tuple[VisualContext, ...] = ()
 
     def __post_init__(self) -> None:
-        import re
-
         if len(self.visual_contexts) > MAX_VISUAL_CONTEXTS:
             raise InvalidValueError("too many visual contexts")
         ids = [item.chart_id for item in self.visual_contexts]
-        if len(set(ids)) != len(ids) or any(
-            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value) for value in ids
-        ):
+        if len(set(ids)) != len(ids) or any(not CHART_ID_PATTERN.fullmatch(value) for value in ids):
             raise InvalidValueError("visual chart ids must be unique bounded identifiers")
         for context in self.visual_contexts:
             if not context.spec.valid_for(context.profile.field_names()):

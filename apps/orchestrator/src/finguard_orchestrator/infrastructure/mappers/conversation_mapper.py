@@ -230,7 +230,11 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
             sort_field=sort_field,
             limit=limit,
         )
-        result.append(VisualContext(item.chart_id, spec, profile))
+        result.append(
+            VisualContext(
+                item.chart_id, spec, profile, derived_from=item.derived_from, turn_id=item.turn_id
+            )
+        )
     return tuple(result)
 
 
@@ -596,6 +600,8 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
             "visual_contexts": [
                 {
                     "chart_id": context.chart_id,
+                    "derived_from": context.derived_from,
+                    "turn_id": context.turn_id,
                     "spec": _context_spec_payload(context.spec),
                     "profile": {
                         "fields": [
