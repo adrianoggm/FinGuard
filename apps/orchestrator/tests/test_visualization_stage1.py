@@ -363,6 +363,15 @@ def test_an_invalid_origin_on_the_wire_is_refused() -> None:
         ConversationPayload.model_validate(raw)
 
 
+def test_a_chart_cannot_claim_to_derive_from_itself_on_the_wire() -> None:
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
+    payload = conversation_mapper.to_payload(IDLE.with_visual_context(context))
+    raw = payload.model_dump(mode="json")
+    raw["visual_contexts"][0]["derived_from"] = context.chart_id
+    with pytest.raises(ValidationError):
+        ConversationPayload.model_validate(raw)
+
+
 async def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:
     """One profile per turn, and the identity check is the whole point.
 
