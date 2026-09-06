@@ -219,7 +219,15 @@ def _visual_only_response(
             conversation=conversation_mapper.to_payload(conversation),
         )
     chart_id = "chart-" + uuid.uuid4().hex[:16]
-    derived_context = VisualContext(chart_id, updated.spec, trusted_context.profile)
+    derived_context = VisualContext(
+        chart_id,
+        updated.spec,
+        trusted_context.profile,
+        source_plan=trusted_context.source_plan,
+        evidence_ids=trusted_context.evidence_ids,
+        derived_from=trusted_context.chart_id,
+        turn_id=uuid.uuid4(),
+    )
     next_conversation = conversation.with_visual_context(derived_context)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:

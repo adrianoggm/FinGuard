@@ -310,6 +310,12 @@ def _visual_title(result: AskFinancialQuestionResult, dataset: VisualDataset) ->
     return f"{subject}{grouped}" + (f" · {period}" if period else "")
 
 
+def _evidence_of(plan: object) -> tuple[UUID, ...]:
+    """The movements behind the figures, when the plan names them. Only FinancialPlan does."""
+    ids = getattr(plan, "transaction_ids", ())
+    return tuple(ids) if all(isinstance(item, UUID) for item in ids) else ()
+
+
 def _remember_visual_context(
     result: AskFinancialQuestionResult, visualization: VisualizationResponse | None
 ) -> AskFinancialQuestionResult:
@@ -328,7 +334,15 @@ def _remember_visual_context(
     return replace(
         result,
         conversation=result.conversation.with_visual_context(
-            VisualContext(visualization.chart_id, spec, decision.profile)
+            VisualContext(
+                visualization.chart_id,
+                spec,
+                decision.profile,
+                decision=decision,
+                source_plan=result.metric_definition,
+                evidence_ids=_evidence_of(result.metric_definition),
+                turn_id=uuid4(),
+            )
         ),
     )
 
