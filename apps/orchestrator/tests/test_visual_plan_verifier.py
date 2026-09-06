@@ -406,6 +406,36 @@ def _normalised_bar(**overrides):
     return D(**fields)
 
 
+def verified_monthly():
+    """A temporal profile whose total was checked -- I2's probe needs `positive`,
+    `mutually_exclusive` and `verified_total` all true on a *temporal* dimension, which `monthly`
+    above does not carry (its `total_minor` is `None`, so `verified_total` is false)."""
+    return visual_profile_of(
+        VisualDataset(metric="SUM", rows=(VisualRow("2026-01", 100), VisualRow("2026-02", 200))),
+        total_minor=300,
+        group_by="MONTH",
+    )
+
+
+def test_a_normalised_line_or_area_is_refused_normalize_composes_a_bar() -> None:
+    """I2 (= D3). `_mark`'s `line`/`area` branch checked axes, temporality and roles but never
+    `stack`, so a normalised line on a qualifying temporal profile was authorised -- the only
+    shape that can qualify with no series is a single-series 100% band that says nothing, and on
+    `line` the stack is simply inert."""
+    normalised_line = D(
+        "line",
+        (E("x", "dimension", "temporal"), E("y", "value_minor", "quantitative")),
+        stack="normalize",
+    )
+    assert rule_of(verify(normalised_line, verified_monthly())) == "mark"
+    normalised_area = D(
+        "area",
+        (E("x", "dimension", "temporal"), E("y", "value_minor", "quantitative")),
+        stack="normalize",
+    )
+    assert rule_of(verify(normalised_area, verified_monthly())) == "mark"
+
+
 def test_a_normalised_bar_claims_the_same_thing_a_donut_does() -> None:
     """Fix round 2, item 3, paired with item 2: both are "the normalised bar is a composition".
     `mark != "donut"` alone let a breakdown with `verified_total=False` -- refused as a donut for
