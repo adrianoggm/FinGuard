@@ -274,3 +274,125 @@ def test_a_query_that_lost_its_window_is_counted_as_lost_context() -> None:
     report = episodes.run([_one_turn(ran={"window": "THIS_YEAR"})])
 
     assert report.lost_context == 1
+
+
+# --- Task 7: a `VISUAL` route, and four wire-visible per-turn assertions -----------------------
+
+_TWO_GROUPS = [["RESTAURANTS", 46556, 3], ["TRANSPORT", 21000, 2]]
+
+# The breakdown floor's canonical form, probed against the real harness: chart-wide `sort` is
+# `None` and the ranking is the y axis's own sort.
+_CANONICAL_BREAKDOWN_CHART = {
+    "mark": "bar",
+    "channels": [
+        ["y", "dimension", "nominal"],
+        ["x", "value_minor", "quantitative"],
+        ["tooltip", "dimension", "nominal"],
+        ["tooltip", "value_minor", "quantitative"],
+    ],
+    "axis_sort": ["y", "descending", "value_minor"],
+}
+
+
+def _a_chart_then(second: episodes.Turn) -> episodes.Episode:
+    """A two-turn episode: the first draws a chart (two groups, so the fake actually has
+    something to plot), the second is whatever the test is calibrating."""
+    return episodes.Episode(
+        name="calibration/after_a_chart",
+        why="the harness measuring itself",
+        turns=(
+            episodes.Turn(say="¿cuánto gasté el mes pasado?", route="QUERY", groups=_TWO_GROUPS),
+            second,
+        ),
+    )
+
+
+def test_a_visual_outcome_is_recognised_as_its_own_route() -> None:
+    """`tool_of` maps `VISUAL_UPDATED` (and its siblings) to `VISUAL` before its `QUERY`
+    fallthrough. A restyle of the chart drawn above must be assertable as its own route."""
+    episode = _a_chart_then(
+        episodes.Turn(say="Ordena el gráfico anterior de mayor a menor.", route="VISUAL")
+    )
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_visual_outcome_asserted_as_a_query_is_caught() -> None:
+    """Without the `VISUAL` route, a `VISUAL_UPDATED` answer fell through `tool_of`'s `QUERY`
+    fallthrough and was silently accepted as a query -- exactly the blindness a `route: QUERY`
+    expectation on a restyle turn must now catch."""
+    episode = _a_chart_then(
+        episodes.Turn(say="Ordena el gráfico anterior de mayor a menor.", route="QUERY")
+    )
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "QUERY was the right place, VISUAL answered" in failures[0].complaint
+
+
+def test_a_turns_chart_can_be_asserted() -> None:
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, chart=_CANONICAL_BREAKDOWN_CHART)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_chart_expectation_is_caught() -> None:
+    """Without this, `chart:` could be silently ignored -- a field the loader reads, nothing
+    compares, and every episode passes."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, chart={"mark": "line"})
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "the chart's mark should be 'line' and is 'bar'" in failures[0].complaint
+
+
+def test_a_turns_banking_calls_can_be_asserted() -> None:
+    episode = _one_turn(route="QUERY", banking_calls=1)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_banking_calls_expectation_is_caught() -> None:
+    episode = _one_turn(route="QUERY", banking_calls=2)
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "the turn should call the ledger 2 time(s) and called it 1" in failures[0].complaint
+
+
+def test_a_turns_derived_from_can_be_asserted() -> None:
+    """The turn's own chart derives from nothing -- it is the first one drawn."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, derived_from=False)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_derived_from_expectation_is_caught() -> None:
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, derived_from=True)
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "derive from a previous one" in failures[0].complaint
+
+
+def test_a_turns_groups_override_the_ledgers_answer() -> None:
+    """`groups:` overrides the `Ledger` fake's one hardcoded row -- proven through the figure it
+    changes, `total`, which the harness already knows how to check."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, total=67_556)
+
+    assert list(episodes.walk(episode)) == []
+
+
+def test_a_wrong_total_against_the_overridden_groups_is_caught() -> None:
+    """The test that makes the one above mean something. Without the override actually reaching
+    the fake, this would still pass by returning the one hardcoded group's figure instead."""
+    episode = _one_turn(route="QUERY", groups=_TWO_GROUPS, total=999)
+
+    failures = list(episodes.walk(episode))
+
+    assert len(failures) == 1
+    assert "the figure should be 999 and is 67556" in failures[0].complaint

@@ -102,6 +102,7 @@ from finguard_orchestrator.domain.errors import (
     RecipientNotFoundError,
 )
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
+from finguard_orchestrator.domain.models.chart import ChartSpec
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
@@ -190,6 +191,7 @@ PAYMENT = "PAYMENT"
 QUERY = "QUERY"
 CLARIFY = "CLARIFY"
 REFUSED = "REFUSED"
+VISUAL = "VISUAL"
 
 _SPOKEN = {
     "BALANCE": BALANCE,
@@ -209,6 +211,15 @@ _PAYMENT_OUTCOMES = {
     PaymentOutcome.CANCELLED.value,
     PaymentOutcome.REFUSED.value,
     PaymentOutcome.BANKING_UNAVAILABLE.value,
+}
+# The visual outcomes, checked before the `QUERY` fallthrough below -- without this, a
+# `VISUAL_UPDATED` answer fell through unrecognised and was silently counted as a query, exactly
+# the blindness a `route: QUERY` expectation on a restyle turn should have caught and could not.
+_VISUAL_OUTCOMES = {
+    "VISUAL_UPDATED",
+    "VISUAL_INCOMPATIBLE",
+    "VISUAL_NEEDS_TARGET",
+    "VISUAL_AMBIGUOUS",
 }
 
 
@@ -240,6 +251,8 @@ def tool_of(answer: dict[str, Any]) -> str:
         if workflow in _PAYMENT_WORKFLOWS:
             return PAYMENT
         return TRANSFER if workflow == "TRANSFER_IN_PROGRESS" else CLARIFY
+    if outcome in _VISUAL_OUTCOMES:
+        return VISUAL
     return QUERY
 
 
@@ -314,6 +327,10 @@ class Ledger:
         # has to be one answer. An aggregate and a ranking are both queries a follow-up inherits
         # from, and keeping them in separate lists means the corpus cannot ask about the turn.
         self.ran: list[FinancialPlan | TopMovements] = []
+        # Set from `turn.groups` immediately before the harness posts that turn and cleared right
+        # after, so an episode naming a breakdown gets that breakdown back instead of every turn
+        # sharing the one hardcoded group below.
+        self.groups_for_next_turn: tuple[Group, ...] | None = None
 
     async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
         self.plans.append(plan)
@@ -321,6 +338,14 @@ class Ledger:
         known = {shop.casefold() for shop in SHOPS}
         if plan.merchants and not any(shop.casefold() in known for shop in plan.merchants):
             return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
+        if self.groups_for_next_turn is not None:
+            groups = self.groups_for_next_turn
+            return QueryAnswer(
+                currency="EUR",
+                total_minor=sum(group.total_minor for group in groups),
+                movement_count=sum(group.movement_count for group in groups),
+                groups=groups,
+            )
         group_key = {
             GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
             GroupBy.MERCHANT: "Mercadona",
@@ -367,6 +392,14 @@ class Ledger:
             category="TRANSPORT_FUEL",
             currency="EUR",
         )
+
+
+def _groups_from(turn: Turn) -> tuple[Group, ...] | None:
+    """`turn.groups`, translated into what `Ledger.run` answers with -- or `None`, its default,
+    when the turn does not override the fake's one hardcoded group."""
+    if turn.groups is None:
+        return None
+    return tuple(Group(str(key), int(minor), int(count)) for key, minor, count in turn.groups)
 
 
 class Accounts:
@@ -642,6 +675,26 @@ class Turn:
     # comparison needs: one mapping only ever reaches the last operand, so the other half of
     # "compara julio con junio" was unasserted.
     ran: dict[str, Any] | list[dict[str, Any]] = field(default_factory=dict)
+    # The chart this turn's last visual context carries, by whichever of `canonical(spec)`'s
+    # elements the episode cares about: `mark`, `stack`, `sort`, `sort_field`, `limit`, `channels`
+    # (the set of `(channel, field, type)` triples an encoding carries, ignoring per-encoding
+    # sorts) and `axis_sort` (the one per-encoding sort an axis carries, as a `[channel, mode,
+    # field]` triple). Read off `conversation.visual_contexts[-1].spec` -- the object the service
+    # remembers -- rather than `answer["visualization"]["spec"]`, the presented Vega-Lite, so a
+    # presenter defect that only changed the wire picture would not slip past an assertion that
+    # only ever reads the presenter's own output.
+    chart: dict[str, Any] | None = None
+    # How many times this turn called the ledger, against `len(ran)` -- so a restyle that must run
+    # none and a reshape that must run one are each a number instead of a guess read off `route`.
+    banking_calls: int | None = None
+    # Whether the last visual context this turn leaves carries a `derived_from` -- the chart links
+    # back to a previous one rather than starting fresh. Asserted only on a turn the classifier
+    # actually links; a `NEW_REQUEST` reading derives from nothing however plausible the sentence.
+    derived_from: bool | None = None
+    # The `Ledger` fake's answer for this turn only, as `[[group_key, total_minor,
+    # movement_count], ...]` -- overriding its one hardcoded group so a turn that reshapes a
+    # breakdown gets the breakdown its expectation describes.
+    groups: list[list[object]] | None = None
 
 
 @dataclass(frozen=True)
@@ -918,9 +971,11 @@ def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
         claims = claimants(turn.say, state)
         if len(set(claims.values())) > 1:
             yield number, turn.say, claims
+        stack.ledger.groups_for_next_turn = _groups_from(turn)
         response = stack.client.post(
             "/v1/questions", json={"question": turn.say, "conversation": state}
         )
+        stack.ledger.groups_for_next_turn = None
         if response.status_code != 200:
             return
         state = response.json()["conversation"]
@@ -964,9 +1019,11 @@ def replay(
     for number, turn in enumerate(episode.turns, start=1):
         before = len(stack.planner.asked)
         ran_before = len(stack.ledger.ran)
+        stack.ledger.groups_for_next_turn = _groups_from(turn)
         response = stack.client.post(
             "/v1/questions", json={"question": turn.say, "conversation": conversation}
         )
+        stack.ledger.groups_for_next_turn = None
         if response.status_code != 200:
             yield number, turn, None, False, ()
             return
@@ -1011,7 +1068,93 @@ def _complaints(
         yield f"it should be waiting for {turn.awaiting} and waits for {got or 'nothing'}"
     if turn.total is not None and answer.get("total_minor") != turn.total:
         yield f"the figure should be {turn.total} and is {answer.get('total_minor')}"
+    if turn.banking_calls is not None and len(ran) != turn.banking_calls:
+        yield (
+            f"the turn should call the ledger {turn.banking_calls} time(s) and called it {len(ran)}"
+        )
+    if turn.derived_from is not None:
+        contexts = (answer.get("conversation") or {}).get("visual_contexts") or []
+        derived = bool(contexts) and contexts[-1].get("derived_from") is not None
+        if derived != turn.derived_from:
+            yield (
+                f"the chart should {'' if turn.derived_from else 'not '}derive from a previous "
+                f"one, and {'does' if derived else 'does not'}"
+            )
+    if turn.chart is not None:
+        yield from _chart_complaints(turn.chart, answer)
     yield from _query_complaints(turn, ran)
+
+
+def canonical(
+    spec: ChartSpec,
+) -> tuple[
+    str,
+    tuple[tuple[str, str, str, str | None, str | None], ...],
+    str | None,
+    str | None,
+    str | None,
+    int | None,
+]:
+    """The value-free shape of a `ChartSpec`, in the same terms a `chart:` expectation names a
+    subset of: `mark`, each encoding as `(channel, field, type, sort_mode, sort_field)`, the
+    chart-wide `stack`, `sort`, `sort_field` and `limit`.
+
+    A chart-wide sort and a per-encoding one are different things on purpose -- the breakdown
+    floor ranks its dimension through the y axis's own sort and leaves the chart-wide `sort`
+    `None`, so a check that only read the latter would see no ranking at all.
+    """
+    encodings = tuple(
+        (
+            item.channel,
+            item.field,
+            item.type,
+            item.sort.mode if item.sort is not None else None,
+            item.sort.field if item.sort is not None else None,
+        )
+        for item in spec.encodings
+    )
+    return (spec.mark, encodings, spec.stack, spec.sort, spec.sort_field, spec.limit)
+
+
+def _chart_complaints(expected: dict[str, Any], answer: dict[str, Any]) -> Iterator[str]:
+    """`turn.chart` against the chart the conversation actually remembers.
+
+    Read off `conversation.visual_contexts[-1].spec` -- the domain `ChartSpec` the service carries
+    forward -- and not `answer["visualization"]["spec"]`, the presented Vega-Lite: the assertion is
+    on the same object a later turn's «el gráfico anterior» resolves against.
+    """
+    conversation = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(answer["conversation"])
+    )
+    if not conversation.visual_contexts:
+        yield f"the turn expects a chart {expected}, and none was remembered"
+        return
+    mark, encodings, stack, sort, sort_field, limit = canonical(
+        conversation.visual_contexts[-1].spec
+    )
+    if "mark" in expected and expected["mark"] != mark:
+        yield f"the chart's mark should be {expected['mark']!r} and is {mark!r}"
+    if "stack" in expected and expected["stack"] != stack:
+        yield f"the chart's stack should be {expected['stack']!r} and is {stack!r}"
+    if "sort" in expected and expected["sort"] != sort:
+        yield f"the chart's sort should be {expected['sort']!r} and is {sort!r}"
+    if "sort_field" in expected and expected["sort_field"] != sort_field:
+        yield f"the chart's sort_field should be {expected['sort_field']!r} and is {sort_field!r}"
+    if "limit" in expected and expected["limit"] != limit:
+        yield f"the chart's limit should be {expected['limit']!r} and is {limit!r}"
+    if "channels" in expected:
+        wanted = {tuple(triple) for triple in expected["channels"]}
+        seen = {(chan, fld, kind) for chan, fld, kind, _, _ in encodings}
+        if seen != wanted:
+            yield f"the chart's channels should be {sorted(wanted)} and are {sorted(seen)}"
+    if "axis_sort" in expected:
+        axis_channel, axis_mode, axis_field = expected["axis_sort"]
+        match = next((item for item in encodings if item[0] == axis_channel), None)
+        got = (match[3], match[4]) if match is not None else None
+        if got != (axis_mode, axis_field):
+            yield (
+                f"the {axis_channel} axis should sort {axis_mode} by {axis_field!r} and sorts {got}"
+            )
 
 
 def _query_complaints(turn: Turn, ran: tuple[FinancialPlan | TopMovements, ...]) -> Iterator[str]:
@@ -1239,9 +1382,11 @@ async def compare(
         )
         conversation: dict[str, Any] | None = opening(episode)
         for turn in episode.turns:
+            stack.ledger.groups_for_next_turn = _groups_from(turn)
             answered = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}
             )
+            stack.ledger.groups_for_next_turn = None
             if answered.status_code != 200:
                 break
             conversation = answered.json()["conversation"]
