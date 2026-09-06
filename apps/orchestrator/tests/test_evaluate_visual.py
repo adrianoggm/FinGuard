@@ -111,8 +111,31 @@ def test_stability_counts_a_pair_with_no_proposal_as_skipped() -> None:
     ]
     proposals = {"base": _bar("y")}  # "twin"'s proposal is missing
     stability = evaluate_visual.stability(cases, proposals)
-    assert stability.skipped == 1
+    assert stability.skipped_pairs == 1
+    assert stability.skipped_instructed == 0
     assert stability.pairs == 0 and stability.held == 0
+
+
+def test_stability_counts_an_instructed_pair_with_no_proposal_separately() -> None:
+    """M6: `skipped_pairs` and `skipped_instructed` used to share one counter printed verbatim
+    on both rows -- an instructed pair with no proposal would have made the equivalent-pair row
+    claim a pair had no proposal when none did."""
+    cases = [
+        evaluate_visual.Case(id="base", group="breakdown", dataset="breakdown", question="q"),
+        evaluate_visual.Case(
+            id="twin",
+            group="breakdown",
+            dataset="breakdown",
+            question="q2",
+            paraphrase_of="base",
+            visual_instruction=True,
+        ),
+    ]
+    proposals = {"base": _bar("y")}  # "twin"'s proposal is missing
+    stability = evaluate_visual.stability(cases, proposals)
+    assert stability.skipped_instructed == 1
+    assert stability.skipped_pairs == 0
+    assert stability.instructed == 0 and stability.sensitive == 0
 
 
 def test_a_no_chart_case_is_suitable_when_nothing_was_drawn() -> None:
@@ -120,3 +143,14 @@ def test_a_no_chart_case_is_suitable_when_nothing_was_drawn() -> None:
     results = evaluate_visual.Results()
     evaluate_visual.judge(next(c for c in cases if c.id == "no_chart_single_figure"), None, results)
     assert results.no_chart_total == 1 and results.no_chart_held == 1
+
+
+def test_a_declined_expect_chart_case_is_counted_not_dropped() -> None:
+    """M7: `judge()` returned on `decision is None` for an `expect_chart` case with no counter --
+    `entered` could read 12 while the header says 14 enter, with nothing saying which two
+    vanished or why."""
+    case = evaluate_visual.Case(id="x", group="breakdown", dataset="breakdown", question="q")
+    results = evaluate_visual.Results()
+    evaluate_visual.judge(case, None, results)
+    assert results.declined == 1
+    assert results.entered == 0

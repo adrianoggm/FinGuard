@@ -10,6 +10,7 @@ changes its answers. Run three times with the GPU alone and take the minimum, th
 import argparse
 import asyncio
 import json
+import logging
 import statistics
 import sys
 from collections import Counter
@@ -44,6 +45,9 @@ from finguard_orchestrator.domain.services.visual_profile import visual_profile_
 from finguard_orchestrator.infrastructure.planning.llm_visual_planner import (  # noqa: E402
     LlmVisualPlanner,
 )
+from finguard_orchestrator.infrastructure.planning.visual_prompt import visual_schema  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 VISUAL = Path(__file__).resolve().parents[1] / "evaluation" / "visual"
 CASES_PATH = VISUAL / "cases.yaml"
@@ -84,6 +88,10 @@ def load_cases(path: Path) -> list[Case]:
 @dataclass
 class Results:
     entered: int = 0
+    declined: int = 0
+    """An `expect_chart` case whose floor declined (`judge` got `decision is None`) -- without
+    this, `entered` can read 12 while the header says 14 enter the policy, with nothing saying
+    which two vanished or why."""
     valid: int = 0
     suitable: int = 0
     changed: int = 0
@@ -104,6 +112,7 @@ def judge(case: Case, decision: VisualDecision | None, results: Results) -> None
             results.no_chart_held += 1
         return
     if decision is None:
+        results.declined += 1
         return
     results.entered += 1
     group["entered"] += 1
@@ -133,10 +142,15 @@ class Stability:
     held: int = 0
     instructed: int = 0
     sensitive: int = 0
-    skipped: int = 0
-    """Pairs dropped because one side (or both) had no verified proposal -- neither `pairs` nor
-    `instructed` counts these, so without this a run where the model's proposals are mostly
+    skipped_pairs: int = 0
+    """Equivalent-paraphrase pairs dropped because one side (or both) had no verified proposal --
+    `pairs` does not count these, so without this a run where the model's proposals are mostly
     rejected prints a stability of 0/0 that reads as a result rather than as missing data."""
+    skipped_instructed: int = 0
+    """The same, for an instructed pair -- kept apart from `skipped_pairs` because the two used
+    to share one counter printed verbatim on both the stability and the sensitivity row: two
+    skipped equivalent pairs and none instructed made the sensitivity row claim two instructed
+    cases had no proposal."""
     breaks: list[str] = field(default_factory=list)
 
 
@@ -147,7 +161,10 @@ def stability(cases: list[Case], proposals: dict[str, Any]) -> Stability:
             continue
         mine, twin = proposals.get(case.id), proposals.get(case.paraphrase_of)
         if mine is None or twin is None:
-            out.skipped += 1
+            if case.visual_instruction:
+                out.skipped_instructed += 1
+            else:
+                out.skipped_pairs += 1
             continue
         same = canonical(mine) == canonical(twin)
         if case.visual_instruction:
@@ -194,14 +211,16 @@ def _report(results: Results, stable: Stability) -> str:
 
     held = f"{stable.held} / {stable.pairs}"
     sensitive = f"{stable.sensitive} / {stable.instructed}"
-    if stable.skipped:
-        # One counter, not split by pair kind: it tells a reader "0/0 is missing data, not a
-        # result" on whichever of the two rows would otherwise read as a clean measurement.
-        held += f" ({stable.skipped} pairs had no proposal)"
-        sensitive += f" ({stable.skipped} instructed had no proposal)"
+    if stable.skipped_pairs:
+        # Its own counter per row: it tells a reader "0/0 is missing data, not a result" on the
+        # row it actually happened on, rather than one counter printed verbatim on both.
+        held += f" ({stable.skipped_pairs} pairs had no proposal)"
+    if stable.skipped_instructed:
+        sensitive += f" ({stable.skipped_instructed} instructed had no proposal)"
 
     rows = [
         ("cases entering the policy", str(results.entered)),
+        ("declined (the floor itself found nothing to draw)", str(results.declined)),
         ("validity", f"{results.valid} / {results.entered}"),
         ("suitability", f"{results.suitable} / {results.valid}"),
         ("changed_from_baseline", f"{results.changed} / {results.valid}"),
@@ -278,7 +297,16 @@ async def run(args: argparse.Namespace) -> int:
     # which routinely takes far longer than that budget. Without this, case 1 is recorded as a
     # `timeout` fallback with a censored latency and no proposal, and because it is the twin of
     # two paraphrase pairs, both pairs are then silently dropped by `stability`'s own skip too.
-    await provider.complete("ok", model=args.model, temperature=0.0, max_output_tokens=1)
+    # `schema=visual_schema()` matters as much as the weight load: the first *schema-constrained*
+    # completion compiles a grammar, and without it that compile still lands on case 1. Wrapped,
+    # because an unguarded raise here would abort before `RUN-MANIFEST` prints, losing the run's
+    # provenance along with the warm-up.
+    try:
+        await provider.complete(
+            "ok", model=args.model, temperature=0.0, max_output_tokens=1, schema=visual_schema()
+        )
+    except Exception:
+        logger.warning("evaluate_visual.warmup_failed")
 
     manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
     print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
@@ -339,13 +367,16 @@ async def run(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "manifest": manifest,
+                "entered": results.entered,
+                "declined": results.declined,
                 "by_group": {group: dict(counts) for group, counts in results.by_group.items()},
                 "stability": {
                     "pairs": stable.pairs,
                     "held": stable.held,
                     "instructed": stable.instructed,
                     "sensitive": stable.sensitive,
-                    "skipped": stable.skipped,
+                    "skipped_pairs": stable.skipped_pairs,
+                    "skipped_instructed": stable.skipped_instructed,
                     "breaks": stable.breaks,
                 },
                 "cases": records,
