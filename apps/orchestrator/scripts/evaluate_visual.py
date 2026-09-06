@@ -4,6 +4,10 @@ One run is not a number: the planner is not bit-reproducible at temperature 0, a
 changes its answers. Run three times with the GPU alone and take the minimum, the way
 `calibrate_robustness_gate.py` does for robustness.
 
+Model, provider and budget default to the visual planner's settings
+(`ORCHESTRATOR_VISUAL_PLANNER_*`, else the financial planner's); a flag overrides them, and the
+manifest records what was actually used.
+
     uv run python scripts/evaluate_visual.py --provider ollama --model qwen3.5:9b
 """
 
@@ -24,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import evaluate_planning  # noqa: E402
 from export_chart_fixtures import FAMILY_DATASETS  # noqa: E402
 
-from finguard_orchestrator.bootstrap.config import get_settings  # noqa: E402
+from finguard_orchestrator.bootstrap.config import Settings, get_settings  # noqa: E402
 from finguard_orchestrator.domain.models.chart import (  # noqa: E402
     DEFAULT_PRESENTATION,
     ChartSpec,
@@ -236,11 +240,11 @@ def stability(cases: list[Case], proposals: dict[str, Any]) -> Stability:
             else:
                 out.skipped_pairs += 1
             continue
-        same = canonical(mine) == canonical(twin)
         if case.visual_instruction:
             out.instructed += 1
             out.sensitive += instruction_holds(mine, case.instruction_effect)
         else:
+            same = canonical(mine) == canonical(twin)
             out.pairs += 1
             out.held += same
             if not same:
@@ -387,6 +391,8 @@ async def run(args: argparse.Namespace) -> int:
 
     manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
     manifest["visual_planner"] = {
+        "provider": args.provider,
+        "model": args.model,
         "temperature": temperature,
         "max_output_tokens": max_output_tokens,
         "budget_seconds": args.budget,
@@ -436,6 +442,8 @@ async def run(args: argparse.Namespace) -> int:
     VISUAL.mkdir(parents=True, exist_ok=True)
     (VISUAL / "RESULTS.md").write_text(
         "# Visual planner evaluation\n\n"
+        f"Model: `{args.model}` on `{args.provider}`; temperature {temperature}, "
+        f"max_output_tokens {max_output_tokens}, budget {args.budget:g} s.\n\n"
         f"{sample}\n\n"
         "One run is not a number -- see the script's own docstring. Run three times with the "
         "GPU alone and take the minimum before treating any of these as a release figure.\n\n"
@@ -471,22 +479,35 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
+def build_parser(settings: Settings) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, help="a model name the provider serves")
+    parser.add_argument(
+        "--model",
+        default=settings.visual_planner_model or settings.planner_model,
+        help="a model name the provider serves "
+        "(default: the visual planner's setting, else the financial planner's)",
+    )
     parser.add_argument(
         "--provider",
-        default="ollama",
+        default=settings.visual_planner_provider or settings.planner_provider,
         choices=("ollama", "groq", "cloudflare"),
         help="ollama runs locally; groq and cloudflare require credentials in .env and send "
-        "every evaluated question over the internet",
+        "every evaluated question over the internet "
+        "(default: the visual planner's setting, else the financial planner's)",
     )
     parser.add_argument(
         "--budget",
         type=float,
-        default=6.0,
-        help="seconds the policy waits for the model before falling back to the floor",
+        default=settings.visual_planner_budget_seconds,
+        help="seconds the policy waits for the model before falling back to the floor "
+        "(default: ORCHESTRATOR_VISUAL_PLANNER_BUDGET_SECONDS)",
     )
+    return parser
+
+
+def main() -> int:
+    settings = get_settings()
+    parser = build_parser(settings)
     args = parser.parse_args()
     return asyncio.run(run(args))
 

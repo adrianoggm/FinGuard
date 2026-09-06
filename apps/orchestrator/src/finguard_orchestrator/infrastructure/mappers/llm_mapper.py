@@ -212,13 +212,7 @@ _ROW_FIELDS: tuple[str, ...] = tuple(item.name for item in dataclass_fields(Visu
 
 
 def rows_on_the_wire(dataset: VisualDataset, declared: frozenset[str]) -> list[dict[str, object]]:
-    """Every row carries every field the profile declared, `None` where the row has no value.
-
-    The profile advertises the union of the rows' fields, the model and the verifier reason over
-    that union, and Vega-Lite treats a null as a missing value. Serialising only the keys a row
-    happens to have made the mapper validate against the *intersection* and drop, silently, a
-    chart that had been proposed, verified and accepted.
-    """
+    """Every row carries every field in `declared`, `None` where the row has no value."""
     return [
         {name: getattr(row, name) for name in _ROW_FIELDS if name in declared}
         for row in dataset.rows

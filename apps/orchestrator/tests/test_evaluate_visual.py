@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec, EncodingSort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 
@@ -103,12 +104,16 @@ def test_the_judge_counts_validity_suitability_and_the_figure_that_matters() -> 
 
 
 def test_stability_holds_for_paraphrases_and_is_sensitive_to_an_instruction() -> None:
+    """The instructed proposal only turns sideways (`_bar("x")`, the same mark as its `_bar("y")`
+    twin): insensitive under the new derivation (`instruction_holds`); under the old one
+    (`not same`) this would have read `sensitive == 1` for a canonical difference the instruction
+    never asked for."""
     cases = evaluate_visual.load_cases(evaluate_visual.CASES_PATH)
     proposals = {
         "breakdown_where_most": _bar("y"),
         "breakdown_where_most_p1": _bar("y"),
         "breakdown_where_most_p2": _bar("x"),  # a break
-        "breakdown_as_donut": _bar("y"),  # instruction ignored: insensitive
+        "breakdown_as_donut": _bar("x"),  # orientation differs, mark does not: insensitive
     }
     stability = evaluate_visual.stability(cases, proposals)
     assert stability.pairs == 2 and stability.held == 1
@@ -281,3 +286,18 @@ def test_the_loader_refuses_a_typo_and_an_instruction_without_its_effect(tmp_pat
     )
     with pytest.raises(ValueError, match="instruction_effect"):
         load_cases(silent)
+
+
+def test_the_cli_defaults_come_from_the_visual_planner_settings(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_MODEL", "bigger:14b")
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_BUDGET_SECONDS", "9.5")
+    get_settings.cache_clear()
+    try:
+        args = evaluate_visual.build_parser(get_settings()).parse_args([])
+        assert (args.model, args.budget) == ("bigger:14b", 9.5)
+        # unset visual provider -> the financial planner's
+        assert args.provider == get_settings().planner_provider
+        overridden = evaluate_visual.build_parser(get_settings())
+        assert overridden.parse_args(["--model", "other:1b"]).model == "other:1b"
+    finally:
+        get_settings.cache_clear()

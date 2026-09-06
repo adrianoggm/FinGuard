@@ -53,18 +53,18 @@ class LlmVisualPlanner:
     ) -> VisualPlanDraft | None:
         prompt = build_visual_prompt(question, profile, presentation)
         answer = await self._complete(prompt)
-        parsed = parse_visual_answer(answer)
-        if parsed is None:
+        validated = parse_visual_answer(answer)
+        if validated is None:
             # Never echo malformed provider text into the repair prompt or the log: the
             # exact schema is sufficient, and the second result is still validated without
             # coercion. Mirrors `llm_query_planner.py`'s own repair log -- no user text, no
             # model text, ever.
             logger.warning("visual_planner.invalid_structure retrying=true")
             answer = await self._complete(prompt + STRUCTURE_REPAIR)
-            parsed = parse_visual_answer(answer)
-            if parsed is None:
+            validated = parse_visual_answer(answer)
+            if validated is None:
                 raise ProviderFailedError(self._model, "visual planner: invalid structure twice")
-        return _draft(parsed)
+        return _draft(validated)
 
     async def _complete(self, prompt: str) -> str:
         return await self._provider.complete(
