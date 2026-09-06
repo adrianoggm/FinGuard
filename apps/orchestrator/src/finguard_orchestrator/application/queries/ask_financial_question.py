@@ -51,6 +51,12 @@ from finguard_orchestrator.application.queries.readers.follow_up import (
     _account_follow_up_plan,
 )
 from finguard_orchestrator.application.queries.readers.subjects import _INVESTMENT_HISTORY
+from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+    classify as classify_visual_follow_up,
+)
+from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+    record_visual_follow_up,
+)
 from finguard_orchestrator.application.queries.readers.windows import (
     _is_whole_month,
     _is_whole_year,
@@ -5233,21 +5239,7 @@ def _record_visual_follow_up(
     """Twelfth seam. Records what the turn wants from the chart it follows and changes nothing:
     the kind and the claimant are service vocabulary, the sentence stays in the query.
     `conversation` is the handler's working conversation (`was`), not `query.conversation`.
-
-    Imported here rather than at module level: `readers.visual_follow_up` reaches
-    `infrastructure.visualization.interpreter` (Task 5's own design), and this module is part of
-    `application/__init__.py`'s own import chain -- a module-level import here would make loading
-    `application` load `infrastructure` before `application` finishes initialising, and
-    `infrastructure/__init__.py` imports `llm_controller.py`, which imports `application` back.
-    Deferred to call time, after both packages are fully loaded, there is no cycle to break.
     """
-    from finguard_orchestrator.application.queries.readers.visual_follow_up import (
-        classify as classify_visual_follow_up,
-    )
-    from finguard_orchestrator.application.queries.readers.visual_follow_up import (
-        record_visual_follow_up,
-    )
-
     if not conversation.visual_contexts:
         return
     follow_up = classify_visual_follow_up(query, analysis, conversation)

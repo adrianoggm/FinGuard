@@ -22,6 +22,7 @@ from finguard_orchestrator.domain.models.conversation import IDLE
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
     _derived_context,
@@ -29,7 +30,6 @@ from finguard_orchestrator.infrastructure.controllers.llm_controller import (
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import _visualization_to_dto
-from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None

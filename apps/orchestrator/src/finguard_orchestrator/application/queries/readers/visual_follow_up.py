@@ -23,7 +23,7 @@ from finguard_orchestrator.application.queries.readers.follow_up import read_con
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
-from finguard_orchestrator.infrastructure.visualization.interpreter import (
+from finguard_orchestrator.domain.services.visual_interpreter import (
     VisualIntent,
     fold,
     interpret_visual,

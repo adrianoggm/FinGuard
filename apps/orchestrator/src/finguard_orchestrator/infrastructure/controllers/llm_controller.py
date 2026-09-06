@@ -94,6 +94,11 @@ from finguard_orchestrator.domain.services import (
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.visual_interpreter import (
+    VisualIntent,
+    apply_visual_intent,
+    interpret_visual,
+)
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
@@ -121,11 +126,6 @@ from finguard_orchestrator.infrastructure.metrics.codec import CodecError
 from finguard_orchestrator.infrastructure.security.metric_tokens import (
     MetricTokenCodec,
     MetricTokenError,
-)
-from finguard_orchestrator.infrastructure.visualization.interpreter import (
-    VisualIntent,
-    apply_visual_intent,
-    interpret_visual,
 )
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present_spec
 
