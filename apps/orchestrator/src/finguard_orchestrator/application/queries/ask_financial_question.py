@@ -5272,6 +5272,14 @@ def _record_visual_follow_up(
     previous-plan restore -- end the turn before `analysis` exists, so none of them reach here:
     those turns record nothing at all rather than `UNRELATED`. Whoever reads this counter is
     reading it against that denominator, not against every turn that had a chart in context.
+
+    Two of those three still draw a chart of their own: retry control and the previous-plan
+    restore both reach `self._answer` -> the module-level `_answered`, which always sets
+    `visual_dataset`. Neither ever reaches this line, so that chart's `visual_follow_up` stays
+    `None` and `_remember_visual_context` (Task 4) writes `derived_from=None` on it even though a
+    chart is already in context -- correct per the brief and 4.1 (no `analysis`, so no
+    classification), but as of Task 4 no longer only this counter's denominator: the same gap now
+    governs chart lineage on the wire.
     """
     if not conversation.visual_contexts:
         return None
