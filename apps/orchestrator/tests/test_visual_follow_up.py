@@ -83,7 +83,7 @@ ROWS = [
     ("Hola", NEW, "UNRELATED", "none"),
     # both a data change ("restaurantes") and a format change ("barras") in one turn: the
     # interpreter's own mixed refusal, read as AMBIGUOUS before the table below is ever reached.
-    ("Ponlo en barras y solo restaurantes", FOLLOW_UP, "AMBIGUOUS", "both"),
+    ("Ponlo en barras y solo restaurantes", FOLLOW_UP, "AMBIGUOUS", "presentation+reshape"),
     # An unqualified "por que" or a bare "responsable"/"explica" used to read every one of these
     # as a drill-down; none of them names anything about the chart in context.
     ("¿Por qué no me funciona la app?", FOLLOW_UP, "UNRELATED", "none"),
@@ -114,7 +114,9 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
         module, "_visual_intent", lambda query, conversation: VisualIntent(None, None)
     )
     monkeypatch.setattr(module, "_drill_down_claims", lambda query, analysis: True)
-    assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp("AMBIGUOUS", "both")
+    assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp(
+        "AMBIGUOUS", "presentation+drill"
+    )
 
 
 # --- I-1: the controller's short-circuit asks classify's own table too -----------------------
@@ -122,9 +124,9 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
 CLAIMED_ROWS = [
     # Each of these three also matches the drill-down lexicon below -- the pair the two-way
     # hand-built mapping in llm_controller.py could never see (I-1).
-    ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "both"),
-    ("qué movimientos hay, ponlo en barras", "AMBIGUOUS", "both"),
-    ("enséñame las compras apiladas", "AMBIGUOUS", "both"),
+    ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "presentation+drill"),
+    ("qué movimientos hay, ponlo en barras", "AMBIGUOUS", "presentation+drill"),
+    ("enséñame las compras apiladas", "AMBIGUOUS", "presentation+drill"),
     ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
 ]
 
@@ -142,7 +144,9 @@ def test_classify_claimed_visual_reads_the_interpreters_own_mixed_refusal() -> N
     lexicon -- `intent.mixed` short-circuits `classify_claimed_visual` the same way it
     short-circuits `classify`."""
     mixed = VisualIntent(None, None, "explanation", mixed=True)
-    assert classify_claimed_visual(mixed, "cualquier cosa") == VisualFollowUp("AMBIGUOUS", "both")
+    assert classify_claimed_visual(mixed, "cualquier cosa") == VisualFollowUp(
+        "AMBIGUOUS", "presentation+reshape"
+    )
 
 
 def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
@@ -175,12 +179,16 @@ def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
 
 def test_every_kind_and_claimant_is_reachable() -> None:
     """Every kind and claimant `classify` can produce is produced at least once here — through
-    `classify` itself over ROWS, plus the forced AMBIGUOUS case above for the pair no sentence in
-    ROWS happens to force. Collected from `classify`'s own results rather than from `row[2]`/
-    `row[3]`, so a `classify` that stopped producing a kind ROWS claims would fail here too."""
+    `classify` itself over ROWS (whose mixed row already forces `presentation+reshape`), plus the
+    other two-claimant pairs proven elsewhere: `test_two_readers_claiming_is_ambiguous` forces
+    `presentation+drill`, and `reshape+drill` is forced by no sentence and no real turn at all —
+    `classify`'s own drill-before-reshape precedence makes the two mutually exclusive. The pairs
+    are pulled from the `Claimant` literal itself via `get_args`, never hand-typed here, so a
+    fourth pair would fail this assertion rather than pass it silently."""
     produced = [classify(_query(sentence), analysis, CHARTED) for sentence, analysis, _, _ in ROWS]
     kinds = {result.kind for result in produced} | {"AMBIGUOUS"}
-    claimants = {result.claimant for result in produced} | {"both"}
+    pairs = {claimant for claimant in get_args(Claimant) if "+" in claimant}
+    claimants = {result.claimant for result in produced} | pairs
     assert kinds == set(get_args(VisualFollowUpKind))
     assert claimants == set(get_args(Claimant))
 
@@ -366,10 +374,10 @@ async def _drive_question_route(sentence: str) -> QuestionResponse:
     ("sentence", "kind", "claimant"),
     [
         ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
-        ("Ponlo en barras y solo restaurantes", "AMBIGUOUS", "both"),
+        ("Ponlo en barras y solo restaurantes", "AMBIGUOUS", "presentation+reshape"),
         # I-1: interpret_visual claims this sentence non-mixed, but it also matches the drill
         # lexicon -- the pair the old hand-built two-way mapping recorded as PRESENTATION_ONLY.
-        ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "both"),
+        ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "presentation+drill"),
     ],
 )
 async def test_the_controllers_visual_short_circuit_records_the_kind_and_claimant(

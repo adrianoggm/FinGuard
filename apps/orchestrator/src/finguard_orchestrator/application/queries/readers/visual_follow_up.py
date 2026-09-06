@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from typing import cast, get_args
 
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
 from finguard_orchestrator.application.queries.readers.follow_up import read_contextual_follow_up
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
-from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
+from finguard_orchestrator.domain.models.visual_follow_up import Claimant, VisualFollowUp
 from finguard_orchestrator.domain.services.visual_interpreter import (
     VisualIntent,
     fold,
@@ -82,6 +83,24 @@ def _drill_down_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis)
     return _DRILL_DOWN.search(fold(query.sentence)) is not None
 
 
+_CLAIMANT_NAMES = ("presentation", "reshape", "drill")
+
+
+def _two_claimant_pair(presentation: bool, reshape: bool, drill: bool) -> Claimant:
+    """Name the two claimants that agree, in the fixed order presentation, reshape, drill. The
+    pair string is built from whichever two names are true and checked against `get_args(Claimant)`
+    rather than hand-typed here, so `Claimant` stays the one place the three pairs are spelled
+    out."""
+    names = [
+        name
+        for name, claimed in zip(_CLAIMANT_NAMES, (presentation, reshape, drill), strict=True)
+        if claimed
+    ]
+    pair = "+".join(names)
+    assert pair in get_args(Claimant), f"not a two-claimant pair: {pair!r}"
+    return cast(Claimant, pair)
+
+
 def classify(
     query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
 ) -> VisualFollowUp:
@@ -93,10 +112,10 @@ def classify(
         return VisualFollowUp("UNRELATED", "none")
     intent = _visual_intent(query, conversation)
     if intent is not None and intent.mixed:
-        # The interpreter has already read two claimants in this one turn — a data change and a
-        # format change asked together — which is exactly what AMBIGUOUS exists for; the table
-        # below is never reached.
-        return VisualFollowUp("AMBIGUOUS", "both")
+        # The interpreter has already read two claimants in this one turn — a data change (reshape)
+        # and a format change (presentation) asked together — which is exactly what AMBIGUOUS
+        # exists for; the table below is never reached.
+        return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, True, False))
     presentation = intent is not None
     # Drill-down is checked before reshape because «¿por qué agosto es tan alto?» is also a
     # FOLLOW_UP on the last answer; the lexicon is the more specific reader and wins, which is why
@@ -107,7 +126,7 @@ def classify(
     # claimant fields, which mypy strict rejects without a `type: ignore`; three explicit branches
     # keep every return a literal mypy can check.
     if sum((presentation, reshape, drill)) > 1:
-        return VisualFollowUp("AMBIGUOUS", "both")
+        return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(presentation, reshape, drill))
     if presentation:
         return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
     if reshape:
@@ -119,9 +138,13 @@ def classify(
 
 def classify_claimed_visual(intent: VisualIntent, sentence: str) -> VisualFollowUp:
     """The short-circuit's own row: interpret_visual has already claimed, so the turn is about the
-    chart by construction and the drill lexicon needs no FOLLOW_UP gate to be safe."""
-    if intent.mixed or _DRILL_DOWN.search(fold(sentence)):
-        return VisualFollowUp("AMBIGUOUS", "both")
+    chart by construction and the drill lexicon needs no FOLLOW_UP gate to be safe. The
+    interpreter's own mixed refusal is presentation+reshape (a data change and a format change
+    asked together); the drill lexicon matching too is presentation+drill."""
+    if intent.mixed:
+        return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, True, False))
+    if _DRILL_DOWN.search(fold(sentence)):
+        return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, False, True))
     return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
 
 
