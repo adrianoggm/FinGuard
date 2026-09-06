@@ -69,7 +69,7 @@ class VisualDecision:
     rationale: str | None = None
     fallback_reason: FallbackReason | None = None
     proposed: bool = False
-    """An attempt was made: the model was called and returned a draft (or abstained)."""
+    """The provider was reached; a timeout never learns whether it was."""
     valid: bool = False
     """The draft passed the verifier."""
     accepted: bool = False

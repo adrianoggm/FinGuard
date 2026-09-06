@@ -50,9 +50,9 @@ class ChartEncoding:
     sort: EncodingSort | None = None
 
     def __post_init__(self) -> None:
-        if self.channel not in {"x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"}:
+        if self.channel not in get_args(Channel):
             raise ValueError("unsupported chart channel")
-        if self.type not in {"nominal", "quantitative", "temporal"}:
+        if self.type not in get_args(FieldType):
             raise ValueError("unsupported chart field type")
         if not FIELD_NAME_PATTERN.fullmatch(self.field):
             raise ValueError("chart fields must be identifiers")
@@ -70,13 +70,13 @@ class ChartSpec:
     responsive: bool = True
 
     def __post_init__(self) -> None:
-        if self.mark not in {"line", "area", "bar", "point", "donut"}:
+        if self.mark not in get_args(Mark):
             raise ValueError("unsupported chart mark")
-        # `mark` above and `sort` below were each checked against a literal set of their own
-        # values; `stack` and `sort` were not -- an unrecognised value passed `_structure`
-        # (`visual_plan_verifier.py`) and reached the wire verbatim, the one path the DTO's own
-        # `stack in get_args(Stack)` / `sort in get_args(SortMode)` guard does not cover, because
-        # nothing here checked membership at all.
+        # `mark` above was checked against its own closed set; `stack` and `sort` below were not
+        # -- an unrecognised value passed `_structure` (`visual_plan_verifier.py`) and reached
+        # the wire verbatim, the one path the DTO's own `stack in get_args(Stack)` /
+        # `sort in get_args(SortMode)` guard does not cover, because nothing here checked
+        # membership at all.
         if self.stack is not None and self.stack not in get_args(Stack):
             raise ValueError("unsupported chart stack")
         if self.mark == "donut" and self.stack is not None:
@@ -109,6 +109,12 @@ class ChartSpec:
             raise ValueError("unsupported chart sort")
         if self.sort_field is not None and self.sort is None:
             raise ValueError("sort_field requires sort")
+        # `EncodingSort.field` and `ChartEncoding.field` both run this pattern; `sort_field` was
+        # the one field-name slot left unchecked. Not exploitable today -- the verifier's
+        # `_fields` refuses a `sort_field` outside the profile and `_value_free_spec` enforces the
+        # pattern on the wire -- but it is the same class of name and belongs to the same check.
+        if self.sort_field is not None and not FIELD_NAME_PATTERN.fullmatch(self.sort_field):
+            raise ValueError("sort fields must be identifiers")
 
     def fields(self) -> frozenset[str]:
         return frozenset(item.field for item in self.encodings)

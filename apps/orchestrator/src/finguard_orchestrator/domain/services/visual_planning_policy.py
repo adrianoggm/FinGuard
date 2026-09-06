@@ -8,6 +8,7 @@ unwritable -- `PlanningOutcome`'s own argument.
 """
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from typing import get_args
@@ -29,6 +30,8 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 
 Verifier = Callable[[VisualPlanDraft, VisualProfile], ChartSpec | Rejection]
 
+logger = logging.getLogger(__name__)
+
 
 class VisualPlanningPolicy:
     def __init__(
@@ -44,6 +47,12 @@ class VisualPlanningPolicy:
             raise ValueError("unsupported visual planning mode")
         if budget_seconds <= 0:
             raise ValueError("the visual budget must be positive")
+        if mode != "deterministic" and model is None:
+            # Unreachable through `main.py` today -- it always builds the adapter off
+            # `deterministic` -- but a `hybrid`/`promoted` deployment whose model failed to wire
+            # would otherwise record `not_run` forever, indistinguishable from `deterministic`,
+            # with nothing telling the operator their mode setting is not doing anything.
+            logger.warning("visual_planner.no_model mode=%s", mode)
         self._model = model
         self._fallback = fallback
         self._verifier = verifier
