@@ -839,7 +839,7 @@ _RECOGNISERS: tuple[tuple[str, Any], ...] = (
     ("direct_period_comparison", comparisons._direct_period_comparison),
     ("named_window_comparison", comparisons._comparison_with_a_named_window),
     ("account_follow_up", follow_up._account_follow_up_plan),
-    ("contextual_follow_up", follow_up._contextual_follow_up_plan),
+    ("contextual_follow_up", follow_up.contextual_follow_up_plan),
     ("multiple_movement_ranking", rankings._multiple_movement_ranking),
     ("group_ranking", rankings._group_ranking_plan),
     ("natural_period", breakdowns._natural_period_aggregate_plan),

@@ -394,7 +394,7 @@ def test_a_plan_without_evidence_yields_no_ids() -> None:
 def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> None:
     """`restyle_turn` drives the restyle endpoint (llm_controller) with a conversation holding
     `VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, source_plan=<a FinancialPlan>, evidence_ids=(uuid4(),))`
-    and the sentence «ponlo en horizontal»; it returns the QuestionResponse. Build it the way
+    and the sentence «ordénalo de mayor a menor» (a phrase `interpret_visual`'s whitelist claims; «ponlo en horizontal» is not one); it returns the QuestionResponse. Build it the way
     test_visualization_stage2_core drives the same endpoint."""
     response = restyle_turn
     contexts = response.conversation.visual_contexts

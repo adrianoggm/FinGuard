@@ -210,7 +210,7 @@ def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
 
 
 @_recogniser
-def _contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+def contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
     """Patch explicit filters and calculations onto the last validated financial query."""
     focus = focus_of(query.conversation)
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
@@ -509,8 +509,8 @@ def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan |
 # see the note there for why it is not renumbered.
 ROWS: Final = (
     Reader(
-        name="_contextual_follow_up_plan",
-        read=_contextual_follow_up_plan,
+        name="contextual_follow_up_plan",
+        read=contextual_follow_up_plan,
         stood_at=10,
         when=Precondition(
             "a query is in view for this turn to be about",

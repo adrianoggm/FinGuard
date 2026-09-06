@@ -67,7 +67,7 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.chart import PresentationContext, VisualContext
+from finguard_orchestrator.domain.models.chart import ChartSpec, PresentationContext, VisualContext
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -181,6 +181,26 @@ def _saved_visual_source(
     return definition
 
 
+def _derived_context(trusted: VisualContext, spec: ChartSpec, chart_id: str) -> VisualContext:
+    """The restyled chart's own context: a new id and turn, the source's profile and provenance.
+
+    A named, pure function rather than an inline construction, so the copy of `source_plan` and
+    `evidence_ids` from `trusted` -- Task 4's own addition -- can be driven directly with an
+    in-process `VisualContext` that still carries them, instead of only through the endpoint, where
+    every `trusted_context` reaching this point already came from a wire round trip that emptied
+    both fields before the copy ever ran.
+    """
+    return VisualContext(
+        chart_id,
+        spec,
+        trusted.profile,
+        source_plan=trusted.source_plan,
+        evidence_ids=trusted.evidence_ids,
+        derived_from=trusted.chart_id,
+        turn_id=uuid.uuid4(),
+    )
+
+
 def _visual_only_response(
     intent: VisualIntent,
     conversation: Conversation,
@@ -219,7 +239,7 @@ def _visual_only_response(
             conversation=conversation_mapper.to_payload(conversation),
         )
     chart_id = "chart-" + uuid.uuid4().hex[:16]
-    derived_context = VisualContext(chart_id, updated.spec, trusted_context.profile)
+    derived_context = _derived_context(trusted_context, updated.spec, chart_id)
     next_conversation = conversation.with_visual_context(derived_context)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:
