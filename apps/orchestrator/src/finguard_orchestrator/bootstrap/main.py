@@ -267,11 +267,12 @@ def create_app() -> FastAPI:
     )
     visual_model: VisualPlannerPort | None = None
     if settings.visual_planner != "deterministic":
+        temperature, max_output_tokens = settings.visual_planner_sampling()
         visual_model = LlmVisualPlanner(
-            planner_provider,
-            model=settings.planner_model,
-            temperature=settings.planner_temperature,
-            max_output_tokens=settings.planner_max_output_tokens,
+            providers.get(settings.visual_planner_provider or settings.planner_provider),
+            model=settings.visual_planner_model or settings.planner_model,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
         )
     visual_policy = VisualPlanningPolicy(
         model=visual_model,

@@ -300,7 +300,7 @@ def _report(results: Results, stable: Stability) -> str:
         ("stability under equivalent paraphrase", held),
         ("sensitivity (the instruction's own effect, on verified proposals)", sensitive),
         ("no-chart cases kept out", f"{results.no_chart_held} / {results.no_chart_total}"),
-        ("latency P50 / P95 (ms)", latency),
+        ("added turn latency P50 / P95 (ms)", latency),
         (
             "fallback reasons",
             f"{dict(results.fallback_reasons)}; rejected rules {dict(results.rejected_rules)}",
@@ -309,6 +309,10 @@ def _report(results: Results, stable: Stability) -> str:
     lines = ["| measure | value |", "| --- | --- |"]
     lines += [f"| {measure} | {value} |" for measure, value in rows]
     report = "\n".join(lines) + "\n"
+    report += (
+        "\nLatency is added to every turn the model runs in shadow or hybrid mode: the answer "
+        "waits for the planner or for its budget.\n"
+    )
     if stable.breaks:
         # The single most useful diagnostic a paraphrase run produces: which pair broke, not just
         # how many. Listed under the stability row rather than folded into the table, since a
@@ -376,15 +380,22 @@ async def run(args: argparse.Namespace) -> int:
     except Exception:
         logger.warning("evaluate_visual.warmup_failed")
 
+    settings = get_settings()
+    temperature, max_output_tokens = settings.visual_planner_sampling()
+
     manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
+    manifest["visual_planner"] = {
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "budget_seconds": args.budget,
+    }
     print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
 
-    settings = get_settings()
     planner = LlmVisualPlanner(
         provider,
         model=args.model,
-        temperature=settings.planner_temperature,
-        max_output_tokens=settings.planner_max_output_tokens,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
     )
     policy = VisualPlanningPolicy(
         model=planner,
