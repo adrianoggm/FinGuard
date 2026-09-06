@@ -53,7 +53,9 @@ def _visual_intent(
     asked together, which `interpret_visual` already recognises as its own refusal — off this same
     `VisualIntent`, rather than asking the interpreter twice for two different facts about it.
     """
-    return interpret_visual(query.sentence, conversation.visual_contexts)
+    return interpret_visual(
+        query.sentence, conversation.visual_contexts, voice=query.presentation.channel == "VOICE"
+    )
 
 
 def _reshape_claims(
@@ -113,6 +115,14 @@ def classify(
     if drill:
         return VisualFollowUp("DRILL_DOWN", "drill_down_reader")
     return VisualFollowUp("UNRELATED", "none")
+
+
+def classify_claimed_visual(intent: VisualIntent, sentence: str) -> VisualFollowUp:
+    """The short-circuit's own row: interpret_visual has already claimed, so the turn is about the
+    chart by construction and the drill lexicon needs no FOLLOW_UP gate to be safe."""
+    if intent.mixed or _DRILL_DOWN.search(fold(sentence)):
+        return VisualFollowUp("AMBIGUOUS", "both")
+    return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
 
 
 def record_visual_follow_up(follow_up: VisualFollowUp) -> None:

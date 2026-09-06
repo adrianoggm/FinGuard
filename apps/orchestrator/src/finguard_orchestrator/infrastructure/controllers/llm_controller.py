@@ -46,6 +46,7 @@ from finguard_orchestrator.application import (
 )
 from finguard_orchestrator.application.queries.browse_account import MAX_DAYS, MAX_MOVEMENTS
 from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+    classify_claimed_visual,
     record_visual_follow_up,
 )
 from finguard_orchestrator.bootstrap.dependencies import (
@@ -82,7 +83,6 @@ from finguard_orchestrator.domain.models.conversation import (
     slot_for,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
-from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
@@ -1369,11 +1369,7 @@ async def ask(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
     if visual is not None:
-        record_visual_follow_up(
-            VisualFollowUp("AMBIGUOUS", "both")
-            if visual.mixed
-            else VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
-        )
+        record_visual_follow_up(classify_claimed_visual(visual, request.question))
         source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
         return _visual_only_response(
             visual,
@@ -1522,11 +1518,7 @@ async def ask_streaming(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
     if visual is not None:
-        record_visual_follow_up(
-            VisualFollowUp("AMBIGUOUS", "both")
-            if visual.mixed
-            else VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
-        )
+        record_visual_follow_up(classify_claimed_visual(visual, request.question))
         source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
         answer = _visual_only_response(
             visual,

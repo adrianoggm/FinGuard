@@ -17,7 +17,10 @@ from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionQuery,
     AskFinancialQuestionResult,
 )
-from finguard_orchestrator.application.queries.readers.visual_follow_up import classify
+from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+    classify,
+    classify_claimed_visual,
+)
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
@@ -31,7 +34,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
-from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent
+from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent, interpret_visual
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -112,6 +115,34 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
     )
     monkeypatch.setattr(module, "_drill_down_claims", lambda query, analysis: True)
     assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp("AMBIGUOUS", "both")
+
+
+# --- I-1: the controller's short-circuit asks classify's own table too -----------------------
+
+CLAIMED_ROWS = [
+    # Each of these three also matches the drill-down lexicon below -- the pair the two-way
+    # hand-built mapping in llm_controller.py could never see (I-1).
+    ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "both"),
+    ("qué movimientos hay, ponlo en barras", "AMBIGUOUS", "both"),
+    ("enséñame las compras apiladas", "AMBIGUOUS", "both"),
+    ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
+]
+
+
+@pytest.mark.parametrize(("sentence", "kind", "claimant"), CLAIMED_ROWS)
+def test_classify_claimed_visual_asks_the_drill_lexicon_too(sentence, kind, claimant) -> None:
+    intent = interpret_visual(sentence, CHARTED.visual_contexts)
+    assert intent is not None
+    assert classify_claimed_visual(intent, sentence) == VisualFollowUp(kind, claimant)
+
+
+def test_classify_claimed_visual_reads_the_interpreters_own_mixed_refusal() -> None:
+    """The interpreter's own mixed-turn refusal (a data change and a format change asked
+    together) is AMBIGUOUS regardless of what the sentence says, and regardless of the drill
+    lexicon -- `intent.mixed` short-circuits `classify_claimed_visual` the same way it
+    short-circuits `classify`."""
+    mixed = VisualIntent(None, None, "explanation", mixed=True)
+    assert classify_claimed_visual(mixed, "cualquier cosa") == VisualFollowUp("AMBIGUOUS", "both")
 
 
 def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
@@ -313,6 +344,9 @@ async def _drive_question_route(sentence: str) -> QuestionResponse:
     [
         ("Ordénalo de mayor a menor", "PRESENTATION_ONLY", "interpret_visual"),
         ("Ponlo en barras y solo restaurantes", "AMBIGUOUS", "both"),
+        # I-1: interpret_visual claims this sentence non-mixed, but it also matches the drill
+        # lexicon -- the pair the old hand-built two-way mapping recorded as PRESENTATION_ONLY.
+        ("muéstrame los movimientos ordenados de mayor a menor", "AMBIGUOUS", "both"),
     ],
 )
 async def test_the_controllers_visual_short_circuit_records_the_kind_and_claimant(
