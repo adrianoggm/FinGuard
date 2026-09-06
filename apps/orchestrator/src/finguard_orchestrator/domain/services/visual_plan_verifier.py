@@ -22,6 +22,7 @@ _MATRIX: dict[tuple[str, str], frozenset[str]] = {
 _AXES = frozenset({"x", "y"})
 _OFFSETS = frozenset({"xOffset", "yOffset"})
 _OFFSET_FOR = {"x": "xOffset", "y": "yOffset"}
+_STACKABLE = frozenset({"bar", "area"})  # the two marks Vega-Lite stacks by default
 
 
 def verify(draft: VisualPlanDraft, profile: VisualProfile) -> ChartSpec | Rejection:
@@ -241,6 +242,8 @@ def _grouped(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
     if len(offsets) > 1:
         return Rejection("grouped", "a comparison offsets one axis, not both")
     color = _on(spec, "color")
+    # General reasons first, on purpose: an offset without its colour is refused here even on a
+    # comparison profile, because "put the same series on both" is the actionable repair.
     if offsets and color is None:
         # An offset separates bars by a series nobody can tell apart: the legend is the colour.
         return Rejection("grouped", "an offset needs its color: the same series on both")
@@ -252,6 +255,15 @@ def _grouped(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
         # measure on the other, nothing else -- verified as a reasonable bar with the comparison
         # gone. Tooltip does not count: a series nobody can see is not a comparison.
         return Rejection("grouped", "a comparison keeps its series: put it on color")
+    if profile.comparison and spec.mark in _STACKABLE and spec.stack != "disabled":
+        # Section D's row is unqualified: a comparison's periods are never added together, over
+        # categories or over time. The offset below is only meaningful on a categorical axis; the
+        # stack rule is not -- a temporal comparison drawn as a bar or an area stacks by Vega-Lite's
+        # default (and `stack: "zero"` says so outright), and the bar's length becomes a number
+        # nobody asked for.
+        return Rejection(
+            "grouped", "a comparison is grouped, never stacked: stack must be disabled"
+        )
     uses_series = any(item.field in series for item in spec.encodings if item.channel != "tooltip")
     if spec.mark == "bar" and uses_series:
         # Not `not profile.temporal()`: that is true for *any* dimension-role field being
