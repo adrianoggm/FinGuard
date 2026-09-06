@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
 from support.visual_planners import BREAKDOWN_PROFILE, default_policy
+from test_decisions_call_sites import turn_for
+from test_visual_follow_up import CHARTED, FOLLOW_UP, PREVIOUS
 
+from finguard_orchestrator.application.queries import ask_financial_question
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
     SpokenGroup,
@@ -19,6 +23,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
 from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
@@ -133,6 +138,73 @@ def test_a_fresh_chart_remembers_its_decision_plan_evidence_and_turn(
     assert context.evidence_ids == charted_result.metric_definition.transaction_ids
     assert isinstance(context.turn_id, UUID)
     assert context.derived_from is None
+
+
+def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) -> None:
+    """Task 4: a follow-up classified `ANALYTICAL_RESHAPE` while a chart was in context produces a
+    context that names the chart it came from -- the newest one on the conversation BEFORE this
+    turn's is appended."""
+    previous = VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE)
+    reshaped = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan"),
+    )
+    remembered = llm_mapper._remember_visual_context(reshaped, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from == "chart-0"
+
+
+def test_an_unrelated_new_chart_names_no_origin(charted_result, chart_response) -> None:
+    """The same chart-in-context setup as the reshape above, but classified `UNRELATED`: the new
+    chart names no origin even though a previous chart exists."""
+    previous = VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE)
+    unrelated = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("UNRELATED", "none"),
+    )
+    remembered = llm_mapper._remember_visual_context(unrelated, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from is None
+
+
+async def test_the_handler_and_the_mapper_together_prove_derived_from(monkeypatch) -> None:
+    """Fix round 1, Important 2. The two mapper tests above hand-set `visual_follow_up` with
+    `replace(...)` and never run the handler; `test_visual_follow_up.py`'s handler tests read
+    `result.visual_follow_up` and never run the mapper. Nothing before this test drove `stream()`'s
+    convergence (`ask_financial_question.py`, the box read alongside `_decided_visual`) and
+    `_remember_visual_context`'s `derived_from` read together -- the one seam this commit exists
+    to join, and the one thing left unguarded: moving the convergence's `replace(...)` under a
+    `visual_dataset is not None` guard, or attaching the box's value anywhere else, would leave
+    every other test in this module green while the feature stayed dead.
+
+    One real turn -- `"Solo restaurantes"` over `CHARTED` (which already holds `chart-1`) with
+    `analysis=FOLLOW_UP` injected, exactly as `test_visual_follow_up.py`'s own seam tests inject it
+    -- run three times with only the classification varied, monkeypatched the way
+    `test_every_kind_is_a_record_row` (`test_visual_follow_up.py`) varies it: every case draws the
+    identical real chart, and only `visual_follow_up.kind`'s effect on `derived_from` differs.
+    `question_to_dto` is driven directly -- the composition `_visualization_to_dto` then
+    `_remember_visual_context` that actually builds a `QuestionResponse` -- rather than chaining the
+    two mapper functions by hand.
+    """
+    for kind, claimant, expected in (
+        ("ANALYTICAL_RESHAPE", "follow_up_plan", "chart-1"),
+        ("UNRELATED", "none", None),
+        ("PRESENTATION_ONLY", "interpret_visual", None),
+    ):
+        monkeypatch.setattr(
+            ask_financial_question,
+            "classify_visual_follow_up",
+            lambda query, analysis, conversation, kind=kind, claimant=claimant: VisualFollowUp(
+                kind, claimant
+            ),
+        )
+        result, _ = await turn_for(
+            "Solo restaurantes", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP
+        )
+        response = llm_mapper.question_to_dto(result)
+        assert response.conversation.visual_contexts[-1].derived_from == expected, kind
 
 
 def test_two_charts_in_one_process_get_two_turn_ids(charted_result, chart_response) -> None:

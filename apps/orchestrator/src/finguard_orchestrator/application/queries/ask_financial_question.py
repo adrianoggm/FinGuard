@@ -125,6 +125,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnFocus,
     TurnRelation,
 )
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.models.visual_plan import Rejection, canonical
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
@@ -576,8 +577,16 @@ class AskFinancialQuestionHandler:
         """
         started = time.perf_counter()
         outcome = "INCOMPLETE"
+        # A one-element box, not a return value: `_steps` is an async generator and PEP 525 forbids
+        # `return <value>` in one. `_record_visual_follow_up`, deep inside it, classifies what this
+        # turn wants from the chart it follows long before any result exists; this is where that
+        # value is written, and read back below at the same convergence that decides
+        # `visual_decision` — for the same reason `metric_definition`'s own fallback is here rather
+        # than in each of `_steps`'s branches, except that fallback reads `step.conversation`
+        # (already on the result) while this one depends on `analysis`, which never is.
+        follow_up_seen: list[VisualFollowUp | None] = [None]
         try:
-            async for step in self._steps_answering_scope(query):
+            async for step in self._steps_answering_scope(query, follow_up_seen):
                 if isinstance(step, AskFinancialQuestionResult):
                     outcome = step.outcome
                     # The turn, as one decision. Here rather than in the `finally` below on
@@ -618,8 +627,11 @@ class AskFinancialQuestionHandler:
                     # The chart is decided once for the turn using the presentation circumstances
                     # supplied at the edge. The deterministic floor may currently ignore some of
                     # them, but the application seam is complete for planners that do not.
-                    step = await _decided_visual(
-                        step, self._visual_policy, query.presentation, query.sentence
+                    step = replace(
+                        await _decided_visual(
+                            step, self._visual_policy, query.presentation, query.sentence
+                        ),
+                        visual_follow_up=follow_up_seen[0],
                     )
                 yield step
         finally:
@@ -635,7 +647,9 @@ class AskFinancialQuestionHandler:
             )
 
     async def _steps_answering_scope(
-        self, query: AskFinancialQuestionQuery
+        self,
+        query: AskFinancialQuestionQuery,
+        follow_up_seen: list[VisualFollowUp | None],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         """`_steps`, with an account-scope requirement answered instead of raised.
 
@@ -650,15 +664,20 @@ class AskFinancialQuestionHandler:
         yielded *and still be recorded*, so the clarification travels through the same turn record
         and reports the same `outcome` to the log as every other answer, instead of needing a
         second copy of both.
+
+        `follow_up_seen` is `stream`'s own box, passed through untouched: this layer decides
+        nothing about the chart, it only forwards what `_steps` writes into it.
         """
         try:
-            async for step in self._steps(query):
+            async for step in self._steps(query, follow_up_seen):
                 yield step
         except AccountScopeRequiredError as required:
             yield self._scope_question(required, query.conversation)
 
     async def _steps(
-        self, query: AskFinancialQuestionQuery
+        self,
+        query: AskFinancialQuestionQuery,
+        follow_up_seen: list[VisualFollowUp | None],
     ) -> AsyncIterator[Stage | AskFinancialQuestionResult]:
         was = query.conversation
         asked_again = query_recovery.retry_action(query.sentence)
@@ -756,7 +775,7 @@ class AskFinancialQuestionHandler:
                 interpreter=self._interpreter,
                 today=query.today,
             )
-        _record_visual_follow_up(query, analysis, was)
+        follow_up_seen[0] = _record_visual_follow_up(query, analysis, was)
         intent = analysis.intent
         if intent is Intent.CORRECTION:
             continuation = (
@@ -5240,20 +5259,33 @@ async def _decided_visual(
 
 def _record_visual_follow_up(
     query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
-) -> None:
+) -> VisualFollowUp | None:
     """Twelfth seam. Records what the turn wants from the chart it follows and changes nothing:
     the kind and the claimant are service vocabulary, the sentence stays in the query.
     `conversation` is the handler's working conversation (`was`), not `query.conversation`.
+
+    Returns what it classified -- `None` when no chart is in context -- so `_steps` can carry it
+    onto the result `_remember_visual_context` (Task 4) reads `derived_from` off, through
+    `stream`'s own box (`follow_up_seen`).
 
     Three early returns above this call in `_steps` -- retry control, alias learning, and the
     previous-plan restore -- end the turn before `analysis` exists, so none of them reach here:
     those turns record nothing at all rather than `UNRELATED`. Whoever reads this counter is
     reading it against that denominator, not against every turn that had a chart in context.
+
+    Two of those three still draw a chart of their own: retry control and the previous-plan
+    restore both reach `self._answer` -> the module-level `_answered`, which always sets
+    `visual_dataset`. Neither ever reaches this line, so that chart's `visual_follow_up` stays
+    `None` and `_remember_visual_context` (Task 4) writes `derived_from=None` on it even though a
+    chart is already in context -- correct per the brief and 4.1 (no `analysis`, so no
+    classification), but as of Task 4 no longer only this counter's denominator: the same gap now
+    governs chart lineage on the wire.
     """
     if not conversation.visual_contexts:
-        return
+        return None
     follow_up = classify_visual_follow_up(query, analysis, conversation)
     record_visual_follow_up(follow_up)
+    return follow_up
 
 
 def record_visual_decision(decision: VisualDecision, *, was: str = "deterministic") -> None:

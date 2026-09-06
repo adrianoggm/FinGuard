@@ -340,6 +340,20 @@ def _remember_visual_context(
     # is what this function used to do, and it omitted `plan_limited` and `plan_metric`, so the
     # profile stored on the conversation disagreed with the one the chart was chosen from.
     spec = replace(decision.spec, title=_visual_title(result, result.visual_dataset))
+    # The newest chart BEFORE this turn's is appended -- read now, because `with_visual_context`
+    # below appends the new one and would otherwise name itself.
+    previous = (
+        result.conversation.visual_contexts[-1] if result.conversation.visual_contexts else None
+    )
+    derived_from = (
+        previous.chart_id
+        if (
+            result.visual_follow_up is not None
+            and result.visual_follow_up.kind == "ANALYTICAL_RESHAPE"
+            and previous is not None
+        )
+        else None
+    )
     return replace(
         result,
         conversation=result.conversation.with_visual_context(
@@ -351,6 +365,7 @@ def _remember_visual_context(
                 source_plan=result.metric_definition,
                 evidence_ids=_evidence_of(result.metric_definition),
                 turn_id=uuid4(),
+                derived_from=derived_from,
             )
         ),
     )
