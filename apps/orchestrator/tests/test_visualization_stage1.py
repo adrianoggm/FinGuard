@@ -1,5 +1,8 @@
 import dataclasses
+import importlib.util
+import sys
 from dataclasses import asdict, replace
+from pathlib import Path
 from typing import get_args
 from uuid import uuid4
 
@@ -30,10 +33,13 @@ from finguard_orchestrator.domain.models.chart import (
     derive_chart,
 )
 from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.visual_plan import draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -50,6 +56,19 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 )
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
+
+# Loaded the way `test_evaluate_visual.py` loads `scripts/evaluate_visual.py`: `scripts/` is not a
+# package, so the exporter's own dataset+kwargs pairs -- the ones the web compile gate renders --
+# are read off the file directly rather than duplicated here.
+_EXPORTER_SPEC = importlib.util.spec_from_file_location(
+    "export_chart_fixtures",
+    Path(__file__).resolve().parents[1] / "scripts" / "export_chart_fixtures.py",
+)
+assert _EXPORTER_SPEC and _EXPORTER_SPEC.loader
+export_chart_fixtures = importlib.util.module_from_spec(_EXPORTER_SPEC)
+sys.modules["export_chart_fixtures"] = export_chart_fixtures
+_EXPORTER_SPEC.loader.exec_module(export_chart_fixtures)
+FAMILY_DATASETS = export_chart_fixtures.FAMILY_DATASETS
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
@@ -310,13 +329,27 @@ def test_a_non_identifier_sort_field_is_refused_at_the_dto() -> None:
 
 def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
     """The old-client case: a caller that has never heard of `stack`/`sort`/`sort_field`/a
-    per-encoding `sort` sends none of them, and the payload still validates -- absence is never
-    treated as an invalid value. `test_conversation_visual_context_round_trip_is_value_free` (in
-    `test_visualization_stage2_core.py`) carries this same case all the way through
-    `conversation_mapper.to_domain` and asserts the reconstructed spec's `stack`/`sort` are
-    `None`."""
+    per-encoding `sort` -- nor, since fix round 1, a field's `role`/`order` or a profile's
+    `comparison`/`plan_limited` -- sends none of them, and the payload still validates: absence is
+    never treated as an invalid value. `test_conversation_visual_context_round_trip_is_value_free`
+    (in `test_visualization_stage2_core.py`) carries this same case all the way through
+    `conversation_mapper.to_domain` and asserts the reconstructed spec's `stack`/`sort` are `None`.
+
+    This test goes one step further for the two new keys specifically: `_visual_context_dict()`'s
+    profile already has no `role`/`order`/`comparison`/`plan_limited` at all (it predates fix
+    round 1), so round-tripping it through `to_domain` exercises the fallback derivation that
+    round adds -- `role` guessed from `type`, `order` defaulted to `VisualField`'s own `"NONE"`,
+    `comparison`/`plan_limited` defaulted to `False` -- for exactly the conversation an older
+    client still holds.
+    """
     payload = VisualContextPayload.model_validate(_visual_context_dict())
     assert payload.chart_id == "chart-1"
+    conversation = ConversationPayload.model_validate({"visual_contexts": [_visual_context_dict()]})
+    (restored,) = conversation_mapper.to_domain(conversation).visual_contexts
+    by_name = {field.name: field for field in restored.profile.fields}
+    assert (by_name["value_minor"].role, by_name["value_minor"].order) == ("measure", "NONE")
+    assert (by_name["dimension"].role, by_name["dimension"].order) == ("dimension", "NONE")
+    assert (restored.profile.comparison, restored.profile.plan_limited) == (False, False)
 
 
 def test_the_wire_carries_derived_from_and_turn_id_and_nothing_server_side() -> None:
@@ -370,6 +403,78 @@ def test_a_chart_cannot_claim_to_derive_from_itself_on_the_wire() -> None:
     raw["visual_contexts"][0]["derived_from"] = context.chart_id
     with pytest.raises(ValidationError):
         ConversationPayload.model_validate(raw)
+
+
+@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
+def test_every_field_role_and_order_survives_the_wire_and_the_floors_chart_still_verifies(
+    family_name: str,
+) -> None:
+    """Fix round 1: `VisualField.role`/`.order` and `VisualProfile.comparison`/`.plan_limited`
+    are now on the wire, so a profile that crosses it is the same profile `verify` judges a
+    restyle against -- not the narrowed guess `to_domain` used to fall back to unconditionally.
+
+    Every family the exporter renders (the same ones the web compile gate checks), because the
+    property this fix exists for -- "the floor's own chart still verifies after the wire" -- is
+    exactly the one a single hand-picked fixture cannot prove for every shape a real profile
+    takes: `_dimension_order` gives FREQUENCY `INPUT`, RECURRENCE `NONE`, a temporal group
+    `TEMPORAL`, everything else `MEASURE_DESC`, and a comparison sets `comparison=True` with a
+    `series` role next to the `dimension` one. A round trip that silently narrowed any of those
+    would still build *a* profile -- just not the one the floor actually used.
+    """
+    dataset, kwargs = FAMILY_DATASETS[family_name]
+    # `total_minor` is required and keyword-only on `visual_profile_of`; the exporter's own
+    # `_family()` (`export_chart_fixtures.py`) is what defaults it to `None`, since only
+    # `ratio_share`'s kwargs name it. Mirrored here rather than calling `_family()` itself, which
+    # renders through the presenter and returns a wire dict, not the profile/spec pair this test
+    # needs.
+    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
+    conversation = IDLE.with_visual_context(VisualContext(f"chart-{family_name}", spec, profile))
+    restored = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
+    (context,) = restored.visual_contexts
+    by_name = {field.name: field for field in context.profile.fields}
+    for field in profile.fields:
+        assert (by_name[field.name].role, by_name[field.name].order) == (field.role, field.order)
+    assert context.profile.comparison == profile.comparison
+    assert context.profile.plan_limited == profile.plan_limited
+    verified = verify(draft_of(context.spec), context.profile)
+    assert isinstance(verified, ChartSpec), f"{family_name}: {verified}"
+
+
+def test_the_donut_familys_role_and_claims_survive_the_wire_too() -> None:
+    """The floor never produces a donut (`DeterministicVisualPlanner.plan` has no such branch), so
+    the parametrised test above cannot cover it -- it is reachable only through a conversational
+    transformation, per the exporter's own `_donut_family` comment. Built the same way that
+    function builds it: the one family whose profile must additionally keep `positive`/
+    `mutually_exclusive`/`verified_total` across the wire for the verifier's `_donut_claims` rule
+    to agree with it -- flags the round trip already carried before this fix, but worth pinning
+    beside the two new ones so a donut chart's whole path (role, order, and the pre-existing
+    three) is proven together.
+    """
+    rows = (
+        VisualRow(dimension="Alquiler", value_minor=60_000),
+        VisualRow(dimension="Ocio", value_minor=40_000),
+    )
+    spec = ChartSpec(
+        mark="donut",
+        encodings=(
+            ChartEncoding("theta", "value_minor", "quantitative", "Importe"),
+            ChartEncoding("color", "dimension", "nominal", "Parte"),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+        ),
+    )
+    dataset = VisualDataset(rows=rows, metric="SUM")
+    profile = visual_profile_of(dataset, total_minor=100_000, group_by="NONE")
+    conversation = IDLE.with_visual_context(VisualContext("chart-donut", spec, profile))
+    restored = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
+    (context,) = restored.visual_contexts
+    by_name = {field.name: field for field in context.profile.fields}
+    for field in profile.fields:
+        assert (by_name[field.name].role, by_name[field.name].order) == (field.role, field.order)
+    verified = verify(draft_of(context.spec), context.profile)
+    assert isinstance(verified, ChartSpec)
 
 
 async def test_the_conversation_stores_the_profile_the_chart_was_chosen_from() -> None:

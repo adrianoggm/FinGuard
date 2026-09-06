@@ -44,6 +44,9 @@ from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     Channel,
     EncodingSort,
+    FieldOrder,
+    FieldRole,
+    FieldType,
     SortMode,
     Stack,
 )
@@ -240,7 +243,12 @@ class TurnPayload(_Payload):
 
 class VisualFieldPayload(_Payload):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    type: Literal["nominal", "quantitative", "temporal"]
+    type: FieldType
+    # Shape facts a verifier reads on the way back, never values. Optional so a conversation an
+    # older client still holds validates; `to_domain` falls back to the old derivation when they
+    # are absent.
+    role: FieldRole | None = None
+    order: FieldOrder | None = None
 
 
 class VisualProfilePayload(_Payload):
@@ -251,6 +259,8 @@ class VisualProfilePayload(_Payload):
     positive: bool = False
     mutually_exclusive: bool = False
     verified_total: bool = False
+    comparison: bool = False
+    plan_limited: bool = False
 
 
 class VisualContextPayload(_Payload):

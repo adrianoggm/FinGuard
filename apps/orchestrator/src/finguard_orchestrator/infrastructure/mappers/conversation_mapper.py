@@ -171,31 +171,31 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
                         _encoding_sort_from_payload(encoded.get("sort")),
                     )
                 )
-        # A narrowed reconstruction, and deliberately so. The profile a planner uses is always
-        # built fresh from the dataset; this one exists only to validate a patch against the chart
-        # it came back with. `role` is derived from `type` because the payload does not carry it,
-        # and that derivation is wrong for `series` -- it will read as a dimension. That is bounded
-        # and safe for the donut rule, the only planner rule that reads a role, because a donut
-        # requires `mutually_exclusive`, which is false whenever a series exists. `to_payload`'s
-        # wire `cardinality` (below) is a second reader of a round-tripped profile's role, and it
-        # is bounded the same way for a different reason: `cardinality` here is the single wire
-        # value copied onto every field two lines below, so whichever field `role("dimension")`
-        # lands on -- the true dimension or a series misread as one -- re-emits that same number.
-        # **Do not trust a role on a round-tripped profile for anything else.**
+        # The profile travels whole enough for the verifier now: `role` and `order` are on the
+        # wire per field, and `comparison`/`plan_limited` are on the wire per profile, so `verify`
+        # judges a round-tripped chart -- Task 3's restyle path -- on the same facts the floor saw
+        # when it built it. The fallback below (`role` guessed from `type`, `order` defaulted to
+        # `VisualField`'s own `"NONE"`) exists only for a conversation an older client still holds,
+        # whose payload predates these two keys.
         #
-        # `row_count`, `plan_limited` and `plan_metric` keep their empty values for the same
-        # reason and with the same bound. None of the three is on the wire -- `VisualProfilePayload`
-        # does not carry them, and a count of rows is not something a browser should be able to
-        # assert -- and none is read by `valid_for` or `merge_encoding_patch`, the only two things
-        # a round-tripped profile is for. The floor never runs on one: it runs on a profile built
-        # fresh from the dataset in the same turn.
+        # What still narrows, and why it is safe to: `cardinality` is the one dataset-level number
+        # the wire carries (the donut rule's), copied onto every field below rather than kept per
+        # field, so whichever field `role("dimension")` lands on -- the true dimension, or an old
+        # payload's series misread as one -- re-emits that same count. `row_count` and
+        # `plan_metric` are not on the wire at all: neither `valid_for`, `merge_encoding_patch` nor
+        # `verify` reads either, and a count of rows is not something a browser should be able to
+        # assert. The floor never runs on a round-tripped profile regardless -- it runs on one
+        # built fresh from the dataset in the same turn.
         profile = VisualProfile(
             fields=tuple(
                 VisualField(
                     field.name,
                     field.type,
-                    "measure" if field.type == "quantitative" else "dimension",
+                    field.role
+                    if field.role is not None
+                    else ("measure" if field.type == "quantitative" else "dimension"),
                     item.profile.cardinality,
+                    field.order if field.order is not None else "NONE",
                 )
                 for field in item.profile.fields
             ),
@@ -204,8 +204,9 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
             positive=item.profile.positive,
             mutually_exclusive=item.profile.mutually_exclusive,
             verified_total=item.profile.verified_total,
+            comparison=item.profile.comparison,
+            plan_limited=item.profile.plan_limited,
             row_count=0,
-            plan_limited=False,
             plan_metric=None,
         )
         title_value = raw.get("title")
@@ -605,7 +606,12 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                     "spec": _context_spec_payload(context.spec),
                     "profile": {
                         "fields": [
-                            {"name": field.name, "type": field.type}
+                            {
+                                "name": field.name,
+                                "type": field.type,
+                                "role": field.role,
+                                "order": field.order,
+                            }
                             for field in context.profile.fields
                         ],
                         # The wire payload keeps one dataset-level count, same as before the
@@ -627,6 +633,8 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                         "positive": context.profile.positive,
                         "mutually_exclusive": context.profile.mutually_exclusive,
                         "verified_total": context.profile.verified_total,
+                        "comparison": context.profile.comparison,
+                        "plan_limited": context.profile.plan_limited,
                     },
                 }
                 for context in conversation.visual_contexts

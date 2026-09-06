@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -82,14 +81,18 @@ def restyle_turn() -> object:
     `Conversation` holding one `VisualContext`, a sentence `interpret_visual` turns into a patch,
     and `_visual_only_response` applying it.
 
-    Three departures from that file's own pattern, all required by what this test checks.
+    Two departures from that file's own pattern, both required by what this test checks.
 
     First, the sentence: `test_visualization_stage2_core` uses "ponlo en barras" and similar --
     the brief's "ponlo en horizontal" names no keyword `interpret_visual` recognises (its style
     vocabulary is barra/linea/area/apil.../ordena.../circular/donut/anillo), so it would never
-    produce a patch. "ponlo en barras" restates the mark `SPEC` already has -- a no-op patch that
-    still exercises a real restyle, chosen over a sort-based sentence for the reason the third
-    departure below explains.
+    produce a patch. "ordénalo de mayor a menor" is that file's own proven descending-sort
+    sentence, kept here so the fixture actually exercises a restyle instead of asserting on `None`.
+    Fix round 1 is what lets it stay: `SPEC` (the floor's own plan for `BREAKDOWN_PROFILE`) ranks
+    its dimension with a per-encoding sort, and before the wire carried a field's `order`, this
+    exact sentence over this exact spec was wrongly refused (`rule="order"`) the moment the
+    context had crossed the wire once -- `test_a_round_tripped_ranked_bar_still_verifies_the_
+    descending_sort` (`test_visualization_stage2_core.py`) pins that this restyle now verifies.
 
     Second, the round trip: the conversation is serialised through `conversation_mapper.to_payload`
     and back through `to_domain` before it reaches `_visual_only_response`, because that is what
@@ -98,37 +101,18 @@ def restyle_turn() -> object:
     conversation is converted back to a domain `Conversation` the same way (rather than left as the
     wire `ConversationPayload`, whose `VisualContextPayload` never carried `decision`/`source_plan`/
     `evidence_ids` to begin with) so the test can read those fields at all.
-
-    Third, the spec: `SPEC` (the module-level floor's own plan for `BREAKDOWN_PROFILE`) ranks its
-    dimension with a per-encoding sort -- `EncodingSort("descending", "value_minor")` on the `y`
-    encoding -- because that is what a ranked breakdown bar always carries. `conversation_mapper.
-    to_domain`'s own comment on its profile reconstruction says a round-tripped `VisualProfile`'s
-    `role` is a narrowed derivation good only for `valid_for`/`merge_encoding_patch`; the same
-    narrowing drops every field's `order` to the dataclass default `"NONE"`, because
-    `VisualFieldPayload` never carried it either. Task 3's verifier reads exactly that `order` for
-    its `order` rule -- unconditionally, before this fixture's own sentence is even considered --
-    so a chart built with `SPEC`'s own baked-in sort is refused (`rule="order"`) the moment its
-    context has crossed the wire once, whatever restyle is then asked of it. This fixture is about
-    provenance, not about that wire gap, so it drives a spec with no per-encoding sort at all --
-    structurally the same ranked breakdown bar, minus the one property this wire limitation cannot
-    carry. (A follow-up ought to add `order` to the wire profile; until then, a sort-driven restyle
-    over a context that has crossed the wire is refused even when the sort it asks for is one the
-    floor's own chart already agrees with.)
     """
     plan = FinancialPlan(
         Direction.EXPENSE,
         period=RelativePeriod(Period.LAST_MONTH),
         transaction_ids=(uuid4(),),
     )
-    unsorted_spec = replace(
-        SPEC, encodings=tuple(replace(encoding, sort=None) for encoding in SPEC.encodings)
-    )
     initial_context = VisualContext(
-        "chart-1", unsorted_spec, BREAKDOWN_PROFILE, source_plan=plan, evidence_ids=(uuid4(),)
+        "chart-1", SPEC, BREAKDOWN_PROFILE, source_plan=plan, evidence_ids=(uuid4(),)
     )
     conversation = IDLE.with_visual_context(initial_context)
     from_wire = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
-    intent = interpret_visual("ponlo en barras", from_wire.visual_contexts)
+    intent = interpret_visual("ordénalo de mayor a menor", from_wire.visual_contexts)
     assert intent is not None
     response = _visual_only_response(intent, from_wire)
     assert response.conversation is not None

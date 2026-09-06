@@ -586,6 +586,31 @@ async def test_a_verified_patch_is_recorded_as_a_patch_decision() -> None:
     assert ctx.decision is not None and ctx.decision.source == "patch"
 
 
+def test_a_round_tripped_ranked_bar_still_verifies_the_descending_sort() -> None:
+    """Fix round 1's own pin: before the wire carried a field's `role`/`order`, this exact
+    restyle -- a ranked breakdown bar, echoed back once, then asked to sort descending by the
+    measure it is already ranked by -- was wrongly refused as `VISUAL_INCOMPATIBLE` (rule
+    `order`), because `conversation_mapper.to_domain` reset the dimension's `order` to `"NONE"`
+    and the verifier's `order` rule reads `NONE` as "this field has no ranking convention, nothing
+    may sort it". The wire now carries `order`, so the same restyle verifies and is recorded as a
+    `patch`, exactly as it would have been in a single turn that never crossed the wire at all.
+    """
+    spec, profile = _breakdown_bar_ranked()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    from_wire = to_domain(to_payload(conversation))
+    intent = interpret_visual("ordénalo de mayor a menor", from_wire.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, from_wire)
+    assert response.outcome == "VISUAL_UPDATED"
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert (decision.verdict, decision.now, decision.detail) == (
+        Verdict.AGREED,
+        "patch",
+        "accepted",
+    )
+
+
 def test_the_saved_metric_source_keeps_the_original_provenance() -> None:
     """D-4.1-1: the rebuild is replace(context, spec=source.chart), not a three-positional rebuild.
 
