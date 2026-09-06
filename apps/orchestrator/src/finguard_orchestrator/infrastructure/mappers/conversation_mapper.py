@@ -10,6 +10,7 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
+from dataclasses import fields as dataclass_fields
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
@@ -20,6 +21,7 @@ from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
     EncodingSort,
+    FieldOrder,
     SortMode,
     Stack,
     VisualContext,
@@ -69,6 +71,13 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     plan_to_domain,
 )
 from finguard_orchestrator.observability import name_the_conversation
+
+# `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
+# `"NONE"` here would be the second copy that goes stale the moment that default changes -- the
+# same "second copy" this module's own reconstruction comment already warns against for `role`.
+_DEFAULT_ORDER: FieldOrder = cast(
+    FieldOrder, next(f.default for f in dataclass_fields(VisualField) if f.name == "order")
+)
 
 
 def plan_payload(plan: FinancialPlan | FinancialPlanDraft | TopMovements) -> PlanPayload:
@@ -175,8 +184,9 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
         # wire per field, and `comparison`/`plan_limited` are on the wire per profile, so `verify`
         # judges a round-tripped chart -- Task 3's restyle path -- on the same facts the floor saw
         # when it built it. The fallback below (`role` guessed from `type`, `order` defaulted to
-        # `VisualField`'s own `"NONE"`) exists only for a conversation an older client still holds,
-        # whose payload predates these two keys.
+        # `_DEFAULT_ORDER` -- `VisualField.order`'s own dataclass default, read rather than
+        # hard-coded) exists only for a conversation an older client still holds, whose payload
+        # predates these two keys.
         #
         # What still narrows, and why it is safe to: `cardinality` is the one dataset-level number
         # the wire carries (the donut rule's), copied onto every field below rather than kept per
@@ -195,7 +205,7 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
                     if field.role is not None
                     else ("measure" if field.type == "quantitative" else "dimension"),
                     item.profile.cardinality,
-                    field.order if field.order is not None else "NONE",
+                    field.order if field.order is not None else _DEFAULT_ORDER,
                 )
                 for field in item.profile.fields
             ),

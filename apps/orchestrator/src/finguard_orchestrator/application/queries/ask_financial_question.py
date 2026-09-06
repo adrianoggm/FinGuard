@@ -5268,18 +5268,27 @@ def record_visual_decision(decision: VisualDecision, *, was: str = "deterministi
     itself against (`proposed`/`fallback_reason` are never set on one), so the caller -- the only
     one that knows what the chart showed before the patch -- hands it in, rather than this
     function inventing "deterministic" for a chart that a model, or an earlier patch, produced.
+    `changed` follows the same invariant every other row does: a `patch` *is* what got shown, so
+    `was != "patch"` is `True` whenever the previous chart had a different source, which is always
+    (a restyle only exists because something was already on screen, and `now` is always "patch").
+
+    A `patch` returns before the `logger.info` below: that call is `visual_planner.decision`, the
+    promotion-evidence sink Task 9 reads acceptance/abstention/latency rates off, and this
+    function's own opening line says what it is for -- one record per turn *that entered the
+    policy*. A restyle never does; `record()` above is its whole audit trail.
     """
     if decision.source == "patch":
         record(
             Step.VISUAL_PLANNER,
             Verdict.AGREED,
-            changed=False,
+            changed=(was != "patch"),
             field="chart",
             was=was,
             now="patch",
             detail="accepted",
         )
-    elif not decision.proposed and decision.fallback_reason is None:
+        return
+    if not decision.proposed and decision.fallback_reason is None:
         record(
             Step.VISUAL_PLANNER,
             Verdict.AGREED,

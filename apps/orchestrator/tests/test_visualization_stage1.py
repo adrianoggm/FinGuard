@@ -396,6 +396,26 @@ def test_an_invalid_origin_on_the_wire_is_refused() -> None:
         ConversationPayload.model_validate(raw)
 
 
+def test_a_contradictory_field_role_is_refused_at_the_dto() -> None:
+    """I2 (fix round 2): `VisualField.__post_init__` (`chart.py`) already refuses a `role` that
+    contradicts `type` -- a measure that is not quantitative is a mislabelled dataset -- but
+    before this fix the wire never checked the pair before handing it to `conversation_mapper.
+    to_domain`, which builds the domain type unguarded and let a bare `ValueError` escape as an
+    unhandled 500. `VisualFieldPayload`'s own validator now constructs the same domain type at
+    the edge and lets its `ValueError` become a 422 instead -- one source of truth with
+    `VisualField.__post_init__`, the way `_derived_from_is_not_self` already does for
+    `derived_from` and the per-encoding sort validator already does for `EncodingSort`.
+    """
+    contradictory = _visual_context_dict()
+    # "dimension" is nominal, not quantitative -- "measure" is the contradiction.
+    contradictory["profile"]["fields"][1]["role"] = "measure"
+    with pytest.raises(ValueError, match="cannot be"):
+        VisualContextPayload.model_validate(contradictory)
+    consistent = _visual_context_dict()
+    consistent["profile"]["fields"][1]["role"] = "dimension"
+    VisualContextPayload.model_validate(consistent)  # does not raise
+
+
 def test_a_chart_cannot_claim_to_derive_from_itself_on_the_wire() -> None:
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
     payload = conversation_mapper.to_payload(IDLE.with_visual_context(context))

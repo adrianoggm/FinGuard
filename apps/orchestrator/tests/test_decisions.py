@@ -35,6 +35,10 @@ from finguard_orchestrator.application import (
     AskFinancialQuestionQuery,
     QueryBus,
 )
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    record_visual_decision,
+    record_visual_decision_refused,
+)
 from finguard_orchestrator.bootstrap.dependencies import (
     authenticated_caller,
     get_ask_handler,
@@ -43,9 +47,18 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, Period, PlanningOutcome
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    VisualField,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import QueryAnswer
+from finguard_orchestrator.domain.models.visual_plan import Rejection
+from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.value_objects.scope import Scope
@@ -68,6 +81,25 @@ from finguard_orchestrator.observability import (
 ACCOUNT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 TODAY = date(2026, 8, 4)
 THREE_MONTHS = RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
+
+# A minimal breakdown bar, just enough to construct a `VisualDecision`/`VisualContext` for the two
+# `Step.VISUAL_PLANNER` rows `record_visual_decision`/`record_visual_decision_refused` produce --
+# the invariant sweep below is the only reader, and it never inspects the chart itself.
+_VISUAL_SPEC = ChartSpec(
+    "bar",
+    (
+        ChartEncoding("x", "value_minor", "quantitative"),
+        ChartEncoding("y", "dimension", "nominal"),
+    ),
+)
+_VISUAL_PROFILE = VisualProfile(
+    fields=(
+        VisualField("dimension", "nominal", "dimension", 2),
+        VisualField("value_minor", "quantitative", "measure", 2),
+    ),
+    metric="SUM",
+    unit="money",
+)
 
 # The same sentence `test_logging.py` uses, and for the same reason: what somebody typed, who they
 # pay, and the note they wrote about it, in one line. Kept identical on purpose — the two records
@@ -312,7 +344,12 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
     Raising there fires on the data rather than the branch, so a miswired call site would pass
     every test whose fixtures happened to agree and take down a turn on the first one that did not.
     Swept here instead, where the same mistake is caught and nothing is at risk.
+
+    I3 (fix round 2) is why the sweep runs over `record_visual_decision`'s own real branches too,
+    not only hand-built rows: a `patch` row used to hard-code `changed=False` regardless of `was`
+    and `now`, which fabricated rows built to already agree could never catch.
     """
+    context = VisualContext("chart-1", _VISUAL_SPEC, _VISUAL_PROFILE)
     with recording_turn() as turn:
         record(
             Step.ENFORCE,
@@ -324,6 +361,17 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
         )
         record(Step.ENFORCE, Verdict.AGREED, changed=False, field="metric", was="SUM", now="SUM")
         record(Step.CAPABILITY_GUARD, Verdict.DECLINED, changed=True, field="family", now="AVERAGE")
+        record_visual_decision(
+            VisualDecision(
+                spec=_VISUAL_SPEC,
+                profile=_VISUAL_PROFILE,
+                source="patch",
+                accepted=True,
+                valid=True,
+            ),
+            was="deterministic",
+        )
+        record_visual_decision_refused(context, Rejection("order", "ordering does not apply"))
 
     for decision in turn.sealed().decisions:
         if decision.was is not None and decision.now is not None:
