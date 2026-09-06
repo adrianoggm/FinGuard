@@ -777,13 +777,27 @@ async def test_every_kind_is_a_record_row(seam_turn, monkeypatch, kind) -> None:
 
 async def test_the_classification_changes_nothing_visible(handler_turn) -> None:
     """The plan's headline constraint: the same turn, recorded and unrecorded, is the same answer."""
-    with recording_turn():
-        recorded = await handler_turn("Ordenalo de mayor a menor", CHARTED)
+    recorded, _ = await turn_for("Ordenalo de mayor a menor", PREVIOUS, conversation=CHARTED)
     unrecorded = await handler_turn("Ordenalo de mayor a menor", CHARTED)
     assert recorded == unrecorded
 ```
 
-(`seam_turn` and `handler_turn` are fixtures in this file built from `tests/test_visual_decision_seam.py`'s construction; `handler_turn` returns the `AskFinancialQuestionResult`. **`handler_turn` must drive the handler, not the controller:** Task 4 mints a fresh `turn_id` in `llm_mapper._remember_visual_context` and in the restyle path, both of which run after the handler returns, so two handler results compare equal while two controller responses would differ by that id. If the fixture ever has to go through the controller, compare with `turn_id` masked and say so in the test.)
+(Fixtures — exact, verified at 3661e0a: `tests/test_decisions_call_sites.py` exports `turn_for(sentence, plan, *, ledger=None, **extra) -> tuple[AskFinancialQuestionResult, TurnRecord]`, which builds a handler with fakes via `handler_for(plan, ledger)`, runs one whole turn under `recording_turn()` and returns the sealed record; `**extra` is forwarded into `AskFinancialQuestionQuery(sentence=..., account_id=ACCOUNT, today=TODAY, **extra)`, so pass `conversation=CHARTED`. Import them as the seam test imports its neighbours: `from test_decisions_call_sites import ACCOUNT, TODAY, FakeLedger, handler_for, turn_for`. Define in this file:
+
+```python
+async def seam_turn(sentence: str, conversation: Conversation) -> TurnRecord:
+    _, sealed = await turn_for(sentence, PREVIOUS, conversation=conversation)
+    return sealed
+
+async def handler_turn(sentence: str, conversation: Conversation) -> AskFinancialQuestionResult:
+    """The same turn with NO recording turn open — `record()` is a no-op outside one."""
+    handler = handler_for(PREVIOUS, FakeLedger())
+    return await handler.handle(
+        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=conversation)
+    )
+```
+
+`PREVIOUS`/`CHARTED` are Task 5's constants (import them from `tests/test_visual_follow_up.py`'s module scope or rebuild them identically). The no-visible-change test then reads `recorded, _ = await turn_for(S, PREVIOUS, conversation=CHARTED)` and `unrecorded = await handler_turn(S, CHARTED)`; `assert recorded == unrecorded`. `handler_turn` drives the handler, not the controller, so no `turn_id` is minted on either side. **`handler_turn` must drive the handler, not the controller:** Task 4 mints a fresh `turn_id` in `llm_mapper._remember_visual_context` and in the restyle path, both of which run after the handler returns, so two handler results compare equal while two controller responses would differ by that id. If the fixture ever has to go through the controller, compare with `turn_id` masked and say so in the test.)
 
 `tests/test_decisions.py`: `11` → `12` at `:283` with the message "a thirteenth should be a diff to justify"; the sweep at `:523-606` adds a `record(Step.VISUAL_FOLLOW_UP, Verdict.AGREED, changed=False, field="visual_follow_up", now="UNRELATED", detail="none")` row so `== set(Step)` holds; `changed` count unchanged (this row does not alter the answer) — update the message "nine of the twelve altered the answer in this example". `tests/test_decisions_call_sites.py`: `# --- 12 · visual_follow_up ---` driving a handler whose conversation holds a chart, asserting `only(sealed, Step.VISUAL_FOLLOW_UP).now == "UNRELATED"` for an ordinary question, and `Step.VISUAL_FOLLOW_UP` added to the `>=` set at `:370-376` (the shared fixture may need a `visual_contexts` entry — widen it the way Task 5 of Wave 3 widened `FakeLedger`, checking every test in the file for a dependency first).
 

@@ -209,9 +209,15 @@ def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
     return False
 
 
-@_recogniser
-def contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
-    """Patch explicit filters and calculations onto the last validated financial query."""
+def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """Patch explicit filters and calculations onto the last validated financial query.
+
+    Undecorated on purpose: `application/queries/readers/visual_follow_up.py` reads this reader
+    too, to classify a turn without recording a cascade decision or memoising onto the query — a
+    second `@_recogniser` call on the same turn would double the `RECOGNISER`/`CLAIMED` row the
+    cascade already writes. `contextual_follow_up_plan` below is the cascade's own name for this
+    same body, wrapped once in the seam that call site needs.
+    """
     focus = focus_of(query.conversation)
     folded = spanish.folded(query.sentence).strip(" ¿?¡!.,")
     folded = re.sub(r"^(?:vale|bueno|ok|perfecto)\W+", "", folded)
@@ -466,6 +472,12 @@ def contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan
         )
         return replace(previous, direction=direction)
     return None
+
+
+@_recogniser
+def contextual_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
+    """The cascade's recogniser for `read_contextual_follow_up` — see its docstring."""
+    return read_contextual_follow_up(query)
 
 
 def _account_follow_up_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | None:
