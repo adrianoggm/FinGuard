@@ -115,6 +115,14 @@ def classify(
     return VisualFollowUp("UNRELATED", "none")
 
 
+def classify_claimed_visual(intent: VisualIntent, sentence: str) -> VisualFollowUp:
+    """The short-circuit's own row: interpret_visual has already claimed, so the turn is about the
+    chart by construction and the drill lexicon needs no FOLLOW_UP gate to be safe."""
+    if intent.mixed or _DRILL_DOWN.search(fold(sentence)):
+        return VisualFollowUp("AMBIGUOUS", "both")
+    return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
+
+
 def record_visual_follow_up(follow_up: VisualFollowUp) -> None:
     """One Decision on the existing record; the kind and claimant are service vocabulary.
 
