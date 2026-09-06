@@ -49,7 +49,7 @@ def monthly():
 def comparison():
     return visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow("ALQUILER", 100, series="2026-07"),
                 VisualRow("ALQUILER", 90, series="2026-06"),
@@ -110,7 +110,7 @@ def temporal_comparison():
     hold at once, the combination `_grouped` must not mistake for a categorical one."""
     return visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow("2026-01", 100, series="A"),
                 VisualRow("2026-02", 200, series="A"),

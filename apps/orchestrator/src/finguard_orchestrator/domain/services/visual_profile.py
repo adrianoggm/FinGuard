@@ -138,7 +138,13 @@ def visual_profile_of(
             dataset.metric == "RATIO_SHARE"
             or (total_minor is not None and sum(row.value_minor for row in rows) == total_minor)
         ),
-        comparison=has_series,
+        # The dataset's shape marker AND a series to group by -- not the presence of a series
+        # alone: RECURRENCE carries a series for its cadence and is not a comparison. Not the
+        # marker alone either: an ungrouped comparison of two totals (`ask_financial_question.py`,
+        # the `else` branch beside `comparison_visual_rows`) is two bars over two periods, with
+        # no series field to put on color -- a plain bar, not a grouped one. Only the handler's
+        # comparison path sets the marker, and the exporter's `categorical_comparison` mirrors it.
+        comparison=dataset.metric == "COMPARISON" and has_series,
         # The number of rows drawn, which is what `derive_chart` means by `rows`. The measure's
         # cardinality above is a count of *distinct amounts* and is not this number: two rows
         # carrying the same amount are two rows. Still value-free -- a count of rows says nothing

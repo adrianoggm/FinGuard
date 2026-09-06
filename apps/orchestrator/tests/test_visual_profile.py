@@ -33,9 +33,10 @@ def test_a_breakdown_profile_names_its_dimension_and_measure() -> None:
 
 
 def test_a_series_gets_its_own_cardinality_and_makes_this_a_comparison() -> None:
-    """Two series are a comparison; the count is what later refuses fifteen of them."""
+    """A COMPARISON dataset's series is the comparison; the count is what later refuses fifteen
+    of them."""
     dataset = VisualDataset(
-        metric="SUM",
+        metric="COMPARISON",
         rows=(
             VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
             VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
@@ -168,3 +169,71 @@ def test_a_donut_still_refuses_more_than_five_parts() -> None:
     )
     with pytest.raises(ValueError, match="between 2 and 5"):
         merge_encoding_patch(_bar_spec(), EncodingPatch(mark="donut"), six)
+
+
+def test_a_recurrence_with_series_is_not_a_comparison() -> None:
+    """RECURRENCE uses `series` for the cadence. Deriving `comparison` from the presence of a
+    series told the model two contradictory things at once -- "grouped bars" and "points on
+    occurred_at". The shape marker is the authority."""
+    dataset = VisualDataset(
+        metric="RECURRENCE",
+        rows=(
+            VisualRow(
+                dimension="Netflix", value_minor=1_299, series="MONTHLY", occurred_at="2026-07-03"
+            ),
+            VisualRow(
+                dimension="Spotify", value_minor=1_099, series="MONTHLY", occurred_at="2026-07-05"
+            ),
+        ),
+    )
+
+    profile = visual_profile_of(dataset, total_minor=None, group_by=None)
+
+    assert profile.comparison is False
+    assert profile.mutually_exclusive is False  # a series still means slices of one dimension
+
+
+def test_a_series_alone_does_not_make_a_comparison() -> None:
+    """The marker decides, not the rows: a dataset nobody marked as a comparison is not one."""
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=(
+            VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
+            VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
+        ),
+    )
+
+    profile = visual_profile_of(dataset, total_minor=None, group_by=None)
+
+    assert profile.comparison is False
+    assert profile.mutually_exclusive is False
+
+
+def test_a_comparison_dataset_is_a_comparison_by_its_marker() -> None:
+    dataset = VisualDataset(
+        metric="COMPARISON",
+        rows=(
+            VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
+            VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
+        ),
+    )
+
+    assert visual_profile_of(dataset, total_minor=None, group_by=None).comparison is True
+
+
+def test_a_comparison_of_two_totals_without_a_series_is_not_grouped() -> None:
+    """The handler's ungrouped comparison: two rows, one per period, no series. Two bars, not a
+    grouped chart -- there is no series field to put on color, and the floor's grouped block
+    would index one that does not exist."""
+    dataset = VisualDataset(
+        metric="COMPARISON",
+        rows=(
+            VisualRow(dimension="agosto", value_minor=12),
+            VisualRow(dimension="julio", value_minor=9),
+        ),
+    )
+
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE", plan_metric="COUNT")
+
+    assert profile.comparison is False
+    assert profile.role("series") == ()
