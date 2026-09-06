@@ -18,6 +18,11 @@ class VisualIntent:
     patch: EncodingPatch | None
     target: str | None
     explanation: str | None = None
+    # Set only by the mixed-turn refusal below: the sentence asked to change the data and the
+    # format in the same turn, so this intent already speaks for two claimants rather than one.
+    # `application/queries/readers/visual_follow_up.py` reads this to record AMBIGUOUS instead of
+    # PRESENTATION_ONLY, without re-deriving "mixed" from the explanation text.
+    mixed: bool = False
 
 
 _FINANCIAL = re.compile(
@@ -69,6 +74,7 @@ def interpret_visual(
                 None,
                 "Has pedido cambiar los datos y el formato a la vez. Pide primero el cambio "
                 "financiero y después el formato del gráfico en otro turno.",
+                mixed=True,
             )
         return None
     if not visual_signal:

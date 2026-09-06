@@ -16,36 +16,65 @@ the turn the cascade goes on to plan.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
 from finguard_orchestrator.application.queries.readers.follow_up import read_contextual_follow_up
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
-from finguard_orchestrator.infrastructure.visualization.interpreter import fold, interpret_visual
+from finguard_orchestrator.infrastructure.visualization.interpreter import (
+    VisualIntent,
+    fold,
+    interpret_visual,
+)
 
+# The input is `fold()`ed before this searches it, so an accented alternative (`qué`, an accented
+# `ensename`) never matches and none is listed here. `por que` is qualified to the shapes §3.3
+# actually names — unqualified, it read «¿Por qué no me funciona la app?» as a drill-down just as
+# readily as «¿Por qué agosto es tan alto?» — and neither `explica` nor a bare `responsable`
+# survived for the same reason: each claimed an ordinary question that named none of this turn's
+# chart.
 _DRILL_DOWN = re.compile(
-    r"\b(por que|qué movimientos|que movimientos|qué comercio|que comercio|qué compras|que compras|"
-    r"responsable|responsables|explica|ensename (los|las) (movimientos|compras|operaciones)|"
-    r"muestrame (los|las) (movimientos|compras|operaciones))\b"
+    r"\bpor que\b.*\b(?:tan|tanto|alto|alta|bajo|baja|sube|subio|subido|pico)\b|"
+    r"\bque movimientos\b|\bque comercio\b|"
+    r"\b(?:ensename|muestrame) (?:los|las) (?:movimientos|compras|operaciones)\b"
 )
 
 
-def _presentation_claims(query: AskFinancialQuestionQuery, conversation: Conversation) -> bool:
-    return interpret_visual(query.sentence, conversation.visual_contexts) is not None
+def _visual_intent(
+    query: AskFinancialQuestionQuery, conversation: Conversation
+) -> VisualIntent | None:
+    """The interpreter's one reading of this turn's presentation request, if any.
+
+    Called exactly once: `classify` reads both whether a presentation change was asked
+    (`intent is not None`) and whether the turn is a mixed one — a data change and a format change
+    asked together, which `interpret_visual` already recognises as its own refusal — off this same
+    `VisualIntent`, rather than asking the interpreter twice for two different facts about it.
+    """
+    return interpret_visual(query.sentence, conversation.visual_contexts)
 
 
-def _reshape_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis) -> bool:
+def _reshape_claims(
+    query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
+) -> bool:
     if (
         analysis.relation is not TurnRelation.FOLLOW_UP
         or analysis.focus is not TurnFocus.LAST_ANSWER
     ):
         return False
-    return read_contextual_follow_up(query) is not None
+    # `conversation`, not `query.conversation`: the two can differ after a restoration (see
+    # `classify`'s docstring), and `read_contextual_follow_up` resolves its focus from
+    # `query.conversation` internally, so it is asked with a copy of the query that carries the
+    # same working conversation `_visual_intent` already reads directly.
+    return read_contextual_follow_up(replace(query, conversation=conversation)) is not None
 
 
 def _drill_down_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis) -> bool:
-    if analysis.relation is not TurnRelation.FOLLOW_UP:
+    if (
+        analysis.relation is not TurnRelation.FOLLOW_UP
+        or analysis.focus is not TurnFocus.LAST_ANSWER
+    ):
         return False
     return _DRILL_DOWN.search(fold(query.sentence)) is not None
 
@@ -54,15 +83,23 @@ def classify(
     query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
 ) -> VisualFollowUp:
     """`conversation` is the handler's working conversation (`was`), which may differ from
-    `query.conversation` after a restoration; the charts in context are read from it."""
+    `query.conversation` after a restoration; the charts in context are read from it, and both
+    `_reshape_claims` and `_visual_intent` are asked about it rather than about
+    `query.conversation`."""
     if not conversation.visual_contexts:
         return VisualFollowUp("UNRELATED", "none")
-    presentation = _presentation_claims(query, conversation)
+    intent = _visual_intent(query, conversation)
+    if intent is not None and intent.mixed:
+        # The interpreter has already read two claimants in this one turn — a data change and a
+        # format change asked together — which is exactly what AMBIGUOUS exists for; the table
+        # below is never reached.
+        return VisualFollowUp("AMBIGUOUS", "both")
+    presentation = intent is not None
     # Drill-down is checked before reshape because «¿por qué agosto es tan alto?» is also a
     # FOLLOW_UP on the last answer; the lexicon is the more specific reader and wins, which is why
     # `reshape` is computed as `not drill and ...`.
     drill = _drill_down_claims(query, analysis)
-    reshape = not drill and _reshape_claims(query, analysis)
+    reshape = not drill and _reshape_claims(query, analysis, conversation)
     # A dict keyed by claimant name would map a plain `str` back onto the `Literal` kind and
     # claimant fields, which mypy strict rejects without a `type: ignore`; three explicit branches
     # keep every return a literal mypy can check.

@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.infrastructure.visualization.interpreter import VisualIntent
 from finguard_orchestrator.observability import recording_turn
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
@@ -63,6 +64,15 @@ ROWS = [
     ("Enséñame los movimientos responsables", FOLLOW_UP, "DRILL_DOWN", "drill_down_reader"),
     ("¿Cuánto gasté en mayo?", NEW, "UNRELATED", "none"),
     ("Hola", NEW, "UNRELATED", "none"),
+    # both a data change ("restaurantes") and a format change ("barras") in one turn: the
+    # interpreter's own mixed refusal, read as AMBIGUOUS before the table below is ever reached.
+    ("Ponlo en barras y solo restaurantes", FOLLOW_UP, "AMBIGUOUS", "both"),
+    # An unqualified "por que" or a bare "responsable"/"explica" used to read every one of these
+    # as a drill-down; none of them names anything about the chart in context.
+    ("¿Por qué no me funciona la app?", FOLLOW_UP, "UNRELATED", "none"),
+    ("Explica el plan", FOLLOW_UP, "UNRELATED", "none"),
+    ("¿Qué compras puedo hacer con 100 euros?", FOLLOW_UP, "UNRELATED", "none"),
+    ("el responsable de la nómina", FOLLOW_UP, "UNRELATED", "none"),
 ]
 
 
@@ -77,12 +87,16 @@ def test_without_a_chart_in_context_every_turn_is_unrelated() -> None:
 
 
 def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
-    """Forced, because the two real readers rarely overlap: the test is about the table, not the
-    regex."""
+    """Forced, because the two real readers rarely overlap: the test is about the table's own
+    `sum(...) > 1` branch, not the regex. Presentation+drill rather than presentation+reshape,
+    because a real row now reaches presentation+reshape's AMBIGUOUS a different way — through the
+    interpreter's own `mixed` refusal, before this table is even consulted."""
     import finguard_orchestrator.application.queries.readers.visual_follow_up as module
 
-    monkeypatch.setattr(module, "_presentation_claims", lambda query, conversation: True)
-    monkeypatch.setattr(module, "_reshape_claims", lambda query, analysis: True)
+    monkeypatch.setattr(
+        module, "_visual_intent", lambda query, conversation: VisualIntent(None, None)
+    )
+    monkeypatch.setattr(module, "_drill_down_claims", lambda query, analysis: True)
     assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp("AMBIGUOUS", "both")
 
 
@@ -116,10 +130,13 @@ def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
 
 
 def test_every_kind_and_claimant_is_reachable() -> None:
-    """Collected from ROWS plus the forced AMBIGUOUS case: the closed sets are what the reader can
-    actually say, so a member nothing produces fails here."""
-    kinds = {row[2] for row in ROWS} | {"AMBIGUOUS"}
-    claimants = {row[3] for row in ROWS} | {"both"}
+    """Every kind and claimant `classify` can produce is produced at least once here — through
+    `classify` itself over ROWS, plus the forced AMBIGUOUS case above for the pair no sentence in
+    ROWS happens to force. Collected from `classify`'s own results rather than from `row[2]`/
+    `row[3]`, so a `classify` that stopped producing a kind ROWS claims would fail here too."""
+    produced = [classify(_query(sentence), analysis, CHARTED) for sentence, analysis, _, _ in ROWS]
+    kinds = {result.kind for result in produced} | {"AMBIGUOUS"}
+    claimants = {result.claimant for result in produced} | {"both"}
     assert kinds == set(get_args(VisualFollowUpKind))
     assert claimants == set(get_args(Claimant))
 
