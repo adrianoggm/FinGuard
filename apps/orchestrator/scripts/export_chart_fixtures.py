@@ -25,25 +25,13 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
+from finguard_orchestrator.infrastructure.mappers.llm_mapper import rows_on_the_wire
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 # Where the web test reads what this script writes.
 FIXTURES = (
     Path(__file__).resolve().parents[2] / "web" / "src" / "__fixtures__" / "chart-families.json"
 )
-
-
-def _rows_to_dicts(rows: tuple[VisualRow, ...]) -> list[dict[str, Any]]:
-    """The same row shape `llm_mapper._visualization_to_dto` puts on the wire."""
-    serialized: list[dict[str, Any]] = []
-    for row in rows:
-        item: dict[str, Any] = {"dimension": row.dimension, "value_minor": row.value_minor}
-        if row.series is not None:
-            item["series"] = row.series
-        if row.occurred_at is not None:
-            item["occurred_at"] = row.occurred_at
-        serialized.append(item)
-    return serialized
 
 
 def _family(
@@ -66,7 +54,9 @@ def _family(
     spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
     if spec is None:
         raise ValueError(f"the floor produced no chart for family {name!r}")
-    presented = present(Visualization(spec=spec, data=tuple(_rows_to_dicts(dataset.rows))))
+    presented = present(
+        Visualization(spec=spec, data=tuple(rows_on_the_wire(dataset, profile.field_names())))
+    )
     return {"name": name, "spec": presented["spec"], "data": presented["data"]}
 
 
@@ -199,7 +189,12 @@ def _donut_family() -> dict[str, Any]:
             ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
         ),
     )
-    presented = present(Visualization(spec=spec, data=tuple(_rows_to_dicts(rows))))
+    # No `VisualProfile` is built for this hand-assembled spec: `declared` is the spec's own
+    # encoded fields, which is exactly what a profile would have declared for these uniform rows.
+    donut_dataset = VisualDataset(rows=rows, metric="SUM")
+    presented = present(
+        Visualization(spec=spec, data=tuple(rows_on_the_wire(donut_dataset, spec.fields())))
+    )
     return {"name": "donut", "spec": presented["spec"], "data": presented["data"]}
 
 

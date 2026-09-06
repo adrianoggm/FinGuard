@@ -687,3 +687,30 @@ def test_a_mobile_viewport_shows_fewer_rows_than_it_is_asked_for() -> None:
         PresentationContext(  # type: ignore[arg-type]
             channel="TELEPATHY", viewport="MOBILE", max_visible_rows=8
         )
+
+
+async def test_every_row_carries_every_field_the_profile_declares() -> None:
+    """The profile advertises the union of the rows' fields; the mapper used to validate the
+    spec against their intersection and drop, silently, a chart the verifier had accepted.
+    One contract: rows carry what the profile declares, None where a row has no value."""
+    dto = question_to_dto(
+        await _result(
+            (
+                VisualRow("Comida", 100, series="agosto"),
+                VisualRow("Comida", 80, series="julio"),
+                VisualRow("Transporte", 50),  # no series on this row
+            ),
+            metric="COMPARISON",
+        )
+    )
+    assert dto.visualization is not None and dto.visualization.kind == "chart"
+    rows = dto.visualization.data
+    assert all(set(row) == {"dimension", "value_minor", "series"} for row in rows)
+    assert rows[2]["series"] is None
+    assert dto.visualization.spec["encoding"]["color"]["field"] == "series"  # type: ignore[index]
+
+
+async def test_a_kpi_still_carries_only_the_fields_its_row_has() -> None:
+    dto = question_to_dto(await _result((VisualRow("Total", 12_345),), metric="SUM", explicit=True))
+    assert dto.visualization is not None and dto.visualization.kind == "kpi"
+    assert set(dto.visualization.data[0]) == {"dimension", "value_minor"}

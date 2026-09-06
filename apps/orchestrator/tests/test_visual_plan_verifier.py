@@ -49,7 +49,7 @@ def monthly():
 def comparison():
     return visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow("ALQUILER", 100, series="2026-07"),
                 VisualRow("ALQUILER", 90, series="2026-06"),
@@ -110,7 +110,7 @@ def temporal_comparison():
     hold at once, the combination `_grouped` must not mistake for a categorical one."""
     return visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow("2026-01", 100, series="A"),
                 VisualRow("2026-02", 200, series="A"),
@@ -501,6 +501,50 @@ def test_two_offsets_are_refused() -> None:
         stack="disabled",
     )
     assert rule_of(verify(both_offsets, comparison())) == "grouped"
+
+
+def test_a_comparison_bar_without_its_series_is_refused() -> None:
+    """The review's case: dimension on y, measure on x, nothing else. It verified as a
+    reasonable bar, and the comparison between the two periods had vanished."""
+    refused = verify(ranked_bar(), comparison())
+    assert isinstance(refused, Rejection)
+    assert refused.rule == "grouped" and "keeps its series" in refused.reason
+
+
+def test_a_comparison_with_its_series_only_in_tooltip_is_refused() -> None:
+    hidden = ranked_bar(
+        encodings=ranked_bar().encodings + (E("tooltip", "series", "nominal"),),
+    )
+    refused = verify(hidden, comparison())
+    assert isinstance(refused, Rejection) and "keeps its series" in refused.reason
+
+
+def test_a_comparison_line_keeps_its_series_on_color() -> None:
+    line = D("line", (E("x", "dimension", "temporal"), E("y", "value_minor", "quantitative")))
+    refused = verify(line, temporal_comparison())
+    assert isinstance(refused, Rejection) and refused.rule == "grouped"
+    with_series = D("line", line.encodings + (E("color", "series", "nominal", S("input")),))
+    assert isinstance(verify(with_series, temporal_comparison()), ChartSpec)
+
+
+def test_a_comparison_bar_with_color_but_no_offset_is_still_refused() -> None:
+    """Colour alone stacks the periods on top of each other -- the existing offset rule fires
+    once the series is on color."""
+    colour_only = ranked_bar(
+        encodings=ranked_bar().encodings + (E("color", "series", "nominal", S("input")),),
+        stack="disabled",
+    )
+    refused = verify(colour_only, comparison())
+    assert isinstance(refused, Rejection) and "needs the offset" in refused.reason
+
+
+def test_an_offset_without_its_color_is_refused() -> None:
+    offset_only = ranked_bar(
+        encodings=ranked_bar().encodings + (E("yOffset", "series", "nominal", S("input")),),
+        stack="disabled",
+    )
+    refused = verify(offset_only, comparison())
+    assert isinstance(refused, Rejection) and "needs its color" in refused.reason
 
 
 def test_limit_belongs_to_one_family() -> None:

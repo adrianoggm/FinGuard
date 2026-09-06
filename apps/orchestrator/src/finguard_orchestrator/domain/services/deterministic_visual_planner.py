@@ -203,10 +203,10 @@ class DeterministicVisualPlanner:
                     ),
                 )
         series = profile.role("series")
-        # `profile.comparison` is `has_series` under a name that reads as "this is a comparison" --
-        # true for RECURRENCE too, since a cadence is a series, which is safe to read here only
-        # because RECURRENCE returns above, before this line is ever reached. Nothing else sets
-        # `comparison` for a reason other than an actual comparison.
+        # `profile.comparison` is the dataset's shape marker plus a series to group by
+        # (`metric == "COMPARISON" and has_series`), so `series[0]` below always exists, a
+        # RECURRENCE profile -- whose series is a cadence -- never reaches this block as a
+        # comparison, and an ungrouped comparison of two totals stays the plain bar it is.
         if spec is not None and profile.comparison and not profile.temporal():
             # Grouped, and both halves are required: `disabled` stops Vega-Lite's default stack,
             # which for a bar with a colour series is to stack; the offset is what separates the

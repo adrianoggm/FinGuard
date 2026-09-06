@@ -279,7 +279,7 @@ def test_a_categorical_comparison_groups_its_series_instead_of_stacking_them() -
     of one total: the bar's length becomes a number nobody asked for, and it renders cleanly."""
     profile = visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
                 VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
@@ -311,7 +311,7 @@ def test_a_categorical_comparisons_groups_are_still_ranked_by_magnitude() -> Non
     regression in either rule shows up beside its sibling rather than only in one test."""
     profile = visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow(dimension="GROCERIES", value_minor=100, series="2026-07"),
                 VisualRow(dimension="GROCERIES", value_minor=90, series="2026-06"),
@@ -342,7 +342,7 @@ def test_a_temporal_comparison_keeps_its_plain_colour_and_no_offset() -> None:
     keeps the plain colour append the categorical rule replaced, unconditionally, as before."""
     profile = visual_profile_of(
         VisualDataset(
-            metric="SUM",
+            metric="COMPARISON",
             rows=(
                 VisualRow(dimension="2026-06", value_minor=100, series="2026"),
                 VisualRow(dimension="2026-07", value_minor=120, series="2026"),

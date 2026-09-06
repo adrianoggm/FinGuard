@@ -241,8 +241,17 @@ def _grouped(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
     if len(offsets) > 1:
         return Rejection("grouped", "a comparison offsets one axis, not both")
     color = _on(spec, "color")
+    if offsets and color is None:
+        # An offset separates bars by a series nobody can tell apart: the legend is the colour.
+        return Rejection("grouped", "an offset needs its color: the same series on both")
     if offsets and color is not None and color.field != offsets[0].field:
         return Rejection("grouped", "color and the offset must name the same series")
+    if profile.comparison and (color is None or color.field not in series):
+        # Section D: a comparison keeps its series, and colour is where the series lives on every
+        # mark. Until this rule a proposal that dropped the series -- dimension on one axis, the
+        # measure on the other, nothing else -- verified as a reasonable bar with the comparison
+        # gone. Tooltip does not count: a series nobody can see is not a comparison.
+        return Rejection("grouped", "a comparison keeps its series: put it on color")
     uses_series = any(item.field in series for item in spec.encodings if item.channel != "tooltip")
     if spec.mark == "bar" and uses_series:
         # Not `not profile.temporal()`: that is true for *any* dimension-role field being

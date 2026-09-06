@@ -4,6 +4,7 @@ Queries and commands answer with Results, never with domain objects, so what arr
 here is already flat. This adds the wire format and nothing else.
 """
 
+from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from typing import Literal, cast
 from uuid import UUID, uuid4
@@ -27,6 +28,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualContext,
     VisualDataset,
     Visualization,
+    VisualRow,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -204,41 +206,53 @@ def _plan_to_dto(plan: SpokenPlan) -> PlanPayload:
     )
 
 
+# A row's attributes in wire order. Read from the dataclass, never hand-copied: these are the
+# names `VisualProfile.fields` can declare, so the two cannot drift.
+_ROW_FIELDS: tuple[str, ...] = tuple(item.name for item in dataclass_fields(VisualRow))
+
+
+def rows_on_the_wire(dataset: VisualDataset, declared: frozenset[str]) -> list[dict[str, object]]:
+    """Every row carries every field the profile declared, `None` where the row has no value.
+
+    The profile advertises the union of the rows' fields, the model and the verifier reason over
+    that union, and Vega-Lite treats a null as a missing value. Serialising only the keys a row
+    happens to have made the mapper validate against the *intersection* and drop, silently, a
+    chart that had been proposed, verified and accepted.
+    """
+    return [
+        {name: getattr(row, name) for name in _ROW_FIELDS if name in declared}
+        for row in dataset.rows
+    ]
+
+
 def _visualization_to_dto(
     result: AskFinancialQuestionResult,
 ) -> VisualizationResponse | None:
     dataset = result.visual_dataset
     if dataset is None or not dataset.rows:
         return None
-
-    rows: list[dict[str, object]] = []
-    for row in dataset.rows:
-        serialized: dict[str, object] = {
-            "dimension": row.dimension,
-            "value_minor": row.value_minor,
-        }
-        if row.series is not None:
-            serialized["series"] = row.series
-        if row.occurred_at is not None:
-            serialized["occurred_at"] = row.occurred_at
-        rows.append(serialized)
-
-    fields = frozenset.intersection(*(frozenset(row) for row in rows))
-    if len(rows) == 1:
+    if len(dataset.rows) == 1:
         if not result.explicit_visualization:
             return None
+        # A KPI has no decision and no profile: it carries the fields its one row has.
+        only = dataset.rows[0]
+        present_fields = frozenset(name for name in _ROW_FIELDS if getattr(only, name) is not None)
         return KpiVisualizationResponse(
             unit="count" if dataset.metric == "COUNT" else "money",
-            data=rows,
+            data=rows_on_the_wire(dataset, present_fields),
         )
 
-    # Rendered, not decided. The chart was chosen by the application, once, on a profile built
-    # from this same dataset; `valid_for` stays because these `fields` are the intersection of the
-    # serialized rows rather than the union the profile describes, and a spec naming a field some
-    # row omits cannot be drawn.
     decision = result.visual_decision
-    if decision is None or not decision.spec.valid_for(fields):
+    if decision is None:
         return None
+    # Rendered, not decided. The chart was chosen by the application, once, on a profile built
+    # from this same dataset; the rows carry exactly the fields that profile declared, so
+    # `valid_for` checks the spec against the set the model and the verifier reasoned over --
+    # the intersection this replaced dropped charts the verifier had accepted.
+    declared = decision.profile.field_names()
+    if not decision.spec.valid_for(declared):
+        return None
+    rows = rows_on_the_wire(dataset, declared)
     spec = replace(decision.spec, title=_visual_title(result, dataset))
     presented = present(Visualization(spec=spec, data=tuple(rows)))
     chart_id = _chart_id(result, spec)
