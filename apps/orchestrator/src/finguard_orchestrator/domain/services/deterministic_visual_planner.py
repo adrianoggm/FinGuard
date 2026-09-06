@@ -14,7 +14,7 @@ stays pure. All this adds is the profile as an input instead of loose arguments 
 """
 
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Literal, get_args
 
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
@@ -25,7 +25,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
-from finguard_orchestrator.domain.models.visual_plan import FallbackReason
+from finguard_orchestrator.domain.models.visual_plan import FallbackReason, VisualSource
 
 
 def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
@@ -51,9 +51,11 @@ def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
 class VisualDecision:
     """Which chart was chosen, from what, by whom, and why the other one was not.
 
-    `source` is `llm | deterministic` and not `llm | deterministic_fallback`: in the
+    `source` is `llm | deterministic | patch` and not `llm | deterministic_fallback`: in the
     deterministic and shadow modes the floor is the *intended* selection rather than a recovery.
-    `fallback_reason` is filled only when an attempt was made and failed.
+    `patch` is a verified edit to what is already shown, not a recovery either -- it carries no
+    `fallback_reason` for the same reason `llm` does not. `fallback_reason` is filled only when an
+    attempt was made and failed.
 
     `profile` is the decision's own input, carried rather than rebuilt. There is exactly one
     profile per turn because of it: `llm_mapper` used to build a second one from the same dataset
@@ -65,7 +67,7 @@ class VisualDecision:
 
     spec: ChartSpec
     profile: VisualProfile
-    source: Literal["llm", "deterministic"]
+    source: VisualSource
     rationale: str | None = None
     fallback_reason: FallbackReason | None = None
     proposed: bool = False
@@ -73,7 +75,8 @@ class VisualDecision:
     valid: bool = False
     """The draft passed the verifier."""
     accepted: bool = False
-    """What the user sees is the model's chart. Implies `source == "llm"`."""
+    """What the user sees is the model's or the patch's chart. Implies
+    `source in {"llm", "patch"}`."""
     changed_from_baseline: bool | None = None
     """The verified proposal differs from the floor on `canonical()`. None when the floor was
     not computed (promoted) or there was no verified proposal to compare."""
@@ -84,12 +87,15 @@ class VisualDecision:
     rejected_rule: str | None = None
 
     def __post_init__(self) -> None:
-        if self.source not in {"llm", "deterministic"}:
+        if self.source not in get_args(VisualSource):
             raise ValueError("unsupported visual decision source")
-        if self.fallback_reason is not None and self.source == "llm":
-            raise ValueError("a chosen model plan did not fall back")
-        if self.accepted != (self.source == "llm"):
-            raise ValueError("accepted means the model's chart is what is shown")
+        if self.fallback_reason is not None and self.source != "deterministic":
+            raise ValueError(
+                "only a deterministic chart fell back -- a chosen model or patch plan did not "
+                "fall back"
+            )
+        if self.accepted != (self.source in {"llm", "patch"}):
+            raise ValueError("accepted means the model's or the patch's chart is what is shown")
 
 
 class DeterministicVisualPlanner:

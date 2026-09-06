@@ -1,8 +1,11 @@
 """The proposal vocabulary: plain strings on purpose, and the equality the baseline uses."""
 
 import pytest
+from support.visual_planners import BREAKDOWN_PROFILE
+from test_visual_plan_verifier import _FLOOR_FAMILIES
 
 from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
     ChartEncoding,
     ChartSpec,
     EncodingSort,
@@ -15,7 +18,12 @@ from finguard_orchestrator.domain.models.visual_plan import (
     Rejection,
     VisualPlanDraft,
     canonical,
+    draft_of,
 )
+from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+    DeterministicVisualPlanner,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 
 
 def test_a_draft_accepts_any_string_because_the_domain_refuses_later() -> None:
@@ -201,3 +209,32 @@ def test_canonical_stays_comparable_when_two_tooltips_differ_only_by_sort() -> N
         ),
     )
     assert canonical(one_sorted) != canonical(neither_sorted)
+
+
+@pytest.mark.parametrize("build_profile", _FLOOR_FAMILIES.values(), ids=_FLOOR_FAMILIES.keys())
+def test_a_spec_re_enters_the_verifier_and_comes_out_the_same(build_profile) -> None:
+    """draft_of is the inverse the verifier already has: verify(draft_of(spec)) is spec,
+    canonically -- for every floor family, not only the plain breakdown."""
+    profile = build_profile()
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    verified = verify(draft_of(spec), profile)
+    assert not isinstance(verified, Rejection), verified
+    assert canonical(verified) == canonical(spec)
+
+
+def test_the_draft_names_every_encoding_and_drops_the_title() -> None:
+    spec = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
+    assert spec is not None
+    draft = draft_of(spec)
+    assert draft.mark == spec.mark
+    assert [(e.channel, e.field, e.type) for e in draft.encodings] == [
+        (e.channel, e.field, e.type) for e in spec.encodings
+    ]
+    assert (draft.sort, draft.sort_field, draft.stack, draft.limit) == (
+        spec.sort,
+        spec.sort_field,
+        spec.stack,
+        spec.limit,
+    )
+    assert draft.rationale is None

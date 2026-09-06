@@ -172,6 +172,42 @@ def test_accepted_means_the_model_chart_is_shown() -> None:
     assert decision.fallback_reason is None
 
 
+def test_a_patch_is_a_source_and_is_what_is_shown() -> None:
+    """A verified patch is a third way to reach "what is shown" -- neither the model's own plan
+    nor the floor, but a decision that carries the same two facts (`accepted`, no fallback) that
+    `llm` does."""
+    decision = VisualDecision(
+        spec=some_bar_spec(), profile=some_profile(), source="patch", accepted=True, valid=True
+    )
+    assert decision.source == "patch" and decision.accepted and decision.valid
+    with pytest.raises(ValueError, match="accepted means"):
+        VisualDecision(spec=some_bar_spec(), profile=some_profile(), source="patch", accepted=False)
+    with pytest.raises(ValueError, match="did not fall back"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="patch",
+            accepted=True,
+            fallback_reason="timeout",
+        )
+
+
+def test_the_source_set_is_the_literal() -> None:
+    """The membership check reads the literal itself (`get_args`), not a hand-typed copy of it --
+    so a new source added to `VisualSource` is admitted here without this file changing."""
+    from typing import get_args
+
+    from finguard_orchestrator.domain.models.visual_plan import VisualSource
+
+    assert set(get_args(VisualSource)) == {"llm", "deterministic", "patch"}
+    with pytest.raises(ValueError, match="unsupported visual decision source"):
+        VisualDecision(
+            spec=some_bar_spec(),
+            profile=some_profile(),
+            source="wizard",  # type: ignore[arg-type]
+        )
+
+
 def test_two_rows_carrying_the_same_amount_are_still_two_rows() -> None:
     """The measure's cardinality counts distinct amounts, so it is not a row count. Passing it
     to `derive_chart` would decline this chart for having "one row"."""
