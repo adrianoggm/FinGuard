@@ -23,7 +23,10 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
-from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
+from finguard_orchestrator.infrastructure.controllers.llm_controller import (
+    _derived_context,
+    _visual_only_response,
+)
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import _visualization_to_dto
 from finguard_orchestrator.infrastructure.visualization.interpreter import interpret_visual
@@ -159,3 +162,36 @@ def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> N
     assert derived.decision is None  # a patch is not a VisualDecision until 4.2 says so
     assert derived.source_plan is None
     assert derived.evidence_ids == ()
+
+
+def test_the_restyle_helper_copies_a_trusted_contexts_provenance_forward() -> None:
+    """`restyle_turn` above proves the wire's own emptying of `source_plan`/`evidence_ids`, which
+    means it cannot also prove the copy that runs before the wire ever sees them: in that fixture,
+    `trusted_context.source_plan`/`.evidence_ids` are already `None`/`()` by the time
+    `_derived_context` reads them, so deleting the copy and falling through to the dataclass
+    defaults would leave every assertion there unchanged.
+
+    `_derived_context` is `_visual_only_response`'s own copy step, pulled into a module-level
+    function precisely so it can be driven directly with an in-process `VisualContext` that still
+    carries real provenance -- no wire, no round trip, nothing to empty it first. This is the test
+    that fails if `source_plan=trusted.source_plan, evidence_ids=trusted.evidence_ids` is deleted
+    from its construction."""
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        transaction_ids=(uuid4(), uuid4()),
+    )
+    trusted = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        source_plan=plan,
+        evidence_ids=(uuid4(), uuid4()),
+        turn_id=uuid4(),
+    )
+    derived = _derived_context(trusted, SPEC, "chart-2")
+    assert derived.source_plan is trusted.source_plan
+    assert derived.evidence_ids == trusted.evidence_ids
+    assert derived.derived_from == trusted.chart_id
+    assert isinstance(derived.turn_id, UUID) and derived.turn_id != trusted.turn_id
+    assert derived.decision is None
