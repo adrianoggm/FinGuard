@@ -39,7 +39,7 @@ from finguard_orchestrator.application.queries.readers.dimensions import (
 )
 from finguard_orchestrator.application.queries.readers.seam import _recogniser
 from finguard_orchestrator.application.queries.readers.subjects import (
-    _internal_movement_request,
+    read_internal_movement_request,
 )
 from finguard_orchestrator.application.queries.readers.windows import (
     _previous_calendar_window,
@@ -269,7 +269,10 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
     # mes pasado?" away from the only reader that keeps an internal scope, and the answer comes
     # back as ordinary spending. `internal_movement` claims the sentence that names a movement, not
     # a bare window over a plan that happens to be internal.
-    if _internal_movement_request(query) is not None or _account_follow_up_plan(query) is not None:
+    if (
+        read_internal_movement_request(query) is not None
+        or _account_follow_up_plan(query) is not None
+    ):
         return None
 
     if (

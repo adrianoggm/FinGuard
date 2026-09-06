@@ -248,11 +248,17 @@ def _how_many_payees_plan(query: AskFinancialQuestionQuery) -> FinancialPlan | N
     )
 
 
-@_recogniser
-def _internal_movement_request(
+def read_internal_movement_request(
     query: AskFinancialQuestionQuery,
 ) -> FinancialPlan | FinancialPlanDraft | None:
-    """A read of transfers that stayed inside the holder's own account set."""
+    """A read of transfers that stayed inside the holder's own account set.
+
+    Undecorated on purpose: `application/queries/readers/follow_up.py`'s
+    `read_contextual_follow_up` consults this reader too, to decide whether a reshape is one it
+    should decline in favour of an internal-movement request — and it must do so without recording
+    a cascade decision or memoising onto the query. `_internal_movement_request` below is the
+    cascade's own name for this same body, wrapped once in the seam that call site needs.
+    """
     folded = spanish.folded(query.sentence)
     facts = explicit_facts.read(query.sentence, today=query.today)
     between_accounts = _INTERNAL_BETWEEN_ACCOUNTS.search(folded) is not None
@@ -309,6 +315,14 @@ def _internal_movement_request(
         include_internal=True,
         internal_only=True,
     )
+
+
+@_recogniser
+def _internal_movement_request(
+    query: AskFinancialQuestionQuery,
+) -> FinancialPlan | FinancialPlanDraft | None:
+    """The cascade's recogniser for `read_internal_movement_request` — see its docstring."""
+    return read_internal_movement_request(query)
 
 
 def _stored_percentage_pair(

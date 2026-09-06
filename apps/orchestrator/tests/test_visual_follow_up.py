@@ -101,32 +101,31 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
 
 
 def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
-    """`classify` must not route through the `@_recogniser` seam: a read-only classifier that
-    records a RECOGNISER/CLAIMED decision, or memoises the *outer* reader's own name onto the
-    frozen query, is not pure, and the module docstring says it is.
+    """`classify` must not route through any `@_recogniser` seam — directly, as
+    `contextual_follow_up_plan` once was, or through a nested consultation, as
+    `_internal_movement_request` once was inside `read_contextual_follow_up`. A read-only
+    classifier that records a RECOGNISER/CLAIMED decision, or leaves so much as one attribute on
+    the frozen query it was handed, is not pure, and the module docstring says it is.
 
-    `_internal_movement_request` is a nested consultation `read_contextual_follow_up` has always
-    made, regardless of this task, and is not what this test is about; `contextual_follow_up_plan`
-    and its precondition key are — they are the seam this classifier must never enter, and were
-    both present (along with a recorded decision) before the split into an undecorated body.
+    Three sentences, three different claimants, so the seam has three different doors to sneak in
+    through: a reshape ("Solo restaurantes"), a presentation change ("Ponlo apilado"), and a
+    sentence that makes the *nested* `_internal_movement_request` claim ("Cuanto he movido entre
+    mis cuentas") — which used to record a decision even though `classify` itself never claims
+    anything for it (the overall result is UNRELATED; `read_contextual_follow_up` declines once its
+    nested check claims).
     """
-    reshape_query = _query("Solo restaurantes")
-    with recording_turn() as turn:
-        result = classify(reshape_query, FOLLOW_UP, CHARTED)
-    assert result == VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")
-    assert turn.sealed().decisions == ()
-    reshape_memo = getattr(reshape_query, "_finguard_reader_memo", {})
-    assert "contextual_follow_up_plan" not in reshape_memo
-    assert "when:contextual_follow_up_plan" not in reshape_memo
-
-    presentation_query = _query("Ponlo apilado")
-    with recording_turn() as turn:
-        result = classify(presentation_query, FOLLOW_UP, CHARTED)
-    assert result == VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
-    assert turn.sealed().decisions == ()
-    presentation_memo = getattr(presentation_query, "_finguard_reader_memo", {})
-    assert "contextual_follow_up_plan" not in presentation_memo
-    assert "when:contextual_follow_up_plan" not in presentation_memo
+    for sentence, expected in (
+        ("Solo restaurantes", VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")),
+        ("Ponlo apilado", VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")),
+        ("Cuanto he movido entre mis cuentas", VisualFollowUp("UNRELATED", "none")),
+    ):
+        query = _query(sentence)
+        before = dict(vars(query))
+        with recording_turn() as turn:
+            result = classify(query, FOLLOW_UP, CHARTED)
+        assert result == expected, sentence
+        assert turn.sealed().decisions == (), sentence
+        assert dict(vars(query)) == before, sentence
 
 
 def test_every_kind_and_claimant_is_reachable() -> None:
