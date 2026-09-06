@@ -432,6 +432,31 @@ Section G evaluation. `RESULTS.md` and `last-run.json` are committed after each 
 manifest's `dirty` flag stays honest, and the promotion decision itself is recorded in this file
 alongside the three manifests.
 
+**2026-09-06 — wave 4.1 landed: charts remember their provenance, follow-ups are classified,
+nothing visible changed.** Every chart the conversation remembers now carries `decision`,
+`source_plan`, `evidence_ids`, `derived_from` and `turn_id` (`VisualContext`, `chart.py`); only
+`derived_from` and `turn_id` travel on the wire (`VisualContextPayload`, `llm_dto.py`) — the other
+three are turn-local because the service keeps no conversation store. A fresh chart records its
+decision, plan, evidence and turn in `llm_mapper._remember_visual_context`; a restyle names its
+origin in `llm_controller._derived_context`. Every turn that follows a charted answer is classified
+into one of five kinds (`visual_follow_up.py`'s `classify`) by three deterministic readers —
+`interpret_visual`, `contextual_follow_up_plan`'s undecorated body (a deliberate substitution for
+§5's `continuation_patch.read()`), and a drill-down lexicon — and recorded as
+`Step.VISUAL_FOLLOW_UP`, the twelfth decision seam, at both places a visual turn passes: the query
+handler once its turn analysis is final, and the controller's visual short-circuit (a claimed
+`interpret_visual` answers without ever reaching the handler), through the same
+`record_visual_follow_up`, so the count does not miss the turns the handler never sees. Nothing
+visible changed — no answer, chart or call differs — proven by
+`test_the_classification_changes_nothing_visible` and its controller-side equivalent. The three
+readers claim a minority of the design's own §3 example phrasings — 5 of 13 at review time;
+«Ponlo en horizontal», «Prefiero líneas», «Ahora agrúpalo por meses» and «Excluye los taxis» are
+among the misses — and the handler's deterministic analyser labels a follow-up sentence
+NEW_REQUEST, so a reshape or drill-down kind surfaces only when the edge hands in its own analysis.
+That is stated as measurement, not as a defect: the record's first job is to say how often the
+readers agree and how often nothing claims a charted turn, before 4.2 decides whether the
+whitelist grows or a model is consulted. The corpus still cannot see charts — that is 4.2's
+episodes.
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate
