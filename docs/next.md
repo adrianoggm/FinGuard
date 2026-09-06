@@ -402,14 +402,22 @@ Left for the next branch, smallest first:
    async and returns a `VisualPlanDraft | None`; the floor's `plan(profile, presentation)` is sync and
    returns a `ChartSpec | None`. `VisualPlanningPolicy` is what holds both. `max_visible_rows` gets
    its first reader there, and every field of a `VisualPlanDraft` crosses the same three boundaries.
-5. **Invalid visual payloads are dropped silently, not refused.** `_encoding_sort_from_payload`
-   returns `None` for an unknown `mode` and swallows `EncodingSort`'s `ValueError`; `to_domain` maps
-   an unknown `stack` to `None`; and `_value_free_spec` validates keys, mark and channels but not the
-   *values* of `stack`, `sort` or `sort_field`. So `{"sort": {"mode": "sideways"}}` is a 200 that
-   quietly forgets the order. FinGuard's own payloads are valid, so nothing round-trips wrong today —
-   but the rule the mapper states for itself is "everything coming in is input", and input that fails
-   a domain type should be a 422. Absent key → `None`; present and valid → the domain object; present
-   and invalid → refused at the DTO. Close this before a probabilistic planner produces drafts.
+5. ~~**Invalid visual payloads are dropped silently, not refused.**~~ CLOSED — `61cdb7a` (the
+   visual-context DTO refuses an invalid stack/sort/sort_field) and `434567f` (the conversation
+   mapper stops silently dropping an invalid stack/sort).
+
+**2026-09-06 — wave 3 landed with the planner shipped off.** `ORCHESTRATOR_VISUAL_PLANNER=deterministic`
+is the shipped setting, so no model call happens in production; `shadow` is the mode the three
+measured runs (Task 9) use instead, running the model beside the floor and always showing the floor.
+Promotion to `hybrid` is a measured decision, not a calendar one: three runs of `just evaluate-visual`
+with the GPU alone, validity ≥ the floor's own verification rate (100 %), suitability and the
+`valid ∧ suitable ∧ changed` figure reported as the minimum over the three runs, and the budget set
+to the max P95 across them, excluding budget-censored timeouts. Every figure carries its sample size
+beside it — 16 cases, 14 entering the policy, 4 equivalent paraphrase pairs, 2 instructed cases, read
+from the run's own `RESULTS.md` header rather than retyped — so `k / 14` is never mistaken for the
+Section G evaluation. `RESULTS.md` and `last-run.json` are committed after each run, so the
+manifest's `dirty` flag stays honest, and the promotion decision itself is recorded in this file
+alongside the three manifests.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 

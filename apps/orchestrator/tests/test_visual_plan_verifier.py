@@ -6,6 +6,7 @@ from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartSpec,
     VisualDataset,
+    Visualization,
     VisualRow,
 )
 from finguard_orchestrator.domain.models.visual_plan import (
@@ -26,6 +27,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
+from finguard_orchestrator.infrastructure.visualization.vega_lite import present
 
 
 def breakdown():
@@ -119,6 +121,17 @@ def temporal_comparison():
     )
 
 
+def verified_breakdown():
+    """A breakdown whose total was checked, not a RATIO_SHARE dataset -- probe B (C1) needs
+    `verified_total=True` without the metric that already forces it, so the two probes exercise
+    two different profiles the way the branch review's own reproduction does."""
+    return visual_profile_of(
+        VisualDataset(metric="SUM", rows=(VisualRow("ALQUILER", 60), VisualRow("OCIO", 40))),
+        total_minor=100,
+        group_by="NONE",
+    )
+
+
 def twelve_row_breakdown():
     """More rows than `ROWS_THAT_FIT`, so the floor's own chart carries a `limit`."""
     return visual_profile_of(
@@ -181,6 +194,70 @@ def test_the_floors_own_chart_verifies_as_itself(build_profile) -> None:
     verified = verify(draft, profile)
     assert isinstance(verified, ChartSpec)
     assert canonical(verified) == canonical(floor)
+
+
+def _draft_from_spec(spec: ChartSpec) -> D:
+    return D(
+        spec.mark,
+        tuple(
+            E(e.channel, e.field, e.type, S(e.sort.mode, e.sort.field) if e.sort else None)
+            for e in spec.encodings
+        ),
+        sort=spec.sort,
+        sort_field=spec.sort_field,
+        stack=spec.stack,
+        limit=spec.limit,
+    )
+
+
+@pytest.mark.parametrize("build_profile", _FLOOR_FAMILIES.values(), ids=_FLOOR_FAMILIES.keys())
+def test_every_authorised_spec_survives_present(build_profile) -> None:
+    """C1's converse property, missing for eight task reviews: `verify()` returning a `ChartSpec`
+    is not enough on its own -- it must also be something `present()` (`vega_lite.py`) can
+    actually draw. Parametrised over every family the floor can emit, the same set
+    `test_the_floors_own_chart_verifies_as_itself` uses."""
+    profile = build_profile()
+    floor = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert floor is not None
+    verified = verify(_draft_from_spec(floor), profile)
+    assert isinstance(verified, ChartSpec)
+    present(Visualization(spec=verified, data=()))  # must not raise
+
+
+_C1_PROBES = {
+    # Probe A: a RATIO_SHARE profile's normalised bar -- the measure on `x`, the dimension in
+    # `color`, no axis left for a chart-wide sort to land on.
+    "ratio_share_normalised_bar": (
+        share,
+        D(
+            "bar",
+            (E("x", "value_minor", "quantitative"), E("color", "dimension", "nominal")),
+            stack="normalize",
+            sort="descending",
+            sort_field="value_minor",
+        ),
+    ),
+    # Probe B: a verified-total breakdown drawn as a donut -- `theta`/`color`, no axes at all.
+    "verified_breakdown_donut": (
+        verified_breakdown,
+        D(
+            "donut",
+            (E("theta", "value_minor", "quantitative"), E("color", "dimension", "nominal")),
+            sort="descending",
+            sort_field="value_minor",
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize(("build_profile", "draft"), _C1_PROBES.values(), ids=_C1_PROBES.keys())
+def test_c1_probes_are_rejected_instead_of_authorising_an_unrenderable_chart(
+    build_profile, draft
+) -> None:
+    """The two probes the branch review reproduced at HEAD: both used to `verify()` into a
+    `ChartSpec` that `present()` then refused with `ValueError("a sorted chart needs a
+    categorical or temporal dimension")`. Both must now be `Rejection`s."""
+    assert isinstance(verify(draft, build_profile()), Rejection)
 
 
 def test_structure_is_the_first_rule() -> None:

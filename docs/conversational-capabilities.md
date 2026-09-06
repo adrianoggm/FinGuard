@@ -35,6 +35,7 @@ conversacional, y un texto de producto puede prometerla nombrando lo que no est�
 | Respuesta con gráfico | Construida: dominio sí, ejecución determinista sí, prueba conversacional no | `ChartSpec` tipado sin protocolo, derivado del plan y del resultado ya verificados; ninguna cifra dentro del spec, y no por una comprobación sino porque una codificación sólo admite un identificador. Seis de las siete capacidades tienen gráfico propio; de los ratios sólo la proporción, y el resto cae en barras | `test_visualization_stage1.py`; el corpus no afirma ni un gráfico en sus 1167 turnos |
 | Reformular el gráfico con palabras | Construida: dominio sí, ejecución determinista sí, prueba conversacional no | `EncodingPatch` validado contra los campos del resultado y fusionado por código, y el parche **no lo emite el modelo**: es un regex sobre una lista blanca que corre antes de cualquier llamada, al contrario de lo que dice [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md) §2. Un parche que nombra un campo ausente se rechaza entero | `test_visualization_stage2_core.py`, con cadenas de dos y tres reformulaciones; ningún episodio del corpus |
 | Guardar una métrica y volver a verla | Construida: dominio sí, ejecución determinista sí, prueba conversacional no | `saved_metric` con `plan_json` y `encoding_json`, sin filas ni totales; el plan almacenado es entrada no confiable y se reejecuta con el alcance recomprobado. Esa recomprobación mira una sola cuenta: rechaza una cuenta propia del titular y no mira `across_accounts` | `test_saved_metrics.py`, `test_saved_metric_codec.py`; ninguna prueba llega a `/v1/metrics` por HTTP y la que ejecuta la política RLS no corre en ningún sitio |
+| Proponer el gráfico con un modelo | Construida y apagada por defecto (deterministic); en shadow el modelo propone, el dominio autoriza y el usuario ve el suelo; medida por scripts/evaluate_visual.py; promoción pendiente de tres corridas | `VisualPlannerPort.plan(question, profile, presentation, budget_seconds)` asíncrono; `VisualPlanningPolicy` decide entre el modelo y el suelo determinista (`DeterministicVisualPlanner`) según `ORCHESTRATOR_VISUAL_PLANNER` (`deterministic \| shadow \| hybrid \| promoted`), con presupuesto `visual_planner_budget_seconds` (6,0 s por defecto) | `test_visual_planning_policy.py`, `test_visual_plan_verifier.py`, `test_llm_visual_planner.py`, `test_visual_decision_seam.py`; medido además por `scripts/evaluate_visual.py` sobre `evaluation/visual/cases.yaml` (16 casos, 14 entran a la política, 4 pares de parafraseo equivalente, 2 instruidos), con `RESULTS.md` y `last-run.json` comprometidos tras cada corrida; ningún episodio del corpus llega a esta capacidad |
 
 ## Evaluación obligatoria por capacidad
 
@@ -74,12 +75,14 @@ dentro del chat; una métrica se guarda como estructura y se reejecuta al abrirl
 mantuvo, y se mantuvo mejor de lo prometido: el vocabulario del gráfico es abierto y el origen de
 sus cifras está cerrado por construcción.
 
-Lo que falta ahora es la medida. Ninguna de las tres filas aparece en el corpus, nada valida un spec
-contra un esquema, y con ellas quedan abiertos tres defectos: el presentador declara Vega-Lite v5
-contra un cliente que resuelve 6.4.3, el orden por defecto de un ranking ordena las etiquetas y no
-la medida, y reformular una métrica ya guardada no se construyó nunca — `PATCH /v1/metrics/{id}`
-acepta un título y reutiliza la definición almacenada. El estado criterio por criterio está en
-[ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md).
+Lo que falta ahora es la medida. Ninguna de las tres filas aparece en el corpus y nada valida un spec
+contra un esquema. De los tres defectos que esta sección dejaba abiertos, dos ya están cerrados:
+~~el presentador declara Vega-Lite v5 contra un cliente que resuelve 6.4.3~~ (`dfc8940`, "declare the
+Vega-Lite version the client actually has") y ~~el orden por defecto de un ranking ordena las
+etiquetas y no la medida~~ (`e4e5376`, "a ranked dimension sorts by magnitude, not by label"); ambos
+en `develop` en `d1b0a40`. Sigue abierto que reformular una métrica ya guardada no se construyó
+nunca — `PATCH /v1/metrics/{id}` acepta un título y reutiliza la definición almacenada. El estado
+criterio por criterio está en [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md).
 
 ## Lo que la evidencia de esta matriz no alcanza
 
