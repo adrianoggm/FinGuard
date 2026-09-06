@@ -81,7 +81,12 @@ from finguard_orchestrator.domain.errors import (
     InvalidValueError,
     QueryRejectedError,
 )
-from finguard_orchestrator.domain.models.chart import PresentationContext, VisualDataset, VisualRow
+from finguard_orchestrator.domain.models.chart import (
+    PresentationContext,
+    VisualContext,
+    VisualDataset,
+    VisualRow,
+)
 from finguard_orchestrator.domain.models.conversation import (
     AccountAlias,
     AccountCandidate,
@@ -120,7 +125,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnFocus,
     TurnRelation,
 )
-from finguard_orchestrator.domain.models.visual_plan import canonical
+from finguard_orchestrator.domain.models.visual_plan import Rejection, canonical
 from finguard_orchestrator.domain.ports.account_directory import AccountDirectoryPort
 from finguard_orchestrator.domain.ports.account_summary import AccountSummaryPort
 from finguard_orchestrator.domain.ports.card_directory import CardDirectoryPort
@@ -5229,7 +5234,7 @@ async def _decided_visual(
     decision = await policy.decide(question, profile, presentation)
     if decision is None:
         return result
-    _record_visual(decision)
+    record_visual_decision(decision)
     return replace(result, visual_decision=decision)
 
 
@@ -5251,15 +5256,30 @@ def _record_visual_follow_up(
     record_visual_follow_up(follow_up)
 
 
-def _record_visual(decision: VisualDecision) -> None:
+def record_visual_decision(decision: VisualDecision, *, was: str = "deterministic") -> None:
     """One `record()` per turn that entered the policy, in the design's own vocabulary.
 
     `changed` is whether the model's chart is what got shown -- only an accepted proposal in
     hybrid/promoted does that. Shadow always shows the floor, so it is `AGREED`/`changed=False`
     even on the run where the model's own proposal differed; `detail` is where that comparison
     lives, because `was`/`now` say what was shown, not what was tried.
+
+    `was` is read only by the `patch` branch: a restyle's decision carries no floor to compare
+    itself against (`proposed`/`fallback_reason` are never set on one), so the caller -- the only
+    one that knows what the chart showed before the patch -- hands it in, rather than this
+    function inventing "deterministic" for a chart that a model, or an earlier patch, produced.
     """
-    if not decision.proposed and decision.fallback_reason is None:
+    if decision.source == "patch":
+        record(
+            Step.VISUAL_PLANNER,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            was=was,
+            now="patch",
+            detail="accepted",
+        )
+    elif not decision.proposed and decision.fallback_reason is None:
         record(
             Step.VISUAL_PLANNER,
             Verdict.AGREED,
@@ -5315,6 +5335,27 @@ def _record_visual(decision: VisualDecision) -> None:
             ),
             "shown_spec": canonical(decision.spec),
         },
+    )
+
+
+def record_visual_decision_refused(context: VisualContext, rejection: Rejection) -> None:
+    """A merged patch the verifier refused. One `DECLINED` row, next to `record_visual_decision`
+    for the same reason every other seam's rows live together: a rejection rate is read per rule
+    across every turn that produced one, `patch` decisions included.
+
+    `changed=False` and `now` names what stayed on screen -- the previous chart, untouched -- not
+    what was tried and refused. `context` is the chart already showing, so its own decision (or
+    `"deterministic"`, the seam's floor default, when nothing decided it) is what `now` reports;
+    the row never carries the rejected spec at all, only the rule that refused it.
+    """
+    now = context.decision.source if context.decision is not None else "deterministic"
+    record(
+        Step.VISUAL_PLANNER,
+        Verdict.DECLINED,
+        changed=False,
+        field="chart",
+        now=now,
+        detail=f"invalid_proposal:{rejection.rule}",
     )
 
 

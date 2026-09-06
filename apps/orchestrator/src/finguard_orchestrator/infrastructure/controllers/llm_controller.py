@@ -44,6 +44,10 @@ from finguard_orchestrator.application import (
     ResetLlmPolicyCommand,
     Stage,
 )
+from finguard_orchestrator.application.queries.ask_financial_question import (
+    record_visual_decision,
+    record_visual_decision_refused,
+)
 from finguard_orchestrator.application.queries.browse_account import MAX_DAYS, MAX_MOVEMENTS
 from finguard_orchestrator.application.queries.readers.visual_follow_up import (
     classify_claimed_visual,
@@ -83,6 +87,7 @@ from finguard_orchestrator.domain.models.conversation import (
     slot_for,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
@@ -93,12 +98,14 @@ from finguard_orchestrator.domain.services import (
     turn_analyzer,
     window_words,
 )
+from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.visual_interpreter import (
     VisualIntent,
     apply_visual_intent,
     interpret_visual,
 )
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
 from finguard_orchestrator.domain.value_objects.payment_draft import PaymentDraft
@@ -185,7 +192,13 @@ def _saved_visual_source(
     return definition
 
 
-def _derived_context(trusted: VisualContext, spec: ChartSpec, chart_id: str) -> VisualContext:
+def _derived_context(
+    trusted: VisualContext,
+    spec: ChartSpec,
+    chart_id: str,
+    *,
+    decision: VisualDecision | None = None,
+) -> VisualContext:
     """The restyled chart's own context: a new id and turn, the source's profile and provenance.
 
     A named, pure function rather than an inline construction, so the copy of `source_plan` and
@@ -193,11 +206,18 @@ def _derived_context(trusted: VisualContext, spec: ChartSpec, chart_id: str) -> 
     in-process `VisualContext` that still carries them, instead of only through the endpoint, where
     every `trusted_context` reaching this point already came from a wire round trip that emptied
     both fields before the copy ever ran.
+
+    `decision` defaults to `None` -- a merged patch the verifier refuses never reaches this
+    function at all, and every other caller before Task 3 had no decision to pass either -- and is
+    turn-local like `VisualContext.decision` itself: a verified patch's own `VisualDecision`, when
+    there is one, so a restyle is a `patch` source the same way a fresh chart is
+    `llm`/`deterministic`.
     """
     return VisualContext(
         chart_id,
         spec,
         trusted.profile,
+        decision=decision,
         source_plan=trusted.source_plan,
         evidence_ids=trusted.evidence_ids,
         derived_from=trusted.chart_id,
@@ -227,23 +247,52 @@ def _visual_only_response(
             conversation=conversation_mapper.to_payload(conversation),
         )
     # `_saved_visual_source` only ever offers a definition that has a chart; this states it rather
-    # than assuming it, so a chart-less metric falls back to the conversation's own context.
+    # than assuming it, so a chart-less metric falls back to the conversation's own context. A
+    # `replace` rather than a fresh three-positional `VisualContext` (D-4.1-1): the saved metric
+    # replaces only the spec, and the rest of `context` -- its decision, source plan, evidence,
+    # provenance -- is provenance a three-positional rebuild would silently drop.
     trusted_context = (
-        VisualContext(context.chart_id, source.chart, context.profile)
+        replace(context, spec=source.chart)
         if source is not None and source.chart is not None
         else context
     )
     try:
         updated = apply_visual_intent(intent, trusted_context)
-        rendered_spec = present_spec(updated.spec)
     except ValueError:
         return QuestionResponse(
             outcome="VISUAL_INCOMPATIBLE",
             text="No puedo aplicar ese cambio a este gráfico; prueba con barras.",
             conversation=conversation_mapper.to_payload(conversation),
         )
+    # The domain verifies the merged chart exactly as it would a model's proposal (`draft_of`
+    # names what the merged spec names, dropping only the title, which is presentation and not a
+    # plan). It refuses, it never repairs: a refusal here leaves the previous chart untouched and
+    # says which rule it broke, and nothing below repairs it either.
+    verified = verify(draft_of(updated.spec), trusted_context.profile)
+    if isinstance(verified, Rejection):
+        record_visual_decision_refused(trusted_context, verified)
+        return QuestionResponse(
+            outcome="VISUAL_INCOMPATIBLE",
+            text=(
+                f"No puedo aplicar ese cambio a este gráfico ({verified.rule}: {verified.reason}); "
+                "el anterior se mantiene."
+            ),
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    rendered_spec = present_spec(verified)
+    decision = VisualDecision(
+        spec=verified,
+        profile=trusted_context.profile,
+        source="patch",
+        accepted=True,
+        valid=True,
+    )
+    was = (
+        trusted_context.decision.source if trusted_context.decision is not None else "deterministic"
+    )
+    record_visual_decision(decision, was=was)
     chart_id = "chart-" + uuid.uuid4().hex[:16]
-    derived_context = _derived_context(trusted_context, updated.spec, chart_id)
+    derived_context = _derived_context(trusted_context, verified, chart_id, decision=decision)
     next_conversation = conversation.with_visual_context(derived_context)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:

@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
+    VisualDecision,
 )
 from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
@@ -35,7 +36,10 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
-from finguard_orchestrator.infrastructure.controllers.llm_controller import _visual_only_response
+from finguard_orchestrator.infrastructure.controllers.llm_controller import (
+    _derived_context,
+    _visual_only_response,
+)
 from finguard_orchestrator.infrastructure.dto.llm_dto import VisualizationDerivation
 from finguard_orchestrator.infrastructure.mappers.conversation_mapper import (
     _encoding_sort_from_payload,
@@ -49,6 +53,7 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 from finguard_orchestrator.infrastructure.metrics.codec import decode_chart, encode_chart
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.infrastructure.visualization.vega_lite import present, present_spec
+from finguard_orchestrator.observability.decisions import Step, Verdict, recording_turn
 
 
 async def _decided(result: AskFinancialQuestionResult) -> AskFinancialQuestionResult:
@@ -71,7 +76,12 @@ def _base() -> tuple[ChartSpec, VisualProfile]:
     )
     profile = VisualProfile(
         fields=(
-            VisualField("dimension", "nominal", "dimension", 3),
+            # `order="MEASURE_DESC"`: this is a ranked breakdown bar, the shape
+            # `visual_profile_of` actually builds for one -- Task 3's verifier reads a
+            # dimension's own `order` before it lets a chart-wide sort touch its axis, and
+            # a plain default `"NONE"` would refuse the descending-sort restyle several tests
+            # below drive over this exact fixture.
+            VisualField("dimension", "nominal", "dimension", 3, "MEASURE_DESC"),
             VisualField("value_minor", "quantitative", "measure", 3),
         ),
         metric="SUM",
@@ -194,7 +204,17 @@ def test_visual_derivation_dto_rejects_ids_reuse_and_embedded_rows() -> None:
         )
 
 
-def test_temporal_chart_supports_bar_then_value_sort_follow_ups() -> None:
+def test_temporal_chart_supports_a_bar_follow_up_but_refuses_a_value_sort() -> None:
+    """A temporal chart survives a mark-only follow-up (line to bar); a second follow-up asking to
+    reorder that bar by value is now refused rather than silently allowed.
+
+    Before Task 3 wired the verifier into this path, `merge_encoding_patch` had no opinion on
+    ordering at all, so this chain used to end in `VISUAL_UPDATED` with the months re-ranked by
+    amount. `visual_profile_of` (`visual_profile.py::_dimension_order`) never gives a temporal
+    dimension anything but `order="TEMPORAL"` -- production never builds the profile this test's
+    second half used to rely on -- and the verifier's own `order` rule enforces exactly that: an
+    axis whose field is time-ordered keeps its own order whatever mark is currently drawing it.
+    """
     spec = ChartSpec(
         "line",
         (
@@ -229,26 +249,13 @@ def test_temporal_chart_supports_bar_then_value_sort_follow_ups() -> None:
     ordered = interpret_visual("ahora ordénalo de mayor a menor", with_bars.visual_contexts)
     assert ordered is not None
     ordered_response = _visual_only_response(ordered, with_bars)
-    assert ordered_response.outcome == "VISUAL_UPDATED"
-    assert ordered_response.visualization_derivation is not None
-    chart_c = ordered_response.visualization_derivation.chart_id
-    assert ordered_response.visualization_derivation.source_chart_id == chart_b
-    assert len({"chart-months", chart_b, chart_c}) == 3
+    assert ordered_response.outcome == "VISUAL_INCOMPATIBLE"
+    assert "order" in ordered_response.text
+    assert ordered_response.visualization_derivation is None
+    # Refused: the previous chart stays, nothing derived.
     with_order = to_domain(ordered_response.conversation)
-    assert [item.chart_id for item in with_order.visual_contexts] == [
-        "chart-months",
-        chart_b,
-        chart_c,
-    ]
-    assert with_order.visual_contexts[0].spec.mark == "line"
+    assert [item.chart_id for item in with_order.visual_contexts] == ["chart-months", chart_b]
     assert with_order.visual_contexts[1].spec.sort is None
-    assert with_order.visual_contexts[2].spec.sort == "descending"
-    encoding = ordered_response.visualization_derivation.spec["encoding"]
-    assert encoding["x"]["type"] == "nominal"
-    assert encoding["x"]["sort"] == {"field": "value_minor", "order": "descending"}
-    wire = ordered_response.model_dump(mode="json")
-    assert "data" not in repr(wire["visualization_derivation"])
-    assert "values" not in repr(wire["visualization_derivation"])
 
 
 def test_context_ids_and_channels_are_bounded() -> None:
@@ -432,9 +439,15 @@ def test_controller_visual_response_updates_context_and_returns_presented_spec()
 
 
 def test_visual_update_rotates_the_save_candidate_with_the_new_spec() -> None:
+    """`_base()`'s dimension is nominal, not temporal, so a `line`/`area` mark -- Section D
+    requires a temporal axis for either -- would now be refused by the verifier before ever
+    reaching the save candidate. `_base()`'s profile is already `positive`,
+    `mutually_exclusive` and `verified_total` with three parts, exactly what a donut needs, so
+    "ponlo en donut" is the mark change that actually survives verification on this fixture.
+    """
     spec, profile = _base()
     conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
-    intent = interpret_visual("ponlo en línea", conversation.visual_contexts)
+    intent = interpret_visual("ponlo en donut", conversation.visual_contexts)
     assert intent is not None
     definition = SavedMetricDefinition(
         FinancialPlan(
@@ -458,8 +471,148 @@ def test_visual_update_rotates_the_save_candidate_with_the_new_spec() -> None:
     assert response.save_candidate.chart_id == response.visualization_derivation.chart_id
     assert response.save_candidate.chart_id != "chart-1"
     updated = tokens.verify(response.save_candidate.definition_token, "holder")
-    assert updated.chart.mark == "line"
+    assert updated.chart.mark == "donut"
     assert updated.plan == definition.plan
+
+
+def _unverified_breakdown() -> tuple[ChartSpec, VisualProfile]:
+    """A breakdown -- positive, mutually exclusive parts -- whose total nobody has verified. The
+    one shape `_donut_claims` exists to refuse: a donut, or the normalised bar that claims the
+    same thing drawn as a single 100% bar instead of a circle."""
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("color", "dimension", "nominal"),
+        ),
+    )
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=False,
+    )
+    return spec, profile
+
+
+def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_the_rule() -> None:
+    """A donut asked of a breakdown whose total is not verified: merge_encoding_patch may accept
+    the shape, the verifier refuses the claim (rule donut_claims). The previous chart stays; the
+    response says why; one VISUAL_PLANNER record says DECLINED with the rule.
+
+    Driven with "apílalo en porcentaje" rather than the literal word "donut": `merge_encoding_patch`
+    carries its own, identical positive/mutually_exclusive/verified_total gate for `mark == "donut"`
+    (`chart.py`, predating this task), which raises before the merged spec ever reaches the new
+    verifier step. A normalised bar -- `stack="normalize"`, the same claim drawn as a single 100%
+    bar instead of a circle -- has no such gate in `merge_encoding_patch`, so it is the shape that
+    actually exercises the verifier's own `_donut_claims` refusal on this path.
+    """
+    spec, profile = _unverified_breakdown()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("apílalo en porcentaje", conversation.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_INCOMPATIBLE"
+    assert "donut_claims" in response.text or "total" in response.text.lower()
+    assert response.conversation is not None
+    assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.verdict is Verdict.DECLINED
+    assert decision.detail == "invalid_proposal:donut_claims"
+
+
+def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
+    """A breakdown bar whose dimension already ranks by magnitude -- `order="MEASURE_DESC"` -- so
+    a chart-wide descending sort by the measure is a claim the verifier's `_order` rule accepts."""
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("y", "dimension", "nominal"),
+        ),
+    )
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3, "MEASURE_DESC"),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+    )
+    return spec, profile
+
+
+async def test_a_verified_patch_is_recorded_as_a_patch_decision() -> None:
+    """«ordénalo de mayor a menor» over a breakdown bar: verifies; VISUAL_UPDATED as before -- and
+    the turn record and the derived context both learn a `patch`, not a fresh proposal, decided it.
+    """
+    spec, profile = _breakdown_bar_ranked()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ordénalo de mayor a menor", conversation.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UPDATED"
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert (decision.verdict, decision.now, decision.detail) == (
+        Verdict.AGREED,
+        "patch",
+        "accepted",
+    )
+    derived = to_domain(response.conversation).visual_contexts[-1]
+    assert derived.derived_from == "chart-1"
+    # decision is turn-local: after the wire it is None -- assert the in-process helper instead:
+    trusted = VisualContext("chart-1", spec, profile)
+    updated_spec = merge_encoding_patch(
+        spec, EncodingPatch(sort="descending", sort_field="value_minor"), profile
+    )
+    ctx = _derived_context(
+        trusted,
+        updated_spec,
+        "chart-2",
+        decision=VisualDecision(
+            spec=updated_spec, profile=profile, source="patch", accepted=True, valid=True
+        ),
+    )
+    assert ctx.decision is not None and ctx.decision.source == "patch"
+
+
+def test_the_saved_metric_source_keeps_the_original_provenance() -> None:
+    """D-4.1-1: the rebuild is replace(context, spec=source.chart), not a three-positional rebuild.
+
+    A three-positional `VisualContext(context.chart_id, source.chart, context.profile)` drops
+    `context`'s own `decision` -- the fact this chart's context already carries a `VisualDecision`
+    (`source="llm"`, here) -- and `record_visual_decision`'s `was` would then read the rebuilt
+    context's `decision` as `None` and report "deterministic", even though the chart it replaced
+    was the model's. `replace(context, spec=source.chart)` carries the decision across, so the
+    `patch` row this restyle records says what it actually replaced.
+    """
+    spec, profile = _breakdown_bar_ranked()
+    original_decision = VisualDecision(
+        spec=spec, profile=profile, source="llm", accepted=True, valid=True
+    )
+    context = VisualContext("chart-1", spec, profile, decision=original_decision)
+    conversation = Conversation(visual_contexts=(context,))
+    intent = interpret_visual("ordénalo de mayor a menor", conversation.visual_contexts)
+    assert intent is not None
+    definition = SavedMetricDefinition(
+        FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH)),
+        spec,
+    )
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation, source=definition)
+    assert response.outcome == "VISUAL_UPDATED"
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.was == "llm"
 
 
 def _limited() -> tuple[ChartSpec, VisualProfile]:
