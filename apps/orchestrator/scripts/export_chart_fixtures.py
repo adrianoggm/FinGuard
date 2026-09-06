@@ -189,11 +189,11 @@ def _donut_family() -> dict[str, Any]:
             ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
         ),
     )
-    # No `VisualProfile` is built for this hand-assembled spec: `declared` is the spec's own
-    # encoded fields, which is exactly what a profile would have declared for these uniform rows.
     donut_dataset = VisualDataset(rows=rows, metric="SUM")
+    # The profile is the one authority on what a row declares, here as on the wire.
+    profile = visual_profile_of(donut_dataset, total_minor=100_000, group_by="NONE")
     presented = present(
-        Visualization(spec=spec, data=tuple(rows_on_the_wire(donut_dataset, spec.fields())))
+        Visualization(spec=spec, data=tuple(rows_on_the_wire(donut_dataset, profile.field_names())))
     )
     return {"name": "donut", "spec": presented["spec"], "data": presented["data"]}
 
