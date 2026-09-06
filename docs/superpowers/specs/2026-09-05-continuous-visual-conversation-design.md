@@ -153,13 +153,19 @@ VisualFollowUpKind = Literal[
 ]
 ```
 
-Where it lives: the existing turn interpreter ladder (`Deterministic → Shadowed → Hybrid → Promoted`
-in `turn_interpreters.py`). The deterministic reader decides first — `interpret_visual()` already
-recognises presentation-only; `continuation_patch.read()` already recognises a reshape; the drill-down
-reader from §3.3 is new. The model is consulted only when the readers disagree or find nothing, and
-only if Wave 3's validity rate has earned it. The result is **verified** the way every other decision
-is: a `PRESENTATION_ONLY` must produce a patch `merge_encoding_patch` accepts; an `ANALYTICAL_RESHAPE`
-must produce a plan the financial verifier accepts; a `DRILL_DOWN` must resolve to exactly one group.
+Where it lives: `application/queries/readers/visual_follow_up.py`'s `classify()`. The deterministic
+reader decides first — `interpret_visual()` already recognises presentation-only;
+`read_contextual_follow_up()` already recognises a reshape; the drill-down reader from §3.3 is new.
+The model is consulted only when the readers disagree or find nothing, and only if Wave 3's validity
+rate has earned it — the turn interpreter ladder (`Deterministic → Shadowed → Hybrid → Promoted` in
+`turn_interpreters.py`) is the intended home for that model rung, still 4.2's to build. The result is
+**verified** the way every other decision is: a `PRESENTATION_ONLY` must produce a patch
+`merge_encoding_patch` accepts; an `ANALYTICAL_RESHAPE` must produce a plan the financial verifier
+accepts; a `DRILL_DOWN` must resolve to exactly one group.
+
+The controller's visual short-circuit — a claimed `interpret_visual` answered before any
+`TurnAnalysis` exists — classifies with `classify_claimed_visual(intent, sentence)` instead, the
+same module's own row for a turn `classify` never sees.
 
 | kind | financial planner | banking | visual planner |
 | --- | --- | --- | --- |
@@ -299,4 +305,4 @@ collaboration between users · proactive alerts.
 - **No explanation from the model's rationale.** Derived from the accepted decision or not shown.
 - **No silent reinterpretation.** An ambiguous follow-up asks.
 - **No wire authority.** `derived_from` and `turn_id` travel; decision, plan and evidence are
-  reconstructed server-side.
+  turn-local and are never taken from the wire (§4).
