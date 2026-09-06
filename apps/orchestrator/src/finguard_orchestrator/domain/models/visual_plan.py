@@ -91,3 +91,26 @@ def canonical(spec: ChartSpec) -> tuple[object, ...]:
     chart_sort = None if axis_has_own_sort else spec.sort
     chart_sort_field = None if axis_has_own_sort else spec.sort_field
     return (spec.mark, encodings, spec.stack, chart_sort, chart_sort_field, spec.limit)
+
+
+def draft_of(spec: ChartSpec) -> VisualPlanDraft:
+    """The plain-string draft that names exactly what a spec names -- so a spec the code built
+    (a merged patch, a saved metric's chart) can be judged by the same verifier a model's
+    proposal is. The title is dropped: a title is presentation, not a plan, and the verifier has
+    no rule for it."""
+    return VisualPlanDraft(
+        mark=spec.mark,
+        encodings=tuple(
+            ProposedEncoding(
+                channel=item.channel,
+                field=item.field,
+                type=item.type,
+                sort=None if item.sort is None else ProposedSort(item.sort.mode, item.sort.field),
+            )
+            for item in spec.encodings
+        ),
+        sort=spec.sort,
+        sort_field=spec.sort_field,
+        stack=spec.stack,
+        limit=spec.limit,
+    )
