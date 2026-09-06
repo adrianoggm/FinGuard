@@ -44,7 +44,7 @@ _TARGET = re.compile(
 _VISUAL_ALL = re.compile(r"(?:ver|mostrar|muestra(?:me)?|ensename)?\s*(?:todos|todas)|sin\s+limite")
 
 
-def _fold(sentence: str) -> str:
+def fold(sentence: str) -> str:
     return "".join(
         character
         for character in unicodedata.normalize("NFKD", sentence.casefold())
@@ -55,7 +55,7 @@ def _fold(sentence: str) -> str:
 def interpret_visual(
     sentence: str, contexts: tuple[VisualContext, ...], *, voice: bool = False
 ) -> VisualIntent | None:
-    folded = _fold(sentence)
+    folded = fold(sentence)
     financial = _FINANCIAL.search(folded)
     show_every_row = _VISUAL_ALL.fullmatch(folded.strip(" ¿?¡!.,")) is not None
     visual_signal = _VISUAL.search(folded) or show_every_row

@@ -443,7 +443,7 @@ _ON_A_COMPARISON: Final = (
     "_direct_period_comparison",
     "_comparison_with_a_named_window",
 )
-_ON_THE_QUERY_IN_VIEW: Final = ("_contextual_follow_up_plan",)
+_ON_THE_QUERY_IN_VIEW: Final = ("contextual_follow_up_plan",)
 _ON_THE_SENTENCE_ITSELF: Final = (
     "_multiple_movement_ranking",
     "_group_ranking_plan",
@@ -952,7 +952,7 @@ class AskFinancialQuestionHandler:
             query = replace(query, conversation=was)
             # And the continuation base goes with it. `last_plan` behind a half-built ratio is a
             # *mirror* of the focus being abandoned, not a question this turn continues —
-            # `_contextual_follow_up_plan` declines on exactly that state. Dropping the pending
+            # `contextual_follow_up_plan` declines on exactly that state. Dropping the pending
             # ratio is what makes the mirror indistinguishable from a base, because
             # `planning_context.can_continue` tells the two apart by whether the focus is a
             # `QueryFocus`, and this line has just made it one. Left standing, "ahora en todas mis
@@ -4404,7 +4404,7 @@ _ANSWERING: Final[
     "_comparison_with_previous_period": AskFinancialQuestionHandler._a_period_comparison,
     "_direct_period_comparison": AskFinancialQuestionHandler._a_period_comparison,
     "_comparison_with_a_named_window": AskFinancialQuestionHandler._a_period_comparison,
-    "_contextual_follow_up_plan": AskFinancialQuestionHandler._planned_answer,
+    "contextual_follow_up_plan": AskFinancialQuestionHandler._planned_answer,
     "_multiple_movement_ranking": AskFinancialQuestionHandler._a_movement_ranking,
     "_group_ranking_plan": AskFinancialQuestionHandler._planned_answer,
     "_natural_period_aggregate_plan": AskFinancialQuestionHandler._planned_answer,

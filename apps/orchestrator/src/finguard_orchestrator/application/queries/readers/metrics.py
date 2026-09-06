@@ -454,7 +454,7 @@ ROWS: Final = (
             "the sentence asks for a running total, or one is in view",
             _asks_a_running_total,
         ),
-        yields_to=("_contextual_follow_up_plan",),
+        yields_to=("contextual_follow_up_plan",),
         because=(
             "«¿y por semana?» over a running total is read by both, and the two have the same "
             "branch written twice — `unit_follow_up` here, and the CUMULATIVE clause in the "
@@ -488,7 +488,7 @@ ROWS: Final = (
             "the sentence asks for an average, or an average is in view",
             _asks_an_average,
         ),
-        yields_to=("_contextual_follow_up_plan", "_group_ranking_plan"),
+        yields_to=("contextual_follow_up_plan", "_group_ranking_plan"),
         because=(
             "Two different arguments, and both were already written down in prose. Against "
             "the follow-up: «¿y en gasolina?» after an average is an ellipsis, and the "
