@@ -112,7 +112,16 @@ class Settings(BaseSettings):
     cloudflare_api_token: SecretStr | None = None
     cloudflare_account_id: str | None = None
 
-    @field_validator("groq_api_key", "cloudflare_api_token", "cloudflare_account_id", mode="before")
+    @field_validator(
+        "groq_api_key",
+        "cloudflare_api_token",
+        "cloudflare_account_id",
+        "visual_planner_provider",
+        "visual_planner_model",
+        "visual_planner_temperature",
+        "visual_planner_max_output_tokens",
+        mode="before",
+    )
     @classmethod
     def _a_blank_key_is_no_key(cls, value: object) -> object:
         """`ORCHESTRATOR_XAI_API_KEY=` means the provider does not exist, not that it has a
@@ -125,6 +134,10 @@ class Settings(BaseSettings):
 
         The account id gets the same treatment because it fails the same way from one line lower:
         blank, it is not a rejected credential but a URL with a hole in it.
+
+        The visual planner's own settings share the treatment for the same reason one level up:
+        `ORCHESTRATOR_VISUAL_PLANNER_MODEL=` is what an unset override looks like on disk, and
+        taken literally it would fail float/int coercion instead of falling back to the planner's.
         """
         return None if isinstance(value, str) and not value.strip() else value
 
@@ -389,6 +402,34 @@ class Settings(BaseSettings):
     # budget with a bare `ValueError` and no field name, so an operator's `0` is caught here, at
     # load, with a named validation error, rather than during `create_app()`.
     visual_planner_budget_seconds: float = Field(default=6.0, gt=0)
+
+    # The visual planner's own provider, model and sampling. `None` means "the financial
+    # planner's", which is what shipped and what `deterministic` mode never reads. Naming one
+    # here lets "try a bigger chart model" move nothing else: the financial planner's model was
+    # chosen against its own evaluation (evaluation/planning/RESULTS.md), and one knob for both
+    # would hide which one moved. A blank value in the environment is "unset" -- see
+    # `_a_blank_key_is_no_key`.
+    visual_planner_provider: str | None = None
+    visual_planner_model: str | None = None
+    visual_planner_temperature: float | None = None
+    visual_planner_max_output_tokens: int | None = None
+
+    def visual_planner_sampling(self) -> tuple[float, int]:
+        """Temperature and token limit for the visual planner: its own when set, else the planner's.
+
+        `is None`, not `or`: an explicit temperature of 0.0 is a setting, not an absence.
+        """
+        temperature = (
+            self.planner_temperature
+            if self.visual_planner_temperature is None
+            else self.visual_planner_temperature
+        )
+        tokens = (
+            self.planner_max_output_tokens
+            if self.visual_planner_max_output_tokens is None
+            else self.visual_planner_max_output_tokens
+        )
+        return temperature, tokens
 
     # The categories that exist in the data. They belong to banking; until there is a
     # legitimate place to read them from, they are stated here and drift shows up as a

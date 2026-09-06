@@ -49,3 +49,60 @@ def test_the_rules_are_what_ships() -> None:
     `just evaluate-visual` say otherwise, and nothing else enforces that promise.
     """
     assert Settings.model_fields["visual_planner"].default == "deterministic"
+
+
+def test_the_visual_planner_falls_back_to_the_financial_planners_model(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER", "shadow")
+    for name in ("PROVIDER", "MODEL", "TEMPERATURE", "MAX_OUTPUT_TOKENS"):
+        monkeypatch.delenv(f"ORCHESTRATOR_VISUAL_PLANNER_{name}", raising=False)
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        settings = get_settings()
+        handler = app.state.query_bus._handlers[AskFinancialQuestionQuery]
+        visual = handler._visual_policy._model
+        assert visual._model == settings.planner_model
+        assert (visual._temperature, visual._max_output_tokens) == (
+            settings.planner_temperature,
+            settings.planner_max_output_tokens,
+        )
+    finally:
+        get_settings.cache_clear()
+
+
+def test_the_visual_planner_takes_its_own_model_and_sampling_when_named(monkeypatch) -> None:  # noqa: ANN001
+    """`is None`, not `or`: the visual temperature 0.0 must win over a planner temperature 0.3."""
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER", "shadow")
+    monkeypatch.setenv("ORCHESTRATOR_PLANNER_TEMPERATURE", "0.3")
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_MODEL", "other:1b")
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_TEMPERATURE", "0.0")
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_MAX_OUTPUT_TOKENS", "512")
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        settings = get_settings()
+        handler = app.state.query_bus._handlers[AskFinancialQuestionQuery]
+        visual = handler._visual_policy._model
+        assert (visual._model, visual._temperature, visual._max_output_tokens) == (
+            "other:1b",
+            0.0,
+            512,
+        )
+        assert handler._planner._model == settings.planner_model  # untouched
+    finally:
+        get_settings.cache_clear()
+
+
+def test_a_blank_visual_planner_setting_is_unset(monkeypatch) -> None:  # noqa: ANN001
+    for name in ("PROVIDER", "MODEL", "TEMPERATURE", "MAX_OUTPUT_TOKENS"):
+        monkeypatch.setenv(f"ORCHESTRATOR_VISUAL_PLANNER_{name}", "")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert (settings.visual_planner_provider, settings.visual_planner_model) == (None, None)
+        assert settings.visual_planner_sampling() == (
+            settings.planner_temperature,
+            settings.planner_max_output_tokens,
+        )
+    finally:
+        get_settings.cache_clear()

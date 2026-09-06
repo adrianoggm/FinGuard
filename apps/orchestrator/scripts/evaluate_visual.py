@@ -76,13 +76,30 @@ class Case:
     visual_instruction: bool = False
     expect_chart: bool = True
     plan_limited: bool = False
+    requires: dict[str, Any] | None = None
+    """Section D's structure for a suitable proposal -- see `requires_hold`."""
+    instruction_effect: dict[str, Any] | None = None
+    """What a visual instruction must visibly do to the proposal -- see `instruction_holds`."""
+
+
+_REQUIRES_KEYS = frozenset({"series", "ordered", "bar_stack"})
+_EFFECT_KEYS = frozenset({"mark"})
 
 
 def load_cases(path: Path) -> list[Case]:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return [
+    cases = [
         Case(**{**item, "suitable_marks": tuple(item.get("suitable_marks", ()))}) for item in raw
     ]
+    for case in cases:
+        unknown = set(case.requires or ()) - _REQUIRES_KEYS
+        if unknown:
+            raise ValueError(f"{case.id}: unknown requires keys {sorted(unknown)}")
+        if case.visual_instruction and not (
+            case.instruction_effect and set(case.instruction_effect) <= _EFFECT_KEYS
+        ):
+            raise ValueError(f"{case.id}: an instructed case names its instruction_effect (mark)")
+    return cases
 
 
 @dataclass
@@ -102,6 +119,55 @@ class Results:
     no_chart_total: int = 0
     no_chart_held: int = 0
     by_group: dict[str, Counter] = field(default_factory=dict)
+
+
+_AXES = frozenset({"x", "y"})
+_OFFSETS = frozenset({"xOffset", "yOffset"})
+
+
+def requires_hold(spec: ChartSpec, profile: VisualProfile, requires: dict[str, Any] | None) -> bool:
+    """Section D's structure, checked on the proposal.
+
+    `series: true` -- a series-role field is on color, and on an offset too when the mark is a bar.
+    `ordered: <mode>` -- when the dimension-role field sits on an axis, that encoding's sort (or,
+    failing one, the chart-wide `sort`) has this mode; a dimension off the axes (a donut's) is not
+    ordered, so the key does not apply to it. `bar_stack: <stack>` -- when the mark is a bar, its
+    stack is this; other marks do not stack, so the key does not apply to them.
+    Roles are the profile's, never guessed from a field's name.
+    """
+    if not requires:
+        return True
+    series = {item.name for item in profile.role("series")}
+    dimensions = {item.name for item in profile.role("dimension")}
+    if requires.get("series"):
+        color = next((item for item in spec.encodings if item.channel == "color"), None)
+        if color is None or color.field not in series:
+            return False
+        if spec.mark == "bar" and not any(
+            item.channel in _OFFSETS and item.field in series for item in spec.encodings
+        ):
+            return False
+    if (mode := requires.get("ordered")) is not None:
+        axis = next(
+            (item for item in spec.encodings if item.channel in _AXES and item.field in dimensions),
+            None,
+        )
+        if axis is not None and (axis.sort.mode if axis.sort is not None else spec.sort) != mode:
+            return False
+    if (stack := requires.get("bar_stack")) is not None and spec.mark == "bar":
+        if spec.stack != stack:
+            return False
+    return True
+
+
+def instruction_holds(spec: ChartSpec, effect: dict[str, Any] | None) -> bool:
+    """The instruction's own effect on the proposal -- not "differs from the twin", which a changed
+    orientation or sort satisfies without the instruction having been heard at all.
+
+    Judged on the verified proposal: a refused attempt has no proposal and the case is skipped,
+    never counted insensitive.
+    """
+    return bool(effect) and spec.mark == effect["mark"]
 
 
 def judge(case: Case, decision: VisualDecision | None, results: Results) -> None:
@@ -126,7 +192,9 @@ def judge(case: Case, decision: VisualDecision | None, results: Results) -> None
         return
     results.valid += 1
     group["valid"] += 1
-    suitable = decision.proposed_spec.mark in case.suitable_marks
+    suitable = decision.proposed_spec.mark in case.suitable_marks and requires_hold(
+        decision.proposed_spec, decision.profile, case.requires
+    )
     changed = bool(decision.changed_from_baseline)
     results.suitable += suitable
     results.changed += changed
@@ -169,7 +237,7 @@ def stability(cases: list[Case], proposals: dict[str, Any]) -> Stability:
         same = canonical(mine) == canonical(twin)
         if case.visual_instruction:
             out.instructed += 1
-            out.sensitive += not same
+            out.sensitive += instruction_holds(mine, case.instruction_effect)
         else:
             out.pairs += 1
             out.held += same
@@ -222,7 +290,7 @@ def _report(results: Results, stable: Stability) -> str:
         ("cases entering the policy", str(results.entered)),
         ("declined (the floor itself found nothing to draw)", str(results.declined)),
         ("validity", f"{results.valid} / {results.entered}"),
-        ("suitability", f"{results.suitable} / {results.valid}"),
+        ("suitability (mark and structure)", f"{results.suitable} / {results.valid}"),
         ("changed_from_baseline", f"{results.changed} / {results.valid}"),
         (
             "**valid, suitable and changed**",
@@ -230,9 +298,9 @@ def _report(results: Results, stable: Stability) -> str:
             "   <- the figure that carries the argument",
         ),
         ("stability under equivalent paraphrase", held),
-        ("sensitivity to a visual instruction", sensitive),
+        ("sensitivity (the instruction's own effect, on verified proposals)", sensitive),
         ("no-chart cases kept out", f"{results.no_chart_held} / {results.no_chart_total}"),
-        ("latency P50 / P95 (ms)", latency),
+        ("added turn latency P50 / P95 (ms)", latency),
         (
             "fallback reasons",
             f"{dict(results.fallback_reasons)}; rejected rules {dict(results.rejected_rules)}",
@@ -241,6 +309,10 @@ def _report(results: Results, stable: Stability) -> str:
     lines = ["| measure | value |", "| --- | --- |"]
     lines += [f"| {measure} | {value} |" for measure, value in rows]
     report = "\n".join(lines) + "\n"
+    report += (
+        "\nLatency is added to every turn the model runs in shadow or hybrid mode: the answer "
+        "waits for the planner or for its budget.\n"
+    )
     if stable.breaks:
         # The single most useful diagnostic a paraphrase run produces: which pair broke, not just
         # how many. Listed under the stability row rather than folded into the table, since a
@@ -308,15 +380,22 @@ async def run(args: argparse.Namespace) -> int:
     except Exception:
         logger.warning("evaluate_visual.warmup_failed")
 
+    settings = get_settings()
+    temperature, max_output_tokens = settings.visual_planner_sampling()
+
     manifest = await evaluate_planning.run_manifest(CASES_PATH, provider, args.model, len(cases))
+    manifest["visual_planner"] = {
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "budget_seconds": args.budget,
+    }
     print(f"RUN-MANIFEST {json.dumps(manifest, sort_keys=True)}", flush=True)
 
-    settings = get_settings()
     planner = LlmVisualPlanner(
         provider,
         model=args.model,
-        temperature=settings.planner_temperature,
-        max_output_tokens=settings.planner_max_output_tokens,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
     )
     policy = VisualPlanningPolicy(
         model=planner,
