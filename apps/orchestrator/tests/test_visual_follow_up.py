@@ -178,19 +178,32 @@ def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
 
 
 def test_every_kind_and_claimant_is_reachable() -> None:
-    """Every kind and claimant `classify` can produce is produced at least once here — through
-    `classify` itself over ROWS (whose mixed row already forces `presentation+reshape`), plus the
-    other two-claimant pairs proven elsewhere: `test_two_readers_claiming_is_ambiguous` forces
-    `presentation+drill`, and `reshape+drill` is forced by no sentence and no real turn at all —
-    `classify`'s own drill-before-reshape precedence makes the two mutually exclusive. The pairs
-    are pulled from the `Claimant` literal itself via `get_args`, never hand-typed here, so a
-    fourth pair would fail this assertion rather than pass it silently."""
+    """Every kind and claimant `classify`/`classify_claimed_visual` can produce is produced at
+    least once here, through real (unmocked) calls: `classify` itself over ROWS gives the single
+    claimants and `presentation+reshape` (the mixed row); `classify_claimed_visual` is asked
+    directly for its own two AMBIGUOUS returns -- a mixed intent (`presentation+reshape` again)
+    and an I-1 sentence that matches the drill lexicon (`presentation+drill`).
+
+    The assertion is deliberately NOT a union of `get_args(Claimant)` back into what was produced
+    -- that union would make any `+`-shaped member of `Claimant` pass whether or not anything ever
+    produces it. Instead it takes the *difference*: `reshape+drill` is the one documented member
+    nothing here (or in production) can reach, because `classify`'s own drill-before-reshape
+    precedence (`reshape = not drill and ...`) makes drill and reshape mutually exclusive. Any
+    other unreached member -- including a new pair added to `Claimant` without a reader to produce
+    it -- fails this assertion instead of passing silently."""
     produced = [classify(_query(sentence), analysis, CHARTED) for sentence, analysis, _, _ in ROWS]
     kinds = {result.kind for result in produced} | {"AMBIGUOUS"}
-    pairs = {claimant for claimant in get_args(Claimant) if "+" in claimant}
-    claimants = {result.claimant for result in produced} | pairs
+    claimants = {result.claimant for result in produced}
+
+    mixed_intent = VisualIntent(None, None, "explanation", mixed=True)
+    claimants.add(classify_claimed_visual(mixed_intent, "cualquier cosa").claimant)
+    lexicon_sentence = CLAIMED_ROWS[0][0]
+    lexicon_intent = interpret_visual(lexicon_sentence, CHARTED.visual_contexts)
+    assert lexicon_intent is not None
+    claimants.add(classify_claimed_visual(lexicon_intent, lexicon_sentence).claimant)
+
     assert kinds == set(get_args(VisualFollowUpKind))
-    assert claimants == set(get_args(Claimant))
+    assert set(get_args(Claimant)) - claimants == {"reshape+drill"}
 
 
 def test_the_reader_never_reads_amounts() -> None:

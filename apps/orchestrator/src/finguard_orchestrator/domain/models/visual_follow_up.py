@@ -21,7 +21,7 @@ Claimant = Literal[
     "none",
 ]
 """Which deterministic reader(s) claimed the turn. The three `+`-joined pairs are the disagreement
-§5 says a model may one day settle -- naming which two readers claimed it, not just that more than
+§5 says a model may one day settle — naming which two readers claimed it, not just that more than
 one did; `none` is the ordinary turn that has nothing to do with the chart."""
 
 
