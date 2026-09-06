@@ -265,23 +265,28 @@ def _visual_only_response(
             conversation=conversation_mapper.to_payload(conversation),
         )
     # The domain verifies the merged chart exactly as it would a model's proposal (`draft_of`
-    # names what the merged spec names, dropping only the title, which is presentation and not a
-    # plan). It refuses, it never repairs: a refusal here leaves the previous chart untouched and
-    # says which rule it broke, and nothing below repairs it either.
-    verified = verify(draft_of(updated.spec), trusted_context.profile)
-    if isinstance(verified, Rejection):
-        record_visual_decision_refused(trusted_context, verified)
+    # names what the merged spec names). It refuses, it never repairs: a refusal here leaves the
+    # previous chart untouched and names which rule it broke, and nothing below repairs it either.
+    #
+    # `verify` is a gate here, nothing more: `draft_of`/`_structure` carry no titles, so what it
+    # returns on acceptance is `updated.spec` minus its chart title and every encoding title. What
+    # is shown, stored in the derived context, and offered for saving is `updated.spec` itself --
+    # the merged chart, titles included -- at every site below; `refusal` is read only for its
+    # `Rejection`, never held onto past the `isinstance` check.
+    refusal = verify(draft_of(updated.spec), trusted_context.profile)
+    if isinstance(refusal, Rejection):
+        record_visual_decision_refused(trusted_context, refusal)
         return QuestionResponse(
             outcome="VISUAL_INCOMPATIBLE",
             text=(
-                f"No puedo aplicar ese cambio a este gráfico ({verified.rule}: {verified.reason}); "
-                "el anterior se mantiene."
+                f"No puedo aplicar ese cambio a este gráfico: no pasa la regla «{refusal.rule}» "
+                "del verificador; el anterior se mantiene."
             ),
             conversation=conversation_mapper.to_payload(conversation),
         )
-    rendered_spec = present_spec(verified)
+    rendered_spec = present_spec(updated.spec)
     decision = VisualDecision(
-        spec=verified,
+        spec=updated.spec,
         profile=trusted_context.profile,
         source="patch",
         accepted=True,
@@ -292,7 +297,7 @@ def _visual_only_response(
     )
     record_visual_decision(decision, was=was)
     chart_id = "chart-" + uuid.uuid4().hex[:16]
-    derived_context = _derived_context(trusted_context, verified, chart_id, decision=decision)
+    derived_context = _derived_context(trusted_context, updated.spec, chart_id, decision=decision)
     next_conversation = conversation.with_visual_context(derived_context)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:

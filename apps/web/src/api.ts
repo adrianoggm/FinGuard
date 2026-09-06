@@ -258,13 +258,20 @@ export type ConversationState = {
     chart_id: string;
     spec: Record<string, unknown>;
     profile: {
-      fields: { name: string; type: "nominal" | "quantitative" | "temporal" }[];
+      fields: {
+        name: string;
+        type: "nominal" | "quantitative" | "temporal";
+        role?: "dimension" | "measure" | "series" | null;
+        order?: "MEASURE_DESC" | "INPUT" | "TEMPORAL" | "NONE" | null;
+      }[];
       cardinality: number;
       metric?: string | null;
       unit?: "money" | "count" | "ratio" | "unknown" | null;
       positive: boolean;
       mutually_exclusive: boolean;
       verified_total: boolean;
+      comparison?: boolean;
+      plan_limited?: boolean;
     };
   }[];
   last_plan: PlanContext | null;

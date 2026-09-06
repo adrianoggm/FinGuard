@@ -5,6 +5,7 @@ or HTTP. Keeping them apart is what stops a change in the contract from reaching
 core — before this, `LlmPolicy` was both the domain object and the request body.
 """
 
+from dataclasses import fields as dataclass_fields
 from datetime import date
 from typing import Annotated, Literal, cast, get_args
 from uuid import UUID
@@ -44,8 +45,12 @@ from finguard_orchestrator.domain.models.chart import (
     ROWS_THAT_FIT,
     Channel,
     EncodingSort,
+    FieldOrder,
+    FieldRole,
+    FieldType,
     SortMode,
     Stack,
+    VisualField,
 )
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
@@ -238,9 +243,52 @@ class TurnPayload(_Payload):
     question: str | None = Field(default=None, max_length=MAX_TURN_NOTE)
 
 
+# `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
+# `"NONE"` here would be the second copy that goes stale the moment that default changes, which
+# this file's own comments already argue against for `stack`/`sort`/`sort_field` above.
+_DEFAULT_ORDER: FieldOrder = cast(
+    FieldOrder, next(f.default for f in dataclass_fields(VisualField) if f.name == "order")
+)
+
+
 class VisualFieldPayload(_Payload):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    type: Literal["nominal", "quantitative", "temporal"]
+    type: FieldType
+    # Shape facts a verifier reads on the way back, never values. Optional so a conversation an
+    # older client still holds validates; `to_domain` falls back to the old derivation when they
+    # are absent.
+    role: FieldRole | None = None
+    order: FieldOrder | None = None
+
+    @model_validator(mode="after")
+    def _role_matches_type(self) -> "VisualFieldPayload":
+        """A client-supplied `role` that contradicts `type` used to reach
+        `VisualField.__post_init__` unguarded -- `conversation_mapper.to_domain` builds the domain
+        type straight from this payload -- and a bare `ValueError` there is neither a
+        `DomainError` nor a pydantic `ValidationError`, so it fell through as an unhandled 500
+        instead of a 422 (the same collision `_derived_from_is_not_self` and the per-encoding sort
+        validator below already exist to close for this DTO's other domain-checked fields).
+
+        One source of truth rather than a copy of `__post_init__`'s invariants: build the domain
+        `VisualField` here, with the same fallback `to_domain` uses when `role`/`order` are absent,
+        and let its own `ValueError` become this validator's -- which pydantic turns into a 422.
+        `cardinality=0` is a placeholder; nothing this constructs is kept.
+        """
+        # The same fallback `conversation_mapper.to_domain` uses when `role` is absent: `type` is
+        # the only signal the wire ever carried before this fix, and it is wrong for `series` --
+        # which reads as `dimension` -- the same bound that reconstruction's own comment names.
+        fallback_role: FieldRole = "measure" if self.type == "quantitative" else "dimension"
+        try:
+            VisualField(
+                self.name,
+                self.type,
+                self.role if self.role is not None else fallback_role,
+                0,
+                self.order if self.order is not None else _DEFAULT_ORDER,
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
 
 
 class VisualProfilePayload(_Payload):
@@ -251,6 +299,8 @@ class VisualProfilePayload(_Payload):
     positive: bool = False
     mutually_exclusive: bool = False
     verified_total: bool = False
+    comparison: bool = False
+    plan_limited: bool = False
 
 
 class VisualContextPayload(_Payload):

@@ -2,29 +2,37 @@
 
 import logging
 
+import pytest
+from support.visual_planners import BREAKDOWN_PROFILE, ScriptedVisualPlanner
 from support.visual_planners import VERTICAL_DRAFT as VERTICAL
-from support.visual_planners import ScriptedVisualPlanner
 from test_logging import Recording
 from test_visualization_stage1 import _result  # the existing result builder
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     VisualRow,
     _decided_visual,
+    record_visual_decision,
+    record_visual_decision_refused,
 )
-from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION
+from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
 from finguard_orchestrator.domain.models.visual_plan import (
     ProposedEncoding,
     ProposedSort,
+    Rejection,
     VisualMode,
     VisualPlanDraft,
 )
 from finguard_orchestrator.domain.ports.visual_planner import VisualPlannerPort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
+    VisualDecision,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.observability.decisions import Step, Verdict, recording_turn
+
+SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
+assert SPEC is not None
 
 # Two rows, a measure and a nominal dimension -- the same shape `BREAKDOWN_PROFILE` (in
 # `support.visual_planners`) draws, and the one `VERTICAL_DRAFT` is a valid, differently-oriented
@@ -216,8 +224,68 @@ async def test_the_question_never_enters_the_record() -> None:
         for slot in (decision.field, decision.was, decision.now, decision.detail):
             assert slot is None or ("734291" not in slot and "Mercadona" not in slot)
 
-    # The wider of the two sinks: `_record_visual`'s `logger.info` has nine free-form keys and no
-    # redaction of any kind -- `JsonLines` copies `extra` verbatim, and nothing else in this task
-    # inspects it.
+    # The wider of the two sinks: `record_visual_decision`'s `logger.info` has nine free-form keys
+    # and no redaction of any kind -- `JsonLines` copies `extra` verbatim, and nothing else in this
+    # task inspects it.
     emitted = "\n".join(recorder.lines)
     assert "734291" not in emitted and "Mercadona" not in emitted
+
+
+def test_a_patch_records_agreed_and_a_refusal_records_declined() -> None:
+    """M4 (fix round 2): the two record shapes `record_visual_decision`/
+    `record_visual_decision_refused` produce, exercised beside every other seam's rows --
+    `test_visualization_stage2_core.py` was, until now, the only place either was ever read back.
+    I3's own invariant (`changed is (was != now)`) is asserted here too: a `patch` row *did*
+    change what was shown, and a refused one did not.
+    """
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
+    patch_decision = VisualDecision(
+        spec=SPEC, profile=BREAKDOWN_PROFILE, source="patch", accepted=True, valid=True
+    )
+    with recording_turn() as turn:
+        record_visual_decision(patch_decision, was="llm")
+        record_visual_decision_refused(context, Rejection("order", "ordering does not apply"))
+    accepted, declined = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert (accepted.verdict, accepted.was, accepted.now, accepted.detail) == (
+        Verdict.AGREED,
+        "llm",
+        "patch",
+        "accepted",
+    )
+    assert accepted.changed is True
+    assert (declined.verdict, declined.now, declined.detail) == (
+        Verdict.DECLINED,
+        "deterministic",
+        "invalid_proposal:order",
+    )
+    assert declined.changed is False
+
+
+async def test_a_patch_decision_never_enters_the_promotion_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """I4 (fix round 2): `record_visual_decision`'s own first line reads "One `record()` per turn
+    that entered the policy" -- a restyle never enters the policy, so its `patch` decision must
+    not reach `visual_planner.decision`, the promotion-evidence sink Task 9's acceptance/
+    abstention/latency rates are read off. A deterministic decision (the seam's own default,
+    tested here for contrast) still emits exactly one.
+    """
+    with caplog.at_level(logging.INFO):
+        with recording_turn():
+            record_visual_decision(
+                VisualDecision(
+                    spec=SPEC, profile=BREAKDOWN_PROFILE, source="patch", accepted=True, valid=True
+                ),
+                was="deterministic",
+            )
+    assert not [r for r in caplog.records if r.getMessage() == "visual_planner.decision"]
+
+    caplog.clear()
+    deterministic_decision = VisualDecision(
+        spec=SPEC, profile=BREAKDOWN_PROFILE, source="deterministic"
+    )
+    with caplog.at_level(logging.INFO):
+        with recording_turn():
+            record_visual_decision(deterministic_decision)
+    promotion_logs = [r for r in caplog.records if r.getMessage() == "visual_planner.decision"]
+    assert len(promotion_logs) == 1

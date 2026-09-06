@@ -241,6 +241,14 @@ def test_temporal_chart_supports_a_bar_follow_up_but_refuses_a_value_sort() -> N
     chart_b = bars_response.visualization_derivation.chart_id
     assert bars_response.visualization_derivation.source_chart_id == "chart-months"
     assert chart_b != "chart-months"
+    # M3: the value-free sweep this test always ran, restored on the step that still succeeds --
+    # the mark-only follow-up never touches the axis's own type, so `x` stays temporal here even
+    # though the (now refused) sort follow-up used to turn it into a ranked, nominal-looking axis.
+    bars_encoding = bars_response.visualization_derivation.spec["encoding"]
+    assert bars_encoding["x"]["type"] == "temporal"
+    bars_wire = bars_response.model_dump(mode="json")
+    assert "data" not in repr(bars_wire["visualization_derivation"])
+    assert "values" not in repr(bars_wire["visualization_derivation"])
 
     with_bars = to_domain(bars_response.conversation)
     assert [item.chart_id for item in with_bars.visual_contexts] == ["chart-months", chart_b]
@@ -519,7 +527,10 @@ def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_th
     with recording_turn() as turn:
         response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_INCOMPATIBLE"
-    assert "donut_claims" in response.text or "total" in response.text.lower()
+    # I1: the sentence is Spanish and names the rule as a token; the rule's English `reason`
+    # ("...verified whole") never reaches the user.
+    assert "donut_claims" in response.text
+    assert "verified whole" not in response.text
     assert response.conversation is not None
     assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
     (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
@@ -584,6 +595,68 @@ async def test_a_verified_patch_is_recorded_as_a_patch_decision() -> None:
         ),
     )
     assert ctx.decision is not None and ctx.decision.source == "patch"
+
+
+def test_a_round_tripped_ranked_bar_still_verifies_the_descending_sort() -> None:
+    """Fix round 1's own pin: before the wire carried a field's `role`/`order`, this exact
+    restyle -- a ranked breakdown bar, echoed back once, then asked to sort descending by the
+    measure it is already ranked by -- was wrongly refused as `VISUAL_INCOMPATIBLE` (rule
+    `order`), because `conversation_mapper.to_domain` reset the dimension's `order` to `"NONE"`
+    and the verifier's `order` rule reads `NONE` as "this field has no ranking convention, nothing
+    may sort it". The wire now carries `order`, so the same restyle verifies and is recorded as a
+    `patch`, exactly as it would have been in a single turn that never crossed the wire at all.
+    """
+    spec, profile = _breakdown_bar_ranked()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    from_wire = to_domain(to_payload(conversation))
+    intent = interpret_visual("ordénalo de mayor a menor", from_wire.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, from_wire)
+    assert response.outcome == "VISUAL_UPDATED"
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert (decision.verdict, decision.now, decision.detail) == (
+        Verdict.AGREED,
+        "patch",
+        "accepted",
+    )
+
+
+def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:
+    """C1 + M1 (fix round 2): `verify` is a gate, not a rewrite. `draft_of`/`_structure` carry no
+    titles, so the `ChartSpec` `verify` returns on acceptance is the merged chart minus its chart
+    title and every encoding title. What is shown, stored in the derived context, and offered for
+    saving must stay `updated.spec` -- the merged chart, titles included -- never that title-less
+    gate value.
+
+    Built the way the floor actually builds a breakdown chart: `visual_profile_of` +
+    `DeterministicVisualPlanner`, which sets the per-encoding titles ("Grupo"/"Importe") itself,
+    plus an explicit chart-level `title` -- the one thing the floor leaves to the mapper
+    (`llm_mapper.py` sets it after planning) and which this test therefore sets by hand.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    floor_spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert floor_spec is not None
+    spec = replace(floor_spec, title="Gastos por categoria")
+    source_titles = {item.channel: item.title for item in spec.encodings}
+    assert spec.title == "Gastos por categoria"
+    assert any(title is not None for title in source_titles.values())
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ordénalo de mayor a menor", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UPDATED"
+    derived = to_domain(response.conversation).visual_contexts[-1]
+    assert derived.spec.title == spec.title
+    assert {item.channel: item.title for item in derived.spec.encodings} == source_titles
+    assert response.visualization_derivation is not None
+    presented_encoding = response.visualization_derivation.spec["encoding"]
+    for channel, title in source_titles.items():
+        if title is not None:
+            assert presented_encoding[channel]["title"] == title  # type: ignore[index]
 
 
 def test_the_saved_metric_source_keeps_the_original_provenance() -> None:
