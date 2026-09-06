@@ -18,6 +18,11 @@ from finguard_orchestrator.domain.models.chart import ChartSpec
 VisualMode = Literal["deterministic", "shadow", "hybrid", "promoted"]
 FallbackReason = Literal["abstention", "timeout", "provider_error", "invalid_proposal"]
 
+# `VisualDecision.source` (`deterministic_visual_planner.py`) is typed by this name for the same
+# reason `FallbackReason` is: the policy and the seam both construct decisions, and a set defined
+# next to the constructions instead of here would be one more place the three could drift.
+VisualSource = Literal["llm", "deterministic", "patch"]
+
 
 @dataclass(frozen=True)
 class ProposedSort:
