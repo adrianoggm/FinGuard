@@ -631,6 +631,21 @@ def test_an_encoding_sort_field_must_be_an_identifier() -> None:
         EncodingSort(mode="ascending", field="not an identifier")
 
 
+def test_a_chart_wide_sort_field_must_be_an_identifier() -> None:
+    """M4: `EncodingSort.field` and `ChartEncoding.field` both run `FIELD_NAME_PATTERN`;
+    `ChartSpec.sort_field` checked only that it required `sort`, not that it was an identifier."""
+    with pytest.raises(ValueError, match="identifiers"):
+        ChartSpec(
+            mark="bar",
+            encodings=(
+                ChartEncoding("y", "dimension", "nominal"),
+                ChartEncoding("x", "value_minor", "quantitative"),
+            ),
+            sort="descending",
+            sort_field="not an identifier",
+        )
+
+
 def test_a_per_encoding_sort_wins_over_the_chart_wide_sort_for_its_own_channel() -> None:
     """`ChartSpec.sort`/`sort_field` and a per-encoding `EncodingSort` can now both target the
     same Vega-Lite channel. Only one `"sort"` property can survive on that channel, and the
