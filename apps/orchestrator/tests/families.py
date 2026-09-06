@@ -129,7 +129,7 @@ _BY_PATH: tuple[tuple[str, str], ...] = (
     # -- the question may not rewrite the rules ---------------------------------------
     ("test_prompt", "injection"),
     # -- charts and the visual planner --------------------------------------------------
-    # Wave 3 and 4.1 added eleven files here; `evaluate-visual` reports their own accuracy
+    # Wave 3 and 4.1 added files here; `evaluate-visual` reports their own accuracy
     # already, GROUPS.md just has never named the capability. `test_visualization` is
     # redundant with `test_visual` (every `test_visualization_stage*` stem contains it) --
     # kept anyway because the redundancy costs nothing and a reviewer should not have to

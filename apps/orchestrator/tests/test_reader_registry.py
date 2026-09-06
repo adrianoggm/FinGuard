@@ -315,6 +315,11 @@ def test_every_reader_is_in_the_registry() -> None:
     # No `name.startswith("_")` filter: `@_recogniser` plus "defined in this module" already
     # identifies a reader precisely, and `contextual_follow_up_plan` — promoted for
     # `visual_follow_up` to import — is one without a leading underscore.
+    #
+    # `__wrapped__ is not None` is read as "decorated by `@_recogniser`" — the only thing that
+    # sets it on a reader module today. `functools.lru_cache` also sets `__wrapped__`, so a future
+    # cached public helper living in a reader module would be picked up here too and fail this
+    # test with a confusing message; nothing in `READER_MODULES` does that yet.
     decorated = {
         f"{getattr(module, name).__module__.rsplit('.', 1)[1]}.{name}"
         for module in READER_MODULES

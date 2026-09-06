@@ -53,7 +53,9 @@ def _visual_intent(
     asked together, which `interpret_visual` already recognises as its own refusal — off this same
     `VisualIntent`, rather than asking the interpreter twice for two different facts about it.
     """
-    return interpret_visual(query.sentence, conversation.visual_contexts)
+    return interpret_visual(
+        query.sentence, conversation.visual_contexts, voice=query.presentation.channel == "VOICE"
+    )
 
 
 def _reshape_claims(

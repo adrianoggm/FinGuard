@@ -5239,6 +5239,11 @@ def _record_visual_follow_up(
     """Twelfth seam. Records what the turn wants from the chart it follows and changes nothing:
     the kind and the claimant are service vocabulary, the sentence stays in the query.
     `conversation` is the handler's working conversation (`was`), not `query.conversation`.
+
+    Three early returns above this call in `_steps` -- retry control, alias learning, and the
+    previous-plan restore -- end the turn before `analysis` exists, so none of them reach here:
+    those turns record nothing at all rather than `UNRELATED`. Whoever reads this counter is
+    reading it against that denominator, not against every turn that had a chart in context.
     """
     if not conversation.visual_contexts:
         return

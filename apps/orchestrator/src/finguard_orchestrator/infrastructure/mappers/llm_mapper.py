@@ -29,12 +29,14 @@ from finguard_orchestrator.domain.models.chart import (
     Visualization,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
     FinancialPlan,
     FinancialPlanDraft,
     RelativePeriod,
 )
+from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
     AccountSummaryResponse,
     BreakdownResponse,
@@ -310,10 +312,9 @@ def _visual_title(result: AskFinancialQuestionResult, dataset: VisualDataset) ->
     return f"{subject}{grouped}" + (f" · {period}" if period else "")
 
 
-def _evidence_of(plan: object) -> tuple[UUID, ...]:
+def _evidence_of(plan: FinancialPlan | ComparisonPlan | RatioPlan | None) -> tuple[UUID, ...]:
     """The movements behind the figures, when the plan names them. Only FinancialPlan does."""
-    ids = getattr(plan, "transaction_ids", ())
-    return tuple(ids) if all(isinstance(item, UUID) for item in ids) else ()
+    return plan.transaction_ids if isinstance(plan, FinancialPlan) else ()
 
 
 def _remember_visual_context(
