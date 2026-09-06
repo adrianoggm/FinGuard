@@ -448,10 +448,12 @@ handler once its turn analysis is final, and the controller's visual short-circu
 `record_visual_follow_up`, so the count does not miss the turns the handler never sees. Nothing
 visible changed — no answer, chart or call differs — proven by
 `test_the_classification_changes_nothing_visible` and its controller-side equivalent. The three
-readers claim a minority of the design's own §3 example phrasings — 5 of 13 at review time;
-«Ponlo en horizontal», «Prefiero líneas», «Ahora agrúpalo por meses» and «Excluye los taxis» are
-among the misses — and the handler's deterministic analyser labels a follow-up sentence
-NEW_REQUEST, so a reshape or drill-down kind surfaces only when the edge hands in its own analysis.
+readers claim a minority of the design's own §3 example phrasings — three of fourteen at HEAD:
+«Ordénalo de mayor a menor» and «la barra más alta» read PRESENTATION_ONLY, «Enséñame las compras
+de esa barra» reads AMBIGUOUS. The other eleven — «Ponlo en horizontal», «Prefiero líneas», «Ahora
+agrúpalo por meses» and «Excluye los taxis» among them — land UNRELATED; and the handler's
+deterministic analyser labels a follow-up sentence NEW_REQUEST, so a reshape or drill-down kind
+surfaces only when the edge hands in its own analysis.
 That is stated as measurement, not as a defect: the record's first job is to say how often the
 readers agree and how often nothing claims a charted turn, before 4.2 decides whether the
 whitelist grows or a model is consulted. The corpus still cannot see charts — that is 4.2's
