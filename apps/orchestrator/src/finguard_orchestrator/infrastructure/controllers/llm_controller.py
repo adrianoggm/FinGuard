@@ -87,6 +87,7 @@ from finguard_orchestrator.domain.models.conversation import (
     slot_for,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.models.visual_follow_up import Claimant
 from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
@@ -223,6 +224,24 @@ def _derived_context(
         derived_from=trusted.chart_id,
         turn_id=uuid.uuid4(),
     )
+
+
+# §5's question, for the two AMBIGUOUS pairs the short-circuit's own `classify_claimed_visual`
+# can actually return: the interpreter's mixed refusal (a format change and a data change asked
+# together) and the drill lexicon matching a sentence `interpret_visual` already claimed (I-1).
+# `reshape+drill` cannot reach the short-circuit -- `interpret_visual` never claimed there -- so
+# it has no text here; `test_every_ambiguous_claimant_classify_claimed_visual_can_return_has_a_text`
+# checks that against the function's own outputs rather than against this dict's keys, so a
+# claimant this dict cannot answer fails a test instead of a `KeyError` in production.
+_ASK: dict[Claimant, str] = {
+    "presentation+reshape": (
+        "¿Quieres cambiar sólo la visualización, o volver a calcular los datos?"
+    ),
+    "presentation+drill": (
+        "¿Quieres cambiar sólo la visualización, o ver los movimientos detrás de esa parte "
+        "del gráfico?"
+    ),
+}
 
 
 def _visual_only_response(
@@ -1423,7 +1442,16 @@ async def ask(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
     if visual is not None:
-        record_visual_follow_up(classify_claimed_visual(visual, request.question))
+        follow_up = classify_claimed_visual(visual, request.question)
+        record_visual_follow_up(follow_up)
+        if follow_up.kind == "AMBIGUOUS":
+            # §5's question, not a guess: two readers agree on this turn and only the holder
+            # knows which one they meant, so nothing is merged and no ledger is ever asked.
+            return QuestionResponse(
+                outcome="VISUAL_AMBIGUOUS",
+                text=_ASK[follow_up.claimant],
+                conversation=conversation_mapper.to_payload(was),
+            )
         source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
         return _visual_only_response(
             visual,
@@ -1572,15 +1600,23 @@ async def ask_streaming(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
     if visual is not None:
-        record_visual_follow_up(classify_claimed_visual(visual, request.question))
-        source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
-        answer = _visual_only_response(
-            visual,
-            was,
-            source=source,
-            holder_reference=who.holder_reference if source is not None else None,
-            metric_tokens=metric_tokens if source is not None else None,
-        )
+        follow_up = classify_claimed_visual(visual, request.question)
+        record_visual_follow_up(follow_up)
+        if follow_up.kind == "AMBIGUOUS":
+            answer = QuestionResponse(
+                outcome="VISUAL_AMBIGUOUS",
+                text=_ASK[follow_up.claimant],
+                conversation=conversation_mapper.to_payload(was),
+            )
+        else:
+            source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+            answer = _visual_only_response(
+                visual,
+                was,
+                source=source,
+                holder_reference=who.holder_reference if source is not None else None,
+                metric_tokens=metric_tokens if source is not None else None,
+            )
 
         async def visual_events() -> AsyncIterator[str]:
             yield _sse({"type": "answer", **answer.model_dump()})
