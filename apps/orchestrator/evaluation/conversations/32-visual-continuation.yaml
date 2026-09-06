@@ -1,0 +1,66 @@
+# The corpus's first visual episode.
+#
+# Every episode before this one measured which of thirteen places answered a turn. This is the
+# fourteenth: which chart a turn leaves behind, and whether the next turn's chart remembers where
+# it came from.
+
+episodes:
+  - name: a_summer_breakdown_is_reshaped_and_then_restyled
+    why: >
+      §9's base episode, the four turns 4.2 owns: turn 1 draws the first chart, 2 and 3 reshape,
+      and (§9's own) turn 6 restyles it. Turns 4-5 (drill-down) are Wave 4.3's and are not here
+      yet, so this episode skips straight from turn 3 to the restyle — then closes with a balance
+      check and a courtesy, neither new, only so the conversation still clears the corpus's
+      six-turn floor while 4.3's two turns are still missing.
+
+      Probed against the real harness rather than assumed from the design doc, and two things
+      came back different from the sketch. Turn 3, «Ahora compáralo por meses.», never reaches
+      the planner: the deterministic comparison reader recognises «compáralo» before any plan is
+      built, cannot find two complete calendar periods to compare, and refuses — a real REFUSED
+      turn with zero banking calls, not the QUERY the sketch assumed. And turn 2's reshape does
+      not derive its chart from turn 1's: «Separa transporte público y gasolina.» is a complete
+      financial question on its own, so the deterministic turn analyser reads it as a new request
+      rather than a follow-up, and the chart it draws stands on its own — `derived_from` is
+      asserted `false` there, not `true`. Both are measurements this task's brief asked to be
+      reported rather than argued with; whether a bare category split should read as a follow-up
+      is a question for whichever wave teaches the analyser to read one as such.
+
+      «Pon el gráfico anterior en horizontal» is not in the interpreter's whitelist (4.1 probed
+      that), so the restyle turn asks for something the vocabulary does claim instead — sorting —
+      and that is the one line here that does not literally match the design doc's wording.
+    metrics: [context_retention]
+    turns:
+      - say: ¿En qué he gastado más este verano?
+        route: QUERY
+        groups: [[RESTAURANTS, 46556, 3], [TRANSPORT, 21000, 2], [GROCERIES, 18000, 5]]
+        # The breakdown floor's canonical form, probed against the real harness: chart-wide sort
+        # is None, the ranking is the y axis's own sort.
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        banking_calls: 1
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Separa transporte público y gasolina.
+        route: QUERY
+        groups: [[PUBLIC_TRANSPORT, 12000, 2], [FUEL, 9000, 1]]
+        banking_calls: 1
+        # Probed, not assumed: a bare category split reads as a new request, not a follow-up, so
+        # its chart derives from nothing. See `why`.
+        derived_from: false
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_FUEL, TRANSPORT_PUBLIC], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Ahora compáralo por meses.
+        route: REFUSED
+        banking_calls: 0
+      - say: Ordena el gráfico anterior de mayor a menor.
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+      - say: ¿Cuánto tengo en la cuenta corriente?
+        route: BALANCE
+        no_model: true
+        says: 2.270,42
+      - say: Gracias.
+        route: COURTESY
+        no_model: true
