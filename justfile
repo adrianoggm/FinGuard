@@ -180,8 +180,9 @@ evaluate-robustness robustness_floor over_refusal_ceiling model="qwen3.5:9b" pro
     uv run --directory apps/orchestrator python scripts/evaluate_planning.py --provider {{ provider }} --model {{ model }} --dataset robustness --tpm {{ tpm }} --robustness-floor {{ robustness_floor }} --over-refusal-ceiling {{ over_refusal_ceiling }}
 # The visual planner in shadow against the annotated cases. Three runs with the GPU alone, then the
 # minimum -- one run is not a number. P95 latency is the budget candidate for docs/next.md.
-evaluate-visual model="qwen3.5:9b" provider="ollama" budget="6.0":
-    uv run --directory apps/orchestrator python scripts/evaluate_visual.py --provider {{ provider }} --model {{ model }} --budget {{ budget }}
+# Defaults come from the visual planner's settings; pass --model/--provider/--budget to override.
+evaluate-visual *args:
+    uv run --directory apps/orchestrator python scripts/evaluate_visual.py {{ args }}
 # The whole path over HTTP: question in, figure and sentence out. Needs the compose stack
 # up, because the point is to exercise the deployed service and not the handler.
 # Properties rather than accuracy, so a non-zero exit is a bug and not a long tail.

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from finguard_orchestrator.bootstrap.config import get_settings
 from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec, EncodingSort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 
@@ -281,3 +282,18 @@ def test_the_loader_refuses_a_typo_and_an_instruction_without_its_effect(tmp_pat
     )
     with pytest.raises(ValueError, match="instruction_effect"):
         load_cases(silent)
+
+
+def test_the_cli_defaults_come_from_the_visual_planner_settings(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_MODEL", "bigger:14b")
+    monkeypatch.setenv("ORCHESTRATOR_VISUAL_PLANNER_BUDGET_SECONDS", "9.5")
+    get_settings.cache_clear()
+    try:
+        args = evaluate_visual.build_parser(get_settings()).parse_args([])
+        assert (args.model, args.budget) == ("bigger:14b", 9.5)
+        # unset visual provider -> the financial planner's
+        assert args.provider == get_settings().planner_provider
+        overridden = evaluate_visual.build_parser(get_settings())
+        assert overridden.parse_args(["--model", "other:1b"]).model == "other:1b"
+    finally:
+        get_settings.cache_clear()
