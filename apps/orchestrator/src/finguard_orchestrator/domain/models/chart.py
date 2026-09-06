@@ -72,11 +72,11 @@ class ChartSpec:
     def __post_init__(self) -> None:
         if self.mark not in get_args(Mark):
             raise ValueError("unsupported chart mark")
-        # `mark` above and `sort` below were each checked against a literal set of their own
-        # values; `stack` and `sort` were not -- an unrecognised value passed `_structure`
-        # (`visual_plan_verifier.py`) and reached the wire verbatim, the one path the DTO's own
-        # `stack in get_args(Stack)` / `sort in get_args(SortMode)` guard does not cover, because
-        # nothing here checked membership at all.
+        # `mark` above was checked against its own closed set; `stack` and `sort` below were not
+        # -- an unrecognised value passed `_structure` (`visual_plan_verifier.py`) and reached
+        # the wire verbatim, the one path the DTO's own `stack in get_args(Stack)` /
+        # `sort in get_args(SortMode)` guard does not cover, because nothing here checked
+        # membership at all.
         if self.stack is not None and self.stack not in get_args(Stack):
             raise ValueError("unsupported chart stack")
         if self.mark == "donut" and self.stack is not None:
