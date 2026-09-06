@@ -1,10 +1,16 @@
 """Classify a turn against the charts in context — deterministically, changing nothing.
 
 Three readers already exist and each recognises one kind: `interpret_visual` reads a presentation
-change, `contextual_follow_up_plan` reads a reshape as a patch on the previous plan, and the
+change, `read_contextual_follow_up` reads a reshape as a patch on the previous plan, and the
 drill-down lexicon below reads a question about one part of the result. The table in `classify`
 is §5's: one claimant names the kind; two claimants are AMBIGUOUS; none is UNRELATED. No model, no
 banking call, no state — the result is recorded and, in 4.1, nothing else.
+
+`read_contextual_follow_up` is the undecorated body behind the cascade's own
+`contextual_follow_up_plan` — this module calls the body, never the `@_recogniser`-wrapped name,
+because that decorator opens a telemetry span and memoises onto the query: calling it here would
+have a read-only classifier record a `RECOGNISER`/`CLAIMED` decision, and record it twice over on
+the turn the cascade goes on to plan.
 """
 
 from __future__ import annotations
@@ -12,7 +18,7 @@ from __future__ import annotations
 import re
 
 from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
-from finguard_orchestrator.application.queries.readers.follow_up import contextual_follow_up_plan
+from finguard_orchestrator.application.queries.readers.follow_up import read_contextual_follow_up
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
@@ -35,7 +41,7 @@ def _reshape_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis) ->
         or analysis.focus is not TurnFocus.LAST_ANSWER
     ):
         return False
-    return contextual_follow_up_plan(query) is not None
+    return read_contextual_follow_up(query) is not None
 
 
 def _drill_down_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis) -> bool:

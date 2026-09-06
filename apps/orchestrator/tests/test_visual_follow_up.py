@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.observability import recording_turn
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
@@ -83,6 +84,35 @@ def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
     monkeypatch.setattr(module, "_presentation_claims", lambda query, conversation: True)
     monkeypatch.setattr(module, "_reshape_claims", lambda query, analysis: True)
     assert classify(_query("x"), FOLLOW_UP, CHARTED) == VisualFollowUp("AMBIGUOUS", "both")
+
+
+def test_classify_records_nothing_and_leaves_the_query_alone() -> None:
+    """`classify` must not route through the `@_recogniser` seam: a read-only classifier that
+    records a RECOGNISER/CLAIMED decision, or memoises the *outer* reader's own name onto the
+    frozen query, is not pure, and the module docstring says it is.
+
+    `_internal_movement_request` is a nested consultation `read_contextual_follow_up` has always
+    made, regardless of this task, and is not what this test is about; `contextual_follow_up_plan`
+    and its precondition key are — they are the seam this classifier must never enter, and were
+    both present (along with a recorded decision) before the split into an undecorated body.
+    """
+    reshape_query = _query("Solo restaurantes")
+    with recording_turn() as turn:
+        result = classify(reshape_query, FOLLOW_UP, CHARTED)
+    assert result == VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")
+    assert turn.sealed().decisions == ()
+    reshape_memo = getattr(reshape_query, "_finguard_reader_memo", {})
+    assert "contextual_follow_up_plan" not in reshape_memo
+    assert "when:contextual_follow_up_plan" not in reshape_memo
+
+    presentation_query = _query("Ponlo apilado")
+    with recording_turn() as turn:
+        result = classify(presentation_query, FOLLOW_UP, CHARTED)
+    assert result == VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
+    assert turn.sealed().decisions == ()
+    presentation_memo = getattr(presentation_query, "_finguard_reader_memo", {})
+    assert "contextual_follow_up_plan" not in presentation_memo
+    assert "when:contextual_follow_up_plan" not in presentation_memo
 
 
 def test_every_kind_and_claimant_is_reachable() -> None:
