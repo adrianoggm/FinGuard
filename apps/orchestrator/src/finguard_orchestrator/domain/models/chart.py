@@ -88,6 +88,18 @@ class ChartSpec:
             # relying on this invariant to make that lookup safe -- so a spec that carries a stack
             # with nothing to hang it on is refused here instead of raising `StopIteration` later.
             raise ValueError("a stacked chart needs a quantitative x or y encoding")
+        if self.sort is not None and not any(
+            item.type in {"nominal", "temporal"} and item.channel in {"x", "y"}
+            for item in self.encodings
+        ):
+            # Its mirror: `present()` (`vega_lite.py:84-85`) raises "a sorted chart needs a
+            # categorical or temporal dimension" when a chart-wide sort has no nominal/temporal
+            # x/y encoding to land on. The verifier used to authorise exactly that shape -- a
+            # normalised RATIO_SHARE bar (measure on the axis, the dimension in `color`) and a
+            # donut (no axes at all) can each carry a chart-wide `sort` -- because nothing
+            # upstream of the presenter enforced this. Refused here instead, so `_structure`
+            # turns it into a `Rejection` rather than an unhandled exception at the presenter.
+            raise ValueError("a sorted chart needs a categorical or temporal x or y encoding")
         channels = [item.channel for item in self.encodings if item.channel != "tooltip"]
         if len(channels) != len(set(channels)):
             raise ValueError("chart channels must be unique")
