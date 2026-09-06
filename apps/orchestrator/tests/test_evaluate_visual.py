@@ -2,7 +2,10 @@
 
 import importlib.util
 import sys
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec, EncodingSort
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
@@ -14,6 +17,8 @@ assert _SPEC and _SPEC.loader
 evaluate_visual = importlib.util.module_from_spec(_SPEC)
 sys.modules["evaluate_visual"] = evaluate_visual
 _SPEC.loader.exec_module(evaluate_visual)
+
+from evaluate_visual import Case, Results, judge, load_cases, stability  # noqa: E402
 
 FAMILY_DATASETS = (
     evaluate_visual.FAMILY_DATASETS
@@ -33,10 +38,18 @@ def _bar(orientation: str = "y") -> ChartSpec:
     )
 
 
-def _decision(spec, *, valid=True, changed=True, ms=1200, reason=None):
+def _decision(
+    spec,
+    *,
+    valid=True,
+    changed=True,
+    ms=1200,
+    reason=None,
+    profile=evaluate_visual.PROFILES["breakdown"],
+):
     return VisualDecision(
         spec=_bar(),
-        profile=evaluate_visual.PROFILES["breakdown"],
+        profile=profile,
         source="deterministic",
         proposed=True,
         valid=valid,
@@ -154,3 +167,117 @@ def test_a_declined_expect_chart_case_is_counted_not_dropped() -> None:
     evaluate_visual.judge(case, None, results)
     assert results.declined == 1
     assert results.entered == 0
+
+
+def test_suitability_requires_the_structure_the_case_names() -> None:
+    """A comparison drawn as a bar with no series had the right mark and had lost the comparison."""
+    profile = evaluate_visual.PROFILES["categorical_comparison"]
+    case = Case(
+        id="c",
+        group="comparison",
+        dataset="categorical_comparison",
+        question="q",
+        suitable_marks=("bar",),
+        requires={"series": True},
+    )
+    plain = _bar("y")
+    grouped = replace(
+        plain,
+        stack="disabled",
+        encodings=plain.encodings
+        + (
+            ChartEncoding("color", "series", "nominal", sort=EncodingSort(mode="input")),
+            ChartEncoding("yOffset", "series", "nominal", sort=EncodingSort(mode="input")),
+        ),
+    )
+    results = Results()
+    judge(case, _decision(plain, profile=profile), results)
+    judge(case, _decision(grouped, profile=profile), results)
+    assert (results.valid, results.suitable) == (2, 1)
+
+
+def test_a_share_wants_the_normalised_bar_and_a_donut_does_not_stack() -> None:
+    profile = evaluate_visual.PROFILES["ratio_share"]
+    case = Case(
+        id="s",
+        group="ratio_share",
+        dataset="ratio_share",
+        question="q",
+        suitable_marks=("bar", "donut"),
+        requires={"bar_stack": "normalize"},
+    )
+    plain = _bar("y")
+    normalised = replace(plain, stack="normalize")
+    donut = ChartSpec(
+        mark="donut",
+        encodings=(
+            ChartEncoding("theta", "value_minor", "quantitative"),
+            ChartEncoding("color", "dimension", "nominal"),
+        ),
+    )
+    results = Results()
+    for spec in (plain, normalised, donut):
+        judge(case, _decision(spec, profile=profile), results)
+    assert (results.valid, results.suitable) == (3, 2)
+
+
+def test_a_ranking_must_say_its_order_when_the_dimension_is_on_an_axis() -> None:
+    case = Case(
+        id="r",
+        group="breakdown",
+        dataset="breakdown",
+        question="q",
+        suitable_marks=("bar",),
+        requires={"ordered": "descending"},
+    )
+    ranked = _bar("y")
+    unranked = replace(
+        ranked, encodings=tuple(replace(item, sort=None) for item in ranked.encodings), sort=None
+    )
+    results = Results()
+    judge(case, _decision(ranked), results)
+    judge(case, _decision(unranked), results)
+    assert (results.valid, results.suitable) == (2, 1)
+
+
+def test_sensitivity_is_the_instructions_own_effect_not_any_difference() -> None:
+    """A bar that only changed orientation used to count as having obeyed «como un donut»."""
+    base = Case(id="a", group="g", dataset="breakdown", question="q", suitable_marks=("bar",))
+    asked = Case(
+        id="b",
+        group="g",
+        dataset="breakdown",
+        question="q donut",
+        suitable_marks=("donut", "bar"),
+        paraphrase_of="a",
+        visual_instruction=True,
+        instruction_effect={"mark": "donut"},
+    )
+    donut = ChartSpec(
+        mark="donut",
+        encodings=(
+            ChartEncoding("theta", "value_minor", "quantitative"),
+            ChartEncoding("color", "dimension", "nominal"),
+        ),
+    )
+    turned = stability([base, asked], {"a": _bar("y"), "b": _bar("x")})
+    obeyed = stability([base, asked], {"a": _bar("y"), "b": donut})
+    assert (turned.instructed, turned.sensitive) == (1, 0)
+    assert (obeyed.instructed, obeyed.sensitive) == (1, 1)
+
+
+def test_the_loader_refuses_a_typo_and_an_instruction_without_its_effect(tmp_path: Path) -> None:
+    typo = tmp_path / "typo.yaml"
+    typo.write_text(
+        "- {id: x, group: g, dataset: breakdown, question: q, requires: {orderd: descending}}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unknown requires keys"):
+        load_cases(typo)
+    silent = tmp_path / "silent.yaml"
+    silent.write_text(
+        "- {id: y, group: g, dataset: breakdown, question: q, visual_instruction: true}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="instruction_effect"):
+        load_cases(silent)
