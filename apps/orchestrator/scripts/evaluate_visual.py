@@ -140,6 +140,8 @@ def requires_hold(spec: ChartSpec, profile: VisualProfile, requires: dict[str, A
     series = {item.name for item in profile.role("series")}
     dimensions = {item.name for item in profile.role("dimension")}
     if requires.get("series"):
+        # Stack is not checked here: suitability is judged on a verified proposal, and the
+        # verifier already refused a stacked comparison.
         color = next((item for item in spec.encodings if item.channel == "color"), None)
         if color is None or color.field not in series:
             return False

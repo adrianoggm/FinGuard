@@ -104,8 +104,9 @@ Roles: a nominal dimension goes on x, y or color; a temporal dimension goes on x
 goes on x, y or theta. A series goes on color and the matching offset (xOffset for a dimension on
 x, yOffset for a dimension on y). Any field may go on tooltip instead of being plotted, to stay
 readable without drawing a mark for it. A comparison (comparison=true) is grouped, never stacked:
-put the series on color and the matching offset, and set stack to "disabled". A comparison never
-drops its series: a proposal without the series on color is refused.
+put the series on color and the matching offset, and set stack to "disabled" -- on a bar or an
+area, over categories or over time. A comparison never drops its series: a proposal without the
+series on color is refused.
 
 A dimension with order MEASURE_DESC ranks by the measure (descending): set sort to "descending"
 and sort_field to that measure field's own name. Order INPUT keeps the given order (sort "input").

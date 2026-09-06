@@ -527,6 +527,22 @@ def test_a_comparison_line_keeps_its_series_on_color() -> None:
     assert isinstance(verify(with_series, temporal_comparison()), ChartSpec)
 
 
+@pytest.mark.parametrize("mark", ["bar", "area"])
+def test_a_temporal_comparison_never_stacks(mark: str) -> None:
+    """Vega-Lite stacks a bar or an area with a colour series by default, and `stack: "zero"` says
+    so outright: two periods added into one length. Section D's rule has no axis qualifier."""
+    series_on_color = (
+        E("x", "dimension", "temporal"),
+        E("y", "value_minor", "quantitative"),
+        E("color", "series", "nominal", S("input")),
+    )
+    for stack in (None, "zero"):
+        refused = verify(D(mark, series_on_color, stack=stack), temporal_comparison())
+        assert isinstance(refused, Rejection) and "never stacked" in refused.reason
+    disabled = D(mark, series_on_color, stack="disabled")
+    assert isinstance(verify(disabled, temporal_comparison()), ChartSpec)
+
+
 def test_a_comparison_bar_with_color_but_no_offset_is_still_refused() -> None:
     """Colour alone stacks the periods on top of each other -- the existing offset rule fires
     once the series is on color."""
