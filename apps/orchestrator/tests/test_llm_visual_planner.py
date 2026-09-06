@@ -21,6 +21,7 @@ from finguard_orchestrator.domain.services.visual_profile import visual_profile_
 from finguard_orchestrator.infrastructure.llm.echo_llm_provider import EchoLlmProvider
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import STRUCTURE_REPAIR
 from finguard_orchestrator.infrastructure.planning.llm_visual_planner import LlmVisualPlanner
+from finguard_orchestrator.infrastructure.planning.visual_answer import parse_visual_answer
 from finguard_orchestrator.infrastructure.planning.visual_prompt import (
     build_visual_prompt,
     profile_payload,
@@ -259,17 +260,115 @@ async def test_json_wrapped_in_prose_is_not_extracted() -> None:
         await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
 
 
-async def test_an_unknown_channel_reaches_the_verifier_rather_than_being_dropped() -> None:
-    """Finding 6: the adapter must not filter an encoding whose channel it does not recognise --
-    that is the verifier's job, and dropping it here would be a silent repair."""
+async def test_an_unknown_channel_is_a_structure_failure_never_a_dropped_encoding() -> None:
+    """The schema names the channels; a provider that answers outside them did not honour its
+    schema. Refused whole (repair once, then a provider failure) -- never filtered down to the
+    encodings the adapter happens to recognise, which would be a silent repair."""
     answer = json.dumps(
         {
             "mark": "bar",
             "encodings": [{"channel": "radius", "field": "dimension", "type": "nominal"}],
         }
     )
-    planner = LlmVisualPlanner(
-        RecordingProvider([answer]), model="m", temperature=0.0, max_output_tokens=256
+    provider = RecordingProvider([answer, answer])
+    planner = LlmVisualPlanner(provider, model="m", temperature=0.0, max_output_tokens=256)
+    with pytest.raises(ProviderFailedError):
+        await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
+    assert len(provider.prompts) == 2
+
+
+async def test_a_missing_mark_key_is_a_structure_failure_not_an_abstention() -> None:
+    """`{"encodings": []}` has no `mark` at all. The schema requires it; reading its absence as
+    the abstention `{"mark": null}` recorded a provider that failed as a model that declined."""
+    answer = json.dumps({"encodings": []})
+    provider = RecordingProvider([answer, answer])
+    planner = LlmVisualPlanner(provider, model="m", temperature=0.0, max_output_tokens=256)
+    with pytest.raises(ProviderFailedError):
+        await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
+    assert len(provider.prompts) == 2
+
+
+async def test_a_mark_without_encodings_is_a_structure_failure() -> None:
+    answer = json.dumps({"mark": "bar"})
+    provider = RecordingProvider([answer, answer])
+    planner = LlmVisualPlanner(provider, model="m", temperature=0.0, max_output_tokens=256)
+    with pytest.raises(ProviderFailedError):
+        await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
+
+
+async def test_a_per_encoding_sort_written_as_a_string_is_refused_not_dropped() -> None:
+    """The model asked for an order; a sort the adapter cannot read must not become `None`."""
+    answer = json.dumps(
+        {
+            "mark": "bar",
+            "encodings": [
+                {"channel": "y", "field": "dimension", "type": "nominal", "sort": "descending"},
+                {"channel": "x", "field": "value_minor", "type": "quantitative"},
+            ],
+        }
     )
-    draft = await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
-    assert draft is not None and draft.encodings[0].channel == "radius"  # refused, never repaired
+    provider = RecordingProvider([answer, answer])
+    planner = LlmVisualPlanner(provider, model="m", temperature=0.0, max_output_tokens=256)
+    with pytest.raises(ProviderFailedError):
+        await planner.plan("q", PROFILE, DEFAULT_PRESENTATION, budget_seconds=1.0)
+    assert len(provider.prompts) == 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"mark": "bar", "encodings": [], "rows": []},
+        {
+            "mark": "bar",
+            "encodings": [{"channel": "x", "field": "d", "type": "nominal", "extra": 1}],
+        },
+        {"mark": "pie", "encodings": []},
+        {"mark": "bar", "encodings": [], "stack": "center"},
+        {"mark": "bar", "encodings": [], "sort": {"mode": "descending"}},
+        {"mark": "bar", "encodings": [], "limit": 5.0},
+    ],
+    ids=[
+        "extra-key",
+        "extra-key-in-encoding",
+        "unknown-mark",
+        "unknown-stack",
+        "object-sort",
+        "float-limit",
+    ],
+)
+def test_an_answer_outside_the_schema_is_refused_whole(answer: dict) -> None:
+    assert parse_visual_answer(json.dumps(answer)) is None
+
+
+def test_the_answer_model_accepts_exactly_the_schema_enums() -> None:
+    """Both are built from the same `Literal`s; this pins that nobody re-types one of them."""
+    props = visual_schema()["properties"]
+    encoding = props["encodings"]["items"]["properties"]
+    for mark in props["mark"]["enum"]:
+        assert parse_visual_answer(json.dumps({"mark": mark, "encodings": []})) is not None
+    for channel in encoding["channel"]["enum"]:
+        for field_type in encoding["type"]["enum"]:
+            for mode in encoding["sort"]["properties"]["mode"]["enum"]:
+                item = {
+                    "channel": channel,
+                    "field": "f",
+                    "type": field_type,
+                    "sort": {"mode": mode},
+                }
+                assert (
+                    parse_visual_answer(json.dumps({"mark": "bar", "encodings": [item]}))
+                    is not None
+                )
+    for stack in props["stack"]["enum"]:
+        assert (
+            parse_visual_answer(json.dumps({"mark": "bar", "encodings": [], "stack": stack}))
+            is not None
+        )
+    for sort in props["sort"]["enum"]:
+        assert (
+            parse_visual_answer(json.dumps({"mark": "bar", "encodings": [], "sort": sort}))
+            is not None
+        )
+    assert (
+        parse_visual_answer(json.dumps({"mark": "bar", "encodings": [], "sort": "random"})) is None
+    )

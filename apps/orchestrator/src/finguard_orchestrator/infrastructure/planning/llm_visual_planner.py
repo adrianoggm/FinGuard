@@ -5,11 +5,12 @@ suffix, and a `ProviderFailedError` when the provider will not honour the schema
 a provider failure, not an abstention, and the policy records it as one. `budget_seconds` is
 accepted and unused here: the policy enforces it with `wait_for`, because only the policy holds the
 floor to fall back to.
+
+The answer is validated whole by `visual_answer.VisualAnswer` (the schema's own closed sets,
+strict); a violation is the structure failure the repair path handles.
 """
 
-import json
 import logging
-from typing import Any
 
 from finguard_orchestrator.domain.errors import ProviderFailedError
 from finguard_orchestrator.domain.models.chart import PresentationContext, VisualProfile
@@ -20,6 +21,10 @@ from finguard_orchestrator.domain.models.visual_plan import (
 )
 from finguard_orchestrator.domain.ports.llm_provider import LlmProviderPort
 from finguard_orchestrator.infrastructure.planning.llm_query_planner import STRUCTURE_REPAIR
+from finguard_orchestrator.infrastructure.planning.visual_answer import (
+    VisualAnswer,
+    parse_visual_answer,
+)
 from finguard_orchestrator.infrastructure.planning.visual_prompt import (
     build_visual_prompt,
     visual_schema,
@@ -48,7 +53,7 @@ class LlmVisualPlanner:
     ) -> VisualPlanDraft | None:
         prompt = build_visual_prompt(question, profile, presentation)
         answer = await self._complete(prompt)
-        parsed = _parse(answer)
+        parsed = parse_visual_answer(answer)
         if parsed is None:
             # Never echo malformed provider text into the repair prompt or the log: the
             # exact schema is sufficient, and the second result is still validated without
@@ -56,7 +61,7 @@ class LlmVisualPlanner:
             # model text, ever.
             logger.warning("visual_planner.invalid_structure retrying=true")
             answer = await self._complete(prompt + STRUCTURE_REPAIR)
-            parsed = _parse(answer)
+            parsed = parse_visual_answer(answer)
             if parsed is None:
                 raise ProviderFailedError(self._model, "visual planner: invalid structure twice")
         return _draft(parsed)
@@ -71,71 +76,23 @@ class LlmVisualPlanner:
         )
 
 
-# The three keys `visual_schema()` marks `required` on an encoding item, and the one key it marks
-# `required` on a `sort` object. A missing one is a structure failure, never a fabricated `"None"`
-# string built by `str(item.get(...))` -- the model wrote no channel, and the record should not
-# claim it wrote `"None"` (finding 13).
-_ENCODING_REQUIRED = ("channel", "field", "type")
-
-
-def _encodings_are_well_formed(encodings: object) -> bool:
-    if not isinstance(encodings, list):
-        return False
-    for item in encodings:
-        if not isinstance(item, dict) or not all(key in item for key in _ENCODING_REQUIRED):
-            return False
-        sort = item.get("sort")
-        if isinstance(sort, dict) and "mode" not in sort:
-            return False
-    return True
-
-
-def _parse(answer: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(answer)
-    except ValueError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    if "mark" in parsed and parsed["mark"] is None:
-        # Abstention, however tersely it was written. Checked before the structural gate below
-        # so a minimal `{"mark": null}` reads as the abstention it is rather than failing
-        # `"encodings" in parsed` and being recorded as a provider error (finding 9).
-        return {"mark": None, "encodings": []}
-    if "encodings" not in parsed or not _encodings_are_well_formed(parsed["encodings"]):
-        return None
-    limit = parsed.get("limit")
-    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)):
-        # A limit the adapter cannot read is a structure failure, not a silently dropped or
-        # coerced value (finding 1): `isinstance(True, int)` is `True` in Python, so `bool` is
-        # excluded explicitly or a JSON boolean would become `limit=1`.
-        return None
-    return parsed
-
-
-def _draft(parsed: dict[str, Any]) -> VisualPlanDraft | None:
-    if parsed.get("mark") is None:
+def _draft(answer: VisualAnswer) -> VisualPlanDraft | None:
+    if answer.mark is None:
         return None  # abstention, the one meaning None has
-    encodings = tuple(
-        ProposedEncoding(
-            str(item.get("channel")),
-            str(item.get("field")),
-            str(item.get("type")),
-            ProposedSort(str(item["sort"].get("mode")), item["sort"].get("field"))
-            if isinstance(item.get("sort"), dict)
-            else None,
-        )
-        for item in parsed.get("encodings", [])
-        if isinstance(item, dict)
-    )
     return VisualPlanDraft(
-        mark=str(parsed["mark"]),
-        encodings=encodings,
-        sort=parsed.get("sort"),
-        sort_field=parsed.get("sort_field"),
-        stack=parsed.get("stack"),
-        # The type is now guaranteed by `_parse`'s own gate -- passed through unconditionally,
-        # never coerced (finding 1).
-        limit=parsed.get("limit"),
-        rationale=parsed.get("rationale") if isinstance(parsed.get("rationale"), str) else None,
+        mark=answer.mark,
+        encodings=tuple(
+            ProposedEncoding(
+                item.channel,
+                item.field,
+                item.type,
+                ProposedSort(item.sort.mode, item.sort.field) if item.sort is not None else None,
+            )
+            for item in answer.encodings
+        ),
+        sort=answer.sort,
+        sort_field=answer.sort_field,
+        stack=answer.stack,
+        limit=answer.limit,
+        rationale=answer.rationale,
     )
