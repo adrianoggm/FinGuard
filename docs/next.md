@@ -465,9 +465,10 @@ user, and they are closed on wave 3's own seams. `VisualProfile.comparison` is t
 marker plus a series to group by (`visual_profile.py`) — not the presence of a series, which made
 a RECURRENCE cadence "a comparison", and not the marker alone, which would have grouped the
 handler's two-totals comparison by a series it does not have. The verifier holds a comparison to
-Section D (`visual_plan_verifier.py`, `_grouped`): the series stays on `color` on every mark and,
-on a bar, on the dimension axis's offset with `stack: disabled`; a proposal that quietly dropped
-the series used to verify as a reasonable bar, and an offset without its colour was never refused.
+Section D (`visual_plan_verifier.py`, `_grouped`): the series stays on `color` on every mark, a
+bar or an area is never stacked whatever its axis, and a categorical bar also carries the offset
+on the dimension's axis; a proposal that quietly dropped the series used to verify as a reasonable
+bar, and an offset without its colour was never refused.
 Rows on the wire carry every field the profile declared, `None` where a row has no value
 (`llm_mapper.rows_on_the_wire`, shared with the fixture exporter), so `valid_for` checks the set
 the model and the verifier reasoned over instead of the intersection that silently dropped an
@@ -481,7 +482,8 @@ effect (`instruction_effect`), so a bar that only turned sideways no longer coun
 «como un donut». And the visual planner has its own provider, model and sampling
 (`ORCHESTRATOR_VISUAL_PLANNER_PROVIDER/MODEL/TEMPERATURE/MAX_OUTPUT_TOKENS`, blank = the financial
 planner's), so trying a bigger chart model moves nothing the planning evaluation measured; the
-run manifest records them and the latency row says what it is — added to every turn the model
+run manifest records them (and the CLI defaults to them, so `just evaluate-visual` measures the
+configured model) and the latency row says what it is — added to every turn the model
 runs in shadow or hybrid mode. Nothing visible changed with the shipped setting. What still waits
 is the evidence: the three GPU runs on one SHA and the promotion decision, against the thresholds
 recorded in the wave 3 paragraph above, are Task 9 and remain the operator's.

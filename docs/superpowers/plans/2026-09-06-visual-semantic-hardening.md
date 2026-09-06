@@ -31,7 +31,7 @@
 
 | file | responsibility | task |
 | --- | --- | --- |
-| `domain/services/visual_profile.py` | `comparison = dataset.metric == "COMPARISON"` | 1 |
+| `domain/services/visual_profile.py` | `comparison = dataset.metric == "COMPARISON" and has_series` | 1 |
 | `domain/services/visual_plan_verifier.py` | `_grouped`: a comparison keeps its series; offset without colour refused | 2 |
 | `infrastructure/mappers/llm_mapper.py` | rows carry every declared field (`None` when absent); `valid_for` against the union | 3 |
 | `infrastructure/planning/llm_visual_planner.py` + new `infrastructure/planning/visual_answer.py` | Pydantic validation of the provider's JSON; `_draft` from the validated model | 4 |
@@ -50,7 +50,7 @@
 
 **Interfaces:**
 - Consumes: `VisualDataset.metric` — the dataset's *shape* marker (`COMPARISON`, `RATIO`, `RATIO_SHARE`, `RECURRENCE`, or a measure name; `chart.py:219-243`); the handler builds comparison datasets with `metric="COMPARISON"` (`ask_financial_question.py:~3335`).
-- Produces: `VisualProfile.comparison is True` iff `dataset.metric == "COMPARISON"`; a RECURRENCE dataset (series = cadence) has `comparison is False` while keeping `mutually_exclusive=False`.
+- Produces: `VisualProfile.comparison is True` iff `dataset.metric == "COMPARISON" and has_series`; the handler's ungrouped two-totals comparison (`ask_financial_question.py`, the `else` branch beside `comparison_visual_rows`) has no series, so the conjunction keeps it `comparison is False` rather than indexing a series that is not there; a RECURRENCE dataset (series = cadence) has `comparison is False` while keeping `mutually_exclusive=False`.
 
 - [ ] **Step 1: Failing tests** (append to `tests/test_visual_profile.py`, using that file's dataset builders)
 
@@ -77,7 +77,7 @@ def test_a_plain_breakdown_is_not_a_comparison() -> None:
 (`RECURRENCE_DATASET`, `COMPARISON_DATASET`, `BREAKDOWN_DATASET`: reuse the exporter's `FAMILY_DATASETS["recurrence"][0]`, `["categorical_comparison"][0]`, `["breakdown"][0]` — `from export_chart_fixtures import FAMILY_DATASETS` the way `tests/test_evaluate_visual.py` imports the scripts, or the file's own builders if it has them.)
 
 - [ ] **Step 2: Run** — `uv run --directory apps/orchestrator pytest tests/test_visual_profile.py -q` — FAIL on the recurrence test.
-- [ ] **Step 3: Implement** — `comparison=dataset.metric == "COMPARISON",` with the comment: "the shape marker, not the presence of a series: RECURRENCE carries a series for its cadence and is not a comparison". Then run `tests/test_visual_prompt*.py`/`test_llm_visual_planner.py` (the payload carries `comparison`) and `tests/test_visual_plan_verifier.py` (the floor families).
+- [ ] **Step 3: Implement** — `comparison=dataset.metric == "COMPARISON" and has_series,` with the comment: "the shape marker AND a series to group by -- not the presence of a series alone: RECURRENCE carries a series for its cadence and is not a comparison; not the marker alone either: the handler's ungrouped two-totals comparison has no series field to put on color". Then run `tests/test_visual_prompt*.py`/`test_llm_visual_planner.py` (the payload carries `comparison`) and `tests/test_visual_plan_verifier.py` (the floor families).
 - [ ] **Step 4: Run** the four suite calls. Expected: the floor's RECURRENCE and comparison families still verify (the floor reads `comparison` — if a floor family changes chart under the new derivation, STOP and report: that is a floor/verifier disagreement the controller rules on).
 - [ ] **Step 5: Commit** — `fix(visual): a comparison is what the dataset's shape says, not what the presence of a series implies`.
 
@@ -91,7 +91,7 @@ def test_a_plain_breakdown_is_not_a_comparison() -> None:
 
 **Interfaces:**
 - Consumes: `profile.comparison` (Task 1), `profile.role("series")`, `_dimension_axis`, `_OFFSET_FOR`, `_on`.
-- Produces: new refusals in the `grouped` rule — `"a comparison keeps its series: put it on color and on the {offset}"` (bar), `"a comparison keeps its series: put it on color"` (line/area), `"a comparison's bars do not stack: stack must be disabled"`, `"an offset needs its color: the same series on both"` (offset without colour, any profile).
+- Produces: new refusals in the `grouped` rule — `"a comparison keeps its series: put it on color"` (every mark), the pre-existing `"a grouped comparison needs the offset on the dimension's axis"` and `"a comparison is grouped, never stacked: stack must be disabled"` (categorical bar), `"an offset needs its color: the same series on both"` (offset without colour, any profile). After the fix wave's commit 1, the stack refusal reaches a comparison drawn as a bar or an area on any axis, not only a categorical one.
 
 - [ ] **Step 1: Failing tests**
 
@@ -173,6 +173,7 @@ def test_a_chart_naming_a_declared_field_is_not_dropped_by_the_mapper() -> None:
 **Interfaces:**
 - Produces: `parse_visual_answer(text: str) -> VisualAnswer | None` (None = structure failure); abstention = `VisualAnswer` with `mark is None`; `_draft(answer: VisualAnswer) -> VisualPlanDraft`.
 - Invariant test: `set(get_args(Mark)) == set(VisualAnswer.model_fields["mark"].annotation's literals)` — simplest: a test that the schema's enums equal `get_args` of each `Literal` (already exists) plus one asserting the model refuses a mark/channel/type/stack/mode outside those sets and any extra key.
+- Ruling: `limit` bounds (the schema's `minimum`/`maximum`) and `rationale`'s `maxLength` are not checked locally — a grammar compiled from the schema cannot enforce a numeric range or a string length. An out-of-range `limit` still reaches `ChartSpec.__post_init__` as a plain `int` and is refused there, recorded as `invalid_proposal` rather than a structure failure, so nothing is lost but the classification.
 
 - [ ] **Step 1: Failing tests** — `{"encodings": []}` (no `mark` key) ⇒ repair path then `ProviderFailedError` (today: abstention); `{"mark": "bar", "encodings": [], "sort": "descending"}` (sort as a string, not an object) ⇒ structure failure (today: check what happens — the report says); `{"mark": "bar", "encodings": [], "rows": []}` (extra key) ⇒ structure failure (today: ignored); `{"mark": "bar", "encodings": [{"channel": "x", "field": "dimension", "type": "nominal", "extra": 1}]}` ⇒ structure failure; `{"mark": null, "encodings": []}` ⇒ abstention (`plan(...) is None`, one prompt); a valid answer ⇒ the same draft as today (the existing tests). Also: `limit: 5.0` and `limit: true` ⇒ structure failure (strict mode refuses float/bool for int — confirm; Pydantic strict rejects `True` for `int`).
 - [ ] **Step 2: Run** — FAIL on the four new refusals.
@@ -190,9 +191,9 @@ def test_a_chart_naming_a_declared_field_is_not_dropped_by_the_mapper() -> None:
 - Test: `apps/orchestrator/tests/test_evaluate_visual.py`
 
 **Interfaces:**
-- `requires` keys (all optional): `channels` — list of `[channel, role]` pairs that must be present with a field of that role (`dimension`, `measure`, `series`; roles resolved through the profile); `series: true` — a series field must appear on `color` (and on an offset when the mark is `bar`); `order: [channel, mode]` — the axis carries that per-encoding sort mode (or the chart-wide sort equals it); `stack: <Stack> | null` — the spec's stack equals it (null = must be absent); `limit: true|false`.
-- `instruction_effect` keys: `mark: <Mark>` — the proposal's mark equals it; `orientation: horizontal|vertical` — the dimension sits on `y`/`x`; `sort: <SortMode>`.
-- `judge`: `suitable = mark in suitable_marks and requires_hold(spec, profile, requires)`; the `valid ∧ suitable ∧ changed` figure uses this `suitable`. `stability`: for an instructed case, `sensitive` iff `instruction_effect` holds on the proposal — a canonical difference alone no longer counts.
+- `requires` keys (all optional, the only three a case needed — `_REQUIRES_KEYS`): `series: true` — a series-role field is on `color`, and on an offset too when the mark is `bar`; `ordered: <mode>` — the dimension-role field's sort (per-encoding, or failing one the chart-wide sort) has this mode; a dimension off the axes is not ordered, so the key does not apply to it; `bar_stack: <stack>` — when the mark is `bar`, its stack equals this; other marks do not stack, so the key does not apply to them. An unknown `requires` key is a load-time `ValueError`, not a silently-ignored one.
+- `instruction_effect` keys (`_EFFECT_KEYS`): `mark: <Mark>` — the proposal's mark equals it. An instructed case with no `instruction_effect` (or one outside `_EFFECT_KEYS`) is a load-time `ValueError`.
+- `judge`: `suitable = mark in suitable_marks and requires_hold(spec, profile, requires)`; the `valid ∧ suitable ∧ changed` figure uses this `suitable`. `stability`: for an instructed case, `sensitive` iff `instruction_holds` on the *verified* proposal — a refused attempt has no proposal and the case is skipped, never counted insensitive; a canonical difference alone no longer counts.
 
 - [ ] Tests first (the file's constructed `VisualDecision`s: a comparison bar without series ⇒ not suitable; with colour+offset ⇒ suitable; the donut instruction on a bar that only changed orientation ⇒ not sensitive; a donut ⇒ sensitive); then the code; then the YAML annotations — written from Section D's mark table, one `requires` block per case whose family Section D constrains (state each in the case's comment); `suitable_marks` unchanged. Commit: `feat(eval): suitability requires the structure Section D names, and sensitivity requires the instruction's own effect`.
 
@@ -201,7 +202,7 @@ def test_a_chart_naming_a_declared_field_is_not_dropped_by_the_mapper() -> None:
 ### Task 6: The visual planner is configured on its own
 
 **Files:**
-- Modify: `apps/orchestrator/src/finguard_orchestrator/bootstrap/config.py` (`visual_planner_provider: str | None = None`, `visual_planner_model: str | None = None`, `visual_planner_temperature: float | None = None`, `visual_planner_max_output_tokens: int | None = None` — each `None` meaning "the financial planner's"), `apps/orchestrator/.env.defaults` (four lines, each with its reason: choosing a better chart model must not move the natural-language → query precision that is worth 30 points), `bootstrap/main.py` (the wiring resolves each with `or settings.planner_*`; the provider through `providers.get(...)`), `scripts/evaluate_visual.py` (the manifest records the four resolved values; `RESULTS.md`'s latency row is labelled "added turn latency — in shadow/hybrid the answer waits for the planner" and the header names the visual model and provider), `tests/test_the_visual_planner_is_configurable.py` (defaults `None`; resolution to the planner's; an explicit visual model builds the adapter with it — asserted through `create_app()` as the sibling test does).
+- Modify: `apps/orchestrator/src/finguard_orchestrator/bootstrap/config.py` (`visual_planner_provider: str | None = None`, `visual_planner_model: str | None = None`, `visual_planner_temperature: float | None = None`, `visual_planner_max_output_tokens: int | None = None` — each `None` meaning "the financial planner's"), `apps/orchestrator/.env.defaults` (four lines, each with its reason: choosing a better chart model must not move the natural-language → query precision that is worth 30 points), `bootstrap/main.py` (the wiring resolves each with `or settings.planner_*`; the provider through `providers.get(...)`), `scripts/evaluate_visual.py` (the manifest records provider, model, temperature, max_output_tokens and budget; `RESULTS.md`'s latency row is labelled "added turn latency — in shadow/hybrid the answer waits for the planner" and the header names model, provider, sampling and budget), `tests/test_the_visual_planner_is_configurable.py` (defaults `None`; resolution to the planner's; an explicit visual model builds the adapter with it — asserted through `create_app()` as the sibling test does).
 - Commit: `feat(config): the visual planner has its own provider, model, temperature and token limit, falling back to the financial planner's`.
 
 ---
