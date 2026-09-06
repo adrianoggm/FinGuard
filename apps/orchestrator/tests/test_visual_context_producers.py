@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
 from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
@@ -132,6 +134,35 @@ def test_a_fresh_chart_remembers_its_decision_plan_evidence_and_turn(
     assert context.source_plan is charted_result.metric_definition
     assert context.evidence_ids == charted_result.metric_definition.transaction_ids
     assert isinstance(context.turn_id, UUID)
+    assert context.derived_from is None
+
+
+def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) -> None:
+    """Task 4: a follow-up classified `ANALYTICAL_RESHAPE` while a chart was in context produces a
+    context that names the chart it came from -- the newest one on the conversation BEFORE this
+    turn's is appended."""
+    previous = VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE)
+    reshaped = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan"),
+    )
+    remembered = llm_mapper._remember_visual_context(reshaped, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from == "chart-0"
+
+
+def test_an_unrelated_new_chart_names_no_origin(charted_result, chart_response) -> None:
+    """The same chart-in-context setup as the reshape above, but classified `UNRELATED`: the new
+    chart names no origin even though a previous chart exists."""
+    previous = VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE)
+    unrelated = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("UNRELATED", "none"),
+    )
+    remembered = llm_mapper._remember_visual_context(unrelated, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
     assert context.derived_from is None
 
 

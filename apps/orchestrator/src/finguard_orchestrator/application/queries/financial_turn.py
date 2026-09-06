@@ -50,6 +50,7 @@ from finguard_orchestrator.domain.models.planning_context import (
 from finguard_orchestrator.domain.models.turn_analysis import (
     TurnAnalysis,
 )
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services import (
     spanish,
     window_words,
@@ -288,6 +289,11 @@ class AskFinancialQuestionResult:
     # for the response DTO and again for the conversational state -- and a mapper is not somewhere
     # a model call can live. The application decides; the mapper renders what it is handed.
     visual_decision: VisualDecision | None = None
+    # What this turn wanted from the chart it followed, in service vocabulary (kind + claimant) --
+    # never the sentence. `None` when no chart was in context; set in `stream()`'s own convergence,
+    # the same one that decides `visual_decision`, for the same reason: forty branches build a
+    # result and this is one fact common to all of them, not one any branch is asked to know.
+    visual_follow_up: VisualFollowUp | None = None
     # Internal, typed source for a save candidate. Never serialized as financial data.
     metric_definition: FinancialPlan | ComparisonPlan | RatioPlan | None = None
 

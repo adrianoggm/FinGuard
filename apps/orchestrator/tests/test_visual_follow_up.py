@@ -274,6 +274,20 @@ async def test_the_classification_changes_nothing_visible(handler_turn) -> None:
     assert recorded == unrecorded
 
 
+async def test_the_result_carries_the_follow_up_when_a_chart_was_in_context() -> None:
+    """Task 4: `_record_visual_follow_up`'s return travels onto the result the handler yields --
+    the same seam `test_a_charted_turn_records_its_kind_and_claimant` proves is recorded."""
+    result, _ = await turn_for(
+        "Ordenalo de mayor a menor", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP
+    )
+    assert result.visual_follow_up == VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
+
+
+async def test_the_result_carries_no_follow_up_without_a_chart_in_context() -> None:
+    result, _ = await turn_for("¿Cuánto gasté en mayo?", PREVIOUS, conversation=IDLE, analysis=NEW)
+    assert result.visual_follow_up is None
+
+
 async def test_a_reshape_turn_records_the_follow_up_reader_at_most_once(seam_turn) -> None:
     """The classifier consults the follow-up reader's undecorated body (Task 5 fix), so the
     cascade's own @_recogniser call is the only one that may record a claim. Two CLAIMED rows
@@ -292,6 +306,15 @@ async def test_a_reshape_turn_records_the_follow_up_reader_at_most_once(seam_tur
     assert len(claims) <= 1
     (kind,) = sealed.where(Step.VISUAL_FOLLOW_UP)
     assert kind.now == "ANALYTICAL_RESHAPE"
+
+
+async def test_a_reshape_turns_result_carries_the_kind_the_seam_recorded() -> None:
+    """The same turn as above, read off the result rather than off the record: the field the
+    mapper's `derived_from` (Task 4) reads is set to what the seam classified, not just logged."""
+    result, _ = await turn_for(
+        "Solo restaurantes", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP
+    )
+    assert result.visual_follow_up == VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan")
 
 
 # --- the twelfth seam, on the controller's own visual short-circuit ----------------------------
