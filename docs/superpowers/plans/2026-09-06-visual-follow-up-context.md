@@ -507,13 +507,18 @@ Also produced: `fold` — `interpreter.py`'s `_fold` (`:47`) promoted to a publi
 
 from __future__ import annotations
 
+from datetime import date
 from typing import get_args
+from uuid import UUID
 
 import pytest
 from support.visual_planners import BREAKDOWN_PROFILE
 
+from finguard_orchestrator.application.queries.financial_turn import AskFinancialQuestionQuery
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
-from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
+from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import (
     Claimant,
@@ -526,20 +531,30 @@ from finguard_orchestrator.application.queries.readers.visual_follow_up import c
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
-CHARTED = IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
+ACCOUNT = UUID("11111111-1111-1111-1111-111111111111")
+TODAY = date(2026, 7, 15)
+PREVIOUS = FinancialPlan(  # the breakdown the chart in context drew; the reshape reader patches THIS
+    direction=Direction.EXPENSE,
+    period=RelativePeriod(Period.LAST_WEEK),
+    group_by=GroupBy.CATEGORY,
+    only_account_id=ACCOUNT,
+)
+CHARTED = Conversation(last_plan=PREVIOUS).with_visual_context(
+    VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
+)
 FOLLOW_UP = TurnAnalysis(intent=Intent.FINANCIAL_QUERY, relation=TurnRelation.FOLLOW_UP, focus=TurnFocus.LAST_ANSWER)
 NEW = TurnAnalysis(intent=Intent.FINANCIAL_QUERY, relation=TurnRelation.NEW_REQUEST, focus=TurnFocus.NEW_REQUEST)
 
 
-def _query(sentence, conversation=CHARTED):
-    """Build an AskFinancialQuestionQuery the way tests/test_visual_decision_seam.py does."""
-    ...
+def _query(sentence: str) -> AskFinancialQuestionQuery:
+    """The conversation is passed to classify separately; the query carries the sentence."""
+    return AskFinancialQuestionQuery(sentence, ACCOUNT, TODAY, conversation=CHARTED)
 
 
 ROWS = [
-    ("Ponlo en horizontal", FOLLOW_UP, "PRESENTATION_ONLY", "interpret_visual"),
+    ("Ponlo apilado", FOLLOW_UP, "PRESENTATION_ONLY", "interpret_visual"),
     ("Ordénalo de mayor a menor", FOLLOW_UP, "PRESENTATION_ONLY", "interpret_visual"),
-    ("Ahora agrúpalo por meses", FOLLOW_UP, "ANALYTICAL_RESHAPE", "follow_up_plan"),
+    ("Solo restaurantes", FOLLOW_UP, "ANALYTICAL_RESHAPE", "follow_up_plan"),  # a category patch on PREVIOUS; interpret_visual yields (financial word)
     ("¿Por qué agosto es tan alto?", FOLLOW_UP, "DRILL_DOWN", "drill_down_reader"),
     ("Enséñame los movimientos responsables", FOLLOW_UP, "DRILL_DOWN", "drill_down_reader"),
     ("¿Cuánto gasté en mayo?", NEW, "UNRELATED", "none"),
@@ -553,7 +568,7 @@ def test_the_deterministic_readers_name_the_kind(sentence, analysis, kind, claim
 
 
 def test_without_a_chart_in_context_every_turn_is_unrelated() -> None:
-    assert classify(_query("Ponlo en horizontal"), FOLLOW_UP, IDLE) == VisualFollowUp("UNRELATED", "none")
+    assert classify(_query("Ordenalo de mayor a menor"), FOLLOW_UP, IDLE) == VisualFollowUp("UNRELATED", "none")
 
 
 def test_two_readers_claiming_is_ambiguous(monkeypatch) -> None:
@@ -735,7 +750,7 @@ git commit -m "feat(visual): five kinds of visual follow-up, named by the reader
 async def test_a_charted_turn_records_its_kind_and_claimant(seam_turn) -> None:
     """`seam_turn(sentence, conversation)` drives the handler under `recording_turn()` the way
     tests/test_visual_decision_seam.py does, returning the sealed TurnRecord."""
-    sealed = await seam_turn("Ponlo en horizontal", CHARTED)
+    sealed = await seam_turn("Ordenalo de mayor a menor", CHARTED)
     (decision,) = sealed.where(Step.VISUAL_FOLLOW_UP)
     assert (decision.verdict, decision.changed, decision.field) == (Verdict.AGREED, False, "visual_follow_up")
     assert (decision.was, decision.now, decision.detail) == (None, "PRESENTATION_ONLY", "interpret_visual")
@@ -763,8 +778,8 @@ async def test_every_kind_is_a_record_row(seam_turn, monkeypatch, kind) -> None:
 async def test_the_classification_changes_nothing_visible(handler_turn) -> None:
     """The plan's headline constraint: the same turn, recorded and unrecorded, is the same answer."""
     with recording_turn():
-        recorded = await handler_turn("Ponlo en horizontal", CHARTED)
-    unrecorded = await handler_turn("Ponlo en horizontal", CHARTED)
+        recorded = await handler_turn("Ordenalo de mayor a menor", CHARTED)
+    unrecorded = await handler_turn("Ordenalo de mayor a menor", CHARTED)
     assert recorded == unrecorded
 ```
 
