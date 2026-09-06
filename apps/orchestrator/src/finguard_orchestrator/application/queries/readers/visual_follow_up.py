@@ -28,6 +28,7 @@ from finguard_orchestrator.infrastructure.visualization.interpreter import (
     fold,
     interpret_visual,
 )
+from finguard_orchestrator.observability import Step, Verdict, record
 
 # The input is `fold()`ed before this searches it, so an accented alternative (`qué`, an accented
 # `ensename`) never matches and none is listed here. `por que` is qualified to the shapes §3.3
@@ -112,3 +113,20 @@ def classify(
     if drill:
         return VisualFollowUp("DRILL_DOWN", "drill_down_reader")
     return VisualFollowUp("UNRELATED", "none")
+
+
+def record_visual_follow_up(follow_up: VisualFollowUp) -> None:
+    """One Decision on the existing record; the kind and claimant are service vocabulary.
+
+    The one place `Step.VISUAL_FOLLOW_UP` is written, so both call sites that classify a turn's
+    relation to the chart it follows — the handler, for the turn that reaches it, and the
+    controller's visual short-circuit, for the turn that never does — record it identically.
+    """
+    record(
+        Step.VISUAL_FOLLOW_UP,
+        Verdict.AGREED,
+        changed=False,
+        field="visual_follow_up",
+        now=follow_up.kind,
+        detail=follow_up.claimant,
+    )

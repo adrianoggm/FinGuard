@@ -745,6 +745,7 @@ class AskFinancialQuestionHandler:
                 interpreter=self._interpreter,
                 today=query.today,
             )
+        _record_visual_follow_up(query, analysis, was)
         intent = analysis.intent
         if intent is Intent.CORRECTION:
             continuation = (
@@ -5224,6 +5225,33 @@ async def _decided_visual(
         return result
     _record_visual(decision)
     return replace(result, visual_decision=decision)
+
+
+def _record_visual_follow_up(
+    query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
+) -> None:
+    """Twelfth seam. Records what the turn wants from the chart it follows and changes nothing:
+    the kind and the claimant are service vocabulary, the sentence stays in the query.
+    `conversation` is the handler's working conversation (`was`), not `query.conversation`.
+
+    Imported here rather than at module level: `readers.visual_follow_up` reaches
+    `infrastructure.visualization.interpreter` (Task 5's own design), and this module is part of
+    `application/__init__.py`'s own import chain -- a module-level import here would make loading
+    `application` load `infrastructure` before `application` finishes initialising, and
+    `infrastructure/__init__.py` imports `llm_controller.py`, which imports `application` back.
+    Deferred to call time, after both packages are fully loaded, there is no cycle to break.
+    """
+    from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+        classify as classify_visual_follow_up,
+    )
+    from finguard_orchestrator.application.queries.readers.visual_follow_up import (
+        record_visual_follow_up,
+    )
+
+    if not conversation.visual_contexts:
+        return
+    follow_up = classify_visual_follow_up(query, analysis, conversation)
+    record_visual_follow_up(follow_up)
 
 
 def _record_visual(decision: VisualDecision) -> None:
