@@ -71,13 +71,29 @@ an invalid change is explained or the previous chart stays.
 `updated.spec` (titles included) is what is shown, stored and offered for saving, and a `VisualDecision`
 with `source="patch"` is recorded (`application/queries/ask_financial_question.py`'s
 `record_visual_decision`) as `AGREED`/`changed=(was != now)`/`now="patch"`/`detail="accepted"`, never
-through the `visual_planner.decision` promotion-log line; refused, `VISUAL_INCOMPATIBLE` names the
-rule in one Spanish sentence, the previous chart is kept, and `record_visual_decision_refused` writes
-one `DECLINED`/`invalid_proposal:<rule>` row. The wire's nested profile now carries the shape facts
-§4 describes (`infrastructure/dto/llm_dto.py`'s `VisualFieldPayload.role`/`order`,
-`VisualProfilePayload.comparison`/`plan_limited`), with the old derivation as the fallback for older
-clients, `row_count`/`plan_metric` still off the wire, and a contradictory wire `role`/`type` refused
-at the DTO (422, not a 500).
+through the `visual_planner.decision` promotion-log line; refused, `VISUAL_INCOMPATIBLE` speaks one
+Spanish clause per rule (`llm_controller._REFUSAL_TEXT`, keyed by the closed `RejectionRule` — the
+rule token itself stays in the record's `detail`, never in the text), the previous chart is kept, and
+`record_visual_decision_refused` writes one `DECLINED`/`invalid_proposal:<rule>` row. The merge-level
+refusal (`apply_visual_intent` raising before a merged spec ever reaches `verify`) is recorded the same
+way now, under rule `merge` (fix wave, I3) — promise 1's per-rule rejection rate used to cover only the
+verifier's own path. The wire's nested profile now carries the shape facts §4 describes
+(`infrastructure/dto/llm_dto.py`'s `VisualFieldPayload.role`/`order`,
+`VisualProfilePayload.comparison`/`plan_limited`), with the old derivation kept for a conversation an
+older client still holds — it validates, but a sort restyle asked of that chart is refused with rule
+`order` exactly as at base, until the conversation's next chart carries the full profile (fix wave, I4)
+— `row_count`/`plan_metric` still off the wire, and a contradictory wire `role`/`type` refused at the
+DTO (422, not a 500).
+
+**Fix wave, I1: verification is a second, deliberate visible change, not only the asking in §5.**
+Probed across the interpreter's whitelist × the eight floor families: 29 of the 62 restyles base
+accepted are now refused (`mark`, `order` or `grouped`) — a 47% reduction, and every one a chart the
+refusing rule exists to refuse (a line over unordered categories, a value sort on a temporal axis, a
+stack on a comparison), never a false refusal. One of those 29 was a chip the answer itself used to
+offer on the commonest chart (a plain breakdown's "Ponlo en línea"); `_chart_suggestions`
+(`infrastructure/mappers/llm_mapper.py`) now filters every candidate through the same gate
+(`interpret_visual` → `apply_visual_intent` → `verify(draft_of(...), ...)`) before offering it, so a
+chip offered is a chip the gate has already agreed to (C1).
 
 ### 3.2 Analytical reshape — **half built**
 
@@ -151,10 +167,11 @@ class VisualContext:
     source_plan: FinancialPlan | ComparisonPlan | RatioPlan | None = None   # the plan this charted
     evidence_ids: tuple[UUID, ...] = ()   # the movements behind the figures, turn-local like decision
     derived_from: str | None = None       # the chart this reshaped or drilled from
-    turn_id: UUID | None = None           # minted where the chart is made; None after a round-trip
+    turn_id: UUID | None = None           # minted where the chart is made; survives the wire (D-4.2-9)
 ```
 
-The wire payload (`VisualContextPayload`) grows only `derived_from` and `turn_id` at the context level; its nested profile payload grows the four shape facts above. `decision`,
+The wire payload (`VisualContextPayload`) grows only `derived_from` and `turn_id` at the context
+level; its nested profile payload grows the four shape facts below. `decision`,
 `source_plan` and `evidence_ids` are **turn-local**: the orchestrator keeps no conversation store —
 the conversation itself is the wire payload — so they are populated in the turn that makes or derives
 the chart and come back `None` / `()` after a round-trip. What a later turn can still recover is what
