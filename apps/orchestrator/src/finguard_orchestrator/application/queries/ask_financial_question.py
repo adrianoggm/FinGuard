@@ -578,12 +578,13 @@ class AskFinancialQuestionHandler:
         started = time.perf_counter()
         outcome = "INCOMPLETE"
         # A one-element box, not a return value: `_steps` is an async generator and PEP 525 forbids
-        # `return <value>` in one. `_record_visual_follow_up`, deep inside it, classifies what this
-        # turn wants from the chart it follows long before any result exists; this is where that
-        # value is written, and read back below at the same convergence that decides
-        # `visual_decision` — for the same reason `metric_definition`'s own fallback is here rather
-        # than in each of `_steps`'s branches, except that fallback reads `step.conversation`
-        # (already on the result) while this one depends on `analysis`, which never is.
+        # `return <value>` in one. `_classify_and_record_visual_follow_up`, deep inside it,
+        # classifies what this turn wants from the chart it follows long before any result exists;
+        # this is where that value is written, and read back below at the same convergence that
+        # decides `visual_decision` — for the same reason `metric_definition`'s own fallback is
+        # here rather than in each of `_steps`'s branches, except that fallback reads
+        # `step.conversation` (already on the result) while this one depends on `analysis`, which
+        # never is.
         follow_up_seen: list[VisualFollowUp | None] = [None]
         try:
             async for step in self._steps_answering_scope(query, follow_up_seen):
@@ -627,12 +628,10 @@ class AskFinancialQuestionHandler:
                     # The chart is decided once for the turn using the presentation circumstances
                     # supplied at the edge. The deterministic floor may currently ignore some of
                     # them, but the application seam is complete for planners that do not.
-                    step = replace(
-                        await _decided_visual(
-                            step, self._visual_policy, query.presentation, query.sentence
-                        ),
-                        visual_follow_up=follow_up_seen[0],
+                    decided = await _decided_visual(
+                        step, self._visual_policy, query.presentation, query.sentence
                     )
+                    step = replace(decided, visual_follow_up=follow_up_seen[0])
                 yield step
         finally:
             logger.info(
@@ -775,7 +774,7 @@ class AskFinancialQuestionHandler:
                 interpreter=self._interpreter,
                 today=query.today,
             )
-        follow_up_seen[0] = _record_visual_follow_up(query, analysis, was)
+        follow_up_seen[0] = _classify_and_record_visual_follow_up(query, analysis, was)
         intent = analysis.intent
         if intent is Intent.CORRECTION:
             continuation = (
@@ -5257,12 +5256,13 @@ async def _decided_visual(
     return replace(result, visual_decision=decision)
 
 
-def _record_visual_follow_up(
+def _classify_and_record_visual_follow_up(
     query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
 ) -> VisualFollowUp | None:
-    """Twelfth seam. Records what the turn wants from the chart it follows and changes nothing:
-    the kind and the claimant are service vocabulary, the sentence stays in the query.
-    `conversation` is the handler's working conversation (`was`), not `query.conversation`.
+    """Twelfth seam. Classifies what the turn wants from the chart it follows, records it, and
+    returns the classification -- changes nothing else: the kind and the claimant are service
+    vocabulary, the sentence stays in the query. `conversation` is the handler's working
+    conversation (`was`), not `query.conversation`.
 
     Returns what it classified -- `None` when no chart is in context -- so `_steps` can carry it
     onto the result `_remember_visual_context` (Task 4) reads `derived_from` off, through

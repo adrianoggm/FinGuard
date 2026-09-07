@@ -32,6 +32,12 @@ episodes:
       Reprobed both against the real harness after the swap; `UNMEASURED` and `MUTE` are back to
       22 and 43.
 
+      (M5, fix wave.) Turn 2's `groups:` keys were `PUBLIC_TRANSPORT`/`FUEL`, leftovers from §9's
+      pre-swap wording — under a salary question they read as the bank answering with petrol,
+      which nothing here measures. Renamed to salary-shaped buckets (`SALARY`/`BONUS`), same two
+      rows, same amounts and counts: the harness reads a chart's shape off the rows it is given,
+      never off a category's label, so the rename changes nothing this episode asserts.
+
       Probed against the real harness rather than assumed from the design doc, and two things came
       back different from §9's intent regardless of wording. Turn 3, «Ahora compáralo por meses.»,
       never reaches the planner: the deterministic comparison reader recognises «compáralo» before
@@ -65,7 +71,7 @@ episodes:
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿Cómo se reparte mi sueldo este mes?
         route: QUERY
-        groups: [[PUBLIC_TRANSPORT, 12000, 2], [FUEL, 9000, 1]]
+        groups: [[SALARY, 12000, 2], [BONUS, 9000, 1]]
         banking_calls: 1
         # Probed, not assumed: a different question about a different direction reads as a new
         # request, not a follow-up, so its chart derives from nothing. See `why`.

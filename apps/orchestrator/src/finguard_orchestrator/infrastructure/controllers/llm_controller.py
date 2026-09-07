@@ -213,6 +213,12 @@ def _derived_context(
     turn-local like `VisualContext.decision` itself: a verified patch's own `VisualDecision`, when
     there is one, so a restyle is a `patch` source the same way a fresh chart is
     `llm`/`deterministic`.
+
+    `derived_from=trusted.chart_id` names the chart on screen, not the chart `spec` came from
+    (M12): on a saved-metric restyle `trusted` is `replace(context, spec=source.chart)`, so
+    `trusted.chart_id` is still the conversation's own displayed chart while `spec` began as the
+    saved metric's. Correct -- the restyle *is* of the chart on screen -- but read the link as
+    "this is a restyle of that chart", never as "this spec derives from that spec".
     """
     return VisualContext(
         chart_id,

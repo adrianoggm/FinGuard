@@ -101,6 +101,11 @@ def _two_claimant_pair(presentation: bool, reshape: bool, drill: bool) -> Claima
     return cast(Claimant, pair)
 
 
+# The interpreter's own mixed refusal, named once (M10/D-4.2-6): a data change and a format
+# change asked in the same turn is presentation+reshape, at both sites below that read it.
+_MIXED_PAIR = _two_claimant_pair(True, True, False)
+
+
 def classify(
     query: AskFinancialQuestionQuery, analysis: TurnAnalysis, conversation: Conversation
 ) -> VisualFollowUp:
@@ -115,7 +120,7 @@ def classify(
         # The interpreter has already read two claimants in this one turn — a data change (reshape)
         # and a format change (presentation) asked together — which is exactly what AMBIGUOUS
         # exists for; the table below is never reached.
-        return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, True, False))
+        return VisualFollowUp("AMBIGUOUS", _MIXED_PAIR)
     presentation = intent is not None
     # Drill-down is checked before reshape because «¿por qué agosto es tan alto?» is also a
     # FOLLOW_UP on the last answer; the lexicon is the more specific reader and wins, which is why
@@ -142,7 +147,7 @@ def classify_claimed_visual(intent: VisualIntent, sentence: str) -> VisualFollow
     interpreter's own mixed refusal is presentation+reshape (a data change and a format change
     asked together); the drill lexicon matching too is presentation+drill."""
     if intent.mixed:
-        return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, True, False))
+        return VisualFollowUp("AMBIGUOUS", _MIXED_PAIR)
     if _DRILL_DOWN.search(fold(sentence)):
         return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, False, True))
     return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")

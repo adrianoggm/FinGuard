@@ -33,10 +33,14 @@ from finguard_orchestrator.domain.models.chart import (
     derive_chart,
 )
 from finguard_orchestrator.domain.models.conversation import IDLE
-from finguard_orchestrator.domain.models.visual_plan import draft_of
+from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
+)
+from finguard_orchestrator.domain.services.visual_interpreter import (
+    apply_visual_intent,
+    interpret_visual,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
@@ -350,6 +354,64 @@ def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
     assert (by_name["value_minor"].role, by_name["value_minor"].order) == ("measure", "NONE")
     assert (by_name["dimension"].role, by_name["dimension"].order) == ("dimension", "NONE")
     assert (restored.profile.comparison, restored.profile.plan_limited) == (False, False)
+
+
+def _old_shape_payload(*, ranked: bool) -> dict[str, object]:
+    """`_visual_context_dict()`'s own shape, its profile fields optionally carrying `role`/
+    `order` -- the two keys fix round 1 put on the wire. `ranked=False` is the payload an older
+    client still holds (I4): a profile that predates both keys entirely, the same shape
+    `test_a_payload_with_none_of_the_new_keys_still_validates` already proves still validates.
+    `ranked=True` is the shape every chart built after that fix carries for a ranked breakdown."""
+    payload = _visual_context_dict()
+    if ranked:
+        payload["profile"] = {
+            "fields": [
+                {"name": "value_minor", "type": "quantitative", "role": "measure"},
+                {
+                    "name": "dimension",
+                    "type": "nominal",
+                    "role": "dimension",
+                    "order": "MEASURE_DESC",
+                },
+            ],
+            "cardinality": 2,
+        }
+    return payload
+
+
+def test_an_older_payload_validates_but_a_sort_restyle_waits_for_the_next_chart() -> None:
+    """I4, decided: document, no heuristic. `to_domain`'s fallback (`role` guessed from `type`,
+    `order` defaulted to `_DEFAULT_ORDER`) lets an older client's payload -- one that predates
+    `role`/`order` entirely -- complete the turn instead of refusing to parse it at all. It does
+    not restore what base itself could do: the fallback's `order` is `"NONE"`, and the verifier's
+    own `order` rule reads `NONE` as "nothing may sort this field", so a descending-sort restyle
+    asked of that chart is refused exactly as it was at base, before this fix wave existed. That
+    is not a regression the fallback owes anyone: the chart still renders and the turn still
+    completes, and the window closes itself the moment the conversation's next chart is built --
+    every new chart carries the full profile, so the restyle resumes working from there.
+
+    The same payload with `role`/`order` present (the shape a chart built after fix round 1 always
+    carries) accepts the identical sentence, which is the contrast this test pins: not "always
+    refused", but "refused only for the one chart whose payload predates these keys".
+    """
+    old = conversation_mapper.to_domain(
+        ConversationPayload.model_validate({"visual_contexts": [_old_shape_payload(ranked=False)]})
+    ).visual_contexts[0]
+    intent = interpret_visual("ordénalo de mayor a menor", (old,))
+    assert intent is not None and intent.patch is not None
+    merged = apply_visual_intent(intent, old)
+    refused = verify(draft_of(merged.spec), old.profile)
+    assert isinstance(refused, Rejection)
+    assert refused.rule == "order"
+
+    ranked = conversation_mapper.to_domain(
+        ConversationPayload.model_validate({"visual_contexts": [_old_shape_payload(ranked=True)]})
+    ).visual_contexts[0]
+    intent = interpret_visual("ordénalo de mayor a menor", (ranked,))
+    assert intent is not None and intent.patch is not None
+    merged = apply_visual_intent(intent, ranked)
+    accepted = verify(draft_of(merged.spec), ranked.profile)
+    assert isinstance(accepted, ChartSpec)
 
 
 def test_the_wire_carries_derived_from_and_turn_id_and_nothing_server_side() -> None:

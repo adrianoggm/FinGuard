@@ -14,7 +14,7 @@ stays pure. All this adds is the profile as an input instead of loose arguments 
 """
 
 from dataclasses import dataclass, replace
-from typing import Literal, get_args
+from typing import Final, Literal, get_args
 
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
@@ -47,6 +47,14 @@ def _sort_for(order: FieldOrder, measure_name: str) -> EncodingSort | None:
     return None
 
 
+# `VisualDecision.__post_init__`'s `accepted` invariant, over the closed set rather than a
+# hand-typed copy of two of its three members (M6/D-4.2-1). Every source but the floor's own --
+# derived from `VisualSource` (Global Constraint 7: closed sets are `Literal`s read through
+# `get_args`) so a fourth source is admitted here the moment it is admitted there, rather than
+# silently inheriting "must not be accepted" from a literal nobody remembered to widen.
+_ACCEPTED_SOURCES: Final[frozenset[str]] = frozenset(get_args(VisualSource)) - {"deterministic"}
+
+
 @dataclass(frozen=True)
 class VisualDecision:
     """Which chart was chosen, from what, by whom, and why the other one was not.
@@ -76,7 +84,7 @@ class VisualDecision:
     """The draft passed the verifier."""
     accepted: bool = False
     """What the user sees is the model's or the patch's chart. Implies
-    `source in {"llm", "patch"}`."""
+    `source in _ACCEPTED_SOURCES` -- every source but `"deterministic"`."""
     changed_from_baseline: bool | None = None
     """The verified proposal differs from the floor on `canonical()`. None when the floor was
     not computed (promoted) or there was no verified proposal to compare."""
@@ -87,14 +95,17 @@ class VisualDecision:
     rejected_rule: str | None = None
 
     def __post_init__(self) -> None:
+        # Constraint 7 ("closed sets are `Literal`s read through `get_args`") was true of this
+        # first check alone; M6 (fix wave) makes it true of the two below as well -- both now
+        # read a set derived from `VisualSource`, never a hand-typed copy of part of it.
         if self.source not in get_args(VisualSource):
             raise ValueError("unsupported visual decision source")
-        if self.fallback_reason is not None and self.source != "deterministic":
+        if self.fallback_reason is not None and self.source not in {"deterministic"}:
             raise ValueError(
                 "only a deterministic chart fell back -- a chosen model or patch plan did not "
                 "fall back"
             )
-        if self.accepted != (self.source in {"llm", "patch"}):
+        if self.accepted != (self.source in _ACCEPTED_SOURCES):
             raise ValueError("accepted means the model's or the patch's chart is what is shown")
 
 
