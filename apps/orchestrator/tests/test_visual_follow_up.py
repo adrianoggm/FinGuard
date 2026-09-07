@@ -385,10 +385,13 @@ _MINTED_ID = UUID("33333333-3333-3333-3333-333333333333")
 _TEST_TOKENS = MetricTokenCodec({"active": b"x" * 32}, "active")
 _SEALED_CHARTED = replace(
     CHARTED,
-    visual_contexts=(
-        conversation_mapper.seal_context(
-            CHARTED.visual_contexts[0], _WHO.holder_reference, _TEST_TOKENS
-        ),
+    # D-3b-9 (fix wave): over every context `CHARTED` carries, not `visual_contexts[0]` alone --
+    # `CHARTED` holds one chart today, so the two read the same, but a hard-coded index silently
+    # drops the rest the day `CHARTED` gains a second one, and the failure would look like a trust
+    # bug in whatever test runs next rather than a stale fixture here.
+    visual_contexts=tuple(
+        conversation_mapper.seal_context(context, _WHO.holder_reference, _TEST_TOKENS)
+        for context in CHARTED.visual_contexts
     ),
 )
 
@@ -491,19 +494,39 @@ class _UnreachableQueries:
 
 ASK_ROWS = [
     # I-1: the drill lexicon also matches this sentence -- the pair a silent restyle used to hide.
-    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill"),
+    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill", True),
     # The interpreter's own mixed refusal -- a data change and a format change in one turn.
-    ("Ponlo en barras y solo restaurantes", "presentation+reshape"),
+    ("Ponlo en barras y solo restaurantes", "presentation+reshape", True),
+    # m3 (fix wave), pinned rather than left incidental: the ask wins even over an untrusted
+    # chart. Classifying a turn AMBIGUOUS takes no decision on the chart -- no merge, no verifier
+    # input, no save candidate, no chip -- so the trust gate need not run first, and running it
+    # first would refuse a turn the server has not yet decided is even about that chart, losing
+    # §5's own ambiguity record for a decision this branch never makes.
+    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill", False),
 ]
 
 
-@pytest.mark.parametrize(("sentence", "claimant"), ASK_ROWS)
-async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(sentence, claimant) -> None:
+@pytest.mark.parametrize(("sentence", "claimant", "trusted"), ASK_ROWS)
+async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(
+    sentence, claimant, trusted
+) -> None:
     """§5's row: a claimed turn two readers agree on gets a question, not a guess -- zero ledger
-    calls, the conversation returned exactly as it arrived (nothing merged), and the one
-    VISUAL_FOLLOW_UP row the recording seam always writes for a claimed turn."""
+    calls, and the one VISUAL_FOLLOW_UP row the recording seam always writes for a claimed turn.
+
+    m3 (fix wave): the untrusted row pins what a tampered chart can and cannot steer here. It can
+    choose which of the two `_ASK` texts comes back (`claimant`, read off the interpreter before
+    trust is ever asked about); it cannot reach a merge, a verifier input, a save candidate or a
+    chip, and the context's token is nulled in the reply exactly as an untrusted context always
+    comes back -- the same refusal `not context.trusted` produces everywhere else, just recorded
+    one step later than a plain restyle would be.
+    """
     fake_queries = _UnreachableQueries()
     request = _charted_request(sentence)
+    if not trusted:
+        # `_Payload` is not frozen (`test_visualization_stage1.py`'s own comment): mutate the wire
+        # shape in place, exactly what a tampering client's request body would look like.
+        context = request.conversation.visual_contexts[0]
+        context.profile.comparison = not context.profile.comparison
     with recording_turn() as turn:
         response = await ask_question(
             request,
@@ -520,7 +543,10 @@ async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(sentence, cl
 
     assert response.outcome == "VISUAL_AMBIGUOUS"
     assert response.text == llm_controller._ASK[claimant]
-    assert response.conversation == request.conversation
+    if trusted:
+        assert response.conversation == request.conversation
+    else:
+        assert response.conversation.visual_contexts[0].token is None
     assert fake_queries.ran == []
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("AMBIGUOUS", claimant)

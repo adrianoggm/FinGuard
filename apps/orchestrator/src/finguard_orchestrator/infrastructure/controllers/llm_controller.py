@@ -1569,6 +1569,13 @@ async def ask(
     )
     presentation = _presentation_of(request)
 
+    # m8: targeting reads every echoed context, trusted or not -- «el gráfico» resolves against
+    # `was.visual_contexts` as a whole, not the trusted subset, because the newest one is what a
+    # holder means by it and the gate below has not run yet. A client that appends a forged
+    # context as the newest chart makes «el gráfico» resolve onto the forgery instead of the
+    # holder's real one, and the turn then refuses at the trust gate -- self-inflicted (a client
+    # can only harm its own conversation this way) and the safe direction: refusing beats
+    # silently resolving onto whichever context happens to still be trusted.
     visual = interpret_visual(
         request.question, was.visual_contexts, voice=request.channel == "VOICE"
     )
@@ -1584,12 +1591,19 @@ async def ask(
                 conversation=conversation_mapper.to_payload(was),
             )
         source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+        # D-3b-6 (fix wave): unconditional -- `_visual_only_response`'s own save-candidate branch
+        # already requires `source is not None` (see its `if source is not None and holder_
+        # reference is not None and metric_tokens is not None:` below), so passing `None` here
+        # whenever there is no source was a second, redundant gate on the same decision, and
+        # Minor 5 is what it costs: an AST allowlist that checks only the keyword's *name*, never
+        # its value, cannot see through a call site that always "passes" `metric_tokens=` while
+        # the value itself is `None`.
         return _visual_only_response(
             visual,
             was,
             source=source,
             holder_reference=who.holder_reference,
-            metric_tokens=metric_tokens if source is not None else None,
+            metric_tokens=metric_tokens,
             seal=seal,
         )
 
@@ -1751,12 +1765,13 @@ async def ask_streaming(
             )
         else:
             source = _saved_visual_source(request, visual, was, who, metric_tokens, metrics_on)
+            # D-3b-6 (fix wave): unconditional -- see the same line on the question route.
             answer = _visual_only_response(
                 visual,
                 was,
                 source=source,
                 holder_reference=who.holder_reference,
-                metric_tokens=metric_tokens if source is not None else None,
+                metric_tokens=metric_tokens,
                 seal=seal,
             )
 

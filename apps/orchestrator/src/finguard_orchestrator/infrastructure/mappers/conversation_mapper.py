@@ -76,6 +76,12 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.observability import name_the_conversation
 
+# D-3b-4 (fix wave): named once, used by both `_visual_contexts` and `to_domain` below -- the two
+# signatures have to move together by definition (one is the closure the other threads through to
+# it), and a hand-written copy at each site is exactly the kind of pair this module's other
+# comments already warn drifts apart.
+type ContextVerifier = Callable[[str | None, dict[str, object]], bool]
+
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
 # `"NONE"` here would be the second copy that goes stale the moment that default changes -- the
 # same "second copy" this module's own reconstruction comment already warns against for `role`.
@@ -147,7 +153,7 @@ def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
 def _visual_contexts(
     payload: ConversationPayload | None,
     *,
-    verify: Callable[[str | None, dict[str, object]], bool] | None = None,
+    verify: ContextVerifier | None = None,
 ) -> tuple[VisualContext, ...]:
     if payload is None:
         return ()
@@ -453,7 +459,7 @@ def _identified(payload: ConversationPayload | None) -> UUID:
 def to_domain(
     payload: ConversationPayload | None,
     *,
-    verify: Callable[[str | None, dict[str, object]], bool] | None = None,
+    verify: ContextVerifier | None = None,
 ) -> Conversation:
     """The conversation a caller echoed back.
 

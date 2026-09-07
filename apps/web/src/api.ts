@@ -256,6 +256,10 @@ export type ConversationState = {
   // Opaque, value-free chart memory. The client echoes it; only the orchestrator interprets it.
   visual_contexts?: {
     chart_id: string;
+    // Sealed; echoed, never read (m6, fix wave).
+    derived_from?: string | null;
+    // Sealed; echoed, never read (m6, fix wave).
+    turn_id?: string | null;
     spec: Record<string, unknown>;
     profile: {
       fields: {

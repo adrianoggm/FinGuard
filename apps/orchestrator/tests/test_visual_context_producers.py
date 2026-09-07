@@ -161,6 +161,27 @@ def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) 
     assert context.derived_from == "chart-0"
 
 
+def test_a_reshape_over_an_untrusted_previous_names_no_origin(
+    charted_result, chart_response
+) -> None:
+    """m9 (fix wave): a new, sealed chart used to be able to name an *untrusted* chart as its
+    `derived_from` -- only the id crossed over (this turn's own dataset still built the new
+    chart's spec and profile), but `derived_from` is what «el gráfico anterior» resolves through,
+    so a legitimate chart's provenance could point at one the server never vouched for. Naming no
+    origin when the previous chart is untrusted is the same refusal `UNRELATED` already gets
+    below, applied to the one case that used to slip past it.
+    """
+    previous = replace(VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE), trusted=False)
+    reshaped = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("ANALYTICAL_RESHAPE", "follow_up_plan"),
+    )
+    remembered = llm_mapper._remember_visual_context(reshaped, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from is None
+
+
 def test_an_unrelated_new_chart_names_no_origin(charted_result, chart_response) -> None:
     """The same chart-in-context setup as the reshape above, but classified `UNRELATED`: the new
     chart names no origin even though a previous chart exists."""
@@ -453,12 +474,33 @@ def test_the_seal_is_never_silently_skipped() -> None:
                 else None
             )
             enclosing = self.stack[-1] if self.stack else "<module>"
-            keywords = frozenset(keyword.arg for keyword in node.keywords if keyword.arg)
+            # m5 (fix wave): a keyword bound to a literal `None` does not count as passed -- both
+            # callers' own guards (`question_to_dto`'s `if holder_reference is not None and
+            # metric_tokens is not None:`, `llm_controller.py`'s save-candidate branch) already
+            # treat it as absent, so `metric_tokens=None` written at the call site must fail this
+            # allowlist the same way omitting the keyword entirely would.
+            keywords = frozenset(
+                keyword.arg
+                for keyword in node.keywords
+                if keyword.arg
+                and not (isinstance(keyword.value, ast.Constant) and keyword.value.value is None)
+            )
             if name == "question_to_dto":
                 self.question_to_dto_calls.append((self.relative, enclosing, keywords))
             elif name == "_visual_only_response":
                 self.visual_only_response_calls.append((self.relative, enclosing, keywords))
             self.generic_visit(node)
+
+    # m5: pinned directly against the visitor, since no live call site writes this shape --
+    # `metric_tokens=None` (a literal), not the `metric_tokens if source is not None else None`
+    # conditional D-3b-6 just removed. A keyword present only by name and bound to `None` must
+    # still read as unsealed.
+    synthetic = _Visitor("synthetic.py")
+    synthetic.visit(
+        ast.parse("def f():\n    question_to_dto(r, holder_reference=h, metric_tokens=None)\n")
+    )
+    (_, _, synthetic_keywords) = synthetic.question_to_dto_calls[0]
+    assert "metric_tokens" not in synthetic_keywords, "a literal metric_tokens=None must not seal"
 
     question_to_dto_calls: list[tuple[str, str, frozenset[str]]] = []
     visual_only_response_calls: list[tuple[str, str, frozenset[str]]] = []
