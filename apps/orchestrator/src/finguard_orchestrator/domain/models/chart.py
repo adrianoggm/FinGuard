@@ -325,6 +325,12 @@ class VisualContext:
     `evidence_ids` are turn-local — the service keeps no conversation store, so a round trip
     brings them back empty — while `derived_from` and `turn_id` travel on the wire, because a
     later turn needs them to resolve «el gráfico anterior» and to say in which turn it was made.
+
+    `token` travels too: it is the seal to re-emit, proof that a round-tripped context is the one
+    this process built rather than one edited in transit. `trusted` is turn-local like `decision`
+    above it — it defaults `True` because a context built fresh in this process is the server's
+    own and needs no seal to prove it; only `to_domain`, given a verifier, ever sets it `False`,
+    for a context whose seal did not check out.
     """
 
     chart_id: str
@@ -335,6 +341,8 @@ class VisualContext:
     evidence_ids: tuple[UUID, ...] = ()
     derived_from: str | None = None
     turn_id: UUID | None = None
+    token: str | None = None
+    trusted: bool = True
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):

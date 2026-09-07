@@ -10,7 +10,9 @@ that is not one, a rank of forty thousand are all refused at the edge with a 422
 layers in with an apology.
 """
 
+from collections.abc import Callable
 from dataclasses import fields as dataclass_fields
+from dataclasses import replace
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
@@ -65,11 +67,13 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
     PaymentDraftPayload,
     PlanPayload,
     SpokenContactResponse,
+    VisualContextPayload,
 )
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
     draft_to_domain,
     plan_to_domain,
 )
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.observability import name_the_conversation
 
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
@@ -140,7 +144,11 @@ def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
     return EncodingSort(cast(SortMode, raw["mode"]), field if isinstance(field, str) else None)
 
 
-def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext, ...]:
+def _visual_contexts(
+    payload: ConversationPayload | None,
+    *,
+    verify: Callable[[str | None, dict[str, object]], bool] | None = None,
+) -> tuple[VisualContext, ...]:
     if payload is None:
         return ()
     result: list[VisualContext] = []
@@ -253,9 +261,20 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
             sort_field=sort_field,
             limit=limit,
         )
+        # No verifier: exactly today's behaviour -- every context this process ever built without
+        # Task 3's holder-bound check in front of it is trusted, on the wire or freshly minted the
+        # same way. With one, a context is trusted only through a seal that actually checks out;
+        # an unverified token is dropped rather than echoed back as if it still meant something.
+        trusted = verify(item.token, context_semantics(item)) if verify is not None else True
         result.append(
             VisualContext(
-                item.chart_id, spec, profile, derived_from=item.derived_from, turn_id=item.turn_id
+                item.chart_id,
+                spec,
+                profile,
+                derived_from=item.derived_from,
+                turn_id=item.turn_id,
+                token=item.token if trusted else None,
+                trusted=trusted,
             )
         )
     return tuple(result)
@@ -290,6 +309,80 @@ def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
         **({"sort_field": spec.sort_field} if spec.sort_field else {}),
         **({"limit": spec.limit} if spec.limit is not None else {}),
     }
+
+
+def _context_payload(context: VisualContext) -> dict[str, object]:
+    """One visual context's wire shape, shared by `to_payload` and `seal_context`.
+
+    Factored out so the dict a seal is computed over (`seal_context`, through
+    `VisualContextPayload.model_validate` and `context_semantics`) and the dict `to_payload`
+    actually emits are built by the exact same code -- never two copies that could drift.
+    """
+    return {
+        "chart_id": context.chart_id,
+        "derived_from": context.derived_from,
+        "turn_id": context.turn_id,
+        "spec": _context_spec_payload(context.spec),
+        "profile": {
+            "fields": [
+                {
+                    "name": field.name,
+                    "type": field.type,
+                    "role": field.role,
+                    "order": field.order,
+                }
+                for field in context.profile.fields
+            ],
+            # The wire payload keeps one dataset-level count, same as before the profile carried
+            # per-field cardinality. It is the nominal dimension's -- what `_limit` and the donut
+            # rule both key off of (`_limit` reads its `order`, the donut rule its `cardinality`),
+            # never "the field that lands in `color`": in a comparison that field is the series,
+            # not the dimension. It is 0 whenever the chart's dimension is temporal rather than
+            # nominal -- read that as "not a donut's business", never as "no rows": the rows are
+            # still all there.
+            "cardinality": next(
+                (
+                    field.cardinality
+                    for field in context.profile.role("dimension")
+                    if field.type == "nominal"
+                ),
+                0,
+            ),
+            "metric": context.profile.metric,
+            "unit": context.profile.unit,
+            "positive": context.profile.positive,
+            "mutually_exclusive": context.profile.mutually_exclusive,
+            "verified_total": context.profile.verified_total,
+            "comparison": context.profile.comparison,
+            "plan_limited": context.profile.plan_limited,
+        },
+        "token": context.token,
+    }
+
+
+def context_semantics(payload: VisualContextPayload) -> dict[str, object]:
+    """What a seal covers: the whole wire context, minus the seal itself.
+
+    The one definition, read both when a context is sealed (`seal_context`, over the context this
+    process is about to sign) and when one is verified (`to_domain`'s `verify`, over the context a
+    caller echoed back) -- so the digest at creation and the digest at verification are always the
+    same pydantic-normalised dict, never two hand-picked field lists that could drift apart.
+    """
+    return payload.model_dump(mode="json", exclude={"token"})
+
+
+def seal_context(
+    context: VisualContext, holder_reference: str, codec: MetricTokenCodec
+) -> VisualContext:
+    """`context`, sealed for `holder_reference`: same wire shape `to_payload` would emit, signed.
+
+    Serialised through `_context_payload` -- the same dict `to_payload` builds -- and validated
+    through `VisualContextPayload.model_validate` before it is sealed, so the digest covers the
+    pydantic-normalised shape a caller's echoed payload will also be read through at verification,
+    never the domain object's own, unvalidated, representation of itself.
+    """
+    payload = VisualContextPayload.model_validate(_context_payload(context))
+    return replace(context, token=codec.seal_context(holder_reference, context_semantics(payload)))
 
 
 def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
@@ -342,7 +435,11 @@ def _identified(payload: ConversationPayload | None) -> UUID:
     return identifier
 
 
-def to_domain(payload: ConversationPayload | None) -> Conversation:
+def to_domain(
+    payload: ConversationPayload | None,
+    *,
+    verify: Callable[[str | None, dict[str, object]], bool] | None = None,
+) -> Conversation:
     """The conversation a caller echoed back.
 
     An absent payload is an idle conversation rather than an error: the first turn has none, and a
@@ -354,6 +451,12 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
     and the caller gets a 422. It used to become idle here, which was quieter and worse. A state
     nobody could have been in is a client bug or an attempt, and silently reinterpreting it as "no
     conversation" tells whoever sent it nothing while discarding whatever was really under way.
+
+    `verify` is absent by default — exactly today's behaviour, and every existing call in this
+    codebase's tests stays that way: an echoed visual context is trusted with no questions asked.
+    The caller who actually has a holder to check against (Task 3) binds it into a closure over
+    that holder and passes it here; `_visual_contexts` is where each context's seal is actually
+    checked.
     """
     conversation_id = _identified(payload)
     if payload is None:
@@ -388,7 +491,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
             counterparty_aliases=_counterparty_aliases(payload),
             recent_payment_rail=payload.recent_payment_rail,
             turns=_turns(payload),
-            visual_contexts=_visual_contexts(payload),
+            visual_contexts=_visual_contexts(payload, verify=verify),
             account_selection=_account_selection(payload) if payload else None,
         )
 
@@ -418,7 +521,7 @@ def to_domain(payload: ConversationPayload | None) -> Conversation:
         counterparty_aliases=_counterparty_aliases(payload),
         recent_payment_rail=payload.recent_payment_rail,
         turns=_turns(payload),
-        visual_contexts=_visual_contexts(payload),
+        visual_contexts=_visual_contexts(payload, verify=verify),
         account_selection=_account_selection(payload),
     )
 
@@ -621,47 +724,7 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                 for turn in conversation.turns
             ],
             "visual_contexts": [
-                {
-                    "chart_id": context.chart_id,
-                    "derived_from": context.derived_from,
-                    "turn_id": context.turn_id,
-                    "spec": _context_spec_payload(context.spec),
-                    "profile": {
-                        "fields": [
-                            {
-                                "name": field.name,
-                                "type": field.type,
-                                "role": field.role,
-                                "order": field.order,
-                            }
-                            for field in context.profile.fields
-                        ],
-                        # The wire payload keeps one dataset-level count, same as before the
-                        # profile carried per-field cardinality. It is the nominal dimension's --
-                        # what `_limit` and the donut rule both key off of (`_limit` reads its
-                        # `order`, the donut rule its `cardinality`), never "the field that lands
-                        # in `color`": in a comparison that field is the series, not the
-                        # dimension. It is 0 whenever the chart's dimension is temporal rather
-                        # than nominal -- read that as "not a donut's business", never as "no
-                        # rows": the rows are still all there.
-                        "cardinality": next(
-                            (
-                                field.cardinality
-                                for field in context.profile.role("dimension")
-                                if field.type == "nominal"
-                            ),
-                            0,
-                        ),
-                        "metric": context.profile.metric,
-                        "unit": context.profile.unit,
-                        "positive": context.profile.positive,
-                        "mutually_exclusive": context.profile.mutually_exclusive,
-                        "verified_total": context.profile.verified_total,
-                        "comparison": context.profile.comparison,
-                        "plan_limited": context.profile.plan_limited,
-                    },
-                }
-                for context in conversation.visual_contexts
+                _context_payload(context) for context in conversation.visual_contexts
             ],
             "last_plan": plan_payload(conversation.last_plan) if conversation.last_plan else None,
             "prior_plan": (
