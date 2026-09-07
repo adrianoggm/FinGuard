@@ -534,10 +534,16 @@ def merge_encoding_patch(
         if mark != "bar":
             raise ValueError("orientation applies to bars")
         axis = _dimension_axis(encodings, profile)
-        # "horizontal" is the dimension on `y`; a bar with no dimension-role field on either axis
-        # (never produced by the floor or a verified model plan) defaults here to "horizontal" so
-        # requesting "horizontal" over it is the no-op and requesting "vertical" is the one that
-        # actually swaps -- there is no third option `Orientation` can name.
+        # `axis is None` is real, not hypothetical: the floor's own RATIO_SHARE bar (a normalised
+        # share of a verified total) puts its dimension in `color` and leaves the measure alone on
+        # `x`, with no dimension-role field on either axis at all. There, as everywhere else, what
+        # "horizontal" names is which axis carries the *measure* -- `present()` draws a bar's
+        # length along whichever axis holds the quantitative field, so a lone measure on `x` is
+        # already the horizontal shape -- and the ordinary case (a dimension on `y`, the measure on
+        # `x`) is the same rule read off the axis that is actually there instead of inferred from
+        # its absence. `axis is None` therefore defaults to "horizontal" exactly as `axis.channel
+        # == "y"` would, and "vertical" is the one that moves the measure to `y`, `color` and
+        # `stack` untouched either way.
         current: Orientation = (
             "vertical" if axis is not None and axis.channel == "x" else "horizontal"
         )

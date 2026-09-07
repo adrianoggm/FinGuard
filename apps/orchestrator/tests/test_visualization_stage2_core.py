@@ -713,6 +713,48 @@ def test_asking_a_line_to_turn_is_a_merge_refusal() -> None:
     assert decision.detail == "invalid_proposal:merge"
 
 
+def test_the_axis_less_share_bar_turns_by_the_measures_axis() -> None:
+    """Fix round 1: the floor's RATIO_SHARE bar has no dimension-role field on either axis -- the
+    measure alone sits on `x` (the dimension lives in `color`, a normalised share of a verified
+    total) -- so an orientation request on it lands in `merge_encoding_patch`'s `axis is None`
+    default rather than the ordinary dimension-axis branch. «ponlo en vertical» moves the measure
+    to `y`, leaving `stack="normalize"` and the `color` dimension untouched, and the merged chart
+    still verifies. The same chart asked for the orientation it already has -- «ponlo en
+    horizontal», the measure already on `x` -- is the no-op the controller's own no-op defence
+    answers.
+    """
+    dataset = VisualDataset(
+        metric="RATIO_SHARE", rows=(VisualRow("Parte", 70), VisualRow("Resto", 30))
+    )
+    profile = visual_profile_of(dataset, total_minor=100, group_by="NONE")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    # The shape this test is about: no dimension-role field on `x` or `y` at all.
+    assert not any(
+        item.channel in {"x", "y"} and item.field == "dimension" for item in spec.encodings
+    )
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+
+    vertical = interpret_visual("ponlo en vertical", conversation.visual_contexts)
+    assert vertical is not None
+    turned = _visual_only_response(vertical, conversation)
+    assert turned.outcome == "VISUAL_UPDATED"
+    derived = to_domain(turned.conversation).visual_contexts[-1]
+    assert not any(item.channel == "x" for item in derived.spec.encodings)
+    assert any(
+        item.channel == "y" and item.field == "value_minor" for item in derived.spec.encodings
+    )
+    assert derived.spec.stack == "normalize"
+    assert any(
+        item.channel == "color" and item.field == "dimension" for item in derived.spec.encodings
+    )
+
+    horizontal = interpret_visual("ponlo en horizontal", conversation.visual_contexts)
+    assert horizontal is not None
+    unchanged = _visual_only_response(horizontal, conversation)
+    assert unchanged.outcome == "VISUAL_UNCHANGED"
+
+
 def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
     """A breakdown bar whose dimension already ranks by magnitude -- `order="MEASURE_DESC"` -- so
     a chart-wide descending sort by the measure is a claim the verifier's `_order` rule accepts."""
