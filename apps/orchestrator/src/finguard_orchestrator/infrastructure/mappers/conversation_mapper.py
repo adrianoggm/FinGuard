@@ -76,6 +76,12 @@ from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.observability import name_the_conversation
 
+# D-3b-4 (fix wave): named once, used by both `_visual_contexts` and `to_domain` below -- the two
+# signatures have to move together by definition (one is the closure the other threads through to
+# it), and a hand-written copy at each site is exactly the kind of pair this module's other
+# comments already warn drifts apart.
+type ContextVerifier = Callable[[str | None, dict[str, object]], bool]
+
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
 # `"NONE"` here would be the second copy that goes stale the moment that default changes -- the
 # same "second copy" this module's own reconstruction comment already warns against for `role`.
@@ -147,7 +153,7 @@ def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
 def _visual_contexts(
     payload: ConversationPayload | None,
     *,
-    verify: Callable[[str | None, dict[str, object]], bool] | None = None,
+    verify: ContextVerifier | None = None,
 ) -> tuple[VisualContext, ...]:
     if payload is None:
         return ()
@@ -285,21 +291,36 @@ def _encoding_sort_payload(sort: EncodingSort) -> dict[str, object]:
 
 
 def _context_spec_payload(spec: ChartSpec) -> dict[str, object]:
-    encoding: dict[str, object] = {}
+    # I1 (fix wave): the shape is defined once, here, rather than folded into the loop below --
+    # one encoding on a channel is a bare dict, more than one is a list, and which shape a
+    # channel gets must not depend on how many happened to arrive before it: the old accumulator
+    # decided that inline, one encoding at a time, and a third `tooltip` both dropped the first
+    # two and left the shape itself unstable across a round trip (a lone survivor serialised as a
+    # list on the first pass, a dict on the second) -- exactly the case `_context_payload`'s own
+    # docstring promises never drifts. `tooltip` is the only channel that can repeat
+    # (`ChartSpec.__post_init__`'s uniqueness check excludes it by name), but the grouping below
+    # does not assume that: it groups by channel first and only then asks how many landed there.
+    grouped: dict[str, list[tuple[str, str, dict[str, object]]]] = {}
     for item in spec.encodings:
-        value = {
+        value: dict[str, object] = {
             "field": item.field,
             "type": item.type,
             **({"title": item.title} if item.title else {}),
             **({"sort": _encoding_sort_payload(item.sort)} if item.sort is not None else {}),
         }
-        if item.channel == "tooltip" and item.channel in encoding:
-            previous = encoding[item.channel]
-            encoding[item.channel] = [previous] if isinstance(previous, dict) else []
-            tooltip_values = cast(list[object], encoding[item.channel])
-            tooltip_values.append(value)
+        grouped.setdefault(item.channel, []).append((item.field, item.type, value))
+    encoding: dict[str, object] = {}
+    for channel, entries in grouped.items():
+        if len(entries) == 1:
+            encoding[channel] = entries[0][2]
         else:
-            encoding[item.channel] = value
+            # Ordered by (field, type) rather than by arrival order, so the same *set* of
+            # encodings always serialises to the same list whichever order the domain handed
+            # them in -- a stability the old accumulator's append-in-arrival-order never promised
+            # and never needed to, because it never round-tripped correctly at three or more.
+            encoding[channel] = [
+                value for _, _, value in sorted(entries, key=lambda entry: (entry[0], entry[1]))
+            ]
     return {
         "mark": {"type": "arc", "innerRadius": 55} if spec.mark == "donut" else {"type": spec.mark},
         "encoding": encoding,
@@ -438,7 +459,7 @@ def _identified(payload: ConversationPayload | None) -> UUID:
 def to_domain(
     payload: ConversationPayload | None,
     *,
-    verify: Callable[[str | None, dict[str, object]], bool] | None = None,
+    verify: ContextVerifier | None = None,
 ) -> Conversation:
     """The conversation a caller echoed back.
 

@@ -356,6 +356,66 @@ def test_a_payload_with_none_of_the_new_keys_still_validates() -> None:
     assert (restored.profile.comparison, restored.profile.plan_limited) == (False, False)
 
 
+def test_a_rendered_specs_extra_keys_are_refused_at_the_dto() -> None:
+    """I2 (fix wave): `_value_free_spec`'s allowlist used to admit `$schema`, `width` and
+    `height` -- exactly the three keys `present_spec` adds to the *rendered* spec a client draws,
+    never emitted by `_context_spec_payload`. A client that echoed the rendered spec instead of
+    `conversation.visual_contexts[].spec` used to get a 200 whose digest could never match the
+    seal -- `VISUAL_UNTRUSTED` with no diagnostic telling it why. Narrowed to exactly what the
+    wire emits, the same mistake is now a 422 that names the key.
+    """
+    raw = _visual_context_dict()
+    raw["spec"] = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+        **raw["spec"],  # type: ignore[dict-item]
+        "width": "container",
+        "height": 220,
+    }
+    with pytest.raises(ValueError, match="unknown visual spec key"):
+        VisualContextPayload.model_validate(raw)
+
+
+def test_the_servers_own_spec_vocabulary_still_validates_after_the_allowlist_narrows() -> None:
+    """I2's other half: narrowing the allowlist must not refuse what the server itself emits.
+    Every key `_context_spec_payload` can produce -- `mark`, `encoding`, `title`, `stack`, `sort`,
+    `sort_field` and `limit` -- together on one spec, not merely the bare mark+encoding minimum
+    every other DTO test already exercises.
+    """
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("x", "value_minor", "quantitative"),
+            ChartEncoding("y", "dimension", "nominal"),
+        ),
+        title="Resultados",
+        stack="zero",
+        sort="descending",
+        sort_field="dimension",
+        limit=5,
+    )
+    raw = {
+        "chart_id": "chart-1",
+        "spec": conversation_mapper._context_spec_payload(spec),
+        "profile": {
+            "fields": [
+                {"name": "value_minor", "type": "quantitative"},
+                {"name": "dimension", "type": "nominal"},
+            ],
+            "cardinality": 2,
+        },
+    }
+    payload = VisualContextPayload.model_validate(raw)
+    assert set(payload.spec) == {
+        "mark",
+        "encoding",
+        "title",
+        "stack",
+        "sort",
+        "sort_field",
+        "limit",
+    }
+
+
 def _old_shape_payload(*, ranked: bool) -> dict[str, object]:
     """`_visual_context_dict()`'s own shape, its profile fields optionally carrying `role`/
     `order` -- the two keys fix round 1 put on the wire. `ranked=False` is the payload an older
@@ -602,6 +662,81 @@ def test_every_field_role_and_order_survives_the_wire_and_the_floors_chart_still
     assert context.profile.plan_limited == profile.plan_limited
     verified = verify(draft_of(context.spec), context.profile)
     assert isinstance(verified, ChartSpec), f"{family_name}: {verified}"
+
+
+def _context_semantics_before_and_after(context: VisualContext) -> tuple[dict, dict]:
+    """`context_semantics` of `context`'s own wire payload, and again after one full wire round
+    trip -- I1's own invariant, read from the seam that has to hold it: the seal digests exactly
+    this, so the payload the server re-emits for a context it just rebuilt from the wire has to
+    equal the payload it emitted at birth, or a chart born trusted goes untrusted on its second
+    hop with nobody having changed anything.
+    """
+    conversation = IDLE.with_visual_context(context)
+    (before,) = conversation_mapper.to_payload(conversation).visual_contexts
+    restored = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
+    (after_context,) = restored.visual_contexts
+    (after,) = conversation_mapper.to_payload(
+        IDLE.with_visual_context(after_context)
+    ).visual_contexts
+    return (
+        conversation_mapper.context_semantics(before),
+        conversation_mapper.context_semantics(after),
+    )
+
+
+@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
+def test_the_wire_payload_is_idempotent_across_every_floor_family(family_name: str) -> None:
+    """I1 (fix wave): the seal digests `context_semantics`, so the payload the server re-emits
+    for a context it just rebuilt from the wire has to equal the payload it emitted at birth --
+    the tooltip accumulator broke exactly that for three or more tooltips (below), and this is
+    the invariant that would have caught it, run over every family the floor can actually
+    produce (none of them carries more than one tooltip, so this alone would not have failed
+    before the fix -- the dedicated test below is what does).
+    """
+    dataset, kwargs = FAMILY_DATASETS[family_name]
+    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
+    before, after = _context_semantics_before_and_after(
+        VisualContext(f"chart-{family_name}", spec, profile)
+    )
+    assert before == after
+
+
+def test_the_wire_payload_is_idempotent_for_a_spec_with_three_tooltips() -> None:
+    """I1: `_context_spec_payload`'s tooltip accumulator used to drop the first two of three
+    tooltips on a second pass and, even where a survivor's shape was compared across two passes,
+    emit it as a one-element list on the first and a bare dict on the second -- so a context
+    sealed with three tooltips came back untrusted after one restyle, with nobody having tampered
+    with anything.
+
+    `tooltip` is the one channel `ChartSpec.__post_init__` lets repeat -- its own uniqueness check
+    (`channels = [... if item.channel != "tooltip"]`) excludes it by name, `color` included -- so
+    there is no equivalent two-encodings-on-one-channel case to add for any other channel.
+    """
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "dimension", "nominal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+            ChartEncoding("tooltip", "dimension", "nominal", "Categoría"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+            ChartEncoding("tooltip", "extra", "nominal", "Nota"),
+        ),
+    )
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3),
+            VisualField("value_minor", "quantitative", "measure", 3),
+            VisualField("extra", "nominal", "dimension", 3),
+        ),
+        metric="SUM",
+        unit="money",
+    )
+    before, after = _context_semantics_before_and_after(
+        VisualContext("chart-tooltips", spec, profile)
+    )
+    assert before == after
 
 
 def test_the_donut_familys_role_and_claims_survive_the_wire_too() -> None:

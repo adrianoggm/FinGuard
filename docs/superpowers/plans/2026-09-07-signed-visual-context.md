@@ -236,6 +236,34 @@ a reason neither prices in, so the plan's other option was taken instead. Corpus
 
 ---
 
+### Fix wave: the whole-branch review's Important/Minor/Deferred findings (`branch-fix1.md`)
+
+**Landed** (five commits over BASE `0a3cecf`, starting `4817a3f`):
+
+- I3 — `metric_tokens.py`: `issue`/`verify` gain `chart_id`; a token no longer pairs with a chart other than the one it was issued for.
+- m1 — `metric_tokens.py`: the envelope's type (`"t"`) moved inside the signed body, checked only after the MAC verifies.
+- D-3b-1 — `seal_context`/`verify_context` gain one-line docstrings.
+- D-3b-2 — `_open`'s `except ValueError` gains a comment naming what it swallows and why.
+- I1 — `_context_spec_payload`'s tooltip accumulator is idempotent across a wire round trip; pinned over the eight floor families and a three-tooltip spec.
+- I2 — `VisualContextPayload._value_free_spec`'s allowlist narrows to exactly what `_context_spec_payload` emits; a rendered spec's `$schema`/`width`/`height` is now a 422.
+- m9 — `_remember_visual_context`'s `derived_from` names the previous chart only when it is trusted.
+- D-3b-6 — the two `metric_tokens=metric_tokens if source is not None else None` call sites become unconditional.
+- m5 — the seal-side allowlist test (`test_the_seal_is_never_silently_skipped`) rejects a keyword bound to a literal `None`.
+- D-3b-5 — `_chart_suggestions`'s stale "every chip would silently vanish anyway" comment is corrected: the guard is live, `_chip_verifies` does not read `trusted`.
+- D-3b-4 — `ContextVerifier` names the verifier `Callable` once in `conversation_mapper.py`, used at both signatures.
+- D-3b-9 — `_SEALED_CHARTED` is built by a comprehension over every context `CHARTED` carries.
+- D-3b-10 — `question_to_dto`'s docstring opens with what the function does; the fix-round history moves to the second paragraph.
+- m8 — one comment at `interpret_visual`'s call site: a forged newest context makes «el gráfico» resolve onto the forgery and the turn refuses, self-inflicted and safe.
+- m3 — pinned, not merely left: the existing ambiguity test gains an untrusted-context case (`VISUAL_AMBIGUOUS`, zero bus calls, the token nulled in the reply).
+- m6 — `apps/web/src/api.ts`'s context type gains `derived_from?`/`turn_id?`, commented "sealed; echoed, never read".
+- I4 — `create_app()` refuses to start when no signing keys are configured and `web_origins` names a non-loopback origin; loopback-only or no origins still only warns.
+- D-3b-7 — the development-key warning is pinned with `caplog` (no keys + public origin refuses; no keys + loopback warns once; keys configured warns nothing).
+- D-3b-8 — the route-level seal/tamper test is parametrised over `/v1/questions` and `/v1/questions/stream`, with `Asking` faked on the streaming route so no probe reaches a real model.
+- Design §4, `docs/next.md`, this plan — the echo contract, the integrity-envelope/clear-text-holder note, the corrected `verify_context` naming, and the 3b paragraph's two new sentences (Task 5, below).
+- Dropped: D-3b-3 (renaming `seal_context` — both call sites already qualified, no reader benefit). Recorded, no code: m7 (the next segment's review package should cut its base below the first task's commit).
+
+---
+
 ## Self-review
 
 - **Spec coverage:** §4's authority sentence becomes true by construction (Tasks 2-3); §13 gains the refusal (Task 5); the third external review's two scenarios — a flipped `comparison`, and a valid `metric_source` paired with an unsigned profile — are both refused at `_visual_only_response`/`_saved_visual_source` (Task 3, tests b and f).

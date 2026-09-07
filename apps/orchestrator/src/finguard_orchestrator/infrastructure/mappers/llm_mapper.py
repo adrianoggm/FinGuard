@@ -362,6 +362,12 @@ def _remember_visual_context(
             result.visual_follow_up is not None
             and result.visual_follow_up.kind == "ANALYTICAL_RESHAPE"
             and previous is not None
+            # m9 (fix wave): only a chart the server vouches for. Only the id crosses over here
+            # -- this turn's own dataset still builds the new chart's spec and profile -- but
+            # `derived_from` is what «el gráfico anterior» resolves through, so an untrusted
+            # previous chart naming itself as the origin would let a legitimate, freshly sealed
+            # chart point its provenance at one nobody signed for.
+            and previous.trusted
         )
         else None
     )
@@ -408,11 +414,15 @@ def _chart_suggestions(context: VisualContext) -> list[str]:
     the grouping and plans for today -- a figure, not a clarification. A chip for it is a button
     that shows a wrong number, so there is no chip until the planner keeps the window.
 
-    Task 3: a chip whose target is not trusted offers nothing, full stop -- every candidate below
-    would still be filtered through `_chip_verifies`, which calls `_visual_only_response`'s own
-    gate on a context nobody has vouched for. That gate now refuses one outright (`VISUAL_UNTRUSTED`
-    before any merge), so every chip would silently vanish anyway; this says so up front instead of
-    relying on that refusal to happen to produce the same empty list.
+    D-3b-5 (fix wave), corrected: this guard is not a restatement of a refusal `_chip_verifies`
+    would produce anyway -- `_chip_verifies` below runs `interpret_visual`/`apply_visual_intent`/
+    `verify` and never reads `trusted` at all, so without this line an untrusted context's chips
+    would be judged purely on whether they parse and merge, not on whether the chart is one
+    anybody has vouched for. It is unreachable in production today only because this function has
+    one caller (`question_to_dto`, below) and that caller looks the context up by the chart id
+    *this turn just minted*, which is trusted by construction -- not because the guard is
+    redundant. Keep it: the day a second caller offers chips over an echoed context, this is the
+    line that keeps an untrusted chart from getting suggestions at all.
     """
     if not context.trusted:
         return []
@@ -461,15 +471,21 @@ def question_to_dto(
     metric_tokens: MetricTokenCodec | None = None,
     offer_saving: bool = False,
 ) -> QuestionResponse:
-    """Fix round 1 (Task 3): `holder_reference`/`metric_tokens` and `offer_saving` answer two
-    different questions, and conflating them is what sent the corpus red. The first pair is "can
-    this chart be sealed for its holder" -- unconditional in both routes, because a context drawn
-    with metrics off (a voice turn, a deployment with `ORCHESTRATOR_METRICS_ENABLED=false`, this
-    codebase's own conversation-corpus harness) still needs a seal or every later restyle of it is
-    refused as untrusted, and `app.state.metric_tokens` always exists regardless of the flag. The
-    second, `offer_saving`, is "may this turn also offer to keep the answer as a saved metric" --
-    still exactly the routes' own pre-Task-3 gate (`metrics_on and request.channel == "TEXT"`), now
-    named and passed explicitly instead of silently riding along on the first two.
+    """The result of a question, put on the wire -- sealed for its holder when one is given.
+
+    `holder_reference`/`metric_tokens` and `offer_saving` answer two different questions. The
+    first pair is "can this chart be sealed for its holder" -- unconditional in both routes,
+    because a context drawn with metrics off (a voice turn, a deployment with
+    `ORCHESTRATOR_METRICS_ENABLED=false`, this codebase's own conversation-corpus harness) still
+    needs a seal or every later restyle of it is refused as untrusted, and `app.state.metric_
+    tokens` always exists regardless of the flag. The second, `offer_saving`, is "may this turn
+    also offer to keep the answer as a saved metric" -- still exactly the routes' own pre-Task-3
+    gate (`metrics_on and request.channel == "TEXT"`), now named and passed explicitly instead of
+    silently riding along on the first two.
+
+    D-3b-10 (fix wave): recorded because it is the reason this signature has three flags rather
+    than one -- Fix round 1 (Task 3) found the corpus red from conflating the two above, and
+    named them apart is the fix.
     """
     visualization = _visualization_to_dto(result)
     # The seal is built whenever both are given, with no dependency on `offer_saving`: a fresh

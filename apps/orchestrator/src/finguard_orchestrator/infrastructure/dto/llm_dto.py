@@ -343,18 +343,14 @@ class VisualContextPayload(_Payload):
                     walk(child)
 
         walk(self.spec)
-        allowed = {
-            "$schema",
-            "mark",
-            "encoding",
-            "title",
-            "width",
-            "height",
-            "stack",
-            "sort",
-            "sort_field",
-            "limit",
-        }
+        # I2 (fix wave): exactly the keys `conversation_mapper._context_spec_payload` emits --
+        # never `$schema`/`width`/`height`, which `present_spec` adds only to the *rendered* spec
+        # a client draws and which this payload's own seal can never cover. Those three used to
+        # be allowed here too, so a client that echoed the rendered spec instead of
+        # `conversation.visual_contexts[].spec` got a silent, permanent `VISUAL_UNTRUSTED` -- no
+        # 422, no diagnostic, nothing to tell it why a chart it had never touched stopped
+        # restyling. An unfaithful echo now fails loudly, at the edge, naming the key.
+        allowed = {"mark", "encoding", "title", "stack", "sort", "sort_field", "limit"}
         if set(self.spec) - allowed:
             raise ValueError("unknown visual spec key")
         encoding = self.spec.get("encoding")

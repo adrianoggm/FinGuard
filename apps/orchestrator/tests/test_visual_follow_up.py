@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import date
 from typing import get_args
@@ -28,7 +29,11 @@ from finguard_orchestrator.application.queries.readers.visual_follow_up import (
     classify,
     classify_claimed_visual,
 )
-from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, get_query_bus
+from finguard_orchestrator.bootstrap.dependencies import (
+    authenticated_caller,
+    get_ask_handler,
+    get_query_bus,
+)
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.models.chart import (
@@ -385,10 +390,13 @@ _MINTED_ID = UUID("33333333-3333-3333-3333-333333333333")
 _TEST_TOKENS = MetricTokenCodec({"active": b"x" * 32}, "active")
 _SEALED_CHARTED = replace(
     CHARTED,
-    visual_contexts=(
-        conversation_mapper.seal_context(
-            CHARTED.visual_contexts[0], _WHO.holder_reference, _TEST_TOKENS
-        ),
+    # D-3b-9 (fix wave): over every context `CHARTED` carries, not `visual_contexts[0]` alone --
+    # `CHARTED` holds one chart today, so the two read the same, but a hard-coded index silently
+    # drops the rest the day `CHARTED` gains a second one, and the failure would look like a trust
+    # bug in whatever test runs next rather than a stale fixture here.
+    visual_contexts=tuple(
+        conversation_mapper.seal_context(context, _WHO.holder_reference, _TEST_TOKENS)
+        for context in CHARTED.visual_contexts
     ),
 )
 
@@ -491,19 +499,39 @@ class _UnreachableQueries:
 
 ASK_ROWS = [
     # I-1: the drill lexicon also matches this sentence -- the pair a silent restyle used to hide.
-    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill"),
+    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill", True),
     # The interpreter's own mixed refusal -- a data change and a format change in one turn.
-    ("Ponlo en barras y solo restaurantes", "presentation+reshape"),
+    ("Ponlo en barras y solo restaurantes", "presentation+reshape", True),
+    # m3 (fix wave), pinned rather than left incidental: the ask wins even over an untrusted
+    # chart. Classifying a turn AMBIGUOUS takes no decision on the chart -- no merge, no verifier
+    # input, no save candidate, no chip -- so the trust gate need not run first, and running it
+    # first would refuse a turn the server has not yet decided is even about that chart, losing
+    # §5's own ambiguity record for a decision this branch never makes.
+    ("muéstrame los movimientos ordenados de mayor a menor", "presentation+drill", False),
 ]
 
 
-@pytest.mark.parametrize(("sentence", "claimant"), ASK_ROWS)
-async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(sentence, claimant) -> None:
+@pytest.mark.parametrize(("sentence", "claimant", "trusted"), ASK_ROWS)
+async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(
+    sentence, claimant, trusted
+) -> None:
     """§5's row: a claimed turn two readers agree on gets a question, not a guess -- zero ledger
-    calls, the conversation returned exactly as it arrived (nothing merged), and the one
-    VISUAL_FOLLOW_UP row the recording seam always writes for a claimed turn."""
+    calls, and the one VISUAL_FOLLOW_UP row the recording seam always writes for a claimed turn.
+
+    m3 (fix wave): the untrusted row pins what a tampered chart can and cannot steer here. It can
+    choose which of the two `_ASK` texts comes back (`claimant`, read off the interpreter before
+    trust is ever asked about); it cannot reach a merge, a verifier input, a save candidate or a
+    chip, and the context's token is nulled in the reply exactly as an untrusted context always
+    comes back -- the same refusal `not context.trusted` produces everywhere else, just recorded
+    one step later than a plain restyle would be.
+    """
     fake_queries = _UnreachableQueries()
     request = _charted_request(sentence)
+    if not trusted:
+        # `_Payload` is not frozen (`test_visualization_stage1.py`'s own comment): mutate the wire
+        # shape in place, exactly what a tampering client's request body would look like.
+        context = request.conversation.visual_contexts[0]
+        context.profile.comparison = not context.profile.comparison
     with recording_turn() as turn:
         response = await ask_question(
             request,
@@ -520,7 +548,10 @@ async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(sentence, cl
 
     assert response.outcome == "VISUAL_AMBIGUOUS"
     assert response.text == llm_controller._ASK[claimant]
-    assert response.conversation == request.conversation
+    if trusted:
+        assert response.conversation == request.conversation
+    else:
+        assert response.conversation.visual_contexts[0].token is None
     assert fake_queries.ran == []
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
     assert (decision.now, decision.detail) == ("AMBIGUOUS", claimant)
@@ -612,9 +643,17 @@ class _DrawsOneChart:
     result `_compound_read_reply` builds on. Every single-turn "draw" test below sends no
     conversation at all, so `query.conversation` there is the same empty one `AskFinancialQuestion
     Result`'s own default (`IDLE`) already was -- this changes nothing for them.
+
+    `calls` (D-3b-8, fix wave): every query this instance ever answered, so a test can assert that
+    a refused restyle reached neither this handler nor -- through `_StreamsOneChart` below, which
+    wraps the same instance -- the streaming route's own `Asking` dependency.
     """
 
+    def __init__(self) -> None:
+        self.calls: list[AskFinancialQuestionQuery] = []
+
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
+        self.calls.append(query)
         return AskFinancialQuestionResult(
             outcome="PLANNED",
             text="Aquí tienes el desglose.",
@@ -630,21 +669,70 @@ class _DrawsOneChart:
         )
 
 
-def test_a_sealed_context_verifies_a_restyle_and_a_tampered_or_missing_one_is_refused() -> None:
-    """The route boundary, through a real `TestClient`: `_conversation_of` verifies every echoed
-    visual context against the app's own `metric_tokens` codec -- the development key in this
-    process, same as production when no signing key is configured, so sealing and verifying
-    through the same app works.
+class _StreamsOneChart:
+    """`Asking`'s own interface (`.stream()`), standing in for the real
+    `AskFinancialQuestionHandler` on `/v1/questions/stream`. D-3b-8 (fix wave): a draw on that
+    route reaches `get_ask_handler` (`Asking`), never the query bus -- overriding only
+    `get_query_bus`, which is all `/v1/questions` needs, would leave the real handler in place for
+    the streaming route, reaching the real banking API and the real LLM planner the moment a
+    first question needs a plan (the same trap the whole-branch review's own process note records
+    for this exact route). Wraps a `_DrawsOneChart` rather than answering independently, so both
+    routes seal the same chart and share the same call count.
+    """
+
+    def __init__(self, inner: _DrawsOneChart) -> None:
+        self._inner = inner
+
+    async def stream(
+        self, query: AskFinancialQuestionQuery
+    ) -> AsyncIterator[AskFinancialQuestionResult]:
+        yield await self._inner.handle(query)
+
+
+def _answer_of(response, route: str) -> dict:
+    """The answer payload, whichever route produced it: a plain JSON body from `/v1/questions`,
+    or the one `"answer"` SSE event from `/v1/questions/stream` -- D-3b-8, so a route-level test
+    can assert the same thing against both without knowing which one it is running against.
+    """
+    if not route.endswith("/stream"):
+        return response.json()
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    (answer,) = [event for event in events if event.get("type") == "answer"]
+    return answer
+
+
+@pytest.mark.parametrize("route", ["/v1/questions", "/v1/questions/stream"])
+def test_a_sealed_context_verifies_a_restyle_and_a_tampered_or_missing_one_is_refused(
+    route: str,
+) -> None:
+    """The route boundary, through a real `TestClient`, on both routes (D-3b-8, fix wave --
+    before this, only `/v1/questions` had this test and the streaming route had only the whole-
+    branch review's own probe): `_conversation_of` verifies every echoed visual context against
+    the app's own `metric_tokens` codec -- the development key in this process, same as
+    production when no signing key is configured, so sealing and verifying through the same app
+    works.
 
     A first question draws a chart and its response seals the context; echoing that seal back
     lets a restyle through (`VISUAL_UPDATED`). Echoing the same conversation with one bit the seal
     covers flipped, or with the token dropped altogether, answers `VISUAL_UNTRUSTED` instead of
-    silently trusting -- or silently refusing to restyle -- an echo nobody can vouch for.
+    silently trusting -- or silently refusing to restyle -- an echo nobody can vouch for, and
+    reaches neither the query bus nor (on the streaming route) `Asking` to do it.
     """
+    draws = _DrawsOneChart()
     bus = QueryBus()
-    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    bus.register(AskFinancialQuestionQuery, draws)
     app.dependency_overrides[get_query_bus] = lambda: bus
     app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    if route.endswith("/stream"):
+        # D-3b-8: the streaming route's draw step reaches `Asking` (`get_ask_handler`), never the
+        # query bus -- overriding only `get_query_bus`, as the question route below needs, would
+        # leave the real handler in place here and reach a real model. `_StreamsOneChart` wraps
+        # the same `draws` instance the bus above uses, so `draws.calls` counts both routes.
+        app.dependency_overrides[get_ask_handler] = lambda: _StreamsOneChart(draws)
     previously_metrics_enabled = app.state.metrics_enabled
     previously_questions_enabled = app.state.questions_enabled
     app.state.metrics_enabled = True
@@ -652,35 +740,41 @@ def test_a_sealed_context_verifies_a_restyle_and_a_tampered_or_missing_one_is_re
     try:
         client = TestClient(app)
 
-        drawn = client.post("/v1/questions", json={"question": "¿Cuánto gasté el mes pasado?"})
+        drawn = client.post(route, json={"question": "¿Cuánto gasté el mes pasado?"})
         assert drawn.status_code == 200
-        sealed_conversation = drawn.json()["conversation"]
+        sealed_conversation = _answer_of(drawn, route)["conversation"]
         (context,) = sealed_conversation["visual_contexts"]
         assert context["token"]
+        assert len(draws.calls) == 1
 
         restyled = client.post(
-            "/v1/questions",
+            route,
             json={"question": "ordénalo de menor a mayor", "conversation": sealed_conversation},
         )
-        assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+        assert _answer_of(restyled, route)["outcome"] == "VISUAL_UPDATED"
 
         tampered = copy.deepcopy(sealed_conversation)
         tampered["visual_contexts"][0]["profile"]["comparison"] = not context["profile"][
             "comparison"
         ]
         flipped = client.post(
-            "/v1/questions",
+            route,
             json={"question": "ordénalo de menor a mayor", "conversation": tampered},
         )
-        assert flipped.json()["outcome"] == "VISUAL_UNTRUSTED"
+        assert _answer_of(flipped, route)["outcome"] == "VISUAL_UNTRUSTED"
+        # D-3b-8: still exactly one call -- the original draw. Neither the restyle above nor this
+        # tampered one ever reaches the bus/handler a second time; the restyle changes the chart
+        # through the trusted in-process merge, and the tampered one refuses before either would.
+        assert len(draws.calls) == 1
 
         stripped = copy.deepcopy(sealed_conversation)
         stripped["visual_contexts"][0]["token"] = None
         untokened = client.post(
-            "/v1/questions",
+            route,
             json={"question": "ordénalo de menor a mayor", "conversation": stripped},
         )
-        assert untokened.json()["outcome"] == "VISUAL_UNTRUSTED"
+        assert _answer_of(untokened, route)["outcome"] == "VISUAL_UNTRUSTED"
+        assert len(draws.calls) == 1
     finally:
         app.dependency_overrides.clear()
         app.state.metrics_enabled = previously_metrics_enabled
