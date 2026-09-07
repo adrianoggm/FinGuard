@@ -621,6 +621,66 @@ untrusted until their next chart. Suite at HEAD: 3936 / 3 / 204, corpus 204. Wha
 reference, not a device; no server-side store — the codec is stateless and the seal is the only
 record of it.
 
+**2026-09-07 — wave 4.2b landed: the conversation reads a split, a regroup and a turned bar in its
+own words.** `turn_analyzer.py` gains three follow-up shapes, all gated on
+`conversation.last_plan is not None`: a sentence opening with «ahora», a reshape/compare verb
+carrying a clitic («compáralo», «sepáralo», «desglósalo»), and a split imperative naming two or
+more precise categories (`20c202a`) — a one-name split still declines as a filter question, read
+exactly as before. `readers/follow_up.py` gains two patches on the plan already in view: a split
+names its categories (`categories=named, group_by=CATEGORY`, a bare `replace` rather than
+`enforce`-wrapped, because two coordinated names read as one *combined* total to
+`explicit_facts.read` and `enforce` would silently undo the very grouping this patch states), and a
+regroup names its calendar («por meses/semanas/días» → `group_by=MONTH|WEEK|DAY`, deferring to
+`_average_plan` on an `AVERAGE` metric so the two readers never contest the same turn);
+`explicit_lexicon`'s `por|al|cada` calendar phrasings now accept the plural (`d9a2783`). `chart.py`
+gains `Orientation` and `EncodingPatch.orientation`; `merge_encoding_patch` swaps a bar's `x`/`y`
+and `xOffset`/`yOffset` by whichever axis carries the *measure* — including the axis-less share bar
+`RATIO_SHARE` draws, found untested by the first pass and pinned by a fix round — and refuses
+orientation on any other mark; `visual_interpreter.py`'s whitelist and `llm_mapper.py`'s chips both
+learn «horizontal»/«vertical»/«tumba»/«de pie» (`e66d1f9`, fix round `d91f904`).
+
+`32-visual-continuation.yaml` now speaks turns 2 and 3 in §9's own words. «Separa transporte
+público y gasolina.» re-queries the plan turn 1 already asked about — one call, `derived_from:
+true`, a bar over the two named categories. «Ahora compáralo por meses.» — previously a genuine
+`REFUSED` comparison with zero banking calls — now regroups that same filtered spending into a
+month-by-month line: one call, `derived_from: true`, nothing categorical left on either axis to
+sort. That answer is a LINE chart nothing can rotate, so the two restyle turns name a bar by number
+rather than §9's own «el gráfico anterior»: turn 4, «Pon el primer gráfico en vertical.», reaches
+back to turn 1's own breakdown; turn 5, «Pon el gráfico anterior en horizontal.», resolves to the
+chart turn 4 just appended and flips it back, landing on chart 1's exact shape as its own new entry
+(`c058902`, the episode's `why` rewritten whole at `fb14ad0`). Ratchets `UNMEASURED` 22/22 and
+`MUTE` 43/43 are unchanged — no sentence moved off or onto the handover, so no planning case was
+written; turn 1 keeps its existing planning-dataset anchor, «¿Cuánto gasté el mes pasado?», because
+`window_words.py` excludes «este verano» on purpose (its own docstring: «en verano» is a window "a
+person understands and this does not, and they are left out on purpose") and no vocabulary in this
+service can give it one without guessing.
+
+The «3 of 14» measurement above moves to **9 of 14**: re-run through `classify()` over the design's
+fourteen §3 phrasings with a probe script (never a model). Three are this wave's own doing: «Ponlo
+en horizontal» now reads PRESENTATION_ONLY (the orientation patch above); «Separa gasolina y
+transporte público» and «Ahora agrúpalo por meses» now read ANALYTICAL_RESHAPE (the split and
+regroup patches above, in either category order and with the plural). Three more also moved —
+«¿Por qué agosto es tan alto?», «¿Qué movimientos explican ese pico?» and «¿Qué comercio es
+responsable?», all now DRILL_DOWN — but not by anything this wave touched: `visual_follow_up.py` is
+untouched by all four commits above, so the drill-down lexicon was already this shape at this
+wave's own BASE. The «3 of 14» line was simply never updated once that lexicon was refined, some
+time between it being written and this wave starting. The remaining five are unchanged: «Compáralo
+con el verano pasado» and «Excluye los taxis» stay UNRELATED (no window for a season and no
+comparison-reference vocabulary reads «compáralo con», neither touched by this wave; the exclusion
+vocabulary is untouched here too); «Prefiero líneas» and «Enséñame solo los cinco primeros» stay
+UNRELATED (no rule reads a bare plural mark word or a row count written out rather than as a
+digit); «La barra más alta.» stays PRESENTATION_ONLY and «Enséñame las compras de esa barra» stays
+AMBIGUOUS, exactly as the paragraph above already said.
+
+**What this wave does not do.** Turns 4-5 of §9's own sketch — a drill-down into one of the split
+categories — are 4.3's, not this wave's; episode 32 says so plainly in its own `why` rather than
+reserving placeholder turns for them. §5's model rung — a language model deciding a follow-up's
+kind where the deterministic readers do not — is deliberately not built here: every shape landed in
+this wave is a lexicon rule with a test naming the sentence it claims and one it must not.
+`VISUAL_UNCHANGED` and `VISUAL_UNTRUSTED` are unchanged from before this wave — neither outcome's
+own mechanism was touched by any of the four tasks above. Suite at HEAD: 3954 / 3 / 204, corpus
+204.
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate
