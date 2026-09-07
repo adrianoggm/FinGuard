@@ -36,6 +36,15 @@ _COMPARISON_WORDS: Final = re.compile(
 )
 # Task 1 (Wave 4.2b): a follow-up focused on the last answer, but only inside the
 # `conversation.last_plan is not None` branch below -- never a new-request shape on its own.
+#
+# The bare "ahora" also reads a discourse marker as a reshape: "Ahora bien, ¿cuánto tengo?" is
+# FOLLOW_UP here whenever a plan is in view (D-4.2b-1, dropped as a fix). It is provably inert --
+# `relation` is consulted in exactly two places, `visual_follow_up.py`'s classifier and its drill
+# lexicon, both gated on a chart in context and both requiring a *second* claimant before anything
+# changes, and the balance route above reads `intent`, never `relation`
+# (`tests/test_balance_answer.py::test_ahora_bien_still_answers_the_balance_over_a_charted_
+# conversation` pins the answer unchanged). Excluding "ahora bien" and its siblings would add a
+# second vocabulary of discourse markers to maintain for zero behaviour change.
 _RESHAPE_FOLLOW_UP: Final = re.compile(
     r"^\s*(?:"
     r"ahora\b"  # "Ahora compáralo por meses."
@@ -52,20 +61,21 @@ _SPLIT_IMPERATIVE: Final = re.compile(
 )
 
 
-def _splits_two_or_more_categories(sentence: str) -> bool:
+def _splits_two_or_more_categories(sentence: str, folded: str) -> bool:
     """A split imperative ("Separa transporte público y gasolina.") reshapes the last answer only
     once it names two or more precise categories; one name ("Separa la gasolina.") is a filter
     question and is read exactly as today."""
-    if _SPLIT_IMPERATIVE.search(spanish.folded(sentence)) is None:
+    if _SPLIT_IMPERATIVE.search(folded) is None:
         return False
     return len(category_words.precisely_named_in(sentence)) >= 2
 
 
-def _is_reshape_follow_up(sentence: str) -> bool:
+def _is_reshape_follow_up(sentence: str, folded: str) -> bool:
     """The three Wave 4.2b shapes: «ahora…», a reshape/compare verb carrying a clitic pronoun, and
     a split imperative naming two or more precise categories."""
-    folded = spanish.folded(sentence)
-    return _RESHAPE_FOLLOW_UP.search(folded) is not None or _splits_two_or_more_categories(sentence)
+    return _RESHAPE_FOLLOW_UP.search(folded) is not None or _splits_two_or_more_categories(
+        sentence, folded
+    )
 
 
 def _substantive(clause: str, intent: Intent) -> bool:
@@ -148,6 +158,9 @@ async def analyze(
         )
 
     intent = await interpreter.interpret(sentence, conversation=conversation)
+    # Folded once (M-5, Wave 4.2b fix wave): `spanish.folded` is not memoised, and the two
+    # FOLLOW_UP checks below both used to fold the same sentence again on their own.
+    folded = spanish.folded(sentence)
     if conversation.awaiting is not None or conversation.last_asked is not None:
         relation = TurnRelation.ANSWER_TO_SLOT
         focus = TurnFocus.ACTIVE_WORKFLOW
@@ -156,10 +169,7 @@ async def analyze(
         focus = TurnFocus.LAST_ANSWER
     elif intent is Intent.EXPLAIN_PREVIOUS or (
         conversation.last_plan is not None
-        and (
-            _FOLLOW_UP.search(spanish.folded(sentence)) is not None
-            or _is_reshape_follow_up(sentence)
-        )
+        and (_FOLLOW_UP.search(folded) is not None or _is_reshape_follow_up(sentence, folded))
     ):
         relation = TurnRelation.FOLLOW_UP
         focus = TurnFocus.LAST_ANSWER

@@ -141,6 +141,10 @@ async def test_an_ellipsis_is_marked_as_focused_on_the_last_answer() -> None:
         "Separa transporte público y gasolina.",
         "Ahora compáralo por meses.",
         "Desglósalo por comercio.",
+        # M-9 (Wave 4.2b fix wave): this analyser claims it, but no reader does -- it is six
+        # words, and `follow_up.py`'s ellipsis guard only inherits filters through five. The
+        # assertion below is correct about this half of the pair; it is not a claim that some
+        # reader also answers it as a follow-up.
         "Sepáralo en transporte público y gasolina",
     ],
 )

@@ -1239,6 +1239,10 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
     # A line over unordered categories is exactly what the `mark` rule exists to refuse (C1).
     assert "Ponlo en línea" not in suggestions
     assert "Ordena de menor a mayor" in suggestions
+    # M-7 (Wave 4.2b fix wave): a categorical bar still offers the orientation chip that changes
+    # it -- this one already draws horizontally (dimension on `y`), so turning it vertical is the
+    # one `_chip_verifies` keeps.
+    assert "Ponlo en vertical" in suggestions
     for chip in suggestions:
         intent = interpret_visual(chip, (context,))
         assert intent is not None and intent.patch is not None, chip
@@ -1267,6 +1271,21 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
     assert _chart_suggestions(VisualContext("chart-2", temporal, temporal_profile)) == [
         "Ponlo en barras"
     ]
+    # M-7 (Wave 4.2b fix wave): a bar is not turned by its calendar axis either -- a month bar
+    # turned puts the calendar down the y axis, legal but not a chart worth suggesting, so a
+    # temporal bar offers neither orientation chip.
+    temporal_bar = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "dimension", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+    temporal_bar_suggestions = _chart_suggestions(
+        VisualContext("chart-3", temporal_bar, temporal_profile)
+    )
+    assert "Ponlo en vertical" not in temporal_bar_suggestions
+    assert "Ponlo en horizontal" not in temporal_bar_suggestions
 
 
 @pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))

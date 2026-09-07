@@ -445,7 +445,11 @@ def _chart_suggestions(context: VisualContext) -> list[str]:
     # two candidates is the no-op depends on which axis the dimension is already on, not on
     # anything this generator needs to work out itself: `_chip_verifies`'s canonical-equality
     # check drops it.
-    if spec.mark == "bar":
+    #
+    # `not temporal` too (M-7, Wave 4.2b fix wave), for the same reason the sort chips above skip
+    # one: turning a month bar puts the calendar down the y axis, which `merge_encoding_patch`
+    # allows and `_chip_verifies` would keep, but it is not a chart worth suggesting.
+    if spec.mark == "bar" and not temporal:
         candidates.append("Ponlo en vertical")
         candidates.append("Ponlo en horizontal")
     return [chip for chip in candidates if _chip_verifies(chip, context)]

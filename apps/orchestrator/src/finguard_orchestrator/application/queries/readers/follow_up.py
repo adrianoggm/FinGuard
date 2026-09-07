@@ -208,6 +208,37 @@ _A_NAME_IN_A_FILTER_SLOT: Final = re.compile(
 )
 
 
+def _asks_a_new_presentation_dimension(
+    facts: explicit_facts.ExplicitFacts, previous: FinancialPlan, folded: str
+) -> bool:
+    """Whether this turn only asks the plan in view to be regrouped, not re-planned.
+
+    Three shapes are admitted: (1) a categorical regroup -- by category, merchant, counterparty
+    or account; (2) a calendar regroup -- by day, week or month -- over a plan that is not
+    already an AVERAGE, because "¿Y por semana?" over an AVERAGE plan is `_average_plan`'s own
+    turn (it converts AVERAGE to PERIOD_AVERAGE for exactly this pair, and claiming it here too
+    left the two readers contesting it, `test_which_recogniser_claims_a_turn.py`); and (3) that
+    same calendar regroup only when the sentence itself names no category -- "Dame el total por
+    meses de gasolina" asks for one category, month by month, and this reader has no way to
+    honour the name it was handed (`explicit_facts.enforce` never applies `facts.categories`),
+    so it declines and the planner reads the category and the grouping both (I-1, Wave 4.2b).
+    """
+    return bool(
+        (
+            facts.group_by
+            in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
+            or (
+                facts.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+                and previous.metric is not Metric.AVERAGE
+                and not facts.names_a_category
+            )
+        )
+        and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
+        and len(folded.split()) <= 7
+        and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
+    )
+
+
 def _names_a_filter_this_cannot_read(query: AskFinancialQuestionQuery) -> bool:
     """Whether the sentence names something in a filter slot that no vocabulary here claims."""
     for word in _A_NAME_IN_A_FILTER_SLOT.findall(spanish.folded(query.sentence)):
@@ -326,22 +357,7 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
             facts,
         )
 
-    if (
-        (
-            facts.group_by
-            in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
-            or (
-                facts.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
-                # "¿Y por semana?" over an AVERAGE plan is `_average_plan`'s own turn: it converts
-                # AVERAGE to PERIOD_AVERAGE for exactly this pair, and claiming it here as well
-                # left the two readers contesting it (`test_which_recogniser_claims_a_turn.py`).
-                and previous.metric is not Metric.AVERAGE
-            )
-        )
-        and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
-        and len(folded.split()) <= 7
-        and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
-    ):
+    if _asks_a_new_presentation_dimension(facts, previous, folded):
         # "Sepáralo por comercio" changes only the presentation dimension of the query in view.
         # Sending that three-word patch to a model made it re-create the window and filters, which
         # is both slower and an opportunity to silently widen the result.
@@ -352,7 +368,11 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         return explicit_facts.enforce(
             replace(
                 previous,
-                group_by=facts.group_by,
+                # `_asks_a_new_presentation_dimension` above already established `facts.group_by`
+                # is one of the six named members, never `None` -- the `or` is for mypy's
+                # narrowing across the function boundary, not a real fallback (same idiom as the
+                # `_CATEGORY_REFERENCE` branch's `facts.group_by or GroupBy.NONE` above).
+                group_by=facts.group_by or previous.group_by,
                 group_limit=(
                     None
                     if facts.group_by in {GroupBy.NONE, GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
@@ -485,11 +505,21 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         # `GroupBy.CATEGORY` this patch states. A precise split needs no calendar or presentation
         # word to lean on beyond the verb itself, which is why this does not gate on
         # `facts.group_by` the way the presentation-dimension branch above does.
+        #
+        # `merchants`, `merchant_terms` and `group_limit` are cleared like every sibling branch in
+        # this function (`_CATEGORY_REFERENCE`, `_CATEGORY_FILTER_FOLLOW_UP`, `_COUNT_FOLLOW_UP`)
+        # clears its own filters. Left in view, a merchant filter turns the split into an
+        # intersection nobody asked for -- "transporte público en Mercadona" -- and a row cut
+        # left over from a ranking draws one of the two categories the split just named (I-2, M-1,
+        # Wave 4.2b).
         return replace(
             previous,
             categories=named,
             excluded_categories=(),
+            merchants=(),
+            merchant_terms=(),
             group_by=GroupBy.CATEGORY,
+            group_limit=None,
         )
     if named:
         return None
