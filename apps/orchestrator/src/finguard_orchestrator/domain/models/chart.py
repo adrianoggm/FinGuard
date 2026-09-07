@@ -158,6 +158,23 @@ class VisualDataset:
     title: str = "Resultados"
 
 
+@dataclass(frozen=True)
+class DrawnLabels:
+    """What a chart shows a reader without showing a number: its labels, in rank order.
+
+    `labels` are the dataset's distinct `dimension` values, the tallest first (summed `value_minor`
+    descending, ties in first-appearance order). `series_labels` are the distinct `series` values in
+    first-appearance order. `ranked` says the two ends are strict -- the first label is alone at the
+    top and the last alone at the bottom -- so «la barra más alta» has one answer; a tie at either
+    end, or a list cut at the cap, makes it False and a later turn asks instead of guessing (design
+    §3.3). A rank is a shape the chart draws, never an amount: no value leaves this function.
+    """
+
+    labels: tuple[str, ...] = ()
+    series_labels: tuple[str, ...] = ()
+    ranked: bool = False
+
+
 FieldRole = Literal["dimension", "measure", "series"]
 FieldOrder = Literal["MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"]
 
