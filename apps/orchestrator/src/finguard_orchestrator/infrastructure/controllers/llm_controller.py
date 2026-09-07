@@ -1097,6 +1097,7 @@ async def _compound_read_reply(
     today: date,
     queries: QueryBus,
     presentation: PresentationContext,
+    metric_tokens: MetricTokenCodec,
 ) -> QuestionResponse | None:
     """Execute bounded read-only clauses and retain a separately auditable answer for each."""
     ordered = _compound_read_order(clauses, was, today)
@@ -1134,8 +1135,22 @@ async def _compound_read_reply(
         )
         current = result.conversation
         conversations[index] = current
-        rendered = llm_mapper.question_to_dto(result)
+        # Fix round 2 (Task 3, C1): a compound clause draws a chart the same as any other turn,
+        # and it needs the same seal or its own restyle refuses it the very next turn --
+        # `offer_saving` stays `False`, since a compound part has never offered a save candidate.
+        rendered = llm_mapper.question_to_dto(
+            result, holder_reference=who.holder_reference, metric_tokens=metric_tokens
+        )
         if rendered.conversation is not None:
+            # No `verify=` here on purpose (I2): `rendered.conversation` is
+            # `to_payload(result.conversation)`, built from this clause's own `result` two lines
+            # above -- a `Conversation` the query bus just returned inside this same request, never
+            # `request.conversation` itself. `to_domain`'s default relaunders every context back to
+            # `trusted=True`, and that stays harmless only because `trusted` never crosses the wire
+            # (`_context_payload` emits `token`, never `trusted`) and because `_conversation_of`
+            # already nulled the `token` of anything refused before it ever reached this function --
+            # so a context that was untrusted coming in is still tokenless going out, and the next
+            # turn's `_conversation_of` refuses it again regardless of what `trusted` says here.
             rendered_conversation = conversation_mapper.to_domain(rendered.conversation)
             previous_visual_ids = {
                 context.chart_id for context in result.conversation.visual_contexts
@@ -1625,6 +1640,7 @@ async def ask(
             today=today,
             queries=queries,
             presentation=presentation,
+            metric_tokens=metric_tokens,
         )
         return compound or _compound_reply(analysis.clauses, was)
     read_as = analysis.intent
@@ -1788,6 +1804,7 @@ async def ask_streaming(
             today=today,
             queries=queries,
             presentation=presentation,
+            metric_tokens=metric_tokens,
         )
         return _open_payment_events(compound or _compound_reply(analysis.clauses, was))
     read_as = analysis.intent

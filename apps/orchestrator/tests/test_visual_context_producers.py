@@ -33,6 +33,7 @@ from finguard_orchestrator.infrastructure.controllers.llm_controller import (
     _derived_context,
     _visual_only_response,
 )
+from finguard_orchestrator.infrastructure.dto.llm_dto import VisualContextPayload
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import _visualization_to_dto
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
@@ -398,3 +399,106 @@ def test_to_domain_is_called_only_where_a_caller_can_verify_it() -> None:
     assert [(call[0], call[2]) for call in unverified_calls] == [
         ("infrastructure/controllers/llm_controller.py", "_compound_read_reply")
     ], f"an unverified to_domain call site appeared where none is accounted for: {unverified_calls}"
+
+
+def test_the_seal_is_never_silently_skipped() -> None:
+    """Fix round 2 (I1): the verify side had an allowlist (the test above); the seal side did not,
+    and that is exactly where C1 shipped -- `_compound_read_reply` called `question_to_dto(result)`
+    with no `holder_reference`/`metric_tokens`, so a compound turn's own charts were born unsealed
+    and refused their own restyle one turn later. This is the seal-side mirror.
+
+    Every production call of `question_to_dto(` passes both `holder_reference=` and
+    `metric_tokens=`, with one allowlisted exception: `_as_own_transfer`'s no-payments fallback.
+    Both of its own callers (the two routes) reach it only when `result.outcome ==
+    Spoken.TRANSFER_READY.value`, and a `TRANSFER_READY` result carries no `visual_dataset`, so
+    `_remember_visual_context` returns before minting anything regardless of what this call passes
+    -- sealing there would be a no-op, not a fix.
+
+    Every `_visual_only_response(` call passes `seal=` -- no exceptions, because every restyle can
+    mint a derived context that needs one.
+    """
+    import ast
+    from pathlib import Path
+
+    source_root = Path(__file__).parents[1] / "src" / "finguard_orchestrator"
+    allowed_unsealed_question_to_dto = {
+        ("infrastructure/controllers/llm_controller.py", "_as_own_transfer"),
+    }
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self, relative: str) -> None:
+            self.relative = relative
+            self.stack: list[str] = []
+            self.question_to_dto_calls: list[tuple[str, str, frozenset[str]]] = []
+            self.visual_only_response_calls: list[tuple[str, str, frozenset[str]]] = []
+
+        def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._function(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._function(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            target = node.func
+            name = (
+                target.id
+                if isinstance(target, ast.Name)
+                else target.attr
+                if isinstance(target, ast.Attribute)
+                else None
+            )
+            enclosing = self.stack[-1] if self.stack else "<module>"
+            keywords = frozenset(keyword.arg for keyword in node.keywords if keyword.arg)
+            if name == "question_to_dto":
+                self.question_to_dto_calls.append((self.relative, enclosing, keywords))
+            elif name == "_visual_only_response":
+                self.visual_only_response_calls.append((self.relative, enclosing, keywords))
+            self.generic_visit(node)
+
+    question_to_dto_calls: list[tuple[str, str, frozenset[str]]] = []
+    visual_only_response_calls: list[tuple[str, str, frozenset[str]]] = []
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(source_root).as_posix()
+        visitor = _Visitor(relative)
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=relative))
+        question_to_dto_calls.extend(visitor.question_to_dto_calls)
+        visual_only_response_calls.extend(visitor.visual_only_response_calls)
+
+    unsealed = {
+        (relative, enclosing)
+        for relative, enclosing, keywords in question_to_dto_calls
+        if not {"holder_reference", "metric_tokens"} <= keywords
+    }
+    assert unsealed == allowed_unsealed_question_to_dto, (
+        f"a question_to_dto( call site skips holder_reference=/metric_tokens= and is not on the "
+        f"allowlist (or the allowlist names a site that now seals): {unsealed}"
+    )
+    assert visual_only_response_calls, "no _visual_only_response( call sites found -- test rotted"
+    unsealed_restyles = [
+        (relative, enclosing)
+        for relative, enclosing, keywords in visual_only_response_calls
+        if "seal" not in keywords
+    ]
+    assert not unsealed_restyles, (
+        f"a _visual_only_response( call site passes no seal=: {unsealed_restyles}"
+    )
+
+
+def test_trusted_never_crosses_the_wire() -> None:
+    """Fix round 2 (I2): `_compound_read_reply`'s own `to_domain(rendered.conversation)` call has
+    no `verify=`, so every context it round-trips comes back `trusted=True`
+    (`conversation_mapper.py`'s own default), including one that arrived untrusted. That
+    relaundering is harmless only because nothing on the wire ever carries `trusted` in the first
+    place -- pinned here directly rather than left as an inference from reading
+    `_context_payload`.
+    """
+    assert "trusted" not in VisualContextPayload.model_fields
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, trusted=False)
+    payload = conversation_mapper.to_payload(IDLE.with_visual_context(context))
+    (item,) = payload.visual_contexts
+    assert "trusted" not in item.model_dump()

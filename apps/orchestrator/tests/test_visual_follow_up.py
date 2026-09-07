@@ -605,6 +605,13 @@ class _DrawsOneChart:
     result -- `SPEC` over `BREAKDOWN_PROFILE`, the same pair `CHARTED` already holds and the same
     sentences above already restyle -- so the round trip below is about the seal, not about
     whether this fixture's own chart happens to support a sort.
+
+    `conversation=query.conversation` (fix round 2): a real handler answers on top of whatever the
+    query already carried, not on a blank slate -- this is what lets a compound clause's own prior
+    context (another chart already in view, an untrusted one carried forward) survive into the
+    result `_compound_read_reply` builds on. Every single-turn "draw" test below sends no
+    conversation at all, so `query.conversation` there is the same empty one `AskFinancialQuestion
+    Result`'s own default (`IDLE`) already was -- this changes nothing for them.
     """
 
     async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
@@ -619,6 +626,7 @@ class _DrawsOneChart:
             visual_decision=VisualDecision(
                 spec=SPEC, profile=BREAKDOWN_PROFILE, source="deterministic", valid=True
             ),
+            conversation=query.conversation,
         )
 
 
@@ -713,6 +721,110 @@ def test_a_chart_is_sealed_even_with_metrics_off_but_offers_no_save_candidate() 
             json={"question": "ordénalo de menor a mayor", "conversation": sealed_conversation},
         )
         assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled
+
+
+# --- Fix round 2 (Task 3, C1/I2): a compound turn's charts are sealed too -----------------------
+
+
+def test_a_compound_turns_charts_are_sealed_and_each_restyles() -> None:
+    """C1: `_compound_read_reply` draws a chart per clause the same as the plain path does, and
+    until this fix it called `question_to_dto(result)` with no holder and no codec -- so every
+    chart a compound question drew was born unsealed, and the very next turn refused it as
+    untrusted (measured at `56fc066`: this exact sentence answered `VISUAL_UPDATED` at BASE and
+    regressed to `VISUAL_UNTRUSTED`). Both charts a compound turn draws now carry a token, and a
+    restyle of the one in view succeeds.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = True
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post(
+            "/v1/questions", json={"question": "Cuanto tengo y cuanto gaste este mes?"}
+        )
+        assert drawn.status_code == 200
+        body = drawn.json()
+        assert body["outcome"] == "COMPOUND"
+        contexts = body["conversation"]["visual_contexts"]
+        assert len(contexts) == 2
+        assert all(context["token"] for context in contexts)
+
+        restyled = client.post(
+            "/v1/questions",
+            json={
+                "question": "ordénalo de menor a mayor",
+                "conversation": body["conversation"],
+            },
+        )
+        assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled
+
+
+def test_an_untrusted_context_survives_a_compound_round_trip_still_tokenless() -> None:
+    """I2: `_compound_read_reply`'s own `to_domain(rendered.conversation)` call passes no
+    `verify=`, so every context it round-trips -- including one the caller's own turn already
+    marked untrusted -- comes back `trusted=True` in-process. That relaundering is inert only
+    because `trusted` never crosses the wire (pinned directly by
+    `test_trusted_never_crosses_the_wire`, `test_visual_context_producers.py`) and because the
+    untrusted context's `token` was already nulled by `_conversation_of` before this function ever
+    saw it, and nothing here re-seals it. Proven end to end: a tampered chart carried into a
+    compound turn comes out the other side of the round trip still tokenless, and restyling it
+    alone on the next turn is still refused -- the relaundered `trusted=True` never leaks past this
+    function's own return.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = True
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post("/v1/questions", json={"question": "¿Cuánto gasté el mes pasado?"})
+        sealed_conversation = drawn.json()["conversation"]
+        tampered_chart_id = sealed_conversation["visual_contexts"][0]["chart_id"]
+        tampered = copy.deepcopy(sealed_conversation)
+        was_comparison = tampered["visual_contexts"][0]["profile"]["comparison"]
+        tampered["visual_contexts"][0]["profile"]["comparison"] = not was_comparison
+
+        compound = client.post(
+            "/v1/questions",
+            json={"question": "Cuanto tengo y cuanto gaste este mes?", "conversation": tampered},
+        )
+        assert compound.status_code == 200
+        assert compound.json()["outcome"] == "COMPOUND"
+        by_chart_id = {
+            context["chart_id"]: context
+            for context in compound.json()["conversation"]["visual_contexts"]
+        }
+        carried = by_chart_id[tampered_chart_id]
+        assert carried["token"] is None
+
+        # Isolated exactly as the next real turn's `_conversation_of` will see it: a lone chart in
+        # the echoed conversation, still tokenless from the compound round trip.
+        isolated = copy.deepcopy(compound.json()["conversation"])
+        isolated["visual_contexts"] = [carried]
+        restyle = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": isolated},
+        )
+        assert restyle.json()["outcome"] == "VISUAL_UNTRUSTED"
     finally:
         app.dependency_overrides.clear()
         app.state.metrics_enabled = previously_metrics_enabled
