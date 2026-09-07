@@ -5,9 +5,11 @@ import pytest
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartSpec,
+    EncodingPatch,
     VisualDataset,
     Visualization,
     VisualRow,
+    merge_encoding_patch,
 )
 from finguard_orchestrator.domain.models.visual_plan import (
     ProposedEncoding as E,
@@ -222,6 +224,25 @@ def test_every_authorised_spec_survives_present(build_profile) -> None:
     verified = verify(_draft_from_spec(floor), profile)
     assert isinstance(verified, ChartSpec)
     present(Visualization(spec=verified, data=()))  # must not raise
+
+
+def test_a_turned_grouped_comparison_bar_still_verifies() -> None:
+    """Task 3's own family member for `test_the_floors_own_chart_verifies_as_itself` above: the
+    floor's grouped comparison bar -- dimension on `y`, its series offset on `yOffset` -- turned
+    vertical. `merge_encoding_patch` swaps the offset along with the axes (`yOffset` ->
+    `xOffset`, not just the axis pair), and the merged chart verifies exactly as the untouched one
+    does.
+    """
+    profile = comparison()
+    floor = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert floor is not None
+    assert any(item.channel == "yOffset" for item in floor.encodings)  # the shape this turns
+    turned = merge_encoding_patch(floor, EncodingPatch(orientation="vertical"), profile)
+    assert any(item.channel == "xOffset" for item in turned.encodings)
+    assert not any(item.channel == "yOffset" for item in turned.encodings)
+    verified = verify(_draft_from_spec(turned), profile)
+    assert isinstance(verified, ChartSpec)
+    assert canonical(verified) == canonical(turned)
 
 
 _C1_PROBES = {

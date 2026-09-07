@@ -595,6 +595,124 @@ def test_a_merge_level_refusal_is_recorded_too() -> None:
     assert decision.detail == "invalid_proposal:merge"
 
 
+def _floor_breakdown() -> tuple[ChartSpec, VisualProfile]:
+    """The floor's own breakdown bar -- dimension on `y`, ranked descending by the measure on its
+    own axis (`EncodingSort`, not the chart-wide `sort` `_breakdown_bar_ranked` above stands in
+    for). Task 3's orientation swap only moves a `ChartEncoding`'s `channel`, so this is the
+    fixture that lets the merged chart still carry that per-axis ranking after it turns -- the
+    handcrafted `_breakdown_bar_ranked` has no such `EncodingSort` to carry across and would fail
+    the verifier's `order` rule the moment the turn is the only thing asked for.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    return spec, profile
+
+
+def test_a_bar_turns_vertical_when_asked() -> None:
+    """Task 3: the floor's breakdown bar has its dimension on `y` (horizontal bars). «pon el
+    gráfico anterior en vertical» moves the dimension to `x` and the measure to `y` -- the
+    presented spec differs from what was on screen, and the merged chart still verifies (its
+    axis's own `EncodingSort` rides along with the channel swap)."""
+    spec, profile = _floor_breakdown()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("pon el gráfico anterior en vertical", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UPDATED"
+    assert response.visualization_derivation is not None
+    presented_encoding = response.visualization_derivation.spec["encoding"]
+    assert presented_encoding["x"]["field"] == "dimension"
+    assert presented_encoding["y"]["field"] == "value_minor"
+    derived = to_domain(response.conversation).visual_contexts[-1]
+    assert {(item.channel, item.field) for item in derived.spec.encodings} >= {
+        ("x", "dimension"),
+        ("y", "value_minor"),
+    }
+
+
+def test_turning_a_bar_already_that_way_answers_visual_unchanged() -> None:
+    """The same breakdown bar is already horizontal (dimension on `y`); «ponlo en horizontal»
+    asks for the orientation it already has -- a no-op the merge answers by returning the spec
+    unchanged, which the controller's own no-op defence (`canonical(updated.spec) ==
+    canonical(context.spec)`) then answers as `VISUAL_UNCHANGED`, minting nothing."""
+    spec, profile = _floor_breakdown()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ponlo en horizontal", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UNCHANGED"
+    assert response.visualization_derivation is None
+
+
+def test_a_grouped_comparison_bar_turns_and_its_offset_swaps_too() -> None:
+    """Task 3's own family member: the floor's grouped comparison bar carries its series on
+    `yOffset` (alongside `color`) as well as its dimension on `y`. Turning it swaps both --
+    `yOffset` becomes `xOffset`, not just the axis pair -- and the merged chart still verifies:
+    the same eight-family shape `test_the_floors_own_chart_verifies_as_itself`
+    (`test_visual_plan_verifier.py`) checks, turned.
+    """
+    dataset = VisualDataset(
+        metric="COMPARISON",
+        rows=(
+            VisualRow("ALQUILER", 100, series="2026-07"),
+            VisualRow("ALQUILER", 90, series="2026-06"),
+            VisualRow("OCIO", 50, series="2026-07"),
+            VisualRow("OCIO", 70, series="2026-06"),
+        ),
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    assert any(item.channel == "yOffset" for item in spec.encodings)  # the shape this test is about
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ponlo en vertical", conversation.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UPDATED"
+    derived = to_domain(response.conversation).visual_contexts[-1]
+    assert any(item.channel == "xOffset" for item in derived.spec.encodings)
+    assert not any(item.channel == "yOffset" for item in derived.spec.encodings)
+
+
+def test_asking_a_line_to_turn_is_a_merge_refusal() -> None:
+    """Refuse, never repair: orientation applies to bars only. A line asked to turn trips
+    `merge_encoding_patch`'s own gate directly, before the verifier ever runs -- recorded exactly
+    like the donut gate above, one DECLINED row naming rule `merge`.
+    """
+    spec = ChartSpec(
+        "line",
+        (
+            ChartEncoding("x", "dimension", "temporal", "Periodo"),
+            ChartEncoding("y", "value_minor", "quantitative", "Importe"),
+        ),
+    )
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "temporal", "dimension", 13, "TEMPORAL"),
+            VisualField("value_minor", "quantitative", "measure", 13),
+        ),
+        metric="SUM",
+        unit="money",
+    )
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ponlo en vertical", conversation.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_INCOMPATIBLE"
+    assert "el cambio pedido no encaja con los campos del gráfico" in response.text
+    assert "orientation applies to bars" not in response.text
+    assert response.conversation is not None
+    assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.verdict is Verdict.DECLINED
+    assert decision.detail == "invalid_proposal:merge"
+
+
 def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
     """A breakdown bar whose dimension already ranks by magnitude -- `order="MEASURE_DESC"` -- so
     a chart-wide descending sort by the measure is a claim the verifier's `_order` rule accepts."""

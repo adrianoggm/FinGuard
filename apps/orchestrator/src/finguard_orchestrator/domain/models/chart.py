@@ -20,6 +20,11 @@ Stack = Literal["zero", "normalize", "disabled"]
 # copies drifting apart -- the failure mode `Channel`/`get_args(Channel)` already had in
 # `VisualContextPayload._value_free_spec` before `get_args` replaced a hand-written copy there.
 SortMode = Literal["input", "ascending", "descending"]
+# One definition shared by `EncodingPatch.orientation`, `interpret_visual`'s intent, and
+# `merge_encoding_patch`'s axis swap -- the same three-boundary reasoning `SortMode` above already
+# follows, so a fourth orientation nobody asked for cannot come into existence at one of the three
+# without the type checker catching the other two.
+Orientation = Literal["horizontal", "vertical"]
 
 # The identifier shape every field name -- a chart field, a visual field, a sort field -- must
 # have. Promoted to a module constant so `VisualContextPayload._value_free_spec`
@@ -370,6 +375,7 @@ class EncodingPatch:
     sort_field: str | None = None
     limit: int | None = None
     title: str | None = None
+    orientation: Orientation | None = None
     changed: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
@@ -383,6 +389,7 @@ class EncodingPatch:
                     ("sort_field", self.sort_field),
                     ("limit", self.limit),
                     ("title", self.title),
+                    ("orientation", self.orientation),
                 )
                 if value is not None
             )
@@ -419,6 +426,18 @@ def _dimension_axis(
     return nominal if nominal is not None else next(iter(candidates), None)
 
 
+# The only structural (not value-swap) property `EncodingPatch` carries: turning a bar renames
+# channels rather than replacing a scalar in `values` below, so it is applied separately, after the
+# mark/donut logic has settled what the merged mark actually is. `color`/`tooltip`/`theta` are
+# deliberately absent -- a turn moves only the axes a bar owns.
+_ORIENTATION_SWAP: dict[Channel, Channel] = {
+    "x": "y",
+    "y": "x",
+    "xOffset": "yOffset",
+    "yOffset": "xOffset",
+}
+
+
 def merge_encoding_patch(
     spec: ChartSpec, patch: EncodingPatch, profile: VisualProfile
 ) -> ChartSpec:
@@ -432,6 +451,8 @@ def merge_encoding_patch(
         "title": spec.title,
     }
     for name in patch.changed:
+        if name == "orientation":
+            continue  # structural -- applied after mark/donut below, never a `values` scalar
         if name not in values:
             raise ValueError(f"unsupported chart patch property: {name}")
         values[name] = getattr(patch, name)
@@ -505,6 +526,28 @@ def merge_encoding_patch(
             else item
             for item in encodings
         )
+    # Task 3: a bar can turn -- runs after the mark/donut logic above, against the *merged* `mark`,
+    # so "ponlo en barras y en vertical" turns the bar it is about to become, not the mark it used
+    # to be. Refuse, never repair: swapping `x`/`y` on a line or a point would not draw the chart
+    # the request named, it would draw a different one nobody asked for.
+    if "orientation" in patch.changed:
+        if mark != "bar":
+            raise ValueError("orientation applies to bars")
+        axis = _dimension_axis(encodings, profile)
+        # "horizontal" is the dimension on `y`; a bar with no dimension-role field on either axis
+        # (never produced by the floor or a verified model plan) defaults here to "horizontal" so
+        # requesting "horizontal" over it is the no-op and requesting "vertical" is the one that
+        # actually swaps -- there is no third option `Orientation` can name.
+        current: Orientation = (
+            "vertical" if axis is not None and axis.channel == "x" else "horizontal"
+        )
+        if current != patch.orientation:
+            encodings = tuple(
+                dataclass_replace(item, channel=_ORIENTATION_SWAP[item.channel])
+                if item.channel in _ORIENTATION_SWAP
+                else item
+                for item in encodings
+            )
     # F1 (fix wave 2): one live order decision per axis. A chart-wide `sort` is what `derive_chart`
     # used to mean by "ranked", but `present()` (`vega_lite.py:89-90`) always lets an axis's own
     # `EncodingSort` win over it -- so once an axis already carries one (the floor's own
