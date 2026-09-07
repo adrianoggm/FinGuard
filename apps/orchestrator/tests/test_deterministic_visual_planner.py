@@ -208,6 +208,19 @@ def test_the_source_set_is_the_literal() -> None:
         )
 
 
+def test_the_accepted_invariant_reads_the_same_literal_too() -> None:
+    """M6 (D-4.2-1): `accepted`'s guard used to hand-type `{"llm", "patch"}` -- two of the three
+    `VisualSource` members, chosen by writing down the ones that are not `"deterministic"`. A
+    fourth source would have silently inherited "must not be accepted" from that literal without
+    either line here being read. `_ACCEPTED_SOURCES` is derived from `VisualSource` itself, so
+    this asserts the derivation rather than a copy of it."""
+    from finguard_orchestrator.domain.services.deterministic_visual_planner import (
+        _ACCEPTED_SOURCES,
+    )
+
+    assert _ACCEPTED_SOURCES == {"llm", "patch"}
+
+
 def test_two_rows_carrying_the_same_amount_are_still_two_rows() -> None:
     """The measure's cardinality counts distinct amounts, so it is not a row count. Passing it
     to `derive_chart` would decline this chart for having "one row"."""

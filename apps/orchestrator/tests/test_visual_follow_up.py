@@ -275,9 +275,10 @@ async def test_a_turn_without_a_chart_records_no_visual_follow_up(seam_turn) -> 
 
 @pytest.mark.parametrize("kind", get_args(VisualFollowUpKind))
 async def test_every_kind_is_a_record_row(seam_turn, monkeypatch, kind) -> None:
-    """`_record_visual_follow_up` imports `classify` at module level now (the interpreter it once
-    reached through `readers.visual_follow_up` lives in `domain/services/` and no longer cycles
-    back through `infrastructure`), so the name to patch is the ordinary one: where it is used."""
+    """`_classify_and_record_visual_follow_up` imports `classify` at module level now (the
+    interpreter it once reached through `readers.visual_follow_up` lives in `domain/services/`
+    and no longer cycles back through `infrastructure`), so the name to patch is the ordinary
+    one: where it is used."""
     monkeypatch.setattr(
         ask_financial_question,
         "classify_visual_follow_up",
@@ -297,8 +298,9 @@ async def test_the_classification_changes_nothing_visible(handler_turn) -> None:
 
 
 async def test_the_result_carries_the_follow_up_when_a_chart_was_in_context() -> None:
-    """Task 4: `_record_visual_follow_up`'s return travels onto the result the handler yields --
-    the same seam `test_a_charted_turn_records_its_kind_and_claimant` proves is recorded."""
+    """Task 4: `_classify_and_record_visual_follow_up`'s return travels onto the result the
+    handler yields -- the same seam `test_a_charted_turn_records_its_kind_and_claimant` proves is
+    recorded."""
     result, _ = await turn_for(
         "Ordenalo de mayor a menor", PREVIOUS, conversation=CHARTED, analysis=FOLLOW_UP
     )

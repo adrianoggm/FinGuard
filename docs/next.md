@@ -496,16 +496,47 @@ sees its first chart.** A code-built chart can re-enter the verifier as the draf
 `updated.spec` — titles included — is what the decision names, the derived context stores, the
 presenter shows and the save candidate keeps, and `record_visual_decision` writes one
 `AGREED`/`changed=(was != now)`/`now="patch"`/`detail="accepted"` row that never reaches the
-`visual_planner.decision` promotion-log line Task 9 reads; refused, `VISUAL_INCOMPATIBLE` names the
-rule in one Spanish sentence («No puedo aplicar ese cambio a este gráfico: no pasa la regla «{rule}»
-del verificador; el anterior se mantiene.»), the previous chart stays untouched, and
+`visual_planner.decision` promotion-log line Task 9 reads; refused, `VISUAL_INCOMPATIBLE` speaks one
+Spanish clause per rule (`llm_controller._REFUSAL_TEXT`, keyed by the closed `RejectionRule` —
+«No puedo aplicar ese cambio a este gráfico: {clause}; el anterior se mantiene.», the rule token
+itself staying in the record's `detail`, never in the text), the previous chart stays untouched, and
 `record_visual_decision_refused` writes one `DECLINED`/`invalid_proposal:<rule>` row, never in the
-promotion log. The wire's nested profile now carries the shape facts the verifier reads — each
-field's `role`/`order` (`VisualFieldPayload`) and the profile's `comparison`/`plan_limited`
+promotion log — including now the older refusal path, `apply_visual_intent` raising before a merged
+spec ever reaches `verify`, recorded under rule `merge` (fix wave, I3: promise 1's per-rule rejection
+rate used to cover only the verifier's own path).
+
+**Fix wave, I1: this gate is a second, deliberate visible change, not only the asking below.**
+Probed across the interpreter's whitelist × the eight floor families: 29 of the 62 restyles base
+accepted are now refused (`mark`, `order` or `grouped`), a 47% reduction — each is a chart the
+refusing rule exists to refuse, never a false one. One of the 29 was a chip the answer itself used
+to offer on the commonest chart; `_chart_suggestions` now filters every candidate through the same
+gate before offering it (C1), so an offered chip is one the gate has already agreed to.
+
+**Fix wave, I2: `was` is the source when the turn knows it, and unrecorded when it does not.**
+`VisualContext.decision` is turn-local, so a restyle of a context that crossed the wire always has
+`decision is None` — recording `"deterministic"` for that case (the old behaviour) was true only by
+accident, while the setting stayed `deterministic` for everyone; the patch row now records `was=None`
+there instead, honest until a signed context (planned Task 3b, see below) makes the source
+recoverable across the wire. `changed = (was != now)` is unaffected either way.
+
+The wire's nested profile now carries the shape facts the verifier reads — each field's
+`role`/`order` (`VisualFieldPayload`) and the profile's `comparison`/`plan_limited`
 (`VisualProfilePayload`) — because a narrowed round-tripped profile used to refuse legitimate
-restyles after one round trip; `row_count`/`plan_metric` stay off the wire, old clients fall back to
-the previous derivation, and a contradictory wire `role`/`type` is refused at the DTO with a 422,
-never an unhandled 500. A reshaped chart now names the chart it came from: `_remember_visual_context`
+restyles after one round trip; `row_count`/`plan_metric` stay off the wire, and a contradictory wire
+`role`/`type` is refused at the DTO with a 422, never an unhandled 500. **Fix wave, I4:** old clients
+fall back to the previous derivation, which validates the payload but does not restore what base
+itself could do — the fallback's `order` defaults to `NONE`, and the verifier's own `order` rule
+reads that as "nothing may sort this field", so a sort restyle asked of an old-shape chart is
+refused with rule `order` exactly as at base, until the conversation's next chart (every new one
+carries the full profile) closes the window; recovering `order` from the spec's own axis sort was
+judged not worth the code for a window one turn wide. **(D-4.2-8.)** Both of the two facts this wave
+put on the wire are value-free and narrow the honest client's profile toward the truth a liar could
+already reach by other means (`verified_total` already moved a refusal to an acceptance at base); the
+wire is now load-bearing for a semantic verdict a save candidate can sign, though, and that blast
+radius — the client's own chart of its own data — is a decision worth making on the record rather
+than a property of what happens to be exploitable today. Task 3b (a signed visual context,
+`MetricTokenCodec`-style) is planned for before the visual planner's promotion, to close it. A
+reshaped chart now names the chart it came from: `_remember_visual_context`
 sets a fresh chart's `derived_from` to the previous chart's id, server-side, exactly when the
 classification reads `ANALYTICAL_RESHAPE` — carried from `_steps`, an async generator, to
 `stream()`'s decision call through `follow_up_seen`, a one-element list threaded as an explicit
@@ -532,10 +563,14 @@ deterministically with zero banking calls, not the query §9 assumed. And turn 2
 derive from turn 1's — the deterministic turn analyser reads a different, complete financial question
 as a new request rather than a follow-up — so `derived_from: true` is exercised only by the restyle
 turn in this episode, never by a reshape; whether a same-thread reshape should read as a follow-up is
-a question for whoever teaches the analyser to read one as such. Suite at HEAD: 3863 / 3 / 192,
-corpus 202 at 0.0 %. §7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays
-4.5's — not built here — and the second external review's own point stands unresolved: `turn_id`
-today identifies the context's creation, not a recoverable turn.
+a question for whoever teaches the analyser to read one as such. Suite at landing: 3863 / 3 / 192,
+corpus 202 at 0.0 %; after this fix wave (13 new tests, no regressions): 3876 / 3 / 204, corpus
+unchanged. §7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays 4.5's — not
+built here.
+**Fix wave, D-4.2-9:** refined rather than left as the second external review left it — `turn_id`
+survives the wire (`to_payload` emits it, `to_domain` reads it back on the next turn), so what is
+still unresolved is its binding to `Conversation.turns` and to the decision record, not its
+persistence; §4's own dataclass comment, stale on this exact point, is corrected alongside.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 

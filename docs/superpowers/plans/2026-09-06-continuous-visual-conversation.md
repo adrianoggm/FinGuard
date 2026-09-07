@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - **A refused patch never merges.** `merge_encoding_patch` + `verify(draft_of(spec), profile)` decide; a `Rejection` leaves the previous chart in place and the response names the rule (`VISUAL_INCOMPATIBLE`); nothing "repairs" a patch.
-- **Asking is the only new visible behaviour, and only on `AMBIGUOUS`.** Every other turn answers as at the base; the 4.1 no-visible-change tests stay green except where a test asserts the old silent restyle of an ambiguous sentence — such a test changes to expect the question, and says so.
+- **Asking is the only new visible behaviour on a turn the verifier accepts, and only on `AMBIGUOUS`; verification is a second, deliberate visible change.** Every other accepted turn answers as at the base; the 4.1 no-visible-change tests stay green except where a test asserts the old silent restyle of an ambiguous sentence — such a test changes to expect the question, and says so. **(I1, fix wave.)** The gate itself changes what a restyle does: probed across the interpreter's whitelist × the eight floor families, 29 of the 62 combinations base accepted are now refused (mark, order or grouped), a 47% reduction — each is a chart the verifier's rule exists to refuse (a line over unordered categories, a value sort on a temporal axis, a stack on a comparison), never a false refusal. The refusal speaks one Spanish clause per rule (`llm_controller._REFUSAL_TEXT`, keyed by `RejectionRule`), and the chips the answer offers are filtered through the same gate (C1) so none of them promises a restyle the gate would then refuse.
 - **No model call anywhere; no new setting; the setting stays `deterministic`.** §5's model rung waits for Task 9's numbers.
 - **No new banking call.** Presentation-only and ambiguous turns make zero ledger calls (asserted on the fake's `ran`).
 - **Result → chart, never chart → plan.** Nothing in this plan writes a plan or filters from a chart.
@@ -149,6 +149,13 @@ git commit -m "feat(visual): a chart the code built can re-enter the verifier as
 **Interfaces:**
 - Produces: `VisualSource = Literal["llm", "deterministic", "patch"]`; `VisualDecision.source: VisualSource`; invariants: `source in get_args(VisualSource)`; `fallback_reason` only with `deterministic`; `accepted == (source in {"llm", "patch"})`; a `patch` decision has `proposed=False`, `valid=True`, `latency_ms=None`, `proposed_spec=None`.
 
+**Landed** (fix wave, M1/D-4.2-11): `VisualDecision.__post_init__` enforces exactly three
+invariants — `source`, `fallback_reason` and `accepted` — and only those; `proposed=False`,
+`valid=True`, `latency_ms=None` and `proposed_spec=None` on a `patch` decision are conventions of
+the constructor sites that build one (`_visual_only_response`), never enforced by the dataclass
+itself. Probed: all four are accepted when violated. This bullet's own wording over-described what
+landed; this note is the correction, not a code change.
+
 - [ ] **Step 1: Failing tests** (beside `test_accepted_means_the_model_chart_is_shown`)
 
 ```python
@@ -247,7 +254,7 @@ def test_the_saved_metric_source_keeps_the_original_provenance() -> None:
 
 **Landed** (`51f8d54`, fix rounds `77a858c`/`c14ffe6`/`49a1460`): `verify(draft_of(updated.spec), profile)` is a **gate**, not a rebuild — the decision names, the derived context stores, the presenter shows and the save candidate keeps `updated.spec` itself (the verified spec is the merged spec minus its titles, used only to pass the gate). The refusal text is one Spanish sentence naming the rule as a token, no English reason: «No puedo aplicar ese cambio a este gráfico: no pasa la regla «{rule}» del verificador; el anterior se mantiene.» — not the sketch's `({verified.reason})` interpolation above. The patch row records `changed = (was != now)` (which is always `True`, since `now` is always `"patch"`), not `changed=False`; a `patch` decision returns before `record_visual_decision`'s `logger.info` call, so it never emits the `visual_planner.decision` promotion-log line Task 9 reads.
 
-**Task 3b (landed as fix round 1, `77a858c`):** the wire's `VisualFieldPayload` carries `role`/`order` (typed by the domain's own `FieldRole`/`FieldOrder` literals) and `VisualProfilePayload` carries `comparison`/`plan_limited`, with the old derivation (from `type` alone) kept as the fallback for a conversation an older client still holds; `row_count`/`plan_metric` stay off the wire; a contradictory wire `role`/`type` is refused at the DTO with a 422, never falls through to an unhandled 500.
+**Task 3b (landed as fix round 1, `77a858c`):** the wire's `VisualFieldPayload` carries `role`/`order` (typed by the domain's own `FieldRole`/`FieldOrder` literals) and `VisualProfilePayload` carries `comparison`/`plan_limited`, with the old derivation (from `type` alone) kept for a conversation an older client still holds; `row_count`/`plan_metric` stay off the wire; a contradictory wire `role`/`type` is refused at the DTO with a 422, never falls through to an unhandled 500. **(I4, fix wave.)** That old derivation validates the payload; it does not restore what base itself could do. `order` falls back to `NONE`, and the verifier's own `order` rule reads `NONE` as "nothing may sort this field" — so a sort restyle asked of an old-shape chart is refused exactly as at base, before this task existed, until the conversation's next chart is built (every new one carries the full profile). Recovering `order` from the spec's own axis sort was judged not worth the code for a window one turn wide.
 
 ---
 

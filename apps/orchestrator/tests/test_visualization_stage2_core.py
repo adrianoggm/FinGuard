@@ -1,7 +1,9 @@
 from dataclasses import replace
+from typing import get_args
 
 import pytest
 from support.visual_planners import default_policy
+from test_visualization_stage1 import FAMILY_DATASETS
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -26,17 +28,23 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.models.visual_plan import RejectionRule, draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
 )
-from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
+from finguard_orchestrator.domain.services.visual_interpreter import (
+    apply_visual_intent,
+    interpret_visual,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
+    _REFUSAL_TEXT,
     _derived_context,
     _visual_only_response,
 )
@@ -258,7 +266,9 @@ def test_temporal_chart_supports_a_bar_follow_up_but_refuses_a_value_sort() -> N
     assert ordered is not None
     ordered_response = _visual_only_response(ordered, with_bars)
     assert ordered_response.outcome == "VISUAL_INCOMPATIBLE"
-    assert "order" in ordered_response.text
+    # I1 (fix wave): the Spanish clause for `order`, not the rule token -- the token now lives
+    # only in the record's `detail`.
+    assert "este eje no admite ese orden" in ordered_response.text
     assert ordered_response.visualization_derivation is None
     # Refused: the previous chart stays, nothing derived.
     with_order = to_domain(ordered_response.conversation)
@@ -508,6 +518,13 @@ def _unverified_breakdown() -> tuple[ChartSpec, VisualProfile]:
     return spec, profile
 
 
+def test_every_rejection_rule_has_a_spanish_clause() -> None:
+    """I1: a rule the closed set gains and `_REFUSAL_TEXT` does not would `KeyError` at the one
+    moment a holder is waiting for an answer. `set` rather than `==` on a dict/tuple would still
+    let the two drift in size; this is the coverage that cannot."""
+    assert set(_REFUSAL_TEXT) == set(get_args(RejectionRule))
+
+
 def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_the_rule() -> None:
     """A donut asked of a breakdown whose total is not verified: merge_encoding_patch may accept
     the shape, the verifier refuses the claim (rule donut_claims). The previous chart stays; the
@@ -527,15 +544,45 @@ def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_th
     with recording_turn() as turn:
         response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_INCOMPATIBLE"
-    # I1: the sentence is Spanish and names the rule as a token; the rule's English `reason`
-    # ("...verified whole") never reaches the user.
-    assert "donut_claims" in response.text
+    # I1 (fix wave): the sentence is Spanish and speaks a clause per rule, not the rule as a
+    # token -- the token stays in the record's `detail` below, never in the text the holder
+    # reads, and the rule's English `reason` ("...verified whole") never reaches it either.
+    assert "un donut necesita partes de un total verificado" in response.text
+    assert "donut_claims" not in response.text
     assert "verified whole" not in response.text
     assert response.conversation is not None
     assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
     (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
     assert decision.verdict is Verdict.DECLINED
     assert decision.detail == "invalid_proposal:donut_claims"
+
+
+def test_a_merge_level_refusal_is_recorded_too() -> None:
+    """I3: the older refusal path -- `apply_visual_intent` raising before a merged spec ever
+    reaches `verify` -- used to record nothing and name no rule, so the per-rule rejection rate
+    `record_visual_decision_refused`'s own docstring promises ("patch decisions included") was
+    incomplete for the share of refusals that take this path. A literal "donut" ask (unlike
+    "apílalo en porcentaje" above) trips `merge_encoding_patch`'s own positive/mutually_exclusive/
+    verified_total gate directly, before the verifier's `_donut_claims` rule ever runs.
+
+    Now recorded exactly like a verifier refusal: one DECLINED row naming rule `merge`, the
+    Spanish `merge` clause in the text (the exception's own English -- "positive, exclusive
+    parts" -- never reaches the holder), the previous chart kept and nothing derived.
+    """
+    spec, profile = _unverified_breakdown()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ponlo en donut", conversation.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_INCOMPATIBLE"
+    assert "el cambio pedido no encaja con los campos del gráfico" in response.text
+    assert "positive, exclusive parts" not in response.text
+    assert response.conversation is not None
+    assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.verdict is Verdict.DECLINED
+    assert decision.detail == "invalid_proposal:merge"
 
 
 def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
@@ -620,6 +667,11 @@ def test_a_round_tripped_ranked_bar_still_verifies_the_descending_sort() -> None
         "patch",
         "accepted",
     )
+    # I2 (fix wave): `decision` is turn-local, so `from_wire`'s context carries none -- `was` is
+    # unrecorded (`None`), never the fabricated "deterministic" default, and the row still knows
+    # it changed something: a patch that replaced an unknown prior source always did.
+    assert decision.was is None
+    assert decision.changed is True
 
 
 def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:
@@ -732,20 +784,53 @@ def test_asking_for_everything_is_only_a_restyle_when_that_is_all_it_says() -> N
 
 
 def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
-    """Every chip round-trips through the interpreter that has to read it back."""
-    spec, profile = _limited()
-    contexts = (VisualContext("chart-1", spec, profile),)
-    suggestions = _chart_suggestions(spec)
+    """Every chip round-trips through the interpreter that has to read it back, and now verifies
+    too (C1): `_chart_suggestions` takes the context and filters each candidate through the same
+    `interpret_visual` / `apply_visual_intent` / `verify(draft_of(...), ...)` gate
+    `_visual_only_response` runs, so a chip offered here is a chip the controller will accept.
+
+    A ranked bar carries its rank on the axis encoding's own sort (`EncodingSort`, not the
+    chart-wide one `_base()`/`_limited()` use) -- the shape the floor actually builds for a
+    MEASURE_DESC dimension -- which is why this fixture is built by hand rather than reused from
+    `_limited()`: only an axis-own sort survives a chart-wide "ascending" patch, per `_order`'s
+    own per-encoding-before-chart-wide reading.
+    """
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding(
+                "y", "dimension", "nominal", sort=EncodingSort("descending", "value_minor")
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        limit=8,
+    )
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3, "MEASURE_DESC"),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+    )
+    context = VisualContext("chart-1", spec, profile)
+    suggestions = _chart_suggestions(context)
     assert "Ver todos" in suggestions
-    assert "Ponlo en línea" in suggestions
+    # A line over unordered categories is exactly what the `mark` rule exists to refuse (C1).
+    assert "Ponlo en línea" not in suggestions
     assert "Ordena de menor a mayor" in suggestions
     for chip in suggestions:
-        intent = interpret_visual(chip, contexts)
+        intent = interpret_visual(chip, (context,))
         assert intent is not None and intent.patch is not None, chip
         merge_encoding_patch(spec, intent.patch, profile)
 
-    # Nothing to lift when nothing was cut, and a series is not reordered by its measure.
-    assert "Ver todos" not in _chart_suggestions(replace(spec, limit=None))
+    # Nothing to lift when nothing was cut.
+    assert "Ver todos" not in _chart_suggestions(
+        VisualContext("chart-1", replace(spec, limit=None), profile)
+    )
     temporal = ChartSpec(
         "line",
         (
@@ -753,7 +838,80 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
             ChartEncoding("y", "value_minor", "quantitative"),
         ),
     )
-    assert _chart_suggestions(temporal) == ["Ponlo en barras"]
+    temporal_profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "temporal", "dimension", 3, "TEMPORAL"),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
+        metric="SUM",
+        unit="money",
+    )
+    # A series is not reordered by its measure: no sort chip on a temporal axis.
+    assert _chart_suggestions(VisualContext("chart-2", temporal, temporal_profile)) == [
+        "Ponlo en barras"
+    ]
+
+
+@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
+def test_every_chip_the_floor_offers_over_this_family_verifies_when_applied(
+    family_name: str,
+) -> None:
+    """C1: `_chart_suggestions` used to offer chips no gate had reviewed, and on the commonest
+    chart -- a plain breakdown -- one of them (a line over unordered categories) was refused the
+    moment a holder tapped it. Driven through the real gate, not a mock: every chip this
+    generator offers over the floor's own chart, for every family the exporter renders, must be
+    a chip `apply_visual_intent` + `verify(draft_of(...), ...)` actually accepts.
+
+    The reviewer's own probe, pinned rather than described: the plain breakdown family no longer
+    offers «Ponlo en línea» (the `mark` rule refuses a line over unordered categories) while it
+    still offers «Ordena de menor a mayor» (the axis already carries its own descending sort,
+    which a chart-wide ascending patch cannot unrank -- see the test above).
+    """
+    dataset, kwargs = FAMILY_DATASETS[family_name]
+    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
+    context = VisualContext(f"chart-{family_name}", spec, profile)
+    suggestions = _chart_suggestions(context)
+    for chip in suggestions:
+        intent = interpret_visual(chip, (context,))
+        assert intent is not None and intent.patch is not None, (family_name, chip)
+        merged = apply_visual_intent(intent, context)
+        verified = verify(draft_of(merged.spec), context.profile)
+        assert isinstance(verified, ChartSpec), (family_name, chip, verified)
+    if family_name == "breakdown":
+        assert "Ponlo en línea" not in suggestions
+        assert "Ordena de menor a mayor" in suggestions
+
+
+def test_the_donut_familys_chips_verify_too() -> None:
+    """The floor never produces a donut (`DeterministicVisualPlanner.plan` has no such branch),
+    so the parametrised test above cannot cover it. Built the same way
+    `export_chart_fixtures._donut_family` and the wire test beside it do.
+    """
+    rows = (
+        VisualRow(dimension="Alquiler", value_minor=60_000),
+        VisualRow(dimension="Ocio", value_minor=40_000),
+    )
+    spec = ChartSpec(
+        mark="donut",
+        encodings=(
+            ChartEncoding("theta", "value_minor", "quantitative", "Importe"),
+            ChartEncoding("color", "dimension", "nominal", "Parte"),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+        ),
+    )
+    dataset = VisualDataset(rows=rows, metric="SUM")
+    profile = visual_profile_of(dataset, total_minor=100_000, group_by="NONE")
+    context = VisualContext("chart-donut", spec, profile)
+    suggestions = _chart_suggestions(context)
+    for chip in suggestions:
+        intent = interpret_visual(chip, (context,))
+        assert intent is not None and intent.patch is not None, chip
+        merged = apply_visual_intent(intent, context)
+        verified = verify(draft_of(merged.spec), context.profile)
+        assert isinstance(verified, ChartSpec), (chip, verified)
 
 
 def test_a_disabled_stack_emits_an_explicit_null_and_not_an_absent_property() -> None:

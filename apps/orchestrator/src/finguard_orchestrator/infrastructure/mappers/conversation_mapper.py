@@ -185,8 +185,20 @@ def _visual_contexts(payload: ConversationPayload | None) -> tuple[VisualContext
         # judges a round-tripped chart -- Task 3's restyle path -- on the same facts the floor saw
         # when it built it. The fallback below (`role` guessed from `type`, `order` defaulted to
         # `_DEFAULT_ORDER` -- `VisualField.order`'s own dataclass default, read rather than
-        # hard-coded) exists only for a conversation an older client still holds, whose payload
-        # predates these two keys.
+        # hard-coded) is for a conversation an older client still holds, whose payload predates
+        # these two keys.
+        #
+        # I4 (fix wave), decided rather than left implicit: this validates; it does not restore
+        # what base itself could do. `_DEFAULT_ORDER` is `"NONE"`, and the verifier's own `order`
+        # rule reads that as "nothing may sort this field" -- so a sort restyle asked of an
+        # old-shape chart is refused exactly as it was at base, before this task existed. That is
+        # not a regression this fallback owes anyone: the turn still completes rather than 500,
+        # and the window closes on its own the moment the conversation's next chart is built --
+        # every new chart carries the full profile, so a sort restyle resumes working from there,
+        # never from this one. Recovering `order` from the spec's own axis sort
+        # (`_encoding_sort_from_payload` already reads one back) was judged not worth the code for
+        # a window one turn wide; `test_an_older_payload_validates_but_a_sort_restyle_waits_for_
+        # the_next_chart` (`test_visualization_stage1.py`) pins both halves of this paragraph.
         #
         # What still narrows, and why it is safe to: `cardinality` is the one dataset-level number
         # the wire carries (the donut rule's), copied onto every field below rather than kept per
@@ -626,10 +638,12 @@ def to_payload(conversation: Conversation) -> ConversationPayload:
                         ],
                         # The wire payload keeps one dataset-level count, same as before the
                         # profile carried per-field cardinality. It is the nominal dimension's --
-                        # the field that lands in `color` -- since that is the only cardinality a
-                        # round-tripped profile's donut rule reads. It is 0 whenever the chart's
-                        # dimension is temporal rather than nominal -- read that as "not a donut's
-                        # business", never as "no rows": the rows are still all there.
+                        # what `_limit` and the donut rule both key off of (`_limit` reads its
+                        # `order`, the donut rule its `cardinality`), never "the field that lands
+                        # in `color`": in a comparison that field is the series, not the
+                        # dimension. It is 0 whenever the chart's dimension is temporal rather
+                        # than nominal -- read that as "not a donut's business", never as "no
+                        # rows": the rows are still all there.
                         "cardinality": next(
                             (
                                 field.cardinality
