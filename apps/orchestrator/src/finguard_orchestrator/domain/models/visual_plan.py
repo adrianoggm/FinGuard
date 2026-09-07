@@ -7,7 +7,7 @@ refusal back into the adapter, and a model error would become an exception where
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
 from finguard_orchestrator.domain.models.chart import ChartSpec
 
@@ -22,6 +22,27 @@ FallbackReason = Literal["abstention", "timeout", "provider_error", "invalid_pro
 # reason `FallbackReason` is: the policy and the seam both construct decisions, and a set defined
 # next to the constructions instead of here would be one more place the three could drift.
 VisualSource = Literal["llm", "deterministic", "patch"]
+
+# `Rejection.rule`'s closed set. The first nine are `visual_plan_verifier.py`'s own names, one per
+# rule function in the order `verify` runs them; a name that module does not construct never
+# belongs here without also appearing in a `Rejection(...)` there, and the reverse never happens
+# silently -- `Rejection.__post_init__` below refuses anything outside this set. `"merge"` is the
+# tenth and the only one no verifier rule produces: it is `llm_controller._visual_only_response`'s
+# own name for the older refusal path, the `ValueError` `merge_encoding_patch`/`apply_visual_intent`
+# raise before a merged spec ever reaches `verify` (I3). One closed set for both refusal paths, so
+# `llm_controller._REFUSAL_TEXT` can be keyed by it and checked against `get_args` too.
+RejectionRule = Literal[
+    "structure",
+    "fields",
+    "types",
+    "matrix",
+    "mark",
+    "donut_claims",
+    "grouped",
+    "limit",
+    "order",
+    "merge",
+]
 
 
 @dataclass(frozen=True)
@@ -51,11 +72,23 @@ class VisualPlanDraft:
 
 @dataclass(frozen=True)
 class Rejection:
-    """Why a draft is not a chart. `rule` is the verifier's own name for the check, so a
-    rejection rate can be read per rule, and `reason` is a sentence in the service's vocabulary."""
+    """Why a draft is not a chart. `rule` is the verifier's own name for the check (or `merge`,
+    the older refusal path's own name for itself -- I3), so a rejection rate can be read per rule,
+    and `reason` is a sentence in the service's vocabulary.
 
-    rule: str
+    `__post_init__` refuses a `rule` outside `RejectionRule`: a name typed by hand at a
+    construction site is exactly the unbounded-cardinality risk `Step` (`observability/
+    decisions.py`) already argues against for a metric label, and `llm_controller._REFUSAL_TEXT`
+    is keyed by this same closed set -- a rule this class let through and that dict did not know
+    would `KeyError` at the one moment a holder is waiting for an answer, rather than here.
+    """
+
+    rule: RejectionRule
     reason: str
+
+    def __post_init__(self) -> None:
+        if self.rule not in get_args(RejectionRule):
+            raise ValueError(f"unknown rejection rule: {self.rule!r}")
 
 
 def canonical(spec: ChartSpec) -> tuple[object, ...]:

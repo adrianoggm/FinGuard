@@ -88,7 +88,7 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.visual_follow_up import Claimant
-from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
+from finguard_orchestrator.domain.models.visual_plan import Rejection, RejectionRule, draft_of
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
@@ -243,6 +243,40 @@ _ASK: dict[Claimant, str] = {
     ),
 }
 
+# I1 (fix wave): one Spanish clause per `Rejection.rule`, in the controller's own voice, so a
+# refusal tells the holder *what about the chart* refused the change rather than handing them the
+# verifier's internal name for the rule that caught it -- the rule token stays in the record's
+# `detail` (`record_visual_decision_refused`), never in this text. Keyed by `RejectionRule` itself
+# rather than by the nine the verifier constructs today, so `merge` (I3's own name for the older
+# refusal path, below) reads the same way. `test_every_rejection_rule_has_a_spanish_clause` checks
+# this dict's keys against `get_args(RejectionRule)` rather than the other way round, so a rule
+# the closed set gains and this dict does not would fail a test instead of `KeyError`ing on a
+# holder's own turn.
+_REFUSAL_TEXT: dict[RejectionRule, str] = {
+    "structure": "el cambio no forma un gráfico completo",
+    "fields": "el cambio nombra un campo que este gráfico no tiene",
+    "types": "el cambio pone un campo en un papel que no le corresponde",
+    "matrix": "ese canal no admite ese campo",
+    "mark": "ese tipo de gráfico no encaja con estos datos",
+    "donut_claims": "un donut necesita partes de un total verificado",
+    "grouped": "una comparación conserva sus series, sin apilarlas",
+    "limit": "este gráfico no admite recortar filas",
+    "order": "este eje no admite ese orden",
+    "merge": "el cambio pedido no encaja con los campos del gráfico",
+}
+
+
+def _refusal_response(rule: RejectionRule, conversation: Conversation) -> QuestionResponse:
+    """The one refusal sentence, in the holder's language, whichever path named the rule."""
+    return QuestionResponse(
+        outcome="VISUAL_INCOMPATIBLE",
+        text=(
+            f"No puedo aplicar ese cambio a este gráfico: {_REFUSAL_TEXT[rule]}; el anterior "
+            "se mantiene."
+        ),
+        conversation=conversation_mapper.to_payload(conversation),
+    )
+
 
 def _visual_only_response(
     intent: VisualIntent,
@@ -277,12 +311,15 @@ def _visual_only_response(
     )
     try:
         updated = apply_visual_intent(intent, trusted_context)
-    except ValueError:
-        return QuestionResponse(
-            outcome="VISUAL_INCOMPATIBLE",
-            text="No puedo aplicar ese cambio a este gráfico; prueba con barras.",
-            conversation=conversation_mapper.to_payload(conversation),
-        )
+    except ValueError as exc:
+        # I3: this path used to record nothing and name no rule, so the per-rule rejection rate
+        # `record_visual_decision_refused` promises was read against the wrong denominator --
+        # every refusal `merge_encoding_patch`/`apply_visual_intent` raise before a merged spec
+        # ever reaches `verify` below was invisible to it. `"merge"` is `RejectionRule`'s own name
+        # for this path; the exception's English (`str(exc)`) goes into the record's `reason`,
+        # never into the text the holder reads.
+        record_visual_decision_refused(trusted_context, Rejection("merge", str(exc)))
+        return _refusal_response("merge", conversation)
     # The domain verifies the merged chart exactly as it would a model's proposal (`draft_of`
     # names what the merged spec names). It refuses, it never repairs: a refusal here leaves the
     # previous chart untouched and names which rule it broke, and nothing below repairs it either.
@@ -295,14 +332,7 @@ def _visual_only_response(
     refusal = verify(draft_of(updated.spec), trusted_context.profile)
     if isinstance(refusal, Rejection):
         record_visual_decision_refused(trusted_context, refusal)
-        return QuestionResponse(
-            outcome="VISUAL_INCOMPATIBLE",
-            text=(
-                f"No puedo aplicar ese cambio a este gráfico: no pasa la regla «{refusal.rule}» "
-                "del verificador; el anterior se mantiene."
-            ),
-            conversation=conversation_mapper.to_payload(conversation),
-        )
+        return _refusal_response(refusal.rule, conversation)
     rendered_spec = present_spec(updated.spec)
     decision = VisualDecision(
         spec=updated.spec,

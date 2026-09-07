@@ -47,6 +47,15 @@ def test_a_rejection_names_its_rule() -> None:
     assert rejection.rule == "matrix"
 
 
+def test_a_rejection_refuses_a_rule_outside_the_closed_set() -> None:
+    """I1/I3: `Rejection.rule` is `RejectionRule`, not a plain `str` -- a name typed by hand at a
+    construction site and never checked would be exactly the unbounded label risk `Step`
+    (`observability/decisions.py`) already argues against. `llm_controller._REFUSAL_TEXT` is
+    keyed by the same closed set; this is the guard that keeps a stray rule from reaching it."""
+    with pytest.raises(ValueError, match="unknown rejection rule"):
+        Rejection(rule="bogus", reason="not one of the ten")  # type: ignore[arg-type]
+
+
 def _bar(*, titled: bool, order: tuple[int, ...] = (0, 1, 2)) -> ChartSpec:
     encodings = (
         ChartEncoding(

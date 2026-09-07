@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import get_args
 
 import pytest
 from support.visual_planners import default_policy
@@ -27,7 +28,7 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
-from finguard_orchestrator.domain.models.visual_plan import draft_of
+from finguard_orchestrator.domain.models.visual_plan import RejectionRule, draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
@@ -43,6 +44,7 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
     RelativePeriod,
 )
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
+    _REFUSAL_TEXT,
     _derived_context,
     _visual_only_response,
 )
@@ -264,7 +266,9 @@ def test_temporal_chart_supports_a_bar_follow_up_but_refuses_a_value_sort() -> N
     assert ordered is not None
     ordered_response = _visual_only_response(ordered, with_bars)
     assert ordered_response.outcome == "VISUAL_INCOMPATIBLE"
-    assert "order" in ordered_response.text
+    # I1 (fix wave): the Spanish clause for `order`, not the rule token -- the token now lives
+    # only in the record's `detail`.
+    assert "este eje no admite ese orden" in ordered_response.text
     assert ordered_response.visualization_derivation is None
     # Refused: the previous chart stays, nothing derived.
     with_order = to_domain(ordered_response.conversation)
@@ -514,6 +518,13 @@ def _unverified_breakdown() -> tuple[ChartSpec, VisualProfile]:
     return spec, profile
 
 
+def test_every_rejection_rule_has_a_spanish_clause() -> None:
+    """I1: a rule the closed set gains and `_REFUSAL_TEXT` does not would `KeyError` at the one
+    moment a holder is waiting for an answer. `set` rather than `==` on a dict/tuple would still
+    let the two drift in size; this is the coverage that cannot."""
+    assert set(_REFUSAL_TEXT) == set(get_args(RejectionRule))
+
+
 def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_the_rule() -> None:
     """A donut asked of a breakdown whose total is not verified: merge_encoding_patch may accept
     the shape, the verifier refuses the claim (rule donut_claims). The previous chart stays; the
@@ -533,15 +544,45 @@ def test_a_patch_that_the_verifier_refuses_keeps_the_previous_chart_and_names_th
     with recording_turn() as turn:
         response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_INCOMPATIBLE"
-    # I1: the sentence is Spanish and names the rule as a token; the rule's English `reason`
-    # ("...verified whole") never reaches the user.
-    assert "donut_claims" in response.text
+    # I1 (fix wave): the sentence is Spanish and speaks a clause per rule, not the rule as a
+    # token -- the token stays in the record's `detail` below, never in the text the holder
+    # reads, and the rule's English `reason` ("...verified whole") never reaches it either.
+    assert "un donut necesita partes de un total verificado" in response.text
+    assert "donut_claims" not in response.text
     assert "verified whole" not in response.text
     assert response.conversation is not None
     assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
     (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
     assert decision.verdict is Verdict.DECLINED
     assert decision.detail == "invalid_proposal:donut_claims"
+
+
+def test_a_merge_level_refusal_is_recorded_too() -> None:
+    """I3: the older refusal path -- `apply_visual_intent` raising before a merged spec ever
+    reaches `verify` -- used to record nothing and name no rule, so the per-rule rejection rate
+    `record_visual_decision_refused`'s own docstring promises ("patch decisions included") was
+    incomplete for the share of refusals that take this path. A literal "donut" ask (unlike
+    "apílalo en porcentaje" above) trips `merge_encoding_patch`'s own positive/mutually_exclusive/
+    verified_total gate directly, before the verifier's `_donut_claims` rule ever runs.
+
+    Now recorded exactly like a verifier refusal: one DECLINED row naming rule `merge`, the
+    Spanish `merge` clause in the text (the exception's own English -- "positive, exclusive
+    parts" -- never reaches the holder), the previous chart kept and nothing derived.
+    """
+    spec, profile = _unverified_breakdown()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ponlo en donut", conversation.visual_contexts)
+    assert intent is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_INCOMPATIBLE"
+    assert "el cambio pedido no encaja con los campos del gráfico" in response.text
+    assert "positive, exclusive parts" not in response.text
+    assert response.conversation is not None
+    assert response.conversation.visual_contexts[-1].chart_id == "chart-1"  # nothing derived
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.verdict is Verdict.DECLINED
+    assert decision.detail == "invalid_proposal:merge"
 
 
 def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
