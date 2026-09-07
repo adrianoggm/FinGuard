@@ -246,3 +246,4 @@ def test_the_plural_calendar_unit_is_read() -> None:
     pattern = explicit_lexicon.compiled("temporal_month")
     assert pattern.search(spanish.folded("gasto por meses")) is not None
     assert pattern.search(spanish.folded("gasto por mes")) is not None
+    assert pattern.search(spanish.folded("gasto por mesa")) is None
