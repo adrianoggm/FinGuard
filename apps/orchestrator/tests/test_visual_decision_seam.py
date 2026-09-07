@@ -237,6 +237,10 @@ def test_a_patch_records_agreed_and_a_refusal_records_declined() -> None:
     `test_visualization_stage2_core.py` was, until now, the only place either was ever read back.
     I3's own invariant (`changed is (was != now)`) is asserted here too: a `patch` row *did*
     change what was shown, and a refused one did not.
+
+    `context`'s own `decision` is `None` here (F3, fix wave 2): `declined.now` reports that
+    honestly rather than the fabricated `"deterministic"` this used to assert -- the same
+    unrecorded-origin argument `record_visual_decision`'s own `was` already makes.
     """
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
     patch_decision = VisualDecision(
@@ -255,7 +259,7 @@ def test_a_patch_records_agreed_and_a_refusal_records_declined() -> None:
     assert accepted.changed is True
     assert (declined.verdict, declined.now, declined.detail) == (
         Verdict.DECLINED,
-        "deterministic",
+        None,
         "invalid_proposal:order",
     )
     assert declined.changed is False

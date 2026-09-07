@@ -5398,11 +5398,18 @@ def record_visual_decision_refused(context: VisualContext, rejection: Rejection)
     across every turn that produced one, `patch` decisions included.
 
     `changed=False` and `now` names what stayed on screen -- the previous chart, untouched -- not
-    what was tried and refused. `context` is the chart already showing, so its own decision (or
-    `"deterministic"`, the seam's floor default, when nothing decided it) is what `now` reports;
-    the row never carries the rejected spec at all, only the rule that refused it.
+    what was tried and refused. `context` is the chart already showing, so its own decision is
+    what `now` reports when there is one.
+
+    **`now` is `None` whenever the caller does not know it, and that is most of the time (I2,
+    fix wave; F3, fix wave 2, applying the same argument here).** `VisualContext.decision` is
+    turn-local by design (§4): the service keeps no conversation store, so a context that crossed
+    the wire and came back has `decision is None` even though a decision did produce the chart on
+    screen. This used to substitute `"deterministic"` for that case, true only by accident -- the
+    same false provenance claim `record_visual_decision`'s own docstring already refused for
+    `was`. The row never carries the rejected spec at all, only the rule that refused it.
     """
-    now = context.decision.source if context.decision is not None else "deterministic"
+    now = context.decision.source if context.decision is not None else None
     record(
         Step.VISUAL_PLANNER,
         Verdict.DECLINED,

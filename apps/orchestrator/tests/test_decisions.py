@@ -381,6 +381,36 @@ def test_the_changed_flag_agrees_with_the_values_it_reports() -> None:
             )
 
 
+def test_a_refused_patch_records_the_origin_it_can_know() -> None:
+    """F3 (fix wave 2): `record_visual_decision_refused`'s `now` used to fabricate
+    `"deterministic"` for a context whose `decision` is `None` -- true only by accident, exactly
+    the shortcut I2 (fix wave) already refused for the accepted path's `was`. `VisualContext.
+    decision` is turn-local (Wave 4's provenance, §4): a context that crossed the wire and came
+    back always has `decision is None`, even though a decision did produce the chart on screen.
+    A refusal over that context must record `now=None`, the same honesty `record_visual_decision`
+    already gives `was`, never an invented "deterministic". A same-turn refusal, whose context
+    still carries the `VisualDecision` that produced the chart on screen, reports that source.
+    """
+    round_tripped = VisualContext("chart-1", _VISUAL_SPEC, _VISUAL_PROFILE)
+    with recording_turn() as turn:
+        record_visual_decision_refused(round_tripped, Rejection("order", "no ranking rule"))
+    (decision,) = turn.sealed().where(Step.VISUAL_PLANNER)
+    assert decision.now is None
+
+    same_turn = VisualContext(
+        "chart-1",
+        _VISUAL_SPEC,
+        _VISUAL_PROFILE,
+        decision=VisualDecision(
+            spec=_VISUAL_SPEC, profile=_VISUAL_PROFILE, source="llm", accepted=True, valid=True
+        ),
+    )
+    with recording_turn() as turn2:
+        record_visual_decision_refused(same_turn, Rejection("order", "no ranking rule"))
+    (decision2,) = turn2.sealed().where(Step.VISUAL_PLANNER)
+    assert decision2.now == "llm"
+
+
 def test_the_changed_decisions_are_readable_as_a_group() -> None:
     """The panel this design exists for, as a value: which rules altered the answer."""
     with recording_turn() as turn:
