@@ -20,6 +20,13 @@ from finguard_orchestrator.application import AskFinancialQuestionHandler, AskFi
 from finguard_orchestrator.domain.enums import Direction, Period, Spoken
 from finguard_orchestrator.domain.errors import BankingUnavailableError
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
+from finguard_orchestrator.domain.models.chart import (
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    VisualField,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.conversation import (
     Conversation,
 )
@@ -54,6 +61,25 @@ SUMMARY = AccountSummary(
     booked_minor=1_042_042,
     available_minor=1_037_042,
     as_of=datetime(2026, 8, 4, 8, 12),
+)
+
+# A minimal breakdown bar, just enough to put a chart in context for
+# `test_ahora_bien_still_answers_the_balance_over_a_charted_conversation` below -- that test never
+# reads the chart itself, only whether its presence (and `last_plan`) can bend the balance route.
+_CHART_SPEC = ChartSpec(
+    "bar",
+    (
+        ChartEncoding("x", "value_minor", "quantitative"),
+        ChartEncoding("y", "dimension", "nominal"),
+    ),
+)
+_CHART_PROFILE = VisualProfile(
+    fields=(
+        VisualField("dimension", "nominal", "dimension", 2),
+        VisualField("value_minor", "quantitative", "measure", 2),
+    ),
+    metric="SUM",
+    unit="money",
 )
 
 
@@ -216,6 +242,37 @@ async def test_a_balance_question_does_not_erase_the_previous_plan() -> None:
     assert result.conversation.last_plan is not None
     assert result.conversation.last_plan.period.period is Period.LAST_MONTH
     assert result.conversation.last_plan.categories == ("GROCERIES",)
+
+
+async def test_ahora_bien_still_answers_the_balance_over_a_charted_conversation() -> None:
+    """D-4.2b-1 (Drop, Wave 4.2b fix wave) -- «Ahora bien, ¿cuánto tengo?» reads as a `FOLLOW_UP`
+    to `turn_analyzer.analyze` the moment a chart is in view: `_RESHAPE_FOLLOW_UP`'s bare "ahora"
+    shape matches, and `conversation.last_plan is not None` is exactly the charted case. But
+    `relation` is read in only two places, both gated on a chart in context and both requiring a
+    *second* claimant (the reader, or the drill lexicon) -- ACCOUNT_BALANCE routing above is keyed
+    on `intent`, never on `relation`. So the misreading is inert: the route and the answer must be
+    the same whether or not a chart, and a plan, happen to already be in view.
+    """
+    sentence = "Ahora bien, ¿cuánto tengo?"
+    charted = Conversation(
+        last_plan=FinancialPlan(
+            direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH)
+        )
+    ).with_visual_context(VisualContext("chart-1", _CHART_SPEC, _CHART_PROFILE))
+    _, _, charted_handler = ask(sentence, FakeAccounts(SUMMARY))
+    _, _, control_handler = ask(sentence, FakeAccounts(SUMMARY))
+
+    charted_result = await charted_handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=charted
+        )
+    )
+    control_result = await control_handler.handle(
+        AskFinancialQuestionQuery(sentence=sentence, account_id=ACCOUNT, today=TODAY)
+    )
+
+    assert charted_result.outcome == control_result.outcome == Spoken.BALANCE.value
+    assert charted_result.text == control_result.text
 
 
 async def test_a_bank_that_will_not_answer_does_not_become_a_zero() -> None:
