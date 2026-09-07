@@ -5288,7 +5288,7 @@ def _record_visual_follow_up(
     return follow_up
 
 
-def record_visual_decision(decision: VisualDecision, *, was: str = "deterministic") -> None:
+def record_visual_decision(decision: VisualDecision, *, was: str | None = "deterministic") -> None:
     """One `record()` per turn that entered the policy, in the design's own vocabulary.
 
     `changed` is whether the model's chart is what got shown -- only an accepted proposal in
@@ -5301,8 +5301,21 @@ def record_visual_decision(decision: VisualDecision, *, was: str = "deterministi
     one that knows what the chart showed before the patch -- hands it in, rather than this
     function inventing "deterministic" for a chart that a model, or an earlier patch, produced.
     `changed` follows the same invariant every other row does: a `patch` *is* what got shown, so
-    `was != "patch"` is `True` whenever the previous chart had a different source, which is always
-    (a restyle only exists because something was already on screen, and `now` is always "patch").
+    `was != "patch"` is `True` whenever the previous chart had a different source, which is
+    always (a restyle only exists because something was already on screen, and `now` is always
+    "patch") -- `None` included, since `None != "patch"`.
+
+    **`was` is `None` whenever the caller does not know it, and that is most of the time (I2,
+    fix wave).** `VisualContext.decision` is turn-local by design (§4): the service keeps no
+    conversation store, so a context that crossed the wire and came back has `decision is None`
+    even though a decision *did* produce the chart on screen. Before this fix the caller
+    substituted `"deterministic"` for that case, which was true only by accident -- while
+    `ORCHESTRATOR_VISUAL_PLANNER` stayed `deterministic` for everyone. The day it is promoted
+    (Task 9), or a chart is restyled a second time, the substitution becomes a false provenance
+    claim: a row saying a model's chart was the floor's. Recording `None` (this module's own
+    `Decision.was: str | None`, so nothing downstream has to invent a sentinel) says the honest
+    thing -- the source is unrecorded -- until a signed visual context (planned Task 3b) makes it
+    recoverable across the wire.
 
     A `patch` returns before the `logger.info` below: that call is `visual_planner.decision`, the
     promotion-evidence sink Task 9 reads acceptance/abstention/latency rates off, and this

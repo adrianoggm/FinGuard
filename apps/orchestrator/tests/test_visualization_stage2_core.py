@@ -667,6 +667,11 @@ def test_a_round_tripped_ranked_bar_still_verifies_the_descending_sort() -> None
         "patch",
         "accepted",
     )
+    # I2 (fix wave): `decision` is turn-local, so `from_wire`'s context carries none -- `was` is
+    # unrecorded (`None`), never the fabricated "deterministic" default, and the row still knows
+    # it changed something: a patch that replaced an unknown prior source always did.
+    assert decision.was is None
+    assert decision.changed is True
 
 
 def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:

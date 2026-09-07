@@ -341,9 +341,10 @@ def _visual_only_response(
         accepted=True,
         valid=True,
     )
-    was = (
-        trusted_context.decision.source if trusted_context.decision is not None else "deterministic"
-    )
+    # I2 (fix wave): `decision` is turn-local (§4) -- a context that crossed the wire always has
+    # `decision is None`, even though a decision produced the chart on screen. `None` says that
+    # honestly; `record_visual_decision`'s own docstring is why this is not "deterministic".
+    was = trusted_context.decision.source if trusted_context.decision is not None else None
     record_visual_decision(decision, was=was)
     chart_id = "chart-" + uuid.uuid4().hex[:16]
     derived_context = _derived_context(trusted_context, updated.spec, chart_id, decision=decision)
