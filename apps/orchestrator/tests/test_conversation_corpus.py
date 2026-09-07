@@ -348,6 +348,47 @@ def test_a_wrong_chart_expectation_is_caught() -> None:
     assert "the chart's mark should be 'line' and is 'bar'" in failures[0].complaint
 
 
+def test_a_chart_wide_sort_the_axis_already_owns_is_read_through_the_domains_nulling() -> None:
+    """`chart:` is compared through the domain's own `visual_plan.canonical(spec)`, not a second
+    copy of it -- so it must inherit that function's one non-obvious rule: `present()` always lets
+    an axis's own per-encoding sort win over the chart-wide `sort`/`sort_field` on the wire, so a
+    chart-wide sort equal to (and shadowed by) the axis's own sort is not a live decision. Mirrors
+    `test_visual_plan.py::test_canonical_ignores_a_chart_wide_sort_the_presenter_would_drop`.
+
+    The restyle turn below produces exactly that shape: the y axis sorts itself descending by
+    `value_minor`, and the spec also carries that same sort as a chart-wide `sort`/`sort_field`.
+    The live value is the axis's own -- asserted as `axis_sort`, and it passes. The dead
+    chart-wide `sort`/`sort_field` must read back as `None`, and asserting it as though it were
+    still live -- the naive reading a harness-local `canonical()` used to validate -- must not
+    silently pass: the presenter never shows it, so validating it validates nothing on the wire.
+    """
+    live_axis_sort_only = _a_chart_then(
+        episodes.Turn(
+            say="Ordena el gráfico anterior de mayor a menor.",
+            route="VISUAL",
+            chart={
+                "sort": None,
+                "sort_field": None,
+                "axis_sort": ["y", "descending", "value_minor"],
+            },
+        )
+    )
+    assert list(episodes.walk(live_axis_sort_only)) == []
+
+    dead_sort_asserted_as_live = _a_chart_then(
+        episodes.Turn(
+            say="Ordena el gráfico anterior de mayor a menor.",
+            route="VISUAL",
+            chart={"sort": "descending", "sort_field": "value_minor"},
+        )
+    )
+    failures = list(episodes.walk(dead_sort_asserted_as_live))
+    assert len(failures) == 2
+    complaints = {f.complaint for f in failures}
+    assert "the chart's sort should be 'descending' and is None" in complaints
+    assert "the chart's sort_field should be 'value_minor' and is None" in complaints
+
+
 def test_a_turns_banking_calls_can_be_asserted() -> None:
     episode = _one_turn(route="QUERY", banking_calls=1)
 

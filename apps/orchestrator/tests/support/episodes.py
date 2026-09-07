@@ -102,7 +102,6 @@ from finguard_orchestrator.domain.errors import (
     RecipientNotFoundError,
 )
 from finguard_orchestrator.domain.models.account_summary import AccountSummary, Holding
-from finguard_orchestrator.domain.models.chart import ChartSpec
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.payment_reading import PaymentReading
@@ -110,6 +109,7 @@ from finguard_orchestrator.domain.models.payment_result import PaymentPreview, P
 from finguard_orchestrator.domain.models.planning_context import PlanningContext
 from finguard_orchestrator.domain.models.planning_result import PlanningResult
 from finguard_orchestrator.domain.models.query_answer import Group, Movement, QueryAnswer
+from finguard_orchestrator.domain.models.visual_plan import canonical
 from finguard_orchestrator.domain.services import (
     category_words,
     explicit_facts,
@@ -1085,43 +1085,24 @@ def _complaints(
     yield from _query_complaints(turn, ran)
 
 
-def canonical(
-    spec: ChartSpec,
-) -> tuple[
-    str,
-    tuple[tuple[str, str, str, str | None, str | None], ...],
-    str | None,
-    str | None,
-    str | None,
-    int | None,
-]:
-    """The value-free shape of a `ChartSpec`, in the same terms a `chart:` expectation names a
-    subset of: `mark`, each encoding as `(channel, field, type, sort_mode, sort_field)`, the
-    chart-wide `stack`, `sort`, `sort_field` and `limit`.
-
-    A chart-wide sort and a per-encoding one are different things on purpose -- the breakdown
-    floor ranks its dimension through the y axis's own sort and leaves the chart-wide `sort`
-    `None`, so a check that only read the latter would see no ranking at all.
-    """
-    encodings = tuple(
-        (
-            item.channel,
-            item.field,
-            item.type,
-            item.sort.mode if item.sort is not None else None,
-            item.sort.field if item.sort is not None else None,
-        )
-        for item in spec.encodings
-    )
-    return (spec.mark, encodings, spec.stack, spec.sort, spec.sort_field, spec.limit)
-
-
 def _chart_complaints(expected: dict[str, Any], answer: dict[str, Any]) -> Iterator[str]:
     """`turn.chart` against the chart the conversation actually remembers.
 
     Read off `conversation.visual_contexts[-1].spec` -- the domain `ChartSpec` the service carries
     forward -- and not `answer["visualization"]["spec"]`, the presented Vega-Lite: the assertion is
     on the same object a later turn's «el gráfico anterior» resolves against.
+
+    The shape a `chart:` expectation names a subset of is the domain's own
+    `visual_plan.canonical(spec)` -- not a second implementation of it. A harness-local copy used
+    to stand here, and it disagreed with the domain on one thing: `present()` (`vega_lite.py`)
+    always lets an axis's own per-encoding sort win over the chart-wide `sort`/`sort_field` on the
+    wire, so the domain's `canonical()` nulls the latter whenever an axis already carries its own
+    sort -- a rule its own regression test pins down (`test_visual_plan.py`,
+    `test_canonical_ignores_a_chart_wide_sort_the_presenter_would_drop`). The copy that used to
+    live here returned `spec.sort`/`spec.sort_field` unconditionally, so a `chart: {sort: ...,
+    sort_field: ...}` expectation could have validated a value dead on the wire -- exactly the
+    shape the shipped episode's restyle turn produces (a chart-wide sort equal to, and shadowed
+    by, the y axis's own sort).
     """
     conversation = conversation_mapper.to_domain(
         ConversationPayload.model_validate(answer["conversation"])
@@ -1129,8 +1110,17 @@ def _chart_complaints(expected: dict[str, Any], answer: dict[str, Any]) -> Itera
     if not conversation.visual_contexts:
         yield f"the turn expects a chart {expected}, and none was remembered"
         return
-    mark, encodings, stack, sort, sort_field, limit = canonical(
+    mark, raw_encodings, stack, sort, sort_field, limit = canonical(
         conversation.visual_contexts[-1].spec
+    )
+    # The domain's own encodings: sorted (order is not a decision there either) and marking "no
+    # per-encoding sort" with `""` rather than `None`. Normalised back to `None` here so the rest
+    # of this function reads exactly as an expectation names it, and an axis with no sort at all
+    # still fails an `axis_sort` expectation rather than matching one that also happens to read
+    # `""`.
+    encodings = tuple(
+        (channel, field, kind, mode or None, sort_name or None)
+        for channel, field, kind, mode, sort_name in raw_encodings
     )
     if "mark" in expected and expected["mark"] != mark:
         yield f"the chart's mark should be {expected['mark']!r} and is {mark!r}"
