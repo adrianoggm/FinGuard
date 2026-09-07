@@ -121,3 +121,39 @@ def test_a_seal_survives_key_order_and_dies_with_key_rotation() -> None:
     assert codec.verify_context(token, "h", {"a": [1, 2], "b": 1}) is True  # canonical JSON
     rotated = MetricTokenCodec({"k2": b"y" * 32}, "k2")
     assert rotated.verify_context(token, "h", {"a": [1, 2], "b": 1}) is False
+
+
+def test_the_type_discriminator_is_signed_not_only_the_prefix() -> None:
+    """m1 (fix wave): before this fix, `_open` compared the unsigned `parts[0]` against the
+    prefix its caller asked for and never asked the signed body what it thought it was. A context
+    seal (`c1.`) relabelled `m1.` still carries a valid signature over its own, untouched body --
+    `_open("m1." + body_and_signature, "m1")` matched the structural check and would have handed
+    that body back to `verify()` as if it had opened a metric token. Only the two envelopes'
+    disjoint key sets (`{v,k,h,g}` vs `{v,t,k,h,d}`) stopped `verify()` from accepting it -- luck,
+    not a check. The signed `"t"` field closes it: the relabelled token's body still says
+    `"t": "c1"`, so `_open` refuses it before either side ever asks about keys.
+    """
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    context_token = codec.seal_context("holder-a", {"chart_id": "chart-1"})
+    relabelled = "m1." + context_token.split(".", 1)[1]
+    assert codec._open(relabelled, "m1") is None
+
+
+def test_a_metric_token_names_the_chart_it_was_issued_for() -> None:
+    """I3 (fix wave): `issue` now takes the chart id it is minting a save candidate for, and
+    `verify` checks it back when the caller demands one. A caller that does not ask (`POST
+    /v1/metrics`, which saves a figure rather than pairing a restyle) still reads either shape --
+    the whole point of leaving `chart_id` optional on both ends.
+    """
+    codec = MetricTokenCodec({"active": b"k" * 32}, "active")
+    bound = codec.issue("holder-1", definition(), chart_id="chart-a")
+    assert codec.verify(bound, "holder-1", chart_id="chart-a") == definition()
+    with pytest.raises(MetricTokenError):
+        codec.verify(bound, "holder-1", chart_id="chart-b")
+    # `POST /v1/metrics`'s own call: no chart_id demanded, so a bound token still reads.
+    assert codec.verify(bound, "holder-1") == definition()
+
+    unbound = codec.issue("holder-1", definition())
+    assert codec.verify(unbound, "holder-1") == definition()
+    with pytest.raises(MetricTokenError):
+        codec.verify(unbound, "holder-1", chart_id="chart-a")

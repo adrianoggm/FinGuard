@@ -181,7 +181,10 @@ the verifier reads — each field's `role` and `order`, and the profile's `compa
 `plan_limited` — because §3.1 verifies a merged patch against it and a narrowed profile refused
 legitimate restyles after one round trip (wave 4.2, Task 3). It still carries nothing a browser
 should be able to assert about the data (`row_count`, `plan_metric` stay off the wire), and the wire
-is still not where authority lives: the verifier decides. `source_plan` is typed
+is still not where authority lives: the verifier decides — and since Task 3b, a context is only a
+verifier's input if the server's seal on it verifies for this holder (`MetricTokenCodec.seal_context`),
+so a client can draw and navigate a chart it altered but cannot have a decision taken on it.
+`source_plan` is typed
 `FinancialPlan | ComparisonPlan | RatioPlan | None` and copied from the result's `metric_definition`;
 `evidence_ids` are the plan's `transaction_ids` when it carries them; `turn_id` is a UUID minted where
 the chart is made — no turn identifier exists elsewhere in the service. The context can answer: which
@@ -361,3 +364,5 @@ collaboration between users · proactive alerts.
 - **No silent reinterpretation.** An ambiguous follow-up asks.
 - **No wire authority.** `derived_from` and `turn_id` travel; decision, plan and evidence are
   turn-local and are never taken from the wire (§4).
+- **No unsealed source.** An unsealed or altered visual context is still drawn and navigated, but
+  is never a source for a restyle decision or a saved metric (§4, Task 3b).

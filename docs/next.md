@@ -600,6 +600,22 @@ survives the wire (`to_payload` emits it, `to_domain` reads it back on the next 
 still unresolved is its binding to `Conversation.turns` and to the decision record, not its
 persistence; §4's own dataclass comment, stale on this exact point, is corrected alongside.
 
+**2026-09-07 — the visual context is sealed.** `MetricTokenCodec` gains `seal_context`/
+`verify_context`: an HMAC-SHA256 envelope over the SHA-256 digest of a context's wire semantics,
+bound to the holder and prefixed `c1.` — it carries no content of its own and no expiry of its
+own; the only way a seal goes stale is key rotation. `VisualContext.token` travels the wire and
+`.trusted` is turn-local; `_conversation_of` is the one production caller that verifies it, and a
+restyle or a saved-metric source over an unverified context now answers `VISUAL_UNTRUSTED` («No
+reconozco ese gráfico; pide uno nuevo y podré cambiarlo.») before a merge, a verify or a single
+ledger call. A fix round sealed the compound-read path too — `_compound_read_reply` was drawing
+its own charts unsealed, so a seal-side allowlist test (`test_the_seal_is_never_silently_skipped`)
+now sweeps every `question_to_dto(` call site the way a verify-side allowlist test already swept
+every `to_domain(` call site. A deployment running on the fallback signing key logs one warning at
+startup and is not refused for it. Older conversations (no token) are untrusted until their next
+chart. Suite at HEAD: 3916 / 3 / 204, corpus 204. What this does **not** do: no expiry beyond key
+rotation; no cross-device trust — the seal binds a holder reference, not a device; no server-side
+store — the codec is stateless and the seal is the only record of it.
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate

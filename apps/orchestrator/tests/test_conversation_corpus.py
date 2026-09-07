@@ -14,6 +14,9 @@ one of those decisions rather than a wrong number. A corpus that needed a model 
 and would measure the model instead.
 """
 
+import copy
+from typing import Any
+
 import pytest
 from support import episodes
 from support.ratchets import Ceiling, Floor
@@ -437,3 +440,103 @@ def test_a_wrong_total_against_the_overridden_groups_is_caught() -> None:
 
     assert len(failures) == 1
     assert "the figure should be 999 and is 67556" in failures[0].complaint
+
+
+# --- Task 4: the corpus carries the seal, and a tampered echo is refused -----------------------
+#
+# Every turn above reaches the real `/v1/questions` route and echoes its own answer's `conversation`
+# straight back on the next turn, exactly as a browser would -- that is what proved Task 3's seal
+# round-trips for free through this harness (`uv run pytest tests/test_conversation_corpus.py -k
+# visual` was already green before this task touched anything). What that round trip cannot
+# exercise is a caller who does not echo faithfully, so this is a second, narrower harness: it
+# replays `32-visual-continuation.yaml`'s own first turn for real, then -- unlike `replay()`, which
+# only ever echoes a turn's answer unmodified -- flips one bit of the profile the seal covers before
+# asking for a restyle.
+#
+# This is written as ad hoc Python against the real episode rather than a `tamper:` key on `Turn`
+# (the brief's other option). A `tamper:` turn *could* express "flip a flag on the echoed profile"
+# cheaply enough, but landing it on `32-visual-continuation.yaml` itself is not cheap: that file
+# already carries two corpus-wide ratchets pinned to its exact turns -- `CONTESTED` (`Ceiling(0,
+# "turns two recognisers both claim")` in `test_which_recogniser_claims_a_turn.py`) walks every
+# turn's sentence against all twenty deterministic recognisers, and the episode's own `why` already
+# records how the two handover ratchets in `test_what_we_hand_to_the_planner.py` moved once from a
+# wording change alone. A new turn appended there is one more sentence those ratchets see for the
+# first time, for a reason that has nothing to do with what either ratchet measures -- and neither
+# is this task's to spend. Loading the real episode and driving only its first turn through a
+# hand-built stack proves the same thing (a real turn, a real seal, a real refusal) without asking
+# either ratchet to hold still for a scenario they were never meant to price in.
+
+
+def _episode_32() -> episodes.Episode:
+    """The corpus's own first visual episode, loaded like any other -- not a copy of its turns."""
+    return next(
+        episode
+        for episode in episodes.load()
+        if episode.name == "32-visual-continuation/a_breakdown_is_reshaped_and_then_restyled"
+    )
+
+
+# The same restyle sentence `32-visual-continuation.yaml` already proves is read deterministically
+# (its own turn asking for this exact order flip asserts `no_model: true`) -- reused rather than
+# invented, so the tamper test is about the seal and not about whether some new sentence parses.
+_RESTYLE = "Ordena el gráfico anterior de menor a mayor."
+
+
+def _tampered_restyle(
+    flag: str = "comparison",
+) -> tuple[episodes.Stack, dict[str, Any], int, dict[str, Any]]:
+    """Episode 32's real first turn, replayed through a real stack, then its echoed chart's
+    profile flipped on `flag` before the restyle is asked.
+
+    Returns the stack (so a test can read `stack.ledger.ran`), the tampered conversation that was
+    actually sent, how many banking calls the ledger had already made before the restyle, and the
+    restyle's own answer.
+    """
+    episode = _episode_32()
+    turn_one = episode.turns[0]
+    stack = episodes.a_stack_for(episode)
+    conversation = episodes.opening(episode)
+
+    stack.ledger.groups_for_next_turn = episodes._groups_from(turn_one)
+    drawn = stack.client.post(
+        "/v1/questions", json={"question": turn_one.say, "conversation": conversation}
+    )
+    stack.ledger.groups_for_next_turn = None
+    assert drawn.status_code == 200
+    sealed = drawn.json()["conversation"]
+    assert sealed["visual_contexts"], "turn 1 should have drawn a chart to tamper"
+
+    tampered = copy.deepcopy(sealed)
+    context = tampered["visual_contexts"][-1]
+    context["profile"][flag] = not context["profile"][flag]
+
+    before = len(stack.ledger.ran)
+    restyled = stack.client.post(
+        "/v1/questions", json={"question": _RESTYLE, "conversation": tampered}
+    )
+    assert restyled.status_code == 200
+    return stack, tampered, before, restyled.json()
+
+
+def test_an_untrusted_visual_outcome_is_recognised_as_its_own_route() -> None:
+    """`tool_of` maps `VISUAL_UNTRUSTED` to `VISUAL` beside its `VISUAL_UNCHANGED` and
+    `VISUAL_UPDATED` siblings -- the same fallthrough gap `test_a_visual_outcome_asserted_as_a_
+    query_is_caught` closed for a successful restyle. Without it, a caller whose echoed chart
+    failed the seal check was silently counted as a query instead of a visual turn."""
+    _, _, _, answer = _tampered_restyle()
+
+    assert episodes.tool_of(answer) == episodes.VISUAL
+
+
+def test_a_tampered_echoed_chart_is_refused_without_a_banking_call() -> None:
+    """Task 4's own proof: an echoed visual context whose seal does not check out is refused --
+    `VISUAL_UNTRUSTED` -- before a single ledger call, and the conversation it leaves behind is
+    exactly the one that was sent: no chart is derived, none is lost, only the seal is gone."""
+    stack, tampered, before, answer = _tampered_restyle()
+
+    assert answer["outcome"] == "VISUAL_UNTRUSTED"
+    assert len(stack.ledger.ran) == before, "an untrusted echo must not reach the ledger"
+
+    after_contexts = answer["conversation"]["visual_contexts"]
+    sent_contexts = tampered["visual_contexts"]
+    assert [c["chart_id"] for c in after_contexts] == [c["chart_id"] for c in sent_contexts]

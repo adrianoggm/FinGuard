@@ -223,6 +223,12 @@ _VISUAL_OUTCOMES = {
     # below -- so it belongs in this set for the same reason `VISUAL_UPDATED` does: without it,
     # a `VISUAL_UNCHANGED` answer falls through unrecognised and is silently counted as a query.
     "VISUAL_UNCHANGED",
+    # Task 4: an echoed chart whose seal does not check out is refused here, before a merge, a
+    # verify or a single ledger call -- still the `VISUAL` route, for the same reason as its two
+    # siblings above: the turn asked to change a chart and got an answer about a chart, so without
+    # this a `VISUAL_UNTRUSTED` answer falls through unrecognised and is silently counted as a
+    # query, exactly the blindness a tampered echo should be caught by and could not.
+    "VISUAL_UNTRUSTED",
     "VISUAL_INCOMPATIBLE",
     "VISUAL_NEEDS_TARGET",
     "VISUAL_AMBIGUOUS",
