@@ -488,6 +488,55 @@ runs in shadow or hybrid mode. Nothing visible changed with the shipped setting.
 is the evidence: the three GPU runs on one SHA and the promotion decision, against the thresholds
 recorded in the wave 3 paragraph above, are Task 9 and remain the operator's.
 
+**2026-09-07 — wave 4.2 landed: every visual follow-up is verified or asked about, and the corpus
+sees its first chart.** A code-built chart can re-enter the verifier as the draft it names
+(`draft_of(spec)`, `visual_plan.py`), and `VisualSource` gains a third member, `patch`, read through
+`get_args` everywhere `VisualDecision`'s invariants are checked. The restyle path now runs
+`verify(draft_of(updated.spec), profile)` as a gate before anything is shown: accepted, the merged
+`updated.spec` — titles included — is what the decision names, the derived context stores, the
+presenter shows and the save candidate keeps, and `record_visual_decision` writes one
+`AGREED`/`changed=(was != now)`/`now="patch"`/`detail="accepted"` row that never reaches the
+`visual_planner.decision` promotion-log line Task 9 reads; refused, `VISUAL_INCOMPATIBLE` names the
+rule in one Spanish sentence («No puedo aplicar ese cambio a este gráfico: no pasa la regla «{rule}»
+del verificador; el anterior se mantiene.»), the previous chart stays untouched, and
+`record_visual_decision_refused` writes one `DECLINED`/`invalid_proposal:<rule>` row, never in the
+promotion log. The wire's nested profile now carries the shape facts the verifier reads — each
+field's `role`/`order` (`VisualFieldPayload`) and the profile's `comparison`/`plan_limited`
+(`VisualProfilePayload`) — because a narrowed round-tripped profile used to refuse legitimate
+restyles after one round trip; `row_count`/`plan_metric` stay off the wire, old clients fall back to
+the previous derivation, and a contradictory wire `role`/`type` is refused at the DTO with a 422,
+never an unhandled 500. A reshaped chart now names the chart it came from: `_remember_visual_context`
+sets a fresh chart's `derived_from` to the previous chart's id, server-side, exactly when the
+classification reads `ANALYTICAL_RESHAPE` — carried from `_steps`, an async generator, to
+`stream()`'s decision call through `follow_up_seen`, a one-element list threaded as an explicit
+out-parameter and reviewed as the least-bad mechanism available; the retry-control and
+previous-plan-restore early returns draw a chart before any turn analysis exists, so both draw one
+whose `derived_from` is `None`, stated in `_record_visual_follow_up`'s own docstring rather than
+hidden. `Claimant` names which pair of readers claimed an ambiguous follow-up —
+`presentation+reshape`, `presentation+drill`, and a `reshape+drill` the vocabulary carries but the
+reader's own drill-before-reshape precedence makes unreachable, which a reachability test asserts as
+exactly the one member nothing produces. An `AMBIGUOUS` classification asks instead of guessing: the
+controller's short-circuit returns `VISUAL_AMBIGUOUS` with one of `_ASK`'s exactly two texts, the
+conversation unchanged and zero banking calls; the outcome field stayed a plain, unconstrained `str`,
+so nothing in the wire's enumeration had to move. The corpus finally sees a chart: the harness's
+`Turn` gains `chart`, `banking_calls`, `derived_from` and `groups`, `tool_of` gains a `VISUAL` route
+read before the old `QUERY` fallthrough could swallow one silently, and the `chart:` mapping is read
+through the domain's own `canonical()` rather than a second, differently-behaving copy of it (a
+review finding, fixed by deleting the harness's own copy). The corpus's first visual episode,
+`32-visual-continuation.yaml`, concedes against §9's own sketch: turns 1 and 2 are not §9's wording —
+«¿En qué he gastado más este verano?» and «Separa transporte público y gasolina.» reach the planner
+on two sentences no planning case exercises, which would have moved two handover ratchets
+(`UNMEASURED`, `MUTE`) that are not this wave's to spend, so the episode says the same thing in
+sentences the planning dataset already measures. Turn 3, «Ahora compáralo por meses.», is refused
+deterministically with zero banking calls, not the query §9 assumed. And turn 2's chart does not
+derive from turn 1's — the deterministic turn analyser reads a different, complete financial question
+as a new request rather than a follow-up — so `derived_from: true` is exercised only by the restyle
+turn in this episode, never by a reshape; whether a same-thread reshape should read as a follow-up is
+a question for whoever teaches the analyser to read one as such. Suite at HEAD: 3863 / 3 / 192,
+corpus 202 at 0.0 %. §7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays
+4.5's — not built here — and the second external review's own point stands unresolved: `turn_id`
+today identifies the context's creation, not a recoverable turn.
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate
