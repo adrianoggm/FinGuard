@@ -332,7 +332,7 @@ evidence · every rejected proposal ends in a valid answer.
 | sub-wave | delivers | done when |
 | --- | --- | --- |
 | **4.1 Context and classification** | `VisualContext` extended (§4); `VisualFollowUpKind` and the deterministic readers (§5); `Step.VISUAL_FOLLOW_UP`; invariant tests | every follow-up kind is classified and recorded; no visible change yet |
-| **4.2 Continuous visual conversation — foundation done; acceptance pending (4.2b)** | presentation patches through the verifier with `source="patch"`; reshape linkage `derived_from`; the first conversational episodes in the corpus | foundation done; acceptance pending (4.2b) — the base episode's turns 1-3 and 6 pass end to end with the banking-call assertion, landed as `evaluation/conversations/32-visual-continuation.yaml`; turns 1-2 use planning-dataset anchor sentences instead of §9's own wording, and the restyle turn uses the interpreter's whitelisted sort sentence instead of §9's horizontal-rotation phrasing — see `docs/next.md` §9 for what turn 3's and turn 2's outcomes had to concede. Neither a natural-language reshape derived from the previous chart nor «compáralo por meses» taken against the answered plan is demonstrated; both are 4.2b's, planned before 4.3 |
+| **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's |
 | **4.3 Financial drill-down** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | turns 4-5 pass; an ambiguous reference asks |
 | **4.4 Multimodal continuity** | `chart_id`/decision id on voice events; the chart-derived spoken summary; the multimodal cases | the five multimodal cases pass; full-turn latency measured against §8 |
 | **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | the acceptance scenario in §11 runs on camera |
@@ -345,14 +345,23 @@ visual follow-up verified, without a single new product surface.
 Complete when this runs end to end, on camera:
 
 - By voice: «¿En qué he gastado más este verano?» — FinGuard answers by voice, shows the ranking, and
-  discreetly explains why bars.
+  discreetly explains why bars. **Not this wave** — voice and explainability are §4.5's; episode 32's
+  turn 1 anchors on «¿Cuánto gasté el mes pasado?» instead, because `window_words.py` excludes a
+  season on purpose.
 - By text: «Separa transporte público y gasolina.» — the summer and the account are kept, the data is
-  re-queried, the chart updates, `derived_from` points at the first chart.
+  re-queried, the chart updates, `derived_from` points at the first chart. **Landed, 4.2b** —
+  episode 32 turn 2, verbatim; the window kept is turn 1's own (last month, not a summer — the same
+  reason as above), one banking call, `derived_from: true`.
 - «Ahora compáralo por meses.» — the query becomes a time series and a suitable chart is chosen.
+  **Landed, 4.2b** — episode 32 turn 3, verbatim: a month-by-month line, one banking call,
+  `derived_from: true`, where this reader used to refuse as an incomplete comparison.
 - «¿Por qué agosto es tan alto?» — August is resolved inside the previous result, the responsible
-  movements are queried, the answer carries evidence.
+  movements are queried, the answer carries evidence. **Not this wave** — reference resolution and
+  the bounded drill-down plan are 4.3's.
 - «Pon el gráfico anterior en horizontal.» — the previous visual context is recovered and only its
-  presentation changes, with zero banking calls.
+  presentation changes, with zero banking calls. **Landed, 4.2b** — episode 32 turn 5, verbatim:
+  «el gráfico anterior» resolves to the chart the prior restyle just appended, zero banking calls,
+  an effective change.
 
 ## 12. Out of scope, to protect the calendar
 
