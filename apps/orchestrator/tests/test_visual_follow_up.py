@@ -677,3 +677,43 @@ def test_a_sealed_context_verifies_a_restyle_and_a_tampered_or_missing_one_is_re
         app.dependency_overrides.clear()
         app.state.metrics_enabled = previously_metrics_enabled
         app.state.questions_enabled = previously_questions_enabled
+
+
+def test_a_chart_is_sealed_even_with_metrics_off_but_offers_no_save_candidate() -> None:
+    """Fix round 1: the corpus harness (and a voice turn, and any deployment with
+    `ORCHESTRATOR_METRICS_ENABLED=false`) never turns metrics on, and Task 3's own first cut of
+    the seal silently rode along on that same flag -- so a chart drawn there was never sealed, and
+    every later restyle of it came back `VISUAL_UNTRUSTED` for no reason a holder caused. The seal
+    is now unconditional: with metrics off (this test's `app.state.metrics_enabled = False`, this
+    module's own default), a first question still comes back sealed -- no save candidate to go
+    with it, since that offer is still exactly `metrics_on and request.channel == "TEXT"` -- and a
+    restyle over that same context still succeeds.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = False
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post("/v1/questions", json={"question": "¿Cuánto gasté el mes pasado?"})
+        assert drawn.status_code == 200
+        body = drawn.json()
+        assert body["save_candidate"] is None
+        sealed_conversation = body["conversation"]
+        (context,) = sealed_conversation["visual_contexts"]
+        assert context["token"]
+
+        restyled = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": sealed_conversation},
+        )
+        assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled

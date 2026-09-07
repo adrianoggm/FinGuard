@@ -459,11 +459,22 @@ def question_to_dto(
     *,
     holder_reference: str | None = None,
     metric_tokens: MetricTokenCodec | None = None,
+    offer_saving: bool = False,
 ) -> QuestionResponse:
+    """Fix round 1 (Task 3): `holder_reference`/`metric_tokens` and `offer_saving` answer two
+    different questions, and conflating them is what sent the corpus red. The first pair is "can
+    this chart be sealed for its holder" -- unconditional in both routes, because a context drawn
+    with metrics off (a voice turn, a deployment with `ORCHESTRATOR_METRICS_ENABLED=false`, this
+    codebase's own conversation-corpus harness) still needs a seal or every later restyle of it is
+    refused as untrusted, and `app.state.metric_tokens` always exists regardless of the flag. The
+    second, `offer_saving`, is "may this turn also offer to keep the answer as a saved metric" --
+    still exactly the routes' own pre-Task-3 gate (`metrics_on and request.channel == "TEXT"`), now
+    named and passed explicitly instead of silently riding along on the first two.
+    """
     visualization = _visualization_to_dto(result)
-    # Task 3: the same two arguments this function already takes are what a seal needs -- no third
-    # parameter, no second way to ask for one. `None` unless both are given, which keeps every
-    # existing caller unsealed exactly as before (mapper-level tests, the compound-read round trip).
+    # The seal is built whenever both are given, with no dependency on `offer_saving`: a fresh
+    # chart is signed for its holder the same turn it is drawn, whether or not this turn may also
+    # offer to save it.
     seal = (
         functools.partial(
             conversation_mapper.seal_context, holder_reference=holder_reference, codec=metric_tokens
@@ -494,6 +505,7 @@ def question_to_dto(
         and answered_a_figure
         and holder_reference is not None
         and metric_tokens is not None
+        and offer_saving
     ):
         # No chart is not the same as a chart the conversation has forgotten: the first saves a
         # figure, the second would save a spec that is no longer the one on screen.

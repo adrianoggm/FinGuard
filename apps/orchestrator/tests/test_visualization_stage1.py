@@ -804,7 +804,9 @@ async def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from
         metric_definition=plan,
     )
 
-    response = question_to_dto(figure, holder_reference="holder", metric_tokens=tokens)
+    response = question_to_dto(
+        figure, holder_reference="holder", metric_tokens=tokens, offer_saving=True
+    )
 
     assert response.visualization is None
     assert response.save_candidate is not None
@@ -824,6 +826,42 @@ async def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
     response = question_to_dto(without_figure, holder_reference="holder", metric_tokens=tokens)
 
     assert response.save_candidate is None
+
+
+async def test_offer_saving_gates_the_candidate_and_not_the_seal() -> None:
+    """Fix round 1 (Task 3): sealing a chart for its holder and offering to save the figure behind
+    it are two different questions. `holder_reference`/`metric_tokens` alone -- `offer_saving`
+    left at its default `False` -- still seal the fresh chart (a restyle later needs no metrics
+    feature to be trusted), but mint no save candidate; `offer_saving=True` does both, over the
+    identical figure.
+    """
+    tokens = MetricTokenCodec({"active": b"z" * 32}, "active")
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    figure = replace(
+        await _result((VisualRow("a", 100), VisualRow("b", 50))),
+        total_minor=150,
+        movement_count=2,
+        metric_definition=plan,
+    )
+
+    unoffered = question_to_dto(figure, holder_reference="holder", metric_tokens=tokens)
+    assert unoffered.save_candidate is None
+    assert unoffered.visualization is not None
+    (unoffered_context,) = unoffered.conversation.visual_contexts[-1:]
+    assert unoffered_context.token is not None
+    assert tokens.verify_context(
+        unoffered_context.token, "holder", conversation_mapper.context_semantics(unoffered_context)
+    )
+
+    offered = question_to_dto(
+        figure, holder_reference="holder", metric_tokens=tokens, offer_saving=True
+    )
+    assert offered.save_candidate is not None
+    (offered_context,) = offered.conversation.visual_contexts[-1:]
+    assert offered_context.token is not None
+    assert tokens.verify_context(
+        offered_context.token, "holder", conversation_mapper.context_semantics(offered_context)
+    )
 
 
 def test_a_profile_describes_its_dataset_and_not_a_chart() -> None:

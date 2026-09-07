@@ -1662,10 +1662,14 @@ async def ask(
     )
     if result.outcome == Spoken.TRANSFER_READY.value:
         return await _as_own_transfer(result, who, commands, payments_on, key=key)
+    # Fix round 1 (Task 3): the seal is unconditional -- who.holder_reference and metric_tokens are
+    # always real here (the codec always exists on app.state) -- and only the save-candidate offer
+    # keeps the routes' own pre-Task-3 gate, now passed by name instead of silently riding along.
     return llm_mapper.question_to_dto(
         result,
-        holder_reference=who.holder_reference if metrics_on and request.channel == "TEXT" else None,
-        metric_tokens=metric_tokens if metrics_on and request.channel == "TEXT" else None,
+        holder_reference=who.holder_reference,
+        metric_tokens=metric_tokens,
+        offer_saving=metrics_on and request.channel == "TEXT",
     )
 
 
@@ -1829,16 +1833,15 @@ async def ask_streaming(
                 staged = await _as_own_transfer(step, who, commands, payments_on, key=key)
                 payload = {"type": "answer", **staged.model_dump()}
             else:
+                # Fix round 1 (Task 3): see the same line on the question route -- the seal is
+                # unconditional, only the save-candidate offer keeps the metrics/channel gate.
                 payload = {
                     "type": "answer",
                     **llm_mapper.question_to_dto(
                         step,
-                        holder_reference=who.holder_reference
-                        if metrics_on and request.channel == "TEXT"
-                        else None,
-                        metric_tokens=metric_tokens
-                        if metrics_on and request.channel == "TEXT"
-                        else None,
+                        holder_reference=who.holder_reference,
+                        metric_tokens=metric_tokens,
+                        offer_saving=metrics_on and request.channel == "TEXT",
                     ).model_dump(),
                 }
             yield _sse(payload)
