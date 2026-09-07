@@ -12,6 +12,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
 )
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
+    category_words,
     financial_relationships,
     intent_router,
     spanish,
@@ -33,6 +34,38 @@ _FOLLOW_UP: Final = re.compile(
 _COMPARISON_WORDS: Final = re.compile(
     r"\b(?:compara\w*|comparacion|frente\s+a(?:l)?|contra|versus|vs)\b"
 )
+# Task 1 (Wave 4.2b): a follow-up focused on the last answer, but only inside the
+# `conversation.last_plan is not None` branch below -- never a new-request shape on its own.
+_RESHAPE_FOLLOW_UP: Final = re.compile(
+    r"^\s*(?:"
+    r"ahora\b"  # "Ahora compáralo por meses."
+    r"|(?:compara|separa|desglosa|agrupa|reparte|divide|distingue)"
+    r"(?:lo|la|los|las|melo|mela|melos|melas)\b"  # "Desglósalo por comercio.", "Sepáralo en..."
+    r")",
+    re.IGNORECASE,
+)
+# A split imperative alone is not enough -- "Separa la gasolina." names one category, which is a
+# filter question and stays a NEW_REQUEST as today; `_splits_two_or_more_categories` is what tells
+# the two shapes apart.
+_SPLIT_IMPERATIVE: Final = re.compile(
+    r"^\s*(?:separa|desglosa|divide|distingue|reparte)\b", re.IGNORECASE
+)
+
+
+def _splits_two_or_more_categories(sentence: str) -> bool:
+    """A split imperative ("Separa transporte público y gasolina.") reshapes the last answer only
+    once it names two or more precise categories; one name ("Separa la gasolina.") is a filter
+    question and is read exactly as today."""
+    if _SPLIT_IMPERATIVE.search(spanish.folded(sentence)) is None:
+        return False
+    return len(category_words.precisely_named_in(sentence)) >= 2
+
+
+def _is_reshape_follow_up(sentence: str) -> bool:
+    """The three Wave 4.2b shapes: «ahora…», a reshape/compare verb carrying a clitic pronoun, and
+    a split imperative naming two or more precise categories."""
+    folded = spanish.folded(sentence)
+    return _RESHAPE_FOLLOW_UP.search(folded) is not None or _splits_two_or_more_categories(sentence)
 
 
 def _substantive(clause: str, intent: Intent) -> bool:
@@ -122,7 +155,11 @@ async def analyze(
         relation = TurnRelation.CORRECTION
         focus = TurnFocus.LAST_ANSWER
     elif intent is Intent.EXPLAIN_PREVIOUS or (
-        conversation.last_plan is not None and _FOLLOW_UP.search(spanish.folded(sentence))
+        conversation.last_plan is not None
+        and (
+            _FOLLOW_UP.search(spanish.folded(sentence)) is not None
+            or _is_reshape_follow_up(sentence)
+        )
     ):
         relation = TurnRelation.FOLLOW_UP
         focus = TurnFocus.LAST_ANSWER
