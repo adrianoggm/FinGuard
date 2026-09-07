@@ -5,12 +5,13 @@ or HTTP. Keeping them apart is what stops a change in the contract from reaching
 core — before this, `LlmPolicy` was both the domain object and the request body.
 """
 
+import re
 from dataclasses import fields as dataclass_fields
 from datetime import date
-from typing import Annotated, Literal, cast, get_args
+from typing import Annotated, Final, Literal, cast, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from finguard_orchestrator.domain.constants import (
     MAX_CATEGORY_LENGTH,
@@ -316,6 +317,11 @@ class VisualProfilePayload(_Payload):
         return self
 
 
+# A wire-shape limit, not an identifier pattern (R3): a real label is "2026-08", "Mié", or "en
+# julio de 2026" -- length and the absence of control characters are all that is refused here.
+_LABEL_PATTERN: Final = re.compile(r"^[^\x00-\x1f\x7f]{1,64}$")
+
+
 class VisualContextPayload(_Payload):
     chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
     spec: dict[str, object]
@@ -327,6 +333,29 @@ class VisualContextPayload(_Payload):
     token: str | None = Field(
         default=None, max_length=512, pattern=r"^c1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"
     )
+    # Wave 4.3: the labels the chart drew, sealed with the rest of the context (`_value_free_spec`
+    # below never touches these -- they are not the spec). Defaults are the old-client shape: an
+    # echo that has never heard of them reads back empty and unranked, which is the safe
+    # direction -- a superlative over an empty list asks rather than guesses.
+    labels: list[str] = Field(default_factory=list, max_length=100)
+    series_labels: list[str] = Field(default_factory=list, max_length=100)
+    ranked: bool = False
+
+    @field_validator("labels", "series_labels")
+    @classmethod
+    def _labels_are_a_wire_shape_not_an_identifier(cls, value: list[str]) -> list[str]:
+        """What is refused here is length and control characters only -- never an identifier
+        pattern. A real label is an ISO month (`2026-08`), a category key, a weekday abbreviation
+        with an accent (`Mié`, `Sáb`), a comparison window label with spaces (`en julio de 2026`,
+        `_comparison_window_label`), or a counterparty name -- none of those is an identifier, and
+        refusing on that shape would refuse the very labels this field exists to carry. Authority
+        over what a label *means* stays with the seal (`context_semantics`/`seal_context`); this
+        is a wire-shape limit, nothing more.
+        """
+        for item in value:
+            if not _LABEL_PATTERN.fullmatch(item):
+                raise ValueError("visual labels must be short and free of control characters")
+        return value
 
     @model_validator(mode="after")
     def _value_free_spec(self) -> "VisualContextPayload":

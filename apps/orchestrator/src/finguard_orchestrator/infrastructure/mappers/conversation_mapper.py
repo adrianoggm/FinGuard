@@ -281,6 +281,9 @@ def _visual_contexts(
                 turn_id=item.turn_id,
                 token=item.token if trusted else None,
                 trusted=trusted,
+                labels=tuple(item.labels),
+                series_labels=tuple(item.series_labels),
+                ranked=item.ranked,
             )
         )
     return tuple(result)
@@ -378,6 +381,11 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
             "plan_limited": context.profile.plan_limited,
         },
         "token": context.token,
+        # Wave 4.3: the labels the chart drew, sealed with the rest -- `context_semantics` is
+        # `model_dump(exclude token)`, so these ride the same digest with no change there.
+        "labels": list(context.labels),
+        "series_labels": list(context.series_labels),
+        "ranked": context.ranked,
     }
 
 

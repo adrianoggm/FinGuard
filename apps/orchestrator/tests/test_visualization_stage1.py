@@ -579,6 +579,110 @@ def test_the_seal_covers_the_whole_wire_context_but_not_itself() -> None:
     assert set(semantics) == set(VisualContextPayload.model_fields) - {"token"}
 
 
+# --- Task 1 (Wave 4.3): a chart's labels travel on the wire, sealed with the rest --------------
+
+
+def test_a_contexts_labels_and_ranked_flag_round_trip_through_the_wire() -> None:
+    """(a): the value-free strings a chart drew survive `to_payload` -> `to_domain` exactly, the
+    same way `derived_from`/`turn_id` already do (`test_the_wire_carries_derived_from_and_turn_id_
+    and_nothing_server_side` above)."""
+    context = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("ALQUILER", "GROCERIES", "ZAPATOS"),
+        series_labels=("2026-07",),
+        ranked=True,
+    )
+    conversation = IDLE.with_visual_context(context)
+    payload = conversation_mapper.to_payload(conversation)
+    (item,) = payload.visual_contexts
+    assert item.labels == ["ALQUILER", "GROCERIES", "ZAPATOS"]
+    assert item.series_labels == ["2026-07"]
+    assert item.ranked is True
+    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
+    assert restored.labels == ("ALQUILER", "GROCERIES", "ZAPATOS")
+    assert restored.series_labels == ("2026-07",)
+    assert restored.ranked is True
+
+
+def test_a_tampered_label_untrusts_a_sealed_context() -> None:
+    """(b): extends `test_a_sealed_context_round_trips_trusted_and_a_tampered_one_does_not` above
+    -- a label is as much a part of what the seal covers as `profile.comparison` is, so changing
+    one in place, after the seal, must untrust the context exactly the same way."""
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    context = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("ALQUILER", "GROCERIES", "ZAPATOS"),
+        ranked=True,
+    )
+    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    assert sealed.token is not None
+
+    def verify(token: str | None, semantics: dict[str, object]) -> bool:
+        return codec.verify_context(token, "holder-a", semantics)
+
+    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload.visual_contexts[0].labels[0] = "OTRA"
+    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
+    assert tampered.trusted is False and tampered.token is None
+
+
+def test_a_tampered_ranked_flag_also_untrusts_a_sealed_context() -> None:
+    """(b), second half: `ranked` is a shape fact and not a label, but it is sealed the same way
+    -- flipping it in place must untrust the context too."""
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, labels=("ALQUILER",), ranked=True)
+    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    assert sealed.token is not None
+
+    def verify(token: str | None, semantics: dict[str, object]) -> bool:
+        return codec.verify_context(token, "holder-a", semantics)
+
+    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload.visual_contexts[0].ranked = not payload.visual_contexts[0].ranked
+    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
+    assert tampered.trusted is False and tampered.token is None
+
+
+def test_an_older_payload_without_labels_still_validates_unranked() -> None:
+    """(c): the old-client case, same shape `test_a_payload_with_none_of_the_new_keys_still_
+    validates` above already proves for `role`/`order`/`comparison`/`plan_limited` -- a payload
+    built by hand, the same way `_visual_context_dict()` builds one, that has never heard of
+    `labels`/`series_labels`/`ranked` still validates, and reads back empty and unranked: the
+    safe direction, so a superlative over it asks rather than guesses."""
+    conversation = ConversationPayload.model_validate({"visual_contexts": [_visual_context_dict()]})
+    (restored,) = conversation_mapper.to_domain(conversation).visual_contexts
+    assert restored.labels == ()
+    assert restored.series_labels == ()
+    assert restored.ranked is False
+
+
+def test_the_dto_refuses_a_label_with_a_control_character() -> None:
+    """(d): the wire-shape limit is length and control characters only -- not an identifier
+    pattern, because a real label is "en julio de 2026" or "Mié", not a field name."""
+    raw = _visual_context_dict()
+    raw["labels"] = ["ok", "line\nbreak"]
+    with pytest.raises(ValidationError):
+        VisualContextPayload.model_validate(raw)
+
+
+def test_the_dto_refuses_a_65_character_label() -> None:
+    raw = _visual_context_dict()
+    raw["labels"] = ["a" * 65]
+    with pytest.raises(ValidationError):
+        VisualContextPayload.model_validate(raw)
+
+
+def test_the_dto_refuses_101_labels() -> None:
+    raw = _visual_context_dict()
+    raw["labels"] = [f"L{n}" for n in range(101)]
+    with pytest.raises(ValidationError):
+        VisualContextPayload.model_validate(raw)
+
+
 def test_a_contradictory_field_role_is_refused_at_the_dto() -> None:
     """I2 (fix round 2): `VisualField.__post_init__` (`chart.py`) already refuses a `role` that
     contradicts `type` -- a measure that is not quantitative is a mislabelled dataset -- but

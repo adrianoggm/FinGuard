@@ -260,6 +260,10 @@ export type ConversationState = {
     derived_from?: string | null;
     // Sealed; echoed, never read (m6, fix wave).
     turn_id?: string | null;
+    // Sealed; echoed, never read (Wave 4.3).
+    labels?: string[];
+    series_labels?: string[];
+    ranked?: boolean;
     spec: Record<string, unknown>;
     profile: {
       fields: {

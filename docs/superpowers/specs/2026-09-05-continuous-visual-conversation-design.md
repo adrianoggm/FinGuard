@@ -168,10 +168,17 @@ class VisualContext:
     evidence_ids: tuple[UUID, ...] = ()   # the movements behind the figures, turn-local like decision
     derived_from: str | None = None       # the chart this reshaped or drilled from
     turn_id: UUID | None = None           # minted where the chart is made; survives the wire (D-4.2-9)
+    labels: tuple[str, ...] = ()          # the dataset's dimension values, tallest first (Wave 4.3)
+    series_labels: tuple[str, ...] = ()   # the dataset's distinct series values, producer order
+    ranked: bool = False                  # both ends of `labels` are strict; a shape fact, not a value
 ```
 
-The wire payload (`VisualContextPayload`) grows only `derived_from` and `turn_id` at the context
-level; its nested profile payload grows the four shape facts below. `decision`,
+The wire payload (`VisualContextPayload`) grows `derived_from` and `turn_id` at the context
+level and, since Wave 4.3, `labels`, `series_labels` and `ranked`: the dimension and series values
+the chart drew, tallest first — value-free strings already on the client (§3.3), so a later turn
+resolves «agosto» or «la barra más alta» against them without a second query; `ranked` is a shape
+fact (both ends strict), never an amount. Its nested profile payload grows the four shape facts
+below. `decision`,
 `source_plan` and `evidence_ids` are **turn-local**: the orchestrator keeps no conversation store —
 the conversation itself is the wire payload — so they are populated in the turn that makes or derives
 the chart and come back `None` / `()` after a round-trip. What a later turn can still recover is what
