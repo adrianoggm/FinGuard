@@ -352,12 +352,18 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
             # backwards from what `MEASURE_DESC` means -- was unrefusable. Off-axis, a sort may be
             # omitted; a sort that is there may not contradict the rank.
             #
-            # On the axis, both directions rank *by the measure* (F1, fix wave 2): the floor's own
-            # choice is descending, but "de menor a mayor" is a live decision the conversation may
-            # make about that same axis, not a different claim about the data. Off axis -- a
-            # legend, an offset -- there is no such conversation turn to make it with, so it stays
-            # exactly what the floor would draw: descending, the one direction `test_measure_desc_
-            # off_axis_may_omit_its_sort_but_not_contradict_it` already pins.
+            # On the axis, both directions rank *by the measure* (F1, fix wave 2; N2, round 1
+            # re-review): the floor's own choice is descending, but "de menor a mayor" is a live
+            # decision the conversation may make about that same axis, not a different claim about
+            # the data. Off axis -- a legend, an offset -- there is no such conversation turn to
+            # make it with, so it stays exactly what the floor would draw: descending. This is
+            # Section D's `MEASURE_DESC` row as amended
+            # (`docs/superpowers/specs/2026-09-03-llm-visual-planner-design.md`): "ranked by the
+            # measure; the floor draws descending; on the axis a holder's patch may flip it, off
+            # the axis it stays descending". Both halves are pinned in `test_visual_plan_verifier.
+            # py`: `test_measure_desc_ranks_either_direction_on_the_axis_but_only_descending_off_
+            # it` (on-axis) and `test_measure_desc_off_axis_may_omit_its_sort_but_not_contradict_
+            # it` (off-axis).
             allowed = {"ascending", "descending"} if is_axis_dimension else {"descending"}
             ranked = sort is not None and sort.mode in allowed and sort.field == measure_name
             ranked_wide = (

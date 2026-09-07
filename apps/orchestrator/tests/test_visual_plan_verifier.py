@@ -639,11 +639,40 @@ def test_order_follows_the_profile_not_the_type() -> None:
     assert rule_of(verify(unranked, breakdown())) == "order"  # MEASURE_DESC wants the ranking
 
 
+def test_measure_desc_ranks_either_direction_on_the_axis_but_only_descending_off_it() -> None:
+    """N2 (round 1, re-review): F1 (fix wave 2) widened the axis half of this rule -- a holder's
+    own patch may flip a `MEASURE_DESC` dimension's axis to ascending, since direction on the axis
+    the holder is looking at is not a claim about the data (Section D's `MEASURE_DESC` row, as
+    amended: "on the axis a holder's patch may flip it, off the axis it stays descending"). Off
+    the axis (a legend, an offset) there is no conversational turn that could have authored the
+    sort, so it stays exactly what the floor or a model would draw: descending -- the other half
+    of the rule, already pinned below by `test_measure_desc_off_axis_may_omit_its_sort_but_not_
+    contradict_it`, restated here beside its mirror so both halves sit where a reader looking at
+    `_order`'s `MEASURE_DESC` branch would look for them.
+    """
+    ascending_axis = ranked_bar(
+        encodings=(
+            E("y", "dimension", "nominal", S("ascending", "value_minor")),
+            E("x", "value_minor", "quantitative"),
+        )
+    )
+    assert isinstance(verify(ascending_axis, breakdown()), ChartSpec)
+
+    ascending_off_axis = _normalised_bar(
+        encodings=(
+            E("x", "value_minor", "quantitative"),
+            E("color", "dimension", "nominal", S("ascending", "value_minor")),
+        )
+    )
+    assert rule_of(verify(ascending_off_axis, share())) == "order"
+
+
 def test_measure_desc_off_axis_may_omit_its_sort_but_not_contradict_it() -> None:
     """Fix round 2, item 4. `if held.order == "MEASURE_DESC" and is_axis_dimension:` headed an
     `elif` chain, so an off-axis field fell out with no check at all when it had a sort of its
-    own: a legend ranked ascending -- backwards from what `MEASURE_DESC` means -- was
-    unrefusable, on a normalised bar and on a donut alike."""
+    own: a legend ranked ascending -- backwards from what `MEASURE_DESC` means **off the axis**
+    (fix wave 2, N2: on the axis, ascending is now a holder's live decision, not a contradiction;
+    see the test above) -- was unrefusable, on a normalised bar and on a donut alike."""
     backwards_bar = _normalised_bar(
         encodings=(
             E("x", "value_minor", "quantitative"),

@@ -636,6 +636,55 @@ def test_a_restyle_that_changes_nothing_answers_visual_unchanged_and_mints_no_ve
     assert turn.sealed().where(Step.VISUAL_PLANNER) == ()
 
 
+def test_visual_unchanged_is_judged_against_the_chart_on_screen_not_the_saved_metric() -> None:
+    """N1 (round 1, re-review): F2's equality used to compare `updated.spec` against
+    `trusted_context.spec`, which is the *saved metric's* chart whenever a verified
+    `SavedMetricDefinition` targets this restyle (`source=`) -- not the chart on screen
+    (`context.spec`). A restyle that is a no-op relative to the saved chart but a real change
+    relative to what is actually drawn used to answer "ya está así" and silently drop the save
+    candidate the same request would otherwise have minted. The comparison is now against
+    `context.spec`, which is also what `trusted_context` collapses to whenever there is no saved
+    source (`replace(context, spec=source.chart)` only runs when one is given) -- so the plain
+    no-op path is unaffected by this fix, checked below alongside the saved-metric one.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    on_screen = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert on_screen is not None
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", on_screen, profile),))
+    intent = interpret_visual("ordena de menor a mayor", conversation.visual_contexts)
+    assert intent is not None and intent.patch is not None
+
+    # The saved chart already ranks ascending: applying the same patch to it is a no-op. But the
+    # chart on screen is still the floor's own descending one, so the merged spec is a genuine
+    # change relative to what is actually drawn.
+    saved_chart = merge_encoding_patch(
+        on_screen, EncodingPatch(sort="ascending", sort_field="value_minor"), profile
+    )
+    definition = SavedMetricDefinition(
+        FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH)),
+        saved_chart,
+    )
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+    response = _visual_only_response(
+        intent, conversation, source=definition, holder_reference="holder", metric_tokens=tokens
+    )
+    assert response.outcome == "VISUAL_UPDATED"
+    assert response.save_candidate is not None
+
+    # The plain no-op -- no saved source, so trusted_context is context -- still answers
+    # VISUAL_UNCHANGED: this fix narrows what counts as "unchanged", it does not remove it.
+    already_ascending = Conversation(
+        visual_contexts=(VisualContext("chart-1", saved_chart, profile),)
+    )
+    same_intent = interpret_visual("ordena de menor a mayor", already_ascending.visual_contexts)
+    assert same_intent is not None and same_intent.patch is not None
+    unchanged_response = _visual_only_response(same_intent, already_ascending)
+    assert unchanged_response.outcome == "VISUAL_UNCHANGED"
+
+
 def test_the_chips_offered_all_change_the_chart() -> None:
     """F2: `_chart_suggestions` used to offer «Ordena de menor a mayor» by checking only the
     chart-wide `spec.sort` -- which stays `None` once an axis owns its own descending sort
