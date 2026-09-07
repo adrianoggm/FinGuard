@@ -533,8 +533,14 @@ async def test_the_streaming_routes_ambiguous_short_circuit_asks_too() -> None:
 
 async def test_a_presentation_only_short_circuit_still_updates_through_the_controller() -> None:
     """Regression: a non-ambiguous claimed turn still restyles as it did before this task, through
-    the same branch point that now also has to recognise AMBIGUOUS."""
-    response = await _drive_question_route("Ordénalo de mayor a menor")
+    the same branch point that now also has to recognise AMBIGUOUS.
+
+    `CHARTED`'s dimension axis already ranks descending -- `BREAKDOWN_PROFILE`'s own
+    `order="MEASURE_DESC"` (`support/visual_planners.py`), the shape the floor always builds --
+    so «de mayor a menor» over it is a genuine no-op after F2 (fix wave 2) and answers
+    `VISUAL_UNCHANGED` instead. Asking for the other direction is what actually restyles it.
+    """
+    response = await _drive_question_route("Ordénalo de menor a mayor")
     assert response.outcome == "VISUAL_UPDATED"
 
 

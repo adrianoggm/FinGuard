@@ -478,6 +478,26 @@ def test_a_contradictory_field_role_is_refused_at_the_dto() -> None:
     VisualContextPayload.model_validate(consistent)  # does not raise
 
 
+def test_a_duplicate_field_name_is_refused_at_the_dto() -> None:
+    """F4 (fix wave 2): `VisualProfile.__post_init__` (`chart.py`) already refuses a duplicate
+    field name -- `VisualField.name` collides -- but before this fix nothing on the wire checked
+    that first: `conversation_mapper.to_domain` built the domain `VisualProfile` straight from
+    this payload's `fields`, and a bare `ValueError` there is neither a `DomainError` nor a
+    pydantic `ValidationError`, so it reached the holder as an unhandled 500 instead of a 422 --
+    the same collision `_role_matches_type` above already exists to close for a contradictory
+    `role`. One `@model_validator` closes it here too, the same way.
+    """
+    duplicated = _visual_context_dict()
+    # Appended, not a rename over an existing entry: renaming would also make the encoding name a
+    # field the profile no longer has, tripping `_value_free_spec`'s own "encoding field absent
+    # from profile" check first and proving nothing about the duplicate-name check this pins.
+    duplicated["profile"]["fields"].append(dict(duplicated["profile"]["fields"][0]))
+    with pytest.raises(ValueError, match="duplicate"):
+        VisualContextPayload.model_validate(duplicated)
+    distinct = _visual_context_dict()
+    VisualContextPayload.model_validate(distinct)  # does not raise
+
+
 def test_a_chart_cannot_claim_to_derive_from_itself_on_the_wire() -> None:
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
     payload = conversation_mapper.to_payload(IDLE.with_visual_context(context))

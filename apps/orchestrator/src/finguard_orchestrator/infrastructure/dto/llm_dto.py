@@ -302,6 +302,19 @@ class VisualProfilePayload(_Payload):
     comparison: bool = False
     plan_limited: bool = False
 
+    @model_validator(mode="after")
+    def _no_duplicate_field_names(self) -> "VisualProfilePayload":
+        """F4 (fix wave 2): `VisualProfile.__post_init__` (`chart.py`) already refuses a duplicate
+        field name, but nothing on the wire checked it first -- `conversation_mapper.to_domain`
+        builds the domain `VisualProfile` straight from `self.fields`, and that bare `ValueError`
+        is neither a `DomainError` nor a pydantic `ValidationError`, so it reached the holder as
+        an unhandled 500 instead of a 422. The same collision `VisualFieldPayload._role_matches_
+        type` above already exists to close for a contradictory `role`; this closes it here too.
+        """
+        if len({field.name for field in self.fields}) != len(self.fields):
+            raise ValueError("duplicate visual field name")
+        return self
+
 
 class VisualContextPayload(_Payload):
     chart_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")

@@ -31,7 +31,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualRow,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
-from finguard_orchestrator.domain.models.visual_plan import draft_of
+from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
 from finguard_orchestrator.domain.services.visual_interpreter import (
     apply_visual_intent,
     interpret_visual,
@@ -404,9 +404,14 @@ def _chart_suggestions(context: VisualContext) -> list[str]:
         candidates.append("Ver todos")
     candidates.append("Ponlo en línea" if spec.mark == "bar" else "Ponlo en barras")
     temporal = any(item.type == "temporal" for item in spec.encodings if item.channel in {"x", "y"})
-    # Sorting a series by its measure shuffles time, which is not a reordering of anything.
-    if not temporal and spec.sort != "ascending":
+    # Sorting a series by its measure shuffles time, which is not a reordering of anything. Both
+    # directions are offered here (F2, fix wave 2): which one is a no-op depends on the axis's own
+    # sort, not on `spec.sort` alone (F1's own shape leaves that `None` even when an axis is
+    # already ranked), and `_chip_verifies`'s canonical-equality check below is what actually
+    # drops whichever direction changes nothing -- this generator no longer has to guess it.
+    if not temporal:
         candidates.append("Ordena de menor a mayor")
+        candidates.append("Ordena de mayor a menor")
     return [chip for chip in candidates if _chip_verifies(chip, context)]
 
 
@@ -414,8 +419,10 @@ def _chip_verifies(chip: str, context: VisualContext) -> bool:
     """Whether offering `chip` over `context` is a change the controller would actually accept.
 
     A chip whose intent does not parse (`interpret_visual` returns `None`, or a `VisualIntent`
-    with no patch -- an explanation only) or whose merge `apply_visual_intent` refuses outright
-    is dropped the same as one the verifier refuses: none of the three is a chip worth offering.
+    with no patch -- an explanation only), whose merge `apply_visual_intent` refuses outright, or
+    whose merged spec draws identically to what is already on screen (F2: the same
+    canonical-equality the controller's own `VISUAL_UNCHANGED` answer uses) is dropped the same
+    as one the verifier refuses: none of the four is a chip worth offering.
     """
     intent = interpret_visual(chip, (context,))
     if intent is None or intent.patch is None:
@@ -423,6 +430,8 @@ def _chip_verifies(chip: str, context: VisualContext) -> bool:
     try:
         merged = apply_visual_intent(intent, context)
     except ValueError:
+        return False
+    if canonical(merged.spec) == canonical(context.spec):
         return False
     return isinstance(verify(draft_of(merged.spec), context.profile), ChartSpec)
 

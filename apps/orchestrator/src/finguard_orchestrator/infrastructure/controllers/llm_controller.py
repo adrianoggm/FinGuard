@@ -88,7 +88,12 @@ from finguard_orchestrator.domain.models.conversation import (
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.visual_follow_up import Claimant
-from finguard_orchestrator.domain.models.visual_plan import Rejection, RejectionRule, draft_of
+from finguard_orchestrator.domain.models.visual_plan import (
+    Rejection,
+    RejectionRule,
+    canonical,
+    draft_of,
+)
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     confirmation,
@@ -339,6 +344,17 @@ def _visual_only_response(
     if isinstance(refusal, Rejection):
         record_visual_decision_refused(trusted_context, refusal)
         return _refusal_response(refusal.rule, conversation)
+    # F2 (fix wave 2): a verified patch is not automatically a *different* chart. `canonical()`
+    # is the same equality `changed_from_baseline` already trusts, so a restyle whose merged spec
+    # draws identically to what is already on screen answers here, before anything is minted --
+    # no new `chart_id`, no derived context, no `patch` decision row (the `VISUAL_FOLLOW_UP` row
+    # recorded upstream is this turn's whole audit trail), zero ledger calls.
+    if canonical(updated.spec) == canonical(trusted_context.spec):
+        return QuestionResponse(
+            outcome="VISUAL_UNCHANGED",
+            text="El gráfico ya está así; lo dejo como está.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
     rendered_spec = present_spec(updated.spec)
     decision = VisualDecision(
         spec=updated.spec,

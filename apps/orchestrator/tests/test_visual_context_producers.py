@@ -91,13 +91,17 @@ def restyle_turn() -> object:
     First, the sentence: `test_visualization_stage2_core` uses "ponlo en barras" and similar --
     the brief's "ponlo en horizontal" names no keyword `interpret_visual` recognises (its style
     vocabulary is barra/linea/area/apil.../ordena.../circular/donut/anillo), so it would never
-    produce a patch. "ordénalo de mayor a menor" is that file's own proven descending-sort
-    sentence, kept here so the fixture actually exercises a restyle instead of asserting on `None`.
-    Fix round 1 is what lets it stay: `SPEC` (the floor's own plan for `BREAKDOWN_PROFILE`) ranks
-    its dimension with a per-encoding sort, and before the wire carried a field's `order`, this
-    exact sentence over this exact spec was wrongly refused (`rule="order"`) the moment the
-    context had crossed the wire once -- `test_a_round_tripped_ranked_bar_still_verifies_the_
-    descending_sort` (`test_visualization_stage2_core.py`) pins that this restyle now verifies.
+    produce a patch. "ordénalo de menor a mayor" is a proven ascending-sort sentence, kept here so
+    the fixture actually exercises a restyle instead of asserting on `None`. Fix round 1 is what
+    lets a restyle over this spec verify at all: `SPEC` (the floor's own plan for
+    `BREAKDOWN_PROFILE`) ranks its dimension with a per-encoding sort, and before the wire carried
+    a field's `order`, a descending restyle over this exact spec was wrongly refused (`rule=
+    "order"`) the moment the context had crossed the wire once -- `test_a_round_tripped_ranked_
+    bar_still_verifies_the_descending_sort` (`test_visualization_stage2_core.py`) pins that a
+    restyle now verifies. The direction asked for here is ascending rather than descending
+    specifically because fix wave 2's F2 answers a *descending* restyle over this same
+    already-descending `SPEC` with `VISUAL_UNCHANGED` and no derived context -- exactly what this
+    fixture exists to produce one of.
 
     Second, the round trip: the conversation is serialised through `conversation_mapper.to_payload`
     and back through `to_domain` before it reaches `_visual_only_response`, because that is what
@@ -117,7 +121,7 @@ def restyle_turn() -> object:
     )
     conversation = IDLE.with_visual_context(initial_context)
     from_wire = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
-    intent = interpret_visual("ordénalo de mayor a menor", from_wire.visual_contexts)
+    intent = interpret_visual("ordénalo de menor a mayor", from_wire.visual_contexts)
     assert intent is not None
     response = _visual_only_response(intent, from_wire)
     assert response.conversation is not None

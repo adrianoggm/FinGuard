@@ -28,7 +28,7 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
-from finguard_orchestrator.domain.models.visual_plan import RejectionRule, draft_of
+from finguard_orchestrator.domain.models.visual_plan import Rejection, RejectionRule, draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
@@ -609,6 +609,63 @@ def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
     return spec, profile
 
 
+def test_a_restyle_that_changes_nothing_answers_visual_unchanged_and_mints_no_version() -> None:
+    """F2 (P0, fix wave 2, the review's own second half of F1): once the merge correctly edits
+    the axis that already owns the order (F1), «ordena de mayor a menor» over a chart already
+    descending on that axis is a genuine no-op -- and a no-op must not mint a version, a fresh
+    `chart_id` or a `patch` decision nobody asked for. The conversation comes back byte-identical
+    to what was handed in and no `VISUAL_PLANNER` row is recorded: the `VISUAL_FOLLOW_UP` row
+    recorded upstream is this turn's whole audit trail.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ordena de mayor a menor", conversation.visual_contexts)
+    assert intent is not None and intent.patch is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UNCHANGED"
+    assert response.text == "El gráfico ya está así; lo dejo como está."
+    assert response.conversation == to_payload(conversation)
+    assert response.visualization_derivation is None
+    assert response.save_candidate is None
+    assert turn.sealed().where(Step.VISUAL_PLANNER) == ()
+
+
+def test_the_chips_offered_all_change_the_chart() -> None:
+    """F2: `_chart_suggestions` used to offer «Ordena de menor a mayor» by checking only the
+    chart-wide `spec.sort` -- which stays `None` once an axis owns its own descending sort
+    (F1's own shape, the floor's own shape), so the guard always passed and the chip was offered
+    even when applying it changed nothing. The generator now proposes both directions and lets
+    the same gate `_visual_only_response` runs -- `interpret_visual` / `apply_visual_intent` /
+    `verify`, plus F2's own canonical-equality check -- drop whichever one is a no-op: a
+    descending bar offers the ascending chip and not the descending one, and a chart just flipped
+    ascending offers the descending chip and not the ascending one.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    descending = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert descending is not None
+    descending_context = VisualContext("chart-1", descending, profile)
+    descending_suggestions = _chart_suggestions(descending_context)
+    assert "Ordena de menor a mayor" in descending_suggestions
+    assert "Ordena de mayor a menor" not in descending_suggestions
+
+    ascending_intent = interpret_visual("ordena de menor a mayor", (descending_context,))
+    assert ascending_intent is not None and ascending_intent.patch is not None
+    ascending = apply_visual_intent(ascending_intent, descending_context)
+    ascending_context = VisualContext("chart-2", ascending.spec, profile)
+    ascending_suggestions = _chart_suggestions(ascending_context)
+    assert "Ordena de mayor a menor" in ascending_suggestions
+    assert "Ordena de menor a mayor" not in ascending_suggestions
+
+
 async def test_a_verified_patch_is_recorded_as_a_patch_decision() -> None:
     """«ordénalo de mayor a menor» over a breakdown bar: verifies; VISUAL_UPDATED as before -- and
     the turn record and the derived context both learn a `patch`, not a fresh proposal, decided it.
@@ -685,6 +742,11 @@ def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:
     `DeterministicVisualPlanner`, which sets the per-encoding titles ("Grupo"/"Importe") itself,
     plus an explicit chart-level `title` -- the one thing the floor leaves to the mapper
     (`llm_mapper.py` sets it after planning) and which this test therefore sets by hand.
+
+    The floor's own dimension axis already ranks descending (F1's own shape), so this asks for
+    the *other* direction -- «de menor a mayor» -- rather than «de mayor a menor»: after F2, the
+    latter is a genuine no-op over this exact fixture and answers `VISUAL_UNCHANGED`, which is
+    not what this test is about.
     """
     dataset = VisualDataset(
         metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
@@ -697,7 +759,7 @@ def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:
     assert spec.title == "Gastos por categoria"
     assert any(title is not None for title in source_titles.values())
     conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
-    intent = interpret_visual("ordénalo de mayor a menor", conversation.visual_contexts)
+    intent = interpret_visual("ordénalo de menor a mayor", conversation.visual_contexts)
     assert intent is not None
     response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_UPDATED"
@@ -882,6 +944,157 @@ def test_every_chip_the_floor_offers_over_this_family_verifies_when_applied(
     if family_name == "breakdown":
         assert "Ponlo en línea" not in suggestions
         assert "Ordena de menor a mayor" in suggestions
+
+
+def test_ordena_de_menor_a_mayor_reorders_the_axis_the_floor_already_ranked() -> None:
+    """F1 (fix wave 2, P0): the interpreter always built a *chart-wide* `sort="ascending"`
+    (`visual_interpreter.py:117-125`), and `present()` (`vega_lite.py:89-90`) lets a per-encoding
+    sort win over it -- so over the floor's own ranked bar, whose dimension axis already carries
+    `EncodingSort("descending", "value_minor")`, «ordena de menor a mayor» merged, verified,
+    minted a new version, and Vega-Lite drew the exact same descending order. It was a no-op that
+    looked like it worked.
+
+    The fix: `merge_encoding_patch` now edits the axis that already owns the order -- the
+    patch's actual meaning -- instead of a chart-wide setting nothing on the wire reads.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    before_spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert before_spec is not None
+    dimension_axis = next(
+        item
+        for item in before_spec.encodings
+        if item.channel in {"x", "y"} and item.type == "nominal"
+    )
+    assert dimension_axis.sort == EncodingSort("descending", "value_minor")
+    context = VisualContext("chart-1", before_spec, profile)
+    intent = interpret_visual("ordena de menor a mayor", (context,))
+    assert intent is not None and intent.patch is not None
+    after = apply_visual_intent(intent, context)
+
+    # The presented spec actually changes -- the whole point of the fix.
+    assert present_spec(after.spec) != present_spec(before_spec)
+    after_axis = next(
+        item for item in after.spec.encodings if item.channel == dimension_axis.channel
+    )
+    assert after_axis.sort == EncodingSort("ascending", "value_minor")
+    assert after.spec.sort is None
+    assert after.spec.sort_field is None
+    presented = present_spec(after.spec)
+    assert presented["encoding"][dimension_axis.channel]["sort"] == {
+        "field": "value_minor",
+        "order": "ascending",
+    }
+
+    # The mirror: «de mayor a menor» over a chart already ascending flips it straight back.
+    ascending_context = VisualContext("chart-2", after.spec, profile)
+    back_intent = interpret_visual("ordena de mayor a menor", (ascending_context,))
+    assert back_intent is not None and back_intent.patch is not None
+    restored = apply_visual_intent(back_intent, ascending_context)
+    restored_axis = next(
+        item for item in restored.spec.encodings if item.channel == dimension_axis.channel
+    )
+    assert restored_axis.sort == EncodingSort("descending", "value_minor")
+    assert restored.spec.sort is None
+    assert restored.spec.sort_field is None
+
+
+def test_a_temporal_axis_asked_to_sort_still_takes_the_chart_wide_path_and_is_refused() -> None:
+    """F1 ruling: when no axis owns a sort, the merge still takes the chart-wide path exactly as
+    it did before this fix. A temporal line's own axis never carries a per-encoding sort
+    (`_sort_for` returns `None` for `order="TEMPORAL"`), so «ordena de menor a mayor» over one
+    still reaches the verifier's `_order` rule the same way it always did, and is refused the
+    same way -- this fix changes nothing about that family.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("2026-01", 10_000), VisualRow("2026-02", 20_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="MONTH")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    dimension_axis = next(
+        item for item in spec.encodings if item.channel in {"x", "y"} and item.type == "temporal"
+    )
+    assert dimension_axis.sort is None
+    context = VisualContext("chart-1", spec, profile)
+    intent = interpret_visual("ordena de menor a mayor", (context,))
+    assert intent is not None and intent.patch is not None
+    merged = apply_visual_intent(intent, context)
+    # No axis owned a sort, so the merge fell back to the chart-wide setting, as today.
+    assert merged.spec.sort == "ascending"
+    assert merged.spec.sort_field == "value_minor"
+    verdict = verify(draft_of(merged.spec), profile)
+    assert isinstance(verdict, Rejection)
+    assert verdict.rule == "order"
+
+
+# The floor family, probed against the tree before this fix: which families' dimension axis is
+# already ranked (`order="MEASURE_DESC"`) and so is exactly where this fix changes *how* the sort
+# is applied (`breakdown`, `categorical_comparison`), and which were already refused on the
+# chart-wide path this fix leaves untouched -- `cumulative`/`temporal`/`recurrence` (their
+# dimension is ordered by time, not by magnitude), `frequency` (its dimension keeps the
+# producer's order), `ratio_share` (its dimension sits in `color`, off any axis, so a chart-wide
+# sort has no categorical/temporal x or y to land on). No family crosses from one column to the
+# other: that is the regression this test exists to catch.
+_ORDENA_ASCENDING_ACCEPTED_AT_BASE: frozenset[str] = frozenset(
+    {"breakdown", "categorical_comparison"}
+)
+
+
+@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
+def test_ordena_de_menor_a_mayor_over_every_floor_family_verifies_wherever_it_did_at_base(
+    family_name: str,
+) -> None:
+    """F1: every family the exporter renders (Task 3b's own eight, donut included below), run
+    through «ordena de menor a mayor» and checked against what actually verified before this fix
+    was written -- no family may newly refuse the patch, whatever its shape."""
+    dataset, kwargs = FAMILY_DATASETS[family_name]
+    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
+    context = VisualContext(f"chart-{family_name}", spec, profile)
+    intent = interpret_visual("ordena de menor a mayor", (context,))
+    assert intent is not None and intent.patch is not None
+    expect_accept = family_name in _ORDENA_ASCENDING_ACCEPTED_AT_BASE
+    try:
+        merged = apply_visual_intent(intent, context)
+    except ValueError as exc:
+        assert not expect_accept, f"{family_name}: newly refused by the merge ({exc})"
+        return
+    verdict = verify(draft_of(merged.spec), profile)
+    if expect_accept:
+        assert isinstance(verdict, ChartSpec), f"{family_name}: newly refused: {verdict}"
+    else:
+        assert isinstance(verdict, Rejection), f"{family_name}: unexpectedly accepted"
+
+
+def test_ordena_de_menor_a_mayor_over_the_donut_family_is_still_refused_by_the_merge() -> None:
+    """The eighth family: the floor never produces a donut, so the parametrised test above cannot
+    cover it -- built the same way `test_the_donut_familys_chips_verify_too` below does. A donut
+    has no x/y axis at all, so the chart-wide path this fix leaves alone still cannot find one to
+    land the sort on, exactly as at BASE."""
+    rows = (
+        VisualRow(dimension="Alquiler", value_minor=60_000),
+        VisualRow(dimension="Ocio", value_minor=40_000),
+    )
+    spec = ChartSpec(
+        mark="donut",
+        encodings=(
+            ChartEncoding("theta", "value_minor", "quantitative", "Importe"),
+            ChartEncoding("color", "dimension", "nominal", "Parte"),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+        ),
+    )
+    dataset = VisualDataset(rows=rows, metric="SUM")
+    profile = visual_profile_of(dataset, total_minor=100_000, group_by="NONE")
+    context = VisualContext("chart-donut", spec, profile)
+    intent = interpret_visual("ordena de menor a mayor", (context,))
+    assert intent is not None and intent.patch is not None
+    with pytest.raises(ValueError, match="categorical or temporal"):
+        apply_visual_intent(intent, context)
 
 
 def test_the_donut_familys_chips_verify_too() -> None:
