@@ -66,6 +66,19 @@ third source, beside `llm` and `deterministic`), so the explanation in §7 can s
 Properties: no banking call; no financial planner; the current dataset is reused; near-immediate;
 an invalid change is explained or the previous chart stays.
 
+**Landed, wave 4.2.** `infrastructure/controllers/llm_controller.py`'s `_visual_only_response` runs
+`verify(draft_of(updated.spec), trusted_context.profile)` as a gate: accepted, the merged
+`updated.spec` (titles included) is what is shown, stored and offered for saving, and a `VisualDecision`
+with `source="patch"` is recorded (`application/queries/ask_financial_question.py`'s
+`record_visual_decision`) as `AGREED`/`changed=(was != now)`/`now="patch"`/`detail="accepted"`, never
+through the `visual_planner.decision` promotion-log line; refused, `VISUAL_INCOMPATIBLE` names the
+rule in one Spanish sentence, the previous chart is kept, and `record_visual_decision_refused` writes
+one `DECLINED`/`invalid_proposal:<rule>` row. The wire's nested profile now carries the shape facts
+§4 describes (`infrastructure/dto/llm_dto.py`'s `VisualFieldPayload.role`/`order`,
+`VisualProfilePayload.comparison`/`plan_limited`), with the old derivation as the fallback for older
+clients, `row_count`/`plan_metric` still off the wire, and a contradictory wire `role`/`type` refused
+at the DTO (422, not a 500).
+
 ### 3.2 Analytical reshape — **half built**
 
 «Separa gasolina y transporte público» · «Ahora agrúpalo por meses» · «Compáralo con el verano pasado» · «Excluye los taxis».
@@ -81,6 +94,18 @@ and a new decision.
 the conversation holds a chain (breakdown → monthly series → comparison) rather than a bag of charts,
 and «el gráfico anterior» resolves to a specific `chart_id`. Nothing in the visual planner may ever
 modify the financial plan — the arrow only points from result to chart.
+
+**Landed, wave 4.2.** `infrastructure/mappers/llm_mapper.py`'s `_remember_visual_context` sets a fresh chart's
+`derived_from` to the previous chart's id server-side, exactly when
+`result.visual_follow_up.kind == "ANALYTICAL_RESHAPE"`; a restyle names its own origin instead, at
+`llm_controller.py`'s `_derived_context` (Task 3's mechanism, not this one). The classification
+travels from `_steps` (an async generator) to `stream()`'s `_decided_visual` call through
+`follow_up_seen`, a one-element list threaded as an explicit out-parameter (`stream` →
+`_steps_answering_scope` → `_steps`) — reviewed as the least-bad mechanism for a value born inside a
+generator and needed after it. Two of `_steps`'s early returns that end a turn before `analysis`
+exists — retry control and the previous-plan restore — still draw a chart of their own but never
+reach `_record_visual_follow_up`, so that chart's `derived_from` is `None`, stated in
+`_record_visual_follow_up`'s own docstring rather than hidden.
 
 ### 3.3 Drill-down — **new**
 
@@ -129,13 +154,17 @@ class VisualContext:
     turn_id: UUID | None = None           # minted where the chart is made; None after a round-trip
 ```
 
-The wire payload (`VisualContextPayload`) grows **only** `derived_from` and `turn_id`. `decision`,
+The wire payload (`VisualContextPayload`) grows only `derived_from` and `turn_id` at the context level; its nested profile payload grows the four shape facts above. `decision`,
 `source_plan` and `evidence_ids` are **turn-local**: the orchestrator keeps no conversation store —
 the conversation itself is the wire payload — so they are populated in the turn that makes or derives
 the chart and come back `None` / `()` after a round-trip. What a later turn can still recover is what
 the conversation already carries: `last_plan` for the newest chart's plan and the `referenced_*`
-reference for the last answer's evidence. The foundation's rule stands: a round-tripped profile is a
-narrowed reconstruction and the wire is not where authority lives. `source_plan` is typed
+reference for the last answer's evidence. A round-tripped profile carries the value-free shape facts
+the verifier reads — each field's `role` and `order`, and the profile's `comparison` and
+`plan_limited` — because §3.1 verifies a merged patch against it and a narrowed profile refused
+legitimate restyles after one round trip (wave 4.2, Task 3). It still carries nothing a browser
+should be able to assert about the data (`row_count`, `plan_metric` stay off the wire), and the wire
+is still not where authority lives: the verifier decides. `source_plan` is typed
 `FinancialPlan | ComparisonPlan | RatioPlan | None` and copied from the result's `metric_definition`;
 `evidence_ids` are the plan's `transaction_ids` when it carries them; `turn_id` is a UUID minted where
 the chart is made — no turn identifier exists elsewhere in the service. The context can answer: which
@@ -177,6 +206,15 @@ same module's own row for a turn `classify` never sees.
 
 A doubtful classification never reinterprets the chart silently. It asks:
 «¿Quieres cambiar sólo la visualización, o volver a calcular los datos agrupándolos por meses?»
+
+**Landed, wave 4.2** — as `VISUAL_AMBIGUOUS`, conversation unchanged, zero banking calls.
+`llm_controller.py`'s `_ASK` holds exactly the two texts `classify_claimed_visual` can return, one
+per `AMBIGUOUS` claimant pair the controller's short-circuit can reach:
+presentation+reshape — «¿Quieres cambiar sólo la visualización, o volver a calcular los datos?»;
+presentation+drill — «¿Quieres cambiar sólo la visualización, o ver los movimientos detrás de esa
+parte del gráfico?». `reshape+drill` is the vocabulary's third pair and is unreachable today (the
+reader's own drill-before-reshape precedence), so it carries no text here — a reachability test
+asserts exactly that member is the one nothing produces.
 
 Recorded as one `Decision` on the existing record: `Step.VISUAL_FOLLOW_UP`, `now=<kind>`,
 `detail=<reader that claimed | model | asked>`. A twelfth seam, justified in its commit.
@@ -269,7 +307,7 @@ evidence · every rejected proposal ends in a valid answer.
 | sub-wave | delivers | done when |
 | --- | --- | --- |
 | **4.1 Context and classification** | `VisualContext` extended (§4); `VisualFollowUpKind` and the deterministic readers (§5); `Step.VISUAL_FOLLOW_UP`; invariant tests | every follow-up kind is classified and recorded; no visible change yet |
-| **4.2 Continuous visual conversation** | presentation patches through the verifier with `source="patch"`; reshape linkage `derived_from`; the first conversational episodes in the corpus | the base episode's turns 1-3 and 6 pass end to end with the banking-call assertion |
+| **4.2 Continuous visual conversation — done** | presentation patches through the verifier with `source="patch"`; reshape linkage `derived_from`; the first conversational episodes in the corpus | the base episode's turns 1-3 and 6 pass end to end with the banking-call assertion — landed as `evaluation/conversations/32-visual-continuation.yaml` (six turns, not four: the corpus's own floor requires it); turns 1-2 use planning-dataset anchor sentences instead of §9's own wording, and the restyle turn uses the interpreter's whitelisted sort sentence instead of §9's horizontal-rotation phrasing — see `docs/next.md` §9 for what turn 3's and turn 2's outcomes had to concede |
 | **4.3 Financial drill-down** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | turns 4-5 pass; an ambiguous reference asks |
 | **4.4 Multimodal continuity** | `chart_id`/decision id on voice events; the chart-derived spoken summary; the multimodal cases | the five multimodal cases pass; full-turn latency measured against §8 |
 | **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | the acceptance scenario in §11 runs on camera |
