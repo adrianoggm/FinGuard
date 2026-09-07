@@ -145,6 +145,16 @@ _CATEGORY_FILTER_FOLLOW_UP: Final = re.compile(
 _CATEGORY_REFERENCE: Final = re.compile(r"\b(?:esa|esta|aquella|la\s+misma)\s+categoria\b")
 
 
+# "Separa transporte público y gasolina" — a verb that asks the plan in view to be broken apart,
+# an optional clitic naming what ("-lo/-la/-los/-las"), then the names themselves read by
+# `category_words.precisely_named_in`. Anchored at the start: the verb has to be what the sentence
+# opens with, the same shape as the presentation-dimension trigger word list below, not a word that
+# merely appears in it.
+_SPLIT_BY_NAMES: Final = re.compile(
+    r"^(?:separa|desglosa|divide|distingue|reparte)(?:lo|la|los|las)?\b"
+)
+
+
 # The nouns that name a charge, from the vocabulary that owns them. They were written out here as
 # well and the two copies stayed level only by accident: the rails were missing from both, and each
 # was found on its own. "Bizum" and "transferencia" are also categories, which is what makes the
@@ -317,8 +327,17 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         )
 
     if (
-        facts.group_by
-        in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
+        (
+            facts.group_by
+            in {GroupBy.CATEGORY, GroupBy.MERCHANT, GroupBy.COUNTERPARTY, GroupBy.ACCOUNT}
+            or (
+                facts.group_by in {GroupBy.DAY, GroupBy.WEEK, GroupBy.MONTH}
+                # "¿Y por semana?" over an AVERAGE plan is `_average_plan`'s own turn: it converts
+                # AVERAGE to PERIOD_AVERAGE for exactly this pair, and claiming it here as well
+                # left the two readers contesting it (`test_which_recogniser_claims_a_turn.py`).
+                and previous.metric is not Metric.AVERAGE
+            )
+        )
         and previous.metric not in {Metric.CUMULATIVE, Metric.PERIOD_AVERAGE}
         and len(folded.split()) <= 7
         and re.search(r"\b(?:separa|separalo|desglosa|desglosalo|agrupa|agrupalo|por)\b", folded)
@@ -326,6 +345,10 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
         # "Sepáralo por comercio" changes only the presentation dimension of the query in view.
         # Sending that three-word patch to a model made it re-create the window and filters, which
         # is both slower and an opportunity to silently widen the result.
+        #
+        # "Ahora compáralo por meses" is the same patch onto a calendar grouping instead of a
+        # named dimension (Task 2, Wave 4.2b) -- the calendar-groups half of `group_limit`'s own
+        # ternary below already existed for this, unreachable until this gate admitted them.
         return explicit_facts.enforce(
             replace(
                 previous,
@@ -453,6 +476,20 @@ def read_contextual_follow_up(query: AskFinancialQuestionQuery) -> FinancialPlan
                 metric=Metric.COUNT,
             ),
             facts,
+        )
+    if len(named) >= 2 and _SPLIT_BY_NAMES.search(folded):
+        # "Separa transporte público y gasolina" changes only the categories and the grouping
+        # that presents them. Bare `replace`, not `explicit_facts.enforce`: two coordinated names
+        # read as one *combined* total to `explicit_facts.read` (`_combined_total`), so its
+        # `facts.group_by` is `NONE` here -- `enforce` would apply that reading and undo the very
+        # `GroupBy.CATEGORY` this patch states. A precise split needs no calendar or presentation
+        # word to lean on beyond the verb itself, which is why this does not gate on
+        # `facts.group_by` the way the presentation-dimension branch above does.
+        return replace(
+            previous,
+            categories=named,
+            excluded_categories=(),
+            group_by=GroupBy.CATEGORY,
         )
     if named:
         return None

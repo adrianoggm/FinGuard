@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import pytest
+
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnFocus, TurnRelation
@@ -10,6 +12,12 @@ from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 
 TODAY = date(2026, 8, 10)
+WITH_LAST_PLAN = Conversation(
+    last_plan=FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_MONTH)
+    )
+)
+IDLE = Conversation()
 
 
 async def test_two_different_requests_are_kept_instead_of_silently_choosing_one() -> None:
@@ -125,3 +133,46 @@ async def test_an_ellipsis_is_marked_as_focused_on_the_last_answer() -> None:
 
     assert analysis.relation is TurnRelation.FOLLOW_UP
     assert analysis.focus is TurnFocus.LAST_ANSWER
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Separa transporte público y gasolina.",
+        "Ahora compáralo por meses.",
+        "Desglósalo por comercio.",
+        "Sepáralo en transporte público y gasolina",
+    ],
+)
+async def test_a_charted_conversation_reads_a_reshape_as_a_follow_up(sentence: str) -> None:
+    analysis = await turn_analyzer.analyze(
+        sentence,
+        conversation=WITH_LAST_PLAN,
+        interpreter=turn_interpreters.Deterministic(),
+        today=TODAY,
+    )
+    assert (analysis.relation, analysis.focus) == (TurnRelation.FOLLOW_UP, TurnFocus.LAST_ANSWER)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "Separa transporte público y gasolina.",  # no plan in view: nothing to follow
+        "Ahora compáralo por meses.",
+    ],
+)
+async def test_without_a_plan_in_view_the_same_sentence_is_a_new_request(sentence: str) -> None:
+    analysis = await turn_analyzer.analyze(
+        sentence, conversation=IDLE, interpreter=turn_interpreters.Deterministic(), today=TODAY
+    )
+    assert analysis.relation is TurnRelation.NEW_REQUEST
+
+
+async def test_a_split_that_names_one_category_is_not_a_follow_up() -> None:
+    analysis = await turn_analyzer.analyze(
+        "Separa la gasolina.",
+        conversation=WITH_LAST_PLAN,
+        interpreter=turn_interpreters.Deterministic(),
+        today=TODAY,
+    )
+    assert analysis.relation is TurnRelation.NEW_REQUEST  # one name is a filter, not a split
