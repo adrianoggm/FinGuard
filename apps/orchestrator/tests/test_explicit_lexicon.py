@@ -235,3 +235,14 @@ def test_the_lexicon_holds_no_frame_it_cannot_explain() -> None:
             assert not (char == "|" and depth == 0), (
                 f"{concept}: {phrasing.says!r} holds a top-level alternation and is two phrasings"
             )
+
+
+def test_the_plural_calendar_unit_is_read() -> None:
+    """«por mes» already matched; «por meses» is the same phrasing, pluralised.
+
+    Task 2 (Wave 4.2b): the reader's regroup patch depends on this — «ahora compáralo por meses»
+    has to be seen as a monthly calendar unit the same way «por mes» already is.
+    """
+    pattern = explicit_lexicon.compiled("temporal_month")
+    assert pattern.search(spanish.folded("gasto por meses")) is not None
+    assert pattern.search(spanish.folded("gasto por mes")) is not None

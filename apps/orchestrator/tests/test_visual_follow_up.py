@@ -25,6 +25,9 @@ from finguard_orchestrator.application.queries.financial_turn import (
     SpokenGroup,
     SpokenPlan,
 )
+from finguard_orchestrator.application.queries.readers.follow_up import (
+    read_contextual_follow_up,
+)
 from finguard_orchestrator.application.queries.readers.visual_follow_up import (
     classify,
     classify_claimed_visual,
@@ -56,7 +59,11 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent, interpret_visual
 from finguard_orchestrator.domain.value_objects.caller import Caller
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import llm_controller
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask as ask_question
@@ -88,9 +95,30 @@ NEW = TurnAnalysis(
 )
 
 
-def _query(sentence: str) -> AskFinancialQuestionQuery:
+def _query(sentence: str, *, conversation: Conversation = CHARTED) -> AskFinancialQuestionQuery:
     """The conversation is passed to classify separately; the query carries the sentence."""
-    return AskFinancialQuestionQuery(sentence, ACCOUNT, TODAY, conversation=CHARTED)
+    return AskFinancialQuestionQuery(sentence, ACCOUNT, TODAY, conversation=conversation)
+
+
+# Task 2 (Wave 4.2b): a summer chart that names no category yet, over an ordinary window --
+# «separa transporte público y gasolina» patches THIS.
+SUMMER_PLAN = FinancialPlan(
+    direction=Direction.EXPENSE,
+    date_range=AbsoluteRange(date(2026, 6, 1), date(2026, 8, 31)),
+    group_by=GroupBy.NONE,
+    only_account_id=ACCOUNT,
+)
+CHARTED_SUMMER = Conversation(last_plan=SUMMER_PLAN).with_visual_context(
+    VisualContext("chart-summer", SPEC, BREAKDOWN_PROFILE)
+)
+# The plan in view after that split -- named by both categories, grouped by CATEGORY, same
+# window and direction as CHARTED_SUMMER. «ahora compáralo por meses» patches THIS.
+SPLIT_PLAN = replace(
+    SUMMER_PLAN, categories=("TRANSPORT_PUBLIC", "TRANSPORT_FUEL"), group_by=GroupBy.CATEGORY
+)
+SPLIT_SUMMER = Conversation(last_plan=SPLIT_PLAN).with_visual_context(
+    VisualContext("chart-summer-split", SPEC, BREAKDOWN_PROFILE)
+)
 
 
 ROWS = [
@@ -923,3 +951,39 @@ def test_an_untrusted_context_survives_a_compound_round_trip_still_tokenless() -
         app.dependency_overrides.clear()
         app.state.metrics_enabled = previously_metrics_enabled
         app.state.questions_enabled = previously_questions_enabled
+
+
+# --- Task 2 (Wave 4.2b): the reader splits by names and regroups by calendar -------------------
+
+
+def test_a_two_category_split_re_queries_the_plan_in_view_by_those_categories() -> None:
+    previous = CHARTED_SUMMER.last_plan
+    assert previous is not None
+    plan = read_contextual_follow_up(
+        _query("Separa transporte público y gasolina.", conversation=CHARTED_SUMMER)
+    )
+    assert plan is not None
+    assert plan.categories == ("TRANSPORT_PUBLIC", "TRANSPORT_FUEL")
+    assert plan.group_by is GroupBy.CATEGORY
+    assert plan.period == previous.period and plan.date_range == previous.date_range
+    assert plan.direction == previous.direction
+    assert plan.only_account_id == previous.only_account_id
+
+
+def test_a_regroup_by_months_turns_the_plan_in_view_into_a_series() -> None:
+    previous = SPLIT_SUMMER.last_plan
+    assert previous is not None
+    plan = read_contextual_follow_up(
+        _query("Ahora compáralo por meses.", conversation=SPLIT_SUMMER)
+    )
+    assert plan is not None and plan.group_by is GroupBy.MONTH
+    assert plan.categories == previous.categories
+    assert plan.period == previous.period and plan.date_range == previous.date_range
+    assert plan.direction == previous.direction
+
+
+def test_a_one_name_split_still_declines() -> None:
+    assert (
+        read_contextual_follow_up(_query("Separa la gasolina.", conversation=CHARTED_SUMMER))
+        is None
+    )
