@@ -70,7 +70,7 @@ episodes:
         groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
         banking_calls: 1
         no_model: true
-        # §9's own split wording (Task 4). Claimed deterministically: `_SPLIT_BY_NAMES` reads the
+        # §9's own split wording. Claimed deterministically: `_SPLIT_BY_NAMES` reads the
         # verb and `category_words.precisely_named_in` reads the two names, so this never reaches
         # the planner (probed). Turn 1 already draws a real breakdown -- its own `groups:` gives it
         # three rows -- so this chart derives from it: measured `true`, not the old turn's `false`.
@@ -87,7 +87,7 @@ episodes:
         banking_calls: 1
         no_model: true
         derived_from: true
-        # Temporal, not categorical: no axis carries its own sort, so no `axis_sort` here (Task 4).
+        # Temporal, not categorical: no axis carries its own sort, so no `axis_sort` here.
         chart:
           mark: line
           channels: [[x, dimension, temporal], [y, value_minor, quantitative], [tooltip, dimension, temporal], [tooltip, value_minor, quantitative]]
@@ -97,7 +97,7 @@ episodes:
         banking_calls: 0
         no_model: true
         derived_from: true
-        # §9's own restyle wording (Task 4). Turn 3's last chart is a LINE -- a temporal series --
+        # §9's own restyle wording. Turn 3's last chart is a LINE -- a temporal series --
         # and probed: «en vertical»/«en horizontal» against it refuses (orientation is a bar's
         # concern, not a time axis's; see `why`). Named by number instead, which reaches back past
         # the line to the breakdown bar turn 1 drew and flips it: the dimension moves from the y
@@ -111,7 +111,7 @@ episodes:
         banking_calls: 0
         no_model: true
         derived_from: true
-        # "El gráfico anterior" settled (Task 4): right after a restyle it resolves to the chart
+        # "El gráfico anterior" settled: right after a restyle it resolves to the chart
         # that restyle just appended -- the vertical breakdown above -- not to whichever chart stood
         # before it. Flipping it back lands on the exact shape chart 1 drew: same mark, same
         # channels, the dimension back on y. A second effective change, not a no-op. See `why`.
