@@ -54,6 +54,7 @@ from finguard_orchestrator.infrastructure.dto.llm_dto import (
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import (
+    _chart_suggestions,
     _remember_visual_context,
     _visualization_to_dto,
     question_to_dto,
@@ -625,6 +626,18 @@ def test_a_chart_cannot_claim_to_derive_from_itself_on_the_wire() -> None:
     raw["visual_contexts"][0]["derived_from"] = context.chart_id
     with pytest.raises(ValidationError):
         ConversationPayload.model_validate(raw)
+
+
+def test_chips_over_the_breakdown_offer_the_turn_that_changes_it() -> None:
+    """Task 3: the floor's own breakdown bar (`SPEC`) has its dimension on `y` (horizontal bars).
+    «Ponlo en vertical» is offered because applying it changes the chart; «Ponlo en horizontal» is
+    not, because the bar is already that way -- `_chip_verifies`'s canonical-equality check drops
+    it, the same gate that drops a no-op sort chip elsewhere.
+    """
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
+    suggestions = _chart_suggestions(context)
+    assert "Ponlo en vertical" in suggestions
+    assert "Ponlo en horizontal" not in suggestions
 
 
 @pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))

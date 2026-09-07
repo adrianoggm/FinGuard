@@ -7,6 +7,7 @@ from typing import Literal, cast
 
 from finguard_orchestrator.domain.models.chart import (
     EncodingPatch,
+    Orientation,
     SortMode,
     VisualContext,
     merge_encoding_patch,
@@ -32,11 +33,11 @@ _FINANCIAL = re.compile(
 )
 _VISUAL = re.compile(
     r"\b(?:barra|barras|linea|area|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
-    r"top\s*\d+|circular|donut|anillo)\b"
+    r"top\s*\d+|circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
 _VISUAL_STYLE = re.compile(
     r"\b(?:barra|barras|linea|area|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
-    r"circular|donut|anillo)\b"
+    r"circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
 _TARGET = re.compile(
     r"\b(?:(?:el\s+)?(?:ultimo|last)|(?:el\s+)?primer(?:o|a)?|"
@@ -107,6 +108,11 @@ def interpret_visual(
         mark = "area"
     elif re.search(r"\b(?:circular|donut|anillo)\b", folded):
         mark = "donut"
+    orientation: Orientation | None = None
+    if re.search(r"\b(?:horizontal|tumba\w*)\b", folded):
+        orientation = "horizontal"
+    elif re.search(r"\b(?:vertical|de\s+pie)\b", folded):
+        orientation = "vertical"
     stack = (
         "normalize"
         if "100%" in folded or "porcentaje" in folded
@@ -129,7 +135,13 @@ def interpret_visual(
         return VisualIntent(None, target, "El top debe estar entre 1 y 100.")
     changed = frozenset(
         name
-        for name, value in (("mark", mark), ("stack", stack), ("sort", sort), ("limit", limit))
+        for name, value in (
+            ("mark", mark),
+            ("stack", stack),
+            ("sort", sort),
+            ("limit", limit),
+            ("orientation", orientation),
+        )
         if value is not None
     )
     if "desapil" in folded:
@@ -150,6 +162,7 @@ def interpret_visual(
             sort=cast(SortMode | None, sort),
             sort_field=sort_field,
             limit=limit,
+            orientation=orientation,
             changed=changed,
         ),
         target,

@@ -70,6 +70,18 @@ episodes:
       write. A second turn right after asks for the descending order again, flipping the axis
       back, and asserts the *same* chart turn 1 drew: proof that the harness can express "no
       different from before" for a chart the same way it can for anything else a turn asserts.
+
+      (Task 2, Wave 4.2b.) Turn 3 is no longer the refusal 4.2 recorded above: the regroup reader
+      now takes «compáralo por meses» against the plan in view, and the turn is a real `QUERY`
+      answering with a month-by-month series (a line chart, not a bar). That series has a
+      quantitative y axis with nothing categorical left to sort, so «ordena…» against it is
+      correctly refused (`VISUAL_INCOMPATIBLE`) — which is why the two restyle turns below now
+      name the breakdown chart by number instead of «el gráfico anterior». «El primer gráfico»
+      always means the conversation's own original first chart — a restyle appends a new one
+      rather than mutating it — so asking for it twice compares against that same untouched
+      original both times, and the flip back names «el último gráfico» instead, which does track
+      the restyle turn 4 just made. Task 4 rewrites turns 1-2 and 6 in §9's own words and will
+      settle what «el gráfico anterior» means there.
     metrics: [context_retention]
     turns:
       - say: ¿Cuánto gasté el mes pasado?
@@ -92,9 +104,12 @@ episodes:
         derived_from: false
         ran: {window: THIS_MONTH, direction: INCOME, categories: [SALARY], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Ahora compáralo por meses.
-        route: REFUSED
-        banking_calls: 0
-      - say: Ordena el gráfico anterior de menor a mayor.
+        route: QUERY
+        groups: [["2026-06", 5200, 2], ["2026-07", 4800, 1], ["2026-08", 6000, 2]]
+        banking_calls: 1
+        derived_from: true
+        ran: {window: THIS_MONTH, direction: INCOME, categories: [SALARY], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Ordena el primer gráfico de menor a mayor.
         route: VISUAL
         banking_calls: 0
         no_model: true
@@ -104,14 +119,16 @@ episodes:
         # exactly what a holder's browser would draw.
         chart:
           axis_sort: [y, ascending, value_minor]
-      - say: Ordena el gráfico anterior de mayor a menor.
+      - say: Ordena el último gráfico de mayor a menor.
         route: VISUAL
         banking_calls: 0
         no_model: true
         derived_from: true
-        # A second effective flip, back to exactly the chart turn 1 drew -- same mark, same
-        # channels, same axis sort. Proves the harness can assert "no different from before" for
-        # a chart, not only that *something* about it is a named value.
+        # "El último gráfico" -- not "el primer gráfico" again -- because the previous turn's
+        # restyle appended a new chart rather than mutating chart 1's own original entry; the last
+        # one on screen after turn 4 is that ascending restyle, and this flips it back to
+        # descending. Same mark, same channels as chart 1's, because a restyle patches an existing
+        # spec rather than redrawing one.
         chart:
           mark: bar
           channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]

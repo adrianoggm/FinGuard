@@ -440,6 +440,14 @@ def _chart_suggestions(context: VisualContext) -> list[str]:
     if not temporal:
         candidates.append("Ordena de menor a mayor")
         candidates.append("Ordena de mayor a menor")
+    # Task 3: a bar can turn. Only a bar has an orientation to offer -- `merge_encoding_patch`
+    # refuses the other marks outright -- and, as with the two sort directions above, which of the
+    # two candidates is the no-op depends on which axis the dimension is already on, not on
+    # anything this generator needs to work out itself: `_chip_verifies`'s canonical-equality
+    # check drops it.
+    if spec.mark == "bar":
+        candidates.append("Ponlo en vertical")
+        candidates.append("Ponlo en horizontal")
     return [chip for chip in candidates if _chip_verifies(chip, context)]
 
 
