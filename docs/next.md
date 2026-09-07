@@ -488,11 +488,12 @@ runs in shadow or hybrid mode. Nothing visible changed with the shipped setting.
 is the evidence: the three GPU runs on one SHA and the promotion decision, against the thresholds
 recorded in the wave 3 paragraph above, are Task 9 and remain the operator's.
 
-**2026-09-07 — wave 4.2 landed: every visual follow-up is verified or asked about, and the corpus
-sees its first chart.** A code-built chart can re-enter the verifier as the draft it names
-(`draft_of(spec)`, `visual_plan.py`), and `VisualSource` gains a third member, `patch`, read through
-`get_args` everywhere `VisualDecision`'s invariants are checked. The restyle path now runs
-`verify(draft_of(updated.spec), profile)` as a gate before anything is shown: accepted, the merged
+**2026-09-07 — wave 4.2 foundation landed: every visual follow-up is verified, asked about or
+refused with a reason; natural-language acceptance pending.** A code-built chart can re-enter the
+verifier as the draft it names (`draft_of(spec)`, `visual_plan.py`), and `VisualSource` gains a
+third member, `patch`, read through `get_args` everywhere `VisualDecision`'s invariants are
+checked. The restyle path now runs `verify(draft_of(updated.spec), profile)` as a gate before
+anything is shown: accepted, the merged
 `updated.spec` — titles included — is what the decision names, the derived context stores, the
 presenter shows and the save candidate keeps, and `record_visual_decision` writes one
 `AGREED`/`changed=(was != now)`/`now="patch"`/`detail="accepted"` row that never reaches the
@@ -535,9 +536,10 @@ already reach by other means (`verified_total` already moved a refusal to an acc
 wire is now load-bearing for a semantic verdict a save candidate can sign, though, and that blast
 radius — the client's own chart of its own data — is a decision worth making on the record rather
 than a property of what happens to be exploitable today. Task 3b (a signed visual context,
-`MetricTokenCodec`-style) is planned for before the visual planner's promotion, to close it. A
-reshaped chart now names the chart it came from: `_remember_visual_context`
-sets a fresh chart's `derived_from` to the previous chart's id, server-side, exactly when the
+`MetricTokenCodec`-style) is planned for before the visual planner's promotion AND before any
+client other than the web app echoes conversations, to close it. A reshaped chart now names the
+chart it came from: `_remember_visual_context` sets a fresh chart's `derived_from` to the previous
+chart's id, server-side, exactly when the
 classification reads `ANALYTICAL_RESHAPE` — carried from `_steps`, an async generator, to
 `stream()`'s decision call through `follow_up_seen`, a one-element list threaded as an explicit
 out-parameter and reviewed as the least-bad mechanism available; the retry-control and
@@ -565,8 +567,34 @@ as a new request rather than a follow-up — so `derived_from: true` is exercise
 turn in this episode, never by a reshape; whether a same-thread reshape should read as a follow-up is
 a question for whoever teaches the analyser to read one as such. Suite at landing: 3863 / 3 / 192,
 corpus 202 at 0.0 %; after this fix wave (13 new tests, no regressions): 3876 / 3 / 204, corpus
-unchanged. §7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays 4.5's — not
-built here.
+unchanged; after fix wave 2 (14 more tests, no regressions): 3890 / 3 / 204, corpus 202 unchanged.
+§7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays 4.5's — not built here.
+
+**Fix wave 2 (2026-09-07): a third visible outcome, and the axis is the one live order
+decision.** `VISUAL_UNCHANGED` joins `VISUAL_UPDATED`/`VISUAL_INCOMPATIBLE`: a restyle whose
+merged spec draws identically to what is already on screen answers "El gráfico ya está así; lo
+dejo como está." and mints no version — no new `chart_id`, no derived context, no `patch`
+decision row, zero ledger calls. It exists because the order patch itself was fixed:
+`merge_encoding_patch` now edits the axis that already owns a sort — the axis `present()`
+(`vega_lite.py:89-90`) actually draws from — instead of a chart-wide setting that sits dead
+behind it, so «de menor a mayor» over a chart the floor already ranks descending genuinely flips
+it, and the verifier's `MEASURE_DESC` rule now allows either direction on that same axis (Section
+D of the visual planner design, amended) while a legend or an offset — never a conversation's own
+turn — stays descending. A promoted model may now propose an ascending `MEASURE_DESC` ranking and
+have it verify: direction on the axis is a suitability question, not a validity one
+(`scripts/evaluate_visual.py`'s `requires: ordered: descending` still measures it offline). A
+runtime rule enforcing direction belongs in the policy, not the verifier, and is recorded here as
+a precondition Task 9's promotion review must close before hybrid or promoted ever shows a
+model's own ranking (4.2b).
+
+**What this wave does not yet demonstrate.** The episode's own restyle turn is a presentation
+patch, not a reshape read from natural language, and no episode shows either of the two things §9
+itself asks for: a reshape that derives from the previous chart in natural language (a categorical
+refinement spoken over a charted answer, read as a follow-up rather than as the new request turn
+2 is read as today), or «compáralo por meses» taken against the answered plan's own window rather
+than refused for want of two complete calendar periods. A follow-up wave, 4.2b — natural-language
+acceptance — is planned before 4.3: the reshape reader recognising a categorical refinement over a
+charted answer, and the comparison reader taking «compáralo por meses» against the answered plan.
 **Fix wave, D-4.2-9:** refined rather than left as the second external review left it — `turn_id`
 survives the wire (`to_payload` emits it, `to_domain` reads it back on the next turn), so what is
 still unresolved is its binding to `Conversation.turns` and to the decision record, not its

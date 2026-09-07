@@ -349,7 +349,15 @@ def _visual_only_response(
     # draws identically to what is already on screen answers here, before anything is minted --
     # no new `chart_id`, no derived context, no `patch` decision row (the `VISUAL_FOLLOW_UP` row
     # recorded upstream is this turn's whole audit trail), zero ledger calls.
-    if canonical(updated.spec) == canonical(trusted_context.spec):
+    #
+    # Judged against `context.spec` -- what is actually drawn -- and not `trusted_context.spec`
+    # (N1, round 1 re-review). The two differ exactly when a verified saved-metric definition
+    # replaces the trusted spec (`trusted_context = replace(context, spec=source.chart)` above):
+    # comparing against the *saved* chart there answered "ya está así" for a restyle that was a
+    # no-op only relative to a chart nobody was looking at, and silently dropped the save
+    # candidate the same request would otherwise have minted. With no saved source,
+    # `trusted_context is context` and this is unchanged.
+    if canonical(updated.spec) == canonical(context.spec):
         return QuestionResponse(
             outcome="VISUAL_UNCHANGED",
             text="El gráfico ya está así; lo dejo como está.",

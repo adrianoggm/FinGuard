@@ -56,6 +56,20 @@ episodes:
       «Pon el gráfico anterior en horizontal» is not in the interpreter's whitelist (4.1 probed
       that), so the restyle turn asks for something the vocabulary does claim instead — sorting —
       and that is the one line here that does not literally match the design doc's wording.
+
+      (Fix wave 2, F5.) The restyle turn's own wording was itself a no-op, and the episode did
+      not know it: turn 1's chart already ranks its y axis descending by `value_minor` (the
+      floor's own choice for a ranked breakdown), and «Ordena el gráfico anterior de mayor a
+      menor» asked for that same descending order a second time. Before fix wave 2 this verified,
+      minted a fresh `chart_id` and answered `VISUAL_UPDATED` anyway — Vega-Lite drew the exact
+      same bar it already had, and the episode's own `derived_from: true` measured infrastructure
+      (a patch decision recorded, a context derived) rather than the scenario it claims to prove.
+      F2 answers that exact shape with `VISUAL_UNCHANGED` and no derived context, so the turn now
+      asks for the direction that actually changes the drawing — «de menor a mayor» — and asserts
+      the flip through `chart:`'s own `axis_sort`, which is what F1 made an order patch actually
+      write. A second turn right after asks for the descending order again, flipping the axis
+      back, and asserts the *same* chart turn 1 drew: proof that the harness can express "no
+      different from before" for a chart the same way it can for anything else a turn asserts.
     metrics: [context_retention]
     turns:
       - say: ¿Cuánto gasté el mes pasado?
@@ -80,11 +94,28 @@ episodes:
       - say: Ahora compáralo por meses.
         route: REFUSED
         banking_calls: 0
+      - say: Ordena el gráfico anterior de menor a mayor.
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        # The effective change the harness can see: the y axis's own sort flips from turn 1's
+        # descending to ascending. Read through the domain's `canonical()` (see `why`), which is
+        # exactly what a holder's browser would draw.
+        chart:
+          axis_sort: [y, ascending, value_minor]
       - say: Ordena el gráfico anterior de mayor a menor.
         route: VISUAL
         banking_calls: 0
         no_model: true
         derived_from: true
+        # A second effective flip, back to exactly the chart turn 1 drew -- same mark, same
+        # channels, same axis sort. Proves the harness can assert "no different from before" for
+        # a chart, not only that *something* about it is a named value.
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
       - say: ¿Cuánto tengo en la cuenta corriente?
         route: BALANCE
         no_model: true
