@@ -366,7 +366,7 @@ The rule is stated **per field**, because the dimension and the series can need 
 
 | `field.order` | what it means | the verifier requires |
 | --- | --- | --- |
-| `MEASURE_DESC` | a breakdown or a ranking — magnitude is the point | `sort: "descending"` with `sort_field` naming the `measure` field |
+| `MEASURE_DESC` | a breakdown or a ranking — magnitude is the point | ranked by the measure; the floor draws descending; on the axis a holder's patch may flip it, off the axis it stays descending |
 | `INPUT` | a declared semantic order: weekdays, months, deliberate bands | `sort: "input"`. The model **may not** substitute alphabetical or quantitative order |
 | `TEMPORAL` | dates and periods | the temporal field orders it; an explicit `sort` on another field is refused |
 | `NONE` | ordering the axis does not apply — a donut, or the `point` family | no `sort` is required, and one that contradicts the mark is refused. **The RECURRENCE dimension is `NONE`**: `visual_profile_of` derives it so (an earlier version gave it `INPUT`, which would have forced a `sort: "input"` the floor never emitted), and the floor's point chart carries no sort |

@@ -567,8 +567,25 @@ as a new request rather than a follow-up — so `derived_from: true` is exercise
 turn in this episode, never by a reshape; whether a same-thread reshape should read as a follow-up is
 a question for whoever teaches the analyser to read one as such. Suite at landing: 3863 / 3 / 192,
 corpus 202 at 0.0 %; after this fix wave (13 new tests, no regressions): 3876 / 3 / 204, corpus
-unchanged. §7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays 4.5's — not
-built here.
+unchanged; after fix wave 2 (14 more tests, no regressions): 3890 / 3 / 204, corpus 202 unchanged.
+§7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays 4.5's — not built here.
+
+**Fix wave 2 (2026-09-07): a third visible outcome, and the axis is the one live order
+decision.** `VISUAL_UNCHANGED` joins `VISUAL_UPDATED`/`VISUAL_INCOMPATIBLE`: a restyle whose
+merged spec draws identically to what is already on screen answers "El gráfico ya está así; lo
+dejo como está." and mints no version — no new `chart_id`, no derived context, no `patch`
+decision row, zero ledger calls. It exists because the order patch itself was fixed:
+`merge_encoding_patch` now edits the axis that already owns a sort — the axis `present()`
+(`vega_lite.py:89-90`) actually draws from — instead of a chart-wide setting that sits dead
+behind it, so «de menor a mayor» over a chart the floor already ranks descending genuinely flips
+it, and the verifier's `MEASURE_DESC` rule now allows either direction on that same axis (Section
+D of the visual planner design, amended) while a legend or an offset — never a conversation's own
+turn — stays descending. A promoted model may now propose an ascending `MEASURE_DESC` ranking and
+have it verify: direction on the axis is a suitability question, not a validity one
+(`scripts/evaluate_visual.py`'s `requires: ordered: descending` still measures it offline). A
+runtime rule enforcing direction belongs in the policy, not the verifier, and is recorded here as
+a precondition Task 9's promotion review must close before hybrid or promoted ever shows a
+model's own ranking (4.2b).
 
 **What this wave does not yet demonstrate.** The episode's own restyle turn is a presentation
 patch, not a reshape read from natural language, and no episode shows either of the two things §9
