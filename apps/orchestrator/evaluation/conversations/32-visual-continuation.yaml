@@ -82,6 +82,47 @@ episodes:
       original both times, and the flip back names «el último gráfico» instead, which does track
       the restyle turn 4 just made. Task 4 rewrites turns 1-2 and 6 in §9's own words and will
       settle what «el gráfico anterior» means there.
+
+      (Task 4, Wave 4.2b.) Turn 2 now is §9's own split wording, «Separa transporte público y
+      gasolina.» — probed, and it is still claimed deterministically (`_SPLIT_BY_NAMES` reads the
+      verb, `category_words.precisely_named_in` reads the two names), so `UNMEASURED`/`MUTE` do not
+      move on its account. And its chart *does* derive from turn 1's now: unlike the old salary
+      question, this is a follow-up over the plan already in view, and turn 1's own `groups:`
+      already gives it a real multi-row breakdown to derive from — measured `derived_from: true`,
+      correcting what the paragraph above says about `false` (that was about the old wording, not
+      this one). Turn 3 keeps its wording and gains the `chart:` block this task's brief asks for;
+      its `ran:` now reads `TRANSPORT_PUBLIC`/`TRANSPORT_FUEL`/`EXPENSE` because it patches turn 2's
+      plan, not the old salary one.
+
+      Turn 1 stays Task 7's anchor sentence, «¿Cuánto gasté el mes pasado?», not §9's «¿En qué he
+      gastado más este verano?». Probed first: the verano sentence does reach the planner (no
+      deterministic reader claims it), so a planning case is this task's to consider — but
+      `window_words.py` excludes seasons on purpose ("Precision over coverage": a miss falls
+      through to the model and costs one turn, a wrong guess costs a figure about the wrong months
+      presented as an answer), so no reader anywhere in this service gives «este verano» a window.
+      An `expect_plan` naming one would be inventing a range this codebase has no concept of, which
+      the brief rules out by name. Turn 1 keeps the anchor sentence instead and no planning case was
+      written; nothing about the ratchets moves because of turn 1, since its sentence was already
+      measured before this task touched anything.
+
+      The restyle settles what the controller note flagged: turn 3's last chart is a LINE, so
+      «Pon el gráfico anterior en vertical/en horizontal» right after it refuses — probed, and the
+      answer is the guard's own refusal text, chart unchanged, no effective flip. So the first
+      restyle turn names the chart it can turn, «Pon el primer gráfico en vertical.», which reaches
+      past the line to the breakdown bar turn 1 drew (not turn 2's — turn 2 is a different bar with
+      the same shape, but «el primer gráfico» is fixed to the conversation's own original) and moves
+      its dimension from the y axis to the x axis: an effective change, probed through `canonical()`.
+      The second restyle turn goes back to «el gráfico anterior» on purpose, to settle its meaning
+      right after a restyle: probed, and it resolves to the chart the first restyle turn just
+      appended — not to the line two turns back — and flips it back to exactly chart 1's own shape
+      (same mark, same channels, dimension back on y). A second effective change, not a no-op; this
+      is the fact the brief's own note misnamed as "the same chart as turn 3's" — turn 3 is the line
+      chart this whole restyle exists to route around, and what the flip actually lands on, measured
+      through the same `canonical()` call, is chart 1's shape.
+
+      Reprobed `tests/test_what_we_hand_to_the_planner.py` after every rewrite above: `UNMEASURED`
+      is 22 of 22 and `MUTE` is 43 of 43, both unchanged from before this task — neither dropped, so
+      neither `Ceiling` moves.
     metrics: [context_retention]
     turns:
       - say: ¿Cuánto gasté el mes pasado?
@@ -95,40 +136,56 @@ episodes:
           axis_sort: [y, descending, value_minor]
         banking_calls: 1
         ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
-      - say: ¿Cómo se reparte mi sueldo este mes?
+      - say: Separa transporte público y gasolina.
         route: QUERY
-        groups: [[SALARY, 12000, 2], [BONUS, 9000, 1]]
+        groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
         banking_calls: 1
-        # Probed, not assumed: a different question about a different direction reads as a new
-        # request, not a follow-up, so its chart derives from nothing. See `why`.
-        derived_from: false
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [SALARY], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        no_model: true
+        # §9's own split wording (Task 4). Claimed deterministically: `_SPLIT_BY_NAMES` reads the
+        # verb and `category_words.precisely_named_in` reads the two names, so this never reaches
+        # the planner (probed). Turn 1 already draws a real breakdown -- its own `groups:` gives it
+        # three rows -- so this chart derives from it: measured `true`, not the old turn's `false`.
+        # See `why`.
+        derived_from: true
+        chart:
+          mark: bar
+          channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [y, descending, value_minor]
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Ahora compáralo por meses.
         route: QUERY
-        groups: [["2026-06", 5200, 2], ["2026-07", 4800, 1], ["2026-08", 6000, 2]]
+        groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
         banking_calls: 1
-        derived_from: true
-        ran: {window: THIS_MONTH, direction: INCOME, categories: [SALARY], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
-      - say: Ordena el primer gráfico de menor a mayor.
-        route: VISUAL
-        banking_calls: 0
         no_model: true
         derived_from: true
-        # The effective change the harness can see: the y axis's own sort flips from turn 1's
-        # descending to ascending. Read through the domain's `canonical()` (see `why`), which is
-        # exactly what a holder's browser would draw.
+        # Temporal, not categorical: no axis carries its own sort, so no `axis_sort` here (Task 4).
         chart:
-          axis_sort: [y, ascending, value_minor]
-      - say: Ordena el último gráfico de mayor a menor.
+          mark: line
+          channels: [[x, dimension, temporal], [y, value_minor, quantitative], [tooltip, dimension, temporal], [tooltip, value_minor, quantitative]]
+        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+      - say: Pon el primer gráfico en vertical.
         route: VISUAL
         banking_calls: 0
         no_model: true
         derived_from: true
-        # "El último gráfico" -- not "el primer gráfico" again -- because the previous turn's
-        # restyle appended a new chart rather than mutating chart 1's own original entry; the last
-        # one on screen after turn 4 is that ascending restyle, and this flips it back to
-        # descending. Same mark, same channels as chart 1's, because a restyle patches an existing
-        # spec rather than redrawing one.
+        # §9's own restyle wording (Task 4). Turn 3's last chart is a LINE -- a temporal series --
+        # and probed: «en vertical»/«en horizontal» against it refuses (orientation is a bar's
+        # concern, not a time axis's; see `why`). Named by number instead, which reaches back past
+        # the line to the breakdown bar turn 1 drew and flips it: the dimension moves from the y
+        # axis to the x axis, the effective change the harness can see through `canonical()`.
+        chart:
+          mark: bar
+          channels: [[x, dimension, nominal], [y, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
+          axis_sort: [x, descending, value_minor]
+      - say: Pon el gráfico anterior en horizontal.
+        route: VISUAL
+        banking_calls: 0
+        no_model: true
+        derived_from: true
+        # "El gráfico anterior" settled (Task 4): right after a restyle it resolves to the chart
+        # that restyle just appended -- the vertical breakdown above -- not to whichever chart stood
+        # before it. Flipping it back lands on the exact shape chart 1 drew: same mark, same
+        # channels, the dimension back on y. A second effective change, not a no-op. See `why`.
         chart:
           mark: bar
           channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
