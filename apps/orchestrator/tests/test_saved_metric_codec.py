@@ -1,3 +1,5 @@
+import pytest
+
 from finguard_orchestrator.domain.enums import Direction, Period
 from finguard_orchestrator.domain.models.chart import ChartEncoding, ChartSpec
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
@@ -83,3 +85,39 @@ def test_a_metric_can_be_a_figure_with_no_chart_and_the_old_shape_still_reads() 
             pass
         else:  # pragma: no cover - the guard is the point of the test
             raise AssertionError("a token must not verify for another holder")
+
+
+def test_a_sealed_context_verifies_for_its_holder_and_content() -> None:
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    semantics = {"chart_id": "chart-1", "spec": ["bar"], "profile": {"comparison": True}}
+    token = codec.seal_context("holder-a", semantics)
+    assert token.startswith("c1.")
+    assert codec.verify_context(token, "holder-a", semantics) is True
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda t, s: (t, "holder-b", s),  # another holder
+        lambda t, s: (t, "holder-a", {**s, "profile": {"comparison": False}}),  # content changed
+        # signature bit
+        lambda t, s: (t[:-2] + ("A" if t[-1] != "A" else "B") + t[-1], "holder-a", s),
+        lambda t, s: ("m1." + t[3:], "holder-a", s),  # wrong prefix
+        lambda t, s: ("not a token", "holder-a", s),
+        lambda t, s: (None, "holder-a", s),
+    ],
+    ids=["holder", "content", "signature", "prefix", "malformed", "missing"],
+)
+def test_a_seal_does_not_verify_when_anything_moves(tamper) -> None:
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    semantics = {"chart_id": "chart-1", "spec": ["bar"], "profile": {"comparison": True}}
+    token = codec.seal_context("holder-a", semantics)
+    assert codec.verify_context(*tamper(token, semantics)) is False
+
+
+def test_a_seal_survives_key_order_and_dies_with_key_rotation() -> None:
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    token = codec.seal_context("h", {"b": 1, "a": [1, 2]})
+    assert codec.verify_context(token, "h", {"a": [1, 2], "b": 1}) is True  # canonical JSON
+    rotated = MetricTokenCodec({"k2": b"y" * 32}, "k2")
+    assert rotated.verify_context(token, "h", {"a": [1, 2], "b": 1}) is False
