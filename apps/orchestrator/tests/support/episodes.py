@@ -217,6 +217,12 @@ _PAYMENT_OUTCOMES = {
 # the blindness a `route: QUERY` expectation on a restyle turn should have caught and could not.
 _VISUAL_OUTCOMES = {
     "VISUAL_UPDATED",
+    # F2 (fix wave 2): a restyle whose merged spec draws identically to what is already on
+    # screen answers this instead of minting a version. Still the `VISUAL` route -- the turn
+    # asked to change the chart and got an answer about the chart, the same as every sibling
+    # below -- so it belongs in this set for the same reason `VISUAL_UPDATED` does: without it,
+    # a `VISUAL_UNCHANGED` answer falls through unrecognised and is silently counted as a query.
+    "VISUAL_UNCHANGED",
     "VISUAL_INCOMPATIBLE",
     "VISUAL_NEEDS_TARGET",
     "VISUAL_AMBIGUOUS",

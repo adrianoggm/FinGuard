@@ -609,6 +609,63 @@ def _breakdown_bar_ranked() -> tuple[ChartSpec, VisualProfile]:
     return spec, profile
 
 
+def test_a_restyle_that_changes_nothing_answers_visual_unchanged_and_mints_no_version() -> None:
+    """F2 (P0, fix wave 2, the review's own second half of F1): once the merge correctly edits
+    the axis that already owns the order (F1), «ordena de mayor a menor» over a chart already
+    descending on that axis is a genuine no-op -- and a no-op must not mint a version, a fresh
+    `chart_id` or a `patch` decision nobody asked for. The conversation comes back byte-identical
+    to what was handed in and no `VISUAL_PLANNER` row is recorded: the `VISUAL_FOLLOW_UP` row
+    recorded upstream is this turn's whole audit trail.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ordena de mayor a menor", conversation.visual_contexts)
+    assert intent is not None and intent.patch is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UNCHANGED"
+    assert response.text == "El gráfico ya está así; lo dejo como está."
+    assert response.conversation == to_payload(conversation)
+    assert response.visualization_derivation is None
+    assert response.save_candidate is None
+    assert turn.sealed().where(Step.VISUAL_PLANNER) == ()
+
+
+def test_the_chips_offered_all_change_the_chart() -> None:
+    """F2: `_chart_suggestions` used to offer «Ordena de menor a mayor» by checking only the
+    chart-wide `spec.sort` -- which stays `None` once an axis owns its own descending sort
+    (F1's own shape, the floor's own shape), so the guard always passed and the chip was offered
+    even when applying it changed nothing. The generator now proposes both directions and lets
+    the same gate `_visual_only_response` runs -- `interpret_visual` / `apply_visual_intent` /
+    `verify`, plus F2's own canonical-equality check -- drop whichever one is a no-op: a
+    descending bar offers the ascending chip and not the descending one, and a chart just flipped
+    ascending offers the descending chip and not the ascending one.
+    """
+    dataset = VisualDataset(
+        metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="NONE")
+    descending = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert descending is not None
+    descending_context = VisualContext("chart-1", descending, profile)
+    descending_suggestions = _chart_suggestions(descending_context)
+    assert "Ordena de menor a mayor" in descending_suggestions
+    assert "Ordena de mayor a menor" not in descending_suggestions
+
+    ascending_intent = interpret_visual("ordena de menor a mayor", (descending_context,))
+    assert ascending_intent is not None and ascending_intent.patch is not None
+    ascending = apply_visual_intent(ascending_intent, descending_context)
+    ascending_context = VisualContext("chart-2", ascending.spec, profile)
+    ascending_suggestions = _chart_suggestions(ascending_context)
+    assert "Ordena de mayor a menor" in ascending_suggestions
+    assert "Ordena de menor a mayor" not in ascending_suggestions
+
+
 async def test_a_verified_patch_is_recorded_as_a_patch_decision() -> None:
     """«ordénalo de mayor a menor» over a breakdown bar: verifies; VISUAL_UPDATED as before -- and
     the turn record and the derived context both learn a `patch`, not a fresh proposal, decided it.
@@ -685,6 +742,11 @@ def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:
     `DeterministicVisualPlanner`, which sets the per-encoding titles ("Grupo"/"Importe") itself,
     plus an explicit chart-level `title` -- the one thing the floor leaves to the mapper
     (`llm_mapper.py` sets it after planning) and which this test therefore sets by hand.
+
+    The floor's own dimension axis already ranks descending (F1's own shape), so this asks for
+    the *other* direction -- «de menor a mayor» -- rather than «de mayor a menor»: after F2, the
+    latter is a genuine no-op over this exact fixture and answers `VISUAL_UNCHANGED`, which is
+    not what this test is about.
     """
     dataset = VisualDataset(
         metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
@@ -697,7 +759,7 @@ def test_an_accepted_restyle_shows_the_merged_chart_with_its_titles() -> None:
     assert spec.title == "Gastos por categoria"
     assert any(title is not None for title in source_titles.values())
     conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
-    intent = interpret_visual("ordénalo de mayor a menor", conversation.visual_contexts)
+    intent = interpret_visual("ordénalo de menor a mayor", conversation.visual_contexts)
     assert intent is not None
     response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_UPDATED"
