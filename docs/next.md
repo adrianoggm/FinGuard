@@ -611,10 +611,15 @@ ledger call. A fix round sealed the compound-read path too — `_compound_read_r
 its own charts unsealed, so a seal-side allowlist test (`test_the_seal_is_never_silently_skipped`)
 now sweeps every `question_to_dto(` call site the way a verify-side allowlist test already swept
 every `to_domain(` call site. A deployment running on the fallback signing key logs one warning at
-startup and is not refused for it. Older conversations (no token) are untrusted until their next
-chart. Suite at HEAD: 3916 / 3 / 204, corpus 204. What this does **not** do: no expiry beyond key
-rotation; no cross-device trust — the seal binds a holder reference, not a device; no server-side
-store — the codec is stateless and the seal is the only record of it.
+startup and is refused only when it also serves a non-loopback origin (fix wave, I4) —
+`ORCHESTRATOR_WEB_ORIGINS` already distinguishes `just app` from a real deployment, so no new
+setting is needed. The metric token now names the chart it was issued for too (fix wave, I3), so
+a token minted for one chart — or one minted before this change, with no chart at all — can no
+longer be offered as another chart's save-candidate source. Older conversations (no token) are
+untrusted until their next chart. Suite at HEAD: 3936 / 3 / 204, corpus 204. What this does
+**not** do: no expiry beyond key rotation; no cross-device trust — the seal binds a holder
+reference, not a device; no server-side store — the codec is stateless and the seal is the only
+record of it.
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 

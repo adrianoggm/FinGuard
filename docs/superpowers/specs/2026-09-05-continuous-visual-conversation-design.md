@@ -182,8 +182,13 @@ the verifier reads — each field's `role` and `order`, and the profile's `compa
 legitimate restyles after one round trip (wave 4.2, Task 3). It still carries nothing a browser
 should be able to assert about the data (`row_count`, `plan_metric` stay off the wire), and the wire
 is still not where authority lives: the verifier decides — and since Task 3b, a context is only a
-verifier's input if the server's seal on it verifies for this holder (`MetricTokenCodec.seal_context`),
-so a client can draw and navigate a chart it altered but cannot have a decision taken on it.
+verifier's input if the server's seal on it verifies for this holder (`MetricTokenCodec.verify_context`),
+so a client can draw and navigate a chart it altered but cannot have a decision taken on it. The echo
+contract is exact: a client returns `visual_contexts` precisely as received, because the seal covers
+every field of it — a rendered chart spec (`$schema`, `width`, `height`, the three keys `present_spec`
+adds for drawing) is not a context spec and is refused at the wire rather than silently untrusted. The
+seal itself is an integrity envelope, not a secret — base64url, not encrypted — and it is the first
+field on the conversation wire to carry the holder reference in clear.
 `source_plan` is typed
 `FinancialPlan | ComparisonPlan | RatioPlan | None` and copied from the result's `metric_definition`;
 `evidence_ids` are the plan's `transaction_ids` when it carries them; `turn_id` is a UUID minted where
