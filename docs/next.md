@@ -655,22 +655,33 @@ written; turn 1 keeps its existing planning-dataset anchor, «¿Cuánto gasté e
 person understands and this does not, and they are left out on purpose") and no vocabulary in this
 service can give it one without guessing.
 
-The «3 of 14» measurement above moves to **9 of 14**: re-run through `classify()` over the design's
-fourteen §3 phrasings with a probe script (never a model). Three are this wave's own doing: «Ponlo
-en horizontal» now reads PRESENTATION_ONLY (the orientation patch above); «Separa gasolina y
+**Fix wave (2026-09-08), I-3: the «3 of 14» measurement above moves to 6 of 14, not 9 — and the
+method is what changed, not the sentences.** Measured through the whole pipeline over a charted
+conversation — `turn_analyzer.analyze(sentence, conversation=charted, interpreter=Deterministic())`
+for the turn's real relation, then `classify()` on that relation, never `classify()` with
+`analysis` forced to `FOLLOW_UP`/`LAST_ANSWER` by hand — three are this wave's own doing: «Ponlo en
+horizontal» now reads PRESENTATION_ONLY (the orientation patch above); «Separa gasolina y
 transporte público» and «Ahora agrúpalo por meses» now read ANALYTICAL_RESHAPE (the split and
-regroup patches above, in either category order and with the plural). Three more also moved —
-«¿Por qué agosto es tan alto?», «¿Qué movimientos explican ese pico?» and «¿Qué comercio es
-responsable?», all now DRILL_DOWN — but not by anything this wave touched: `visual_follow_up.py` is
-untouched by all four commits above, so the drill-down lexicon was already this shape at this
-wave's own BASE. The «3 of 14» line was simply never updated once that lexicon was refined, some
-time between it being written and this wave starting. The remaining five are unchanged: «Compáralo
-con el verano pasado» and «Excluye los taxis» stay UNRELATED (no window for a season and no
-comparison-reference vocabulary reads «compáralo con», neither touched by this wave; the exclusion
-vocabulary is untouched here too); «Prefiero líneas» and «Enséñame solo los cinco primeros» stay
-UNRELATED (no rule reads a bare plural mark word or a row count written out rather than as a
-digit); «La barra más alta.» stays PRESENTATION_ONLY and «Enséñame las compras de esa barra» stays
-AMBIGUOUS, exactly as the paragraph above already said.
+regroup patches above, in either category order and with the plural). Three more were already
+claimed before this wave and are unchanged by it: «Ordénalo de mayor a menor» and «La barra más
+alta.» read PRESENTATION_ONLY, «Enséñame las compras de esa barra» reads AMBIGUOUS. «¿Por qué
+agosto es tan alto?», «¿Qué movimientos explican ese pico?» and «¿Qué comercio es responsable?»
+stay UNRELATED and reach the planner, one banking call each — the handler's own deterministic
+analyser labels each of them NEW_REQUEST, so a turn never reaches the drill-down lexicon that would
+otherwise claim them; wiring the analyser to hand a drill-down phrasing to that lexicon is 4.3's
+work, not a pattern still to be written. Their earlier "all now DRILL_DOWN" claim measured the
+readers with the relation supplied by hand rather than derived, which is a different, narrower
+question than "what does this wave's pipeline do with these fourteen sentences", and answered it as
+if it were the same one. The «3 of 14» line it replaced was not stale — 4.1 measured 3 through the
+real pipeline and this wave adds exactly the 3 it claims as its own, 3 + 3 = 6, so the earlier
+figure was right throughout and only the yardstick moved. The remaining eight are unchanged:
+«Compáralo con el verano pasado» and «Excluye los taxis» stay UNRELATED (no window for a season and
+no comparison-reference vocabulary reads «compáralo con», neither touched by this wave; the
+exclusion vocabulary is untouched here too); «Prefiero líneas» and «Enséñame solo los cinco
+primeros» stay UNRELATED (no rule reads a bare plural mark word or a row count written out rather
+than as a digit); the three drill-down sentences above; and «Esa categoría.» stays UNRELATED (the
+fixture carries no echoed result row for `_CATEGORY_REFERENCE` to resolve, a fixture limit rather
+than a code question).
 
 **What this wave does not do.** Turns 4-5 of §9's own sketch — a drill-down into one of the split
 categories — are 4.3's, not this wave's; episode 32 says so plainly in its own `why` rather than

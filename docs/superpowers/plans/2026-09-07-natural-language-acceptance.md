@@ -61,6 +61,14 @@ existing `last_plan is not None` branch's `elif`; a one-name split still decline
 question. Four foreground suite calls: 4147 passed / 3 skipped / 206 deselected — baseline plus the
 seven new tests, no corpus episode moved.
 
+**Fix wave** (`8066da5`): `spanish.folded(sentence)` folded once in `analyze` and threaded into
+`_is_reshape_follow_up`/`_splits_two_or_more_categories` rather than re-computed by each (M-5); a
+comment beside `_RESHAPE_FOLLOW_UP`'s bare «ahora» records that «Ahora bien, ¿cuánto tengo?» reads
+FOLLOW_UP the moment a plan is in view and why that is provably inert, pinned by a handler-level
+balance test (D-4.2b-1, dropped as a code change); a comment on the «Sepáralo en…» parametrize entry
+in the analyser's own test says the reader claims none of it, so the T1/T2 pairing does not hold
+for that sentence (M-9).
+
 - [ ] **Step 1: Failing tests** (the file's builders; a conversation with a `last_plan` vs one without)
 
 ```python
@@ -126,6 +134,17 @@ so turn 3's expectation (and turns 4-5's restyle targets, retargeted to «el pri
 re-probed against the real harness rather than assumed. Ratchets unchanged: `UNMEASURED` 22/22,
 `MUTE` 43/43.
 
+**Fix wave** (`9a57d1c`): the calendar half of the presentation-dimension gate now declines when
+the sentence itself names a category — «Dame el total por meses de gasolina» is handed back to the
+planner instead of answering every category's monthly total with the named one silently dropped
+(I-1, a route-change regression the whole-branch review found and the per-task reviews could not,
+since each task was correct about its own boundary) — with the negative test named. The gate is now
+one call, `_asks_a_new_presentation_dimension`, with a docstring naming the three shapes it admits
+(M-6), and the `AVERAGE` deference beside it is pinned by its own reader-level test (M-3). The
+split's `replace` also clears `merchants`/`merchant_terms`/`group_limit`, like its three sibling
+branches in the same function (I-2, M-1). The plural calendar lexicon test gains its negative, «por
+mesa» (M-2).
+
 - [ ] **Step 1: Failing tests**
 
 ```python
@@ -181,6 +200,15 @@ chips offer «Ponlo en vertical»/«Ponlo en horizontal» through the existing v
 foreground suite calls: 3954 passed / 3 skipped / 206 deselected (baseline + 6 tests), corpus
 unaffected — no episode names an orientation yet.
 
+**Fix wave** (`dc3e88b`): the orientation chips gain the same `not temporal` guard the sort chips
+already carried one line above, so a month bar offers neither turn — legal (`merge_encoding_patch`
+allows it) but not a chart worth suggesting (M-7); a bar carrying only a chart-wide
+`sort`/`sort_field` and no per-axis `EncodingSort`, turned, is now pinned beside
+`test_a_turned_grouped_comparison_bar_still_verifies` — a coverage gap, not a bug, re-verified to
+swap, verify both ways and round-trip (M-8); `visual_interpreter.py` states in a comment that
+`horizontal|tumba` is checked before `vertical|de pie` and a sentence naming both resolves to
+horizontal, the same first-listed-wins rule as everywhere else in the function (M-10).
+
 - [ ] **Step 1: Failing tests** — the floor's breakdown bar (dimension on `y`) + «pon el gráfico anterior en vertical» → dimension on `x`, measure on `y`, presented spec differs, verifier accepts; the same bar + «ponlo en horizontal» → `VISUAL_UNCHANGED` through `_visual_only_response`; the grouped comparison bar turned → offsets swap (`yOffset`→`xOffset`) and still verifies (`test_the_floors_own_chart_verifies_as_itself`'s family, turned); a line asked to turn → `merge` refusal; chips over the breakdown include «Ponlo en vertical» and not «Ponlo en horizontal».
 - [ ] **Step 2-4:** implement, run the three files + `tests/test_llm_visual_planner.py` (the prompt is untouched — orientation is a patch, not a model vocabulary), the four suite calls.
 - [ ] **Step 5: Commit** — `feat(visual): a bar can turn — «en vertical» / «en horizontal» swap the axes the bar owns`.
@@ -206,6 +234,9 @@ reserved as placeholders. Ratchets unchanged: `UNMEASURED` 22/22, `MUTE` 43/43. 
 suite calls: 3954 passed / 3 skipped / 204 deselected (`test_[a-l]*`/`[m-s]*`/`[t-z]*` sum, matching
 the recorded baseline exactly) + corpus 204 at 0.0 % on every rate.
 
+**Fix wave** (`6fcd53e`): the four remaining «(Task 4)» inline comments are scrubbed to their
+substance alone — the corpus's last ticket references (M-4). Corpus and ratchets unchanged.
+
 - [ ] **Probe first**, through the harness, §9's turns: 1 «¿En qué he gastado más este verano?» — does a deterministic reader claim it, or does it reach the planner? If it reaches the planner and no planning case exercises it, write the case in the planning dataset (`why`: §9's opener; expected plan: EXPENSE, `group_by: CATEGORY`, the window the readers give «este verano» — read `explicit_facts`/`natural_periods`; if the readers know no summer window, the case's window is what the planner should produce and the brief says which; if that is genuinely ambiguous, keep Task 7's anchor sentence for turn 1 and say so in `why` — never guess). 2 «Separa transporte público y gasolina.» → `route: QUERY`, `banking_calls: 1`, `derived_from: true`, `chart:` a bar over two categories (the `groups:` override supplies `TRANSPORT_PUBLIC`/`TRANSPORT_FUEL` rows). 3 «Ahora compáralo por meses.» → `route: QUERY`, `banking_calls: 1`, `derived_from: true`, `chart:` temporal (line or bar, dimension temporal on the axis; `groups:` rows keyed by month). 6 «Pon el gráfico anterior en vertical.» → `route: VISUAL`, `banking_calls: 0`, `derived_from: true`, `chart:` with the dimension on `x`; then, if the six-turn floor allows, «Pon el gráfico anterior en horizontal.» → `route: VISUAL`, `banking_calls: 0`, the same chart as turn 3's (a second flip). Turns 4-5 stay 4.3's, named in `why`.
 - [ ] Ratchets: after Tasks 1-2 the two reshape sentences are claimed deterministically; if `UNMEASURED`/`MUTE` dropped and Task 2 did not already lower the literals, lower them here.
 - [ ] Commit — `test(corpus): the visual episode speaks §9's words — a split, a regroup and a turned bar, each remembering the chart before it`.
@@ -219,6 +250,18 @@ the recorded baseline exactly) + corpus 204 at 0.0 % on every rate.
 - `docs/conversational-capabilities.md`: the two visual rows' Estado → «construida y probada conversacionalmente (episodio 32 en las palabras del §9)».
 - This plan: "Landed" notes.
 - Commit — `docs(visual): wave 4.2 is the continuous visual conversation it set out to be, in its own words`.
+
+**Fix wave, I-3 + I-4:** `docs/next.md`'s measurement corrected to **6 of 14**, not 9 — the method
+changed, not the sentences: measured through the whole pipeline
+(`turn_analyzer.analyze(..., interpreter=Deterministic())` then `classify()`) over a charted
+conversation, never `classify()` with the relation forced by hand, which is what produced the
+uncomparable 9 and credited three drill-down sentences this wave never touched; the «3 of 14» line
+it replaced was not stale, it was right, and 3 (4.1's) + 3 (this wave's own) = 6. Design §11's
+restyle bullet and §10 row 4.2 each gain a clause: in §9's own order the restyle is refused right
+after turn 3's month line, with no chart between them to turn, which is why episode 32 reaches that
+wording only after naming a bar by number first, and why the ordered scenario itself closes only
+once 4.3 leaves a chart behind. This plan's "Landed" notes above carry one line per fix. Docs-only,
+no pytest.
 
 ---
 
