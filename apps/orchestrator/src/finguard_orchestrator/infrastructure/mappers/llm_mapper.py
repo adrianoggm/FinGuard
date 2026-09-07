@@ -31,6 +31,12 @@ from finguard_orchestrator.domain.models.chart import (
     VisualRow,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.models.visual_plan import draft_of
+from finguard_orchestrator.domain.services.visual_interpreter import (
+    apply_visual_intent,
+    interpret_visual,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -371,12 +377,17 @@ def _remember_visual_context(
     )
 
 
-def _chart_suggestions(spec: ChartSpec) -> list[str]:
+def _chart_suggestions(context: VisualContext) -> list[str]:
     """Visual follow-ups this chart will accept, written the way the interpreter reads them.
 
-    Deterministic ones only. `interpret_visual` is a regex over an allow-list, so every line here is
-    a change the service is certain it can make. A chip that gets refused is worse than no chip: it
-    teaches somebody that the chips lie, and then the ones that work go untried too.
+    Deterministic ones only. `interpret_visual` is a regex over an allow-list, but a sentence
+    that parses is not a chip that survives: every candidate below is filtered through the same
+    gate `_visual_only_response` (`llm_controller.py`) runs on a holder's own sentence --
+    `interpret_visual(chip, (context,))`, merged with `apply_visual_intent`, then judged by
+    `verify(draft_of(merged.spec), context.profile)`. A chip that gets refused is worse than no
+    chip: it teaches somebody that the chips lie, and then the ones that work go untried too. One
+    definition of "will this be accepted" -- imported from where the controller imports it, never
+    copied -- is what keeps that true after the gate changes and this generator does not.
 
     Filters are the obvious omission and they are omitted on measurement, not on suspicion.
     `excluded_categories` and `excluded_merchants` are on the plan and banking honours them, and the
@@ -387,15 +398,33 @@ def _chart_suggestions(spec: ChartSpec) -> list[str]:
     the grouping and plans for today -- a figure, not a clarification. A chip for it is a button
     that shows a wrong number, so there is no chip until the planner keeps the window.
     """
-    suggestions = []
+    spec = context.spec
+    candidates = []
     if spec.limit is not None:
-        suggestions.append("Ver todos")
-    suggestions.append("Ponlo en línea" if spec.mark == "bar" else "Ponlo en barras")
+        candidates.append("Ver todos")
+    candidates.append("Ponlo en línea" if spec.mark == "bar" else "Ponlo en barras")
     temporal = any(item.type == "temporal" for item in spec.encodings if item.channel in {"x", "y"})
     # Sorting a series by its measure shuffles time, which is not a reordering of anything.
     if not temporal and spec.sort != "ascending":
-        suggestions.append("Ordena de menor a mayor")
-    return suggestions
+        candidates.append("Ordena de menor a mayor")
+    return [chip for chip in candidates if _chip_verifies(chip, context)]
+
+
+def _chip_verifies(chip: str, context: VisualContext) -> bool:
+    """Whether offering `chip` over `context` is a change the controller would actually accept.
+
+    A chip whose intent does not parse (`interpret_visual` returns `None`, or a `VisualIntent`
+    with no patch -- an explanation only) or whose merge `apply_visual_intent` refuses outright
+    is dropped the same as one the verifier refuses: none of the three is a chip worth offering.
+    """
+    intent = interpret_visual(chip, (context,))
+    if intent is None or intent.patch is None:
+        return False
+    try:
+        merged = apply_visual_intent(intent, context)
+    except ValueError:
+        return False
+    return isinstance(verify(draft_of(merged.spec), context.profile), ChartSpec)
 
 
 def question_to_dto(
@@ -488,7 +517,7 @@ def question_to_dto(
         visualization=visualization,
         # Never over the planner's own: those recover a question that did not land, and a chip about
         # bar charts does not belong next to "¿de qué periodo?".
-        suggestions=result.suggestions or (_chart_suggestions(context.spec) if context else []),
+        suggestions=result.suggestions or (_chart_suggestions(context) if context else []),
         save_candidate=candidate,
     )
 

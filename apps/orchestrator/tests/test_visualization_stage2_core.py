@@ -2,6 +2,7 @@ from dataclasses import replace
 
 import pytest
 from support.visual_planners import default_policy
+from test_visualization_stage1 import FAMILY_DATASETS
 
 from finguard_orchestrator.application.queries.ask_financial_question import (
     AskFinancialQuestionResult,
@@ -26,11 +27,16 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.models.visual_plan import draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
     VisualDecision,
 )
-from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
+from finguard_orchestrator.domain.services.visual_interpreter import (
+    apply_visual_intent,
+    interpret_visual,
+)
+from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
@@ -732,20 +738,53 @@ def test_asking_for_everything_is_only_a_restyle_when_that_is_all_it_says() -> N
 
 
 def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
-    """Every chip round-trips through the interpreter that has to read it back."""
-    spec, profile = _limited()
-    contexts = (VisualContext("chart-1", spec, profile),)
-    suggestions = _chart_suggestions(spec)
+    """Every chip round-trips through the interpreter that has to read it back, and now verifies
+    too (C1): `_chart_suggestions` takes the context and filters each candidate through the same
+    `interpret_visual` / `apply_visual_intent` / `verify(draft_of(...), ...)` gate
+    `_visual_only_response` runs, so a chip offered here is a chip the controller will accept.
+
+    A ranked bar carries its rank on the axis encoding's own sort (`EncodingSort`, not the
+    chart-wide one `_base()`/`_limited()` use) -- the shape the floor actually builds for a
+    MEASURE_DESC dimension -- which is why this fixture is built by hand rather than reused from
+    `_limited()`: only an axis-own sort survives a chart-wide "ascending" patch, per `_order`'s
+    own per-encoding-before-chart-wide reading.
+    """
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding(
+                "y", "dimension", "nominal", sort=EncodingSort("descending", "value_minor")
+            ),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        limit=8,
+    )
+    profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "nominal", "dimension", 3, "MEASURE_DESC"),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
+        metric="SUM",
+        unit="money",
+        positive=True,
+        mutually_exclusive=True,
+        verified_total=True,
+    )
+    context = VisualContext("chart-1", spec, profile)
+    suggestions = _chart_suggestions(context)
     assert "Ver todos" in suggestions
-    assert "Ponlo en línea" in suggestions
+    # A line over unordered categories is exactly what the `mark` rule exists to refuse (C1).
+    assert "Ponlo en línea" not in suggestions
     assert "Ordena de menor a mayor" in suggestions
     for chip in suggestions:
-        intent = interpret_visual(chip, contexts)
+        intent = interpret_visual(chip, (context,))
         assert intent is not None and intent.patch is not None, chip
         merge_encoding_patch(spec, intent.patch, profile)
 
-    # Nothing to lift when nothing was cut, and a series is not reordered by its measure.
-    assert "Ver todos" not in _chart_suggestions(replace(spec, limit=None))
+    # Nothing to lift when nothing was cut.
+    assert "Ver todos" not in _chart_suggestions(
+        VisualContext("chart-1", replace(spec, limit=None), profile)
+    )
     temporal = ChartSpec(
         "line",
         (
@@ -753,7 +792,80 @@ def test_the_chart_offers_the_follow_ups_it_can_actually_honour() -> None:
             ChartEncoding("y", "value_minor", "quantitative"),
         ),
     )
-    assert _chart_suggestions(temporal) == ["Ponlo en barras"]
+    temporal_profile = VisualProfile(
+        fields=(
+            VisualField("dimension", "temporal", "dimension", 3, "TEMPORAL"),
+            VisualField("value_minor", "quantitative", "measure", 3),
+        ),
+        metric="SUM",
+        unit="money",
+    )
+    # A series is not reordered by its measure: no sort chip on a temporal axis.
+    assert _chart_suggestions(VisualContext("chart-2", temporal, temporal_profile)) == [
+        "Ponlo en barras"
+    ]
+
+
+@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
+def test_every_chip_the_floor_offers_over_this_family_verifies_when_applied(
+    family_name: str,
+) -> None:
+    """C1: `_chart_suggestions` used to offer chips no gate had reviewed, and on the commonest
+    chart -- a plain breakdown -- one of them (a line over unordered categories) was refused the
+    moment a holder tapped it. Driven through the real gate, not a mock: every chip this
+    generator offers over the floor's own chart, for every family the exporter renders, must be
+    a chip `apply_visual_intent` + `verify(draft_of(...), ...)` actually accepts.
+
+    The reviewer's own probe, pinned rather than described: the plain breakdown family no longer
+    offers «Ponlo en línea» (the `mark` rule refuses a line over unordered categories) while it
+    still offers «Ordena de menor a mayor» (the axis already carries its own descending sort,
+    which a chart-wide ascending patch cannot unrank -- see the test above).
+    """
+    dataset, kwargs = FAMILY_DATASETS[family_name]
+    profile = visual_profile_of(dataset, **{"total_minor": None, **kwargs})
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None, f"the floor produced no chart for family {family_name!r}"
+    context = VisualContext(f"chart-{family_name}", spec, profile)
+    suggestions = _chart_suggestions(context)
+    for chip in suggestions:
+        intent = interpret_visual(chip, (context,))
+        assert intent is not None and intent.patch is not None, (family_name, chip)
+        merged = apply_visual_intent(intent, context)
+        verified = verify(draft_of(merged.spec), context.profile)
+        assert isinstance(verified, ChartSpec), (family_name, chip, verified)
+    if family_name == "breakdown":
+        assert "Ponlo en línea" not in suggestions
+        assert "Ordena de menor a mayor" in suggestions
+
+
+def test_the_donut_familys_chips_verify_too() -> None:
+    """The floor never produces a donut (`DeterministicVisualPlanner.plan` has no such branch),
+    so the parametrised test above cannot cover it. Built the same way
+    `export_chart_fixtures._donut_family` and the wire test beside it do.
+    """
+    rows = (
+        VisualRow(dimension="Alquiler", value_minor=60_000),
+        VisualRow(dimension="Ocio", value_minor=40_000),
+    )
+    spec = ChartSpec(
+        mark="donut",
+        encodings=(
+            ChartEncoding("theta", "value_minor", "quantitative", "Importe"),
+            ChartEncoding("color", "dimension", "nominal", "Parte"),
+            ChartEncoding("tooltip", "dimension", "nominal"),
+            ChartEncoding("tooltip", "value_minor", "quantitative", "Importe"),
+        ),
+    )
+    dataset = VisualDataset(rows=rows, metric="SUM")
+    profile = visual_profile_of(dataset, total_minor=100_000, group_by="NONE")
+    context = VisualContext("chart-donut", spec, profile)
+    suggestions = _chart_suggestions(context)
+    for chip in suggestions:
+        intent = interpret_visual(chip, (context,))
+        assert intent is not None and intent.patch is not None, chip
+        merged = apply_visual_intent(intent, context)
+        verified = verify(draft_of(merged.spec), context.profile)
+        assert isinstance(verified, ChartSpec), (chip, verified)
 
 
 def test_a_disabled_stack_emits_an_explicit_null_and_not_an_absent_property() -> None:
