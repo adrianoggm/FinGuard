@@ -351,12 +351,20 @@ def _order(spec: ChartSpec, profile: VisualProfile) -> Rejection | None:
             # it had one, was never checked either: a `color` legend ranked *ascending* --
             # backwards from what `MEASURE_DESC` means -- was unrefusable. Off-axis, a sort may be
             # omitted; a sort that is there may not contradict the rank.
-            ranked = sort is not None and sort.mode == "descending" and sort.field == measure_name
-            ranked_wide = spec.sort == "descending" and spec.sort_field == measure_name
+            #
+            # On the axis, both directions rank *by the measure* (F1, fix wave 2): the floor's own
+            # choice is descending, but "de menor a mayor" is a live decision the conversation may
+            # make about that same axis, not a different claim about the data. Off axis -- a
+            # legend, an offset -- there is no such conversation turn to make it with, so it stays
+            # exactly what the floor would draw: descending, the one direction `test_measure_desc_
+            # off_axis_may_omit_its_sort_but_not_contradict_it` already pins.
+            allowed = {"ascending", "descending"} if is_axis_dimension else {"descending"}
+            ranked = sort is not None and sort.mode in allowed and sort.field == measure_name
+            ranked_wide = (
+                is_axis_dimension and spec.sort in allowed and spec.sort_field == measure_name
+            )
             if not (ranked or ranked_wide) and (is_axis_dimension or sort is not None):
-                return Rejection(
-                    "order", f"{item.field} ranks by magnitude: descending by {measure_name}"
-                )
+                return Rejection("order", f"{item.field} ranks by magnitude: by {measure_name}")
         elif held.order == "INPUT":
             wrong_encoding_sort = sort is not None and sort.mode != "input"
             wrong_chart_sort = chart_wide and spec.sort != "input"

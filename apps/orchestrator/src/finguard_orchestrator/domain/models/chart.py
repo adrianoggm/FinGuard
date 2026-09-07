@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from typing import TYPE_CHECKING, Final, Literal, cast, get_args
 from uuid import UUID
 
@@ -387,6 +388,29 @@ class EncodingPatch:
         return cls(changed=frozenset(names))
 
 
+def _dimension_axis(
+    encodings: tuple[ChartEncoding, ...], profile: VisualProfile
+) -> ChartEncoding | None:
+    """The x/y encoding whose field is a `dimension`, preferring a nominal one.
+
+    Mirrors `visual_plan_verifier._dimension_axis` rather than importing it -- a service reaching
+    back into the model it is itself built from would be the layering this codebase refuses
+    everywhere else. A RECURRENCE profile can place two `dimension`-role fields on axes at once
+    (`occurred_at`, temporal, on `x`; `dimension`, nominal, on `y`), and it is the nominal one
+    whose order a sort patch means to edit -- the temporal axis is never what "de menor a mayor"
+    is asking to reorder.
+    """
+    candidates = [
+        item
+        for item in encodings
+        if item.channel in {"x", "y"}
+        and (held := profile.field(item.field)) is not None
+        and held.role == "dimension"
+    ]
+    nominal = next((item for item in candidates if item.type == "nominal"), None)
+    return nominal if nominal is not None else next(iter(candidates), None)
+
+
 def merge_encoding_patch(
     spec: ChartSpec, patch: EncodingPatch, profile: VisualProfile
 ) -> ChartSpec:
@@ -473,6 +497,30 @@ def merge_encoding_patch(
             else item
             for item in encodings
         )
+    # F1 (fix wave 2): one live order decision per axis. A chart-wide `sort` is what `derive_chart`
+    # used to mean by "ranked", but `present()` (`vega_lite.py:89-90`) always lets an axis's own
+    # `EncodingSort` win over it -- so once an axis already carries one (the floor's own
+    # MEASURE_DESC dimension does), a patch's chart-wide `sort` was dead on arrival: it verified,
+    # minted a new version, and drew the exact same order. The patch's actual meaning is to
+    # replace the order the axis already keeps, not to set a slot nothing on the wire reads.
+    # `input` keeps its existing (chart-wide, field-less) rule: `EncodingSort` refuses a field
+    # paired with `"input"`, so there is no per-axis form of it to replace into.
+    if "sort" in patch.changed and sort is not None and sort != "input":
+        axis = _dimension_axis(encodings, profile)
+        if axis is not None and axis.sort is not None:
+            encodings = tuple(
+                dataclass_replace(
+                    item, sort=EncodingSort(mode=sort, field=patch.sort_field or axis.sort.field)
+                )
+                if item is axis
+                else item
+                for item in encodings
+            )
+            # The chart-wide slots stay exactly what the spec already had: never invented (I2's
+            # own argument, applied here to a value rather than to `was`), and never left at
+            # whatever the patch tried to set there.
+            sort = spec.sort
+            sort_field = spec.sort_field
     result = ChartSpec(
         mark=mark,
         encodings=encodings,
