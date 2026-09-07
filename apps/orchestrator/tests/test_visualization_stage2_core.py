@@ -1,5 +1,7 @@
+import functools
 from dataclasses import replace
 from typing import get_args
+from uuid import UUID
 
 import pytest
 from support.visual_planners import default_policy
@@ -34,11 +36,13 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     VisualDecision,
 )
 from finguard_orchestrator.domain.services.visual_interpreter import (
+    VisualIntent,
     apply_visual_intent,
     interpret_visual,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
+from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     FinancialPlan,
     RelativePeriod,
@@ -46,9 +50,15 @@ from finguard_orchestrator.domain.value_objects.financial_plan import (
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
     _REFUSAL_TEXT,
     _derived_context,
+    _saved_visual_source,
     _visual_only_response,
 )
-from finguard_orchestrator.infrastructure.dto.llm_dto import VisualizationDerivation
+from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    MetricSourcePayload,
+    QuestionRequest,
+    VisualizationDerivation,
+)
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.mappers.conversation_mapper import (
     _encoding_sort_from_payload,
     to_domain,
@@ -683,6 +693,80 @@ def test_visual_unchanged_is_judged_against_the_chart_on_screen_not_the_saved_me
     assert same_intent is not None and same_intent.patch is not None
     unchanged_response = _visual_only_response(same_intent, already_ascending)
     assert unchanged_response.outcome == "VISUAL_UNCHANGED"
+
+
+# --- Task 3: refused where it is untrusted, sealed where it is derived --------------------------
+
+
+def test_an_untrusted_context_is_refused_before_any_merge_or_ledger_call() -> None:
+    """An echoed context whose seal did not check out (`conversation_mapper.to_domain`'s own
+    `verify`, `trusted=False`) is drawn and can still be navigated, but it is not a legitimate
+    target for a restyle. `_visual_only_response` refuses it before `_saved_visual_source`'s own
+    refusal even matters, before any merge or verify -- the conversation comes back byte-identical
+    to what was handed in, and zero ledger calls: the `VISUAL_FOLLOW_UP` row recorded upstream
+    (`llm_controller.py`'s own short-circuit) is this turn's whole audit trail, exactly like F2's
+    `VISUAL_UNCHANGED` above.
+    """
+    spec, profile = _base()
+    untrusted = replace(VisualContext("chart-1", spec, profile), trusted=False)
+    conversation = Conversation(visual_contexts=(untrusted,))
+    intent = interpret_visual("ordénalo descendente", conversation.visual_contexts)
+    assert intent is not None and intent.patch is not None
+    with recording_turn() as turn:
+        response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UNTRUSTED"
+    assert response.text == "No reconozco ese gráfico; pide uno nuevo y podré cambiarlo."
+    assert response.conversation == to_payload(conversation)
+    assert turn.sealed().decisions == ()
+
+
+def test_a_restyle_seals_its_derived_context_for_the_holder() -> None:
+    """Task 3's `seal` flows straight from `_visual_only_response` into `_derived_context`, so a
+    restyle's own chart is signed the same turn it is minted -- the holder does not have to ask a
+    fresh question just to get a context this process's own verifier will accept back."""
+    spec, profile = _base()
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("ordénalo descendente", conversation.visual_contexts)
+    assert intent is not None
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+    seal = functools.partial(
+        conversation_mapper.seal_context, holder_reference="holder", codec=tokens
+    )
+
+    response = _visual_only_response(intent, conversation, seal=seal)
+
+    assert response.outcome == "VISUAL_UPDATED"
+    assert response.conversation is not None
+    (payload_context,) = response.conversation.visual_contexts[-1:]
+    assert payload_context.token is not None
+    assert tokens.verify_context(
+        payload_context.token, "holder", conversation_mapper.context_semantics(payload_context)
+    )
+
+
+def test_saved_visual_source_refuses_an_untrusted_context_even_with_a_valid_token() -> None:
+    """A saved-metric restyle needs both a valid metric token AND a context the caller can still
+    vouch for. `_saved_visual_source` used to check only the token; an echoed context whose seal
+    did not check out now refuses here too, before the token verification even has a say -- refuse,
+    never repair, applied to the save-candidate path and not only to the restyle merge above.
+    """
+    spec, profile = _base()
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    definition = SavedMetricDefinition(plan, spec)
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+    who = Caller(holder_reference="holder", account_id=UUID(int=0), scopes=frozenset())
+    metric_token = tokens.issue(who.holder_reference, definition)
+    untrusted = replace(VisualContext("chart-1", spec, profile), trusted=False)
+    conversation = Conversation(visual_contexts=(untrusted,))
+    intent = VisualIntent(None, "chart-1")
+    request = QuestionRequest(
+        question="ponlo en donut",
+        metric_sources=[MetricSourcePayload(chart_id="chart-1", definition_token=metric_token)],
+    )
+
+    result = _saved_visual_source(request, intent, conversation, who, tokens, True)
+
+    assert result is None
 
 
 def test_the_chips_offered_all_change_the_chart() -> None:

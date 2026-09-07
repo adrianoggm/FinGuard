@@ -10,9 +10,10 @@ handler directly and says so, which is a smaller lie than a bus that sometimes a
 once and sometimes many times.
 """
 
+import functools
 import json
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from datetime import date, timedelta
 from typing import Annotated
@@ -186,6 +187,11 @@ def _saved_visual_source(
     context = conversation.visual_context(intent.target)
     if offered is None or context is None:
         return None
+    # Task 3: a valid metric token says nothing about whether the *chart* it would restyle is
+    # still one this holder can vouch for. An untrusted context refuses a save-candidate restyle
+    # the same way it refuses a plain one -- refuse, never repair.
+    if not context.trusted:
+        return None
     try:
         definition = metric_tokens.verify(offered.definition_token, who.holder_reference)
     except (MetricTokenError, CodecError):
@@ -204,6 +210,7 @@ def _derived_context(
     chart_id: str,
     *,
     decision: VisualDecision | None = None,
+    seal: Callable[[VisualContext], VisualContext] | None = None,
 ) -> VisualContext:
     """The restyled chart's own context: a new id and turn, the source's profile and provenance.
 
@@ -224,8 +231,14 @@ def _derived_context(
     `trusted.chart_id` is still the conversation's own displayed chart while `spec` began as the
     saved metric's. Correct -- the restyle *is* of the chart on screen -- but read the link as
     "this is a restyle of that chart", never as "this spec derives from that spec".
+
+    `seal` defaults to `None` -- Task 3's own addition, and every caller before it had none to pass
+    either. Sealed here rather than by a second pass over the wire afterward, the same reason
+    `_remember_visual_context` seals a fresh chart at birth: a restyle is signed the turn it is
+    minted, so the holder does not have to ask a new question just to get a context this process's
+    own verifier will accept back.
     """
-    return VisualContext(
+    context = VisualContext(
         chart_id,
         spec,
         trusted.profile,
@@ -235,6 +248,7 @@ def _derived_context(
         derived_from=trusted.chart_id,
         turn_id=uuid.uuid4(),
     )
+    return seal(context) if seal is not None else context
 
 
 # §5's question, for the two AMBIGUOUS pairs the short-circuit's own `classify_claimed_visual`
@@ -296,6 +310,7 @@ def _visual_only_response(
     source: SavedMetricDefinition | None = None,
     holder_reference: str | None = None,
     metric_tokens: MetricTokenCodec | None = None,
+    seal: Callable[[VisualContext], VisualContext] | None = None,
 ) -> QuestionResponse:
     if intent.explanation:
         return QuestionResponse(
@@ -308,6 +323,16 @@ def _visual_only_response(
         return QuestionResponse(
             outcome="VISUAL_NEEDS_TARGET",
             text="Indica qué gráfico quieres cambiar.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    # Task 3: refuse, never repair. An echoed context whose seal did not check out
+    # (`conversation_mapper.to_domain`'s own `verify`) is drawn and can still be navigated, but it
+    # is not a legitimate target for a restyle -- before `_saved_visual_source`'s own refusal even
+    # matters, before any merge or verify, and before a single ledger call.
+    if not context.trusted:
+        return QuestionResponse(
+            outcome="VISUAL_UNTRUSTED",
+            text="No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
             conversation=conversation_mapper.to_payload(conversation),
         )
     # `_saved_visual_source` only ever offers a definition that has a chart; this states it rather
@@ -377,7 +402,9 @@ def _visual_only_response(
     was = trusted_context.decision.source if trusted_context.decision is not None else None
     record_visual_decision(decision, was=was)
     chart_id = "chart-" + uuid.uuid4().hex[:16]
-    derived_context = _derived_context(trusted_context, updated.spec, chart_id, decision=decision)
+    derived_context = _derived_context(
+        trusted_context, updated.spec, chart_id, decision=decision, seal=seal
+    )
     next_conversation = conversation.with_visual_context(derived_context)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:
@@ -1167,14 +1194,28 @@ def _sse(payload: Mapping[str, object]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
-def _conversation_of(request: QuestionRequest) -> Conversation:
+def _conversation_of(
+    request: QuestionRequest, who: Caller, metric_tokens: MetricTokenCodec
+) -> Conversation:
     """Where the conversation was, as a conversation.
 
     Mapped at the edge on purpose: a state the caller made up is a bad request, and this is the
     layer that knows how to say so. Nothing further in owns a value it has to take on faith — the
     handler receives typed states whose invariants have already run.
+
+    Task 3: the one production call of `to_domain` bound to `verify=...` -- every echoed visual
+    context is checked against `who.holder_reference` and this process's own `metric_tokens` codec
+    right here, at the one HTTP boundary a caller's own claim about the conversation crosses. A
+    context whose seal does not check out comes back `trusted=False` (`to_domain`'s own default
+    otherwise), and everything downstream refuses it as a semantic input rather than repairing or
+    silently dropping it.
     """
-    return conversation_mapper.to_domain(request.conversation)
+    return conversation_mapper.to_domain(
+        request.conversation,
+        verify=lambda token, semantics: metric_tokens.verify_context(
+            token, who.holder_reference, semantics
+        ),
+    )
 
 
 def _presentation_of(request: QuestionRequest) -> PresentationContext:
@@ -1496,7 +1537,13 @@ async def ask(
     field that could carry one.
     """
     key = attempt
-    was = _conversation_of(request)
+    was = _conversation_of(request, who, metric_tokens)
+    # Task 3: built once per request, unconditionally -- restyling a chart is not a metrics
+    # feature, so a derived context is sealed for its holder the same turn it is minted regardless
+    # of whether saved metrics are enabled.
+    seal = functools.partial(
+        conversation_mapper.seal_context, holder_reference=who.holder_reference, codec=metric_tokens
+    )
     presentation = _presentation_of(request)
 
     visual = interpret_visual(
@@ -1518,8 +1565,9 @@ async def ask(
             visual,
             was,
             source=source,
-            holder_reference=who.holder_reference if source is not None else None,
+            holder_reference=who.holder_reference,
             metric_tokens=metric_tokens if source is not None else None,
+            seal=seal,
         )
 
     if isinstance(was.active, PaymentConfirmation):
@@ -1654,7 +1702,11 @@ async def ask_streaming(
     rather than arriving as a footnote under a number the user has already read.
     """
     key = attempt
-    was = _conversation_of(request)
+    was = _conversation_of(request, who, metric_tokens)
+    # Task 3: built once per request, unconditionally -- see the same line on the question route.
+    seal = functools.partial(
+        conversation_mapper.seal_context, holder_reference=who.holder_reference, codec=metric_tokens
+    )
     presentation = _presentation_of(request)
 
     visual = interpret_visual(
@@ -1675,8 +1727,9 @@ async def ask_streaming(
                 visual,
                 was,
                 source=source,
-                holder_reference=who.holder_reference if source is not None else None,
+                holder_reference=who.holder_reference,
                 metric_tokens=metric_tokens if source is not None else None,
+                seal=seal,
             )
 
         async def visual_events() -> AsyncIterator[str]:

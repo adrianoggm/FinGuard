@@ -35,6 +35,7 @@ from finguard_orchestrator.infrastructure.controllers.llm_controller import (
 )
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper, llm_mapper
 from finguard_orchestrator.infrastructure.mappers.llm_mapper import _visualization_to_dto
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
@@ -281,3 +282,119 @@ def test_the_restyle_helper_copies_a_trusted_contexts_provenance_forward() -> No
     assert derived.derived_from == trusted.chart_id
     assert isinstance(derived.turn_id, UUID) and derived.turn_id != trusted.turn_id
     assert derived.decision is None
+
+
+# --- Task 3: sealed where it is born -----------------------------------------------------------
+
+
+def test_a_fresh_chart_is_sealed_for_its_holder_and_unsealed_without_one(
+    charted_result, chart_response
+) -> None:
+    """`question_to_dto` builds `seal` itself from the two keyword arguments it already takes and
+    hands it to `_remember_visual_context`, so the context it mints is sealed before `to_payload`
+    ever sees it -- signed at birth, not by a second pass over the wire afterward.
+
+    With no holder to seal for -- every existing caller in this codebase's tests, and every turn
+    on a channel/feature-flag combination the routes gate to `None` -- the context stays exactly
+    as it always has: unsealed, and `trusted=True` in-process, which is `VisualContext`'s own
+    default rather than anything this task has to set.
+    """
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+
+    sealed = llm_mapper.question_to_dto(charted_result, holder_reference="h", metric_tokens=tokens)
+    (payload_context,) = sealed.conversation.visual_contexts[-1:]
+    assert payload_context.token is not None
+    assert tokens.verify_context(
+        payload_context.token, "h", conversation_mapper.context_semantics(payload_context)
+    )
+
+    unsealed = llm_mapper.question_to_dto(charted_result)
+    (plain_context,) = unsealed.conversation.visual_contexts[-1:]
+    assert plain_context.token is None
+
+    remembered = llm_mapper._remember_visual_context(charted_result, chart_response)
+    assert remembered.conversation.visual_contexts[-1].trusted is True
+
+
+def test_chart_suggestions_offers_nothing_for_an_untrusted_context() -> None:
+    """A chip offered over a context nobody can vouch for is a button that will answer
+    `VISUAL_UNTRUSTED` the moment it is tapped -- `_chart_suggestions` says so up front rather than
+    relying on `_visual_only_response`'s own refusal to happen to produce the same empty list."""
+    untrusted = replace(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE), trusted=False)
+    assert llm_mapper._chart_suggestions(untrusted) == []
+
+
+def test_to_domain_is_called_only_where_a_caller_can_verify_it() -> None:
+    """`to_domain` builds `VisualContext.trusted` from its `verify` callable, so a call with no
+    `verify` trusts whatever the caller echoed with no check at all -- `to_domain`'s own default.
+    Two call sites do this in `src/` today, and this pins both rather than either alone.
+
+    `_conversation_of` is the one HTTP boundary: `request.conversation` is a caller's own claim
+    about where a conversation was, and it is the one call bound to `verify=...`, closing over
+    `who.holder_reference` and the app's own `metric_tokens` codec.
+
+    `_compound_read_reply`'s own call is not a second boundary. Its argument
+    (`rendered.conversation`) is `to_payload(result.conversation)`, built two lines earlier in the
+    same function from a `Conversation` the query bus just returned inside *this* request --
+    nothing a caller sent reaches it. The round trip exists to recover the richer domain types
+    (`ChartSpec` and friends) `to_payload` just flattened, not to admit new data; every context it
+    builds carries `token=None`, so binding a `verify` there would refuse it regardless of content
+    and turn an internal implementation detail into a bug in the compound-question path.
+
+    A third call site appearing anywhere else in `src/` -- verified or not -- fails this test until
+    someone decides which of the two shapes it is, the way `test_otel.py`'s own import sweep pins
+    where `opentelemetry` may be imported from.
+    """
+    import ast
+    from pathlib import Path
+
+    source_root = Path(__file__).parents[1] / "src" / "finguard_orchestrator"
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self, relative: str) -> None:
+            self.relative = relative
+            self.stack: list[str] = []
+            self.calls: list[tuple[str, int, str, bool]] = []
+
+        def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._function(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._function(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            target = node.func
+            name = (
+                target.id
+                if isinstance(target, ast.Name)
+                else target.attr
+                if isinstance(target, ast.Attribute)
+                else None
+            )
+            if name == "to_domain":
+                enclosing = self.stack[-1] if self.stack else "<module>"
+                verified = any(keyword.arg == "verify" for keyword in node.keywords)
+                self.calls.append((self.relative, node.lineno, enclosing, verified))
+            self.generic_visit(node)
+
+    calls: list[tuple[str, int, str, bool]] = []
+    for path in sorted(source_root.rglob("*.py")):
+        relative = path.relative_to(source_root).as_posix()
+        visitor = _Visitor(relative)
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=relative))
+        calls.extend(visitor.calls)
+
+    verified_calls = [call for call in calls if call[3]]
+    unverified_calls = [call for call in calls if not call[3]]
+
+    assert [call[2] for call in verified_calls] == ["_conversation_of"], (
+        f"to_domain called with verify= outside _conversation_of, or not at all: {verified_calls}"
+    )
+    assert [(call[0], call[2]) for call in unverified_calls] == [
+        ("infrastructure/controllers/llm_controller.py", "_compound_read_reply")
+    ], f"an unverified to_domain call site appeared where none is accounted for: {unverified_calls}"
