@@ -4,6 +4,7 @@ import pytest
 
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
+    ChartEncoding,
     ChartSpec,
     EncodingPatch,
     VisualDataset,
@@ -243,6 +244,38 @@ def test_a_turned_grouped_comparison_bar_still_verifies() -> None:
     verified = verify(_draft_from_spec(turned), profile)
     assert isinstance(verified, ChartSpec)
     assert canonical(verified) == canonical(turned)
+
+
+def test_a_turned_bar_with_only_a_chart_wide_sort_still_verifies() -> None:
+    """D-4.2b-5 (Task 3 minor 1, Wave 4.2b fix wave): every floor bar above carries a per-axis
+    `EncodingSort` (`ranked_bar`'s own shape), so nothing pinned the other legal one -- a
+    chart-wide `sort`/`sort_field` alone, with no per-axis sort at all. `breakdown()`'s MEASURE_DESC
+    rank accepts either (`verify`'s `ranked`/`ranked_wide` pair), and re-probed here: it swaps,
+    verifies both ways, and round-trips back to the untouched chart.
+    """
+    profile = breakdown()
+    horizontal = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("y", "dimension", "nominal"),
+            ChartEncoding("x", "value_minor", "quantitative"),
+        ),
+        sort="descending",
+        sort_field="value_minor",
+    )
+    verified_horizontal = verify(_draft_from_spec(horizontal), profile)
+    assert isinstance(verified_horizontal, ChartSpec)
+    assert canonical(verified_horizontal) == canonical(horizontal)
+
+    vertical = merge_encoding_patch(horizontal, EncodingPatch(orientation="vertical"), profile)
+    assert any(item.channel == "x" and item.field == "dimension" for item in vertical.encodings)
+    assert (vertical.sort, vertical.sort_field) == ("descending", "value_minor")
+    verified_vertical = verify(_draft_from_spec(vertical), profile)
+    assert isinstance(verified_vertical, ChartSpec)
+    assert canonical(verified_vertical) == canonical(vertical)
+
+    back = merge_encoding_patch(vertical, EncodingPatch(orientation="horizontal"), profile)
+    assert canonical(back) == canonical(horizontal)
 
 
 _C1_PROBES = {

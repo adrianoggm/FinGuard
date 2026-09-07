@@ -109,6 +109,8 @@ def interpret_visual(
     elif re.search(r"\b(?:circular|donut|anillo)\b", folded):
         mark = "donut"
     orientation: Orientation | None = None
+    # M-10 (Wave 4.2b fix wave): a sentence naming both resolves to horizontal -- first-listed
+    # wins, the same rule as everywhere else in this function (`mark` above, `sort` below).
     if re.search(r"\b(?:horizontal|tumba\w*)\b", folded):
         orientation = "horizontal"
     elif re.search(r"\b(?:vertical|de\s+pie)\b", folded):
