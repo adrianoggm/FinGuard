@@ -192,8 +192,15 @@ def _saved_visual_source(
     # the same way it refuses a plain one -- refuse, never repair.
     if not context.trusted:
         return None
+    # I3 (fix wave): the token also has to name this chart. `intent.target` is never `None` here
+    # (checked above), so a token minted before this change -- one that carries no chart at all --
+    # can no longer be used as a source: it is the holder's own token, over the holder's own
+    # chart, but pairing it with *this* chart would sign a saved metric that draws that token's
+    # plan over a profile nobody verified for it. Refuse, never repair.
     try:
-        definition = metric_tokens.verify(offered.definition_token, who.holder_reference)
+        definition = metric_tokens.verify(
+            offered.definition_token, who.holder_reference, chart_id=intent.target
+        )
     except (MetricTokenError, CodecError):
         return None
     # A metric saved as a figure has no chart, so there is nothing here for a restyle to trust.
@@ -413,6 +420,7 @@ def _visual_only_response(
             definition_token=metric_tokens.issue(
                 holder_reference,
                 SavedMetricDefinition(source.plan, updated.spec),
+                chart_id=chart_id,
             ),
         )
     return QuestionResponse(

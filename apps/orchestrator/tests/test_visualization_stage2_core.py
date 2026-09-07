@@ -769,6 +769,68 @@ def test_saved_visual_source_refuses_an_untrusted_context_even_with_a_valid_toke
     assert result is None
 
 
+def test_saved_visual_source_refuses_a_metric_token_bound_to_a_different_chart() -> None:
+    """I3 (fix wave): a metric token now names the chart it was issued for. A token minted for
+    plan B's chart, offered as chart A's `metric_sources` entry, is the holder's own token over
+    the holder's own chart -- nothing forged -- but pairing it with A would sign a saved metric
+    that draws B's plan over a profile nobody verified for it. `_saved_visual_source` refuses it
+    the same way an untrusted context does above, before the profile/field check ever runs.
+    """
+    spec, profile = _base()
+    plan_b = FinancialPlan(direction=Direction.INCOME, period=RelativePeriod(Period.THIS_YEAR))
+    definition_b = SavedMetricDefinition(plan_b, spec)
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+    who = Caller(holder_reference="holder", account_id=UUID(int=0), scopes=frozenset())
+    token_for_b = tokens.issue(who.holder_reference, definition_b, chart_id="chart-b")
+    conversation = Conversation(visual_contexts=(VisualContext("chart-a", spec, profile),))
+    intent = VisualIntent(None, "chart-a")
+    request = QuestionRequest(
+        question="ponlo en donut",
+        metric_sources=[MetricSourcePayload(chart_id="chart-a", definition_token=token_for_b)],
+    )
+
+    result = _saved_visual_source(request, intent, conversation, who, tokens, True)
+
+    assert result is None
+
+
+def test_a_metric_token_bound_to_another_chart_restyles_without_a_save_candidate() -> None:
+    """I3, end to end (the reviewer's own probe): before this fix, offering plan B's token as
+    chart A's source answered `VISUAL_UPDATED` *and* minted a save candidate pairing plan B with a
+    spec merged over chart A's profile nobody verified for B. After it, `source` falls back to
+    `None` -- the turn is unaffected, since the intent is a real restyle of chart A's own trusted
+    context -- but no candidate is minted: pairing B's plan with A's chart is exactly the
+    unverified pairing this fix closes.
+    """
+    spec, profile = _base()
+    plan_b = FinancialPlan(direction=Direction.INCOME, period=RelativePeriod(Period.THIS_YEAR))
+    definition_b = SavedMetricDefinition(plan_b, spec)
+    tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+    who = Caller(holder_reference="holder", account_id=UUID(int=0), scopes=frozenset())
+    token_for_b = tokens.issue(who.holder_reference, definition_b, chart_id="chart-b")
+    conversation = Conversation(visual_contexts=(VisualContext("chart-a", spec, profile),))
+    intent = interpret_visual("ordénalo descendente", conversation.visual_contexts)
+    assert intent is not None
+    request = QuestionRequest(
+        question="ordénalo descendente",
+        metric_sources=[MetricSourcePayload(chart_id="chart-a", definition_token=token_for_b)],
+    )
+
+    source = _saved_visual_source(request, intent, conversation, who, tokens, True)
+    assert source is None
+
+    response = _visual_only_response(
+        intent,
+        conversation,
+        source=source,
+        holder_reference=who.holder_reference,
+        metric_tokens=tokens,
+    )
+
+    assert response.outcome == "VISUAL_UPDATED"
+    assert response.save_candidate is None
+
+
 def test_the_chips_offered_all_change_the_chart() -> None:
     """F2: `_chart_suggestions` used to offer «Ordena de menor a mayor» by checking only the
     chart-wide `spec.sort` -- which stays `None` once an axis owns its own descending sort

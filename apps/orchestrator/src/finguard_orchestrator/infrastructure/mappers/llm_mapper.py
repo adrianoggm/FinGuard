@@ -516,6 +516,7 @@ def question_to_dto(
                     SavedMetricDefinition(
                         result.metric_definition, context.spec if context else None
                     ),
+                    chart_id=chart_id,
                 )
             except CodecError:
                 pass
