@@ -2,28 +2,41 @@
 
 from __future__ import annotations
 
+import copy
 import json
+from dataclasses import replace
 from datetime import date
 from typing import get_args
 from uuid import UUID
 
 import pytest
+from fastapi.testclient import TestClient
 from support.visual_planners import BREAKDOWN_PROFILE
 from test_decisions_call_sites import ACCOUNT as CS_ACCOUNT
 from test_decisions_call_sites import TODAY as CS_TODAY
 from test_decisions_call_sites import FakeLedger, handler_for, turn_for
 
+from finguard_orchestrator.application.bus.query_bus import QueryBus
 from finguard_orchestrator.application.queries import ask_financial_question
 from finguard_orchestrator.application.queries.financial_turn import (
     AskFinancialQuestionQuery,
     AskFinancialQuestionResult,
+    SpokenGroup,
+    SpokenPlan,
 )
 from finguard_orchestrator.application.queries.readers.visual_follow_up import (
     classify,
     classify_claimed_visual,
 )
+from finguard_orchestrator.bootstrap.dependencies import authenticated_caller, get_query_bus
+from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
-from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    VisualContext,
+    VisualDataset,
+    VisualRow,
+)
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import (
@@ -33,6 +46,7 @@ from finguard_orchestrator.domain.models.visual_follow_up import (
 )
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
+    VisualDecision,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
 from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent, interpret_visual
@@ -44,6 +58,7 @@ from finguard_orchestrator.infrastructure.controllers.llm_controller import ask 
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask_streaming
 from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
+from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.observability import Step, TurnRecord, Verdict, recording_turn
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
@@ -362,10 +377,24 @@ _CONVERSATION_ID = UUID("22222222-2222-2222-2222-222222222222")
 # (`llm_controller._derived_context`, `uuid.uuid4()`) regardless of whether a turn is being
 # recorded -- pinned here for the same reason `_CONVERSATION_ID` is.
 _MINTED_ID = UUID("33333333-3333-3333-3333-333333333333")
+# Task 3: `_conversation_of` now verifies every echoed visual context against a real codec -- these
+# tests drive the route function directly rather than through the DI container, so they need one
+# too, and `CHARTED`'s own context (built in-process, `token=None`) needs sealing for `_WHO` before
+# it crosses `_charted_request`'s wire round trip, or it would come back `trusted=False` the same
+# as a tampered one, and the PRESENTATION_ONLY restyle below would refuse rather than update.
+_TEST_TOKENS = MetricTokenCodec({"active": b"x" * 32}, "active")
+_SEALED_CHARTED = replace(
+    CHARTED,
+    visual_contexts=(
+        conversation_mapper.seal_context(
+            CHARTED.visual_contexts[0], _WHO.holder_reference, _TEST_TOKENS
+        ),
+    ),
+)
 
 
 def _charted_request(sentence: str) -> QuestionRequest:
-    payload = conversation_mapper.to_payload(CHARTED).model_copy(
+    payload = conversation_mapper.to_payload(_SEALED_CHARTED).model_copy(
         update={"conversation_id": _CONVERSATION_ID}
     )
     return QuestionRequest(question=sentence, conversation=payload)
@@ -381,7 +410,7 @@ async def _drive_question_route(sentence: str) -> QuestionResponse:
         payments_on=False,
         attempt="x",
         reads=None,
-        metric_tokens=None,
+        metric_tokens=_TEST_TOKENS,
         metrics_on=False,
     )
 
@@ -421,7 +450,7 @@ async def test_the_streaming_routes_short_circuit_records_it_too() -> None:
             queries=None,
             attempt="x",
             reads=None,
-            metric_tokens=None,
+            metric_tokens=_TEST_TOKENS,
             metrics_on=False,
         )
     (decision,) = turn.sealed().where(Step.VISUAL_FOLLOW_UP)
@@ -485,7 +514,7 @@ async def test_an_ambiguous_short_circuit_asks_instead_of_restyling(sentence, cl
             payments_on=False,
             attempt="x",
             reads=None,
-            metric_tokens=None,
+            metric_tokens=_TEST_TOKENS,
             metrics_on=False,
         )
 
@@ -515,7 +544,7 @@ async def test_the_streaming_routes_ambiguous_short_circuit_asks_too() -> None:
             queries=fake_queries,
             attempt="x",
             reads=None,
-            metric_tokens=None,
+            metric_tokens=_TEST_TOKENS,
             metrics_on=False,
         )
         chunks = [chunk async for chunk in streamed.body_iterator]
@@ -560,3 +589,243 @@ def test_every_ambiguous_claimant_classify_claimed_visual_can_return_has_a_text(
     drill = classify_claimed_visual(lexicon_intent, lexicon_sentence)
     assert drill.kind == "AMBIGUOUS"
     assert drill.claimant in llm_controller._ASK
+
+
+# --- Task 3: sealed where it is born, verified where it enters, refused where untrusted --------
+#
+# The only test in this module driven through a real `TestClient` rather than the route functions
+# directly: what is under test here is the app's own wiring -- `app.state.metric_tokens`, the dev
+# key it runs on in this process (`tests/conftest.py`'s `ORCHESTRATOR_DEV_TOKENS`), and the fact
+# that sealing and verifying a context both go through that one codec -- not any behaviour a bare
+# function call could exercise without it.
+
+
+class _DrawsOneChart:
+    """A `QueryBus` handler that answers every `AskFinancialQuestionQuery` with the same charted
+    result -- `SPEC` over `BREAKDOWN_PROFILE`, the same pair `CHARTED` already holds and the same
+    sentences above already restyle -- so the round trip below is about the seal, not about
+    whether this fixture's own chart happens to support a sort.
+
+    `conversation=query.conversation` (fix round 2): a real handler answers on top of whatever the
+    query already carried, not on a blank slate -- this is what lets a compound clause's own prior
+    context (another chart already in view, an untrusted one carried forward) survive into the
+    result `_compound_read_reply` builds on. Every single-turn "draw" test below sends no
+    conversation at all, so `query.conversation` there is the same empty one `AskFinancialQuestion
+    Result`'s own default (`IDLE`) already was -- this changes nothing for them.
+    """
+
+    async def handle(self, query: AskFinancialQuestionQuery) -> AskFinancialQuestionResult:
+        return AskFinancialQuestionResult(
+            outcome="PLANNED",
+            text="Aquí tienes el desglose.",
+            plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+            groups=[SpokenGroup("ALQUILER", 51_300, 1), SpokenGroup("OCIO", 4_000, 1)],
+            visual_dataset=VisualDataset(
+                metric="SUM", rows=(VisualRow("ALQUILER", 51_300), VisualRow("OCIO", 4_000))
+            ),
+            visual_decision=VisualDecision(
+                spec=SPEC, profile=BREAKDOWN_PROFILE, source="deterministic", valid=True
+            ),
+            conversation=query.conversation,
+        )
+
+
+def test_a_sealed_context_verifies_a_restyle_and_a_tampered_or_missing_one_is_refused() -> None:
+    """The route boundary, through a real `TestClient`: `_conversation_of` verifies every echoed
+    visual context against the app's own `metric_tokens` codec -- the development key in this
+    process, same as production when no signing key is configured, so sealing and verifying
+    through the same app works.
+
+    A first question draws a chart and its response seals the context; echoing that seal back
+    lets a restyle through (`VISUAL_UPDATED`). Echoing the same conversation with one bit the seal
+    covers flipped, or with the token dropped altogether, answers `VISUAL_UNTRUSTED` instead of
+    silently trusting -- or silently refusing to restyle -- an echo nobody can vouch for.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = True
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post("/v1/questions", json={"question": "¿Cuánto gasté el mes pasado?"})
+        assert drawn.status_code == 200
+        sealed_conversation = drawn.json()["conversation"]
+        (context,) = sealed_conversation["visual_contexts"]
+        assert context["token"]
+
+        restyled = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": sealed_conversation},
+        )
+        assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+
+        tampered = copy.deepcopy(sealed_conversation)
+        tampered["visual_contexts"][0]["profile"]["comparison"] = not context["profile"][
+            "comparison"
+        ]
+        flipped = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": tampered},
+        )
+        assert flipped.json()["outcome"] == "VISUAL_UNTRUSTED"
+
+        stripped = copy.deepcopy(sealed_conversation)
+        stripped["visual_contexts"][0]["token"] = None
+        untokened = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": stripped},
+        )
+        assert untokened.json()["outcome"] == "VISUAL_UNTRUSTED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled
+
+
+def test_a_chart_is_sealed_even_with_metrics_off_but_offers_no_save_candidate() -> None:
+    """Fix round 1: the corpus harness (and a voice turn, and any deployment with
+    `ORCHESTRATOR_METRICS_ENABLED=false`) never turns metrics on, and Task 3's own first cut of
+    the seal silently rode along on that same flag -- so a chart drawn there was never sealed, and
+    every later restyle of it came back `VISUAL_UNTRUSTED` for no reason a holder caused. The seal
+    is now unconditional: with metrics off (this test's `app.state.metrics_enabled = False`, this
+    module's own default), a first question still comes back sealed -- no save candidate to go
+    with it, since that offer is still exactly `metrics_on and request.channel == "TEXT"` -- and a
+    restyle over that same context still succeeds.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = False
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post("/v1/questions", json={"question": "¿Cuánto gasté el mes pasado?"})
+        assert drawn.status_code == 200
+        body = drawn.json()
+        assert body["save_candidate"] is None
+        sealed_conversation = body["conversation"]
+        (context,) = sealed_conversation["visual_contexts"]
+        assert context["token"]
+
+        restyled = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": sealed_conversation},
+        )
+        assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled
+
+
+# --- Fix round 2 (Task 3, C1/I2): a compound turn's charts are sealed too -----------------------
+
+
+def test_a_compound_turns_charts_are_sealed_and_each_restyles() -> None:
+    """C1: `_compound_read_reply` draws a chart per clause the same as the plain path does, and
+    until this fix it called `question_to_dto(result)` with no holder and no codec -- so every
+    chart a compound question drew was born unsealed, and the very next turn refused it as
+    untrusted (measured at `56fc066`: this exact sentence answered `VISUAL_UPDATED` at BASE and
+    regressed to `VISUAL_UNTRUSTED`). Both charts a compound turn draws now carry a token, and a
+    restyle of the one in view succeeds.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = True
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post(
+            "/v1/questions", json={"question": "Cuanto tengo y cuanto gaste este mes?"}
+        )
+        assert drawn.status_code == 200
+        body = drawn.json()
+        assert body["outcome"] == "COMPOUND"
+        contexts = body["conversation"]["visual_contexts"]
+        assert len(contexts) == 2
+        assert all(context["token"] for context in contexts)
+
+        restyled = client.post(
+            "/v1/questions",
+            json={
+                "question": "ordénalo de menor a mayor",
+                "conversation": body["conversation"],
+            },
+        )
+        assert restyled.json()["outcome"] == "VISUAL_UPDATED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled
+
+
+def test_an_untrusted_context_survives_a_compound_round_trip_still_tokenless() -> None:
+    """I2: `_compound_read_reply`'s own `to_domain(rendered.conversation)` call passes no
+    `verify=`, so every context it round-trips -- including one the caller's own turn already
+    marked untrusted -- comes back `trusted=True` in-process. That relaundering is inert only
+    because `trusted` never crosses the wire (pinned directly by
+    `test_trusted_never_crosses_the_wire`, `test_visual_context_producers.py`) and because the
+    untrusted context's `token` was already nulled by `_conversation_of` before this function ever
+    saw it, and nothing here re-seals it. Proven end to end: a tampered chart carried into a
+    compound turn comes out the other side of the round trip still tokenless, and restyling it
+    alone on the next turn is still refused -- the relaundered `trusted=True` never leaks past this
+    function's own return.
+    """
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = True
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+
+        drawn = client.post("/v1/questions", json={"question": "¿Cuánto gasté el mes pasado?"})
+        sealed_conversation = drawn.json()["conversation"]
+        tampered_chart_id = sealed_conversation["visual_contexts"][0]["chart_id"]
+        tampered = copy.deepcopy(sealed_conversation)
+        was_comparison = tampered["visual_contexts"][0]["profile"]["comparison"]
+        tampered["visual_contexts"][0]["profile"]["comparison"] = not was_comparison
+
+        compound = client.post(
+            "/v1/questions",
+            json={"question": "Cuanto tengo y cuanto gaste este mes?", "conversation": tampered},
+        )
+        assert compound.status_code == 200
+        assert compound.json()["outcome"] == "COMPOUND"
+        by_chart_id = {
+            context["chart_id"]: context
+            for context in compound.json()["conversation"]["visual_contexts"]
+        }
+        carried = by_chart_id[tampered_chart_id]
+        assert carried["token"] is None
+
+        # Isolated exactly as the next real turn's `_conversation_of` will see it: a lone chart in
+        # the echoed conversation, still tokenless from the compound round trip.
+        isolated = copy.deepcopy(compound.json()["conversation"])
+        isolated["visual_contexts"] = [carried]
+        restyle = client.post(
+            "/v1/questions",
+            json={"question": "ordénalo de menor a mayor", "conversation": isolated},
+        )
+        assert restyle.json()["outcome"] == "VISUAL_UNTRUSTED"
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled

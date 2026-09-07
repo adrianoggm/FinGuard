@@ -273,6 +273,8 @@ export type ConversationState = {
       comparison?: boolean;
       plan_limited?: boolean;
     };
+    // The server's seal; echoed, never read.
+    token?: string | null;
   }[];
   last_plan: PlanContext | null;
   prior_plan?: PlanContext | null;

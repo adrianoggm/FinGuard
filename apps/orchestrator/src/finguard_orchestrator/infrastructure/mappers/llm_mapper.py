@@ -4,6 +4,8 @@ Queries and commands answer with Results, never with domain objects, so what arr
 here is already flat. This adds the wire format and nothing else.
 """
 
+import functools
+from collections.abc import Callable
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from typing import Literal, cast
@@ -332,7 +334,10 @@ def _evidence_of(plan: FinancialPlan | ComparisonPlan | RatioPlan | None) -> tup
 
 
 def _remember_visual_context(
-    result: AskFinancialQuestionResult, visualization: VisualizationResponse | None
+    result: AskFinancialQuestionResult,
+    visualization: VisualizationResponse | None,
+    *,
+    seal: Callable[[VisualContext], VisualContext] | None = None,
 ) -> AskFinancialQuestionResult:
     if not isinstance(visualization, ChartVisualizationResponse) or result.visual_dataset is None:
         return result
@@ -360,20 +365,25 @@ def _remember_visual_context(
         )
         else None
     )
+    context = VisualContext(
+        visualization.chart_id,
+        spec,
+        decision.profile,
+        decision=decision,
+        source_plan=result.metric_definition,
+        evidence_ids=_evidence_of(result.metric_definition),
+        turn_id=uuid4(),
+        derived_from=derived_from,
+    )
+    # Task 3: sealed here, where the context is born -- before it ever reaches `to_payload` --
+    # rather than by a second pass over the wire once the response is built. `seal` is `None` for
+    # every caller with no holder to seal for (every existing call in this codebase's tests), and
+    # the context stays exactly as it always has: unsealed, `trusted=True` in-process.
+    if seal is not None:
+        context = seal(context)
     return replace(
         result,
-        conversation=result.conversation.with_visual_context(
-            VisualContext(
-                visualization.chart_id,
-                spec,
-                decision.profile,
-                decision=decision,
-                source_plan=result.metric_definition,
-                evidence_ids=_evidence_of(result.metric_definition),
-                turn_id=uuid4(),
-                derived_from=derived_from,
-            )
-        ),
+        conversation=result.conversation.with_visual_context(context),
     )
 
 
@@ -397,7 +407,15 @@ def _chart_suggestions(context: VisualContext) -> list[str]:
     spread "Sin el alquiler" after a breakdown of last month by category drops both the window and
     the grouping and plans for today -- a figure, not a clarification. A chip for it is a button
     that shows a wrong number, so there is no chip until the planner keeps the window.
+
+    Task 3: a chip whose target is not trusted offers nothing, full stop -- every candidate below
+    would still be filtered through `_chip_verifies`, which calls `_visual_only_response`'s own
+    gate on a context nobody has vouched for. That gate now refuses one outright (`VISUAL_UNTRUSTED`
+    before any merge), so every chip would silently vanish anyway; this says so up front instead of
+    relying on that refusal to happen to produce the same empty list.
     """
+    if not context.trusted:
+        return []
     spec = context.spec
     candidates = []
     if spec.limit is not None:
@@ -441,9 +459,30 @@ def question_to_dto(
     *,
     holder_reference: str | None = None,
     metric_tokens: MetricTokenCodec | None = None,
+    offer_saving: bool = False,
 ) -> QuestionResponse:
+    """Fix round 1 (Task 3): `holder_reference`/`metric_tokens` and `offer_saving` answer two
+    different questions, and conflating them is what sent the corpus red. The first pair is "can
+    this chart be sealed for its holder" -- unconditional in both routes, because a context drawn
+    with metrics off (a voice turn, a deployment with `ORCHESTRATOR_METRICS_ENABLED=false`, this
+    codebase's own conversation-corpus harness) still needs a seal or every later restyle of it is
+    refused as untrusted, and `app.state.metric_tokens` always exists regardless of the flag. The
+    second, `offer_saving`, is "may this turn also offer to keep the answer as a saved metric" --
+    still exactly the routes' own pre-Task-3 gate (`metrics_on and request.channel == "TEXT"`), now
+    named and passed explicitly instead of silently riding along on the first two.
+    """
     visualization = _visualization_to_dto(result)
-    result = _remember_visual_context(result, visualization)
+    # The seal is built whenever both are given, with no dependency on `offer_saving`: a fresh
+    # chart is signed for its holder the same turn it is drawn, whether or not this turn may also
+    # offer to save it.
+    seal = (
+        functools.partial(
+            conversation_mapper.seal_context, holder_reference=holder_reference, codec=metric_tokens
+        )
+        if holder_reference is not None and metric_tokens is not None
+        else None
+    )
+    result = _remember_visual_context(result, visualization, seal=seal)
     chart_id = (
         visualization.chart_id if isinstance(visualization, ChartVisualizationResponse) else None
     )
@@ -466,6 +505,7 @@ def question_to_dto(
         and answered_a_figure
         and holder_reference is not None
         and metric_tokens is not None
+        and offer_saving
     ):
         # No chart is not the same as a chart the conversation has forgotten: the first saves a
         # figure, the second would save a spec that is no longer the one on screen.

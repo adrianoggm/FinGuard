@@ -32,7 +32,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualProfile,
     derive_chart,
 )
-from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
 from finguard_orchestrator.domain.models.visual_plan import Rejection, draft_of
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
@@ -433,10 +433,14 @@ def test_the_wire_carries_derived_from_and_turn_id_and_nothing_server_side() -> 
     assert (item.derived_from, item.turn_id) == ("chart-1", turn)
     assert not hasattr(item, "decision") and not hasattr(item, "source_plan")
     assert not hasattr(item, "evidence_ids")
+    # `token` travels like `derived_from`/`turn_id` above it -- unlike `decision`/`source_plan`/
+    # `evidence_ids`, an unsealed context's `None` still rides the wire rather than vanishing.
+    assert item.token is None
     back = conversation_mapper.to_domain(payload)
     (restored,) = back.visual_contexts
     assert (restored.derived_from, restored.turn_id) == ("chart-1", turn)
     assert (restored.decision, restored.source_plan, restored.evidence_ids) == (None, None, ())
+    assert (restored.token, restored.trusted) == (None, True)
 
 
 def test_an_absent_origin_round_trips_as_none() -> None:
@@ -456,6 +460,62 @@ def test_an_invalid_origin_on_the_wire_is_refused() -> None:
     raw["visual_contexts"][0]["derived_from"] = "not a chart id!"
     with pytest.raises(ValidationError):
         ConversationPayload.model_validate(raw)
+
+
+def test_a_sealed_context_round_trips_trusted_and_a_tampered_one_does_not() -> None:
+    """A context this process sealed comes back `trusted` under the holder it was sealed for,
+    untrusted the moment a byte the seal covers changes underneath it, and untrusted again for a
+    different holder entirely -- the seal names who it was sealed for as much as what."""
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
+    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    assert sealed.token is not None and sealed.trusted is True
+
+    def verify(token: str | None, semantics: dict[str, object]) -> bool:
+        return codec.verify_context(token, "holder-a", semantics)
+
+    echoed = conversation_mapper.to_domain(
+        conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,))), verify=verify
+    )
+    assert echoed.visual_contexts[0].trusted is True
+    assert echoed.visual_contexts[0].token == sealed.token
+
+    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    # `_Payload` is not frozen: mutate the wire shape in place, exactly what a tampering client's
+    # request body would look like once it reaches the DTO.
+    profile = payload.visual_contexts[0].profile
+    profile.comparison = not profile.comparison
+    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
+    assert tampered.trusted is False and tampered.token is None
+
+    other = conversation_mapper.to_domain(
+        conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,))),
+        verify=lambda t, s: codec.verify_context(t, "holder-b", s),
+    ).visual_contexts[0]
+    assert other.trusted is False
+
+
+def test_an_unsealed_echo_is_untrusted_only_when_someone_verifies() -> None:
+    """No verifier: exactly today's behaviour, for every existing `to_domain(...)` call in this
+    suite -- an echoed context with no seal is trusted. Only a caller that actually hands a
+    verifier (Task 3's job) turns a tokenless echo untrusted."""
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)  # token None: an older client
+    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(context,)))
+    assert conversation_mapper.to_domain(payload).visual_contexts[0].trusted is True
+    untrusted = conversation_mapper.to_domain(payload, verify=lambda t, s: False)
+    assert untrusted.visual_contexts[0].trusted is False
+
+
+def test_the_seal_covers_the_whole_wire_context_but_not_itself() -> None:
+    """`context_semantics` is the one definition of what a seal covers: the wire context minus
+    the seal itself -- everything `VisualContextPayload` carries except `token`, never a
+    hand-picked subset that could drift from the DTO's own field set."""
+    payload = conversation_mapper.to_payload(
+        Conversation(visual_contexts=(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE),))
+    )
+    semantics = conversation_mapper.context_semantics(payload.visual_contexts[0])
+    assert "token" not in semantics
+    assert set(semantics) == set(VisualContextPayload.model_fields) - {"token"}
 
 
 def test_a_contradictory_field_role_is_refused_at_the_dto() -> None:
@@ -744,7 +804,9 @@ async def test_a_figure_is_offered_for_saving_even_with_no_chart_to_hang_it_from
         metric_definition=plan,
     )
 
-    response = question_to_dto(figure, holder_reference="holder", metric_tokens=tokens)
+    response = question_to_dto(
+        figure, holder_reference="holder", metric_tokens=tokens, offer_saving=True
+    )
 
     assert response.visualization is None
     assert response.save_candidate is not None
@@ -764,6 +826,42 @@ async def test_an_answer_with_no_figure_is_not_offered_for_saving() -> None:
     response = question_to_dto(without_figure, holder_reference="holder", metric_tokens=tokens)
 
     assert response.save_candidate is None
+
+
+async def test_offer_saving_gates_the_candidate_and_not_the_seal() -> None:
+    """Fix round 1 (Task 3): sealing a chart for its holder and offering to save the figure behind
+    it are two different questions. `holder_reference`/`metric_tokens` alone -- `offer_saving`
+    left at its default `False` -- still seal the fresh chart (a restyle later needs no metrics
+    feature to be trusted), but mint no save candidate; `offer_saving=True` does both, over the
+    identical figure.
+    """
+    tokens = MetricTokenCodec({"active": b"z" * 32}, "active")
+    plan = FinancialPlan(direction=Direction.EXPENSE, period=RelativePeriod(Period.THIS_MONTH))
+    figure = replace(
+        await _result((VisualRow("a", 100), VisualRow("b", 50))),
+        total_minor=150,
+        movement_count=2,
+        metric_definition=plan,
+    )
+
+    unoffered = question_to_dto(figure, holder_reference="holder", metric_tokens=tokens)
+    assert unoffered.save_candidate is None
+    assert unoffered.visualization is not None
+    (unoffered_context,) = unoffered.conversation.visual_contexts[-1:]
+    assert unoffered_context.token is not None
+    assert tokens.verify_context(
+        unoffered_context.token, "holder", conversation_mapper.context_semantics(unoffered_context)
+    )
+
+    offered = question_to_dto(
+        figure, holder_reference="holder", metric_tokens=tokens, offer_saving=True
+    )
+    assert offered.save_candidate is not None
+    (offered_context,) = offered.conversation.visual_contexts[-1:]
+    assert offered_context.token is not None
+    assert tokens.verify_context(
+        offered_context.token, "holder", conversation_mapper.context_semantics(offered_context)
+    )
 
 
 def test_a_profile_describes_its_dataset_and_not_a_chart() -> None:

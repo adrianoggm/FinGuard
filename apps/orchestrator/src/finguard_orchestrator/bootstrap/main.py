@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
@@ -115,6 +116,8 @@ runtime over `/admin/llm-policy` without restarting. Which models exist, which p
 serves each one and what happens when one fails come from the catalogue file, not from
 code.
 """
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -429,6 +432,14 @@ def create_app() -> FastAPI:
             configured_metric_keys[key_name] = base64.urlsafe_b64decode(key_value + "=")
     if settings.metrics_enabled and not configured_metric_keys:
         raise ValueError("METRICS_SIGNING_KEYS contains no valid signing keys")
+    # Task 3: the same codec now seals every visual context, not only save candidates -- a
+    # deployment running on the fallback key is one whose signed contexts anybody who reads this
+    # log line already knows how to forge, so it says so once, at the moment the choice was made.
+    if not configured_metric_keys:
+        logger.warning(
+            "visual seals and metric tokens use the development key: set "
+            "ORCHESTRATOR_METRICS_SIGNING_KEYS"
+        )
     app.state.metric_tokens = MetricTokenCodec(
         configured_metric_keys or {"default": b"test-only-disabled-metrics-key-32bytes"},
         settings.metrics_signing_active if configured_metric_keys else "default",
