@@ -1,6 +1,7 @@
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,6 +119,16 @@ code.
 """
 
 logger = logging.getLogger(__name__)
+
+# I4 (fix wave): rule 13's own vocabulary -- the loopback addresses a development credential is
+# allowed to sit on. `urlsplit(...).hostname` strips brackets from an IPv6 literal, so `[::1]`
+# and `::1` compare equal here without a second form of the same address to maintain.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    hostname = urlsplit(origin).hostname
+    return hostname is not None and hostname.lower() in _LOOPBACK_HOSTS
 
 
 def create_app() -> FastAPI:
@@ -432,6 +443,20 @@ def create_app() -> FastAPI:
             configured_metric_keys[key_name] = base64.urlsafe_b64decode(key_value + "=")
     if settings.metrics_enabled and not configured_metric_keys:
         raise ValueError("METRICS_SIGNING_KEYS contains no valid signing keys")
+    # I4 (fix wave): the case the guard above never covered. Task 3 made the same codec seal
+    # every visual context unconditionally, not only save candidates, so a deployment with
+    # metrics *off* and no signing keys is still running the whole trust boundary on the
+    # fallback key committed in this repository -- forgeable by whoever reads the source. No new
+    # setting: `web_origins` is already required (`config.py`) and already distinguishes `just
+    # app` (loopback only) from a real deployment, which is the same thing this refusal needs to
+    # know. Loopback-only or no origins at all still just warns, below.
+    if not configured_metric_keys and any(
+        not _is_loopback_origin(origin) for origin in settings.web_origins
+    ):
+        raise ValueError(
+            "METRICS_SIGNING_KEYS is required to serve a non-loopback origin: the visual seal "
+            "would run on the development key"
+        )
     # Task 3: the same codec now seals every visual context, not only save candidates -- a
     # deployment running on the fallback key is one whose signed contexts anybody who reads this
     # log line already knows how to forge, so it says so once, at the moment the choice was made.
