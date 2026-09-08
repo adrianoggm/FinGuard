@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from uuid import uuid4
 
+from support import episodes
 from support.visual_planners import BREAKDOWN_PROFILE
 from test_decisions_call_sites import (
     ACCOUNT,
@@ -577,3 +578,108 @@ def test_i4_a_category_plan_with_tied_labels_still_asks() -> None:
     drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation, today=AFTER_AUGUST)
 
     assert isinstance(drill, DrillAsk)
+
+
+# --- Fix round 2: N-1, a month outside the chart's own window is today's path, never a crash -----
+
+
+def test_n1_a_label_before_the_window_falls_to_todays_path_by_name() -> None:
+    """N-1: the chart drew a June bar, but its own `window` only covers July -- a ledger that
+    reports a bucket outside the window it also reports. Drilling June by name must compare the
+    two dates before building the range, not after: `AbsoluteRange(start, end)` with `end < start`
+    raises `InvalidValueError` in its own `__post_init__`, so the old code (build first, check
+    second) turned this into an unhandled exception rather than today's path."""
+    plan = replace(MONTH_PLAN, categories=())
+    context = VisualContext(
+        "chart-june-before-window",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("2026-07", "2026-06"),
+        ranked=True,
+        window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 31)),
+        plan_digest=plan_digest(plan),
+    )
+    conversation = Conversation(last_plan=plan, visual_contexts=(context,))
+
+    drill = read_drill_down("¿Por qué junio es tan alto?", conversation, today=AFTER_AUGUST)
+
+    assert drill is None
+
+
+def test_n1_a_label_after_the_window_falls_to_todays_path_by_name() -> None:
+    """N-1's other direction: the chart drew a September bar, but its own `window` only covers the
+    1st-5th of August -- the re-reviewer's own probe shape (a harness-derived window clamped to
+    `TODAY`, narrower than the labels it drew)."""
+    plan = replace(MONTH_PLAN, categories=())
+    context = VisualContext(
+        "chart-september-after-window",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("2026-09", "2026-08"),
+        ranked=True,
+        window=AbsoluteRange(date(2026, 8, 1), date(2026, 8, 5)),
+        plan_digest=plan_digest(plan),
+    )
+    conversation = Conversation(last_plan=plan, visual_contexts=(context,))
+
+    drill = read_drill_down(
+        "¿Por qué septiembre es tan alto?", conversation, today=date(2026, 8, 5)
+    )
+
+    assert drill is None
+
+
+def test_n1_a_superlative_landing_outside_the_window_falls_to_todays_path() -> None:
+    """N-1, by superlative rather than by name: the top-ranked bar (rank reading, read off the
+    chart's own order rather than named) is September, and the same out-of-window guard applies to
+    it exactly as it does to a named month."""
+    plan = replace(MONTH_PLAN, categories=())
+    context = VisualContext(
+        "chart-superlative-after-window",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("2026-09", "2026-08"),
+        ranked=True,
+        window=AbsoluteRange(date(2026, 8, 1), date(2026, 8, 5)),
+        plan_digest=plan_digest(plan),
+    )
+    conversation = Conversation(last_plan=plan, visual_contexts=(context,))
+
+    drill = read_drill_down(
+        "¿Qué movimientos explican ese pico?", conversation, today=date(2026, 8, 5)
+    )
+
+    assert drill is None
+
+
+async def test_n1_end_to_end_through_the_harness_stack_never_a_422() -> None:
+    """N-1, end to end, verbatim to the ruling's own scenario: «¿Cuánto gasté este año por meses?»
+    with groups 2026-08/2026-09 at the harness's `TODAY` (2026-08-05) draws a chart whose `window`
+    the harness derives as `2026-08-01..2026-08-05` (the month-key clamp, fix round 1); «¿Por qué
+    septiembre es tan alto?» resolves the September label, whose calendar month
+    (`2026-09-01..2026-09-30`) does not overlap that window at all -- HTTP 200 and the planner
+    path, never `invalid_input`."""
+    stack = episodes.a_stack()
+    conversation: dict[str, object] | None = {"account_selection_mode": "ALL"}
+    opening = episodes.Turn(
+        say="¿Cuánto gasté este año por meses?",
+        groups=[["2026-08", 18_000, 2], ["2026-09", 9_000, 1]],
+    )
+    stack.ledger.groups_for_next_turn = episodes._groups_from(opening)
+    first = stack.client.post(
+        "/v1/questions", json={"question": opening.say, "conversation": conversation}
+    )
+    stack.ledger.groups_for_next_turn = None
+    assert first.status_code == 200
+    conversation = first.json()["conversation"]
+
+    asked_before = len(stack.planner.asked)
+    calls_before = len(stack.ledger.ran)
+    second = stack.client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué septiembre es tan alto?", "conversation": conversation},
+    )
+
+    assert second.status_code == 200
+    assert len(stack.planner.asked) > asked_before  # today's path: the planner answered
+    assert len(stack.ledger.ran) == calls_before + 1  # one ordinary call, not a drill
