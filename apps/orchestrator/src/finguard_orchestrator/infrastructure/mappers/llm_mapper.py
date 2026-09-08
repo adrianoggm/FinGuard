@@ -8,7 +8,7 @@ import functools
 from collections.abc import Callable
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
-from typing import Final, Literal, cast
+from typing import Final, Literal, cast, get_args
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.application import (
@@ -33,6 +33,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualRow,
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
+from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUpKind
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
 from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.visual_interpreter import (
@@ -339,6 +340,11 @@ def _evidence_of(plan: FinancialPlan | ComparisonPlan | RatioPlan | None) -> tup
 # drill-down (Task 4) are the two follow-up kinds a new chart can trace back to its predecessor;
 # every other kind names no origin.
 _DERIVING_KINDS: Final = frozenset({"ANALYTICAL_RESHAPE", "DRILL_DOWN"})
+# M2 (fix wave): checked against the vocabulary at import time, the same way
+# `visual_follow_up.py`'s own `Claimant` pair strings check themselves against `get_args(Claimant)`
+# -- a typo in either hand-typed string here would otherwise stop a chart deriving from its
+# predecessor silently, discovered only by a test that happened to exercise that exact kind.
+assert _DERIVING_KINDS <= frozenset(get_args(VisualFollowUpKind))
 
 
 def _remember_visual_context(

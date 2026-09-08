@@ -130,6 +130,6 @@ def resolve_reference(sentence: str, context: VisualContext) -> Reference:
             )
         if len(context.labels) >= 2:
             return Ambiguous(context.labels)
-        # Not ranked and one label cannot happen: `drawn_labels` ranks a single-label chart.
+        # A single unranked label falls through to `NoMatch`; `drawn_labels` never produces one.
 
     return NoMatch()

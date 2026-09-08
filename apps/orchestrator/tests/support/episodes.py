@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from calendar import monthrange
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -341,6 +342,42 @@ class AnyPlan:
 # ever paid, and that needs a list to *not* be in, not a ledger to add up.
 SHOPS = ("Mercadona", "Cepsa", "Spotify")
 
+_MONTH_KEY = re.compile(r"(\d{4})-(\d{2})")
+
+
+def _resolved_window(
+    plan: FinancialPlan, groups: tuple[Group, ...]
+) -> tuple[date | None, date | None]:
+    """`period_start`/`period_end` the way banking answers them (Wave 4.3's fix wave):
+    `http_financial_query.py` maps the ledger's own `periodStart`/`periodEnd`, and this fake used
+    to answer neither, so a chart's `window` (`VisualDataset.window`, built from these two) was
+    always `None` in the corpus regardless of what an episode's `groups:` described.
+
+    When `plan.group_by` is `MONTH` and the groups handed back this turn carry `YYYY-MM` keys, the
+    window is the first day of the earliest key to the last day of the latest -- clamped to
+    `TODAY`, because the fake cannot answer with rows from a day that has not happened either.
+    Otherwise, `plan.date_range`'s own bounds when it has one. Otherwise neither: the fake has
+    nothing to resolve a window from, and `None` is the honest answer, not a guess.
+
+    The fake answers the window of the months it was told to answer -- so a chart's `window` in
+    the corpus is the one its `groups` describe, never a window the fixture merely asserts on top.
+    """
+    if plan.group_by is GroupBy.MONTH:
+        months = [
+            (int(match.group(1)), int(match.group(2)))
+            for group in groups
+            if (match := _MONTH_KEY.fullmatch(group.key)) is not None
+        ]
+        if months:
+            months.sort()
+            start = date(*months[0], 1)
+            end_year, end_month = months[-1]
+            end = date(end_year, end_month, monthrange(end_year, end_month)[1])
+            return start, min(end, TODAY)
+    if plan.date_range is not None:
+        return plan.date_range.start, plan.date_range.end
+    return None, None
+
 
 class Ledger:
     def __init__(self) -> None:
@@ -368,10 +405,13 @@ class Ledger:
             return QueryAnswer(currency="EUR", total_minor=0, movement_count=0)
         if self.groups_for_next_turn is not None:
             groups = self.groups_for_next_turn
+            period_start, period_end = _resolved_window(plan, groups)
             return QueryAnswer(
                 currency="EUR",
                 total_minor=sum(group.total_minor for group in groups),
                 movement_count=sum(group.movement_count for group in groups),
+                period_start=period_start,
+                period_end=period_end,
                 groups=groups,
                 movements=self._synthetic_movements(plan, groups, movements),
             )
@@ -420,6 +460,13 @@ class Ledger:
         request for those rows, the real ledger's own behaviour for one). A turn that never asks
         gets none, whatever `movements_for_next_turn` says: that is what makes `movements: 3` on a
         turn a check that the evidence was requested, not just a fixture handed over for free.
+
+        M4 (fix wave): this is the right rule for what `Turn.movements` measures, and it reads as
+        the opposite of production's. The real adapter (`http_financial_query.py`) always sends a
+        positive `supportingLimit` -- the deployment default when the caller passes none, never
+        "not asked" -- so a holder sees movements on turns where THIS fake shows none. Read
+        `movements: 0` (or an unasserted `movements:`) on a turn here as "the code did not request
+        evidence", never as "production would have shown nothing".
         """
         if self.movements_for_next_turn is None:
             return ()
@@ -908,8 +955,9 @@ def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
         "include_internal": getattr(query, "include_internal", False),
         # An id-selected plan -- «esos movimientos», the evidence turn after a drill-down -- names
         # its rows by identifier rather than by window or category, and by count rather than by the
-        # identifiers themselves: they are invented fresh by this fixture on every run, so what an
-        # episode can pin down is how many travelled, not which ones.
+        # identifiers themselves (M5, fix wave): the ids are `uuid.UUID(int=day)`, identical every
+        # run, not invented fresh -- the real reason to assert only the count is that the ids are
+        # this fixture's own, not the episode's to know or care about.
         "transaction_ids": len(getattr(query, "transaction_ids", ())),
     }
     if isinstance(query, TopMovements):

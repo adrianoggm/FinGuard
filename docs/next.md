@@ -727,10 +727,29 @@ gasto tanto?» is `NoMatch` and reaches the planner exactly as before, because t
 weekday resolution would have been a refusal text nobody asked for; series labels travel on the wire
 but are not read — a comparison's window or a recurrence's cadence still goes to the planner as
 today. There is no click-to-drill on the client — every drill starts from a sentence, never a tap.
-And the drill never widens: a label already inside the plan's own window narrows it further, never
-past it — a month still in progress is clamped to today (design §3.3's own rule against silently
-widening a chart's window), so «agosto» asked on the 5th drills the 1st-5th of it, not the whole
-calendar month.
+And the drill never widens, now enforced rather than assumed (fix wave, C-1/I-1): the calendar
+month a label names is intersected with the window the chart's own rows cover before anything else
+narrows, so a plan whose window is a slice of a month — «del 10 de junio al 20 de julio» — never
+widens past that slice on a later «¿por qué julio es tan alto?»; and the plan in view is checked
+against the chart's own sealed digest before the intersection runs at all, so a KPI turn, a restyle
+of an older chart or a client-edited `last_plan` all fall to today's path rather than narrowing a
+plan the chart was never drawn from. A month still in progress is then clamped to today (design
+§3.3's own rule against silently widening a chart's window), so «agosto» asked on the 5th drills
+the 1st-5th of it, not the whole calendar month.
+
+Recorded rather than fixed, from the same fix round: «Enséñame los movimientos de agosto» over a
+month chart is now a drill rather than today's path — the sentence names a bar (agosto) and the
+drill lexicon's unanchored «enséñame/muéstrame (los|las) movimientos» alternative claims it, so it
+narrows to August by merchant in one call, a route change beyond §9's own two sentences and
+defensible rather than a defect (M7). Three known limits: a drill over an AVERAGE/PERIOD_AVERAGE/
+CUMULATIVE/FREQUENCY/RECURRENCE chart normalises the metric to SUM and the spoken plan says so, with
+no sentence calling the change out on its own (M8); `MAX_VISUAL_CONTEXTS` is five and the drill
+spends one of them, so «el primer gráfico» is the oldest *surviving* chart rather than literally the
+first one drawn, once a conversation has drawn six (M12); and the `VISUAL_FOLLOW_UP` record's
+claimant names the lexicon that recognised the sentence, not the reader that actually answered the
+turn — three of four probed sentences write `DRILL_DOWN`/`drill_down_reader` while a different
+reader answers (the contextual follow-up, `EXPLAIN_PREVIOUS`), and R8 still stands: the same turn's
+other rows say where the answer really came from (Minor 3 / D-4.3-4, parked).
 
 The §3 fourteen phrasings, re-measured with the real deterministic analyser over a charted
 conversation — `turn_analyzer.analyze(sentence, conversation=charted, interpreter=Deterministic())`

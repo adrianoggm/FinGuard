@@ -21,9 +21,10 @@ from finguard_orchestrator.domain.models.chart import (
 )
 
 # The wire's own per-list cap (`VisualContextPayload.labels`/`.series_labels`, `infrastructure/dto/
-# llm_dto.py`) -- named once here because `drawn_labels` is where the cut actually happens, and a
-# dataset with a hundred distinct dimensions is not a shape the deterministic floor draws today,
-# but a later plan (`group_limit`) could ask for exactly that many rows.
+# llm_dto.py`, M10 fix wave: imported there rather than a second `100` written by hand) -- named
+# once here because `drawn_labels` is where the cut actually happens, and a dataset with a hundred
+# distinct dimensions is not a shape the deterministic floor draws today, but a later plan
+# (`group_limit`) could ask for exactly that many rows.
 MAX_DRAWN_LABELS: Final = 100
 
 # Group keys that name a calendar bucket. Same set `derive_chart` has always used; stated once
