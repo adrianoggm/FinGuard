@@ -84,6 +84,12 @@ en `develop` en `d1b0a40`. Sigue abierto que reformular una métrica ya guardada
 nunca — `PATCH /v1/metrics/{id}` acepta un título y reutiliza la definición almacenada. El estado
 criterio por criterio está en [ADR-011](architecture/adr-011-derived-charts-and-saved-metrics.md).
 
+Wave 4.3 añade una capacidad más al bloque de gráfico, ya con prueba conversacional propia:
+
+| Capacidad | Qué hace | Qué rechaza | Dónde se prueba |
+| --- | --- | --- | --- |
+| Profundizar en una barra del último gráfico | Resuelve un mes, una categoría precisa o un extremo (superlativo, sólo si el gráfico está estrictamente ordenado por ambos extremos) sobre las etiquetas de un gráfico de confianza, ejecuta el plan en vista acotado a esa barra y reagrupado por comercio, y responde con los movimientos que la explican; «Enséñame los movimientos responsables» repite esa misma evidencia | Una barra ambigua (dos meses empatados, «agosto» sobre dos agostos) pregunta cuál en vez de adivinar, sin llamada a banca ni hueco abierto; un gráfico sin sello no decide nada; un mes que el gráfico no dibujó no es una referencia; los días de la semana y las series no se resuelven; nunca amplía la ventana | `evaluation/conversations/32-visual-continuation.yaml` turnos 4-5; `tests/test_drill_down.py`; `tests/test_visual_reference.py` |
+
 ## Lo que la evidencia de esta matriz no alcanza
 
 Anotado el 28 de agosto de 2026. Una columna de evidencia que no dice hasta dónde llega su prueba es

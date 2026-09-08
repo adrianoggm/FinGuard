@@ -73,3 +73,54 @@ In the handler, right after `_classify_and_record_visual_follow_up` returns `DRI
 - **Type consistency:** `Resolved.kind` literal named once; `resolve_reference` returns the three dataclasses; the handler and the analyser import the same function.
 - **Pre-read facts settled:** (1) the dataset's rows come in the ledger's order (the handler does not sort them; the floor sorts the axis only) — hence the rank-ordered `labels` + `ranked` on the context; `whole_month(year, month) -> AbsoluteRange` lives in `domain/services/window_words.py:350`; `month_name`/`month_group_name` in `domain/services/answer_writer.py:485-498` (`_MONTHS` at :503); `MAX_SELECTED_TRANSACTIONS = 50`; the fake ledger returns `groups_for_next_turn` or one default group and movements only for one hardcoded case; `tool_of`'s VISUAL set lists six outcomes — `DRILL_AMBIGUOUS` needs its own route or joins VISUAL (judge at Task 5's pre-read).
 - **Pre-read risks remaining:** (2) `whole_month` signature and where month names live (`answer_writer._MONTHS` is domain?); (3) the fake ledger's `run()` movement shape; (4) whether `_referenced_result_plan` re-runs one call or zero; (5) `Turn` and `tool_of` for the `DRILL_AMBIGUOUS` outcome (route `VISUAL`? a new `DRILL` route? — the harness's route set).
+
+## Landed
+
+One line per task, its commit SHAs read from `git log`:
+
+- **Plan**: `a05aecb` (draft) + `c1ccbcb` (base named, Task 1 restated per R1-R5: domain `drawn_labels` in rank order + `ranked`, the wire limit, two commits) + `67978f0` (the wire pattern's control bytes fixed as text).
+- **Task 1** — a trusted chart carries its labels: `f49d901` (domain `DrawnLabels`/`drawn_labels`, rank order + `ranked`) + `1843671` (context fields, wire, seal coverage, producers, web type, design §4).
+- **Task 2** — a reference resolver over the labels: `6e4fbc6` (`domain/models/visual_reference.py`, `domain/services/visual_reference.py`, `resolve_reference`).
+- **Task 3** — the analyser and the movement-set reference read the drill: `27a5f90` (the drill lexicon moved to the domain, one copy) + `f757291` (`turn_analyzer._drills_into_the_chart`) + `fcdf655` (`_MOVEMENT_SET_REFERENCE` admits «los movimientos responsables/detrás/que lo explican» and a bare «enséñame/muéstrame/dame los movimientos»).
+- **Task 4** — the handler drills: `6850a02` (`readers/drill_down.py`, the handler branch, `_answer(movements=)`) + `707c260` (`_remember_visual_context` derives for `DRILL_DOWN`); fix round 1: `dbbd8ae` (I-1 `parsed_month` made public and imported; M1 dead reshaped guard removed) + `c81effe` (M2 the in-progress month clamps to today; M3/M6 docstrings; M4/M5 tests).
+- **Task 5** — the corpus sees the drill: `a1c3138` (harness `Turn.movements`, `Ledger.movements_for_next_turn`, `tool_of` maps `DRILL_AMBIGUOUS` to `CLARIFY`) + `c8b6408` (episode 32 gains §9's turns 4-5 verbatim; the ambiguity-ask test; `scripts/handover_cases.py` wiring).
+- **Task 6** — the record on paper: this commit.
+
+One line per ruling that changed the plan's own text above, rather than only settling a "judge at
+pre-read" placeholder:
+
+- **R14** drops the weekday refusal Task 4's own line above still names ("weekday: refuse for now
+  with «Todavía no puedo abrir un día de la semana»"): weekday references are not resolved at all in
+  4.3 — YAGNI, the only consumer would have been that refusal text, and `ReferenceKind` never grew a
+  `"weekday"` member.
+- **R15**: series labels travel on the wire (Task 1) but are never resolved — a comparison's window
+  or a recurrence's cadence still goes to the planner as today; stated in the resolver's own
+  docstring, not only here.
+- **R16** (amends R10 and Task 4's own line above): the bounded plan is not the month/category alone
+  — it is that label **and** a regroup by merchant (`group_limit=None`, the metric kept when
+  SUM/COUNT, else normalised to SUM), because design §3.3's own third sentence, «¿Qué comercio es
+  responsable?», has no turn of its own in episode 32 to answer it in. The "Ese mes no está en el
+  periodo del gráfico" refusal Task 4's own line above named is dropped as unreachable: a label is
+  inside the plan's window by construction (it is one of the plan's own rows), so the handler instead
+  checks the plan's `group_by` matches the label's kind (`MONTH` for a month label, `CATEGORY` for a
+  category label) and falls through to today's path otherwise.
+- **R17**: turn 5, «Enséñame los movimientos responsables.», is answered by the existing
+  `_referenced_result_plan` path once `_MOVEMENT_SET_REFERENCE` admits the new phrasings — not the
+  new code path Task 3's own line above implied; the analyser is not involved.
+- **R18**: the drill branch sits immediately before the referenced-result read in the handler, gated
+  on `follow_up_seen[0].kind == "DRILL_DOWN"` and the newest context trusted; `_answer` gains
+  `movements: int | None = None` forwarded to `run()` (the FREQUENCY/RECURRENCE branch keeps its own
+  constant).
+- **R19**: the fake `Ledger` returns movements only when asked (`run(movements=<int>)`) or when the
+  plan carries `transaction_ids` — as Task 5 found it, not as an assumption; `Turn.movements: int |
+  None` asserts the count the answer shows.
+- **The Task 4 review's M2**: a drill into the month in progress ends today, never past the plan's
+  own window — the plan's own Task 4 line above did not anticipate a chart drawn mid-month; the
+  handler passes `query.today` and the window's end clamps to it (design §3.3, never widen).
+- **Task 5's `scripts/handover_cases.py` wiring**: the ratchet replay injects the same per-turn
+  groups/movements the corpus harness does, so the drill turns are not miscounted as planner
+  handovers — without it the ratchets read 24/45 in that replay; with it, 22/43, unchanged, no
+  literal touched.
+
+One more sentence for the `docs/next.md` paragraph, already there: the in-progress month is clamped
+to today (design §3.3, never widen), so «agosto» asked on the 5th drills the 1st-5th.

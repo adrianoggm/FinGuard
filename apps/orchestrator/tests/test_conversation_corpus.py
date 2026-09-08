@@ -540,3 +540,60 @@ def test_a_tampered_echoed_chart_is_refused_without_a_banking_call() -> None:
     after_contexts = answer["conversation"]["visual_contexts"]
     sent_contexts = tampered["visual_contexts"]
     assert [c["chart_id"] for c in after_contexts] == [c["chart_id"] for c in sent_contexts]
+
+
+# --- Task 5: R9 -- a drill-down that fits several bars asks instead of guessing ----------------
+#
+# Episode 32's own third turn draws a month line whose bars are never tied -- June 15 000, July
+# 17 000, August 18 000, each its own rank. This is the same episode, replayed the same way through
+# a real stack, with only that one turn's `groups` swapped for a version that ties the top two: July
+# and August both at 18 000. What the drill reader does with a tie is what this test is about, and
+# episode 32's own file cannot ask that question without lying about what the ledger actually
+# returned that turn -- so it is asked here instead, in the same style as the tamper test above.
+
+
+def test_an_ambiguous_bar_asks_without_a_banking_call() -> None:
+    """A drill-down that names no single bar asks which one instead of guessing: `DRILL_AMBIGUOUS`,
+    zero ledger calls, `tool_of` maps it to `CLARIFY` through `_ASKED_ABOUT_THE_FIGURES` (R9 --
+    a question about the figures already on screen, not a chart change and not an open slot), and
+    the conversation is left exactly where it was: nothing ambiguous is drawn."""
+    episode = _episode_32()
+    turn_one, turn_two, turn_three = episode.turns[0], episode.turns[1], episode.turns[2]
+    tied_months = tuple(
+        episodes.Group(key, minor, count)
+        for key, minor, count in (
+            ("2026-06", 15000, 2),
+            ("2026-07", 18000, 3),
+            ("2026-08", 18000, 2),
+        )
+    )
+    stack = episodes.a_stack_for(episode)
+    conversation = episodes.opening(episode)
+
+    for turn, groups in (
+        (turn_one, episodes._groups_from(turn_one)),
+        (turn_two, episodes._groups_from(turn_two)),
+        (turn_three, tied_months),
+    ):
+        stack.ledger.groups_for_next_turn = groups
+        response = stack.client.post(
+            "/v1/questions", json={"question": turn.say, "conversation": conversation}
+        )
+        stack.ledger.groups_for_next_turn = None
+        assert response.status_code == 200
+        conversation = response.json()["conversation"]
+
+    contexts_before = len(conversation["visual_contexts"])
+    before = len(stack.ledger.ran)
+    asked = stack.client.post(
+        "/v1/questions",
+        json={"question": "¿Qué movimientos explican ese pico?", "conversation": conversation},
+    )
+    assert asked.status_code == 200
+    answer = asked.json()
+
+    assert answer["outcome"] == "DRILL_AMBIGUOUS"
+    assert len(stack.ledger.ran) == before, "an ambiguous drill must not reach the ledger"
+    assert answer["text"] == "¿A qué te refieres: julio de 2026, agosto de 2026 o junio de 2026?"
+    assert episodes.tool_of(answer) == episodes.CLARIFY
+    assert len(answer["conversation"]["visual_contexts"]) == contexts_before

@@ -692,6 +692,67 @@ this wave is a lexicon rule with a test naming the sentence it claims and one it
 own mechanism was touched by any of the four tasks above. Suite at HEAD: 3954 / 3 / 204, corpus
 204.
 
+**2026-09-08 — wave 4.3 landed: a bar of the last chart can be asked about, and the answer is the
+movements behind it.** A trusted chart's context now carries the labels it drew, tallest first —
+`drawn_labels(dataset)` orders the dimension values by summed `value_minor` descending, ties in
+first-appearance order, capped at 100, `ranked` true only when both the top two and the bottom two
+totals are strict — sealed with the rest of the wire context: value-free strings the web already
+echoes and never reads (`f49d901`, `1843671`). `domain/services/visual_reference.py`'s
+`resolve_reference` reads a sentence against those labels: a named month by the answer writer's own
+vocabulary, the exact «agosto de 2025» picked before a bare «agosto» when two Augusts are on
+screen; a precisely named category; a superlative («la barra más alta», «el pico», «el más bajo»)
+only on a chart whose `ranked` is strict at both ends (`6e4fbc6`). `turn_analyzer.analyze` reads a
+drill sentence that resolves against the newest trusted chart as a follow-up
+(`_drills_into_the_chart`, `f757291`); the handler runs the plan in view narrowed to that one label
+and regrouped by merchant — design §3.3's own third sentence, «¿Qué comercio es responsable?», is
+answered in the same turn rather than needing a question of its own (R16) — with
+`MAX_SELECTED_TRANSACTIONS` movements behind it, and the drilled chart derives from the chart it
+drilled (`6850a02`, `707c260`). «Enséñame los movimientos responsables.» re-lists that same
+evidence through the existing referenced-result path, once `_MOVEMENT_SET_REFERENCE` learns «los
+movimientos responsables/detrás/que lo explican» and a bare «enséñame/muéstrame/dame los
+movimientos» that ends the sentence (`fcdf655`, R17). Episode 32 speaks §9's own turns 4-5 verbatim,
+right after the month line (`c8b6408`).
+
+What it refuses: two bars fitting one reference — «ese pico» when two months tie, a bare «agosto»
+naming two Augusts — asks `DRILL_AMBIGUOUS`, a Spanish question naming the candidates in the
+chart's own order, with zero banking calls and no slot opened (probed:
+`test_an_ambiguous_bar_asks_without_a_banking_call`, outcome `DRILL_AMBIGUOUS`, the ledger
+untouched, `tool_of` reads `CLARIFY`); an unsigned chart's labels decide nothing — the same
+`trusted` flag a tampered restyle's `VISUAL_UNTRUSTED` refusal already reads is checked before
+`resolve_reference` ever runs, so a drill over it falls straight to today's path (the planner)
+rather than narrowing (`test_an_untrusted_chart_is_not_drilled`, probed: the planner asked, not the
+drill reader); a month the chart never drew is not a reference — today's path too. What it does not
+do, on purpose (R14, R15): weekday labels are not resolved — a frequency chart's «¿por qué los martes
+gasto tanto?» is `NoMatch` and reaches the planner exactly as before, because the only consumer of a
+weekday resolution would have been a refusal text nobody asked for; series labels travel on the wire
+but are not read — a comparison's window or a recurrence's cadence still goes to the planner as
+today. There is no click-to-drill on the client — every drill starts from a sentence, never a tap.
+And the drill never widens: a label already inside the plan's own window narrows it further, never
+past it — a month still in progress is clamped to today (design §3.3's own rule against silently
+widening a chart's window), so «agosto» asked on the 5th drills the 1st-5th of it, not the whole
+calendar month.
+
+The §3 fourteen phrasings, re-measured with the real deterministic analyser over a charted
+conversation — `turn_analyzer.analyze(sentence, conversation=charted, interpreter=Deterministic())`
+then `classify()`, the 4.2b fix-wave paragraph's own method, this time over a month-labelled,
+`ranked` chart in view — move from 6 of 14 claimed to **8 of 14**. «¿Por qué agosto es tan alto?»
+and «¿Qué movimientos explican ese pico?» now read `DRILL_DOWN`: the two sentences this wave exists
+for. «¿Qué comercio es responsable?» names no bar the resolver reads — no month, no category, no
+top/bottom superlative — so `_drills_into_the_chart` still answers `NoMatch`, the turn stays a
+`NEW_REQUEST`, and `classify()` still reads it `UNRELATED`; it is answered in the same turn as
+«¿Por qué agosto es tan alto?» only because the bounded plan itself regroups by merchant (R16),
+never because this sentence resolves to anything of its own. «Enséñame las compras de esa barra»
+stays `AMBIGUOUS` (presentation+drill) in real request routing, unchanged by this wave — but not
+through `classify()`'s own drill claimant: `interpret_visual` already claims this sentence as a
+presentation change before any `TurnAnalysis` exists, so `llm_controller.py`'s own short-circuit
+(`classify_claimed_visual`) decides it before `analyze()`/`classify()` are ever reached in
+production; asked of `classify()` alone — the path a turn reaches only when nothing claimed it
+first — it reads `PRESENTATION_ONLY` instead, because `_drill_down_claims` requires a `FOLLOW_UP`
+relation and «esa barra» names nothing `_drills_into_the_chart` resolves. Both readings agree it is
+claimed, never `UNRELATED`, so the 8-of-14 count holds either way, and the claimant is the only
+thing that depends on which of the two paths a turn actually takes. Suite at HEAD: 4058 / 3 / 207,
+corpus 205.
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate

@@ -6,6 +6,11 @@ from dataclasses import replace as dataclass_replace
 from typing import TYPE_CHECKING, Final, Literal, cast, get_args
 from uuid import UUID
 
+# Domain to domain, not a forward reference: `VisualDataset.window` and `VisualContext.window`
+# below are both typed with this at runtime (Wave 4.3), so a chart's own module can intersect a
+# drilled month against it without importing anything from `application/` or `infrastructure/`.
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
+
 if TYPE_CHECKING:  # the decision and the plans import this module; only the annotation needs them
     from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
     from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
@@ -156,6 +161,11 @@ class VisualDataset:
     rows: tuple[VisualRow, ...]
     metric: str
     title: str = "Resultados"
+    # Wave 4.3: the dates the rows cover, when the query that produced them named a window --
+    # never an amount, and never wider than what was actually queried. `None` on a dataset built
+    # from something other than one plan's own answered window (a comparison, a ratio): a month
+    # drill over those is not a 4.3 case. See `ask_financial_question._answered_window`.
+    window: AbsoluteRange | None = None
 
 
 @dataclass(frozen=True)
@@ -359,6 +369,15 @@ class VisualContext:
     values and the series values of the chart's own dataset, tallest first -- so a later turn can
     resolve «agosto» or «la barra más alta» against them without a second query. `ranked` is a
     shape fact about that ranking, not an amount; see `DrawnLabels`.
+
+    `window` and `plan_digest` travel and are sealed too (the wave's fix round): two more
+    provenance facts, both value-free. `window` is the dates the chart's rows actually cover --
+    `VisualDataset.window`, carried up from the dataset the chart was built from -- so the drill
+    can intersect a month label with what was drawn rather than assume the label's own calendar
+    month was queried in full. `plan_digest` is a fingerprint of the plan that produced this chart
+    (`domain/services/plan_digest.py`), so the drill can refuse to narrow a plan that is not this
+    chart's own -- a KPI turn after a chart, a restyle of an older chart, or a client-edited
+    `last_plan` all fail that check rather than silently narrowing the wrong query.
     """
 
     chart_id: str
@@ -374,6 +393,8 @@ class VisualContext:
     labels: tuple[str, ...] = ()
     series_labels: tuple[str, ...] = ()
     ranked: bool = False
+    window: AbsoluteRange | None = None
+    plan_digest: str | None = None
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):

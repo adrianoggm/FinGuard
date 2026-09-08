@@ -138,9 +138,18 @@ def cases() -> list[dict[str, Any]]:
             # was last *executed* and what the thread is on are not the same thing after a balance
             # or a refusal, and it is the thread the model is given.
             before = (conversation or {}).get("last_plan")
+            # The same override `episodes.replay()` sets and clears around every turn: a turn whose
+            # own routing reads the chart the ledger just drew -- a drill-down resolving «agosto»
+            # against a month line's own labels, not merely its sentence -- would otherwise see the
+            # fake's one hardcoded group instead of the breakdown the episode actually describes,
+            # and reach the planner for a reason this script's own count should never carry.
+            stack.ledger.groups_for_next_turn = episodes._groups_from(turn)
+            stack.ledger.movements_for_next_turn = episodes._movements_from(turn)
             response = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}
             )
+            stack.ledger.groups_for_next_turn = None
+            stack.ledger.movements_for_next_turn = None
             if response.status_code != 200:
                 continue
             conversation = response.json()["conversation"]
