@@ -158,6 +158,23 @@ class VisualDataset:
     title: str = "Resultados"
 
 
+@dataclass(frozen=True)
+class DrawnLabels:
+    """What a chart shows a reader without showing a number: its labels, in rank order.
+
+    `labels` are the dataset's distinct `dimension` values, the tallest first (summed `value_minor`
+    descending, ties in first-appearance order). `series_labels` are the distinct `series` values in
+    first-appearance order. `ranked` says the two ends are strict -- the first label is alone at the
+    top and the last alone at the bottom -- so «la barra más alta» has one answer; a tie at either
+    end, or a list cut at the cap, makes it False and a later turn asks instead of guessing (design
+    §3.3). A rank is a shape the chart draws, never an amount: no value leaves this function.
+    """
+
+    labels: tuple[str, ...] = ()
+    series_labels: tuple[str, ...] = ()
+    ranked: bool = False
+
+
 FieldRole = Literal["dimension", "measure", "series"]
 FieldOrder = Literal["MEASURE_DESC", "INPUT", "TEMPORAL", "NONE"]
 
@@ -336,6 +353,12 @@ class VisualContext:
     above it — it defaults `True` because a context built fresh in this process is the server's
     own and needs no seal to prove it; only `to_domain`, given a verifier, ever sets it `False`,
     for a context whose seal did not check out.
+
+    `labels`, `series_labels` and `ranked` travel on the wire too and are sealed with the rest
+    (Wave 4.3): the value-free strings the client already draws (design §3.3) -- the dimension
+    values and the series values of the chart's own dataset, tallest first -- so a later turn can
+    resolve «agosto» or «la barra más alta» against them without a second query. `ranked` is a
+    shape fact about that ranking, not an amount; see `DrawnLabels`.
     """
 
     chart_id: str
@@ -348,6 +371,9 @@ class VisualContext:
     turn_id: UUID | None = None
     token: str | None = None
     trusted: bool = True
+    labels: tuple[str, ...] = ()
+    series_labels: tuple[str, ...] = ()
+    ranked: bool = False
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):

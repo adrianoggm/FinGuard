@@ -28,6 +28,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
 from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
+from finguard_orchestrator.domain.services.visual_profile import drawn_labels
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
     _derived_context,
@@ -144,6 +145,27 @@ def test_a_fresh_chart_remembers_its_decision_plan_evidence_and_turn(
     assert context.evidence_ids == charted_result.metric_definition.transaction_ids
     assert isinstance(context.turn_id, UUID)
     assert context.derived_from is None
+
+
+def test_a_fresh_chart_carries_the_labels_its_dataset_draws(charted_result, chart_response) -> None:
+    """Task 1 (Wave 4.3): `_remember_visual_context` computes `drawn_labels` off the same
+    `result.visual_dataset` its profile already came from, and puts the three fields it returns
+    on the `VisualContext` it builds -- before the seal, so a holder's own token covers them."""
+    remembered = llm_mapper._remember_visual_context(charted_result, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    expected = drawn_labels(charted_result.visual_dataset)
+    assert context.labels == expected.labels
+    assert context.series_labels == expected.series_labels
+    assert context.ranked == expected.ranked
+
+
+def test_a_kpi_or_no_chart_result_leaves_no_context(charted_result) -> None:
+    """Unchanged behaviour: `_remember_visual_context`'s own guard (`not isinstance(visualization,
+    ChartVisualizationResponse)`) is what a KPI response and a turn with no visualization at all
+    both fail, and this task changes nothing about it -- the conversation must come back exactly
+    as it arrived."""
+    remembered = llm_mapper._remember_visual_context(charted_result, None)
+    assert remembered.conversation.visual_contexts == charted_result.conversation.visual_contexts
 
 
 def test_a_reshape_names_the_chart_it_came_from(charted_result, chart_response) -> None:
@@ -304,6 +326,25 @@ def test_the_restyle_helper_copies_a_trusted_contexts_provenance_forward() -> No
     assert derived.derived_from == trusted.chart_id
     assert isinstance(derived.turn_id, UUID) and derived.turn_id != trusted.turn_id
     assert derived.decision is None
+
+
+def test_the_restyle_helper_copies_a_trusted_contexts_labels_forward_too() -> None:
+    """Task 1 (Wave 4.3): a restyle shows the same data, so its labels are the source's own --
+    same pattern as the provenance copy above, and the same reason `_derived_context` exists as a
+    module-level function rather than an inline construction: driven directly with an in-process
+    `VisualContext` that still carries them, no wire in between to empty anything first."""
+    trusted = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("ALQUILER", "GROCERIES"),
+        series_labels=("2026-07",),
+        ranked=True,
+    )
+    derived = _derived_context(trusted, SPEC, "chart-2")
+    assert derived.labels == trusted.labels
+    assert derived.series_labels == trusted.series_labels
+    assert derived.ranked == trusted.ranked
 
 
 # --- Task 3: sealed where it is born -----------------------------------------------------------

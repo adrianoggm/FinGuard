@@ -39,6 +39,7 @@ from finguard_orchestrator.domain.services.visual_interpreter import (
     interpret_visual,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
+from finguard_orchestrator.domain.services.visual_profile import drawn_labels
 from finguard_orchestrator.domain.value_objects.comparison_plan import ComparisonPlan
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -371,6 +372,10 @@ def _remember_visual_context(
         )
         else None
     )
+    # Task 1 (Wave 4.3): the same dataset the profile above already came from, ranked the way the
+    # chart itself ranks its bars -- computed here, before the seal, so a holder's own token
+    # covers the labels too.
+    drawn = drawn_labels(result.visual_dataset)
     context = VisualContext(
         visualization.chart_id,
         spec,
@@ -380,6 +385,9 @@ def _remember_visual_context(
         evidence_ids=_evidence_of(result.metric_definition),
         turn_id=uuid4(),
         derived_from=derived_from,
+        labels=drawn.labels,
+        series_labels=drawn.series_labels,
+        ranked=drawn.ranked,
     )
     # Task 3: sealed here, where the context is born -- before it ever reaches `to_payload` --
     # rather than by a second pass over the wire once the response is built. `seal` is `None` for

@@ -244,6 +244,10 @@ def _derived_context(
     `_remember_visual_context` seals a fresh chart at birth: a restyle is signed the turn it is
     minted, so the holder does not have to ask a new question just to get a context this process's
     own verifier will accept back.
+
+    `labels`/`series_labels`/`ranked` are copied from `trusted` too (Task 1, Wave 4.3): a restyle
+    shows the same data, so the labels a reader can resolve «agosto» or «la barra más alta»
+    against are the source's own, unchanged by the shape the chart is redrawn in.
     """
     context = VisualContext(
         chart_id,
@@ -254,6 +258,9 @@ def _derived_context(
         evidence_ids=trusted.evidence_ids,
         derived_from=trusted.chart_id,
         turn_id=uuid.uuid4(),
+        labels=trusted.labels,
+        series_labels=trusted.series_labels,
+        ranked=trusted.ranked,
     )
     return seal(context) if seal is not None else context
 

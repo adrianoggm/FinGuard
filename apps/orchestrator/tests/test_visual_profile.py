@@ -1,14 +1,32 @@
+import importlib.util
+import sys
+from pathlib import Path
+
 import pytest
 
 from finguard_orchestrator.domain.models.chart import (
     ChartEncoding,
     ChartSpec,
+    DrawnLabels,
     EncodingPatch,
     VisualDataset,
     VisualRow,
     merge_encoding_patch,
 )
-from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
+from finguard_orchestrator.domain.services.visual_profile import drawn_labels, visual_profile_of
+
+# Loaded the way `test_visualization_stage1.py` loads the same script: `scripts/` is not a
+# package, so the exporter's own dataset+kwargs pairs -- the ones the web compile gate renders --
+# are read off the file directly rather than duplicated here.
+_EXPORTER_SPEC = importlib.util.spec_from_file_location(
+    "export_chart_fixtures",
+    Path(__file__).resolve().parents[1] / "scripts" / "export_chart_fixtures.py",
+)
+assert _EXPORTER_SPEC and _EXPORTER_SPEC.loader
+export_chart_fixtures = importlib.util.module_from_spec(_EXPORTER_SPEC)
+sys.modules["export_chart_fixtures"] = export_chart_fixtures
+_EXPORTER_SPEC.loader.exec_module(export_chart_fixtures)
+FAMILY_DATASETS = export_chart_fixtures.FAMILY_DATASETS
 
 
 def test_a_breakdown_profile_names_its_dimension_and_measure() -> None:
@@ -237,3 +255,103 @@ def test_a_comparison_of_two_totals_without_a_series_is_not_grouped() -> None:
 
     assert profile.comparison is False
     assert profile.role("series") == ()
+
+
+# --- Task 1 (Wave 4.3): a dataset knows the labels it draws -------------------------------------
+
+# One expectation per family the exporter renders -- the same families the web compile gate
+# checks -- so a family added later to `FAMILY_DATASETS` without an entry here fails loudly
+# (`KeyError` on the missing key) instead of silently going unmeasured.
+_EXPECTED_DRAWN_LABELS: dict[str, DrawnLabels] = {
+    "breakdown": DrawnLabels(labels=("ALQUILER", "GROCERIES", "ZAPATOS"), ranked=True),
+    "temporal": DrawnLabels(labels=("2026-02", "2026-03", "2026-01"), ranked=True),
+    "cumulative": DrawnLabels(labels=("2026-03", "2026-02", "2026-01"), ranked=True),
+    "frequency": DrawnLabels(labels=("Vie", "Mar", "Jue", "Lun", "Mié", "Sáb", "Dom"), ranked=True),
+    # Netflix appears twice (two months) and sums to 2598; Spotify appears once at 999.
+    "recurrence": DrawnLabels(
+        labels=("Netflix", "Spotify"), series_labels=("MONTHLY",), ranked=True
+    ),
+    "ratio_share": DrawnLabels(labels=("Parte", "Resto"), ranked=True),
+    # GROCERIES sums 100+90=190 over both windows, RESTAURANTS sums 50+70=120.
+    "categorical_comparison": DrawnLabels(
+        labels=("GROCERIES", "RESTAURANTS"), series_labels=("2026-07", "2026-06"), ranked=True
+    ),
+}
+
+
+@pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
+def test_every_family_dataset_knows_the_labels_it_draws(family_name: str) -> None:
+    """Every family the exporter renders -- the same ones the web compile gate checks -- because
+    the property this function exists for ("the labels match the bars the chart actually draws")
+    is exactly the one a single hand-picked fixture cannot prove for every shape a real dataset
+    takes: a plain sum, a temporal series, a cumulative one, an INPUT-ordered weekday list, a
+    dimension summed across repeated rows (recurrence), a two-row share, and a grouped comparison
+    whose ranking is by the total across both windows."""
+    dataset, _ = FAMILY_DATASETS[family_name]
+    assert drawn_labels(dataset) == _EXPECTED_DRAWN_LABELS[family_name]
+
+
+def test_a_tie_at_the_top_is_not_ranked_but_keeps_first_appearance_order() -> None:
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=(
+            VisualRow(dimension="B", value_minor=10),
+            VisualRow(dimension="A", value_minor=10),
+            VisualRow(dimension="C", value_minor=5),
+        ),
+    )
+    result = drawn_labels(dataset)
+    assert result.labels == ("B", "A", "C")
+    assert result.ranked is False
+
+
+def test_a_tie_at_the_bottom_only_is_not_ranked() -> None:
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=(
+            VisualRow(dimension="A", value_minor=10),
+            VisualRow(dimension="B", value_minor=5),
+            VisualRow(dimension="C", value_minor=5),
+        ),
+    )
+    result = drawn_labels(dataset)
+    assert result.labels == ("A", "B", "C")
+    assert result.ranked is False
+
+
+def test_a_tie_in_the_middle_only_is_still_ranked() -> None:
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=(
+            VisualRow(dimension="A", value_minor=10),
+            VisualRow(dimension="B", value_minor=5),
+            VisualRow(dimension="C", value_minor=5),
+            VisualRow(dimension="D", value_minor=1),
+        ),
+    )
+    result = drawn_labels(dataset)
+    assert result.labels == ("A", "B", "C", "D")
+    assert result.ranked is True
+
+
+def test_one_row_is_ranked() -> None:
+    dataset = VisualDataset(metric="SUM", rows=(VisualRow(dimension="A", value_minor=10),))
+    assert drawn_labels(dataset) == DrawnLabels(labels=("A",), ranked=True)
+
+
+def test_an_empty_dataset_draws_no_labels() -> None:
+    dataset = VisualDataset(metric="SUM", rows=())
+    assert drawn_labels(dataset) == DrawnLabels()
+
+
+def test_101_distinct_dimensions_are_capped_at_100_and_left_unranked() -> None:
+    """The true bottom label falls off the list once the cap cuts it, so `ranked` cannot claim
+    one -- `label[100-1]` is not `dataset`'s actual last bar any more."""
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=tuple(VisualRow(dimension=f"D{n}", value_minor=101 - n) for n in range(101)),
+    )
+    result = drawn_labels(dataset)
+    assert len(result.labels) == 100
+    assert result.labels[:3] == ("D0", "D1", "D2")
+    assert result.ranked is False

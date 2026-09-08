@@ -10,12 +10,21 @@ comparison against zero, and `verified_total` is an equality. No amount and no d
 survives into the returned object, and a test asserts that with sentinels.
 """
 
+from typing import Final
+
 from finguard_orchestrator.domain.models.chart import (
+    DrawnLabels,
     FieldOrder,
     VisualDataset,
     VisualField,
     VisualProfile,
 )
+
+# The wire's own per-list cap (`VisualContextPayload.labels`/`.series_labels`, `infrastructure/dto/
+# llm_dto.py`) -- named once here because `drawn_labels` is where the cut actually happens, and a
+# dataset with a hundred distinct dimensions is not a shape the deterministic floor draws today,
+# but a later plan (`group_limit`) could ask for exactly that many rows.
+MAX_DRAWN_LABELS: Final = 100
 
 # Group keys that name a calendar bucket. Same set `derive_chart` has always used; stated once
 # here so the profile and the floor cannot disagree about what "temporal" means.
@@ -153,3 +162,44 @@ def visual_profile_of(
         plan_limited=plan_limited,
         plan_metric=plan_metric,
     )
+
+
+def drawn_labels(dataset: VisualDataset) -> DrawnLabels:
+    """The labels `dataset` draws, ranked the way the chart itself ranks its bars.
+
+    `totals` sums `value_minor` per distinct `dimension`, in first-appearance order -- a `dict`
+    preserves that order on its own, so nothing here sorts to get it. Ranking then sorts those
+    totals descending with a stable sort, so any tie keeps the first-appearance order rather than
+    an arbitrary one. `series_labels` never enters the ranking -- a legend is not a set of bars --
+    it is simply the distinct `series` values (skipping rows with none) in first-appearance order.
+
+    Both lists are capped at `MAX_DRAWN_LABELS`; `ranked` answers a narrower question than "is
+    this sorted" -- whether the *top* and the *bottom* are each unique, so «la barra más alta» and
+    «la más baja» each have one answer. It is `False` whenever the dimension list had to be cut at
+    the cap (the true bottom is off the list) or the dataset carried no rows at all.
+    """
+    totals: dict[str, int] = {}
+    series_seen: set[str] = set()
+    series_order: list[str] = []
+    for row in dataset.rows:
+        totals[row.dimension] = totals.get(row.dimension, 0) + row.value_minor
+        if row.series is not None and row.series not in series_seen:
+            series_seen.add(row.series)
+            series_order.append(row.series)
+
+    if not totals:
+        return DrawnLabels()
+
+    ranked_dimensions = sorted(totals, key=lambda label: totals[label], reverse=True)
+    cut = len(ranked_dimensions) > MAX_DRAWN_LABELS
+    labels = tuple(ranked_dimensions[:MAX_DRAWN_LABELS])
+    series_labels = tuple(series_order[:MAX_DRAWN_LABELS])
+
+    if cut:
+        ranked = False
+    elif len(labels) == 1:
+        ranked = True
+    else:
+        ranked = totals[labels[0]] > totals[labels[1]] and totals[labels[-1]] < totals[labels[-2]]
+
+    return DrawnLabels(labels=labels, series_labels=series_labels, ranked=ranked)
