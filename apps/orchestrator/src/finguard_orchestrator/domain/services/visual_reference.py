@@ -55,8 +55,15 @@ _TOP = re.compile(
 _BOTTOM = re.compile(r"\bmas\s+(?:bajo|baja|pequeno|pequena|barato|barata)\b|\b(?:el|la)\s+menor\b")
 
 
-def _parsed_month(label: str) -> tuple[int, int] | None:
-    """`label` as a calendar month, or `None` when it is not `YYYY-MM` with `MM` in 01-12."""
+def parsed_month(label: str) -> tuple[int, int] | None:
+    """`label` as a calendar month, or `None` when it is not `YYYY-MM` with `MM` in 01-12.
+
+    Public: `read_drill_down` (`application/queries/readers/drill_down.py`) needs this exact
+    predicate to tell a month-shaped label from a category one, and a second copy of it there used
+    to be the one place that reader re-derived an answer this module already computed.
+    `_MONTH_LABEL` itself stays private -- nothing outside this module needs the regex, only what
+    it decides.
+    """
     match = _MONTH_LABEL.fullmatch(label)
     if match is None:
         return None
@@ -77,7 +84,7 @@ def _month_matches(context_labels: tuple[str, ...], folded: str) -> list[str]:
     exact: list[str] = []
     loose: list[str] = []
     for label in context_labels:
-        parsed = _parsed_month(label)
+        parsed = parsed_month(label)
         if parsed is None:
             continue
         year, month = parsed
@@ -107,7 +114,7 @@ def resolve_reference(sentence: str, context: VisualContext) -> Reference:
 
     if len(combined) == 1:
         label = combined[0]
-        kind: ReferenceKind = "month" if _parsed_month(label) is not None else "category"
+        kind: ReferenceKind = "month" if parsed_month(label) is not None else "category"
         return Resolved(label, kind)
     if len(combined) >= 2:
         return Ambiguous(tuple(combined))

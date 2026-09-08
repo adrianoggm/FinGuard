@@ -204,6 +204,37 @@ def test_a_reshape_over_an_untrusted_previous_names_no_origin(
     assert context.derived_from is None
 
 
+def test_a_drill_down_names_the_chart_it_drilled(charted_result, chart_response) -> None:
+    """Task 4: `_DERIVING_KINDS` admits `DRILL_DOWN` beside `ANALYTICAL_RESHAPE` -- a follow-up
+    classified `DRILL_DOWN` while a chart was in context produces a context that names the chart it
+    drilled, the same way a reshape does."""
+    previous = VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE)
+    drilled = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("DRILL_DOWN", "drill_down_reader"),
+    )
+    remembered = llm_mapper._remember_visual_context(drilled, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from == "chart-0"
+
+
+def test_a_drill_down_over_an_untrusted_previous_names_no_origin(
+    charted_result, chart_response
+) -> None:
+    """The m9 rule holds for a drill too: an untrusted previous chart is never named as the origin,
+    whether the follow-up that produced the new chart was a reshape or a drill."""
+    previous = replace(VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE), trusted=False)
+    drilled = replace(
+        charted_result,
+        conversation=charted_result.conversation.with_visual_context(previous),
+        visual_follow_up=VisualFollowUp("DRILL_DOWN", "drill_down_reader"),
+    )
+    remembered = llm_mapper._remember_visual_context(drilled, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.derived_from is None
+
+
 def test_an_unrelated_new_chart_names_no_origin(charted_result, chart_response) -> None:
     """The same chart-in-context setup as the reshape above, but classified `UNRELATED`: the new
     chart names no origin even though a previous chart exists."""
