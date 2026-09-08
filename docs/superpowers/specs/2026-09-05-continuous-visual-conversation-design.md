@@ -153,9 +153,14 @@ writer's own vocabulary and a precisely named category over the labels a trusted
 superlative («la barra más alta», «el pico», «el más bajo») only on a chart whose `ranked` is strict
 at both ends. Weekday labels and series labels are deliberately not resolved (R14, R15): a frequency
 chart's weekday reference and a comparison's window or a recurrence's cadence still go to the planner
-exactly as before. The bounded plan (`application/queries/readers/drill_down.py`) is the plan in view
-narrowed to the resolved label — `date_range=whole_month(...)` for a month (clamped to today when
-the month is still in progress), `categories=(key,)` for a category — and regrouped by merchant
+exactly as before. **Bound before it narrows (fix round, C-1/I-1):** the reader checks
+`newest.plan_digest == plan_digest(conversation.last_plan)` before doing anything else, so a KPI turn
+answered after the chart, a restyle of an older chart, or a client-edited `last_plan` all fail this
+check and fall to today's path rather than narrow a plan the chart was never drawn from. The bounded
+plan (`application/queries/readers/drill_down.py`) is the plan in view narrowed to the resolved
+label — for a month, `whole_month(...)` intersected with `newest.window` (the dates the chart's own
+rows cover) before the M2 clamp to today, so a plan whose own window is a slice of a calendar month
+never widens past that slice; `categories=(key,)` for a category — and regrouped by merchant
 (`GroupBy.MERCHANT`, `group_limit=None`), with the account scope and every other filter kept
 unchanged, run once with `MAX_SELECTED_TRANSACTIONS` movements: the answer is the merchant breakdown
 of that bar, and its evidence is the movements behind it. «Back» is unchanged: the drill's own chart
@@ -163,7 +168,10 @@ is one more entry in `visual_contexts`, deriving from the chart it drilled rathe
 so the chart the drill narrowed is still there for a restyle to name — a restyle sentence («el
 gráfico anterior», by number) resolves to whichever chart is newest, exactly as before 4.3. Two or
 more candidates fitting one reference ask, in the chart's own order (up to four names; more asks for
-the label itself instead), with zero banking calls and nothing merged.
+the label itself instead), with zero banking calls and nothing merged — and only for a chart whose
+plan can actually be drilled (`group_by` MONTH or CATEGORY, checked before the ask, fix round I-4):
+a MERCHANT-grouped chart with two tied labels never asks, because no reply to that question could
+ever be acted on.
 
 ## 4. Visual conversational context
 

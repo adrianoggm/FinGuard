@@ -124,3 +124,37 @@ pre-read" placeholder:
 
 One more sentence for the `docs/next.md` paragraph, already there: the in-progress month is clamped
 to today (design §3.3, never widen), so «agosto» asked on the 5th drills the 1st-5th.
+
+## Landed — whole-branch fix wave
+
+The whole-branch review (`branch-review.md`) found one Critical and four Important items; the
+controller's rulings (`branch-fix1.md`) are six atomic commits. One line per fix, its commit SHA
+read from `git log`:
+
+- **C-1 + I-1** — the context knows its window and its plan: `447a55f` (`VisualDataset.window`,
+  `VisualContext.window`/`plan_digest`, `domain/services/plan_digest.py`, `_answered_window`, the
+  wire fields, sealed; design §4 amended in the same commit).
+- **C-1 + I-1 + I-4** — the reader binds, intersects and asks only what it can act on: `5299584`
+  (`read_drill_down` checks `newest.plan_digest == plan_digest(plan)` before narrowing anything,
+  intersects the drilled month with the chart's own window before the M2 clamp, and checks
+  `group_by` feasibility before `resolve_reference` ever runs — so an undrillable chart never asks).
+- **I-2** — the evidence turn asks for exactly what it re-lists: `d4ba102`
+  (`_answer(query, referenced_result, movements=len(referenced_result.transaction_ids) or None)` —
+  the same line also serves the pre-existing «esos movimientos» reference path).
+- **I-3** — the flagship episode's window genuinely contains its months: `3a9fbc6` (the harness
+  fake, `Ledger.run`, now answers `period_start`/`period_end` from injected `MONTH`-keyed groups
+  clamped to `TODAY`; episode 32's turn 1 anchor becomes «¿Cuánto gasté el último trimestre?»,
+  claimed deterministically by `_natural_period_aggregate_plan`'s own `_LAST_QUARTER` phrase —
+  `RelativePeriod(LAST_N_MONTHS, n=3)`, the value the controller's own two named probes were
+  reaching for but neither reached deterministically nor without moving the ratchets; `UNMEASURED`
+  22 / `MUTE` 43 unmoved).
+- **Minors M1, M2, M4, M5, M9, M10**: `dda4b24` (a stale "cannot happen" comment reworded to what
+  the code does; `_DERIVING_KINDS` asserted a subset of `get_args(VisualFollowUpKind)` at import
+  time plus a one-line test pinning the handler's own `"DRILL_DOWN"` literal against it; the fake's
+  movement-rule docstring says production shows movements where the fake shows none; the fixture-id
+  comment reworded from "invented fresh" to "the fixture's own, stable"; `_ask` names only a
+  candidate `_candidate_name` actually recognises and falls back to the generic question otherwise;
+  the 100-label wire cap imported from `domain/services/visual_profile.MAX_DRAWN_LABELS` instead of
+  written twice).
+- **Docs**: this commit (`docs/next.md`'s 4.3 paragraph, `docs/conversational-capabilities.md`'s
+  drill-down row, design §3.3's Landed paragraph, this file).
