@@ -421,6 +421,60 @@ async def test_those_movements_select_the_exact_rows_that_were_shown() -> None:
     assert ledger.plan.group_by is GroupBy.NONE
 
 
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # R17: the drill turn Task 5 expects reaches this same reader once Task 4 wires it up --
+        # this pins that the reader already knows how to answer it, unassisted by that wiring.
+        "Enséñame los movimientos responsables.",
+        "¿Qué hay detrás? Dame los movimientos que lo explican.",
+    ],
+)
+async def test_the_responsible_movements_select_the_same_evidence_as_esos_movimientos(
+    sentence: str,
+) -> None:
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+    selected = (uuid.UUID(int=21), uuid.UUID(int=22), uuid.UUID(int=23))
+    conversation = answered_with_result(
+        Conversation(last_plan=previous),
+        ResultReference(source_query=previous, transaction_ids=selected),
+    )
+
+    answer = await asked(sentence, planner, ledger, conversation)
+
+    assert answer.outcome == PlanningOutcome.PLANNED.value
+    assert planner.asked == 0
+    assert ledger.plan is not None
+    assert ledger.plan.transaction_ids == selected
+    assert ledger.plan.group_by is GroupBy.NONE
+
+
+async def test_a_month_filter_naming_movements_is_not_the_evidence_in_view() -> None:
+    """The second alternative's own anchor (`[\\s.!?]*$`) exists exactly for this: «Enséñame los
+    movimientos de agosto» names a new filter, not the evidence set left by the last answer, and
+    must not be swallowed by `_MOVEMENT_SET_REFERENCE`."""
+    planner = GivesUp()
+    ledger = Ledger()
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.THIS_YEAR),
+    )
+    selected = (uuid.UUID(int=21), uuid.UUID(int=22), uuid.UUID(int=23))
+    conversation = answered_with_result(
+        Conversation(last_plan=previous),
+        ResultReference(source_query=previous, transaction_ids=selected),
+    )
+
+    await asked("Enséñame los movimientos de agosto", planner, ledger, conversation)
+
+    assert ledger.plan is None or ledger.plan.transaction_ids != selected
+
+
 async def test_that_merchant_reuses_the_highlighted_breakdown_row() -> None:
     planner = GivesUp()
     ledger = Ledger()

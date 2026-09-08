@@ -15,7 +15,6 @@ the turn the cascade goes on to plan.
 
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from typing import cast, get_args
 
@@ -29,19 +28,8 @@ from finguard_orchestrator.domain.services.visual_interpreter import (
     fold,
     interpret_visual,
 )
+from finguard_orchestrator.domain.services.visual_reference import DRILL_DOWN
 from finguard_orchestrator.observability import Step, Verdict, record
-
-# The input is `fold()`ed before this searches it, so an accented alternative (`qué`, an accented
-# `ensename`) never matches and none is listed here. `por que` is qualified to the shapes §3.3
-# actually names — unqualified, it read «¿Por qué no me funciona la app?» as a drill-down just as
-# readily as «¿Por qué agosto es tan alto?» — and neither `explica` nor a bare `responsable`
-# survived for the same reason: each claimed an ordinary question that named none of this turn's
-# chart.
-_DRILL_DOWN = re.compile(
-    r"\bpor que\b.*\b(?:tan|tanto|alto|alta|bajo|baja|sube|subio|subido|pico)\b|"
-    r"\bque movimientos\b|\bque comercio\b|"
-    r"\b(?:ensename|muestrame) (?:los|las) (?:movimientos|compras|operaciones)\b"
-)
 
 
 def _visual_intent(
@@ -80,7 +68,7 @@ def _drill_down_claims(query: AskFinancialQuestionQuery, analysis: TurnAnalysis)
         or analysis.focus is not TurnFocus.LAST_ANSWER
     ):
         return False
-    return _DRILL_DOWN.search(fold(query.sentence)) is not None
+    return DRILL_DOWN.search(fold(query.sentence)) is not None
 
 
 _CLAIMANT_NAMES = ("presentation", "reshape", "drill")
@@ -148,7 +136,7 @@ def classify_claimed_visual(intent: VisualIntent, sentence: str) -> VisualFollow
     asked together); the drill lexicon matching too is presentation+drill."""
     if intent.mixed:
         return VisualFollowUp("AMBIGUOUS", _MIXED_PAIR)
-    if _DRILL_DOWN.search(fold(sentence)):
+    if DRILL_DOWN.search(fold(sentence)):
         return VisualFollowUp("AMBIGUOUS", _two_claimant_pair(True, False, True))
     return VisualFollowUp("PRESENTATION_ONLY", "interpret_visual")
 

@@ -3,8 +3,11 @@
 from datetime import date
 
 import pytest
+from support.visual_planners import BREAKDOWN_PROFILE
+from test_visual_follow_up import SPEC
 
 from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.turn_analysis import TurnFocus, TurnRelation
 from finguard_orchestrator.domain.services import turn_analyzer, turn_interpreters
@@ -180,3 +183,97 @@ async def test_a_split_that_names_one_category_is_not_a_follow_up() -> None:
         today=TODAY,
     )
     assert analysis.relation is TurnRelation.NEW_REQUEST  # one name is a filter, not a split
+
+
+# --- Task 3 (Wave 4.3): a drill-down naming a bar of the newest trusted chart is a follow-up ----
+
+_MONTH_LABELS = ("2026-08", "2026-07", "2026-06")
+
+# Newest (and only) chart, ranked -- «agosto» is the tallest bar, «junio» the shortest.
+CHARTED_MONTHS = WITH_LAST_PLAN.with_visual_context(
+    VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, labels=_MONTH_LABELS, ranked=True)
+)
+# The same chart, but the drawn ranking is not strict -- a tie at either end -- so «ese pico»
+# resolves Ambiguous rather than Resolved; an ambiguous pointing still counts as a follow-up.
+CHARTED_MONTHS_UNRANKED = WITH_LAST_PLAN.with_visual_context(
+    VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, labels=_MONTH_LABELS, ranked=False)
+)
+# Untrusted: the labels are drawn, but nobody signed for them (a tampered or unsealed context).
+UNTRUSTED_CHARTED_MONTHS = WITH_LAST_PLAN.with_visual_context(
+    VisualContext(
+        "chart-1", SPEC, BREAKDOWN_PROFILE, labels=_MONTH_LABELS, ranked=True, trusted=False
+    )
+)
+# A chart in context, but no plan behind it -- `analyze()`'s own `elif` never reaches the drill
+# reader at all in this shape, same as every other follow-up shape in this module.
+CHARTED_MONTHS_NO_PLAN = Conversation().with_visual_context(
+    VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, labels=_MONTH_LABELS, ranked=True)
+)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "conversation"),
+    [
+        ("¿Por qué agosto es tan alto?", CHARTED_MONTHS),
+        # A shape ("ese pico"), read on a ranked chart -- resolves Resolved, "rank".
+        ("¿Qué movimientos explican ese pico?", CHARTED_MONTHS),
+        # The same shape over a chart whose rank is not strict -- resolves Ambiguous, and an
+        # ambiguous pointing still counts: the handler's answer to it is a question about the
+        # chart, not a new request (§3.3, docstring of `_drills_into_the_chart`).
+        ("¿Qué movimientos explican ese pico?", CHARTED_MONTHS_UNRANKED),
+    ],
+)
+async def test_a_drill_down_naming_a_bar_of_the_last_chart_is_a_follow_up(
+    sentence: str, conversation: Conversation
+) -> None:
+    analysis = await turn_analyzer.analyze(
+        sentence,
+        conversation=conversation,
+        interpreter=turn_interpreters.Deterministic(),
+        today=TODAY,
+    )
+    assert (analysis.relation, analysis.focus) == (TurnRelation.FOLLOW_UP, TurnFocus.LAST_ANSWER)
+
+
+@pytest.mark.parametrize(
+    ("sentence", "conversation"),
+    [
+        # No such bar was drawn: the chart is June-August, not September.
+        ("¿Por qué septiembre es tan alto?", CHARTED_MONTHS),
+        # A drill sentence naming no month and no shape ("tan caro" is not "más caro"/"el pico").
+        ("¿Por qué es tan caro?", CHARTED_MONTHS),
+        # A real bar is named, but over an untrusted chart -- whose labels nobody signed for.
+        ("¿Por qué agosto es tan alto?", UNTRUSTED_CHARTED_MONTHS),
+        # No chart in context at all.
+        ("¿Por qué agosto es tan alto?", WITH_LAST_PLAN),
+        # A chart in context, but no plan behind it.
+        ("¿Por qué agosto es tan alto?", CHARTED_MONTHS_NO_PLAN),
+    ],
+)
+async def test_a_drill_down_naming_nothing_the_chart_drew_is_a_new_request(
+    sentence: str, conversation: Conversation
+) -> None:
+    analysis = await turn_analyzer.analyze(
+        sentence,
+        conversation=conversation,
+        interpreter=turn_interpreters.Deterministic(),
+        today=TODAY,
+    )
+    assert analysis.relation is TurnRelation.NEW_REQUEST
+
+
+async def test_the_evidence_sentence_names_no_bar_and_stays_a_new_request() -> None:
+    """R17: «Enséñame los movimientos responsables.» matches the drill lexicon (it names a
+    movement set), but `resolve_reference` finds no month, category or shape it names in
+    `CHARTED_MONTHS` -- so `_drills_into_the_chart` returns False and this analyser reads it
+    exactly as today, NEW_REQUEST. It still reaches an answer: `_MOVEMENT_SET_REFERENCE`
+    (`ask_financial_question.py`, Commit 3 of this task) recognises this exact sentence directly,
+    without going through this analyser's chart relation at all -- the evidence path answers it,
+    the relation never has to."""
+    analysis = await turn_analyzer.analyze(
+        "Enséñame los movimientos responsables.",
+        conversation=CHARTED_MONTHS,
+        interpreter=turn_interpreters.Deterministic(),
+        today=TODAY,
+    )
+    assert analysis.relation is TurnRelation.NEW_REQUEST
