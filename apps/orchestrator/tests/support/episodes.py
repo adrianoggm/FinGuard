@@ -906,6 +906,11 @@ def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
         # a la hucha?" is neither spending nor income — and two episodes turn on it.
         "internal_only": getattr(query, "internal_only", False),
         "include_internal": getattr(query, "include_internal", False),
+        # An id-selected plan -- «esos movimientos», the evidence turn after a drill-down -- names
+        # its rows by identifier rather than by window or category, and by count rather than by the
+        # identifiers themselves: they are invented fresh by this fixture on every run, so what an
+        # episode can pin down is how many travelled, not which ones.
+        "transaction_ids": len(getattr(query, "transaction_ids", ())),
     }
     if isinstance(query, TopMovements):
         return {**ran, "rank": query.rank}
