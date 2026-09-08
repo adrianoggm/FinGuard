@@ -1237,7 +1237,22 @@ class AskFinancialQuestionHandler:
         if referenced_result is not None:
             yield Stage("planned", answer_writer.describe(referenced_result))
             yield Stage("querying")
-            yield await self._answer(query, referenced_result)
+            # I-2 (fix wave): ask the ledger for exactly the movements this turn re-lists, rather
+            # than none -- the real adapter substitutes the deployment's own `supporting_movements`
+            # default (10 in `compose.yaml`) against up to `MAX_SELECTED_TRANSACTIONS` (50)
+            # selected ids, so a caller asking with no `movements=` gets ten of the up-to-fifty rows
+            # the drill just showed. `None` when the referenced plan names no ids at all -- an
+            # ordinary contextual reference, not the evidence path -- so this line changes nothing
+            # for it.
+            yield await self._answer(
+                query,
+                referenced_result,
+                movements=(
+                    len(referenced_result.transaction_ids)
+                    if referenced_result.transaction_ids
+                    else None
+                ),
+            )
             return
 
         in_view = seam.READERS.select(query, among=_ON_THE_QUERY_IN_VIEW)
