@@ -4519,6 +4519,8 @@ _MOVEMENT_SET_REFERENCE: Final = re.compile(
     r"|\b(?:esos|estos|aquellos|los\s+mismos)\s+"
     r"(?:movimientos|cargos|pagos|ingresos)\b"
     r"|\b(?:esas|estas|aquellas|las\s+mismas)\s+(?:operaciones|compras)\b"
+    r"|\blos\s+movimientos\s+(?:responsables|detras|que\s+lo\s+explican)\b"
+    r"|\b(?:ensename|muestrame|dame)\s+(?:esos|estos|los)\s+movimientos[\s.!?]*$"
 )
 
 
