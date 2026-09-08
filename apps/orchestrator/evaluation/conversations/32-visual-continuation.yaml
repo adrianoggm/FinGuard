@@ -10,15 +10,37 @@ episodes:
       A financial breakdown that gets reshaped twice, drilled into once, and then restyled twice
       more, each turn remembering the chart the turn before it drew.
 
-      Turn 1 asks a plain question, «¿Cuánto gasté el mes pasado?», rather than §9's own opener,
-      «¿En qué he gastado más este verano?»: probed, the verano sentence reaches the planner (no
-      deterministic reader claims it) because `window_words.py` excludes seasons on purpose — its
-      own docstring says «en verano» is a window "a person understands and this does not, and they
-      are left out on purpose". Nothing in this service can turn «este verano» into a window
-      without guessing one, so handing it to the planner would cede a sentence nobody checks. This
-      turn asks about last month instead — a sentence `evaluation/planning/conversations.yaml`
-      already has a written expectation for — and draws a ranked breakdown bar over three spending
-      categories.
+      Turn 1 asks a plain question, «¿Cuánto gasté el último trimestre?», rather than §9's own
+      opener, «¿En qué he gastado más este verano?»: probed, the verano sentence reaches the
+      planner (no deterministic reader claims it) because `window_words.py` excludes seasons on
+      purpose — its own docstring says «en verano» is a window "a person understands and this
+      does not, and they are left out on purpose". Nothing in this service can turn «este verano»
+      into a window without guessing one, so handing it to the planner would cede a sentence
+      nobody checks. This turn asks about the last quarter instead, and draws a ranked breakdown
+      bar over three spending categories.
+
+      **The anchor changed from «¿Cuánto gasté el mes pasado?» in the fix wave, and the reason is
+      I-3.** That sentence's own plan was `LAST_MONTH` — one calendar month — and turn 3 below
+      regroups by month over three injected rows (June, July, August). A real ledger grouped by
+      month over `LAST_MONTH` returns exactly one bar; the fixture handed back three anyway, and
+      turn 4's drill into August then ran against a window (`2026-08-01..2026-08-05`) the plan in
+      view could never actually have produced. The whole-branch review named this a fixture that
+      lied about what the ledger returned, and the drill's own containment rule — never speak past
+      the window the chart's rows cover — is exactly the check that would have caught it, had the
+      window been real. It was not: `Ledger.run` answered no window at all before this fix wave,
+      so there was nothing for the rule to check turn 3's own three months against.
+      «El último trimestre» is what the controller's own rulings tried first as «los últimos tres
+      meses»/«desde junio hasta agosto» and both moved `handover_cases.py`'s ratchets — neither
+      phrasing is one `_ON_THE_SENTENCE_ITSELF`'s readers recognise (`_natural_period_aggregate_
+      plan` reads only `window_words.natural_period_in`'s narrower vocabulary — quarter, semester,
+      fortnight, weekend — never the counted-window regex `window_in` reads elsewhere), so both
+      reached the planner and, being nowhere in `evaluation/planning/conversations.yaml`, both
+      became a new unmeasured sentence. «El último trimestre» is `_LAST_QUARTER`'s own phrase and
+      resolves to the identical `RelativePeriod(LAST_N_MONTHS, n=3)` the controller's own probes
+      were reaching for, deterministically (`no_model: true`, probed) and with the ratchets
+      unmoved (`UNMEASURED` 22, `MUTE` 43, unchanged) — so the anchor now asks a plain question
+      whose own window genuinely spans three months, and turn 3's three injected rows are an
+      answer that plan can actually produce.
 
       Turn 2, «Separa transporte público y gasolina.», is §9's own split, verbatim. A deterministic
       reader recognises the verb and the two named categories the moment a plan is already in view,
@@ -38,11 +60,15 @@ episodes:
       to that one bar, and regroups by merchant — design §3.3's own third sentence, «¿Qué comercio
       es responsable?», is answered here rather than in a turn of its own, because a question
       naming August's own spike was always going to be asked that. The window it narrows to is not
-      the whole of August: this harness's fixed "today" falls inside that month, so the plan clamps
-      to the days that have actually happened rather than naming days the chart never covered —
-      design's own rule against widening a chart's window silently, and a month still in progress is
-      exactly the case that rule exists for. Its chart derives from the line it drilled and draws in
-      the breakdown floor's own canonical shape, the one turn 1 already drew.
+      the whole of August, and now for two reasons stacked rather than one: C-1's own intersection
+      first narrows the calendar month against the window turn 3's chart actually carries (now real,
+      since the harness fix answers one) — a no-op here, because that window is the whole three
+      months and fully contains August — and then this harness's fixed "today" falls inside the
+      month besides, so the plan clamps to the days that have actually happened rather than naming
+      days the chart never covered — design's own rule against widening a chart's window silently,
+      and a month still in progress is exactly the case that rule exists for. Its chart derives from
+      the line it drilled and draws in the breakdown floor's own canonical shape, the one turn 1
+      already drew.
 
       «Enséñame los movimientos responsables.» is the turn after it, and it draws nothing: the
       movements the drill's answer just named come back by their own identifiers, an id-selected
@@ -74,7 +100,7 @@ episodes:
       neither about the drill, only so it still clears the corpus's six-turn floor by a wide margin.
     metrics: [context_retention]
     turns:
-      - say: ¿Cuánto gasté el mes pasado?
+      - say: ¿Cuánto gasté el último trimestre?
         route: QUERY
         groups: [[RESTAURANTS, 46556, 3], [TRANSPORT, 21000, 2], [GROCERIES, 18000, 5]]
         # The breakdown floor's canonical form, probed against the real harness: chart-wide sort
@@ -84,7 +110,11 @@ episodes:
           channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
           axis_sort: [y, descending, value_minor]
         banking_calls: 1
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        no_model: true
+        # I-3 (fix wave): claimed deterministically by `_natural_period_aggregate_plan`'s own
+        # `_LAST_QUARTER` phrase, resolving to `RelativePeriod(LAST_N_MONTHS, n=3)` -- the window
+        # turn 3's own three months (June-August) can actually be an answer to. See `why`.
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Separa transporte público y gasolina.
         route: QUERY
         groups: [[TRANSPORT_PUBLIC, 32000, 4], [TRANSPORT_FUEL, 18000, 3]]
@@ -100,7 +130,7 @@ episodes:
           mark: bar
           channels: [[y, dimension, nominal], [x, value_minor, quantitative], [tooltip, dimension, nominal], [tooltip, value_minor, quantitative]]
           axis_sort: [y, descending, value_minor]
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: CATEGORY, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Ahora compáralo por meses.
         route: QUERY
         groups: [["2026-06", 15000, 2], ["2026-07", 17000, 3], ["2026-08", 18000, 2]]
@@ -111,7 +141,7 @@ episodes:
         chart:
           mark: line
           channels: [[x, dimension, temporal], [y, value_minor, quantitative], [tooltip, dimension, temporal], [tooltip, value_minor, quantitative]]
-        ran: {window: LAST_MONTH, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
+        ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿Por qué agosto es tan alto?
         route: QUERY
         groups: [[Repsol, 12000, 2], [Renfe, 6000, 1]]
