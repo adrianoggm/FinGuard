@@ -15,11 +15,15 @@ and would measure the model instead.
 """
 
 import copy
+from datetime import date
 from typing import Any
 
 import pytest
 from support import episodes
 from support.ratchets import Ceiling, Floor
+
+from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
 
 CORPUS = episodes.load()
 
@@ -597,3 +601,60 @@ def test_an_ambiguous_bar_asks_without_a_banking_call() -> None:
     assert answer["text"] == "¿A qué te refieres: julio de 2026, agosto de 2026 o junio de 2026?"
     assert episodes.tool_of(answer) == episodes.CLARIFY
     assert len(answer["conversation"]["visual_contexts"]) == contexts_before
+
+
+# --- Fix round 2: C-1 becomes visible to the corpus, not only to a direct reader test -----------
+#
+# The re-review's own end-to-end C-1 probe, made a harness-level test rather than only a
+# `read_drill_down` unit row: a plan whose `date_range` is a slice of two calendar months, drilled
+# on the second one. Not episode 32 -- a fresh two-turn scenario, because the opening sentence is
+# not one `handover_cases.py` could ever measure among the corpus's own YAML episodes (it is not a
+# turn `episodes.load()` returns), and it is not claimed by any deterministic reader a first turn
+# can reach without the planner: `window_words.date_range_in` (which reads an absolute range) is
+# consulted by the broader `window_in`, never by `_natural_period_aggregate_plan`'s narrower
+# `natural_period_in` -- the one window-only reader in `_ON_THE_SENTENCE_ITSELF`. Probed directly:
+# the sentence reaches the planner (`planner=1`) and the plan it produces reads
+# `date_range=2026-06-10..2026-07-20`, `group_by=MONTH` -- exactly the reviewer's own numbers, so
+# it is used verbatim rather than substituted. Because it reaches the planner rather than any
+# deterministic reader, and because `handover_cases.py`'s own `cases()` walks only
+# `evaluation/conversations/*.yaml`, this test cannot move `UNMEASURED`/`MUTE` either way; the
+# contract's own ratchet re-run after this commit is confirmation, not a risk.
+
+
+def test_c1_a_month_bar_never_speaks_past_the_slice_the_plan_asked_for() -> None:
+    """«¿Cuánto gasté del 10 de junio al 20 de julio por meses?» then «¿Por qué julio es tan
+    alto?»: the drill must run exactly `2026-07-01..2026-07-20` -- the slice of July the plan in
+    view actually asked for -- never the whole calendar month, in one ledger call, regrouped by
+    merchant, with the spoken answer naming those same dates."""
+    stack = episodes.a_stack()
+    conversation: dict[str, object] | None = {"account_selection_mode": "ALL"}
+    opening = episodes.Turn(
+        say="¿Cuánto gasté del 10 de junio al 20 de julio por meses?",
+        groups=[["2026-06", 15_000, 2], ["2026-07", 17_000, 3]],
+    )
+    stack.ledger.groups_for_next_turn = episodes._groups_from(opening)
+    first = stack.client.post(
+        "/v1/questions", json={"question": opening.say, "conversation": conversation}
+    )
+    stack.ledger.groups_for_next_turn = None
+    assert first.status_code == 200
+    opening_plan = stack.ledger.ran[-1]
+    assert opening_plan.date_range == AbsoluteRange(date(2026, 6, 10), date(2026, 7, 20))
+    assert opening_plan.group_by is GroupBy.MONTH
+    conversation = first.json()["conversation"]
+
+    before = len(stack.ledger.ran)
+    second = stack.client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué julio es tan alto?", "conversation": conversation},
+    )
+    assert second.status_code == 200
+    answer = second.json()
+
+    assert len(stack.ledger.ran) == before + 1, "the drill must run exactly one ledger call"
+    drilled = stack.ledger.ran[-1]
+    assert drilled.date_range == AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
+    assert drilled.group_by is GroupBy.MERCHANT
+    # Measured text: "465,56 € del 2026-07-01 al 2026-07-20, en 3 movimientos.\n  • Mercadona:
+    # 465,56 € (3)\nConsultado en todas tus cuentas."
+    assert "del 2026-07-01 al 2026-07-20" in answer["text"]

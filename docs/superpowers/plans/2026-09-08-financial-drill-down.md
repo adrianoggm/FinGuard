@@ -158,3 +158,30 @@ read from `git log`:
   written twice).
 - **Docs**: this commit (`docs/next.md`'s 4.3 paragraph, `docs/conversational-capabilities.md`'s
   drill-down row, design §3.3's Landed paragraph, this file).
+
+## Landed — fix round 2
+
+The scoped re-review (`branch-re-review.md`) against `branch-fix1.md`'s own rulings found two new
+Important items; the controller's rulings (`branch-fix2.md`) are two atomic commits. One line per
+fix, its commit SHA read from `git log`:
+
+- **N-1** — the empty-intersection guard now runs before the value is built: `0c33a40`
+  (`read_drill_down` computes `start`/`end` and checks `end < start` before constructing
+  `AbsoluteRange`, so a month bucket the ledger reports outside the window it also reports, or a
+  corpus episode whose `groups:` name a month past `TODAY`, falls to today's path rather than
+  raising `InvalidValueError` as an unhandled HTTP 422).
+- **N-2** — the drill's window is what the ledger answered *inside* what the plan asked, not the
+  ledger's answer alone: `0c33a40` (`_answered_window` intersects `answer.period_start/period_end`
+  with `plan.date_range` when both are known, empty intersection → `None`; the harness fake's own
+  `_resolved_window` now checks `plan.date_range` first, so an absolute plan answers exactly its
+  own range and the month-key derivation applies only to a `RelativePeriod` plan; the re-reviewer's
+  own end-to-end C-1 probe is now a harness-level test, `test_conversation_corpus.py`'s
+  `test_c1_a_month_bar_never_speaks_past_the_slice_the_plan_asked_for`, rather than only a
+  `read_drill_down` unit row — ratchets confirmed unmoved, `UNMEASURED` 22 / `MUTE` 43, because the
+  test's own opening sentence reaches the planner and `handover_cases.py`'s `cases()` never reads
+  anything but `evaluation/conversations/*.yaml`).
+- **New Minor** (the import-time `assert` on `_DERIVING_KINDS` is stripped under `python -O`): left
+  as is, per the ruling — consistent with `visual_follow_up.py`'s own `assert pair in
+  get_args(Claimant)`, and the handler's literal is pinned by a test `-O` does not strip.
+- **Docs**: this commit (`docs/next.md`'s never-widens paragraph, design §3.3's Landed paragraph,
+  this file).

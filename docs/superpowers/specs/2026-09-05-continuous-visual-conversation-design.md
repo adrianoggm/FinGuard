@@ -159,8 +159,13 @@ answered after the chart, a restyle of an older chart, or a client-edited `last_
 check and fall to today's path rather than narrow a plan the chart was never drawn from. The bounded
 plan (`application/queries/readers/drill_down.py`) is the plan in view narrowed to the resolved
 label — for a month, `whole_month(...)` intersected with `newest.window` (the dates the chart's own
-rows cover) before the M2 clamp to today, so a plan whose own window is a slice of a calendar month
-never widens past that slice; `categories=(key,)` for a category — and regrouped by merchant
+rows actually cover, itself the ledger's own answered window bounded by the plan's own `date_range`
+— `_answered_window`'s intersection, fix round 2's N-2 — never the ledger's answer alone, which a
+lenient ledger or the corpus's own fake can report as whole calendar months for a plan that asked
+for a slice of one) before the M2 clamp to today; the two dates are compared before the range is
+ever built (fix round 2's N-1), so a label whose calendar month does not overlap `newest.window` at
+all falls to today's path rather than raising, and a plan whose own window is a slice of a calendar
+month never widens past that slice; `categories=(key,)` for a category — and regrouped by merchant
 (`GroupBy.MERCHANT`, `group_limit=None`), with the account scope and every other filter kept
 unchanged, run once with `MAX_SELECTED_TRANSACTIONS` movements: the answer is the merchant breakdown
 of that bar, and its evidence is the movements behind it. «Back» is unchanged: the drill's own chart

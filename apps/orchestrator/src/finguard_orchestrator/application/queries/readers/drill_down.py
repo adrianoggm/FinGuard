@@ -156,14 +156,19 @@ def read_drill_down(
         # all -- a plan's own `date_range` can be a slice of a calendar month (`del 10 de junio al
         # 20 de julio` draws a July bar whose rows cover 1-20 July only), and naming the whole
         # month here would speak days the chart never drew.
-        window = AbsoluteRange(
-            max(month_window.start, newest.window.start), min(month_window.end, newest.window.end)
-        )
-        if window.end < window.start:
-            # Unreachable by construction: the label was drawn from `newest.window`, so the
-            # calendar month it names always overlaps it. Kept as the fail-closed guard rather than
-            # a new outcome for a branch nothing can reach.
+        #
+        # N-1 (fix round 2): the two dates are compared BEFORE `AbsoluteRange` is built, not after
+        # -- `AbsoluteRange.__post_init__` raises when its own `end < start`, so building the value
+        # first and checking it second never reaches the check at all. This branch is reachable: a
+        # ledger can report a month bucket outside the window it also reports (a boundary-timezone
+        # bucketing, or a bucket beyond `periodEnd`/before `periodStart`), and a corpus episode can
+        # inject a month past the harness's own `TODAY`. Today's path is the honest answer to a
+        # label the chart's own window does not actually cover, never an HTTP 422.
+        start = max(month_window.start, newest.window.start)
+        end = min(month_window.end, newest.window.end)
+        if end < start:
             return None
+        window = AbsoluteRange(start, end)
         if window.start <= today <= window.end:
             # Design §3.3: never widen the window silently. The chart drew this bar through
             # whatever of the month had happened by then; naming the whole calendar month here,

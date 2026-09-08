@@ -5593,17 +5593,32 @@ def _local_visual_date(movement: Movement, reporting_timezone: str) -> str:
 def _answered_window(plan: FinancialPlan, answer: QueryAnswer) -> AbsoluteRange | None:
     """The dates the rows a chart is about to draw actually cover -- never an amount.
 
-    The ledger's own resolved window wins when it sent one: `answer.period_start`/`period_end`
-    are what `http_financial_query.py` maps from `periodStart`/`periodEnd` (`:310-311`), so they
-    are what banking actually ran, narrower than a named period can be (a `LAST_MONTH` plan
-    clamped mid-month is exactly this case). Absent that, `plan.date_range` is the next best
-    fact -- the plan's own explicit range, when it has one. `None` when neither is set: a plan
-    naming a `RelativePeriod` and answered by a fake that reports no period back (the corpus
-    harness, before Wave 4.3's own fix to it) has genuinely no window to carry, and the drill's
-    own feasibility check (`readers/drill_down.py`) reads that `None` as "refuse, never guess".
+    N-2 (fix round 2): the ledger's own resolved window is bounded by the plan's own explicit
+    range, never trusted alone. `answer.period_start`/`period_end` are what
+    `http_financial_query.py` maps from `periodStart`/`periodEnd` (`:310-311`) -- what banking
+    says it ran -- but a lenient ledger, or a fake built to answer whole calendar buckets (the
+    corpus harness's own `_resolved_window`), can report a window wider than the plan it was
+    handed: a plan asking for 10 June - 20 July grouped by month draws a July bar, and an answer
+    of "the whole of June and July" is not what that plan queried. `plan.date_range` is the bound
+    the drill must never exceed, so when both are known the window is their intersection
+    (`max` of the two starts, `min` of the two ends); an empty intersection -- the ledger answered
+    a window disjoint from the plan's own -- is `None`, fail closed, never a guess. The ledger's
+    window alone when the plan names a `RelativePeriod` (nothing of the plan's own to bound it
+    with); `plan.date_range` alone when the ledger answered no period at all (the corpus harness,
+    before Wave 4.3's own fix to it); `None` when neither is set -- the drill's own feasibility
+    check (`readers/drill_down.py`) reads that `None` as "refuse, never guess" either way.
     """
-    if answer.period_start is not None and answer.period_end is not None:
-        return AbsoluteRange(answer.period_start, answer.period_end)
+    answered = (
+        AbsoluteRange(answer.period_start, answer.period_end)
+        if answer.period_start is not None and answer.period_end is not None
+        else None
+    )
+    if answered is not None and plan.date_range is not None:
+        start = max(answered.start, plan.date_range.start)
+        end = min(answered.end, plan.date_range.end)
+        return None if end < start else AbsoluteRange(start, end)
+    if answered is not None:
+        return answered
     return plan.date_range
 
 

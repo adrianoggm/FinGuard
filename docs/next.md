@@ -727,15 +727,21 @@ gasto tanto?» is `NoMatch` and reaches the planner exactly as before, because t
 weekday resolution would have been a refusal text nobody asked for; series labels travel on the wire
 but are not read — a comparison's window or a recurrence's cadence still goes to the planner as
 today. There is no click-to-drill on the client — every drill starts from a sentence, never a tap.
-And the drill never widens, now enforced rather than assumed (fix wave, C-1/I-1): the calendar
-month a label names is intersected with the window the chart's own rows cover before anything else
-narrows, so a plan whose window is a slice of a month — «del 10 de junio al 20 de julio» — never
-widens past that slice on a later «¿por qué julio es tan alto?»; and the plan in view is checked
-against the chart's own sealed digest before the intersection runs at all, so a KPI turn, a restyle
-of an older chart or a client-edited `last_plan` all fall to today's path rather than narrowing a
-plan the chart was never drawn from. A month still in progress is then clamped to today (design
-§3.3's own rule against silently widening a chart's window), so «agosto» asked on the 5th drills
-the 1st-5th of it, not the whole calendar month.
+And the drill never widens, now enforced rather than assumed (fix wave, C-1/I-1, tightened in fix
+round 2 by N-1/N-2): the calendar month a label names is intersected with the window the chart's
+own rows actually cover, and that window is itself what the ledger answered bounded by what the
+plan asked for — never the ledger's answer alone, because a lenient ledger, or the corpus's own
+fake, can report whole calendar months for a plan that asked for a slice of one — so a plan whose
+own range is a slice of a month — «del 10 de junio al 20 de julio» — never widens past that slice
+on a later «¿por qué julio es tan alto?», whatever the ledger's own answer claimed to cover. A
+label whose calendar month does not overlap that window at all is today's path, not an error: the
+two dates are compared before the range is built, never after, so an out-of-window month can no
+longer end the turn as an unhandled 422. And the plan in view is checked against the chart's own
+sealed digest before any of this runs, so a KPI turn, a restyle of an older chart or a
+client-edited `last_plan` all fall to today's path rather than narrowing a plan the chart was
+never drawn from. A month still in progress is then clamped to today (design §3.3's own rule
+against silently widening a chart's window), so «agosto» asked on the 5th drills the 1st-5th of
+it, not the whole calendar month.
 
 Recorded rather than fixed, from the same fix round: «Enséñame los movimientos de agosto» over a
 month chart is now a drill rather than today's path — the sentence names a bar (agosto) and the

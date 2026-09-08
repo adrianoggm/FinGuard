@@ -353,15 +353,25 @@ def _resolved_window(
     to answer neither, so a chart's `window` (`VisualDataset.window`, built from these two) was
     always `None` in the corpus regardless of what an episode's `groups:` described.
 
-    When `plan.group_by` is `MONTH` and the groups handed back this turn carry `YYYY-MM` keys, the
-    window is the first day of the earliest key to the last day of the latest -- clamped to
-    `TODAY`, because the fake cannot answer with rows from a day that has not happened either.
-    Otherwise, `plan.date_range`'s own bounds when it has one. Otherwise neither: the fake has
-    nothing to resolve a window from, and `None` is the honest answer, not a guess.
+    An absolute plan is checked FIRST (fix round 2, alongside N-2): a plan carrying its own
+    `date_range` names the exact window it asked for, and the real banking adapter runs that
+    range verbatim (`http_financial_query.py:279-283`) -- so a faithful ledger's answer is the
+    plan's own range, never the wider span of whichever calendar months its rows happen to fall
+    in. Deriving from the injected `YYYY-MM` group keys instead (as this fake used to, for every
+    plan alike) answered whole months for a plan that asked for a slice of one, which is exactly
+    what let the corpus stay blind to C-1 -- `_answered_window`
+    (`application/queries/ask_financial_question.py`) now guards against a lenient ledger doing
+    this too, but the fake should not manufacture the lenient case in the first place.
 
-    The fake answers the window of the months it was told to answer -- so a chart's `window` in
-    the corpus is the one its `groups` describe, never a window the fixture merely asserts on top.
+    The month-key derivation applies only when the plan names a `RelativePeriod` (`LAST_MONTH`,
+    `THIS_YEAR`, ...) and has no `date_range` of its own to answer with: the window is the first
+    day of the earliest `YYYY-MM` key the groups carry to the last day of the latest -- clamped to
+    `TODAY`, because the fake cannot answer with rows from a day that has not happened either.
+    `None`/`None` when neither applies: the fake has nothing to resolve a window from, and that is
+    the honest answer, not a guess.
     """
+    if plan.date_range is not None:
+        return plan.date_range.start, plan.date_range.end
     if plan.group_by is GroupBy.MONTH:
         months = [
             (int(match.group(1)), int(match.group(2)))
@@ -374,8 +384,6 @@ def _resolved_window(
             end_year, end_month = months[-1]
             end = date(end_year, end_month, monthrange(end_year, end_month)[1])
             return start, min(end, TODAY)
-    if plan.date_range is not None:
-        return plan.date_range.start, plan.date_range.end
     return None, None
 
 
