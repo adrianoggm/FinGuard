@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -98,6 +98,34 @@ def event(
         "at": now_iso(),
         **data,
     }
+
+
+def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str, str]:
+    """`chartId`/`visualTurnId` for the four turn events -- only the keys the reply carries.
+
+    The gateway reads two strings off a payload it otherwise passes through unchanged; it still
+    interprets nothing (ADR-010). `chartId` is `answer["visualization"]["chart_id"]` when that is a
+    str -- a KPI answer's visualization has no `chart_id` and a KPI is not a chart a later turn can
+    name, so it is omitted; `visualTurnId` is the newest
+    `conversation["visual_contexts"][-1]["turn_id"]` when the conversation is a mapping carrying a
+    non-empty list whose last item has a str there. An uncharted turn returns `{}` so its events
+    look exactly as they did before Wave 4.4 -- omitted, never `null`.
+    """
+    identity: dict[str, str] = {}
+    visualization = answer.get("visualization")
+    if isinstance(visualization, Mapping):
+        chart_id = visualization.get("chart_id")
+        if isinstance(chart_id, str):
+            identity["chartId"] = chart_id
+    if isinstance(conversation, Mapping):
+        visual_contexts = conversation.get("visual_contexts")
+        if isinstance(visual_contexts, list) and visual_contexts:
+            last_context = visual_contexts[-1]
+            if isinstance(last_context, Mapping):
+                turn_id = last_context.get("turn_id")
+                if isinstance(turn_id, str):
+                    identity["visualTurnId"] = turn_id
+    return identity
 
 
 class VoiceSession:
@@ -479,6 +507,9 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         reply_conversation = reply.conversation
         payment_required = reply.payment_confirmation_required
         reply_answer = reply.answer
+    # Computed once the reply is known, both branches: the chart this turn drew and the
+    # identity of the decision that drew it, riding the four turn events below.
+    identity = chart_identity(reply_answer, reply_conversation)
     session.machine.speaking()
     await websocket.send_json(
         event(
@@ -489,6 +520,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
             text=reply_text,
             answer=reply_answer,
             paymentConfirmationRequired=payment_required,
+            **identity,
         )
     )
     timings.mark("assistant_text_final")
@@ -499,6 +531,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
             turn_id=turn_id,
             sequence=session.next_sequence(),
             sampleRate=session.services.settings.output_sample_rate,
+            **identity,
         )
     )
     async for chunk in session.services.tts.synthesize(
@@ -512,7 +545,11 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         return
     await websocket.send_json(
         event(
-            "audio.completed", session.session_id, turn_id=turn_id, sequence=session.next_sequence()
+            "audio.completed",
+            session.session_id,
+            turn_id=turn_id,
+            sequence=session.next_sequence(),
+            **identity,
         )
     )
     if session.cancelled(generation, turn_id):
@@ -532,6 +569,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
                 sequence=session.next_sequence(),
                 conversation=reply_conversation,
                 timings={"schemaVersion": 1, **timings.durations()},
+                **identity,
             )
         )
     finally:

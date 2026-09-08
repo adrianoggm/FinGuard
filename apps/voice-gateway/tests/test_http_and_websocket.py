@@ -166,6 +166,62 @@ def test_fake_text_turn_and_spoken_payment_confirmation_refusal() -> None:
             assert response_answer["text"] == response_text
             assert response_answer["groups"] == []
             assert response["paymentConfirmationRequired"] is False
+            # An uncharted turn's four identity-bearing events look exactly as they did
+            # before Wave 4.4: no chartId, no visualTurnId.
+            for event_type in (
+                "assistant.text.final",
+                "audio.started",
+                "audio.completed",
+                "turn.completed",
+            ):
+                identity_event = next(item for item in received if item["type"] == event_type)
+                assert "chartId" not in identity_event
+                assert "visualTurnId" not in identity_event
+    sessions.clear()
+
+
+def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+            socket.send_bytes("quiero ver el gráfico".encode())
+            socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+            received: list[dict[str, object]] = []
+            indices: dict[str, int] = {}
+            while True:
+                item = socket.receive()
+                if item.get("text"):
+                    payload = json.loads(item["text"])
+                    received.append(payload)
+                    indices.setdefault(payload["type"], len(received) - 1)
+                    if payload["type"] == "turn.completed":
+                        break
+            identity_types = (
+                "assistant.text.final",
+                "audio.started",
+                "audio.completed",
+                "turn.completed",
+            )
+            for event_type in identity_types:
+                event_payload = received[indices[event_type]]
+                assert event_payload["chartId"] == "chart-fake-1"
+                assert event_payload["visualTurnId"] == "11111111-1111-1111-1111-111111111111"
+            # The chart before audio: the text (and its chart) is on screen before the
+            # summary starts playing, not an accident of ordering but an asserted invariant.
+            assert indices["assistant.text.final"] < indices["audio.started"]
+            text_final_answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(text_final_answer, dict)
+            visualization = text_final_answer["visualization"]
+            assert isinstance(visualization, dict)
+            assert visualization["chart_id"] == received[indices["assistant.text.final"]]["chartId"]
     sessions.clear()
 
 
@@ -204,6 +260,9 @@ def test_payment_policy_blocks_next_spoken_turn_without_calling_assistant() -> N
             assert isinstance(final_text, str)
             assert "No puedo confirmar" in final_text
             assert final["paymentConfirmationRequired"] is True
+            # The payment-refusal branch builds a reply with no chart: no identity to lift.
+            assert "chartId" not in final
+            assert "visualTurnId" not in final
     sessions.clear()
 
 
@@ -506,6 +565,7 @@ class _CancellationResistantTTS:
 async def test_cancelled_speaking_turn_does_not_commit_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    original_tts = services.tts
     resistant_tts = _CancellationResistantTTS()
     monkeypatch.setattr(services, "tts", resistant_tts)
     session = VoiceSession("session", "credential", services)
@@ -513,23 +573,55 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
     session.conversation = original_conversation
     session.machine.configure()
     session.machine.start_input("old-turn")
-    session.audio.extend(b"old text")
+    # A charted old turn: the probe below is meaningless if there is no chart identity to fence.
+    session.audio.extend(b"old grafico text")
     session.machine.commit()
     transport = _RecordingTransport()
     session.task = asyncio.create_task(process_turn(transport, session, "old-turn"))
     await resistant_tts.entered.wait()
 
-    await handle_control(
-        transport,
-        session,
-        parse_event(json.loads(_control("input.start", "session", 0, "new-turn"))),
-    )
-    resistant_tts.release.set()
+    try:
+        # By the time the TTS generator has entered, assistant.text.final and audio.started for
+        # the old, charted turn are already on the wire -- and charted, or this probe would be
+        # vacuous.
+        events_before_cancel = list(transport.events)
+        charted_before_cancel = [
+            item for item in events_before_cancel if item.get("chartId") == "chart-fake-1"
+        ]
+        assert charted_before_cancel
+
+        await handle_control(
+            transport,
+            session,
+            parse_event(json.loads(_control("input.start", "session", 0, "new-turn"))),
+        )
+    finally:
+        # Always released, assertions above notwithstanding: otherwise a failure here leaves
+        # the resistant TTS's generator parked on an Event nothing will ever set, and teardown
+        # hangs rather than reporting the failure.
+        resistant_tts.release.set()
     await asyncio.gather(*session.retired_tasks)
 
     assert session.conversation is original_conversation
     assert session.machine.turn_id == "new-turn"
     assert transport.audio == []
+    # No event carrying the old turn's chart identity reaches the transport after the cancel
+    # point: fencing discards the old turn's late work regardless of whether it was charted.
+    events_after_cancel = transport.events[len(events_before_cancel) :]
+    assert not any(item.get("chartId") == "chart-fake-1" for item in events_after_cancel)
+
+    # The new turn is uncharted; its events carry no identity at all -- none of the old
+    # turn's leaks onto it.
+    services.tts = original_tts
+    session.audio.extend(b"hola")
+    session.machine.commit()
+    events_before_new_turn = len(transport.events)
+    await process_turn(transport, session, "new-turn")
+    new_turn_events = transport.events[events_before_new_turn:]
+    assert new_turn_events
+    for item in new_turn_events:
+        assert "chartId" not in item
+        assert "visualTurnId" not in item
 
 
 @pytest.mark.parametrize("provider", ["stt", "tts"])
