@@ -39,6 +39,7 @@ from finguard_orchestrator.domain.services import explicit_facts
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.window_words import whole_month
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -114,12 +115,17 @@ MONTH_PLAN = FinancialPlan(
     group_by=GroupBy.MONTH,
     only_account_id=ACCOUNT,
 )
+# The full three months the chart's own rows cover -- wide enough that intersecting a drilled
+# month against it is a no-op for every test below that is not itself testing the intersection
+# (C-1's own probes construct a narrower window directly).
 MONTH_CONTEXT = VisualContext(
     "chart-months",
     SPEC,
     BREAKDOWN_PROFILE,
     labels=("2026-08", "2026-07", "2026-06"),
     ranked=True,
+    window=AbsoluteRange(date(2026, 6, 1), date(2026, 8, 31)),
+    plan_digest=plan_digest(MONTH_PLAN),
 )
 MONTH_CONVERSATION = Conversation(last_plan=MONTH_PLAN, visual_contexts=(MONTH_CONTEXT,))
 
@@ -237,12 +243,18 @@ async def test_an_untrusted_chart_is_not_drilled() -> None:
 
 
 async def test_a_category_grouped_plan_is_not_drilled_by_a_month_label() -> None:
+    """Feasibility admits CATEGORY (it is one of the two drillable groupings), so this plan clears
+    the digest and feasibility gates and reaches resolution -- the reader still refuses there,
+    because the label the chart's own month-shaped labels resolve to is not the kind of label a
+    CATEGORY grouping can be narrowed by."""
     ledger = RecordingLedger()
     handler, planner = _handler_with_planner(FALLBACK_PLAN, ledger)
     sentence = "¿Por qué agosto es tan alto?"
+    category_plan = replace(MONTH_PLAN, group_by=GroupBy.CATEGORY)
     conversation = replace(
         MONTH_CONVERSATION,
-        last_plan=replace(MONTH_PLAN, group_by=GroupBy.CATEGORY),
+        last_plan=category_plan,
+        visual_contexts=(replace(MONTH_CONTEXT, plan_digest=plan_digest(category_plan)),),
     )
 
     result = await handler.handle(
@@ -272,6 +284,7 @@ async def test_a_breakdown_drills_into_the_category_it_names() -> None:
         BREAKDOWN_PROFILE,
         labels=("RESTAURANTS", "TRANSPORT_FUEL", "GROCERIES"),
         ranked=True,
+        plan_digest=plan_digest(breakdown_plan),
     )
     conversation = Conversation(last_plan=breakdown_plan, visual_contexts=(context,))
 
@@ -314,7 +327,8 @@ AFTER_AUGUST = date(2026, 9, 10)
 
 def _month_conversation(*, metric: Metric) -> Conversation:
     plan = replace(MONTH_PLAN, metric=metric)
-    return Conversation(last_plan=plan, visual_contexts=(MONTH_CONTEXT,))
+    context = replace(MONTH_CONTEXT, plan_digest=plan_digest(plan))
+    return Conversation(last_plan=plan, visual_contexts=(context,))
 
 
 def test_an_average_plan_drills_with_the_sum_metric() -> None:
@@ -412,3 +426,130 @@ def test_no_visual_contexts_is_not_drilled() -> None:
     conversation = Conversation(last_plan=MONTH_PLAN)
 
     assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
+
+
+# --- Fix wave: C-1 (never past the chart's own window), I-1 (bound to the chart's own plan), I-4
+# --- (feasibility before ambiguity) --------------------------------------------------------------
+
+
+def test_the_reviewers_c1_probe_never_speaks_past_the_charts_own_window() -> None:
+    """The reviewer's own probe: a plan whose `date_range` is a slice of two calendar months (10
+    June - 20 July), grouped by MONTH, with a chart whose own `window` is that same slice and whose
+    labels are July and June -- drilling into July must never speak past 20 July, the day the
+    chart's own rows stop, however far `today` has since moved."""
+    plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        date_range=AbsoluteRange(date(2026, 6, 10), date(2026, 7, 20)),
+        group_by=GroupBy.MONTH,
+        only_account_id=ACCOUNT,
+    )
+    context = VisualContext(
+        "chart-slice",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("2026-07", "2026-06"),
+        ranked=True,
+        window=AbsoluteRange(date(2026, 6, 10), date(2026, 7, 20)),
+        plan_digest=plan_digest(plan),
+    )
+    conversation = Conversation(last_plan=plan, visual_contexts=(context,))
+
+    drill = read_drill_down("¿Por qué julio es tan alto?", conversation, today=date(2026, 9, 10))
+
+    assert isinstance(drill, DrillDown)
+    assert drill.plan.date_range == AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
+
+
+def test_a_month_chart_with_no_known_window_is_not_drilled() -> None:
+    """C-1's other failure mode: a MONTH-grouped plan whose chart carries no `window` at all (an
+    older client's echo, or a dataset `_answered_window` could not resolve) has nothing to
+    intersect the label against, and refuses rather than falling back to the calendar month
+    alone."""
+    context = replace(MONTH_CONTEXT, window=None)
+    conversation = replace(MONTH_CONVERSATION, visual_contexts=(context,))
+
+    assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
+
+
+async def test_i1_a_different_plan_in_view_is_not_drilled_by_a_chart_it_did_not_draw() -> None:
+    """I-1, end to end: the newest chart is a month chart, but `last_plan` is a genuinely different
+    plan (different categories, a different digest) -- the chart is not this plan's, so the reader
+    refuses and the planner answers as it always does for today's path."""
+    ledger = RecordingLedger()
+    different_plan = replace(MONTH_PLAN, categories=("GROCERIES",))
+    handler, planner = _handler_with_planner(FALLBACK_PLAN, ledger)
+    sentence = "¿Por qué marzo es tan alto?"
+    conversation = replace(MONTH_CONVERSATION, last_plan=different_plan)
+
+    result = await handler.handle(
+        AskFinancialQuestionQuery(
+            sentence=sentence, account_id=ACCOUNT, today=TODAY, conversation=conversation
+        )
+    )
+
+    assert planner.asked == sentence
+    assert len(ledger.calls) == 1
+    plan, _ = ledger.calls[0]
+    assert plan.group_by is not GroupBy.MERCHANT
+    assert result.outcome == "PLANNED"
+
+
+def test_i1_the_reader_refuses_a_chart_bound_to_a_different_plan() -> None:
+    """I-1, direct: the chart's own digest names plan A; the conversation's `last_plan` is plan
+    B -- unrelated plans, so the chart is provably not this turn's."""
+    plan_a = MONTH_PLAN
+    plan_b = replace(MONTH_PLAN, categories=("GROCERIES",))
+    context = replace(MONTH_CONTEXT, plan_digest=plan_digest(plan_a))
+    conversation = Conversation(last_plan=plan_b, visual_contexts=(context,))
+
+    assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
+
+
+def test_i1_a_client_edited_last_plan_is_not_drilled() -> None:
+    """I-1: the same shape as above, from the more realistic direction -- a holder's own client
+    echoed `last_plan` with one filter changed underneath a chart that was sealed for the
+    unedited plan. The digest no longer matches, so the chart is refused rather than narrowed."""
+    edited = replace(MONTH_PLAN, categories=("GROCERIES",))
+    conversation = replace(MONTH_CONVERSATION, last_plan=edited)
+
+    assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
+
+
+def test_i4_a_merchant_grouped_plan_with_tied_labels_is_never_asked_about() -> None:
+    """I-4: feasibility refuses a MERCHANT grouping before `resolve_reference` ever runs, so a tied
+    pair of merchant labels never produces the ask the reviewer's own probe found -- «¿A qué te
+    refieres: Repsol o Renfe?» over a chart that could never be drilled whatever the reply."""
+    merchant_plan = replace(MONTH_PLAN, group_by=GroupBy.MERCHANT)
+    context = VisualContext(
+        "chart-merchants",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("Repsol", "Renfe"),
+        ranked=False,
+        plan_digest=plan_digest(merchant_plan),
+    )
+    conversation = Conversation(last_plan=merchant_plan, visual_contexts=(context,))
+
+    drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation, today=AFTER_AUGUST)
+
+    assert drill is None
+
+
+def test_i4_a_category_plan_with_tied_labels_still_asks() -> None:
+    """I-4's other half: a CATEGORY plan is drillable, so the same tied-label shape that I-4
+    refuses for MERCHANT above still asks here -- feasibility was never the reason the merchant
+    case refused, drillability was."""
+    category_plan = replace(MONTH_PLAN, group_by=GroupBy.CATEGORY)
+    context = VisualContext(
+        "chart-categories-tied",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("RESTAURANTS", "GROCERIES"),
+        ranked=False,
+        plan_digest=plan_digest(category_plan),
+    )
+    conversation = Conversation(last_plan=category_plan, visual_contexts=(context,))
+
+    drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation, today=AFTER_AUGUST)
+
+    assert isinstance(drill, DrillAsk)
