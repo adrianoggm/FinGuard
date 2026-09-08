@@ -460,6 +460,13 @@ class Ledger:
         request for those rows, the real ledger's own behaviour for one). A turn that never asks
         gets none, whatever `movements_for_next_turn` says: that is what makes `movements: 3` on a
         turn a check that the evidence was requested, not just a fixture handed over for free.
+
+        M4 (fix wave): this is the right rule for what `Turn.movements` measures, and it reads as
+        the opposite of production's. The real adapter (`http_financial_query.py`) always sends a
+        positive `supportingLimit` -- the deployment default when the caller passes none, never
+        "not asked" -- so a holder sees movements on turns where THIS fake shows none. Read
+        `movements: 0` (or an unasserted `movements:`) on a turn here as "the code did not request
+        evidence", never as "production would have shown nothing".
         """
         if self.movements_for_next_turn is None:
             return ()
@@ -948,8 +955,9 @@ def executed(query: FinancialPlan | TopMovements) -> dict[str, Any]:
         "include_internal": getattr(query, "include_internal", False),
         # An id-selected plan -- «esos movimientos», the evidence turn after a drill-down -- names
         # its rows by identifier rather than by window or category, and by count rather than by the
-        # identifiers themselves: they are invented fresh by this fixture on every run, so what an
-        # episode can pin down is how many travelled, not which ones.
+        # identifiers themselves (M5, fix wave): the ids are `uuid.UUID(int=day)`, identical every
+        # run, not invented fresh -- the real reason to assert only the count is that the ids are
+        # this fixture's own, not the episode's to know or care about.
         "transaction_ids": len(getattr(query, "transaction_ids", ())),
     }
     if isinstance(query, TopMovements):

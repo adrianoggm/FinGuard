@@ -54,6 +54,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualField,
 )
 from finguard_orchestrator.domain.models.conversation import AccountSelectionMode, Slot, Workflow
+from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
 from finguard_orchestrator.domain.value_objects.ratio_plan import RatioKind
 
 
@@ -337,8 +338,8 @@ class VisualContextPayload(_Payload):
     # below never touches these -- they are not the spec). Defaults are the old-client shape: an
     # echo that has never heard of them reads back empty and unranked, which is the safe
     # direction -- a superlative over an empty list asks rather than guesses.
-    labels: list[str] = Field(default_factory=list, max_length=100)
-    series_labels: list[str] = Field(default_factory=list, max_length=100)
+    labels: list[str] = Field(default_factory=list, max_length=MAX_DRAWN_LABELS)
+    series_labels: list[str] = Field(default_factory=list, max_length=MAX_DRAWN_LABELS)
     ranked: bool = False
     # Sealed; echoed, never read (Wave 4.3's fix round). The dates the chart's rows cover, and a
     # fingerprint of the plan that produced them -- two provenance facts a holder's own client

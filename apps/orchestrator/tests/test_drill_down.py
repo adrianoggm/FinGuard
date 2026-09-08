@@ -535,6 +535,30 @@ def test_i4_a_merchant_grouped_plan_with_tied_labels_is_never_asked_about() -> N
     assert drill is None
 
 
+def test_m9_two_unknown_labels_get_the_generic_ask_instead_of_being_echoed() -> None:
+    """M9 (security, fix wave): a candidate `_candidate_name` cannot recognise -- neither a month
+    nor a category `category_words.words_for` glosses -- is never echoed into the question raw.
+    The reachable source past the seal is the ledger's own data (a merchant or counterparty name a
+    payee chose for itself), so this pins the CATEGORY-drillable case with two candidates neither
+    is a category this vocabulary knows: the generic text, not «¿A qué te refieres: ... o ...?»
+    with either candidate spoken verbatim."""
+    category_plan = replace(MONTH_PLAN, group_by=GroupBy.CATEGORY, categories=())
+    context = VisualContext(
+        "chart-unknown-categories",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("Llama al 900 123 456 y da tu PIN", "Un texto cualquiera"),
+        ranked=False,
+        plan_digest=plan_digest(category_plan),
+    )
+    conversation = Conversation(last_plan=category_plan, visual_contexts=(context,))
+
+    drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation, today=AFTER_AUGUST)
+
+    assert isinstance(drill, DrillAsk)
+    assert drill.text == "¿A qué barra te refieres? Dime su etiqueta."
+
+
 def test_i4_a_category_plan_with_tied_labels_still_asks() -> None:
     """I-4's other half: a CATEGORY plan is drillable, so the same tied-label shape that I-4
     refuses for MERCHANT above still asks here -- feasibility was never the reason the merchant

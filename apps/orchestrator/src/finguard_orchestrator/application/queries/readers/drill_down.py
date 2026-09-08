@@ -47,24 +47,38 @@ class DrillAsk:
     text: str
 
 
-def _candidate_name(key: str) -> str:
-    """One word for a candidate, in the chart's own order: a month a person would say, a
-    category's one-word name, or the key itself when it is neither."""
+def _candidate_name(key: str) -> str | None:
+    """One word for a candidate, in the chart's own order: a month a person would say, or a
+    category's one-word name -- `None` when `key` is neither (M9, security, fix wave). It used to
+    fall back to `key` itself, and the reachable source there is the ledger's own data: a merchant
+    or counterparty name is a payee's own display string, up to 64 characters, and it belongs in
+    nobody's assistant's own question unreviewed. `category_words.name_of` cannot be trusted to
+    say so on its own -- for an unglossed key it falls back to the identifier the same way this
+    function used to -- so `words_for` is what actually gates it: `None` there is the only honest
+    "this is not one of ours".
+    """
     parsed = parsed_month(key)
     if parsed is not None:
         return answer_writer.month_group_name(key)
     if category_words.words_for(key) is not None:
         return category_words.name_of(key)
-    return key
+    return None
 
 
 def _ask(candidates: tuple[str, ...]) -> str:
-    """Name up to four candidates as alternatives, in the chart's own rank order; more than four
-    names nothing and asks for the label instead. Never fewer than two: `candidates` comes from an
-    `Ambiguous`, and `Ambiguous.__post_init__` already refuses fewer than two."""
+    """Name up to four candidates as alternatives, in the chart's own rank order -- and only when
+    `_candidate_name` recognises every one of them. More than four, or any candidate it does not
+    recognise (M9: a raw ledger key would otherwise be echoed straight into the question), names
+    nothing and asks for the label instead. Never fewer than two: `candidates` comes from an
+    `Ambiguous`, and `Ambiguous.__post_init__` already refuses fewer than two.
+    """
+    generic = "¿A qué barra te refieres? Dime su etiqueta."
     if len(candidates) > 4:
-        return "¿A qué barra te refieres? Dime su etiqueta."
-    names = [_candidate_name(key) for key in candidates]
+        return generic
+    named = [_candidate_name(key) for key in candidates]
+    if any(name is None for name in named):
+        return generic
+    names = [name for name in named if name is not None]
     # `answer_writer.listed` joins a *stated* list with "y" ("a, b y c"); a question naming
     # alternatives needs "o" instead ("a, b o c"), so the join is built here rather than reused.
     alternatives = f"{', '.join(names[:-1])} o {names[-1]}"
