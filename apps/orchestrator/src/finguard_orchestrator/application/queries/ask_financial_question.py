@@ -1217,7 +1217,7 @@ class AskFinancialQuestionHandler:
         # asks instead of guessing, with no ledger call and the conversation unchanged; `None` is
         # today's path, falling through to everything below exactly as before this task.
         if follow_up_seen[0] is not None and follow_up_seen[0].kind == "DRILL_DOWN":
-            drill = read_drill_down(query.sentence, was)
+            drill = read_drill_down(query.sentence, was, today=query.today)
             if isinstance(drill, DrillAsk):
                 yield AskFinancialQuestionResult(
                     outcome="DRILL_AMBIGUOUS",

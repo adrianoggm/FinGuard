@@ -14,6 +14,7 @@ narrow.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 
 from finguard_orchestrator.domain.enums import GroupBy, Metric
 from finguard_orchestrator.domain.models.conversation import Conversation
@@ -21,7 +22,7 @@ from finguard_orchestrator.domain.models.visual_reference import Ambiguous, NoMa
 from finguard_orchestrator.domain.services import answer_writer, category_words, explicit_facts
 from finguard_orchestrator.domain.services.visual_reference import parsed_month, resolve_reference
 from finguard_orchestrator.domain.services.window_words import whole_month
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
+from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,8 @@ def _candidate_name(key: str) -> str:
 
 def _ask(candidates: tuple[str, ...]) -> str:
     """Name up to four candidates as alternatives, in the chart's own rank order; more than four
-    names nothing and asks for the label instead."""
+    names nothing and asks for the label instead. Never fewer than two: `candidates` comes from an
+    `Ambiguous`, and `Ambiguous.__post_init__` already refuses fewer than two."""
     if len(candidates) > 4:
         return "¿A qué barra te refieres? Dime su etiqueta."
     names = [_candidate_name(key) for key in candidates]
@@ -62,12 +64,17 @@ def _ask(candidates: tuple[str, ...]) -> str:
     return f"¿A qué te refieres: {alternatives}?"
 
 
-def read_drill_down(sentence: str, conversation: Conversation) -> DrillDown | DrillAsk | None:
+def read_drill_down(
+    sentence: str, conversation: Conversation, *, today: date
+) -> DrillDown | DrillAsk | None:
     """The bounded plan `sentence` drills into, off the newest trusted chart in `conversation` --
     an ambiguous question when several bars fit, or `None` for today's path.
 
     Trust first (R16 depends on the plan the chart was drawn from, and an unsigned chart's labels
-    decide nothing): only the newest context, and only when it is trusted, is ever read.
+    decide nothing): only the newest context, and only when it is trusted, is ever read. A
+    MERCHANT-grouped plan is never drilled in 4.3 -- the labels are merchants, which the resolver
+    does not read, and a rank reading over them is refused by the `group_by` check below -- so the
+    second drill of a chain is today's path.
 
     The regrouping below never refuses: the metric it hands `explicit_facts.reshaped` is always
     normalised to `SUM` or `COUNT` first, and the domain only ever couples a metric to a grouping
@@ -98,9 +105,13 @@ def read_drill_down(sentence: str, conversation: Conversation) -> DrillDown | Dr
         if plan.group_by is not GroupBy.MONTH:
             return None
         year, month = parsed
-        # The chart's bars are the plan's own month buckets, so the label is inside the plan's
-        # window by construction and no date arithmetic beyond `whole_month` is needed (R16).
-        bounded = replace(plan, period=None, date_range=whole_month(year, month), group_limit=None)
+        window = whole_month(year, month)
+        if window.start <= today <= window.end:
+            # Design §3.3: never widen the window silently. The chart drew this bar through
+            # whatever of the month had happened by then; naming the whole calendar month here,
+            # once more of it has since happened, would speak days the chart never covered.
+            window = AbsoluteRange(window.start, today)
+        bounded = replace(plan, period=None, date_range=window, group_limit=None)
     else:
         unfiltered_or_named = not plan.categories or label in plan.categories
         if plan.group_by is not GroupBy.CATEGORY or not unfiltered_or_named:

@@ -6,7 +6,7 @@ else falls through to today's path, unnarrowed.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from support.visual_planners import BREAKDOWN_PROFILE
@@ -41,6 +41,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.window_words import whole_month
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
 )
@@ -62,10 +63,16 @@ def _movement(*, merchant: str, category: str, amount_minor: int) -> Movement:
 
 
 class RecordingLedger:
-    """Every `run(...)` call's plan and `movements` kwarg; one canned merchant breakdown."""
+    """Every `run(...)` call's plan and the kwargs it ran with; one canned merchant breakdown.
+
+    `**kwargs` rather than a named `movements` parameter: the production seam
+    (`_RecordedLedger.run`) omits `movements` from the forwarded call entirely when it is `None` --
+    a `movements=None` that reached every adapter and fake would mean something different from "not
+    asked" -- and a fixed parameter with its own default could never tell the two apart.
+    """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[FinancialPlan, int | None]] = []
+        self.calls: list[tuple[FinancialPlan, dict[str, object]]] = []
 
     async def run(
         self,
@@ -74,9 +81,9 @@ class RecordingLedger:
         account_id: object,
         today: object,
         reporting_timezone: str = "Europe/Madrid",
-        movements: int | None = None,
+        **kwargs: object,
     ) -> QueryAnswer:
-        self.calls.append((plan, movements))
+        self.calls.append((plan, kwargs))
         return QueryAnswer(
             currency="EUR",
             total_minor=18_000,
@@ -144,14 +151,16 @@ async def test_a_named_month_drills_into_the_bar_it_names() -> None:
     )
 
     assert len(ledger.calls) == 1
-    plan, movements = ledger.calls[0]
-    assert plan.date_range == whole_month(2026, 8)
+    plan, kwargs = ledger.calls[0]
+    # TODAY (2026-08-04) falls inside the named month, so M2's clamp applies here too: the window
+    # this turn ran with ends today, not on the 31st.
+    assert plan.date_range == AbsoluteRange(date(2026, 8, 1), TODAY)
     assert plan.period is None
     assert plan.categories == ("TRANSPORT_PUBLIC", "TRANSPORT_FUEL")
     assert plan.group_by is GroupBy.MERCHANT
     assert plan.group_limit is None
     assert plan.only_account_id == ACCOUNT
-    assert movements == MAX_SELECTED_TRANSACTIONS
+    assert kwargs["movements"] == MAX_SELECTED_TRANSACTIONS
 
     assert result.outcome == "PLANNED"
     assert len(result.movements) == 3
@@ -173,7 +182,8 @@ async def test_the_rank_reading_drills_into_the_tallest_bar() -> None:
 
     assert len(ledger.calls) == 1
     plan, _ = ledger.calls[0]
-    assert plan.date_range == whole_month(2026, 8)
+    # Same clamp as above: TODAY sits inside August.
+    assert plan.date_range == AbsoluteRange(date(2026, 8, 1), TODAY)
     assert plan.group_by is GroupBy.MERCHANT
     assert result.outcome == "PLANNED"
 
@@ -289,12 +299,17 @@ async def test_an_ordinary_question_still_asks_for_no_movements_cap() -> None:
     )
 
     assert len(ledger.calls) == 1
-    _, movements = ledger.calls[0]
-    assert movements is None
+    _, kwargs = ledger.calls[0]
+    assert "movements" not in kwargs
     assert result.outcome == "PLANNED"
 
 
 # --- `read_drill_down`, directly -----------------------------------------------------------
+
+# Outside the drilled month (August 2026): every bare call below that is not itself testing M2's
+# clamp uses this, so the window it gets back is never narrowed and the pre-M2 expectations --
+# written for a plan `whole_month` alone -- still hold.
+AFTER_AUGUST = date(2026, 9, 10)
 
 
 def _month_conversation(*, metric: Metric) -> Conversation:
@@ -304,7 +319,7 @@ def _month_conversation(*, metric: Metric) -> Conversation:
 
 def test_an_average_plan_drills_with_the_sum_metric() -> None:
     conversation = _month_conversation(metric=Metric.AVERAGE)
-    drill = read_drill_down("¿Por qué agosto es tan alto?", conversation)
+    drill = read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST)
 
     assert isinstance(drill, DrillDown)
     assert drill.plan.metric is Metric.SUM
@@ -312,10 +327,33 @@ def test_an_average_plan_drills_with_the_sum_metric() -> None:
 
 def test_a_count_plan_keeps_the_count_metric() -> None:
     conversation = _month_conversation(metric=Metric.COUNT)
-    drill = read_drill_down("¿Por qué agosto es tan alto?", conversation)
+    drill = read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST)
 
     assert isinstance(drill, DrillDown)
     assert drill.plan.metric is Metric.COUNT
+
+
+def test_a_drill_into_the_month_in_progress_ends_today() -> None:
+    """M2: the calendar month is still running when `today` falls inside it -- the window this
+    drill runs with ends there, not on the 31st (design §3.3: never widen the window silently)."""
+    drill = read_drill_down(
+        "¿Por qué agosto es tan alto?", MONTH_CONVERSATION, today=date(2026, 8, 4)
+    )
+
+    assert isinstance(drill, DrillDown)
+    assert drill.plan.date_range == AbsoluteRange(date(2026, 8, 1), date(2026, 8, 4))
+    assert drill.plan.period is None
+
+
+def test_a_drill_into_a_finished_month_names_the_whole_of_it() -> None:
+    """M2's other half: once `today` has moved past the month, the window is the whole of it --
+    the clamp only ever narrows, it never widens past the calendar month either."""
+    drill = read_drill_down(
+        "¿Por qué agosto es tan alto?", MONTH_CONVERSATION, today=date(2026, 9, 10)
+    )
+
+    assert isinstance(drill, DrillDown)
+    assert drill.plan.date_range == whole_month(2026, 8)
 
 
 def test_an_ambiguous_reference_asks_by_name() -> None:
@@ -324,10 +362,26 @@ def test_an_ambiguous_reference_asks_by_name() -> None:
         visual_contexts=(replace(MONTH_CONTEXT, ranked=False),),
     )
 
-    drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation)
+    drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation, today=AFTER_AUGUST)
 
     assert isinstance(drill, DrillAsk)
     assert drill.text == "¿A qué te refieres: agosto de 2026, julio de 2026 o junio de 2026?"
+
+
+def test_five_unranked_candidates_asks_for_the_label_instead() -> None:
+    """M4: `_ask` names up to four alternatives in the chart's rank order; a fifth candidate means
+    naming none of them and asking for the label instead."""
+    five_month_context = replace(
+        MONTH_CONTEXT,
+        labels=("2026-08", "2026-07", "2026-06", "2026-05", "2026-04"),
+        ranked=False,
+    )
+    conversation = Conversation(last_plan=MONTH_PLAN, visual_contexts=(five_month_context,))
+
+    drill = read_drill_down("¿Qué movimientos explican ese pico?", conversation, today=AFTER_AUGUST)
+
+    assert isinstance(drill, DrillAsk)
+    assert drill.text == "¿A qué barra te refieres? Dime su etiqueta."
 
 
 def test_reshaped_refuses_period_average_beside_a_merchant_grouping() -> None:
@@ -351,10 +405,10 @@ def test_reshaped_refuses_period_average_beside_a_merchant_grouping() -> None:
 def test_a_plan_that_is_not_a_financial_plan_is_not_drilled() -> None:
     conversation = replace(MONTH_CONVERSATION, last_plan=None)
 
-    assert read_drill_down("¿Por qué agosto es tan alto?", conversation) is None
+    assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
 
 
 def test_no_visual_contexts_is_not_drilled() -> None:
     conversation = Conversation(last_plan=MONTH_PLAN)
 
-    assert read_drill_down("¿Por qué agosto es tan alto?", conversation) is None
+    assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
