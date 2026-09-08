@@ -331,15 +331,14 @@ def test_an_ambiguous_reference_asks_by_name() -> None:
 
 
 def test_reshaped_refuses_period_average_beside_a_merchant_grouping() -> None:
-    """The guard `read_drill_down` carries -- `if bounded.group_by is not GroupBy.MERCHANT: return
-    None` -- exists for the pair `explicit_facts.reshaped`'s own docstring names: `PERIOD_AVERAGE`
-    (or `CUMULATIVE`) beside a merchant grouping. `read_drill_down` never reaches that call with an
-    unnormalised metric -- its own ternary maps every metric outside `{SUM, COUNT}` to `SUM` first,
-    and `SUM`/`COUNT` beside `MERCHANT` is always accepted -- so this is `reshaped` itself, proving
-    the pair the guard exists for really does refuse. See the report's concern: the brief's third
-    `read_drill_down` unit row ("a plan reshaped refuses ... -> None") names this exact pair, but it
-    is unreachable through `read_drill_down` for the reason above; probed directly rather than
-    guessed at.
+    """Fix round 1 (I-1/M1): `read_drill_down` used to carry a guard for this exact pair --
+    `explicit_facts.reshaped`'s own docstring names `PERIOD_AVERAGE`/`CUMULATIVE` beside a merchant
+    grouping as its one refusal -- and the guard was removed because it could never fire: the
+    ternary two lines above it always normalises the metric to `SUM`/`COUNT` before this call, and
+    the domain only couples a metric to a grouping for `PERIOD_AVERAGE`/`CUMULATIVE`. This is
+    `reshaped` itself, called with the raw, unnormalised metric, proving the pair the removed guard
+    named really does refuse -- so this test is now the regression that would notice the day the
+    domain grows a coupling `read_drill_down`'s normalisation no longer shields against.
     """
     plan = replace(MONTH_PLAN, metric=Metric.PERIOD_AVERAGE)
 

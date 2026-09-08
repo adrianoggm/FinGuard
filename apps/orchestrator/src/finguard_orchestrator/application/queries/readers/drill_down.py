@@ -13,23 +13,15 @@ narrow.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
-from typing import Final
 
 from finguard_orchestrator.domain.enums import GroupBy, Metric
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.visual_reference import Ambiguous, NoMatch
 from finguard_orchestrator.domain.services import answer_writer, category_words, explicit_facts
-from finguard_orchestrator.domain.services.visual_reference import resolve_reference
+from finguard_orchestrator.domain.services.visual_reference import parsed_month, resolve_reference
 from finguard_orchestrator.domain.services.window_words import whole_month
 from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan
-
-# The same shape `visual_reference._MONTH_LABEL` parses (a full match, not a search) -- duplicated
-# rather than imported, because that name is private to its module and the shape is three lines:
-# YYYY-MM, so a category label that merely contains four digits and a dash is never mistaken for
-# one.
-_MONTH_LABEL: Final = re.compile(r"(\d{4})-(\d{2})")
 
 
 @dataclass(frozen=True)
@@ -47,21 +39,10 @@ class DrillAsk:
     text: str
 
 
-def _parsed_month(label: str) -> tuple[int, int] | None:
-    """`label` as a calendar month, or `None` when it is not `YYYY-MM` with `MM` in 01-12."""
-    match = _MONTH_LABEL.fullmatch(label)
-    if match is None:
-        return None
-    month = int(match.group(2))
-    if not 1 <= month <= 12:
-        return None
-    return int(match.group(1)), month
-
-
 def _candidate_name(key: str) -> str:
     """One word for a candidate, in the chart's own order: a month a person would say, a
     category's one-word name, or the key itself when it is neither."""
-    parsed = _parsed_month(key)
+    parsed = parsed_month(key)
     if parsed is not None:
         return answer_writer.month_group_name(key)
     if category_words.words_for(key) is not None:
@@ -87,6 +68,11 @@ def read_drill_down(sentence: str, conversation: Conversation) -> DrillDown | Dr
 
     Trust first (R16 depends on the plan the chart was drawn from, and an unsigned chart's labels
     decide nothing): only the newest context, and only when it is trusted, is ever read.
+
+    The regrouping below never refuses: the metric it hands `explicit_facts.reshaped` is always
+    normalised to `SUM` or `COUNT` first, and the domain only ever couples a metric to a grouping
+    for `PERIOD_AVERAGE`/`CUMULATIVE` -- so a merchant regrouping here is always accepted, and there
+    is no case left to guard against.
     """
     if not conversation.visual_contexts:
         return None
@@ -107,7 +93,7 @@ def read_drill_down(sentence: str, conversation: Conversation) -> DrillDown | Dr
     # a "rank" reading needs no extra rule, because a rank is read off the chart's own order, not
     # named, and the label it lands on is a month or a category exactly like a named one.
     label = reference.label
-    parsed = _parsed_month(label)
+    parsed = parsed_month(label)
     if parsed is not None:
         if plan.group_by is not GroupBy.MONTH:
             return None
@@ -126,7 +112,4 @@ def read_drill_down(sentence: str, conversation: Conversation) -> DrillDown | Dr
     # category filter) narrows, and the grouping and metric change to answer "which merchant".
     metric = plan.metric if plan.metric in {Metric.SUM, Metric.COUNT} else Metric.SUM
     bounded = explicit_facts.reshaped(bounded, group_by=GroupBy.MERCHANT, metric=metric)
-    if bounded.group_by is not GroupBy.MERCHANT:
-        # The domain refused the pair -- `reshaped` returned the plan it was given, unchanged.
-        return None
     return DrillDown(bounded, label)
