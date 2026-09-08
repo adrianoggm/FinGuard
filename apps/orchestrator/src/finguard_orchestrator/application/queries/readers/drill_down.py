@@ -20,9 +20,16 @@ from finguard_orchestrator.domain.enums import GroupBy, Metric
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.visual_reference import Ambiguous, NoMatch
 from finguard_orchestrator.domain.services import answer_writer, category_words, explicit_facts
+from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.visual_reference import parsed_month, resolve_reference
 from finguard_orchestrator.domain.services.window_words import whole_month
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange, FinancialPlan
+
+# The grouping shapes a chart's own labels can ever be drilled by. Read before `resolve_reference`
+# runs at all (I-4): a chart whose plan cannot be drilled -- MERCHANT, COUNTERPARTY, ACCOUNT, DAY,
+# WEEK, NONE -- must never ask which bar was meant, because no reply to that ask could be acted on
+# either (the reader's own next lines refuse every one of those groupings just the same).
+_DRILLABLE_GROUPINGS = frozenset({GroupBy.MONTH, GroupBy.CATEGORY})
 
 
 @dataclass(frozen=True)
@@ -71,10 +78,20 @@ def read_drill_down(
     an ambiguous question when several bars fit, or `None` for today's path.
 
     Trust first (R16 depends on the plan the chart was drawn from, and an unsigned chart's labels
-    decide nothing): only the newest context, and only when it is trusted, is ever read. A
-    MERCHANT-grouped plan is never drilled in 4.3 -- the labels are merchants, which the resolver
-    does not read, and a rank reading over them is refused by the `group_by` check below -- so the
-    second drill of a chain is today's path.
+    decide nothing): only the newest context, and only when it is trusted, is ever read. Binding is
+    next, replacing the by-construction argument the fix wave found wrong: a label is inside the
+    window its OWN rows cover, always -- but that is a fact about the rows, not about the whole
+    calendar month a month label names, and the chart's own rows are only known to be *this plan's*
+    once `newest.plan_digest` is checked against `plan_digest(plan)` rather than assumed from
+    `conversation.last_plan` alone (I-1: a KPI turn after a chart, a restyle of an older chart, or
+    a client-edited `last_plan` all fail this check rather than narrowing the wrong query).
+    Feasibility is checked before any question is asked (I-4): a chart whose plan can never be
+    drilled -- every
+    grouping outside `_DRILLABLE_GROUPINGS`, or a MONTH chart with no known window -- returns `None`
+    before `resolve_reference` ever runs, so an ambiguous label on an undrillable chart never asks a
+    question no reply to it could act on. A MERCHANT-grouped plan is never drilled in 4.3 for the
+    same reason `_DRILLABLE_GROUPINGS` excludes it -- the labels are merchants, which the resolver
+    does not read -- so the second drill of a chain is today's path.
 
     The regrouping below never refuses: the metric it hands `explicit_facts.reshaped` is always
     normalised to `SUM` or `COUNT` first, and the domain only ever couples a metric to a grouping
@@ -89,11 +106,26 @@ def read_drill_down(
     plan = conversation.last_plan
     if not isinstance(plan, FinancialPlan):
         return None
+    if newest.plan_digest != plan_digest(plan):
+        # I-1: the chart in view is not this plan's -- a different turn's chart (a KPI answered
+        # after it, an older chart a restyle put back in view) or a client that edited `last_plan`
+        # underneath an unrelated chart. Refuse, never guess which plan the chart was really drawn
+        # from.
+        return None
+    if plan.group_by not in _DRILLABLE_GROUPINGS:
+        return None
+    if plan.group_by is GroupBy.MONTH and newest.window is None:
+        # A month drill needs the dates the chart's rows cover to intersect against; a category
+        # drill does not. Refuse rather than fall back to the calendar month alone -- the very
+        # widening C-1 exists to close.
+        return None
 
     reference = resolve_reference(sentence, newest)
     if isinstance(reference, NoMatch):
         return None
     if isinstance(reference, Ambiguous):
+        # Reached only for a chart that could be drilled (I-4): the two checks above already
+        # refused every plan shape no reply to this question could ever act on.
         return DrillAsk(_ask(reference.candidates))
 
     # The only case left in `Reference` is `Resolved`. The label's own shape decides what it is --
@@ -102,10 +134,22 @@ def read_drill_down(
     label = reference.label
     parsed = parsed_month(label)
     if parsed is not None:
-        if plan.group_by is not GroupBy.MONTH:
+        if plan.group_by is not GroupBy.MONTH or newest.window is None:
             return None
         year, month = parsed
-        window = whole_month(year, month)
+        month_window = whole_month(year, month)
+        # C-1: intersect with the window the chart's rows actually cover before naming a window at
+        # all -- a plan's own `date_range` can be a slice of a calendar month (`del 10 de junio al
+        # 20 de julio` draws a July bar whose rows cover 1-20 July only), and naming the whole
+        # month here would speak days the chart never drew.
+        window = AbsoluteRange(
+            max(month_window.start, newest.window.start), min(month_window.end, newest.window.end)
+        )
+        if window.end < window.start:
+            # Unreachable by construction: the label was drawn from `newest.window`, so the
+            # calendar month it names always overlaps it. Kept as the fail-closed guard rather than
+            # a new outcome for a branch nothing can reach.
+            return None
         if window.start <= today <= window.end:
             # Design §3.3: never widen the window silently. The chart drew this bar through
             # whatever of the month had happened by then; naming the whole calendar month here,
@@ -113,8 +157,10 @@ def read_drill_down(
             window = AbsoluteRange(window.start, today)
         bounded = replace(plan, period=None, date_range=window, group_limit=None)
     else:
+        if plan.group_by is not GroupBy.CATEGORY:
+            return None
         unfiltered_or_named = not plan.categories or label in plan.categories
-        if plan.group_by is not GroupBy.CATEGORY or not unfiltered_or_named:
+        if not unfiltered_or_named:
             return None
         bounded = replace(plan, categories=(label,), group_limit=None)
 
