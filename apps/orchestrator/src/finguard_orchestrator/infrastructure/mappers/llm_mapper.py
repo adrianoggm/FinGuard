@@ -34,6 +34,7 @@ from finguard_orchestrator.domain.models.chart import (
 )
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
+from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.visual_interpreter import (
     apply_visual_intent,
     interpret_visual,
@@ -394,6 +395,16 @@ def _remember_visual_context(
         labels=drawn.labels,
         series_labels=drawn.series_labels,
         ranked=drawn.ranked,
+        # The fix wave's own two provenance facts: the window this turn's dataset actually
+        # covers, and a fingerprint of the plan that produced it -- `None` on either when there
+        # is nothing to fingerprint (a comparison, a ratio, a metric_definition that is not a
+        # `FinancialPlan` at all).
+        window=result.visual_dataset.window,
+        plan_digest=(
+            plan_digest(result.metric_definition)
+            if isinstance(result.metric_definition, FinancialPlan)
+            else None
+        ),
     )
     # Task 3: sealed here, where the context is born -- before it ever reaches `to_payload` --
     # rather than by a second pass over the wire once the response is built. `seal` is `None` for

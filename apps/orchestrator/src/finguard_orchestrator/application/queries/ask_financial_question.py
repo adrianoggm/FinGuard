@@ -3068,6 +3068,12 @@ class AskFinancialQuestionHandler:
                 )
                 for group in counted.groups
             ],
+            # `window` stays `None` here (the dataclass default) and at every other
+            # `VisualDataset(` this handler builds outside `_visual_dataset` -- a payee count, a
+            # period comparison, a ratio share, a salary history. None of those is one plan's own
+            # answered window over its own rows the way `_visual_dataset`'s three call sites are,
+            # so a month drill over them is not a case Wave 4.3 covers; `read_drill_down` reads
+            # `window is None` as "refuse, never guess" for exactly this reason.
             visual_dataset=VisualDataset(
                 rows=tuple(
                     VisualRow(dimension=group.key, value_minor=group.movement_count)
@@ -5569,6 +5575,23 @@ def _local_visual_date(movement: Movement, reporting_timezone: str) -> str:
     return occurred_at.astimezone(ZoneInfo(reporting_timezone)).date().isoformat()
 
 
+def _answered_window(plan: FinancialPlan, answer: QueryAnswer) -> AbsoluteRange | None:
+    """The dates the rows a chart is about to draw actually cover -- never an amount.
+
+    The ledger's own resolved window wins when it sent one: `answer.period_start`/`period_end`
+    are what `http_financial_query.py` maps from `periodStart`/`periodEnd` (`:310-311`), so they
+    are what banking actually ran, narrower than a named period can be (a `LAST_MONTH` plan
+    clamped mid-month is exactly this case). Absent that, `plan.date_range` is the next best
+    fact -- the plan's own explicit range, when it has one. `None` when neither is set: a plan
+    naming a `RelativePeriod` and answered by a fake that reports no period back (the corpus
+    harness, before Wave 4.3's own fix to it) has genuinely no window to carry, and the drill's
+    own feasibility check (`readers/drill_down.py`) reads that `None` as "refuse, never guess".
+    """
+    if answer.period_start is not None and answer.period_end is not None:
+        return AbsoluteRange(answer.period_start, answer.period_end)
+    return plan.date_range
+
+
 def _visual_dataset(
     plan: FinancialPlan,
     answer: QueryAnswer,
@@ -5577,6 +5600,7 @@ def _visual_dataset(
     reporting_timezone: str,
 ) -> VisualDataset | None:
     """Build rows while the typed financial result still owns their semantics."""
+    window = _answered_window(plan, answer)
     if plan.metric is Metric.FREQUENCY:
         frequency = frequency_analyzer.analyse(
             answer,
@@ -5600,6 +5624,7 @@ def _visual_dataset(
             ),
             metric=Metric.FREQUENCY.value,
             title=answer_writer.describe(plan),
+            window=window,
         )
 
     if plan.metric is Metric.RECURRENCE:
@@ -5633,6 +5658,7 @@ def _visual_dataset(
                 rows=tuple(rows),
                 metric=Metric.RECURRENCE.value,
                 title=answer_writer.describe(plan),
+                window=window,
             )
             if len(rows) >= 2
             else None
@@ -5650,6 +5676,7 @@ def _visual_dataset(
         ),
         metric=plan.metric.value,
         title=answer_writer.describe(plan),
+        window=window,
     )
 
 

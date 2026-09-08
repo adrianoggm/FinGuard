@@ -248,6 +248,10 @@ def _derived_context(
     `labels`/`series_labels`/`ranked` are copied from `trusted` too (Task 1, Wave 4.3): a restyle
     shows the same data, so the labels a reader can resolve «agosto» or «la barra más alta»
     against are the source's own, unchanged by the shape the chart is redrawn in.
+
+    `window`/`plan_digest` are copied from `trusted` too (the fix wave): a restyle shows the same
+    data of the same plan, so the window it drew and the plan it drew from travel unchanged --
+    exactly the reasoning the two lines above already state for the labels.
     """
     context = VisualContext(
         chart_id,
@@ -261,6 +265,8 @@ def _derived_context(
         labels=trusted.labels,
         series_labels=trusted.series_labels,
         ranked=trusted.ranked,
+        window=trusted.window,
+        plan_digest=trusted.plan_digest,
     )
     return seal(context) if seal is not None else context
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -27,9 +28,14 @@ from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
+from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
 from finguard_orchestrator.domain.services.visual_profile import drawn_labels
-from finguard_orchestrator.domain.value_objects.financial_plan import FinancialPlan, RelativePeriod
+from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
+    FinancialPlan,
+    RelativePeriod,
+)
 from finguard_orchestrator.infrastructure.controllers.llm_controller import (
     _derived_context,
     _visual_only_response,
@@ -157,6 +163,49 @@ def test_a_fresh_chart_carries_the_labels_its_dataset_draws(charted_result, char
     assert context.labels == expected.labels
     assert context.series_labels == expected.series_labels
     assert context.ranked == expected.ranked
+
+
+async def test_a_fresh_chart_carries_the_window_and_plan_digest() -> None:
+    """The fix wave's own two provenance facts: the window this turn's dataset actually covers
+    (carried up from `VisualDataset.window`) and a fingerprint of the plan that produced it
+    (`metric_definition`, when it is a `FinancialPlan`), both set before the seal, the same as
+    `test_a_fresh_chart_carries_the_labels_its_dataset_draws` proves for labels above."""
+    plan = FinancialPlan(
+        Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        transaction_ids=(uuid4(), uuid4()),
+    )
+    window = AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
+    result = AskFinancialQuestionResult(
+        outcome="PLANNED",
+        text="Resultado",
+        plan_context=SpokenPlan(direction="EXPENSE", group_by="CATEGORY", metric="SUM"),
+        groups=[SpokenGroup("visible", 100, 2), SpokenGroup("also visible", 50, 1)],
+        visual_dataset=VisualDataset(
+            rows=(VisualRow("Comida", 100), VisualRow("Casa", 50)), metric="SUM", window=window
+        ),
+        metric_definition=plan,
+    )
+    charted = await ask_financial_question._decided_visual(
+        result, default_policy(), DEFAULT_PRESENTATION, ""
+    )
+    response = _visualization_to_dto(charted)
+    remembered = llm_mapper._remember_visual_context(charted, response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.window == window
+    assert context.plan_digest == plan_digest(plan)
+
+
+def test_a_fresh_chart_with_no_financial_plan_carries_no_digest(
+    charted_result, chart_response
+) -> None:
+    """`plan_digest` is `None` whenever `metric_definition` is not a `FinancialPlan` at all --
+    `charted_result`'s own fixture sets one, so this drives the guard with `None` directly rather
+    than asserting only the positive case above."""
+    no_plan = replace(charted_result, metric_definition=None)
+    remembered = llm_mapper._remember_visual_context(no_plan, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.plan_digest is None
 
 
 def test_a_kpi_or_no_chart_result_leaves_no_context(charted_result) -> None:
@@ -376,6 +425,22 @@ def test_the_restyle_helper_copies_a_trusted_contexts_labels_forward_too() -> No
     assert derived.labels == trusted.labels
     assert derived.series_labels == trusted.series_labels
     assert derived.ranked == trusted.ranked
+
+
+def test_the_restyle_helper_copies_a_trusted_contexts_window_and_digest_forward_too() -> None:
+    """The fix wave: a restyle shows the same data of the same plan, so the window it drew and the
+    plan it drew from travel unchanged -- the same reasoning and the same pattern as the labels
+    copy just above."""
+    trusted = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20)),
+        plan_digest="0123456789abcdef",
+    )
+    derived = _derived_context(trusted, SPEC, "chart-2")
+    assert derived.window == trusted.window
+    assert derived.plan_digest == trusted.plan_digest
 
 
 # --- Task 3: sealed where it is born -----------------------------------------------------------

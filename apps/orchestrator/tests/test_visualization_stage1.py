@@ -2,6 +2,7 @@ import dataclasses
 import importlib.util
 import sys
 from dataclasses import asdict, replace
+from datetime import date
 from pathlib import Path
 from typing import get_args
 from uuid import uuid4
@@ -45,6 +46,7 @@ from finguard_orchestrator.domain.services.visual_interpreter import (
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.services.visual_profile import visual_profile_of
 from finguard_orchestrator.domain.value_objects.financial_plan import (
+    AbsoluteRange,
     FinancialPlan,
     RelativePeriod,
 )
@@ -658,6 +660,99 @@ def test_an_older_payload_without_labels_still_validates_unranked() -> None:
     assert restored.labels == ()
     assert restored.series_labels == ()
     assert restored.ranked is False
+
+
+# --- Fix wave: a chart's window and its plan's digest travel on the wire, sealed too -----------
+
+
+def test_a_contexts_window_and_plan_digest_round_trip_through_the_wire() -> None:
+    """(a): the window a chart's rows cover and the digest of the plan that drew them survive
+    `to_payload` -> `to_domain` exactly, the same way labels/ranked already do above."""
+    context = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20)),
+        plan_digest="0123456789abcdef",
+    )
+    conversation = IDLE.with_visual_context(context)
+    payload = conversation_mapper.to_payload(conversation)
+    (item,) = payload.visual_contexts
+    assert (item.window_start, item.window_end) == (date(2026, 7, 1), date(2026, 7, 20))
+    assert item.plan_digest == "0123456789abcdef"
+    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
+    assert restored.window == AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20))
+    assert restored.plan_digest == "0123456789abcdef"
+
+
+def test_a_tampered_plan_digest_untrusts_a_sealed_context() -> None:
+    """A digest is as much a part of what the seal covers as a label is -- changing one in place,
+    after the seal, must untrust the context exactly the same way."""
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, plan_digest="0123456789abcdef")
+    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    assert sealed.token is not None
+
+    def verify(token: str | None, semantics: dict[str, object]) -> bool:
+        return codec.verify_context(token, "holder-a", semantics)
+
+    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload.visual_contexts[0].plan_digest = "fedcba9876543210"
+    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
+    assert tampered.trusted is False and tampered.token is None
+
+
+def test_a_tampered_window_end_untrusts_a_sealed_context() -> None:
+    """The window's own end is sealed too, so widening it in place must untrust the context."""
+    codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
+    context = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20)),
+    )
+    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    assert sealed.token is not None
+
+    def verify(token: str | None, semantics: dict[str, object]) -> bool:
+        return codec.verify_context(token, "holder-a", semantics)
+
+    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload.visual_contexts[0].window_end = date(2026, 7, 31)
+    tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
+    assert tampered.trusted is False and tampered.token is None
+
+
+def test_an_older_payload_without_a_window_or_digest_reads_back_none() -> None:
+    """(c): the old-client case -- a payload built by hand that has never heard of `window_start`/
+    `window_end`/`plan_digest` still validates, and both read back `None`: the safe direction, a
+    month drill against a chart with no window refuses rather than guesses."""
+    conversation = ConversationPayload.model_validate({"visual_contexts": [_visual_context_dict()]})
+    (restored,) = conversation_mapper.to_domain(conversation).visual_contexts
+    assert restored.window is None
+    assert restored.plan_digest is None
+
+
+def test_the_dto_refuses_a_window_with_only_one_end() -> None:
+    raw = _visual_context_dict()
+    raw["window_start"] = "2026-07-01"
+    with pytest.raises(ValidationError):
+        VisualContextPayload.model_validate(raw)
+
+
+def test_the_dto_refuses_a_window_that_ends_before_it_starts() -> None:
+    raw = _visual_context_dict()
+    raw["window_start"] = "2026-07-20"
+    raw["window_end"] = "2026-07-01"
+    with pytest.raises(ValidationError):
+        VisualContextPayload.model_validate(raw)
+
+
+def test_the_dto_refuses_a_plan_digest_that_is_not_sixteen_hex_characters() -> None:
+    raw = _visual_context_dict()
+    raw["plan_digest"] = "not-hex"
+    with pytest.raises(ValidationError):
+        VisualContextPayload.model_validate(raw)
 
 
 def test_the_dto_refuses_a_label_with_a_control_character() -> None:

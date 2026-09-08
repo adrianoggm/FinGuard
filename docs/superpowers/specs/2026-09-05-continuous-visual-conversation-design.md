@@ -188,13 +188,18 @@ class VisualContext:
     labels: tuple[str, ...] = ()          # the dataset's dimension values, tallest first (Wave 4.3)
     series_labels: tuple[str, ...] = ()   # the dataset's distinct series values, producer order
     ranked: bool = False                  # both ends of `labels` are strict; a shape fact, not a value
+    window: AbsoluteRange | None = None   # the dates the rows cover (wave's fix round)
+    plan_digest: str | None = None        # a fingerprint of the plan that charted them (fix round)
 ```
 
 The wire payload (`VisualContextPayload`) grows `derived_from` and `turn_id` at the context
 level and, since Wave 4.3, `labels`, `series_labels` and `ranked`: the dimension and series values
 the chart drew, tallest first — value-free strings already on the client (§3.3), so a later turn
 resolves «agosto» or «la barra más alta» against them without a second query; `ranked` is a shape
-fact (both ends strict), never an amount. Its nested profile payload grows the four shape facts
+fact (both ends strict), never an amount — and, from the wave's fix, `window` and `plan_digest`:
+the dates the chart's rows cover and a fingerprint of the plan it charted, so a drill intersects a
+month with what was drawn and refuses a plan that is not the chart's own — the design's «`last_plan`
+for the newest chart's plan» is no longer assumed; it is checked. Its nested profile payload grows the four shape facts
 below. `decision`,
 `source_plan` and `evidence_ids` are **turn-local**: the orchestrator keeps no conversation store —
 the conversation itself is the wire payload — so they are populated in the turn that makes or derives

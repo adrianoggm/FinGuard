@@ -340,6 +340,29 @@ class VisualContextPayload(_Payload):
     labels: list[str] = Field(default_factory=list, max_length=100)
     series_labels: list[str] = Field(default_factory=list, max_length=100)
     ranked: bool = False
+    # Sealed; echoed, never read (Wave 4.3's fix round). The dates the chart's rows cover, and a
+    # fingerprint of the plan that produced them -- two provenance facts a holder's own client
+    # never has to act on, only carry back so the drill can check them. Dates rather than an
+    # `AbsoluteRange` object because this is a wire payload, not a domain type: both present or
+    # neither, checked below, the same shape `PlanPayload.start`/`.end` already use for the same
+    # reason.
+    window_start: date | None = None
+    window_end: date | None = None
+    plan_digest: str | None = Field(
+        default=None, min_length=16, max_length=16, pattern=r"^[0-9a-f]{16}$"
+    )
+
+    @model_validator(mode="after")
+    def _window_is_both_ends_or_neither(self) -> "VisualContextPayload":
+        if (self.window_start is None) != (self.window_end is None):
+            raise ValueError("visual context window needs both ends or neither")
+        if (
+            self.window_start is not None
+            and self.window_end is not None
+            and self.window_end < self.window_start
+        ):
+            raise ValueError("visual context window ends before it starts")
+        return self
 
     @field_validator("labels", "series_labels")
     @classmethod

@@ -272,6 +272,13 @@ def _visual_contexts(
         # same way. With one, a context is trusted only through a seal that actually checks out;
         # an unverified token is dropped rather than echoed back as if it still meant something.
         trusted = verify(item.token, context_semantics(item)) if verify is not None else True
+        # Both ends or neither -- `VisualContextPayload`'s own validator already refuses a payload
+        # with just one, so `item.window_end` is never `None` here when `item.window_start` is not.
+        window = (
+            AbsoluteRange(item.window_start, item.window_end)
+            if item.window_start is not None and item.window_end is not None
+            else None
+        )
         result.append(
             VisualContext(
                 item.chart_id,
@@ -284,6 +291,8 @@ def _visual_contexts(
                 labels=tuple(item.labels),
                 series_labels=tuple(item.series_labels),
                 ranked=item.ranked,
+                window=window,
+                plan_digest=item.plan_digest,
             )
         )
     return tuple(result)
@@ -386,6 +395,11 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
         "labels": list(context.labels),
         "series_labels": list(context.series_labels),
         "ranked": context.ranked,
+        # The fix wave: the window the chart's rows cover and a digest of the plan that drew them
+        # -- sealed the same way, for the same reason, riding the same digest.
+        "window_start": context.window.start if context.window is not None else None,
+        "window_end": context.window.end if context.window is not None else None,
+        "plan_digest": context.plan_digest,
     }
 
 
@@ -396,6 +410,10 @@ def context_semantics(payload: VisualContextPayload) -> dict[str, object]:
     process is about to sign) and when one is verified (`to_domain`'s `verify`, over the context a
     caller echoed back) -- so the digest at creation and the digest at verification are always the
     same pydantic-normalised dict, never two hand-picked field lists that could drift apart.
+
+    Unchanged by the fix wave's `window_start`/`window_end`/`plan_digest`: `model_dump` walks every
+    field the payload declares, so the three are covered by construction the moment they exist on
+    `VisualContextPayload` -- there is no allowlist here to extend.
     """
     return payload.model_dump(mode="json", exclude={"token"})
 

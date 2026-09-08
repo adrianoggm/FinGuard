@@ -264,6 +264,10 @@ export type ConversationState = {
     labels?: string[];
     series_labels?: string[];
     ranked?: boolean;
+    // Sealed; echoed, never read (Wave 4.3).
+    window_start?: string | null;
+    window_end?: string | null;
+    plan_digest?: string | null;
     spec: Record<string, unknown>;
     profile: {
       fields: {
