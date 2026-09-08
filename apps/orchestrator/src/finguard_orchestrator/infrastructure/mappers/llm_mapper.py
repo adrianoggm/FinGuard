@@ -8,7 +8,7 @@ import functools
 from collections.abc import Callable
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
-from typing import Literal, cast
+from typing import Final, Literal, cast
 from uuid import UUID, uuid4
 
 from finguard_orchestrator.application import (
@@ -334,6 +334,12 @@ def _evidence_of(plan: FinancialPlan | ComparisonPlan | RatioPlan | None) -> tup
     return plan.transaction_ids if isinstance(plan, FinancialPlan) else ()
 
 
+# design §4: `derived_from: str | None  # the chart this reshaped or drilled from`. A reshape and a
+# drill-down (Task 4) are the two follow-up kinds a new chart can trace back to its predecessor;
+# every other kind names no origin.
+_DERIVING_KINDS: Final = frozenset({"ANALYTICAL_RESHAPE", "DRILL_DOWN"})
+
+
 def _remember_visual_context(
     result: AskFinancialQuestionResult,
     visualization: VisualizationResponse | None,
@@ -361,7 +367,7 @@ def _remember_visual_context(
         previous.chart_id
         if (
             result.visual_follow_up is not None
-            and result.visual_follow_up.kind == "ANALYTICAL_RESHAPE"
+            and result.visual_follow_up.kind in _DERIVING_KINDS
             and previous is not None
             # m9 (fix wave): only a chart the server vouches for. Only the id crosses over here
             # -- this turn's own dataset still builds the new chart's spec and profile -- but
