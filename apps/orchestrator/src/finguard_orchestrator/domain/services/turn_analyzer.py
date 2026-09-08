@@ -10,6 +10,7 @@ from finguard_orchestrator.domain.models.turn_analysis import (
     TurnFocus,
     TurnRelation,
 )
+from finguard_orchestrator.domain.models.visual_reference import NoMatch
 from finguard_orchestrator.domain.ports.turn_interpreter import TurnInterpreterPort
 from finguard_orchestrator.domain.services import (
     category_words,
@@ -19,6 +20,7 @@ from finguard_orchestrator.domain.services import (
     window_words,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.visual_reference import DRILL_DOWN, resolve_reference
 
 # Deliberately conservative. A conjunction is only accepted as a request boundary after each side
 # independently routes to a substantive request. Thus "gasolina y supermercado" remains one
@@ -76,6 +78,19 @@ def _is_reshape_follow_up(sentence: str, folded: str) -> bool:
     return _RESHAPE_FOLLOW_UP.search(folded) is not None or _splits_two_or_more_categories(
         sentence, folded
     )
+
+
+def _drills_into_the_chart(sentence: str, folded: str, conversation: Conversation) -> bool:
+    """§3.3's drill-down («¿Por qué agosto es tan alto?», «¿Qué movimientos explican ese pico?»):
+    the drill lexicon AND a bar of the newest trusted chart the sentence names or points at. An
+    ambiguous pointing counts -- the handler's answer to it is a question about the chart, not a new
+    request. A drill sentence naming nothing the chart drew («¿Por qué septiembre es tan alto?» on a
+    June-August line, «¿Por qué es tan caro?») is read exactly as today; so is one over an untrusted
+    chart, whose labels nobody signed for."""
+    if DRILL_DOWN.search(folded) is None or not conversation.visual_contexts:
+        return False
+    newest = conversation.visual_contexts[-1]
+    return newest.trusted and not isinstance(resolve_reference(sentence, newest), NoMatch)
 
 
 def _substantive(clause: str, intent: Intent) -> bool:
@@ -169,7 +184,11 @@ async def analyze(
         focus = TurnFocus.LAST_ANSWER
     elif intent is Intent.EXPLAIN_PREVIOUS or (
         conversation.last_plan is not None
-        and (_FOLLOW_UP.search(folded) is not None or _is_reshape_follow_up(sentence, folded))
+        and (
+            _FOLLOW_UP.search(folded) is not None
+            or _is_reshape_follow_up(sentence, folded)
+            or _drills_into_the_chart(sentence, folded, conversation)
+        )
     ):
         relation = TurnRelation.FOLLOW_UP
         focus = TurnFocus.LAST_ANSWER
