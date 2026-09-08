@@ -233,6 +233,14 @@ _VISUAL_OUTCOMES = {
     "VISUAL_NEEDS_TARGET",
     "VISUAL_AMBIGUOUS",
 }
+# R9: a drill-down that fit several bars asks which one rather than guessing -- a question about
+# the figures already on screen (which bar?), not a request to change the chart, so it does not
+# belong beside `_VISUAL_OUTCOMES`; and not `NEEDS_CLARIFICATION` either, because no slot is opened
+# and no workflow is left waiting -- the conversation is exactly as it was before the turn. A small
+# named set of its own, the same shape as `_VISUAL_OUTCOMES`, for the same reason: without this,
+# `DRILL_AMBIGUOUS` fell through to `tool_of`'s `QUERY` fallthrough and a turn that asked instead of
+# answering was silently counted as having answered.
+_ASKED_ABOUT_THE_FIGURES = {"DRILL_AMBIGUOUS"}
 
 
 def tool_of(answer: dict[str, Any]) -> str:
@@ -265,6 +273,8 @@ def tool_of(answer: dict[str, Any]) -> str:
         return TRANSFER if workflow == "TRANSFER_IN_PROGRESS" else CLARIFY
     if outcome in _VISUAL_OUTCOMES:
         return VISUAL
+    if outcome in _ASKED_ABOUT_THE_FIGURES:
+        return CLARIFY
     return QUERY
 
 
@@ -343,8 +353,14 @@ class Ledger:
         # after, so an episode naming a breakdown gets that breakdown back instead of every turn
         # sharing the one hardcoded group below.
         self.groups_for_next_turn: tuple[Group, ...] | None = None
+        # Set from `turn.movements` at the same three sites as `groups_for_next_turn`, and cleared
+        # right after. How many synthetic movements `run()` hands back -- but only on a call that
+        # actually asked for them; see `_synthetic_movements`.
+        self.movements_for_next_turn: int | None = None
 
-    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+    async def run(
+        self, plan: FinancialPlan, *, movements: int | None = None, **_: object
+    ) -> QueryAnswer:
         self.plans.append(plan)
         self.ran.append(plan)
         known = {shop.casefold() for shop in SHOPS}
@@ -357,6 +373,7 @@ class Ledger:
                 total_minor=sum(group.total_minor for group in groups),
                 movement_count=sum(group.movement_count for group in groups),
                 groups=groups,
+                movements=self._synthetic_movements(plan, groups, movements),
             )
         group_key = {
             GroupBy.CATEGORY: plan.categories[0] if plan.categories else "GROCERIES",
@@ -369,11 +386,12 @@ class Ledger:
             and plan.period == RelativePeriod(Period.LAST_N_MONTHS, n=24)
             and plan.include_internal
         )
+        groups = (Group(group_key, 46_556, 3),)
         return QueryAnswer(
             currency="EUR",
             total_minor=46_556,
             movement_count=3,
-            groups=(Group(group_key, 46_556, 3),),
+            groups=groups,
             movements=(
                 tuple(
                     Movement(
@@ -388,8 +406,38 @@ class Ledger:
                     for day in range(1, 4)
                 )
                 if is_recent_list
-                else ()
+                else self._synthetic_movements(plan, groups, movements)
             ),
+        )
+
+    def _synthetic_movements(
+        self, plan: FinancialPlan, groups: tuple[Group, ...], movements: int | None
+    ) -> tuple[Movement, ...]:
+        """The evidence behind a drilled-down or referenced answer -- built like the recent-list
+        ones above, deterministically, and handed back ONLY when the ledger was actually asked for
+        them: the call carried `movements=<int>` (the drill's own `MAX_SELECTED_TRANSACTIONS`) or
+        the plan carries `transaction_ids` (an id-selected plan -- «esos movimientos» -- is itself a
+        request for those rows, the real ledger's own behaviour for one). A turn that never asks
+        gets none, whatever `movements_for_next_turn` says: that is what makes `movements: 3` on a
+        turn a check that the evidence was requested, not just a fixture handed over for free.
+        """
+        if self.movements_for_next_turn is None:
+            return ()
+        if movements is None and not plan.transaction_ids:
+            return ()
+        category = plan.categories[0] if plan.categories else "GROCERIES"
+        merchant = groups[0].key if groups else "Mercadona"
+        return tuple(
+            Movement(
+                occurred_at=datetime(2026, 7, day, 10, 0, tzinfo=UTC),
+                description=f"Compra {day}",
+                amount_minor=10_000 + day,
+                direction=plan.direction.value,
+                merchant_name=merchant,
+                category=category,
+                transaction_id=str(uuid.UUID(int=day)),
+            )
+            for day in range(1, self.movements_for_next_turn + 1)
         )
 
     async def ranked(self, ranking: object, **_: object) -> Movement:
@@ -412,6 +460,12 @@ def _groups_from(turn: Turn) -> tuple[Group, ...] | None:
     if turn.groups is None:
         return None
     return tuple(Group(str(key), int(minor), int(count)) for key, minor, count in turn.groups)
+
+
+def _movements_from(turn: Turn) -> int | None:
+    """`turn.movements`, translated into what `Ledger.run` is told to hand back -- or `None`, its
+    default, when the turn says nothing about how many movements its answer should show."""
+    return turn.movements
 
 
 class Accounts:
@@ -707,6 +761,13 @@ class Turn:
     # movement_count], ...]` -- overriding its one hardcoded group so a turn that reshapes a
     # breakdown gets the breakdown its expectation describes.
     groups: list[list[object]] | None = None
+    # How many movements the turn's answer SHOWS -- `len(answer["movements"])`, the wire's
+    # `QuestionResponse.movements` list. Asserted beside `banking_calls`, and nothing asserted when
+    # `None`. The `Ledger` fake only ever hands these back when it was actually asked for them (see
+    # `Ledger.run`), so `movements: 3` on a turn fails if the code forgot to ask -- that is the
+    # point: the number here is not free-standing evidence, it is a check that the evidence was
+    # requested at all.
+    movements: int | None = None
 
 
 @dataclass(frozen=True)
@@ -984,10 +1045,12 @@ def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
         if len(set(claims.values())) > 1:
             yield number, turn.say, claims
         stack.ledger.groups_for_next_turn = _groups_from(turn)
+        stack.ledger.movements_for_next_turn = _movements_from(turn)
         response = stack.client.post(
             "/v1/questions", json={"question": turn.say, "conversation": state}
         )
         stack.ledger.groups_for_next_turn = None
+        stack.ledger.movements_for_next_turn = None
         if response.status_code != 200:
             return
         state = response.json()["conversation"]
@@ -1032,10 +1095,12 @@ def replay(
         before = len(stack.planner.asked)
         ran_before = len(stack.ledger.ran)
         stack.ledger.groups_for_next_turn = _groups_from(turn)
+        stack.ledger.movements_for_next_turn = _movements_from(turn)
         response = stack.client.post(
             "/v1/questions", json={"question": turn.say, "conversation": conversation}
         )
         stack.ledger.groups_for_next_turn = None
+        stack.ledger.movements_for_next_turn = None
         if response.status_code != 200:
             yield number, turn, None, False, ()
             return
@@ -1084,6 +1149,10 @@ def _complaints(
         yield (
             f"the turn should call the ledger {turn.banking_calls} time(s) and called it {len(ran)}"
         )
+    if turn.movements is not None:
+        shown = len(answer.get("movements") or [])
+        if shown != turn.movements:
+            yield f"the answer should show {turn.movements} movement(s) and shows {shown}"
     if turn.derived_from is not None:
         contexts = (answer.get("conversation") or {}).get("visual_contexts") or []
         derived = bool(contexts) and contexts[-1].get("derived_from") is not None
@@ -1385,10 +1454,12 @@ async def compare(
         conversation: dict[str, Any] | None = opening(episode)
         for turn in episode.turns:
             stack.ledger.groups_for_next_turn = _groups_from(turn)
+            stack.ledger.movements_for_next_turn = _movements_from(turn)
             answered = stack.client.post(
                 "/v1/questions", json={"question": turn.say, "conversation": conversation}
             )
             stack.ledger.groups_for_next_turn = None
+            stack.ledger.movements_for_next_turn = None
             if answered.status_code != 200:
                 break
             conversation = answered.json()["conversation"]
