@@ -15,6 +15,7 @@ martes...?» is `NoMatch` and goes to the planner exactly as it does today.
 """
 
 import re
+from typing import Final
 
 from finguard_orchestrator.domain.models.chart import VisualContext
 from finguard_orchestrator.domain.models.visual_reference import (
@@ -25,6 +26,18 @@ from finguard_orchestrator.domain.models.visual_reference import (
     Resolved,
 )
 from finguard_orchestrator.domain.services import answer_writer, category_words, spanish
+
+# The input is `fold()`ed before this searches it, so an accented alternative (`qué`, an accented
+# `ensename`) never matches and none is listed here. `por que` is qualified to the shapes §3.3
+# actually names — unqualified, it read «¿Por qué no me funciona la app?» as a drill-down just as
+# readily as «¿Por qué agosto es tan alto?» — and neither `explica` nor a bare `responsable`
+# survived for the same reason: each claimed an ordinary question that named none of this turn's
+# chart.
+DRILL_DOWN: Final = re.compile(
+    r"\bpor que\b.*\b(?:tan|tanto|alto|alta|bajo|baja|sube|subio|subido|pico)\b|"
+    r"\bque movimientos\b|\bque comercio\b|"
+    r"\b(?:ensename|muestrame) (?:los|las) (?:movimientos|compras|operaciones)\b"
+)
 
 # YYYY-MM, the same shape `answer_writer.month_group_name` parses -- a full match, not a search,
 # so a category label that merely contains four digits and a dash is never mistaken for one.
