@@ -148,6 +148,23 @@ the previous result's dimension values first (they are the labels on screen), an
 the reader finds nothing or more than one match. It reads the result's *labels*, which are already on
 the client; it never receives amounts.
 
+**Landed, 4.3.** The resolver (`domain/services/visual_reference.py`) reads a month by the answer
+writer's own vocabulary and a precisely named category over the labels a trusted chart drew, and a
+superlative («la barra más alta», «el pico», «el más bajo») only on a chart whose `ranked` is strict
+at both ends. Weekday labels and series labels are deliberately not resolved (R14, R15): a frequency
+chart's weekday reference and a comparison's window or a recurrence's cadence still go to the planner
+exactly as before. The bounded plan (`application/queries/readers/drill_down.py`) is the plan in view
+narrowed to the resolved label — `date_range=whole_month(...)` for a month (clamped to today when
+the month is still in progress), `categories=(key,)` for a category — and regrouped by merchant
+(`GroupBy.MERCHANT`, `group_limit=None`), with the account scope and every other filter kept
+unchanged, run once with `MAX_SELECTED_TRANSACTIONS` movements: the answer is the merchant breakdown
+of that bar, and its evidence is the movements behind it. «Back» is unchanged: the drill's own chart
+is one more entry in `visual_contexts`, deriving from the chart it drilled rather than replacing it,
+so the chart the drill narrowed is still there for a restyle to name — a restyle sentence («el
+gráfico anterior», by number) resolves to whichever chart is newest, exactly as before 4.3. Two or
+more candidates fitting one reference ask, in the chart's own order (up to four names; more asks for
+the label itself instead), with zero banking calls and nothing merged.
+
 ## 4. Visual conversational context
 
 Not a second memory. **What exists:** `Conversation.visual_contexts: tuple[VisualContext, ...]`
@@ -340,7 +357,7 @@ evidence · every rejected proposal ends in a valid answer.
 | --- | --- | --- |
 | **4.1 Context and classification** | `VisualContext` extended (§4); `VisualFollowUpKind` and the deterministic readers (§5); `Step.VISUAL_FOLLOW_UP`; invariant tests | every follow-up kind is classified and recorded; no visible change yet |
 | **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's. **Fix wave, I-4:** in §9's own order the restyle bullet (§11) is refused right after turn 3's month line, with no chart between them for a bar to be turned — episode 32 reaches it only because turn 4 names a bar by number first; the scenario in §9's own sequence closes once 4.3 leaves a chart behind for «el gráfico anterior» to resolve to |
-| **4.3 Financial drill-down** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | turns 4-5 pass; an ambiguous reference asks |
+| **4.3 Financial drill-down — done** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | done — turns 4-5 pass verbatim in episode 32; an ambiguous reference asks (`DRILL_AMBIGUOUS`, harness route `CLARIFY`); the drill's chart is a merchant bar deriving from the chart it drilled |
 | **4.4 Multimodal continuity** | `chart_id`/decision id on voice events; the chart-derived spoken summary; the multimodal cases | the five multimodal cases pass; full-turn latency measured against §8 |
 | **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | the acceptance scenario in §11 runs on camera |
 
@@ -363,10 +380,14 @@ Complete when this runs end to end, on camera:
   **Landed, 4.2b** — episode 32 turn 3, verbatim: a month-by-month line, one banking call,
   `derived_from: true`, where this reader used to refuse as an incomplete comparison.
 - «¿Por qué agosto es tan alto?» — August is resolved inside the previous result, the responsible
-  movements are queried, the answer carries evidence. **Not this wave** — reference resolution and
-  the bounded drill-down plan are 4.3's.
+  movements are queried, the answer carries evidence. **Landed, 4.3** — episode 32 turn 4, verbatim:
+  «agosto» resolves against the month line's own label rather than reaching the planner, the plan
+  turn 3 left in view narrows to that bar and regroups by merchant, clamped to the days the harness's
+  fixed today had actually seen (2026-08-01..2026-08-05, never the whole calendar month); one banking
+  call, `derived_from: true`, its chart a merchant bar.
 - «Pon el gráfico anterior en horizontal.» — the previous visual context is recovered and only its
-  presentation changes, with zero banking calls. **Landed, 4.2b** — episode 32 turn 5, verbatim:
+  presentation changes, with zero banking calls. **Landed, 4.2b** — episode 32 turn 5 at the time
+  (now turn 7, since 4.3's own Task 5 inserted the drill's two turns ahead of it), verbatim:
   «el gráfico anterior» resolves to the chart the prior restyle just appended, zero banking calls,
   an effective change. **Fix wave, I-4:** landed on a bar named explicitly, not on §9's own order —
   probed in that order, right after turn 3's month line with no restyle between, «el gráfico
@@ -374,7 +395,12 @@ Complete when this runs end to end, on camera:
   series's), which is why episode 32 inserts turn 4, «Pon el primer gráfico en vertical.», naming a
   bar by number before this bullet's own wording can land on one. The ordered scenario itself closes
   only once 4.3's drill-down turns leave a chart of their own behind for «el gráfico anterior» to
-  resolve to.
+  resolve to. Now that those turns exist: probed right after them, in §9's own order, «el gráfico
+  anterior» resolves onto the drill's own merchant bar — already a horizontal bar (the dimension on
+  the y axis) — so this exact wording is a no-op there, `VISUAL_UNCHANGED`; «en vertical» is the
+  effective change instead, which is why episode 32 turns the first chart by number rather than
+  reusing §9's own wording for that turn, and only reaches §9's own «en horizontal» wording one turn
+  later, verbatim, against the bar that turn just made vertical.
 
 ## 12. Out of scope, to protect the calendar
 
