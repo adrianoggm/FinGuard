@@ -141,4 +141,10 @@ describe("VoiceClient transport A-J", () => {
     setup.fakeSocket.message(event("assistant.text.final", "s-1", 3, { turnId: "turn-1", text: "stale" }));
     expect(setup.statuses.at(-1)).toBe("listening");
   });
+  it("fences audio.started to the chart its assistant.text.final announced", async () => {
+    const matched = await ready(); matched.client.stopCapture(); matched.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } })); matched.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" })); expect(matched.statuses.at(-1)).toBe("speaking");
+    const mismatched = await ready(); mismatched.client.stopCapture(); mismatched.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x", answer: { visualization: { kind: "chart", chart_id: "c1" } } })); mismatched.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c2" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(mismatched.statuses.at(-1)).toMatch(/^error/); expect(mismatched.fakeSocket.socket.readyState).toBe(3); expect(mismatched.playback.sources).toHaveLength(0);
+    const uncharted = await ready(); uncharted.client.stopCapture(); uncharted.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); uncharted.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 })); expect(uncharted.statuses.at(-1)).toBe("speaking");
+    const unannounced = await ready(); unannounced.client.stopCapture(); unannounced.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" })); unannounced.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000, chartId: "c1" })); for (let i = 0; i < 8; i += 1) await Promise.resolve(); expect(unannounced.statuses.at(-1)).toMatch(/^error/);
+  });
 });

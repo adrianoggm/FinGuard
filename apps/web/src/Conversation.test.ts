@@ -252,6 +252,20 @@ describe("voice event synchronisation", () => {
     const structured = answer({
       text: "Comida fue la categoría principal.",
       groups: [{ key: "Comida", total_minor: 1200, movement_count: 2 }],
+      // Built the way validateVoiceAnswer accepts (chartFamilies.test.ts holds the same shape).
+      visualization: {
+        kind: "chart",
+        chart_id: "chart-1",
+        unit: "money",
+        spec: {
+          mark: { type: "bar" },
+          encoding: {
+            x: { field: "dimension", type: "nominal" },
+            y: { field: "value_minor", type: "quantitative" },
+          },
+        },
+        data: [{ dimension: "Comida", value_minor: 1200 }],
+      },
     });
     current = applyVoiceEvent(
       current,
@@ -262,6 +276,13 @@ describe("voice event synchronisation", () => {
     expect(current.turns.map((turn) => turn.who)).toEqual(["user", "assistant"]);
     expect((current.turns[1] as { who: "assistant"; answer: Answer }).answer.groups).toEqual(
       structured.groups,
+    );
+    // The chart on screen while the summary plays: the assistant turn already carries its
+    // chart_id the instant assistant.text.final applies, before audio.started/audio.completed.
+    const renderedVisualization = (current.turns[1] as { who: "assistant"; answer: Answer }).answer
+      .visualization;
+    expect(renderedVisualization?.kind === "chart" ? renderedVisualization.chart_id : null).toBe(
+      "chart-1",
     );
     // Text and visual data are committed before playback finishes.
     expect(applyVoiceEvent(current, event("audio.completed", 3), noop).thread).toBeUndefined();

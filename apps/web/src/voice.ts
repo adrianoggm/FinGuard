@@ -323,6 +323,9 @@ export class VoiceClient {
   private turnState: "idle" | "listening" | "processing" | "speaking" = "idle";
   private discardFencedAudio = false;
   private bargeInActive = false;
+  // The chart_id the current turn's assistant.text.final announced, or null when it announced
+  // none. Reset alongside audioStarted at every per-turn reset.
+  private announcedChartId: string | null = null;
   private readonly player: PcmPlayer;
 
   constructor(private readonly options: VoiceClientOptions) {
@@ -428,6 +431,7 @@ export class VoiceClient {
     this.ready = false;
     this.commitSent = false;
     this.audioStarted = false;
+    this.announcedChartId = null;
     this.audioCompleted = false;
     this.turnCompleted = false;
     this.playerIdle = false;
@@ -448,6 +452,7 @@ export class VoiceClient {
     const previousTurn = this.turnId;
     this.player.clear();
     this.audioStarted = false;
+    this.announcedChartId = null;
     this.audioCompleted = false;
     this.turnCompleted = false;
     this.playerIdle = false;
@@ -528,6 +533,15 @@ export class VoiceClient {
     });
   }
 
+  /** `event.answer.visualization.chart_id` when every step of that is present and a string. */
+  private static chartIdOf(value: unknown): string | null {
+    if (typeof value !== "object" || value === null) return null;
+    const visualization = (value as { visualization?: unknown }).visualization;
+    if (typeof visualization !== "object" || visualization === null) return null;
+    const chartId = (visualization as { chart_id?: unknown }).chart_id;
+    return typeof chartId === "string" ? chartId : null;
+  }
+
   private receive(data: unknown, onReady: () => void): void {
     if (data instanceof ArrayBuffer) {
       if (this.discardFencedAudio && !this.audioStarted) return;
@@ -573,7 +587,15 @@ export class VoiceClient {
 
     this.options.onEvent(event);
 
-    if (event.type === "audio.started") {
+    if (event.type === "assistant.text.final") {
+      this.announcedChartId = VoiceClient.chartIdOf(event.answer);
+    } else if (event.type === "audio.started") {
+      // The gateway stamps the chart the turn drew on audio.started; audio for a chart this
+      // client did not just render is a protocol error, never played.
+      const chartId = typeof event.chartId === "string" ? event.chartId : null;
+      if (chartId !== this.announcedChartId) {
+        throw new Error("Audio de otro gráfico.");
+      }
       if (event.sampleRate !== VOICE_OUTPUT_RATE || this.audioStarted) {
         throw new Error("Frecuencia o estado de reproducción inválido.");
       }

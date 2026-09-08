@@ -103,6 +103,7 @@ Server events:
 | `assistant.text.delta` / `assistant.text.final` | visible response text |
 | `audio.started` / binary frames / `audio.completed` | one active synthesis stream |
 | `turn.completed` | final conversation state and timings |
+| `chartId` / `visualTurnId` | optional on `assistant.text.final`, `audio.started`, `audio.completed` and `turn.completed` since Wave 4.4: the chart this turn drew and the identity of the decision that drew it (the newest visual context's `turn_id`), so a client never plays one turn's audio beside another turn's chart; absent on an uncharted turn; version 1 unchanged (additive) |
 | `response.cancelled` | interruption acknowledged and old turn fenced off |
 | `error` | typed recoverable or fatal failure |
 | `pong` | keepalive response and clock sample |
