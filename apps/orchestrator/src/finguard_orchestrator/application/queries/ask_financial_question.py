@@ -46,6 +46,11 @@ from finguard_orchestrator.application.queries.financial_turn import (
 )
 from finguard_orchestrator.application.queries.reader_registry import Claim
 from finguard_orchestrator.application.queries.readers import seam
+from finguard_orchestrator.application.queries.readers.drill_down import (
+    DrillAsk,
+    DrillDown,
+    read_drill_down,
+)
 from finguard_orchestrator.application.queries.readers.follow_up import (
     _CATEGORY_REFERENCE,
     _account_follow_up_plan,
@@ -1206,6 +1211,27 @@ class AskFinancialQuestionHandler:
             yield Stage("querying")
             yield await self._group_reference(query, previous, difference=False)
             return
+
+        # §3.3's act, gated on the classification this turn already took: a drill-down that named
+        # one bar of the chart in view runs the bounded plan behind it; one that fits several bars
+        # asks instead of guessing, with no ledger call and the conversation unchanged; `None` is
+        # today's path, falling through to everything below exactly as before this task.
+        if follow_up_seen[0] is not None and follow_up_seen[0].kind == "DRILL_DOWN":
+            drill = read_drill_down(query.sentence, was)
+            if isinstance(drill, DrillAsk):
+                yield AskFinancialQuestionResult(
+                    outcome="DRILL_AMBIGUOUS",
+                    text=drill.text,
+                    question=drill.text,
+                    plan=answer_writer.describe(previous) if previous is not None else None,
+                    conversation=was,
+                )
+                return
+            if isinstance(drill, DrillDown):
+                yield Stage("planned", answer_writer.describe(drill.plan))
+                yield Stage("querying")
+                yield await self._answer(query, drill.plan, movements=MAX_SELECTED_TRANSACTIONS)
+                return
 
         referenced_result = await self._referenced_result_plan(query)
         if referenced_result is not None:
@@ -4180,6 +4206,7 @@ class AskFinancialQuestionHandler:
         *,
         widened: bool = False,
         narrowed: bool = False,
+        movements: int | None = None,
     ) -> AskFinancialQuestionResult:
         # Scoped for the run and not on the plan itself. Which accounts the figures came from is a
         # property of how the question was answered; the plan is what was *asked*, and that is what
@@ -4247,6 +4274,7 @@ class AskFinancialQuestionHandler:
                         account_id=query.account_id,
                         today=query.today,
                         reporting_timezone=query.reporting_timezone,
+                        movements=movements,
                     )
                 break
             except QueryRejectedError:
