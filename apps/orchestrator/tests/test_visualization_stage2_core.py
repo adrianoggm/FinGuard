@@ -342,8 +342,12 @@ def test_visual_interpreter_is_value_free_and_skips_financial_changes() -> None:
     assert ordered.patch.sort == "descending"
     assert interpret_visual("por semanas", (context,)) is None
     assert interpret_visual("top 2 categorías por ticket medio", (context,)) is None
-    voice = interpret_visual("ponlo en línea", (context,), voice=True)
-    assert voice is not None and voice.explanation is not None
+    # Wave 4.4 (design §6): the `voice` parameter is gone -- the old keyword now raises, and a
+    # restyle sentence resolves the same non-refusing intent whichever channel it arrived on.
+    with pytest.raises(TypeError):
+        interpret_visual("ponlo en línea", (context,), voice=True)  # type: ignore[call-arg]
+    resolved = interpret_visual("ponlo en horizontal", (context,))
+    assert resolved is not None and resolved.explanation is None and resolved.patch is not None
     mixed = interpret_visual("por semanas y ponlo en barras", (context,))
     assert mixed is not None and mixed.patch is None and mixed.explanation is not None
 

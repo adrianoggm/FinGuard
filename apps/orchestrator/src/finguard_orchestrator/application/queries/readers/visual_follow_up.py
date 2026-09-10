@@ -41,10 +41,11 @@ def _visual_intent(
     (`intent is not None`) and whether the turn is a mixed one — a data change and a format change
     asked together, which `interpret_visual` already recognises as its own refusal — off this same
     `VisualIntent`, rather than asking the interpreter twice for two different facts about it.
+
+    Wave 4.4 (design §6): the channel no longer changes what the interpreter reads — a spoken
+    restyle is read exactly like a typed one.
     """
-    return interpret_visual(
-        query.sentence, conversation.visual_contexts, voice=query.presentation.channel == "VOICE"
-    )
+    return interpret_visual(query.sentence, conversation.visual_contexts)
 
 
 def _reshape_claims(

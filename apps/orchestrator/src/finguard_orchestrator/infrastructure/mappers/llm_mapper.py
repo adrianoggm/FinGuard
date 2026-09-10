@@ -36,6 +36,7 @@ from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefiniti
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUpKind
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
 from finguard_orchestrator.domain.services.plan_digest import plan_digest
+from finguard_orchestrator.domain.services.spoken_presenter import spoken_summary
 from finguard_orchestrator.domain.services.visual_interpreter import (
     apply_visual_intent,
     interpret_visual,
@@ -513,6 +514,7 @@ def question_to_dto(
     holder_reference: str | None = None,
     metric_tokens: MetricTokenCodec | None = None,
     offer_saving: bool = False,
+    spoken_for_voice: bool = False,
 ) -> QuestionResponse:
     """The result of a question, put on the wire -- sealed for its holder when one is given.
 
@@ -529,6 +531,11 @@ def question_to_dto(
     D-3b-10 (fix wave): recorded because it is the reason this signature has three flags rather
     than one -- Fix round 1 (Task 3) found the corpus red from conflating the two above, and
     named them apart is the fix.
+
+    `spoken_for_voice` (Wave 4.4) is a fourth, independent question: "does this turn's channel
+    want a spoken summary at all". It is `request.channel == "VOICE"` at both call sites -- a
+    channel fact, not a metrics one, so it rides alongside the first two flags rather than being
+    folded into either.
     """
     visualization = _visualization_to_dto(result)
     # The seal is built whenever both are given, with no dependency on `offer_saving`: a fresh
@@ -542,6 +549,12 @@ def question_to_dto(
         else None
     )
     result = _remember_visual_context(result, visualization, seal=seal)
+    spoken = None
+    if spoken_for_voice and isinstance(visualization, ChartVisualizationResponse):
+        newest = result.conversation.visual_contexts[-1]
+        spoken = spoken_summary(
+            newest.spec, newest.profile, newest.labels, newest.ranked, result.metric_definition
+        )
     chart_id = (
         visualization.chart_id if isinstance(visualization, ChartVisualizationResponse) else None
     )
@@ -628,6 +641,7 @@ def question_to_dto(
         # bar charts does not belong next to "¿de qué periodo?".
         suggestions=result.suggestions or (_chart_suggestions(context) if context else []),
         save_candidate=candidate,
+        spoken=spoken,
     )
 
 

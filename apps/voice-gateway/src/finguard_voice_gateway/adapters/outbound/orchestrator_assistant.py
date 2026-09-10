@@ -166,4 +166,8 @@ def _reply_from(payload: dict[str, Any]) -> AssistantReply:
         isinstance(conversation, dict) and conversation.get("workflow") == "PAYMENT_CONFIRMATION"
     ) or payload.get("outcome") == "AWAITING_CONFIRMATION"
     answer = {key: value for key, value in payload.items() if key != "type"}
-    return AssistantReply(text, conversation, answer, payment_required)
+    # No error for a missing or non-string value: an older orchestrator answers with no `spoken`
+    # key at all, and that is not malformed, only silent about voice.
+    spoken = payload.get("spoken")
+    spoken = spoken if isinstance(spoken, str) else None
+    return AssistantReply(text, conversation, answer, payment_required, spoken=spoken)

@@ -46,6 +46,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualRow,
 )
 from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
+from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import (
     Claimant,
@@ -68,7 +69,11 @@ from finguard_orchestrator.domain.value_objects.scope import Scope
 from finguard_orchestrator.infrastructure.controllers import llm_controller
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask as ask_question
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask_streaming
-from finguard_orchestrator.infrastructure.dto.llm_dto import QuestionRequest, QuestionResponse
+from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    MetricSourcePayload,
+    QuestionRequest,
+    QuestionResponse,
+)
 from finguard_orchestrator.infrastructure.mappers import conversation_mapper
 from finguard_orchestrator.infrastructure.security.metric_tokens import MetricTokenCodec
 from finguard_orchestrator.observability import Step, TurnRecord, Verdict, recording_turn
@@ -512,6 +517,97 @@ async def test_the_controllers_visual_response_is_unchanged_by_recording(monkeyp
     unrecorded = await _drive_question_route("Ordénalo de mayor a menor")
 
     assert recorded == unrecorded
+
+
+# --- Wave 4.4 (design §6): a spoken restyle takes the typed restyle's own path ------------------
+#
+# `interpret_visual` no longer refuses on the VOICE channel before resolving a target -- a spoken
+# «ponlo en horizontal» is read exactly like a typed one. The metric-saving offer stays a TEXT
+# affordance (ruling R5: a save needs a screen control), so it is the one channel read left; the
+# restyle itself is not.
+
+
+async def test_a_voice_restyle_takes_the_typed_restyles_path_on_the_streaming_route() -> None:
+    """«Ponlo en vertical» spoken (`channel="VOICE"`) reaches the same short-circuit a typed
+    restyle does: zero banking calls, the sealed context re-verified and carried forward with a
+    fresh token, `VISUAL_UPDATED`, and no save candidate. The identical request on `channel="TEXT"`
+    still offers one -- the save offer is channel-gated, the restyle is not.
+    """
+    fake_queries = _UnreachableQueries()
+    metric_token = _TEST_TOKENS.issue(
+        _WHO.holder_reference, SavedMetricDefinition(PREVIOUS, SPEC), chart_id="chart-1"
+    )
+    payload = conversation_mapper.to_payload(_SEALED_CHARTED).model_copy(
+        update={"conversation_id": _CONVERSATION_ID}
+    )
+    voice_request = QuestionRequest(
+        question="Ponlo en vertical",
+        conversation=payload,
+        channel="VOICE",
+        metric_sources=[MetricSourcePayload(chart_id="chart-1", definition_token=metric_token)],
+    )
+
+    async def _streamed(request: QuestionRequest) -> dict:
+        streamed = await ask_streaming(
+            request,
+            _WHO,
+            asking=None,
+            today=CS_TODAY,
+            commands=None,
+            payments_on=False,
+            queries=fake_queries,
+            attempt="x",
+            reads=None,
+            metric_tokens=_TEST_TOKENS,
+            metrics_on=True,
+        )
+        chunks = [chunk async for chunk in streamed.body_iterator]
+        body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+        frames = [
+            json.loads(line.removeprefix("data: "))
+            for line in body.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert frames[-1]["type"] == "answer"
+        return frames[-1]
+
+    voice_answer = await _streamed(voice_request)
+    assert voice_answer["outcome"] == "VISUAL_UPDATED"
+    assert voice_answer["save_candidate"] is None
+    (context,) = voice_answer["conversation"]["visual_contexts"][-1:]
+    assert context["token"]
+    assert fake_queries.ran == []
+
+    text_answer = await _streamed(voice_request.model_copy(update={"channel": "TEXT"}))
+    assert text_answer["outcome"] == "VISUAL_UPDATED"
+    assert text_answer["save_candidate"] is not None
+    assert fake_queries.ran == []
+
+
+async def test_a_voice_restyle_updates_through_the_non_streaming_route_too() -> None:
+    """The second route this task touches: the same VOICE-channel restyle updates the chart with
+    zero banking calls on `/v1/questions` (the non-streaming route) as well as on the stream."""
+    fake_queries = _UnreachableQueries()
+    payload = conversation_mapper.to_payload(_SEALED_CHARTED).model_copy(
+        update={"conversation_id": _CONVERSATION_ID}
+    )
+    request = QuestionRequest(question="Ponlo en vertical", conversation=payload, channel="VOICE")
+
+    response = await ask_question(
+        request,
+        _WHO,
+        queries=fake_queries,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    assert response.outcome == "VISUAL_UPDATED"
+    assert fake_queries.ran == []
 
 
 # --- Task 6: an AMBIGUOUS short-circuit asks instead of guessing -------------------------------
