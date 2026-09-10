@@ -949,6 +949,9 @@ class QuestionResponse(_Payload):
     movements: list[SpokenMovementResponse] = []
     visualization: VisualizationResponse | None = None
     visualization_derivation: VisualizationDerivation | None = None
+    # What a voice client speaks instead of `text` -- present only on a VOICE request that drew a
+    # chart this turn (Task 3); the screen keeps `text` regardless of channel.
+    spoken: str | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []

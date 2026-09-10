@@ -436,6 +436,8 @@ def _visual_only_response(
                 chart_id=chart_id,
             ),
         )
+    # `spoken` stays unset (Task 3): a restyle never runs `question_to_dto`, so it never computes
+    # one, and a voice client speaks this `text` instead -- the same sentence a screen would show.
     return QuestionResponse(
         outcome="VISUAL_UPDATED",
         text="He creado una nueva versión del gráfico.",
@@ -1719,6 +1721,7 @@ async def ask(
         holder_reference=who.holder_reference,
         metric_tokens=metric_tokens,
         offer_saving=metrics_on and request.channel == "TEXT",
+        spoken_for_voice=request.channel == "VOICE",
     )
 
 
@@ -1891,6 +1894,7 @@ async def ask_streaming(
                         holder_reference=who.holder_reference,
                         metric_tokens=metric_tokens,
                         offer_saving=metrics_on and request.channel == "TEXT",
+                        spoken_for_voice=request.channel == "VOICE",
                     ).model_dump(),
                 }
             yield _sse(payload)

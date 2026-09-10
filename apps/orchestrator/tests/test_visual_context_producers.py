@@ -349,6 +349,60 @@ def test_a_plan_without_evidence_yields_no_ids() -> None:
     assert _evidence_of(None) == ()
 
 
+# --- Task 3 (Wave 4.4): `spoken` on a VOICE charted answer ------------------------------------
+
+
+def test_a_voice_charted_answer_carries_a_spoken_summary(charted_result) -> None:
+    """`question_to_dto(..., spoken_for_voice=True)` over a charted result fills `spoken` with the
+    presenter's own sentence -- named here by its top label (`charted_result`'s dataset draws
+    "Comida" (100) ahead of "Casa" (50), ranked) once the plan actually groups by CATEGORY (the
+    fixture's own plan groups by nothing, per its docstring)."""
+    plan_with_grouping = replace(charted_result.metric_definition, group_by="CATEGORY")
+    voice_result = replace(charted_result, metric_definition=plan_with_grouping)
+    response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
+    assert response.spoken is not None
+    assert response.spoken.startswith("Comida fue la categoría con mayor gasto.")
+    assert response.text == "Resultado"  # the screen keeps the full written answer regardless
+
+
+def test_the_same_result_over_text_channel_has_no_spoken(charted_result) -> None:
+    """`spoken_for_voice=False` (the TEXT route's own value) computes nothing at all."""
+    response = llm_mapper.question_to_dto(charted_result, spoken_for_voice=False)
+    assert response.spoken is None
+
+
+def test_a_voice_kpi_answer_has_no_spoken() -> None:
+    """A KPI turn draws no `ChartVisualizationResponse` at all, so `spoken_for_voice=True` still
+    computes nothing -- there is no chart for a voice summary to be derived from."""
+    result = AskFinancialQuestionResult(outcome="ANSWERED", text="Gastaste 42 €", total_minor=4200)
+    response = llm_mapper.question_to_dto(result, spoken_for_voice=True)
+    assert response.visualization is None
+    assert response.spoken is None
+
+
+def test_a_voice_restyle_carries_no_spoken(restyle_turn) -> None:
+    """The restyle path never runs `question_to_dto` at all (it answers through
+    `_visual_only_response`), so `spoken` stays at its default `None` regardless of channel --
+    checked here off the actual `QuestionResponse` `_visual_only_response` returns, not the
+    round-tripped `restyle_turn` fixture (whose own `SimpleNamespace` only keeps `conversation`)."""
+    initial_context = VisualContext(
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        source_plan=FinancialPlan(
+            Direction.EXPENSE, period=RelativePeriod(Period.LAST_MONTH), transaction_ids=(uuid4(),)
+        ),
+        evidence_ids=(uuid4(),),
+    )
+    conversation = IDLE.with_visual_context(initial_context)
+    from_wire = conversation_mapper.to_domain(conversation_mapper.to_payload(conversation))
+    intent = interpret_visual("ordénalo de menor a mayor", from_wire.visual_contexts)
+    assert intent is not None
+    response = _visual_only_response(intent, from_wire)
+    assert response.outcome == "VISUAL_UPDATED"
+    assert response.spoken is None
+
+
 def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> None:
     """`restyle_turn` drives the restyle endpoint (llm_controller) with a conversation holding
     `VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, source_plan=<a FinancialPlan>,
