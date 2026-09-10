@@ -778,6 +778,66 @@ claimed, never `UNRELATED`, so the 8-of-14 count holds either way, and the claim
 thing that depends on which of the two paths a turn actually takes. Suite at HEAD: 4058 / 3 / 207,
 corpus 205.
 
+**2026-09-10 — wave 4.4 landed: the conversation keeps its chart across voice and text, and the
+summary is spoken from the chart.** A turn's chart identity now rides its own voice events: the
+gateway lifts `chartId` (the answer's `visualization.chart_id`) and `visualTurnId` (the newest
+`visual_contexts[].turn_id`) onto `assistant.text.final`, `audio.started`, `audio.completed` and
+`turn.completed`, omitted rather than `null` on an uncharted turn or a KPI answer, additive on the
+existing protocol (ADR-010 stays version 1) (`09fcc85`, `e142564`). The web client fences audio to
+it: `audio.started` naming a `chartId` other than the one the same turn's `assistant.text.final`
+just announced fails the same way a wrong sample rate does, and the chart landing on the thread
+before `audio.started` arrives is now an asserted invariant rather than an accident of ordering
+(`335740c`). A spoken «ponlo en horizontal» takes the exact `_visual_only_response` path a typed
+one does — `interpret_visual`'s unconditional VOICE refusal is gone, its `voice` parameter deleted
+from the signature and all three call sites — and the metric-saving offer stays a TEXT-only
+affordance, pinned both ways in the same test (`69b7d61`). The spoken summary of a charted answer
+is a new domain presenter, `spoken_summary`, reading the accepted chart rather than the table: a
+top-group sentence only when the chart's labels are `ranked` strictly at both ends, named through a
+closed noun table over every `GroupBy` member (categoría/comercio/contraparte/cuenta/mes/semana/día),
+a second sentence keyed off the profile's own shape (temporal, comparison, donut, or the plain
+desglose) independent of the plan's grouping, and «ingreso»/«gasto» read off the plan's own
+direction — never an amount (`f745e33`). `QuestionResponse.spoken` is filled only when
+`request.channel == "VOICE"` and a chart exists, computed from the context this same turn just
+sealed; the gateway's `_reply_from` reads it defensively (a string or nothing) and `_process_turn`
+synthesises `reply.spoken or reply.text` while `assistant.text.final.text` keeps the full written
+answer the screen shows (`71a5036`). §8's five objectives are now tests rather than a promise:
+zero banking calls and no visual-planner-port call on a presentation-only turn, on both channels,
+wired through a real handler and ledger so the count is a fact rather than the absence of a crash;
+the deterministic path's `Step.VISUAL_PLANNER` record reads `detail == "not_run"` with `decide`
+awaited exactly once; the first SSE frame is a `stage` and is observably ahead of the policy being
+consulted, drained one chunk at a time against a shared spy rather than checked as two isolated
+facts; the budget and the floor-on-expiry stay Wave 3's own `test_a_non_positive_budget_is_refused`
+and `test_the_three_failures_are_told_apart` (`15d6ac5`). The gateway's benchmark gained a
+follow-up-turn row: a charted turn then a presentation-only restyle on the same open session, fake
+providers, `followUp:inputStartToTurnCompletedMs` P50 = P95 = 16 ms over 20 samples (win32
+timer-tick quantisation of protocol overhead, not a fabricated flat line —
+`apps/voice-gateway/evaluation/RESULTS.md`), and the §8 gate is stated in one sentence against
+Wave 3's real-provider P95 (5,076 ms, 17 August 2026) (`373efb9`, measured 10 September 2026). The
+corpus speaks by voice: the harness gained `Turn.channel` and posts a VOICE turn to the streaming
+route, reading the last frame as the answer (`ef69fa5`); episode 33 carries §9's cases a, b, d and
+e — a voice-opened chart restyled by text, a text chart continued by voice, a voice follow-up
+narrowing the window, and the chart on screen the same frame `spoken` is set — case c, the
+interruption, stays the gateway's own cancellation test from Task 1 (`303cf36`). Suite at HEAD:
+4141 / 5 / 209, corpus 207 (176 · 1193); ratchets 22/43/0, unmoved.
+
+What it refuses: no voice saving offer (a save still needs a screen control); no amount in the
+spoken line beyond what the written text already says; no voice payment confirmation, as before.
+What it does not do, on purpose: no orchestrator-internal stage timing — the gateway's own marks
+bracket the orchestrator end to end, which is what today's §8 gate reads, and a finer split inside
+the orchestrator is not needed to state it; the real-provider follow-up row is the operator's own
+run (Task 9's runbook), not invented here; a charted answer's `data` still travels over the voice
+channel unmeasured — the explorer's own risk, carried forward as a known cost, not a regression
+this wave introduced; the discreet voice explanation («¿Por qué este gráfico?») is 4.5's,
+untouched. Two things are also true and not smoothed over: a VOICE `ACCOUNT_BALANCE` turn's stream
+branch answers directly with no `stage` frame at all, so §8 e's «first frame is a stage» invariant
+is proven for a *planned* answer only, and episode 33 keeps its closing balance/courtesy turns on
+TEXT rather than pretend the harness's own frame rule holds for a route that never emits one; and
+`test_spoken_presenter.py`'s value-free claim carries two `pytest.skip`s over the MONTH-grouped
+families rather than a narrowed assertion — the review's own smallest fix (strip the four-digit
+year, assert no digit remains) is recorded as open, not applied. Deferred to the fix wave:
+D-4.4-1 through D-4.4-8
+(`.superpowers/sdd/2026-09-08-multimodal-continuity/progress.md`).
+
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
 The accepted design is [ADR-010](architecture/adr-010-realtime-voice.md). Voice is a separate

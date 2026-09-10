@@ -6,6 +6,10 @@ from finguard_voice_gateway.ports.assistant_client import AssistantReply, Assist
 # two values, because the fake stays a protocol fixture and never invents evidence.
 _CHART_ID = "chart-fake-1"
 _CHART_TURN_ID = "11111111-1111-1111-1111-111111111111"
+# The fake's one restyle case: `visualization` stays empty and the chart rides
+# `visualization_derivation` instead, the shape `_visual_only_response` actually returns (I-1).
+_RESTYLE_CHART_ID = "chart-fake-2"
+_RESTYLE_TURN_ID = "22222222-2222-2222-2222-222222222222"
 
 
 def _fold(text: str) -> str:
@@ -43,6 +47,13 @@ class FakeAssistantClient:
             else f"He entendido: {text}"
         )
         reply_conversation: dict[str, object] = {"previous": conversation, "last": text}
+        if isinstance(conversation, dict):
+            incoming_contexts = conversation.get("visual_contexts")
+            if incoming_contexts is not None:
+                # Visual contexts persist across turns whether or not this one draws a new
+                # chart (`Conversation.with_visual_context`) -- carried forward here, not just
+                # for the charted/restyle branches below, so a stale one can be probed (I-2).
+                reply_conversation["visual_contexts"] = incoming_contexts
         answer: dict[str, object] = {
             "outcome": "AWAITING_CONFIRMATION" if payment else "ANSWERED",
             "text": reply_text,
@@ -58,7 +69,15 @@ class FakeAssistantClient:
             "suggestions": [],
         }
         spoken: str | None = None
-        if "grafico" in _fold(normalized):
+        if "reestilo" in normalized:
+            # Shaped like `_visual_only_response`: no `visualization`, the chart only in
+            # `visualization_derivation`, and `spoken` stays `None`.
+            answer["visualization"] = None
+            answer["visualization_derivation"] = {"chart_id": _RESTYLE_CHART_ID}
+            reply_conversation["visual_contexts"] = [
+                {"chart_id": _RESTYLE_CHART_ID, "turn_id": _RESTYLE_TURN_ID}
+            ]
+        elif "grafico" in _fold(normalized):
             answer["visualization"] = {
                 "kind": "chart",
                 "chart_id": _CHART_ID,
