@@ -68,16 +68,16 @@ episodes:
       evidence turn — no chart is drawn, so there is nothing here for either field to be about.
 
       The close is unrelated to the drill, only so the episode clears the corpus's own six-turn
-      floor by a margin: an account balance and a courtesy, both on TEXT. Probed: `ACCOUNT_BALANCE`
-      answers over the *streaming* route too, but `AskFinancialQuestion.stream` never yields a
-      `Stage` on that path at all (`ask_financial_question.py`'s own handling: "not a plan and not a
-      model... yield await self._balance(...); return"), so a VOICE balance turn would open its SSE
-      body directly on `{"type": "answer", ...}` — failing the very rule this task's own harness
-      change asserts on every VOICE turn (frame 0 is a stage, always). That is not this service
-      routing a voice balance wrong; a balance genuinely has no stage to report, and the harness's
-      default frame check has no exception carved out for it. Rather than carve one in for a single
-      closing turn that proves nothing about §9's five cases, the balance stays on TEXT here, exactly
-      as episode 32 closes — a channel switch is not the thing this turn is for.
+      floor by a margin: an account balance, now on VOICE, and a courtesy on TEXT. `ACCOUNT_BALANCE`
+      answers over the *streaming* route with `AskFinancialQuestion.stream` never yielding a `Stage`
+      on that path at all (`ask_financial_question.py`'s own handling: "not a plan and not a
+      model... yield await self._balance(...); return"), so its SSE body opens directly on
+      `{"type": "answer", ...}` — the fix wave's own harness change (I-4/D-4.4-9) narrowed the
+      leading-stage rule to `route: QUERY` turns only, exactly so a route that genuinely has
+      nothing to stage is not asserted against a universal that was never true for it. The last
+      frame is still an answer, always, and is checked unconditionally; `spoken: false` because the
+      balance answer carries no `visualization` for a voice summary to be derived from, the same
+      shape Task 3's own `test_a_voice_kpi_answer_has_no_spoken` proves in-process.
 
       Every sentence above is one 32 already speaks or a follow-up `contextual_follow_up` already
       claims (turn 5, probed): `tests/test_what_we_hand_to_the_planner.py` still reads 22 unmeasured
@@ -140,8 +140,10 @@ episodes:
         spoken: false
         ran: {window: 2026-07-01..2026-07-31, direction: EXPENSE, categories: [TRANSPORT_PUBLIC, TRANSPORT_FUEL], merchants: [], group_by: MONTH, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: ¿Cuánto tengo en la cuenta corriente?
+        channel: VOICE
         route: BALANCE
         no_model: true
+        spoken: false
         says: 2.270,42
       - say: Gracias.
         route: COURTESY
