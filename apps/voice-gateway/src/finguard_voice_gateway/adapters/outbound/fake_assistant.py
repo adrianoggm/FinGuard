@@ -47,6 +47,13 @@ class FakeAssistantClient:
             else f"He entendido: {text}"
         )
         reply_conversation: dict[str, object] = {"previous": conversation, "last": text}
+        if isinstance(conversation, dict):
+            incoming_contexts = conversation.get("visual_contexts")
+            if incoming_contexts is not None:
+                # Visual contexts persist across turns whether or not this one draws a new
+                # chart (`Conversation.with_visual_context`) -- carried forward here, not just
+                # for the charted/restyle branches below, so a stale one can be probed (I-2).
+                reply_conversation["visual_contexts"] = incoming_contexts
         answer: dict[str, object] = {
             "outcome": "AWAITING_CONFIRMATION" if payment else "ANSWERED",
             "text": reply_text,

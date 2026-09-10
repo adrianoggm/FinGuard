@@ -15,6 +15,7 @@ from finguard_voice_gateway.app import (
     VoiceSession,
     _process_turn,
     app,
+    chart_identity,
     handle_control,
     process_turn,
     receive_audio,
@@ -24,6 +25,15 @@ from finguard_voice_gateway.app import (
 from finguard_voice_gateway.domain.state import SessionProtocolError, SessionState
 from finguard_voice_gateway.ports.speech_to_text import SpeechToTextTimeoutError
 from finguard_voice_gateway.protocol import parse_event
+
+# The four events `chart_identity`'s result is spread onto (D-4.4-1) -- one place naming them,
+# not three that could drift apart.
+IDENTITY_EVENT_TYPES = (
+    "assistant.text.final",
+    "audio.started",
+    "audio.completed",
+    "turn.completed",
+)
 
 
 def _control(event_type: str, session_id: str, sequence: int, turn_id: str | None = None) -> str:
@@ -147,9 +157,19 @@ def test_fake_text_turn_and_spoken_payment_confirmation_refusal() -> None:
             session_id = body["sessionId"]
             socket.send_text(_control("session.configure", session_id, 0))
             assert socket.receive_json()["type"] == "session.ready"
-            socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+            # I-2: a charted warm-up turn first, so the *next* turn's conversation carries a
+            # stale `visual_contexts` entry -- otherwise the assertion below would pass whether
+            # or not the guard exists, because there would be nothing to leak in the first place.
+            socket.send_text(_control("input.start", session_id, 1, "warm-up"))
+            socket.send_bytes("quiero ver el gráfico".encode())
+            socket.send_text(_control("input.commit", session_id, 2, "warm-up"))
+            while True:
+                item = socket.receive()
+                if item.get("text") and json.loads(item["text"])["type"] == "turn.completed":
+                    break
+            socket.send_text(_control("input.start", session_id, 3, "turn-1"))
             socket.send_bytes(b"si")
-            socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+            socket.send_text(_control("input.commit", session_id, 4, "turn-1"))
             received: list[dict[str, object]] = []
             while True:
                 item = socket.receive()
@@ -168,13 +188,9 @@ def test_fake_text_turn_and_spoken_payment_confirmation_refusal() -> None:
             assert response_answer["groups"] == []
             assert response["paymentConfirmationRequired"] is False
             # An uncharted turn's four identity-bearing events look exactly as they did
-            # before Wave 4.4: no chartId, no visualTurnId.
-            for event_type in (
-                "assistant.text.final",
-                "audio.started",
-                "audio.completed",
-                "turn.completed",
-            ):
+            # before Wave 4.4: no chartId, no visualTurnId -- even though the warm-up turn
+            # above left a stale chart context sitting in this turn's own conversation (I-2).
+            for event_type in IDENTITY_EVENT_TYPES:
                 identity_event = next(item for item in received if item["type"] == event_type)
                 assert "chartId" not in identity_event
                 assert "visualTurnId" not in identity_event
@@ -205,13 +221,7 @@ def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
                     indices.setdefault(payload["type"], len(received) - 1)
                     if payload["type"] == "turn.completed":
                         break
-            identity_types = (
-                "assistant.text.final",
-                "audio.started",
-                "audio.completed",
-                "turn.completed",
-            )
-            for event_type in identity_types:
+            for event_type in IDENTITY_EVENT_TYPES:
                 event_payload = received[indices[event_type]]
                 assert event_payload["chartId"] == "chart-fake-1"
                 assert event_payload["visualTurnId"] == "11111111-1111-1111-1111-111111111111"
@@ -233,6 +243,18 @@ def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
                 "desglose, y puedes preguntarme por cualquiera de las categorías."
             )
     sessions.clear()
+
+
+def test_chart_identity_omits_a_stale_visual_turn_id_on_an_uncharted_answer() -> None:
+    """I-2: `visual_contexts` persist across turns (`Conversation.with_visual_context`), so an
+    uncharted answer's conversation can still carry a previous turn's context. `chart_identity`
+    must not stamp that stale `turn_id` onto a turn that drew no chart of its own."""
+    stale_conversation = {"visual_contexts": [{"chart_id": "chart-old", "turn_id": "turn-old-id"}]}
+    assert chart_identity({"visualization": None}, stale_conversation) == {}
+    # Even a charted answer must not borrow a *different* chart's context: the newest context's
+    # own `chart_id` has to equal the chart this turn just drew.
+    mismatched_answer = {"visualization": {"chart_id": "chart-new"}}
+    assert chart_identity(mismatched_answer, stale_conversation) == {"chartId": "chart-new"}
 
 
 def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
@@ -263,12 +285,7 @@ def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
                     indices.setdefault(payload["type"], len(received) - 1)
                     if payload["type"] == "turn.completed":
                         break
-            for event_type in (
-                "assistant.text.final",
-                "audio.started",
-                "audio.completed",
-                "turn.completed",
-            ):
+            for event_type in IDENTITY_EVENT_TYPES:
                 event_payload = received[indices[event_type]]
                 assert event_payload["chartId"] == "chart-fake-2"
             text_final_answer = received[indices["assistant.text.final"]]["answer"]
@@ -324,9 +341,13 @@ def test_payment_policy_blocks_next_spoken_turn_without_calling_assistant() -> N
             session_id = body["sessionId"]
             socket.send_text(_control("session.configure", session_id, 0))
             socket.receive_json()
+            # I-2: a charted warm-up turn first, so the payment-refusal turn's own conversation
+            # (carried through `session.conversation` since the refusal branch never calls the
+            # assistant) carries a stale `visual_contexts` entry to guard against.
             for sequence, turn_id, audio in (
-                (1, "prepare", b"quiero preparar un pago "),
-                (3, "confirm", b"si"),
+                (1, "warm-up", "quiero ver el gráfico".encode()),
+                (3, "prepare", b"quiero preparar un pago "),
+                (5, "confirm", b"si"),
             ):
                 socket.send_text(_control("input.start", session_id, sequence, turn_id))
                 socket.send_bytes(audio)
@@ -339,14 +360,15 @@ def test_payment_policy_blocks_next_spoken_turn_without_calling_assistant() -> N
                         events.append(payload)
                         if payload["type"] == "turn.completed":
                             break
-            assert services.assistant.call_count == before + 1
+            assert services.assistant.call_count == before + 2
             assert services.assistant.received_credential is True
             final = [item for item in events if item["type"] == "assistant.text.final"][0]
             final_text = final["text"]
             assert isinstance(final_text, str)
             assert "No puedo confirmar" in final_text
             assert final["paymentConfirmationRequired"] is True
-            # The payment-refusal branch builds a reply with no chart: no identity to lift.
+            # The payment-refusal branch builds a reply with no chart, and the warm-up turn's
+            # stale context must not leak in either: no identity to lift.
             assert "chartId" not in final
             assert "visualTurnId" not in final
     sessions.clear()
@@ -655,7 +677,14 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
     resistant_tts = _CancellationResistantTTS()
     monkeypatch.setattr(services, "tts", resistant_tts)
     session = VoiceSession("session", "credential", services)
-    original_conversation = {"last": "previous"}
+    # A stale visual context from an earlier, already-committed turn -- I-2's guard is
+    # meaningless here unless the *next* turn's conversation actually carries one.
+    original_conversation = {
+        "last": "previous",
+        "visual_contexts": [
+            {"chart_id": "chart-fake-1", "turn_id": "11111111-1111-1111-1111-111111111111"}
+        ],
+    }
     session.conversation = original_conversation
     session.machine.configure()
     session.machine.start_input("old-turn")
