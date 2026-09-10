@@ -1589,9 +1589,7 @@ async def ask(
     # holder's real one, and the turn then refuses at the trust gate -- self-inflicted (a client
     # can only harm its own conversation this way) and the safe direction: refusing beats
     # silently resolving onto whichever context happens to still be trusted.
-    visual = interpret_visual(
-        request.question, was.visual_contexts, voice=request.channel == "VOICE"
-    )
+    visual = interpret_visual(request.question, was.visual_contexts)
     if visual is not None:
         follow_up = classify_claimed_visual(visual, request.question)
         record_visual_follow_up(follow_up)
@@ -1764,9 +1762,7 @@ async def ask_streaming(
     )
     presentation = _presentation_of(request)
 
-    visual = interpret_visual(
-        request.question, was.visual_contexts, voice=request.channel == "VOICE"
-    )
+    visual = interpret_visual(request.question, was.visual_contexts)
     if visual is not None:
         follow_up = classify_claimed_visual(visual, request.question)
         record_visual_follow_up(follow_up)

@@ -58,9 +58,7 @@ def fold(sentence: str) -> str:
     )
 
 
-def interpret_visual(
-    sentence: str, contexts: tuple[VisualContext, ...], *, voice: bool = False
-) -> VisualIntent | None:
+def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> VisualIntent | None:
     folded = fold(sentence)
     financial = _FINANCIAL.search(folded)
     show_every_row = _VISUAL_ALL.fullmatch(folded.strip(" ¿?¡!.,")) is not None
@@ -80,8 +78,6 @@ def interpret_visual(
         return None
     if not visual_signal:
         return None
-    if voice:
-        return VisualIntent(None, None, "Para cambiar un gráfico, escríbelo en el chat.")
     if not contexts:
         return VisualIntent(None, None, "No hay ningún gráfico anterior que pueda cambiar.")
     target_match = _TARGET.search(folded)
