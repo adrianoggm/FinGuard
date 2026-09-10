@@ -77,3 +77,65 @@ Orchestrator: (a) a VOICE and a TEXT presentation-only turn through the streamin
 - **Type consistency:** `spoken_summary` signature used identically by T3's mapper call; `QuestionResponse.spoken` read by the gateway's `_reply_from` as `payload.get("spoken")`; `chartId`/`visualTurnId` spelled the same in the gateway, ADR and web.
 - **Pre-read facts (explorer 2026-09-08, `.superpowers/sdd/2026-09-08-multimodal-continuity/explorer-report.md`):** the gateway's events and `event()` helper (`app.py:88-100`, `_process_turn` `:398-538`); `AssistantReply(text, conversation, answer, payment_confirmation_required)` and `_reply_from` (`orchestrator_assistant.py:158-169`); the VOICE refusal (`visual_interpreter.py:83-84`) and its three callers; `QuestionResponse` fields (`llm_dto.py:~895-930`); `question_to_dto(result, *, holder_reference, metric_tokens, offer_saving)` (`llm_mapper.py:493`); the web's `applyVoiceEvent` (`Conversation.tsx:168-193`) and turn fence (`voice.ts:565-572`); RESULTS.md's Wave 3 numbers (input start → turn completed P95 5,076 ms; first stage → text final P95 3,984 ms); `Presentation.channel: Literal["TEXT","VOICE"]` (`chart.py:317`); the policy decides at `ask_financial_question.py:5282` (`await policy.decide(question, profile, presentation)`).
 - **Pre-read risks (settle at each brief):** T1 — does the fake assistant's `answer` shape in the gateway tests carry `visualization`? (extend the fake); does the web's `validateVoiceAnswer` accept the new optional fields on events (they are on the event, not the answer — fine)? T3 — `question_to_dto` runs BEFORE or AFTER `_remember_visual_context` seals the context (the spoken line reads the newest context's labels — order matters; read the mapper). T5 — the app client used by `replay()` must reach the streaming route (the existing `_drive_question_route` pattern in `tests/test_visual_follow_up.py` is for the non-streaming route; `tests/test_question_routing.py:354-382` drives the stream).
+
+## Landed
+
+One line per task, its SHAs, and the rulings that shaped its code:
+
+- **Task 1** — `09fcc85` (gateway: `chartId`/`visualTurnId` on the four turn events, the fake
+  charted case, the cancellation probe), `335740c` (web: the `announcedChartId` fence on
+  `audio.started`, the chart-before-audio invariant), `e142564` (ADR-010's one row). R1 (T1 lands
+  before T3; T3 rebases on T1's shape), R2 (the fence compares `audio.started.chartId` against the
+  same turn's `assistant.text.final` chart, mismatch the same protocol-error path as a wrong sample
+  rate), R3 (no version bump; the ADR row says "optional since Wave 4.4"), R4 (a KPI's
+  `.get("chart_id")` is `None`, so identity is omitted for it).
+- **Task 2** — `69b7d61` (the VOICE refusal removed from `interpret_visual` and its three call
+  sites; the parity tests). R5 (`voice` removed with its refusal; `offer_saving` stays TEXT-only,
+  pinned both ways).
+- **Task 3** — `f745e33` (orchestrator: `spoken_presenter.py`, `QuestionResponse.spoken`,
+  `question_to_dto(..., spoken_for_voice=)`), `71a5036` (gateway: `AssistantReply.spoken`, the TTS
+  speaks it, `FakeTts.spoken` recorder). R6 (`spoken_for_voice`; the spoken line reads
+  `visual_contexts[-1]` after `_remember_visual_context` seals it; `None` on the restyle path), R7
+  (`AssistantReply.spoken = payload.get("spoken")` when a `str`, else `None`), R9 (the closed noun
+  table over every `GroupBy` member; income/expense by `plan.direction`); also R15 (the fake TTS
+  gains a `spoken: list[str]` recorder, added at this task's pre-read).
+- **Task 4** — `15d6ac5` (orchestrator: `test_performance_objectives.py`, §8 a/b/e as tests, c/d
+  named), `373efb9` (gateway: `--follow-up-text` on `benchmark_e2e.py`, the RESULTS.md row). R10
+  (§8 c/d named to Wave 3's own tests, nothing added; §8 e is the first stream frame ahead of the
+  policy), R11 (the follow-up row measured with fakes, the gate stated with Wave 3's number; the
+  real-provider row is the operator's, Task 9's runbook).
+- **Task 5** — `ef69fa5` (harness: `Turn.channel`, `Turn.spoken`, the streaming-route replay, the
+  frame assertions), `303cf36` (episode 33, seven turns, cases a/b/d/e; case c named to the
+  gateway). R8 (`Turn.spoken` asserts presence/absence only), R12 (a VOICE turn posts to
+  `/v1/questions/stream` with `channel: "VOICE"`, the last frame is the answer), R13 (episode 33
+  carries a, b, d, e; case c is Task 1's gateway cancellation test), R14 (episode 33 speaks episode
+  32's own anchors and already-claimed reshape phrasings only; ratchets moved only down — here, not
+  at all: 22/43/0 unchanged).
+- **Task 6** — this commit, docs only: `docs/next.md` §9, the design's §6/§8/§10/§11,
+  `conversational-capabilities.md`'s row, and this section.
+
+Deferred items, from the ledger (`.superpowers/sdd/2026-09-08-multimodal-continuity/progress.md`),
+all **open** — none fixed in this wave:
+
+- **D-4.4-1** — the four-event-type tuple is written out twice in
+  `apps/voice-gateway/tests/test_http_and_websocket.py`; hoist to a module constant.
+- **D-4.4-2** — `apps/web/src/voice.test.ts`'s fence test lacks the mirror case (announced
+  `chartId` + `audio.started` omitting `chartId`); add a fifth line to the same `it`.
+- **D-4.4-3** — `_UnreachableQueries`'s docstring in `test_visual_follow_up.py` stays scoped to its
+  original Task 6 (Wave 4.1) AMBIGUOUS use, though it now also guards the VOICE-restyle tests;
+  broaden the wording by one clause.
+- **D-4.4-4** — the sealed-payload construction is typed out three times in
+  `test_visual_follow_up.py`; fold into a small parametrised helper if a fourth caller appears.
+- **D-4.4-5 (Important)** — `tests/test_spoken_presenter.py`'s
+  `test_no_family_summary_ever_contains_a_digit` uses two `pytest.skip`s to exclude the MONTH-grouped
+  families rather than narrowing the assertion to tolerate the acknowledged four-digit-year
+  exception; replace the skips with a year-stripped digit check applied uniformly, returning the
+  suite to 3 skips.
+- **D-4.4-6** — `test_performance_objectives.py`'s module docstring claims "no cross-test-module
+  imports in this codebase," which the file's own import block contradicts; reword to state the
+  real convention (public fakes imported, private fixtures re-typed).
+- **D-4.4-7** — §8 e's inline spy in `test_performance_objectives.py` duplicates `_decide_spy`'s
+  three lines instead of extending it; fold together.
+- **D-4.4-8 (note, no fix needed)** — `RESULTS.md`'s follow-up row reports P50 == P95 == 16.000 ms
+  over 20 samples; consistent with win32 timer-tick quantisation of fake-provider overhead, not a
+  fabricated number.

@@ -303,6 +303,23 @@ which is the second consumer `docs/next.md` said presenters-per-channel had been
 text follow-ups share the `conversation_id` and therefore the visual context; a voice «ponlo en
 horizontal» is the same `PRESENTATION_ONLY` as a typed one.
 
+**Landed, 4.4.** `chartId` (the answer's `visualization.chart_id`) and `visualTurnId` (the newest
+`visual_contexts[].turn_id`) travel on `assistant.text.final`, `audio.started`, `audio.completed`
+and `turn.completed` — additive, protocol version unchanged (ADR-010) — and the web client refuses
+to play `audio.started` against any `chartId` other than the one its own turn just announced, the
+same failure path as a wrong sample rate. Parity holds: the VOICE-only refusal in
+`interpret_visual` is gone, its `voice` parameter deleted everywhere it was read; a spoken restyle
+reaches `_visual_only_response` exactly as a typed one does, zero banking calls, and the
+metric-saving offer stays TEXT-only, pinned both ways. The spoken summary's actual rules: a
+top-group sentence fires only when the chart's labels are `ranked` strictly at both ends — never on
+a tie — named through a closed table over every `GroupBy` member (categoría, comercio, contraparte,
+cuenta, mes, semana, día); the second sentence is keyed off the profile's own shape (temporal,
+comparison, donut, or the plain desglose), independent of the plan's grouping; income and expense
+plans read «ingreso»/«gasto» off `plan.direction`; a MONTH-grouped top label names a calendar year
+(e.g. «agosto de 2026»), read as a calendar fact rather than a ledger value, not the strict
+never-a-digit claim it otherwise is. `QuestionResponse.spoken` fills only for VOICE and only when a
+chart exists; the gateway speaks it and still shows the full written text.
+
 ## 7. Visual explainability
 
 Generated **from the accepted decision**, never from the model's free-text `rationale`:
@@ -331,15 +348,25 @@ verifier refused it, the explanation justifies the bars the floor drew — and s
 Once banking has answered, the answer writer and the visual planner are independent; they run
 concurrently on the same verified result. Objectives, each one a test:
 
-- a presentation-only change makes **zero** banking calls (assert on the banking fake's call count);
-- a deterministic presentation change is near-immediate — no model call on that path;
-- the spoken response does not wait for the chart when the chart is still inside its budget;
-- the visual planner keeps Wave 3's budget; on expiry the floor is shown;
-- adding the planner never delays the first visible sign of progress.
+- a presentation-only change makes **zero** banking calls (assert on the banking fake's call
+  count) — `test_a_presentation_only_restyle_makes_zero_banking_calls_and_no_policy_call`, both
+  channels (4.4);
+- a deterministic presentation change is near-immediate — no model call on that path — the same
+  test's policy-call count (4.4);
+- the spoken response does not wait for the chart when the chart is still inside its budget — no
+  dedicated test lands this wave; not measured;
+- the visual planner keeps Wave 3's budget; on expiry the floor is shown —
+  `test_a_non_positive_budget_is_refused` and `test_the_three_failures_are_told_apart` (Wave 3);
+- adding the planner never delays the first visible sign of progress —
+  `test_the_first_frame_is_a_stage_and_arrives_before_the_policy_is_consulted` (4.4).
 
 **The gate is stated against Wave 3's measurement**, not a number invented here: a follow-up turn's
 P95 may not exceed Wave 3's measured single-turn P95 plus the presentation-only path's own cost, and
-that cost is measured before it is promised.
+that cost is measured before it is promised. **Measured, 10 September 2026 (fake providers):** the
+gateway's follow-up-turn benchmark reports `followUp:inputStartToTurnCompletedMs` P50 = P95 = 16 ms
+over 20 samples (`apps/voice-gateway/evaluation/RESULTS.md`); the gate reads Wave 3's real-provider
+single-turn P95 (5,076 ms, 17 August 2026) plus this fake-provider row; the real-provider follow-up
+row itself is pending the operator's run (Task 9's runbook).
 
 ## 9. Conversational visual evaluation
 
@@ -376,7 +403,7 @@ evidence · every rejected proposal ends in a valid answer.
 | **4.1 Context and classification** | `VisualContext` extended (§4); `VisualFollowUpKind` and the deterministic readers (§5); `Step.VISUAL_FOLLOW_UP`; invariant tests | every follow-up kind is classified and recorded; no visible change yet |
 | **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's. **Fix wave, I-4:** in §9's own order the restyle bullet (§11) is refused right after turn 3's month line, with no chart between them for a bar to be turned — episode 32 reaches it only because turn 4 names a bar by number first; the scenario in §9's own sequence closes once 4.3 leaves a chart behind for «el gráfico anterior» to resolve to |
 | **4.3 Financial drill-down — done** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | done — turns 4-5 pass verbatim in episode 32; an ambiguous reference asks (`DRILL_AMBIGUOUS`, harness route `CLARIFY`); the drill's chart is a merchant bar deriving from the chart it drilled |
-| **4.4 Multimodal continuity** | `chart_id`/decision id on voice events; the chart-derived spoken summary; the multimodal cases | the five multimodal cases pass; full-turn latency measured against §8 |
+| **4.4 Multimodal continuity — done** | `chart_id`/`visualTurnId` on voice events; the chart-derived spoken summary; the multimodal cases | done — four of the five multimodal cases run in episode 33 (a, b, d, e); the fifth (c, the interruption) is the gateway's own protocol cancellation test; full-turn latency measured with fake providers, the real-provider row pending the operator's run |
 | **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | the acceptance scenario in §11 runs on camera |
 
 Sub-waves 4.1-4.2 are worth landing on their own: they make the corpus see charts and make every
@@ -389,7 +416,8 @@ Complete when this runs end to end, on camera:
 - By voice: «¿En qué he gastado más este verano?» — FinGuard answers by voice, shows the ranking, and
   discreetly explains why bars. **Not this wave** — voice and explainability are §4.5's; episode 32's
   turn 1 anchors on «¿Cuánto gasté el mes pasado?» instead, because `window_words.py` excludes a
-  season on purpose.
+  season on purpose. **The voice answer and its chart are landed, 4.4** (episode 33 turn 1: VOICE,
+  charted, `spoken: true`) — the discreet explanation stays 4.5's.
 - By text: «Separa transporte público y gasolina.» — the summer and the account are kept, the data is
   re-queried, the chart updates, `derived_from` points at the first chart. **Landed, 4.2b** —
   episode 32 turn 2, verbatim; the window kept is turn 1's own (last month, not a summer — the same
