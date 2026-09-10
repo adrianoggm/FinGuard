@@ -619,8 +619,11 @@ async def test_a_voice_restyle_updates_through_the_non_streaming_route_too() -> 
 
 
 class _UnreachableQueries:
-    """A `Queries` double for the ask path: any call means the short-circuit fell through to the
-    handler and its ledger, which the AMBIGUOUS branch must never do."""
+    """A `Queries` double for the ask path: any call means a short-circuit fell through to the
+    handler and its ledger. Two callers share it for the same reason -- the AMBIGUOUS branch must
+    never reach the query bus (it decides nothing about the chart), and neither must a voice or
+    text restyle's own short-circuit (zero banking calls is the whole point of a presentation-only
+    change)."""
 
     def __init__(self) -> None:
         self.ran: list[object] = []

@@ -75,8 +75,10 @@ _WHO = Caller(
 _TEST_TOKENS = MetricTokenCodec({"active": b"x" * 32}, "active")
 
 # A sealed charted conversation -- the same shape `test_visual_follow_up._SEALED_CHARTED` builds,
-# rebuilt locally because this module drives its own fixtures (no cross-test-module imports in
-# this codebase).
+# rebuilt locally rather than imported. This codebase does import public names across test modules
+# (see `test_decisions_call_sites` above) -- what does not travel is anything underscore-private,
+# `_SEALED_CHARTED` included, so a module that wants that shape re-types it rather than reaching
+# into another module's private fixtures.
 _SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert _SPEC is not None
 _PREVIOUS = FinancialPlan(
