@@ -16,6 +16,7 @@ from benchmark_e2e import (
     REQUIRED_TIMING_NAMES,
     Sample,
     run_cancel_probe,
+    run_recorded_turn,
     run_turn,
     send_audio,
     summarize,
@@ -216,3 +217,74 @@ async def test_cancel_waits_for_audio_acknowledges_same_turn_and_fences_trailing
     )
     with pytest.raises(RuntimeError, match="after the cancellation ping/pong fence"):
         await run_cancel_probe(late_audio, "session", 1, 1.0, b"\0\0")
+
+
+# --- Wave 4.4 (design §8): the follow-up turn measured beside the turn it follows -------------
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_text_produces_a_second_sample_under_its_own_prefix() -> None:
+    """`--follow-up-text` runs a second turn straight after the recorded one, on the same
+    session: the sequence keeps climbing across both turns, and the second `Sample`'s names all
+    carry the `followUp:` prefix -- the same names, so `summarize` reports the same milestones
+    twice, once per turn."""
+    socket = Socket(valid_turn_messages("benchmark-1") + valid_turn_messages("benchmark-3"))
+    samples, sequence = await run_recorded_turn(
+        socket, "session", 1, 1.0, b"\0\0", follow_up_audio=b"\0\0"
+    )
+
+    assert sequence == 5
+    assert len(samples) == 2
+    recorded, follow_up = samples
+    assert recorded.values and not any(name.startswith("followUp:") for name in recorded.values)
+    assert set(follow_up.values) == {f"followUp:{name}" for name in recorded.values}
+
+
+@pytest.mark.asyncio
+async def test_without_a_follow_up_text_a_recorded_turn_is_unchanged() -> None:
+    """No option, no second turn: the sequence and the single `Sample` are exactly what
+    `run_turn` alone would have produced."""
+    socket = Socket(valid_turn_messages("benchmark-1"))
+    samples, sequence = await run_recorded_turn(
+        socket, "session", 1, 1.0, b"\0\0", follow_up_audio=None
+    )
+
+    assert sequence == 3
+    assert len(samples) == 1
+    assert not any(name.startswith("followUp:") for name in samples[0].values)
+
+
+def test_summarize_keeps_a_recorded_and_a_follow_up_row_apart() -> None:
+    metrics = summarize(
+        [
+            Sample(
+                {
+                    "inputStartToTurnCompletedMs": 100.0,
+                    "followUp:inputStartToTurnCompletedMs": 200.0,
+                }
+            )
+        ]
+    )
+    assert metrics["inputStartToTurnCompletedMs"]["p50Ms"] == 100.0
+    assert metrics["followUp:inputStartToTurnCompletedMs"]["p50Ms"] == 200.0
+
+
+def test_validate_sample_counts_accepts_the_follow_up_metric_set() -> None:
+    base = REQUIRED_TIMING_NAMES | {"clientPlaybackStartMs"}
+    metrics = {
+        name: {"count": 2, "p50Ms": 1.0, "p95Ms": 1.0, "meanMs": 1.0}
+        for name in base | {f"followUp:{name}" for name in base}
+    }
+    validate_sample_counts(metrics, 2, cancel_runs=0, require_stage_timings=False, follow_up=True)
+    # Without the flag the same (now unrecognised) `followUp:` names are unknown metrics.
+    with pytest.raises(RuntimeError):
+        validate_sample_counts(metrics, 2, cancel_runs=0, require_stage_timings=False)
+
+
+def test_follow_up_text_is_exposed_on_the_cli() -> None:
+    script = Path(__file__).parents[1] / "scripts" / "benchmark_e2e.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "--help"], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0
+    assert "--follow-up-text" in completed.stdout

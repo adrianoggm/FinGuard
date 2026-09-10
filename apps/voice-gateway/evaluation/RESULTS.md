@@ -118,3 +118,37 @@ own resampler does the work, but that is hygiene, not the fix — the model was.
 
 Speech synthesised by Piper and transcribed back by Whisper returns the same sentence bar one word,
 which is the check that the audio is intelligible speech rather than well-formed noise.
+
+## Follow-up turn (Wave 4.4, fake providers)
+
+Design §8 states the latency gate against Wave 3's own single-turn measurement rather than a
+number invented for it. `scripts/benchmark_e2e.py` now accepts `--follow-up-text`: every recorded
+turn is followed by a second turn on the same session, and its durations are reported under a
+`followUp:` prefix. Run locally against the gateway with fake providers (the default:
+`VOICE_GATEWAY_ASSISTANT_MODE`/`VOICE_GATEWAY_STT_MODE`/`VOICE_GATEWAY_TTS_MODE` all `fake` per
+`.env.defaults` — nothing extra to set), two warmup turns and twenty recorded turns:
+
+```bash
+uv run --directory apps/voice-gateway uvicorn finguard_voice_gateway.main:app \
+  --host 127.0.0.1 --port 8123
+VOICE_GATEWAY_TOKEN=dev-benchmark-token \
+uv run --directory apps/voice-gateway python scripts/benchmark_e2e.py \
+  --url http://127.0.0.1:8123 --text "¿Cuánto gasté el mes pasado? gráfico" \
+  --follow-up-text "Ponlo en horizontal" --warmup 2 --runs 20 --timeout 30 --format json
+```
+
+The `--text` turn is the charted turn the fake assistant draws a chart for («gráfico»); the
+`--follow-up-text` turn is the presentation-only restyle («Ponlo en horizontal»). This run used the
+gateway's own fake assistant, which does not restyle a chart — the fake STT/TTS/assistant loop
+still measures the gateway's own protocol overhead for a second turn on an open session, but not
+the orchestrator's real restyle cost, which is measured in the orchestrator (Task 4's own
+`test_a_presentation_only_restyle_makes_zero_banking_calls_and_no_policy_call`, `apps/orchestrator`)
+rather than here.
+
+| milestone | P50 | P95 | samples |
+| --- | ---: | ---: | ---: |
+| followUp:input start → turn completed | 16.000 ms | 16.000 ms | 20 |
+
+**§8 gate:** a follow-up turn's P95 must not exceed Wave 3's single-turn P95 (5,076 ms, real
+providers, 17 August 2026) plus the presentation-only path's own cost, measured before it is
+promised; the real-provider follow-up row is the operator's run (Task 9's runbook).
