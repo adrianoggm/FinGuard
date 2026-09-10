@@ -9,6 +9,9 @@ class AssistantReply:
     conversation: object
     answer: dict[str, object]
     payment_confirmation_required: bool = False
+    # What a voice client should say instead of `text` -- set only on a VOICE turn that drew a
+    # chart (Task 3, Wave 4.4). `None` on every older orchestrator and on any turn without one.
+    spoken: str | None = None
 
 
 AssistantStageCallback = Callable[[str, str | None], Awaitable[None]]

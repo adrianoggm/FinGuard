@@ -462,6 +462,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     session.machine.thinking()
     if session.payment_confirmation_required:
         reply_text = "No puedo confirmar pagos por voz; usa el control explícito en pantalla."
+        reply_spoken = None
         reply_conversation = session.conversation
         payment_required = True
         reply_answer: dict[str, object] = {
@@ -504,6 +505,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         if session.cancelled(generation, turn_id):
             return
         reply_text = reply.text
+        reply_spoken = reply.spoken
         reply_conversation = reply.conversation
         payment_required = reply.payment_confirmation_required
         reply_answer = reply.answer
@@ -511,6 +513,8 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     # identity of the decision that drew it, riding the four turn events below.
     identity = chart_identity(reply_answer, reply_conversation)
     session.machine.speaking()
+    # `text=reply_text` here always -- the screen shows the full written answer regardless of
+    # channel (Task 3, Wave 4.4); only the audio below speaks `reply_spoken` when there is one.
     await websocket.send_json(
         event(
             "assistant.text.final",
@@ -535,7 +539,7 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         )
     )
     async for chunk in session.services.tts.synthesize(
-        reply_text, cancelled=lambda: session.cancelled(generation, turn_id)
+        reply_spoken or reply_text, cancelled=lambda: session.cancelled(generation, turn_id)
     ):
         if session.cancelled(generation, turn_id):
             return

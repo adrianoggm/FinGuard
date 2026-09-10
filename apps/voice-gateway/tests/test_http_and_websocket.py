@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from finguard_voice_gateway.adapters.outbound.fake_assistant import FakeAssistantClient
+from finguard_voice_gateway.adapters.outbound.fake_tts import FakeTextToSpeech
 from finguard_voice_gateway.app import (
     VoiceSession,
     _process_turn,
@@ -222,6 +223,48 @@ def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
             visualization = text_final_answer["visualization"]
             assert isinstance(visualization, dict)
             assert visualization["chart_id"] == received[indices["assistant.text.final"]]["chartId"]
+            # Task 3, Wave 4.4: the screen shows the full written answer (`text`, asserted above
+            # via `answer`), but the audio speaks the fake's `spoken` summary instead of `text`.
+            # `services` is a module-level singleton shared across this file's tests, so its
+            # `spoken` list accumulates -- the *last* entry is this turn's own.
+            assert isinstance(services.tts, FakeTextToSpeech)
+            assert services.tts.spoken[-1] == (
+                "Restaurantes fue la categoría con mayor gasto. En pantalla tienes el "
+                "desglose, y puedes preguntarme por cualquiera de las categorías."
+            )
+    sessions.clear()
+
+
+def test_an_uncharted_turn_speaks_the_written_text_itself() -> None:
+    """No `spoken` on the fake's uncharted case (`fake_assistant.py`'s own reply has none) --
+    the audio speaks `reply.text`, same as before Task 3."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+            socket.send_bytes(b"si")
+            socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+            received: list[dict[str, object]] = []
+            while True:
+                item = socket.receive()
+                if item.get("text"):
+                    payload = json.loads(item["text"])
+                    received.append(payload)
+                    if payload["type"] == "turn.completed":
+                        break
+            response_text = next(
+                item for item in received if item["type"] == "assistant.text.final"
+            )["text"]
+            assert isinstance(response_text, str)
+            assert isinstance(services.tts, FakeTextToSpeech)
+            assert services.tts.spoken[-1] == response_text
     sessions.clear()
 
 

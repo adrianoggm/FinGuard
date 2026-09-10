@@ -57,6 +57,7 @@ class FakeAssistantClient:
             "movements": [],
             "suggestions": [],
         }
+        spoken: str | None = None
         if "grafico" in _fold(normalized):
             answer["visualization"] = {
                 "kind": "chart",
@@ -73,9 +74,15 @@ class FakeAssistantClient:
             reply_conversation["visual_contexts"] = [
                 {"chart_id": _CHART_ID, "turn_id": _CHART_TURN_ID}
             ]
+            spoken = (
+                "Restaurantes fue la categoría con mayor gasto. En pantalla tienes el "
+                "desglose, y puedes preguntarme por cualquiera de las categorías."
+            )
+            answer["spoken"] = spoken
         return AssistantReply(
             text=reply_text,
             conversation=reply_conversation,
             answer=answer,
             payment_confirmation_required=payment,
+            spoken=spoken,
         )
