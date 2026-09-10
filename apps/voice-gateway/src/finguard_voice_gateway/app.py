@@ -106,7 +106,9 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
     The gateway reads two strings off a payload it otherwise passes through unchanged; it still
     interprets nothing (ADR-010). `chartId` is `answer["visualization"]["chart_id"]` when that is a
     str -- a KPI answer's visualization has no `chart_id` and a KPI is not a chart a later turn can
-    name, so it is omitted; `visualTurnId` is the newest
+    name, so it is omitted; a restyle answers with `visualization` empty and the chart only in
+    `answer["visualization_derivation"]["chart_id"]` (`_visual_only_response`), so that is read as
+    the fallback under the same guards. `visualTurnId` is the newest
     `conversation["visual_contexts"][-1]["turn_id"]` when the conversation is a mapping carrying a
     non-empty list whose last item has a str there. An uncharted turn returns `{}` so its events
     look exactly as they did before Wave 4.4 -- omitted, never `null`.
@@ -117,6 +119,12 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
         chart_id = visualization.get("chart_id")
         if isinstance(chart_id, str):
             identity["chartId"] = chart_id
+    if "chartId" not in identity:
+        derivation = answer.get("visualization_derivation")
+        if isinstance(derivation, Mapping):
+            derived_chart_id = derivation.get("chart_id")
+            if isinstance(derived_chart_id, str):
+                identity["chartId"] = derived_chart_id
     if isinstance(conversation, Mapping):
         visual_contexts = conversation.get("visual_contexts")
         if isinstance(visual_contexts, list) and visual_contexts:

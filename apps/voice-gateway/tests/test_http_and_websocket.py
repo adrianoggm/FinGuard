@@ -235,6 +235,49 @@ def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
     sessions.clear()
 
 
+def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
+    """I-1: a restyle answers through `_visual_only_response`, whose `QuestionResponse` carries
+    the new chart only in `visualization_derivation.chart_id` (`visualization` stays `None`).
+    The four identity-bearing events must still carry that `chartId`, or the web fence
+    (`voice.ts`'s `chartIdOf`) is comparing against nothing on exactly this turn."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+            socket.send_bytes(b"reestilo")
+            socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+            received: list[dict[str, object]] = []
+            indices: dict[str, int] = {}
+            while True:
+                item = socket.receive()
+                if item.get("text"):
+                    payload = json.loads(item["text"])
+                    received.append(payload)
+                    indices.setdefault(payload["type"], len(received) - 1)
+                    if payload["type"] == "turn.completed":
+                        break
+            for event_type in (
+                "assistant.text.final",
+                "audio.started",
+                "audio.completed",
+                "turn.completed",
+            ):
+                event_payload = received[indices[event_type]]
+                assert event_payload["chartId"] == "chart-fake-2"
+            text_final_answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(text_final_answer, dict)
+            assert text_final_answer["visualization"] is None
+            assert text_final_answer["visualization_derivation"] == {"chart_id": "chart-fake-2"}
+    sessions.clear()
+
+
 def test_an_uncharted_turn_speaks_the_written_text_itself() -> None:
     """No `spoken` on the fake's uncharted case (`fake_assistant.py`'s own reply has none) --
     the audio speaks `reply.text`, same as before Task 3."""
