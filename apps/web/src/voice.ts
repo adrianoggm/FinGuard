@@ -533,13 +533,25 @@ export class VoiceClient {
     });
   }
 
-  /** `event.answer.visualization.chart_id` when every step of that is present and a string. */
+  /**
+   * `event.answer.visualization.chart_id` when every step of that is present and a string; a
+   * restyle carries `visualization: null` and puts the new chart only in
+   * `visualization_derivation.chart_id` instead (`Conversation.tsx`'s
+   * `materializeVisualizationDerivation` renders that same chart), so that is read as the
+   * fallback (I-1).
+   */
   private static chartIdOf(value: unknown): string | null {
     if (typeof value !== "object" || value === null) return null;
     const visualization = (value as { visualization?: unknown }).visualization;
-    if (typeof visualization !== "object" || visualization === null) return null;
-    const chartId = (visualization as { chart_id?: unknown }).chart_id;
-    return typeof chartId === "string" ? chartId : null;
+    if (typeof visualization === "object" && visualization !== null) {
+      const chartId = (visualization as { chart_id?: unknown }).chart_id;
+      if (typeof chartId === "string") return chartId;
+    }
+    const derivation = (value as { visualization_derivation?: unknown })
+      .visualization_derivation;
+    if (typeof derivation !== "object" || derivation === null) return null;
+    const derivedChartId = (derivation as { chart_id?: unknown }).chart_id;
+    return typeof derivedChartId === "string" ? derivedChartId : null;
   }
 
   private receive(data: unknown, onReady: () => void): void {
