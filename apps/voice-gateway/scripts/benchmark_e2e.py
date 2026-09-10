@@ -107,17 +107,26 @@ def validate_sample_counts(
     *,
     cancel_runs: int,
     require_stage_timings: bool,
+    follow_up: bool = False,
 ) -> None:
     expected = REQUIRED_TIMING_NAMES | {"clientPlaybackStartMs"}
     if require_stage_timings:
         expected |= OPTIONAL_STAGE_TIMING_NAMES
+    if follow_up:
+        # `--follow-up-text` renames every one of a recorded turn's own metrics under the
+        # `followUp:` prefix (Wave 4.4) rather than inventing a second, smaller vocabulary — the
+        # follow-up turn is measured exactly like the turn it follows.
+        expected |= {f"followUp:{name}" for name in expected}
     if cancel_runs:
         expected |= {"cancelAcknowledgementMs"}
     # The stage metrics appear whenever the orchestrator reports its stages, which is not the same
     # question as whether the caller demanded them. `validate_timings` already treats them as
     # optional per turn; treating them as unknown here made a run where every turn was PLANNED
     # report "failed".
-    expected |= set(metrics) & OPTIONAL_STAGE_TIMING_NAMES
+    optional = OPTIONAL_STAGE_TIMING_NAMES | {
+        f"followUp:{name}" for name in OPTIONAL_STAGE_TIMING_NAMES
+    }
+    expected |= set(metrics) & optional
     if set(metrics) != expected:
         raise RuntimeError("benchmark did not produce the exact required metric set")
     for name in expected:
@@ -238,6 +247,46 @@ async def run_turn(
     return Sample(values), commit_sequence + 1
 
 
+def _prefixed(sample: Sample, prefix: str) -> Sample:
+    return Sample({f"{prefix}{name}": value for name, value in sample.values.items()})
+
+
+async def run_recorded_turn(
+    socket: Any,
+    session_id: str,
+    sequence: int,
+    wait_seconds: float,
+    audio: bytes,
+    *,
+    follow_up_audio: bytes | None,
+    require_stage_timings: bool = False,
+) -> tuple[list[Sample], int]:
+    """One recorded turn and, when `follow_up_audio` is set, a second turn straight after it on
+    the same session -- the presentation-only follow-up (Wave 4.4, design §8) measured beside the
+    turn it follows rather than as a run of its own. The follow-up `Sample` is renamed under the
+    `followUp:` prefix so `summarize` reports it as its own set of rows."""
+    sample, sequence = await run_turn(
+        socket,
+        session_id,
+        sequence,
+        wait_seconds,
+        audio,
+        require_stage_timings=require_stage_timings,
+    )
+    samples = [sample]
+    if follow_up_audio is not None:
+        follow_up_sample, sequence = await run_turn(
+            socket,
+            session_id,
+            sequence,
+            wait_seconds,
+            follow_up_audio,
+            require_stage_timings=require_stage_timings,
+        )
+        samples.append(_prefixed(follow_up_sample, "followUp:"))
+    return samples, sequence
+
+
 async def run_cancel_probe(
     socket: Any, session_id: str, sequence: int, wait_seconds: float, audio: bytes
 ) -> tuple[float, int]:
@@ -312,6 +361,11 @@ async def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             audio += b"\x00"
     if not audio or len(audio) % 2:
         raise RuntimeError("input audio must be non-empty PCM16 with complete samples")
+    follow_up_audio: bytes | None = None
+    if args.follow_up_text:
+        follow_up_audio = args.follow_up_text.encode("utf-8")
+        if len(follow_up_audio) % 2:
+            follow_up_audio += b"\x00"
     base_url = args.url.rstrip("/")
     async with httpx.AsyncClient(base_url=base_url, timeout=args.timeout) as client:
         response = await client.post(
@@ -348,17 +402,20 @@ async def benchmark(args: argparse.Namespace) -> dict[str, Any]:
             samples: list[Sample] = []
             cancel_samples: list[Sample] = []
             failures: list[dict[str, Any]] = []
+            completed_turns = 0
             for index in range(args.runs):
                 try:
-                    sample, sequence = await run_turn(
+                    turn_samples, sequence = await run_recorded_turn(
                         socket,
                         session_id,
                         sequence,
                         args.timeout,
                         audio,
+                        follow_up_audio=follow_up_audio,
                         require_stage_timings=args.require_stage_timings,
                     )
-                    samples.append(sample)
+                    samples.extend(turn_samples)
+                    completed_turns += 1
                     if args.cancel_runs and index < args.cancel_runs:
                         cancel_ms, sequence = await run_cancel_probe(
                             socket, session_id, sequence, args.timeout, audio
@@ -375,22 +432,24 @@ async def benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 if failures:
                     break
             metrics = summarize(samples + cancel_samples)
-            if not failures and len(samples) == args.runs:
+            if not failures and completed_turns == args.runs:
                 try:
                     validate_sample_counts(
                         metrics,
                         args.runs,
                         cancel_runs=args.cancel_runs,
                         require_stage_timings=args.require_stage_timings,
+                        follow_up=follow_up_audio is not None,
                     )
                 except RuntimeError as exc:
                     failures.append({"kind": "validation", "error": type(exc).__name__})
             return {
-                "status": "ok" if not failures and len(samples) == args.runs else "failed",
+                "status": "ok" if not failures and completed_turns == args.runs else "failed",
                 "providerConfiguration": "read from gateway environment; no credentials emitted",
                 "warmupRuns": args.warmup,
+                "followUpText": args.follow_up_text,
                 "requestedRuns": args.runs,
-                "completedRuns": len(samples),
+                "completedRuns": completed_turns,
                 "metrics": metrics,
                 "failures": failures,
             }
@@ -405,6 +464,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cancel-runs", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--text", default="hola")
+    parser.add_argument(
+        "--follow-up-text",
+        default=None,
+        help="when set, every recorded turn is followed by a second turn with this sentence; "
+        "its Sample durations are reported under a followUp: prefix",
+    )
     parser.add_argument("--pcm-file", help="raw mono PCM16 little-endian at 16 kHz")
     parser.add_argument("--require-stage-timings", action="store_true")
     parser.add_argument("--format", choices=("json", "table"), default="json")

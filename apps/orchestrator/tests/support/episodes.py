@@ -41,6 +41,7 @@ path without a preamble turn in every conversation; see `opening`.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from calendar import monthrange
@@ -48,7 +49,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from fastapi.testclient import TestClient
@@ -823,6 +824,17 @@ class Turn:
     # point: the number here is not free-standing evidence, it is a check that the evidence was
     # requested at all.
     movements: int | None = None
+    # Which endpoint this turn travels: `"TEXT"` posts to `/v1/questions`, byte-identical to every
+    # turn before this field existed; `"VOICE"` posts to `/v1/questions/stream` and reads its SSE
+    # frames instead. Why a corpus turn needs a channel at all: design §9 names five multimodal
+    # cases -- a conversation that keeps its chart across the channel a turn arrives on -- and
+    # nothing before this task could drive a turn through the streaming route.
+    channel: Literal["TEXT", "VOICE"] = "TEXT"
+    # Whether this turn's answer carries Task 3's chart-derived spoken summary --
+    # `isinstance(answer.get("spoken"), str)` compared against this flag. What it measures is the
+    # summary's *presence*, never its wording -- that is `test_visual_context_producers.py`'s own
+    # business. `None` asserts nothing, matching every turn written before this field existed.
+    spoken: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1092,6 +1104,53 @@ def claimants(
     return claims
 
 
+@dataclass
+class _Answered:
+    """One turn's answer, however it travelled the wire.
+
+    TEXT posts to `/v1/questions` and its body IS the answer; VOICE posts to
+    `/v1/questions/stream` and the answer is the last SSE frame, minus the `type` key that frame
+    alone carries. Every reader downstream of a post -- the three sites this replaces -- only ever
+    wanted the answer, so `.json()` hands back that same shape on both channels and `frames` is
+    where a VOICE-only check goes looking.
+    """
+
+    status_code: int
+    frames: tuple[dict[str, Any], ...]
+    _body: dict[str, Any] | None
+
+    def json(self) -> dict[str, Any]:
+        assert self._body is not None, "json() called on a turn that never answered"
+        return self._body
+
+
+def _post_turn(stack: Stack, turn: Turn, conversation: dict[str, Any] | None) -> _Answered:
+    """Post one turn on its own channel, and read its answer back the same way regardless.
+
+    A VOICE turn posts `channel: "VOICE"` to the streaming route and parses its SSE text the way
+    `test_question_routing.py`'s own `events_of` does -- replicated rather than imported, because a
+    support module reaching into a test module would make the test the thing under test. A TEXT
+    turn is byte-identical to every call this helper replaces.
+    """
+    if turn.channel == "VOICE":
+        response = stack.client.post(
+            "/v1/questions/stream",
+            json={"question": turn.say, "conversation": conversation, "channel": "VOICE"},
+        )
+        frames = tuple(
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        )
+        body = {k: v for k, v in frames[-1].items() if k != "type"} if frames else None
+        return _Answered(response.status_code, frames, body)
+    response = stack.client.post(
+        "/v1/questions", json={"question": turn.say, "conversation": conversation}
+    )
+    body = response.json() if response.status_code == 200 else None
+    return _Answered(response.status_code, (), body)
+
+
 def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
     """The turns of one episode where two recognisers want to run different queries.
 
@@ -1107,14 +1166,12 @@ def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
             yield number, turn.say, claims
         stack.ledger.groups_for_next_turn = _groups_from(turn)
         stack.ledger.movements_for_next_turn = _movements_from(turn)
-        response = stack.client.post(
-            "/v1/questions", json={"question": turn.say, "conversation": state}
-        )
+        answered = _post_turn(stack, turn, state)
         stack.ledger.groups_for_next_turn = None
         stack.ledger.movements_for_next_turn = None
-        if response.status_code != 200:
+        if answered.status_code != 200:
             return
-        state = response.json()["conversation"]
+        state = answered.json()["conversation"]
 
 
 def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failure]:
@@ -1129,18 +1186,23 @@ def walk(episode: Episode, interpreter: object | None = None) -> Iterator[Failur
     those as ACCOUNT_BALANCE is right about the destination and wrong about our plumbing, and only
     one of those two is worth counting.
     """
-    for number, turn, answer, reached_model, ran in replay(episode, interpreter):
+    for number, turn, answer, reached_model, ran, frames in replay(episode, interpreter):
         if answer is None:
             yield Failure(episode.name, number, turn.say, "HTTP error")
             return
-        for complaint in _complaints(turn, answer, reached_model=reached_model, ran=ran):
+        for complaint in _complaints(
+            turn, answer, reached_model=reached_model, ran=ran, frames=frames
+        ):
             yield Failure(episode.name, number, turn.say, complaint)
 
 
 def replay(
     episode: Episode, interpreter: object | None = None
-) -> Iterator[tuple[int, Turn, dict[str, Any] | None, bool, tuple[Any, ...]]]:
-    """Each turn with what it reached: the answer, whether a model was asked, what the ledger ran.
+) -> Iterator[
+    tuple[int, Turn, dict[str, Any] | None, bool, tuple[Any, ...], tuple[dict[str, Any], ...]]
+]:
+    """Each turn with what it reached: the answer, whether a model was asked, what the ledger ran,
+    and the SSE frames a VOICE turn produced (empty for a TEXT turn).
 
     Separate from `walk` because two things read a replay and only one of them is looking for
     failures. Counting the turns that ran a query without saying which one is not a complaint about
@@ -1157,15 +1219,13 @@ def replay(
         ran_before = len(stack.ledger.ran)
         stack.ledger.groups_for_next_turn = _groups_from(turn)
         stack.ledger.movements_for_next_turn = _movements_from(turn)
-        response = stack.client.post(
-            "/v1/questions", json={"question": turn.say, "conversation": conversation}
-        )
+        answered = _post_turn(stack, turn, conversation)
         stack.ledger.groups_for_next_turn = None
         stack.ledger.movements_for_next_turn = None
-        if response.status_code != 200:
-            yield number, turn, None, False, ()
+        if answered.status_code != 200:
+            yield number, turn, None, False, (), ()
             return
-        answer = response.json()
+        answer = answered.json()
         conversation = answer["conversation"]
         # This turn's queries only. A turn asserting `ran` is asking about itself, and the ledger
         # holds the whole conversation.
@@ -1175,6 +1235,7 @@ def replay(
             answer,
             len(stack.planner.asked) > before,
             tuple(stack.ledger.ran[ran_before:]),
+            answered.frames,
         )
 
 
@@ -1184,11 +1245,21 @@ def _complaints(
     *,
     reached_model: bool,
     ran: tuple[FinancialPlan | TopMovements, ...] = (),
+    frames: tuple[dict[str, Any], ...] = (),
 ) -> Iterator[str]:
     tool = tool_of(answer)
     workflow = (answer.get("conversation") or {}).get("workflow")
     text = answer["text"]
 
+    if turn.spoken is not None and isinstance(answer.get("spoken"), str) != turn.spoken:
+        yield (
+            f"the answer should {'' if turn.spoken else 'not '}carry a spoken summary, "
+            f"and {'does not' if turn.spoken else 'does'}"
+        )
+    if turn.channel == "VOICE" and (not frames or frames[0]["type"] != "stage"):
+        yield f"a VOICE turn should open with a stage frame, and opens with {frames[:1]!r}"
+    if turn.channel == "VOICE" and (not frames or frames[-1]["type"] != "answer"):
+        yield f"a VOICE turn should close with an answer frame, and closes with {frames[-1:]!r}"
     if turn.route and tool != turn.route:
         yield f"{turn.route} was the right place, {tool} answered"
     if turn.no_model and reached_model:
@@ -1362,7 +1433,7 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
     report = Report(episodes=len(episodes))
     for episode in episodes:
         report.turns += len(episode.turns)
-        for number, turn, answer, reached_model, ran in replay(episode, interpreter):
+        for number, turn, answer, reached_model, ran, frames in replay(episode, interpreter):
             if answer is None:
                 report.failures.append(Failure(episode.name, number, turn.say, "HTTP error"))
                 break
@@ -1374,7 +1445,9 @@ def run(episodes: list[Episode], interpreter: object | None = None) -> Report:
                 report.unstated.append(
                     f"{episode.name} · turn {number} · {turn.say!r} · {field_name}"
                 )
-            for complaint in _complaints(turn, answer, reached_model=reached_model, ran=ran):
+            for complaint in _complaints(
+                turn, answer, reached_model=reached_model, ran=ran, frames=frames
+            ):
                 report.failures.append(Failure(episode.name, number, turn.say, complaint))
                 if "answered" in complaint:
                     report.wrong_tool += 1
@@ -1516,9 +1589,7 @@ async def compare(
         for turn in episode.turns:
             stack.ledger.groups_for_next_turn = _groups_from(turn)
             stack.ledger.movements_for_next_turn = _movements_from(turn)
-            answered = stack.client.post(
-                "/v1/questions", json={"question": turn.say, "conversation": conversation}
-            )
+            answered = _post_turn(stack, turn, conversation)
             stack.ledger.groups_for_next_turn = None
             stack.ledger.movements_for_next_turn = None
             if answered.status_code != 200:
