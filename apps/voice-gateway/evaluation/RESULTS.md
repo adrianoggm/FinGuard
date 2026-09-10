@@ -149,6 +149,11 @@ rather than here.
 | --- | ---: | ---: | ---: |
 | followUp:input start → turn completed | 16.000 ms | 16.000 ms | 20 |
 
+P50 and P95 land on the same value because Windows' default ~15.6 ms scheduler timer tick is the
+dominant source of jitter at this scale, not because the samples are a fabricated flat line; every
+one of the 20 fake-provider runs quantises to that tick.
+
 **§8 gate:** a follow-up turn's P95 must not exceed Wave 3's single-turn P95 (5,076 ms, real
-providers, 17 August 2026) plus the presentation-only path's own cost, measured before it is
-promised; the real-provider follow-up row is the operator's run (Task 9's runbook).
+providers, 17 August 2026) plus the presentation-only path's own cost (16.000 ms here), measured
+before it is promised — sum: 5,076.250 ms + 16.000 ms = 5,092.250 ms; the real-provider follow-up
+row is the operator's run (Task 9's runbook).

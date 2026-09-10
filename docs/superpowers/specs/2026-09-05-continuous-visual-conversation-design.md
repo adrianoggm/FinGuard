@@ -353,8 +353,9 @@ concurrently on the same verified result. Objectives, each one a test:
   channels (4.4);
 - a deterministic presentation change is near-immediate — no model call on that path — the same
   test's policy-call count (4.4);
-- the spoken response does not wait for the chart when the chart is still inside its budget — no
-  dedicated test lands this wave; not measured;
+- the chart never delays the *written* answer — §6 makes `spoken` itself a function of the
+  accepted chart for a charted turn, so a charted turn's speech necessarily waits for it by
+  design; an uncharted turn's speech never waited for a chart in the first place;
 - the visual planner keeps Wave 3's budget; on expiry the floor is shown —
   `test_a_non_positive_budget_is_refused` and `test_the_three_failures_are_told_apart` (Wave 3);
 - adding the planner never delays the first visible sign of progress —

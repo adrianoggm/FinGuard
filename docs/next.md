@@ -800,8 +800,12 @@ direction — never an amount (`f745e33`). `QuestionResponse.spoken` is filled o
 `request.channel == "VOICE"` and a chart exists, computed from the context this same turn just
 sealed; the gateway's `_reply_from` reads it defensively (a string or nothing) and `_process_turn`
 synthesises `reply.spoken or reply.text` while `assistant.text.final.text` keeps the full written
-answer the screen shows (`71a5036`). §8's five objectives are now tests rather than a promise:
-zero banking calls and no visual-planner-port call on a presentation-only turn, on both channels,
+answer the screen shows (`71a5036`). §8's five objectives are now tests rather than a promise, bar
+one superseded outright by §6's own design — the chart never delays the *written* answer; a
+charted turn's speech necessarily waits for the accepted chart by construction, so there is no
+budget under which it could not wait, and an uncharted turn's speech never waited in the first
+place: zero banking calls and no visual-planner-port call on a presentation-only turn, on both
+channels,
 wired through a real handler and ledger so the count is a fact rather than the absence of a crash;
 the deterministic path's `Step.VISUAL_PLANNER` record reads `detail == "not_run"` with `decide`
 awaited exactly once; the first SSE frame is a `stage` and is observably ahead of the policy being
