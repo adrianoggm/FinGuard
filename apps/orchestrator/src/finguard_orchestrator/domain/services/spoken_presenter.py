@@ -85,21 +85,32 @@ def spoken_summary(
 
     top_sentence = None
     if ranked and labels and nouns is not None and group_by is not None:
+        if not isinstance(plan, FinancialPlan):
+            # `group_by` is only ever set two lines up, from a `FinancialPlan`'s own attribute --
+            # so reaching a non-`None` `group_by` with a `plan` that is not one is a type-narrowing
+            # invariant, not a real input. A plain check that degrades to the generic second
+            # sentence keeps that invariant true without an `assert`, which an `-O` run strips.
+            second = _second_sentence(profile, group_by, nouns)
+            return second
         singular, _ = nouns
-        assert isinstance(plan, FinancialPlan)
         measure = _MEASURES[plan.direction]
         top_sentence = f"{_top_label(labels[0], group_by)} fue {singular} con mayor {measure}."
 
+    second = _second_sentence(profile, group_by, nouns)
+    return f"{top_sentence} {second}" if top_sentence else second
+
+
+def _second_sentence(
+    profile: VisualProfile, group_by: GroupBy | None, nouns: tuple[str, str] | None
+) -> str:
+    """The shape sentence: temporal evolution, a named desglose, or the bare desglose."""
     if profile.temporal():
         unit = _TIME_UNITS.get(group_by, "meses") if group_by is not None else "meses"
-        second = (
+        return (
             f"En pantalla tienes la evolución por {unit}, y puedes preguntarme por "
             "cualquiera de ellos."
         )
-    elif nouns is not None:
+    if nouns is not None:
         _, plural = nouns
-        second = f"En pantalla tienes el desglose, y puedes preguntarme por cualquiera de {plural}."
-    else:
-        second = "En pantalla tienes el desglose."
-
-    return f"{top_sentence} {second}" if top_sentence else second
+        return f"En pantalla tienes el desglose, y puedes preguntarme por cualquiera de {plural}."
+    return "En pantalla tienes el desglose."

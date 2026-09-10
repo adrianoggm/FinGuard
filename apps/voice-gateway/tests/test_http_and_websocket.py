@@ -198,6 +198,11 @@ def test_fake_text_turn_and_spoken_payment_confirmation_refusal() -> None:
 
 
 def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
+    # M-3: `services.tts` is a module-level singleton shared across this file's tests, and
+    # `spoken` only ever accumulates -- reading `[-1]` below is only this turn's own entry
+    # because the recorder starts clean here, not by luck of test ordering.
+    assert isinstance(services.tts, FakeTextToSpeech)
+    services.tts.spoken.clear()
     with TestClient(app) as client:
         body = client.post(
             "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
@@ -235,8 +240,6 @@ def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
             assert visualization["chart_id"] == received[indices["assistant.text.final"]]["chartId"]
             # Task 3, Wave 4.4: the screen shows the full written answer (`text`, asserted above
             # via `answer`), but the audio speaks the fake's `spoken` summary instead of `text`.
-            # `services` is a module-level singleton shared across this file's tests, so its
-            # `spoken` list accumulates -- the *last* entry is this turn's own.
             assert isinstance(services.tts, FakeTextToSpeech)
             assert services.tts.spoken[-1] == (
                 "Restaurantes fue la categoría con mayor gasto. En pantalla tienes el "
@@ -298,6 +301,10 @@ def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
 def test_an_uncharted_turn_speaks_the_written_text_itself() -> None:
     """No `spoken` on the fake's uncharted case (`fake_assistant.py`'s own reply has none) --
     the audio speaks `reply.text`, same as before Task 3."""
+    # M-3: see the same line in the charted test above -- the recorder starts clean so `[-1]`
+    # below is not order-dependent on whatever an earlier test in this file already spoke.
+    assert isinstance(services.tts, FakeTextToSpeech)
+    services.tts.spoken.clear()
     with TestClient(app) as client:
         body = client.post(
             "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
@@ -727,7 +734,9 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
 
     # The new turn is uncharted; its events carry no identity at all -- none of the old
     # turn's leaks onto it.
-    services.tts = original_tts
+    # M-4: through `monkeypatch`, the same fixture that installed `resistant_tts` above, rather
+    # than a direct attribute set -- correct today only because the fixture would undo it anyway.
+    monkeypatch.setattr(services, "tts", original_tts)
     session.audio.extend(b"hola")
     session.machine.commit()
     events_before_new_turn = len(transport.events)

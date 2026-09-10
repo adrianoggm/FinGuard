@@ -1118,9 +1118,14 @@ class _Answered:
     status_code: int
     frames: tuple[dict[str, Any], ...]
     _body: dict[str, Any] | None
+    sentence: str = ""
 
     def json(self) -> dict[str, Any]:
-        assert self._body is not None, "json() called on a turn that never answered"
+        if self._body is None:
+            raise AssertionError(
+                f"json() called on a turn that never answered: {self.sentence!r} "
+                f"(status {self.status_code})"
+            )
         return self._body
 
 
@@ -1137,18 +1142,22 @@ def _post_turn(stack: Stack, turn: Turn, conversation: dict[str, Any] | None) ->
             "/v1/questions/stream",
             json={"question": turn.say, "conversation": conversation, "channel": "VOICE"},
         )
+        # D-4.4-10: mirror the TEXT branch below -- frames are parsed only once the request
+        # actually answered, not on the strength of hoping the body is SSE-shaped.
+        if response.status_code != 200:
+            return _Answered(response.status_code, (), None, turn.say)
         frames = tuple(
             json.loads(line.removeprefix("data: "))
             for line in response.text.splitlines()
             if line.startswith("data: ")
         )
         body = {k: v for k, v in frames[-1].items() if k != "type"} if frames else None
-        return _Answered(response.status_code, frames, body)
+        return _Answered(response.status_code, frames, body, turn.say)
     response = stack.client.post(
         "/v1/questions", json={"question": turn.say, "conversation": conversation}
     )
     body = response.json() if response.status_code == 200 else None
-    return _Answered(response.status_code, (), body)
+    return _Answered(response.status_code, (), body, turn.say)
 
 
 def contested(episode: Episode) -> Iterator[tuple[int, str, dict[str, str]]]:
@@ -1256,10 +1265,24 @@ def _complaints(
             f"the answer should {'' if turn.spoken else 'not '}carry a spoken summary, "
             f"and {'does not' if turn.spoken else 'does'}"
         )
-    if turn.channel == "VOICE" and (not frames or frames[0]["type"] != "stage"):
-        yield f"a VOICE turn should open with a stage frame, and opens with {frames[:1]!r}"
+    # I-4 (D-4.4-9, ruling R16): every VOICE turn's *last* frame is the answer, always -- that
+    # much `ask_streaming` guarantees regardless of which branch answered. A leading `stage`,
+    # though, is only true for a turn `asking.stream` actually plans -- `tool_of`'s `QUERY`
+    # fallthrough, the only category built by running a plan through `_steps`. Every other route
+    # answers directly, with nothing to stage: `ACCOUNT_BALANCE`/`BALANCE` (`_balance` returns
+    # before any `Stage` is yielded), the `VISUAL_*` outcomes (`ask_streaming`'s `visual is not
+    # None` branch yields only `{"type": "answer", ...}`), the spoken categories -- COURTESY,
+    # IDENTITY, CATEGORIES, EXPLANATION, GUIDANCE, CONTACTS, CARDS -- and payment turns answered
+    # through `_confirmation_events`/`_open_payment_events` (no invented planning stage, by their
+    # own docstrings). A `PAYMENT`-routed turn reaching `_payment_events` instead *does* stage
+    # ("reading"), so the rule states a minimum, not an exact shape, for anything but `QUERY`.
     if turn.channel == "VOICE" and (not frames or frames[-1]["type"] != "answer"):
         yield f"a VOICE turn should close with an answer frame, and closes with {frames[-1:]!r}"
+    if turn.channel == "VOICE" and tool == QUERY and (not frames or frames[0]["type"] != "stage"):
+        yield (
+            "a VOICE turn answering a query should open with a stage frame, and opens with "
+            f"{frames[:1]!r}"
+        )
     if turn.route and tool != turn.route:
         yield f"{turn.route} was the right place, {tool} answered"
     if turn.no_model and reached_model:

@@ -316,17 +316,17 @@ def test_no_family_summary_ever_contains_a_digit(family_name: str) -> None:
     `group_by` kwarg, the pairing a real turn would actually produce): the presenter never says an
     amount or a count. The one calendar exception -- a MONTH top sentence naming a year, which
     `_top_label` reaches whenever a label parses as `YYYY-MM` regardless of which `GroupBy` a plan
-    names -- is pinned separately and precisely by the test right below, so it is excluded here
-    rather than asserted away."""
+    names, and which the test right below pins separately and precisely -- is stripped before the
+    check here rather than skipped, so the "no digit" claim is uniform across every family instead
+    of silently missing the one family it is hardest for."""
     spec, profile, labels, ranked = _context(family_name)
     _, kwargs = FAMILY_DATASETS[family_name]
     natural_group_by = GroupBy(kwargs["group_by"])
-    if natural_group_by is GroupBy.MONTH:
-        pytest.skip("the MONTH/year exception is pinned by the dedicated test below")
     plan = _last_month(Direction.EXPENSE, natural_group_by)
     spoken = spoken_summary(spec, profile, labels, ranked, plan)
     assert spoken is not None
-    assert re.search(r"\d", spoken) is None, (family_name, spoken)
+    year_stripped = re.sub(r"\b\d{4}\b", "", spoken)
+    assert re.search(r"\d", year_stripped) is None, (family_name, spoken)
 
 
 @pytest.mark.parametrize("family_name", sorted(FAMILY_DATASETS))
