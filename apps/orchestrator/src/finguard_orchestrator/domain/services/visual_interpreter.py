@@ -12,6 +12,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualContext,
     merge_encoding_patch,
 )
+from finguard_orchestrator.domain.services import category_words, spanish_numbers
 
 
 @dataclass(frozen=True)
@@ -31,13 +32,43 @@ _FINANCIAL = re.compile(
     r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|"
     r"diciembre|compar(?:a|ar)|restaurantes?|categorias?|gastos?|ingresos?)\b"
 )
+# A-10 (Wave 3 hardening): the subset of `_FINANCIAL` that actually asks something new -- a
+# window or a comparison verb. `_FINANCIAL` also matches "categorías"/"gastos"/"ingresos", the
+# *generic* words for the axis or for money in general -- what a chart's own axis is called, not a
+# second question; "Ordena las categorías de mayor a menor" and "Ponme los gastos en barras" both
+# matched only through one of those and were refused `VISUAL_AMBIGUOUS` for asking "two things at
+# once" when they asked for one. Real category words ("restaurantes", "ocio", ...) are not generic
+# the same way: "solo restaurantes" beside "en barras" genuinely asks to filter and restyle in the
+# same turn (`category_words.named_in`, checked below rather than folded into this regex, is the
+# closed vocabulary that already draws exactly that line for every other reader in this service).
+_FINANCIAL_QUERY_SIGNAL = re.compile(
+    r"\b(?:por\s+(?:dias?|semanas?|meses?|trimestres?|anos?)|semanal|mensual|"
+    r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|"
+    r"diciembre|compar(?:a|ar))\b"
+)
+# A-8 (Wave 3 hardening): plurals `_VISUAL` never learned ("líneas", "áreas") and a mark, "puntos",
+# it never had a word for at all -- design §3.1's own "Prefiero líneas" fell through both gates
+# and reached the financial planner as a query no vocabulary here had claimed.
 _VISUAL = re.compile(
-    r"\b(?:barra|barras|linea|area|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
+    r"\b(?:barras?|lineas?|areas?|puntos?|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
     r"top\s*\d+|circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
 _VISUAL_STYLE = re.compile(
-    r"\b(?:barra|barras|linea|area|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
+    r"\b(?:barras?|lineas?|areas?|puntos?|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
     r"circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
+)
+# B-8 (Wave 3 hardening): "solo los tres primeros", "los cinco primeros", "los 10 últimos" -- a
+# row limit in words or digits. Not folded into `_VISUAL`'s own alternation because, exactly like
+# "top N" beside it, this phrase means something different in a financial sentence ("los tres
+# primeros gastos de gasolina" is a query limit, not a restyle) and is read as one only when
+# `interpret_visual` has already decided the turn is not financial.
+#
+# `(?!\s+movimiento)` refuses "los cinco últimos movimientos" -- a real financial query for the
+# five most recent transactions, not a chart row cut, and one no word in `_FINANCIAL`'s own noun
+# list already caught the way "gastos"/"restaurantes" would have.
+_LIMIT_PHRASE = re.compile(
+    r"\b(?:solo\s+)?(?:los?|las?)\s+(?P<num>\d{1,2}|[a-z]+)\s+"
+    r"(?:primer[oa]s?|ultim[oa]s?|mayores?|mas\s+altos?)\b(?!\s+movimiento)"
 )
 # Exported (Wave 4.5, Task 4): `visual_explanation.asks_why` reads this same ordinal vocabulary
 # off its own «¿por qué el primer gráfico?» match rather than a second copy of it.
@@ -85,20 +116,25 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
     folded = fold(sentence)
     financial = _FINANCIAL.search(folded)
     show_every_row = _VISUAL_ALL.fullmatch(folded.strip(" ¿?¡!.,")) is not None
-    visual_signal = _VISUAL.search(folded) or show_every_row
+    limit_phrase = _LIMIT_PHRASE.search(folded)
+    visual_signal = _VISUAL.search(folded) or show_every_row or limit_phrase is not None
     if financial:
         # In a financial sentence, "top N" is a query limit (for example "top 2 categories by
         # average ticket"), not a request to trim the already rendered rows. Only an actual style
-        # instruction makes the turn mixed.
+        # instruction makes the turn mixed -- and only when something beside the style word
+        # actually asks a new financial question (A-10): a bare axis noun ("categorías", "gastos")
+        # is what the chart's own axis is called, not a second thing to plan.
         if _VISUAL_STYLE.search(folded):
-            return VisualIntent(
-                None,
-                None,
-                "Has pedido cambiar los datos y el formato a la vez. Pide primero el cambio "
-                "financiero y después el formato del gráfico en otro turno.",
-                mixed=True,
-            )
-        return None
+            if _FINANCIAL_QUERY_SIGNAL.search(folded) or category_words.named_in(sentence):
+                return VisualIntent(
+                    None,
+                    None,
+                    "Has pedido cambiar los datos y el formato a la vez. Pide primero el cambio "
+                    "financiero y después el formato del gráfico en otro turno.",
+                    mixed=True,
+                )
+        else:
+            return None
     if not visual_signal:
         return None
     if not contexts:
@@ -114,12 +150,14 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
         # conversation could impose and never lift.
         return VisualIntent(EncodingPatch.clear("limit"), target)
     mark = None
-    if re.search(r"\b(?:barra|barras)\b", folded):
+    if re.search(r"\bbarras?\b", folded):
         mark = "bar"
-    elif re.search(r"\blinea\b", folded):
+    elif re.search(r"\blineas?\b", folded):
         mark = "line"
-    elif re.search(r"\barea\b", folded):
+    elif re.search(r"\bareas?\b", folded):
         mark = "area"
+    elif re.search(r"\bpuntos?\b", folded):
+        mark = "point"
     elif re.search(r"\b(?:circular|donut|anillo)\b", folded):
         mark = "donut"
     orientation: Orientation | None = None
@@ -145,10 +183,22 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
             else None
         )
     )
-    limit_match = re.search(r"\btop\s*(\d{1,3})\b", folded)
-    limit = int(limit_match.group(1)) if limit_match else None
-    if limit is not None and not 1 <= limit <= 100:
-        return VisualIntent(None, target, "El top debe estar entre 1 y 100.")
+    limit: int | None = None
+    limit_range = (1, 100)
+    top_match = re.search(r"\btop\s*(\d{1,3})\b", folded)
+    if top_match:
+        limit = int(top_match.group(1))
+    elif limit_phrase:
+        # B-8: the same phrase, in words or digits -- "los cinco primeros" and "los 5 primeros"
+        # read the same limit. 1-20, not top's 1-100: this is a chip-sized "just the first few",
+        # never a hundred-row cut.
+        num_token = limit_phrase.group("num")
+        limit = int(num_token) if num_token.isdigit() else spanish_numbers.integer(num_token)
+        limit_range = (1, 20)
+    if limit is not None and not limit_range[0] <= limit <= limit_range[1]:
+        return VisualIntent(
+            None, target, f"El top debe estar entre {limit_range[0]} y {limit_range[1]}."
+        )
     changed = frozenset(
         name
         for name, value in (
