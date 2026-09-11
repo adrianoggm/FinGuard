@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -100,6 +101,31 @@ def event(
     }
 
 
+_NUMBERED_LINE = re.compile(r"^\d+\.\s*")
+
+
+def spoken_text(reply_spoken: str | None, reply_text: str) -> str:
+    """What TTS should read for this turn (G-5): `reply_spoken` when the assistant set one,
+    else `reply_text` with a compound answer's own «1. … 2. …» numbering stripped.
+
+    `_compound_read_reply` joins each part's text with `f"{index}. {part.text}"` and builds
+    those parts with no `spoken_for_voice` (a real orchestrator gap, confirmed by reading
+    `llm_controller.py` -- not something this gateway invents a fix for on the orchestrator's
+    side). Read aloud verbatim, a two-part answer says "uno punto ... dos punto ..." before
+    either sentence -- numbering a screen reads by eye and a voice has no use for. Every line
+    that starts with a number and a dot has it stripped, and the remaining lines are joined with
+    a plain space rather than a newline, so TTS reads one sentence after another instead of
+    silence where the screen had a line break -- a space, not ". ", because each part's own
+    `text` already ends in its own sentence punctuation. A single, non-numbered answer's
+    `reply_text` is unaffected: no line here starts that way, so `_NUMBERED_LINE` never matches
+    and nothing changes.
+    """
+    if reply_spoken is not None:
+        return reply_spoken
+    stripped_lines = (_NUMBERED_LINE.sub("", line) for line in reply_text.split("\n"))
+    return " ".join(line for line in stripped_lines if line)
+
+
 def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str, str]:
     """`chartId`/`visualTurnId` for the four turn events -- only the keys the reply carries.
 
@@ -117,6 +143,18 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
     stale context -- must not be stamped with a previous turn's decision identity. An uncharted
     turn returns `{}` so its events look exactly as they did before Wave 4.4 -- omitted, never
     `null`.
+
+    G-5: a compound (`parts`) answer's own top-level `visualization`/`visualization_derivation`
+    are always `None` (`_compound_read_reply`) -- whichever part drew a chart carries it inside
+    `answer["parts"][i]["visualization"]` instead. Rather than reaching into `parts`, a `chartId`
+    still not found above is read from the conversation's own newest visual context when `parts`
+    is a non-empty list: that context IS the compound's last charted part, because
+    `_compound_read_reply` appends each part's new context in clause order before returning. This
+    reading is weaker than the two above -- it has no chart id of its own to compare the newest
+    context against, so a compound answer that draws no chart at all, while its conversation still
+    carries a stale context from an earlier turn, would wrongly borrow that stale identity. Known
+    limitation, undetectable from this function's own inputs; not exercised by the fake, whose
+    only `parts` case always charts its last part.
     """
     identity: dict[str, str] = {}
     visualization = answer.get("visualization")
@@ -136,6 +174,16 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
             derived_chart_id = derivation.get("chart_id")
             if isinstance(derived_chart_id, str):
                 identity["chartId"] = derived_chart_id
+    if "chartId" not in identity:
+        parts = answer.get("parts")
+        if isinstance(parts, list) and parts and isinstance(conversation, Mapping):
+            visual_contexts = conversation.get("visual_contexts")
+            if isinstance(visual_contexts, list) and visual_contexts:
+                newest_context = visual_contexts[-1]
+                if isinstance(newest_context, Mapping):
+                    newest_chart_id = newest_context.get("chart_id")
+                    if isinstance(newest_chart_id, str):
+                        identity["chartId"] = newest_chart_id
     if "chartId" in identity and isinstance(conversation, Mapping):
         visual_contexts = conversation.get("visual_contexts")
         if isinstance(visual_contexts, list) and visual_contexts:
@@ -581,7 +629,8 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         )
     )
     async for chunk in session.services.tts.synthesize(
-        reply_spoken or reply_text, cancelled=lambda: session.cancelled(generation, turn_id)
+        spoken_text(reply_spoken, reply_text),
+        cancelled=lambda: session.cancelled(generation, turn_id),
     ):
         if session.cancelled(generation, turn_id):
             return

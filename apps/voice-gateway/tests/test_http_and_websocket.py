@@ -21,6 +21,7 @@ from finguard_voice_gateway.app import (
     receive_audio,
     services,
     sessions,
+    spoken_text,
 )
 from finguard_voice_gateway.domain.state import SessionProtocolError, SessionState
 from finguard_voice_gateway.ports.speech_to_text import SpeechToTextTimeoutError
@@ -483,12 +484,14 @@ def test_save_candidate_names_the_same_chart_the_answer_drew() -> None:
     sessions.clear()
 
 
-def test_compound_answer_carries_no_chart_identity_before_g5() -> None:
-    """G-5/G-8: a compound (`parts`) answer's own top-level `visualization`/`visualization_
+def test_compound_answer_identity_is_the_conversations_newest_context() -> None:
+    """G-5: a compound (`parts`) answer's own top-level `visualization`/`visualization_
     derivation` are always `None` (`_compound_read_reply`); the chart its second part draws
-    rides only inside `answer["parts"][1]["visualization"]` and the conversation's own newest
-    context. `chart_identity` does not look at either yet -- fixed in the G-5 commit, which
-    updates this same test's expectations once it does."""
+    rides only inside `answer["parts"][1]["visualization"]`. `chart_identity` reads the
+    conversation's own newest visual context instead -- the compound's last charted part -- so
+    the four turn events still carry `chartId`/`visualTurnId` rather than nothing."""
+    assert isinstance(services.tts, FakeTextToSpeech)
+    services.tts.spoken.clear()
     with TestClient(app) as client:
         body = client.post(
             "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
@@ -517,9 +520,26 @@ def test_compound_answer_carries_no_chart_identity_before_g5() -> None:
             assert answer.get("visualization_derivation") is None
             for event_type in IDENTITY_EVENT_TYPES:
                 event_payload = received[indices[event_type]]
-                assert "chartId" not in event_payload
-                assert "visualTurnId" not in event_payload
+                assert event_payload["chartId"] == "chart-fake-3"
+                assert event_payload["visualTurnId"] == "33333333-3333-3333-3333-333333333333"
+            # G-5: no `spoken` on this answer (the real orchestrator never sets one for a
+            # compound part either), so TTS reads `text` with the numbering stripped -- never
+            # "1. En agosto ... \n2. En septiembre ...", read aloud verbatim.
+            assert isinstance(services.tts, FakeTextToSpeech)
+            assert services.tts.spoken[-1] == (
+                "En agosto gastaste 100,00 €. En septiembre gastaste 200,00 €."
+            )
     sessions.clear()
+
+
+def test_spoken_text_strips_only_a_leading_numbered_line() -> None:
+    """G-5: a direct check of the stripping rule, independent of the fake -- `spoken_text`
+    prefers `reply_spoken` outright, and otherwise removes a leading "N. " from every line of
+    `reply_text`, joining what remains with ". " rather than the newline the numbering rode on.
+    A plain, non-numbered answer is returned unchanged."""
+    assert spoken_text("dicho en voz alta", "1. uno\n2. dos") == "dicho en voz alta"
+    assert spoken_text(None, "1. En agosto.\n2. En septiembre.") == "En agosto. En septiembre."
+    assert spoken_text(None, "He entendido: hola") == "He entendido: hola"
 
 
 def test_an_uncharted_turn_speaks_the_written_text_itself() -> None:
