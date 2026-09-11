@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mono, pcm16le, PcmPlayer, resampleMono, StreamingResampler, VoiceClient, VOICE_SUBPROTOCOL } from "./voice";
+import { mono, pcm16le, PcmPlayer, resampleMono, SILENT_TURN_MESSAGE, SILENT_TURN_TIMEOUT_MS, StreamingResampler, VoiceClient, VOICE_SUBPROTOCOL } from "./voice";
 
 const json = (value: unknown) => JSON.stringify(value);
 const event = (type: string, sessionId: string, sequence: number, fields: Record<string, unknown> = {}) => json({ type, sessionId, sequence, at: `2026-08-17T00:00:0${sequence}.000Z`, ...fields });
@@ -218,5 +218,97 @@ describe("VoiceClient transport A-J", () => {
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
     expect(statuses.at(-1)).toMatch(/^error/);
     expect(playback.sources).toHaveLength(0);
+  });
+  // W-3: a straggler PCM frame carries no turn identity of its own, so the fence cannot tell it
+  // apart from a legitimate frame by inspecting it -- what it *can* do is hold the barged-in
+  // turn's own audio.started (and anything that arrives behind it) until the gateway's own
+  // confirmation that the cancelled turn drained, closing the window a stray frame from that
+  // turn's task could otherwise land in as if it were the new turn's.
+  it("holds a barged-in turn's audio until the old turn's drain is confirmed, even out of order", async () => {
+    let next = 0;
+    const setup = await (async () => {
+      const value = makeClient(() => `turn-${++next}`);
+      const promise = value.client.start();
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+      value.fakeSocket.open();
+      value.fakeSocket.message(event("session.ready", "s-1", 0, { inputSampleRate: 16_000, outputSampleRate: 24_000 }));
+      await promise;
+      return value;
+    })();
+    setup.client.stopCapture();
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+    setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
+    setup.fakeSocket.message(new Uint8Array([0, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(1);
+
+    await setup.client.start(); // barge-in: cancels turn-1, starts turn-2
+
+    // Turn-2's own audio.started, delivered (pathologically) before the gateway confirms turn-1
+    // drained: buffered rather than applied, so no source is created and status does not move.
+    setup.fakeSocket.message(event("audio.started", "s-1", 3, { turnId: "turn-2", sampleRate: 24_000 }));
+    expect(setup.playback.sources).toHaveLength(1);
+    expect(setup.statuses.at(-1)).toBe("listening");
+
+    // A straggler from turn-1's own cancelled TTS loop, arriving in that same gap, is dropped by
+    // the pre-existing discardFencedAudio gate -- which is exactly the point: that gate is only
+    // safe because W-3 keeps it armed until drain is confirmed, instead of clearing it the moment
+    // turn-2's own (out-of-order) audio.started arrived above.
+    setup.fakeSocket.message(new Uint8Array([1, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(1);
+
+    setup.fakeSocket.message(event("assistant.text.final", "s-1", 4, { turnId: "turn-2", text: "y" }));
+    // The gateway's own confirmation that turn-1 drained -- sent synchronously on its receipt of
+    // turn-2's input.start, long before turn-1's TTS loop could still be producing a straggler in
+    // a real deployment -- is what finally releases turn-2's audio. No source has been created
+    // for the dropped straggler; the fence opens clean.
+    setup.fakeSocket.message(event("response.cancelled", "s-1", 5, { turnId: "turn-1" }));
+    expect(setup.statuses.at(-1)).toBe("speaking");
+    expect(setup.playback.sources).toHaveLength(1);
+
+    // And once open, turn-2's own real frames play normally.
+    setup.fakeSocket.message(new Uint8Array([2, 0]).buffer);
+    expect(setup.playback.sources).toHaveLength(2);
+  });
+  // W-5: a turn whose answer produces no audio at all (a refusal that forgot to synthesise, a
+  // dead TTS provider) left `maybeFinish` waiting forever on `audioCompleted`/`playerIdle`, which
+  // only audio.started/audio.completed can ever set. The client now gives up visibly instead.
+  it("fails a silent turn after the timeout instead of hanging on processing forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = await ready();
+      setup.client.stopCapture();
+      expect(setup.statuses.at(-1)).toBe("processing");
+
+      // assistant.text.final and turn.completed arrive -- the answer was real, it just drew no
+      // audio -- but nothing ever sets audioCompleted/playerIdle without an audio.started first.
+      setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+      setup.fakeSocket.message(event("turn.completed", "s-1", 2, { turnId: "turn-1" }));
+      await vi.advanceTimersByTimeAsync(SILENT_TURN_TIMEOUT_MS - 1);
+      expect(setup.statuses.at(-1)).toBe("processing");
+      expect(setup.finished).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(setup.statuses.at(-1)).toBe(`error:${SILENT_TURN_MESSAGE}`);
+      // The session actually closed -- the mic is free for a fresh `start()` rather than stuck
+      // behind a socket the client believes is still live.
+      expect(setup.fakeSocket.socket.readyState).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("clears the silent-turn timer once real audio starts, so it never fires late", async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = await ready();
+      setup.client.stopCapture();
+      setup.fakeSocket.message(event("assistant.text.final", "s-1", 1, { turnId: "turn-1", text: "x" }));
+      setup.fakeSocket.message(event("audio.started", "s-1", 2, { turnId: "turn-1", sampleRate: 24_000 }));
+      expect(setup.statuses.at(-1)).toBe("speaking");
+      await vi.advanceTimersByTimeAsync(SILENT_TURN_TIMEOUT_MS + 1_000);
+      // No timeout error: the turn had audio, so the guard was cleared the moment it started.
+      expect(setup.statuses.at(-1)).toBe("speaking");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
