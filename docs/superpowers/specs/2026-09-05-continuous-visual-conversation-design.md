@@ -322,26 +322,68 @@ chart exists; the gateway speaks it and still shows the full written text.
 
 ## 7. Visual explainability
 
-Generated **from the accepted decision**, never from the model's free-text `rationale`:
+**Why the 2026-09-05 wording cannot stand.** That first draft derived an explanation from
+`(spec, profile, decision, source_plan)` — but §4 (as amended) already rules `decision` and
+`source_plan` **turn-local**: the orchestrator keeps no conversation store, so both come back
+`None` after a round trip, and §13 refuses a second memory that would keep them alive past their
+turn. An explanation asked on a later turn — «¿Por qué este gráfico?» typed after the chart has
+already scrolled by — cannot be built from either field, because by then neither exists. The
+explanation can only be a pure function of what the sealed `VisualContext` actually carries once it
+has crossed the wire and come back: `spec`, `profile`, `labels`, `ranked`, `window`, `derived_from`,
+and the two **descriptive provenance** facts this wave adds and seals with the rest — `source` and
+`fallback_reason` (§4). Vocabulary, not authority: nothing reads either field to decide anything: an
+explanation is not a policy, and neither field ever feeds a verifier, a merge, or a drill.
 
 ```python
 @dataclass(frozen=True)
 class VisualExplanation:
-    chart_reason: str          # "Barras: estás comparando categorías."
-    ordering_reason: str | None   # "Orden: gasto total, de mayor a menor."
-    scope_summary: str         # "Datos: 23 movimientos entre el 1 de junio y el 31 de agosto."
-    evidence_count: int
-    decision_source: Literal["AI_VERIFIED", "DETERMINISTIC_FALLBACK", "USER_PATCH"]
+    chart_reason: str            # "Barras: comparas categorías entre sí."
+    ordering_reason: str | None  # "Orden: de mayor a menor gasto."
+    scope_summary: str           # "Entre el 1 de junio y el 31 de agosto de 2026, en 4 categorías."
+    provenance: str              # "Elegido por las reglas de FinGuard."
+
+    def as_text(self) -> str: ...
 ```
 
-Shown under a discreet «¿Por qué este gráfico?». Derivation is a pure function of
-`(spec, profile, decision, source_plan)`: mark → `chart_reason`; the dimension's `EncodingSort` →
-`ordering_reason`; the plan's window and the evidence count → `scope_summary`; `decision.source` →
-`decision_source`. The user never sees a provider error, a prompt, or a verifier rule name.
+`explain_chart(context: VisualContext) -> VisualExplanation` is a pure function of `context.spec`,
+`context.profile`, `context.labels`, `context.ranked`, `context.window`, `context.derived_from`,
+`context.source` and `context.fallback_reason` — nothing else, and nothing turn-local: mark →
+`chart_reason`; the dimension's `EncodingSort` and `ranked` → `ordering_reason`; `window` and
+`profile.row_count` → `scope_summary`; `source`/`fallback_reason` → `provenance`.
 
-**Rule:** the explanation describes the chart finally accepted. If the model proposed a donut and the
-verifier refused it, the explanation justifies the bars the floor drew — and says
-«visualización segura seleccionada automáticamente», not why the donut failed.
+**Provenance wording** (the closed sets `VisualSource`/`FallbackReason` actually carry, never the
+invented `AI_VERIFIED`/`DETERMINISTIC_FALLBACK`/`USER_PATCH` of the first draft):
+
+- `source == "llm"` → «Propuesto por el asistente y comprobado por las reglas de FinGuard.»
+- `source == "deterministic"` with a `fallback_reason` → «Visualización segura seleccionada
+  automáticamente.»
+- `source == "deterministic"` with no `fallback_reason` → «Elegido por las reglas de FinGuard.»
+- `source == "patch"` → «Ajustado a petición tuya sobre el gráfico anterior.»
+- `source is None` (a chart echoed with no decision behind it) → the provenance line is omitted
+  entirely, not guessed at.
+
+The sentence never names a `RejectionRule`, a provider error, or the proposal the verifier
+discarded — the §9 invariant «zero explanations of a discarded spec» restated here: the explanation
+describes the chart finally accepted, never the one the model wanted.
+
+**Scope.** `scope_summary` states dates, read from the sealed `window` («entre el 1 de junio y el
+31 de agosto de 2026»), and a count of groups, read from `profile.row_count` («4 categorías», «12
+meses»…). It never states an amount, a total or a percentage — the evidence (movement) count does
+not survive the wire (§4) and so is never claimed, honestly rather than by omission alone.
+
+**Two surfaces, one derivation.** `explain_chart` runs once per charted answer and feeds both:
+`QuestionResponse.explanation` on every answer that carries a chart — a discreet «¿Por qué este
+gráfico?» disclosure on screen, inert (§12) — and the question itself, «¿Por qué este gráfico?»
+(and its variants), answered as outcome `VISUAL_EXPLAINED` with `as_text()` in `text`. The gateway
+is untouched: it already speaks `text` when `spoken` is `None`, so no new protocol surface is
+needed to have it spoken. No new endpoint (§13).
+
+**What is refused.** Binding the explanation to `turn_id` — saying *which recoverable turn* asked
+for a chart — is refused for this wave: it needs a store this design does not keep (§13's second
+memory) or a replayable record the orchestrator has nowhere to put; the explanation does not need
+it, because it is a function of the chart, not of the turn that asked about it. The model's
+free-text `rationale` is refused too, as it always was: the explanation is derived from the
+accepted decision's closed vocabulary, never from what the model said about itself.
 
 ## 8. Performance
 
@@ -405,7 +447,7 @@ evidence · every rejected proposal ends in a valid answer.
 | **4.2 Continuous visual conversation — done (3b, 4.2b)** | presentation patches through the verifier with `source="patch"`, on a context the server has sealed (3b); reshape linkage `derived_from`; the corpus's episode reshaped, regrouped and restyled in §9's own words (4.2b) | done — `evaluation/conversations/32-visual-continuation.yaml` runs every turn end to end with the banking-call assertion: turn 2, «Separa transporte público y gasolina.», re-queries the plan in view (one call, `derived_from: true`) instead of a planning-dataset stand-in; turn 3, «Ahora compáralo por meses.», regroups it into a month-by-month series instead of the comparison reader's refusal; turns 4-5 restyle a bar by number (turn 3's own chart is a line, which refuses an orientation change) and by «el gráfico anterior», each an effective, verified change. Turn 1 stays the planning-dataset anchor sentence — `window_words.py` excludes «este verano» by design, so nothing here could give it a window without guessing. Turns 4-5 of §9's own sketch — a drill-down into a split category — are 4.3's. **Fix wave, I-4:** in §9's own order the restyle bullet (§11) is refused right after turn 3's month line, with no chart between them for a bar to be turned — episode 32 reaches it only because turn 4 names a bar by number first; the scenario in §9's own sequence closes once 4.3 leaves a chart behind for «el gráfico anterior» to resolve to |
 | **4.3 Financial drill-down — done** | reference resolution over result labels; bounded drill-down plan; movements linked to evidence; "back" | done — turns 4-5 pass verbatim in episode 32; an ambiguous reference asks (`DRILL_AMBIGUOUS`, harness route `CLARIFY`); the drill's chart is a merchant bar deriving from the chart it drilled |
 | **4.4 Multimodal continuity — done** | `chart_id`/`visualTurnId` on voice events; the chart-derived spoken summary; the multimodal cases | done — four of the five multimodal cases run in episode 33 (a, b, d, e); the fifth (c, the interruption) is the gateway's own protocol cancellation test; full-turn latency measured with fake providers, the real-provider row pending the operator's run |
-| **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | the acceptance scenario in §11 runs on camera |
+| **4.5 Explainability and product** | `VisualExplanation`; «¿Por qué este gráfico?»; the video's polish | `docs/superpowers/plans/2026-09-11-visual-explainability.md` — the acceptance scenario in §11 runs on camera |
 
 Sub-waves 4.1-4.2 are worth landing on their own: they make the corpus see charts and make every
 visual follow-up verified, without a single new product surface.
