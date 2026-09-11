@@ -46,6 +46,7 @@ from finguard_orchestrator.domain.services.answer_writer import _MONTHS
 # or a financial question, never this) and `fold`/`TARGET` (the same casefold-and-strip-diacritics
 # normalisation, and the same ordinal-chart vocabulary `interpret_visual` resolves).
 from finguard_orchestrator.domain.services.visual_interpreter import _FINANCIAL, TARGET, fold
+from finguard_orchestrator.domain.services.visual_profile import MAX_DRAWN_LABELS
 
 # The generic fallback -- an empty label tuple, a mix of shapes, or labels that match none of the
 # closed shapes below (merchant names, counterparty names, account names, weekday abbreviations,
@@ -267,17 +268,37 @@ def _ordering_reason(
     return base
 
 
-def _scope_summary(context: VisualContext, singular: str, plural: str) -> str:
+def _scope_summary(context: VisualContext, singular: str, plural: str, indef: str) -> str:
+    # I-2 (fix wave, D-4.5-8): `profile.row_count` never crosses the wire --
+    # `conversation_mapper.to_domain` zeroes it on purpose, since a count of rows is not something
+    # a client should be able to assert (see that mapper's own comment). What DOES travel, sealed,
+    # is `context.labels`: the count comes from `len(labels)` so a later-turn explanation states
+    # what actually crossed the wire instead of a false zero. `labels` is capped at
+    # `MAX_DRAWN_LABELS`, so a full label list means "at least this many, we stopped counting" --
+    # stating that as a bare number would read as a total, so the count is omitted instead (chosen
+    # over "al menos N": an omitted clause cannot be misread as a bound stated as fact). An empty
+    # label list (no chart drew any group -- shouldn't normally happen, but nothing here should
+    # guess) omits the count for the same reason. The noun-with-article phrasing
+    # (`f"{article} {plural}"`) is the one reading that stays grammatical whether or not a window
+    # follows -- "Datos: los grupos." and "Datos: los grupos entre el ... y el ..." both read as
+    # sentences, where "Datos: entre el ... y el ..." (no noun at all) would not survive the
+    # no-window case. The article agrees in gender with the noun (`las categorías`, not `los
+    # categorías`): `_nouns_of`'s own `indef` ("una categoría" vs "un mes") is what already says
+    # which gender the triple is, so it is read here rather than a second table.
     profile = context.profile
-    row_count = profile.row_count
-    noun = singular if row_count == 1 else plural
+    count = len(context.labels)
+    omit_count = not context.labels or count == MAX_DRAWN_LABELS
+    article = "las" if indef.startswith("una") else "los"
+    noun_phrase = (
+        f"{article} {plural}" if omit_count else f"{count} {singular if count == 1 else plural}"
+    )
     if context.window is not None:
         start, end = context.window.start, context.window.end
         start_words = _date_words(start, with_year=start.year != end.year)
         end_words = _date_words(end, with_year=True)
-        base = f"Datos: {row_count} {noun} entre el {start_words} y el {end_words}."
+        base = f"Datos: {noun_phrase} entre el {start_words} y el {end_words}."
     else:
-        base = f"Datos: {row_count} {noun}."
+        base = f"Datos: {noun_phrase}."
     if profile.plan_limited:
         base = f"{base} (los primeros que pediste)"
     return base
@@ -309,7 +330,7 @@ def explain_chart(context: VisualContext) -> VisualExplanation:
         chart_reason = _MARK_REASONS[spec.mark](profile.temporal(), medida, singular, plural, indef)
 
     ordering_reason = _ordering_reason(spec, profile, dimension, medida, plural)
-    scope_summary = _scope_summary(context, singular, plural)
+    scope_summary = _scope_summary(context, singular, plural, indef)
     provenance = _provenance(context)
 
     return VisualExplanation(chart_reason, ordering_reason, scope_summary, provenance)

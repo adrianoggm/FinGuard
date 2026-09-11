@@ -568,7 +568,9 @@ turn in this episode, never by a reshape; whether a same-thread reshape should r
 a question for whoever teaches the analyser to read one as such. Suite at landing: 3863 / 3 / 192,
 corpus 202 at 0.0 %; after this fix wave (13 new tests, no regressions): 3876 / 3 / 204, corpus
 unchanged; after fix wave 2 (14 more tests, no regressions): 3890 / 3 / 204, corpus 202 unchanged.
-§7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) stays 4.5's — not built here.
+§7 (multimodal continuity, `turn_id` bound to a `Turn` and the record) was picked up by 4.5, which
+refused it there too, for the same reason: it needs a store this design does not keep — see the
+4.5 paragraph below.
 
 **Fix wave 2 (2026-09-07): a third visible outcome, and the axis is the one live order
 decision.** `VISUAL_UNCHANGED` joins `VISUAL_UPDATED`/`VISUAL_INCOMPATIBLE`: a restyle whose
@@ -831,8 +833,8 @@ bracket the orchestrator end to end, which is what today's §8 gate reads, and a
 the orchestrator is not needed to state it; the real-provider follow-up row is the operator's own
 run (Task 9's runbook), not invented here; a charted answer's `data` still travels over the voice
 channel unmeasured — the explorer's own risk, carried forward as a known cost, not a regression
-this wave introduced; the discreet voice explanation («¿Por qué este gráfico?») is 4.5's,
-untouched. Two things are also true and not smoothed over: a VOICE `ACCOUNT_BALANCE` turn's stream
+this wave introduced; the discreet voice explanation («¿Por qué este gráfico?») is 4.5's — see the
+4.5 paragraph below for what it landed and what it still refuses. Two things are also true and not smoothed over: a VOICE `ACCOUNT_BALANCE` turn's stream
 branch answers directly with no `stage` frame at all, so §8 e's «first frame is a stage» invariant
 is proven for a *planned* answer only, and episode 33 keeps its closing balance/courtesy turns on
 TEXT rather than pretend the harness's own frame rule holds for a route that never emits one; and
@@ -841,6 +843,53 @@ families rather than a narrowed assertion — the review's own smallest fix (str
 year, assert no digit remains) is recorded as open, not applied. Deferred to the fix wave:
 D-4.4-1 through D-4.4-8
 (`.superpowers/sdd/2026-09-08-multimodal-continuity/progress.md`).
+
+**2026-09-11 — wave 4.5 landed: a chart explains itself from what it carries, and the record says
+what it refuses to say.** The sealed `VisualContext` gains descriptive provenance —
+`source: "llm"|"deterministic"|"patch"|None` and `fallback_reason` — through the three boundaries
+and into the seal (`57063d6`, `dc9c436`); vocabulary, not authority, nothing reads either field to
+decide anything. `domain/services/visual_explanation.py`'s `explain_chart(context) ->
+VisualExplanation` derives `chart_reason`, `ordering_reason`, `scope_summary` and `provenance` from
+the sealed context alone — mark and profile for shape, `EncodingSort`/`ranked` for order, `window`
+and the drawn `labels` for scope, `source`/`fallback_reason` for who chose it — the noun read off
+the labels themselves (`YYYY-MM` → mes, an ISO date → día, a known category key → categoría, else
+grupo) since no plan survives to a later turn, and the measure word from `profile.measure_metric()`
+(`47a0597`, `4a12083`). `QuestionResponse.explanation` now rides every charted answer, TEXT and
+VOICE alike, restyle included, and the web shows it under an inert `<details>` «¿Por qué este
+gráfico?» beside «Ver la consulta», no chip, no endpoint, no action (`6aab2cb`, `5edccb1`). The
+question itself — «¿Por qué este gráfico?» and its close variants, claimed only when a trusted
+chart exists — is answered outcome `VISUAL_EXPLAINED` from `explain_chart` alone: zero ledger calls,
+zero model calls, the conversation byte-identical to before the question (`6283309`). The presenter
+now speaks only the chart's own plan: `question_to_dto` hands `spoken_summary` a plan only when its
+digest matches the sealed `plan_digest`, otherwise the generic noun — M-2 (4.4's branch review) is
+closed on paper, though see the limit below. Episode 32 gains the why-turn right after turn 1 and
+episode 33's turn 1 asserts its voice explanation (`7f673e8`, `92b00e3`). Suite at HEAD: 4227 / 3 /
+209 (three globs) + corpus 207 (176 · 1194) at 0.0 %; ratchets 22/43/0 (`UNMEASURED`/`MUTE`/
+`CONTESTED`), unmoved; gateway untouched (`git diff --stat -- apps/voice-gateway` empty across the
+whole wave).
+
+What it refuses: no amount, no total, no percentage in an explanation — dates and a group count
+only, the evidence (movement) count never stated because it does not survive the wire; no rule
+name, no provider error, no discarded proposal — a fallback says only «visualización segura
+seleccionada automáticamente»; no chip, no endpoint, no automatic action from a chart. Binding the
+explanation's `turn_id` to a recoverable turn is REFUSED for this wave, same reason R8 gave it: it
+needs a store this design does not keep, or a replayable record the orchestrator has nowhere to
+put — replacing the older sentence at this document that said the binding "stays 4.5's": it does
+not land in 4.5 either, and needs no store 4.5 does not already lack. What is not yet true, plainly:
+an explanation asked on a *later* turn reads «Datos: 0 grupos/días/…» today, because
+`profile.row_count` never crosses the wire and the fix wave's own proposal (reading `len(labels)`
+instead, capped and worded "al menos N") has not run — D-4.5-8, open. A week-grouped chart's labels
+are indistinguishable on the wire from a day-grouped chart's (both a plain ISO date), so a
+week-grouped explanation says «días», by design until a real week-shaped key exists — not fixed,
+ruled a stated limit (D-4.5-3, re-ruled, no fix-wave item). The R7/M-2 digest guard compares a
+value against itself within one call today (`llm_mapper.py`'s seal and its guard both read
+`plan_digest(result.metric_definition)` off the same object), so it is tautological until the fix
+wave digests the plan at the chart's own producer — D-4.5-6, open. Also open from the fix wave:
+D-4.5-1 (an inline example string in the design's old §7 code block), D-4.5-4 (a public
+`category_words.keys()` accessor), D-4.5-5 (unused params on the `_MARK_REASONS` callables),
+D-4.5-7 (no web test drives the disclosure through a materialised restyle) — D-4.5-2 was fixed in
+Task 2b. The video's on-camera run of §11 is the user's; what the code offers it is episode 32's
+turn order and the explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 

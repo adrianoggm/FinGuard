@@ -25,6 +25,7 @@ from finguard_orchestrator.domain.models.chart import (
     VisualDataset,
     VisualRow,
 )
+from finguard_orchestrator.domain.models.conversation import IDLE
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
@@ -35,8 +36,13 @@ from finguard_orchestrator.domain.services.visual_explanation import (
     asks_why,
     explain_chart,
 )
-from finguard_orchestrator.domain.services.visual_profile import drawn_labels, visual_profile_of
+from finguard_orchestrator.domain.services.visual_profile import (
+    MAX_DRAWN_LABELS,
+    drawn_labels,
+    visual_profile_of,
+)
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
+from finguard_orchestrator.infrastructure.mappers import conversation_mapper as mapper
 
 _EXPORTER_SPEC = importlib.util.spec_from_file_location(
     "export_chart_fixtures",
@@ -120,7 +126,7 @@ _EXPECTED: dict[str, str] = {
     ),
     "recurrence": (
         "Puntos: cada uno es un grupo y su número de movimientos. Orden: cronológico. "
-        "Datos: 3 grupos entre el 1 de junio y el 31 de agosto de 2026. "
+        "Datos: 2 grupos entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
     "ratio_share": (
@@ -131,7 +137,7 @@ _EXPECTED: dict[str, str] = {
     "categorical_comparison": (
         "Dos periodos lado a lado, para que compares el mismo importe en cada uno. "
         "Orden: de mayor a menor importe. "
-        "Datos: 4 categorías entre el 1 de junio y el 31 de agosto de 2026. "
+        "Datos: 2 categorías entre el 1 de junio y el 31 de agosto de 2026. "
         "Elegido por las reglas de FinGuard."
     ),
 }
@@ -192,7 +198,13 @@ def test_plan_limited_appends_the_caveat() -> None:
 
 def test_no_window_omits_the_date_range() -> None:
     spec, profile = _spec_and_profile("breakdown")
-    context = VisualContext(chart_id="c1", spec=spec, profile=profile, source="deterministic")
+    context = VisualContext(
+        chart_id="c1",
+        spec=spec,
+        profile=profile,
+        labels=("A", "B", "C"),
+        source="deterministic",
+    )
     explanation = explain_chart(context)
     assert explanation.scope_summary == "Datos: 3 grupos."
 
@@ -207,9 +219,62 @@ def test_a_single_row_uses_the_singular_noun() -> None:
             ChartEncoding("x", "value_minor", "quantitative", "Importe"),
         ),
     )
-    context = VisualContext(chart_id="c1", spec=spec, profile=profile, source="deterministic")
+    context = VisualContext(
+        chart_id="c1", spec=spec, profile=profile, labels=("A",), source="deterministic"
+    )
     explanation = explain_chart(context)
     assert explanation.scope_summary == "Datos: 1 grupo."
+
+
+def test_the_count_comes_from_the_labels_that_crossed_the_wire_not_row_count() -> None:
+    """I-2: `conversation_mapper.to_domain` zeroes `profile.row_count` on purpose (it is not on
+    the wire), so an explanation asked on a later turn must count what actually travelled --
+    `context.labels` -- or it states a false zero on every echoed chart."""
+    context = _context("categorical_comparison")
+    conversation = IDLE.with_visual_context(context)
+    payload = mapper.to_payload(conversation)
+    echoed = mapper.to_domain(payload)
+    wired_context = echoed.visual_context()
+    assert wired_context is not None
+    assert wired_context.profile.row_count == 0
+    minted_text = explain_chart(context).scope_summary
+    wired_text = explain_chart(wired_context).scope_summary
+    assert minted_text == wired_text
+    assert not wired_text.startswith("Datos: 0 ")
+    assert wired_text.startswith(f"Datos: {len(context.labels)} ")
+
+
+def test_a_capped_label_list_omits_the_count() -> None:
+    labels = tuple(f"L{i}" for i in range(MAX_DRAWN_LABELS))
+    spec, profile = _spec_and_profile("breakdown")
+    context = VisualContext(
+        chart_id="c1", spec=spec, profile=profile, labels=labels, source="deterministic"
+    )
+    explanation = explain_chart(context)
+    assert explanation.scope_summary == "Datos: los grupos."
+
+
+def test_no_labels_omits_the_count() -> None:
+    spec, profile = _spec_and_profile("breakdown")
+    context = VisualContext(
+        chart_id="c1", spec=spec, profile=profile, labels=(), source="deterministic"
+    )
+    explanation = explain_chart(context)
+    assert explanation.scope_summary == "Datos: los grupos."
+
+
+def test_omitting_the_count_agrees_in_gender_with_a_feminine_noun() -> None:
+    """`categoría`/`categorías` is feminine ("una categoría"): the omitted-count phrasing must
+    read "las categorías", not "los categorías" -- the bug a hard-coded "los" would have been.
+    A capped label list of real category keys drives the noun to "categorías" and the omitted
+    count at the same time."""
+    labels = tuple(("GROCERIES", "RESTAURANTS")[i % 2] for i in range(MAX_DRAWN_LABELS))
+    spec, profile = _spec_and_profile("categorical_comparison")
+    context = VisualContext(
+        chart_id="c1", spec=spec, profile=profile, labels=labels, source="deterministic"
+    )
+    explanation = explain_chart(context)
+    assert explanation.scope_summary == "Datos: las categorías."
 
 
 @pytest.mark.parametrize(
