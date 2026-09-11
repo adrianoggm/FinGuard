@@ -21,8 +21,10 @@ from finguard_voice_gateway.app import (
     receive_audio,
     services,
     sessions,
+    spoken_text,
 )
 from finguard_voice_gateway.domain.state import SessionProtocolError, SessionState
+from finguard_voice_gateway.ports.assistant_client import AssistantClientError, AssistantReply
 from finguard_voice_gateway.ports.speech_to_text import SpeechToTextTimeoutError
 from finguard_voice_gateway.protocol import parse_event
 
@@ -277,6 +279,68 @@ def test_chart_identity_ignores_a_chart_id_on_an_unknown_visualization_kind() ->
     assert chart_identity(kpi_answer, None) == {}
 
 
+def test_chart_identity_picks_the_newest_of_three_contexts() -> None:
+    """G-9: `app.py:131-143`'s own assumption -- `conversation["visual_contexts"][-1]` is this
+    turn's chart -- was never exercised against a list longer than one before this test, because
+    the fake always *replaced* the list with a single element where the real `Conversation.
+    with_visual_context` removes-and-appends up to `MAX_VISUAL_CONTEXTS`. Three contexts here,
+    not two: two would still pass a bug that just returns "the last of exactly two"."""
+    three_contexts = {
+        "visual_contexts": [
+            {"chart_id": "chart-1", "turn_id": "turn-1"},
+            {"chart_id": "chart-2", "turn_id": "turn-2"},
+            {"chart_id": "chart-3", "turn_id": "turn-3"},
+        ]
+    }
+    newest_answer = {"visualization": {"kind": "chart", "chart_id": "chart-3"}}
+    assert chart_identity(newest_answer, three_contexts) == {
+        "chartId": "chart-3",
+        "visualTurnId": "turn-3",
+    }
+    # An older context among the three is not mistaken for the newest: naming it still stamps a
+    # `chartId` (the answer really did draw it), but no `visualTurnId` -- it does not match
+    # `visual_contexts[-1]`.
+    oldest_answer = {"visualization": {"kind": "chart", "chart_id": "chart-1"}}
+    assert chart_identity(oldest_answer, three_contexts) == {"chartId": "chart-1"}
+
+
+def test_a_third_charted_turn_keeps_all_three_contexts_newest_last() -> None:
+    """G-9: end to end, through the fake's own `_with_visual_context` (mirroring `Conversation.
+    with_visual_context`) -- three different charted turns on one session leave the conversation
+    carrying all three contexts, newest last, and each turn's own events are identified by its
+    own chart, never the session's first or its accumulated middle one."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            first, first_indices = _run_one_turn(
+                socket, session_id, 1, "turn-1", "quiero ver el gráfico".encode()
+            )
+            for event_type in IDENTITY_EVENT_TYPES:
+                assert first[first_indices[event_type]]["chartId"] == "chart-fake-1"
+            second, second_indices = _run_one_turn(socket, session_id, 3, "turn-2", b"guardalo")
+            for event_type in IDENTITY_EVENT_TYPES:
+                assert second[second_indices[event_type]]["chartId"] == "chart-fake-4"
+            third, third_indices = _run_one_turn(socket, session_id, 5, "turn-3", b"reestilo")
+            for event_type in IDENTITY_EVENT_TYPES:
+                assert third[third_indices[event_type]]["chartId"] == "chart-fake-2"
+            final_conversation = third[third_indices["turn.completed"]]["conversation"]
+            assert isinstance(final_conversation, dict)
+            visual_contexts = final_conversation["visual_contexts"]
+            assert visual_contexts == [
+                {"chart_id": "chart-fake-1", "turn_id": "11111111-1111-1111-1111-111111111111"},
+                {"chart_id": "chart-fake-4", "turn_id": "44444444-4444-4444-4444-444444444444"},
+                {"chart_id": "chart-fake-2", "turn_id": "22222222-2222-2222-2222-222222222222"},
+            ]
+    sessions.clear()
+
+
 def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
     """I-1: a restyle answers through `_visual_only_response`, whose `QuestionResponse` carries
     the new chart only in `visualization_derivation.chart_id` (`visualization` stays `None`).
@@ -483,12 +547,14 @@ def test_save_candidate_names_the_same_chart_the_answer_drew() -> None:
     sessions.clear()
 
 
-def test_compound_answer_carries_no_chart_identity_before_g5() -> None:
-    """G-5/G-8: a compound (`parts`) answer's own top-level `visualization`/`visualization_
+def test_compound_answer_identity_is_the_conversations_newest_context() -> None:
+    """G-5: a compound (`parts`) answer's own top-level `visualization`/`visualization_
     derivation` are always `None` (`_compound_read_reply`); the chart its second part draws
-    rides only inside `answer["parts"][1]["visualization"]` and the conversation's own newest
-    context. `chart_identity` does not look at either yet -- fixed in the G-5 commit, which
-    updates this same test's expectations once it does."""
+    rides only inside `answer["parts"][1]["visualization"]`. `chart_identity` reads the
+    conversation's own newest visual context instead -- the compound's last charted part -- so
+    the four turn events still carry `chartId`/`visualTurnId` rather than nothing."""
+    assert isinstance(services.tts, FakeTextToSpeech)
+    services.tts.spoken.clear()
     with TestClient(app) as client:
         body = client.post(
             "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
@@ -517,9 +583,26 @@ def test_compound_answer_carries_no_chart_identity_before_g5() -> None:
             assert answer.get("visualization_derivation") is None
             for event_type in IDENTITY_EVENT_TYPES:
                 event_payload = received[indices[event_type]]
-                assert "chartId" not in event_payload
-                assert "visualTurnId" not in event_payload
+                assert event_payload["chartId"] == "chart-fake-3"
+                assert event_payload["visualTurnId"] == "33333333-3333-3333-3333-333333333333"
+            # G-5: no `spoken` on this answer (the real orchestrator never sets one for a
+            # compound part either), so TTS reads `text` with the numbering stripped -- never
+            # "1. En agosto ... \n2. En septiembre ...", read aloud verbatim.
+            assert isinstance(services.tts, FakeTextToSpeech)
+            assert services.tts.spoken[-1] == (
+                "En agosto gastaste 100,00 €. En septiembre gastaste 200,00 €."
+            )
     sessions.clear()
+
+
+def test_spoken_text_strips_only_a_leading_numbered_line() -> None:
+    """G-5: a direct check of the stripping rule, independent of the fake -- `spoken_text`
+    prefers `reply_spoken` outright, and otherwise removes a leading "N. " from every line of
+    `reply_text`, joining what remains with ". " rather than the newline the numbering rode on.
+    A plain, non-numbered answer is returned unchanged."""
+    assert spoken_text("dicho en voz alta", "1. uno\n2. dos") == "dicho en voz alta"
+    assert spoken_text(None, "1. En agosto.\n2. En septiembre.") == "En agosto. En septiembre."
+    assert spoken_text(None, "He entendido: hola") == "He entendido: hola"
 
 
 def test_an_uncharted_turn_speaks_the_written_text_itself() -> None:
@@ -603,6 +686,127 @@ def test_payment_policy_blocks_next_spoken_turn_without_calling_assistant() -> N
             assert "chartId" not in final
             assert "visualTurnId" not in final
     sessions.clear()
+
+
+def test_the_refusal_answer_carries_only_outcome_text_and_conversation() -> None:
+    """G-7: the gateway must not fabricate an orchestrator answer -- ADR-010 says it carries no
+    financial domain types (§1), and the assistant is never asked on this turn, so it has no
+    real value for `intent_id`, `plan`, `currency`, `total_minor`, `movement_count`, `groups`,
+    `movements` or `suggestions`. Before the fix this dict carried all of those, every one
+    invented."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            socket.receive_json()
+            for sequence, turn_id, audio in (
+                (1, "prepare", b"quiero preparar un pago "),
+                (3, "confirm", b"si"),
+            ):
+                socket.send_text(_control("input.start", session_id, sequence, turn_id))
+                socket.send_bytes(audio)
+                socket.send_text(_control("input.commit", session_id, sequence + 1, turn_id))
+                while True:
+                    item = socket.receive()
+                    if item.get("text"):
+                        payload = json.loads(item["text"])
+                        if payload["type"] == "assistant.text.final":
+                            final = payload
+                        if payload["type"] == "turn.completed":
+                            break
+            answer = final["answer"]
+            assert isinstance(answer, dict)
+            assert set(answer.keys()) == {"outcome", "text", "conversation"}
+            assert answer["outcome"] == "AWAITING_CONFIRMATION"
+    sessions.clear()
+
+
+class _RejectsOnceThenAnswers:
+    """G-10: a fake assistant client that answers the orchestrator's own 422 shape once -- an
+    `AssistantClientError` coded `ORCHESTRATOR_REJECTED`, exactly what `orchestrator_assistant.
+    py`'s `_status_message` returns for any 4xx that is not 401/403 -- and answers normally on
+    every call after."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def ask(
+        self,
+        text: str,
+        conversation: object,
+        *,
+        credential: str,
+        idempotency_key: str,
+        on_stage: object = None,
+    ) -> AssistantReply:
+        self.calls += 1
+        if self.calls == 1:
+            raise AssistantClientError("orchestrator rejected the request", "ORCHESTRATOR_REJECTED")
+        return AssistantReply(
+            text=f"He entendido: {text}",
+            conversation={"last": text},
+            answer={"outcome": "ANSWERED", "text": f"He entendido: {text}", "conversation": None},
+            payment_confirmation_required=False,
+        )
+
+
+def test_an_orchestrator_4xx_is_a_recoverable_turn_error_not_a_socket_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G-10: before the fix, every `AssistantClientError` -- including a 4xx, which means only
+    that *this turn's own request* was rejected (e.g. its echoed `conversation` failed the
+    orchestrator's DTO validation) -- closed the socket with a fatal error, destroying the whole
+    session over one bad turn. `ORCHESTRATOR_REJECTED` must instead surface as a non-fatal
+    `error` and leave the socket, and the session, usable for the very next turn."""
+    rejecting_assistant = _RejectsOnceThenAnswers()
+    monkeypatch.setattr(services, "assistant", rejecting_assistant)
+    try:
+        with TestClient(app) as client:
+            body = client.post(
+                "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+            ).json()
+            with client.websocket_connect(
+                body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+            ) as socket:
+                session_id = body["sessionId"]
+                socket.send_text(_control("session.configure", session_id, 0))
+                socket.receive_json()
+                socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+                socket.send_bytes(b"ok")
+                socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+                error = None
+                while error is None:
+                    item = socket.receive_json()
+                    if item["type"] == "error":
+                        error = item
+                assert error["type"] == "error"
+                assert error["code"] == "ORCHESTRATOR_REJECTED"
+                assert error["fatal"] is False
+
+                # The socket is still open and the session is ready for a normal next turn.
+                socket.send_text(_control("input.start", session_id, 3, "turn-2"))
+                socket.send_bytes(b"ok")
+                socket.send_text(_control("input.commit", session_id, 4, "turn-2"))
+                received: list[dict[str, object]] = []
+                while True:
+                    item = socket.receive()
+                    if item.get("text"):
+                        payload = json.loads(item["text"])
+                        received.append(payload)
+                        if payload["type"] == "turn.completed":
+                            break
+                final = next(e for e in received if e["type"] == "assistant.text.final")
+                final_text = final["text"]
+                assert isinstance(final_text, str)
+                assert "He entendido" in final_text
+                assert rejecting_assistant.calls == 2
+    finally:
+        sessions.clear()
 
 
 def test_a_refused_voice_payment_does_not_silence_the_session() -> None:
@@ -970,9 +1174,16 @@ class _CancellationResistantTTS:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_speaking_turn_does_not_commit_conversation(
+async def test_barge_in_during_tts_still_keeps_the_chart_the_turn_drew(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """G-4: a barge-in is cancellation during TTS -- the normal voice gesture, not a reason to
+    discard the chart the turn already drew. Before the fix, the conversation committed only
+    after `audio.completed` survived, so interrupting playback of a charted answer left the
+    *next* turn's `session.conversation` pointing at the previous, uncharted turn -- a follow-up
+    "ponlo en horizontal" would hit `VISUAL_NEEDS_TARGET` or restyle a stale chart. The fix moves
+    the commit to right after the reply is known, before synthesis starts, so it survives a
+    cancellation that only ever fences *sends*, never session state, from this point on."""
     original_tts = services.tts
     resistant_tts = _CancellationResistantTTS()
     monkeypatch.setattr(services, "tts", resistant_tts)
@@ -1017,7 +1228,18 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
         resistant_tts.release.set()
     await asyncio.gather(*session.retired_tasks)
 
-    assert session.conversation is original_conversation
+    # G-4: the barge-in fenced the *audio*, never the conversation the answer already produced --
+    # `session.conversation` is the cancelled turn's own charted reply, not the stale value from
+    # before it ran. `is not original_conversation` first: a bug that reverted to committing
+    # nothing would leave the identity comparison below vacuously true only by accident.
+    assert session.conversation is not original_conversation
+    assert session.conversation == {
+        "previous": original_conversation,
+        "last": "old grafico text",
+        "visual_contexts": [
+            {"chart_id": "chart-fake-1", "turn_id": "11111111-1111-1111-1111-111111111111"}
+        ],
+    }
     assert session.machine.turn_id == "new-turn"
     assert transport.audio == []
     # No event carrying the old turn's chart identity reaches the transport after the cancel
@@ -1032,6 +1254,7 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
     monkeypatch.setattr(services, "tts", original_tts)
     session.audio.extend(b"hola")
     session.machine.commit()
+    charted_conversation_after_barge_in = session.conversation
     events_before_new_turn = len(transport.events)
     await process_turn(transport, session, "new-turn")
     new_turn_events = transport.events[events_before_new_turn:]
@@ -1039,6 +1262,11 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
     for item in new_turn_events:
         assert "chartId" not in item
         assert "visualTurnId" not in item
+    # G-4's own claim: the *next* turn sees the charted conversation the barge-in interrupted --
+    # the fake assistant was asked with it as `conversation` and echoes it back under `previous`.
+    next_turn_conversation = session.conversation
+    assert isinstance(next_turn_conversation, dict)
+    assert next_turn_conversation["previous"] is charted_conversation_after_barge_in
 
 
 @pytest.mark.parametrize("provider", ["stt", "tts"])

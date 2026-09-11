@@ -108,6 +108,12 @@ Server events:
 | `error` | typed recoverable or fatal failure |
 | `pong` | keepalive response and clock sample |
 
+G-10 (fix wave): `error.fatal` is `false` for `ORCHESTRATOR_REJECTED` -- the orchestrator answering
+this turn's own request with a 4xx (its own DTO rejecting, for instance, the `conversation` this
+gateway just echoed back). That is one bad turn, not a broken session: the socket stays open and the
+session returns to `READY`, ready for the next `input.start`, rather than closing with code `1011`
+as every other assistant, speech or protocol failure still does.
+
 Only one input stream and one output stream may be active. Binary client frames are rejected unless
 the session is listening; binary server frames are meaningful only between `audio.started` and
 `audio.completed`. Version 1 uses mono little-endian PCM16: 16 kHz input and 24 kHz output, with
@@ -141,6 +147,13 @@ and requires its existing explicit confirmation control.
 
 This is a channel policy, not a new payment rule. Supporting spoken confirmation later requires a
 separate decision with transcript display, explicit read-back and evidence about false acceptance.
+
+G-7 (fix wave): the spoken refusal this policy produces is not a fabricated orchestrator answer.
+The assistant is never asked on this turn, so the gateway holds no real value for the eleven other
+`QuestionResponse` keys a real answer carries, and §1 already forbids it from inventing financial
+domain types to fill them with. The refusal's own `answer` carries exactly three keys -- `outcome`,
+`text` and the unchanged `conversation` -- and a client must not expect the shape of a real
+orchestrator answer from it.
 
 ### 6. Barge-in is cancellation, not another concurrent turn
 

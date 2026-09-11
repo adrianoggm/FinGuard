@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -100,6 +101,31 @@ def event(
     }
 
 
+_NUMBERED_LINE = re.compile(r"^\d+\.\s*")
+
+
+def spoken_text(reply_spoken: str | None, reply_text: str) -> str:
+    """What TTS should read for this turn (G-5): `reply_spoken` when the assistant set one,
+    else `reply_text` with a compound answer's own «1. … 2. …» numbering stripped.
+
+    `_compound_read_reply` joins each part's text with `f"{index}. {part.text}"` and builds
+    those parts with no `spoken_for_voice` (a real orchestrator gap, confirmed by reading
+    `llm_controller.py` -- not something this gateway invents a fix for on the orchestrator's
+    side). Read aloud verbatim, a two-part answer says "uno punto ... dos punto ..." before
+    either sentence -- numbering a screen reads by eye and a voice has no use for. Every line
+    that starts with a number and a dot has it stripped, and the remaining lines are joined with
+    a plain space rather than a newline, so TTS reads one sentence after another instead of
+    silence where the screen had a line break -- a space, not ". ", because each part's own
+    `text` already ends in its own sentence punctuation. A single, non-numbered answer's
+    `reply_text` is unaffected: no line here starts that way, so `_NUMBERED_LINE` never matches
+    and nothing changes.
+    """
+    if reply_spoken is not None:
+        return reply_spoken
+    stripped_lines = (_NUMBERED_LINE.sub("", line) for line in reply_text.split("\n"))
+    return " ".join(line for line in stripped_lines if line)
+
+
 def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str, str]:
     """`chartId`/`visualTurnId` for the four turn events -- only the keys the reply carries.
 
@@ -117,6 +143,18 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
     stale context -- must not be stamped with a previous turn's decision identity. An uncharted
     turn returns `{}` so its events look exactly as they did before Wave 4.4 -- omitted, never
     `null`.
+
+    G-5: a compound (`parts`) answer's own top-level `visualization`/`visualization_derivation`
+    are always `None` (`_compound_read_reply`) -- whichever part drew a chart carries it inside
+    `answer["parts"][i]["visualization"]` instead. Rather than reaching into `parts`, a `chartId`
+    still not found above is read from the conversation's own newest visual context when `parts`
+    is a non-empty list: that context IS the compound's last charted part, because
+    `_compound_read_reply` appends each part's new context in clause order before returning. This
+    reading is weaker than the two above -- it has no chart id of its own to compare the newest
+    context against, so a compound answer that draws no chart at all, while its conversation still
+    carries a stale context from an earlier turn, would wrongly borrow that stale identity. Known
+    limitation, undetectable from this function's own inputs; not exercised by the fake, whose
+    only `parts` case always charts its last part.
     """
     identity: dict[str, str] = {}
     visualization = answer.get("visualization")
@@ -136,6 +174,16 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
             derived_chart_id = derivation.get("chart_id")
             if isinstance(derived_chart_id, str):
                 identity["chartId"] = derived_chart_id
+    if "chartId" not in identity:
+        parts = answer.get("parts")
+        if isinstance(parts, list) and parts and isinstance(conversation, Mapping):
+            visual_contexts = conversation.get("visual_contexts")
+            if isinstance(visual_contexts, list) and visual_contexts:
+                newest_context = visual_contexts[-1]
+                if isinstance(newest_context, Mapping):
+                    newest_chart_id = newest_context.get("chart_id")
+                    if isinstance(newest_chart_id, str):
+                        identity["chartId"] = newest_chart_id
     if "chartId" in identity and isinstance(conversation, Mapping):
         visual_contexts = conversation.get("visual_contexts")
         if isinstance(visual_contexts, list) and visual_contexts:
@@ -415,6 +463,16 @@ async def process_turn(websocket: VoiceTransport, session: VoiceSession, turn_id
     except AssistantClientError as exc:
         if session.machine.turn_id != turn_id:
             return
+        if exc.code == "ORCHESTRATOR_REJECTED":
+            # G-10: a 4xx is the orchestrator refusing this turn's own request -- e.g. the
+            # `conversation` this gateway echoed back failed the orchestrator's DTO validation
+            # (`orchestrator_assistant.py`'s `_status_message`, any status below 500 other than
+            # 401/403). That is one bad turn, not a broken session: `machine.cancel()` returns
+            # to READY (clearing the dead turn id) so the next `input.start` behaves like any
+            # other new turn, and the socket -- and everything already said on it -- survives.
+            session.machine.cancel()
+            await send_error(websocket, session, exc.code, "assistant provider rejected the turn")
+            return
         session.machine.close()
         await send_error(websocket, session, exc.code, "assistant provider failed", fatal=True)
         await websocket.close(code=1011)
@@ -493,19 +551,16 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         reply_spoken = None
         reply_conversation = session.conversation
         payment_required = True
+        # G-7: a minimal, honest answer -- `outcome`, `text` and the unchanged `conversation`,
+        # never the other nine `QuestionResponse` keys the gateway used to invent (`intent_id`,
+        # `plan`, `currency`, `total_minor`, `movement_count`, `groups`, `movements`,
+        # `suggestions`, and the two literal fields above). The assistant is never asked this
+        # turn, so the gateway has no real values for any of them, and ADR-010 (§1, "no new
+        # financial authority") says it carries no financial domain types to fabricate one with.
         reply_answer: dict[str, object] = {
             "outcome": "AWAITING_CONFIRMATION",
             "text": reply_text,
-            "question": None,
-            "intent_id": None,
-            "plan": None,
             "conversation": reply_conversation,
-            "currency": None,
-            "total_minor": None,
-            "movement_count": 0,
-            "groups": [],
-            "movements": [],
-            "suggestions": [],
         }
     else:
 
@@ -540,6 +595,20 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     # Computed once the reply is known, both branches: the chart this turn drew and the
     # identity of the decision that drew it, riding the four turn events below.
     identity = chart_identity(reply_answer, reply_conversation)
+    # G-4: committed here, before synthesis, not after `audio.completed` survives. A barge-in
+    # is cancellation during TTS -- the normal voice gesture -- and until this point every
+    # cancellation check above already returned before touching session state, so reaching here
+    # means this turn's reply is real and belongs to the conversation regardless of what happens
+    # to its audio next. The old placement (right before `turn.completed`) discarded the chart
+    # a charted answer had just drawn on exactly that gesture: the holder saw it, interrupted,
+    # and the next "ponlo en horizontal" found no chart to restyle.
+    session.conversation = reply_conversation
+    # G-1: a refusal is spoken once and this session-local latch clears immediately after --
+    # the assistant was never asked this turn, so nothing it said could have changed the
+    # conversation's real payment state, and holding the latch open forever (the old behaviour)
+    # meant the assistant could never be reached again on this session, not even to cancel.
+    # ADR-010 §5 blocks a spoken *confirmation* turn from moving money, not every later turn.
+    session.payment_confirmation_required = False if refusing_payment else payment_required
     session.machine.speaking()
     # `text=reply_text` here always -- the screen shows the full written answer regardless of
     # channel (Task 3, Wave 4.4); only the audio below speaks `reply_spoken` when there is one.
@@ -567,7 +636,8 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         )
     )
     async for chunk in session.services.tts.synthesize(
-        reply_spoken or reply_text, cancelled=lambda: session.cancelled(generation, turn_id)
+        spoken_text(reply_spoken, reply_text),
+        cancelled=lambda: session.cancelled(generation, turn_id),
     ):
         if session.cancelled(generation, turn_id):
             return
@@ -586,15 +656,6 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     )
     if session.cancelled(generation, turn_id):
         return
-    # Conversation is committed only after the turn survives synthesis. A
-    # cancelled answer may have completed remotely, but it is discarded here.
-    session.conversation = reply_conversation
-    # G-1: a refusal is spoken once and this session-local latch clears immediately after --
-    # the assistant was never asked this turn, so nothing it said could have changed the
-    # conversation's real payment state, and holding the latch open forever (the old behaviour)
-    # meant the assistant could never be reached again on this session, not even to cancel.
-    # ADR-010 §5 blocks a spoken *confirmation* turn from moving money, not every later turn.
-    session.payment_confirmation_required = False if refusing_payment else payment_required
     session.machine.completed()
     timings.mark("turn_completed")
     try:
