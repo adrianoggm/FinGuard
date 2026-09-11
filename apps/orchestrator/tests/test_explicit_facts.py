@@ -142,6 +142,15 @@ async def ask(sentence: str, planner: FakePlanner, ledger: FakeLedger, **extra: 
         ("Todos mis gastos excepto alquiler", ("HOUSING_RENT",), ()),
         ("Si no contamos el supermercado", ("GROCERIES",), ()),
         ("Lo mismo, pero sin Mercadona", (), ("mercadona",)),
+        # B-1 (Wave 3 hardening): the imperative and prepositional forms a holder actually says,
+        # not only the gerund («quitando») the vocabulary already had.
+        ("Quita restaurantes", ("RESTAURANTS",), ()),
+        ("Elimina restaurantes", ("RESTAURANTS",), ()),
+        ("Borra restaurantes", ("RESTAURANTS",), ()),
+        ("Saca restaurantes", ("RESTAURANTS",), ()),
+        ("Fuera restaurantes", ("RESTAURANTS",), ()),
+        ("Excluye restaurantes", ("RESTAURANTS",), ()),
+        ("Ya no cuentes restaurantes", ("RESTAURANTS",), ()),
     ],
 )
 def test_negative_filters_are_explicit_facts(

@@ -48,9 +48,15 @@ _MONTH_LABEL = re.compile(r"(\d{4})-(\d{2})")
 # and no case to fold, because the haystack it searches is folded once by the caller.
 _WORD = "(?<![a-z0-9]){}(?![a-z0-9])"
 
+# B-6 (Wave 3 hardening): design §3.3's own drill words -- "¿por qué tanto?", "¿qué comercio es
+# responsable?", "¿de dónde sale?" -- name no month, no category and none of the "más alto/grande/
+# caro" vocabulary above; each is an implicit "the standout bar" exactly the way "el pico" already
+# is. "Tanto" is the bare word, not "tan" (kept out of `DRILL_DOWN`'s own "tan alto" reading, which
+# `resolve_reference`'s existing "¿Por qué es tan alto?" -> `NoMatch()` still needs: naming no
+# specific bar and no `_TOP` word at all stays unresolved).
 _TOP = re.compile(
     r"\bmas\s+(?:alto|alta|grande|caro|cara|elevado|elevada)\b|\b(?:el|ese|este)\s+pico\b"
-    r"|\b(?:el|la)\s+mayor\b"
+    r"|\b(?:el|la)\s+mayor\b|\btanto\b|\bresponsable\b|\bde\s+donde\s+sale\b"
 )
 _BOTTOM = re.compile(r"\bmas\s+(?:bajo|baja|pequeno|pequena|barato|barata)\b|\b(?:el|la)\s+menor\b")
 

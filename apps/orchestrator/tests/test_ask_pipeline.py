@@ -1395,3 +1395,33 @@ async def test_a_refusal_the_planner_found_keeps_the_balance_thread() -> None:
     result = await ask(PlanningResult.unsupported("AVERAGE"), conversation=was)
 
     assert result.conversation.answered_the_balance
+
+
+async def test_a_season_asks_for_its_months_instead_of_answering_the_inherited_window() -> None:
+    """B-4 (Wave 3 hardening), §11's own opening sentence.
+
+    «¿En qué he gastado más este verano?» used to reach the planner with no signal that "este
+    verano" was never read, and the window it ran with was whatever the conversation already had
+    in view -- a silent substitution. It now asks which months, naming them, before the planner
+    or the model or the ledger ever sees the sentence.
+    """
+    planner = FakePlanner(PlanningResult.planned(plan()))
+    ledger = RecordingLedger(ANSWER)
+    previous = FinancialPlan(
+        direction=Direction.EXPENSE, period=RelativePeriod(period=Period.LAST_N_MONTHS, n=3)
+    )
+
+    result = await chat(planner, ledger).handle(
+        AskFinancialQuestionQuery(
+            sentence="¿En qué he gastado más este verano?",
+            account_id=ACCOUNT,
+            today=date(2026, 9, 11),
+            conversation=Conversation(last_plan=previous),
+        )
+    )
+
+    assert result.outcome == Spoken.GUIDANCE.value
+    assert result.text == "¿Te refieres a junio, julio y agosto de 2026?"
+    assert result.suggestions == ["Junio, julio y agosto de 2026"]
+    assert planner.asked is None
+    assert ledger.plans == []

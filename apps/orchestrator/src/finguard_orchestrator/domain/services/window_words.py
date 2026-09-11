@@ -932,3 +932,64 @@ def _a_year_before(day: date) -> date:
         return day.replace(year=day.year - 1)
     except ValueError:
         return day.replace(year=day.year - 1, day=28)
+
+
+# --- B-4 (Wave 3 hardening): a season is a question with its months in it ----------------------
+#
+# `window_in` above keeps refusing to guess "este verano" -- that refusal is right, and this file's
+# own docstring already says why: a miss falls through and costs one turn, a wrong guess costs a
+# figure about the wrong months presented as an answer. What was missing is what the refusal
+# *becomes*. §11's own opening sentence, «¿En qué he gastado más este verano?», reached the planner
+# with no signal that "este verano" was never read, and the window it ran with was whatever was
+# already on screen -- a silent substitution, not a refusal. `season_ask` turns the same refusal
+# into an honest question naming the months a reading would take, with one suggestion chip per
+# reading a holder might have meant.
+_SEASON_MONTHS: Final[dict[str, tuple[int, int, int]]] = {
+    "primavera": (3, 4, 5),
+    "verano": (6, 7, 8),
+    "otono": (9, 10, 11),
+    "invierno": (12, 1, 2),
+}
+
+_SEASON: Final = re.compile(r"\b(primavera|verano|otono|invierno)\b")
+
+# "Este verano"/"este invierno"/"este otoño" (masculine) and "esta primavera" (feminine) both name
+# the reading anchored on the current year; the pattern reads either article so the season word
+# alone decides which season it is.
+_THIS_SEASON: Final = re.compile(r"\best[ae]\s+(primavera|verano|otono|invierno)\b")
+_LAST_SEASON: Final = re.compile(r"\b(primavera|verano|otono|invierno)\s+pasad[ao]\b")
+
+
+def _season_months(season: str, year: int) -> tuple[str, tuple[int, int, int]]:
+    months = _SEASON_MONTHS[season]
+    named = ", ".join(_MONTHS[month - 1] for month in months[:-1])
+    return f"{named} y {_MONTHS[months[-1] - 1]} de {year}", months
+
+
+def season_ask(sentence: str, *, today: date) -> tuple[str, tuple[str, ...]] | None:
+    """The honest question a season deserves, or `None` when the sentence names no season.
+
+    One reading when the sentence itself picks a year ("este verano" is `today.year`, "el verano
+    pasado" is `today.year - 1`); two when it does not ("en primavera" alone), offered current year
+    first because that is what every other bare period in this file resolves to when a holder does
+    not say otherwise (`window_in`'s own "the last time it happened, counting the one under way").
+
+    Never a guess: nothing here reads `window_in`'s vocabulary or touches a plan. The caller answers
+    with this question and these chips and asks the ledger nothing.
+    """
+    folded = spanish.folded(sentence)
+    match = _SEASON.search(folded)
+    if match is None:
+        return None
+    season = match.group(1)
+    years: tuple[int, ...]
+    if _THIS_SEASON.search(folded):
+        years = (today.year,)
+    elif _LAST_SEASON.search(folded):
+        years = (today.year - 1,)
+    else:
+        years = (today.year, today.year - 1)
+    readings = [_season_months(season, year)[0] for year in years]
+    chips = tuple(reading[0].upper() + reading[1:] for reading in readings)
+    question = "¿Te refieres a " + " o a ".join(readings) + "?"
+    return question, chips

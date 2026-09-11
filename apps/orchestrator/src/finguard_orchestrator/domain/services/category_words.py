@@ -183,8 +183,17 @@ _PRECISE: Final[dict[str, tuple[str, ...]]] = {
     "INTEREST": ("intereses", "interes"),
 }
 
+# B-1 (Wave 3 hardening): the gerund ("quitando") was here; the imperative a holder actually
+# types was not. "Quita restaurantes", "elimina restaurantes", "borra restaurantes", "saca
+# restaurantes", "fuera restaurantes" and "excluye restaurantes" all named the category and
+# nothing marked it negative, so a plan built from `precisely_named_in` alone (never checked
+# against `precisely_excluded_in`) read every one of them as the opposite of what was asked —
+# "en restaurantes" for a request to drop restaurants, the worst failure mode this vocabulary can
+# produce because it is wrong with full confidence. `ya no` (`"ya no cuentes"`) already matched
+# through the existing `no\s+cuentes` branch and is not repeated here.
 _EXCLUSION_PREFIX: Final = re.compile(
-    r"(?:\bsin(?:\s+contar|\s+incluir)?|\bquitando|\bexcepto|\bsalvo|\bmenos"
+    r"(?:\bsin(?:\s+contar|\s+incluir)?|\bquitando|\bquita(?:r)?|\belimina(?:r)?|\bborra(?:r)?"
+    r"|\bsaca(?:r)?|\bexcluye(?:ndo)?|\bexcepto|\bsalvo|\bmenos|\bfuera(?:\s+de)?"
     r"|\bno\s+(?:contamos|cuentes|incluimos|incluyas|metas))"
     r"(?:\s+(?:el|la|los|las|de|gastos?|movimientos?|categorias?|y|ni))*"
     r"[a-z0-9\s,/-]{0,60}$"
