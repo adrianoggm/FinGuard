@@ -221,13 +221,16 @@ def _visual_contexts(
         # a window one turn wide; `test_an_older_payload_validates_but_a_sort_restyle_waits_for_
         # the_next_chart` (`test_visualization_stage1.py`) pins both halves of this paragraph.
         #
-        # What still narrows, and why it is safe to: `cardinality` is the one dataset-level number
-        # the wire carries (the donut rule's), copied onto every field below rather than kept per
-        # field, so whichever field `role("dimension")` lands on -- the true dimension, or an old
-        # payload's series misread as one -- re-emits that same count. `row_count` and
-        # `plan_metric` are not on the wire at all: neither `valid_for`, `merge_encoding_patch` nor
-        # `verify` reads either, and a count of rows is not something a browser should be able to
-        # assert. The floor never runs on a round-tripped profile regardless -- it runs on one
+        # Task 2 (Wave 3 hardening, A-6/U-4/C-5): `cardinality` now travels per field
+        # (`VisualFieldPayload.cardinality`), so the true dimension, a series, or an old payload's
+        # series misread as one each keep their own count -- falling back to the one dataset-level
+        # number (`item.profile.cardinality`, the nominal dimension's) only for a field an older
+        # client's payload predates this key for, the same one-turn-wide window `role`/`order`'s
+        # own fallback above already describes. `row_count` and `plan_metric` now round-trip too:
+        # neither is authority -- `valid_for`/`merge_encoding_patch`/`verify` read neither -- but
+        # `measure_metric()` (`chart.py`) is the one thing that does, and a later turn's
+        # explanation calling it on a zeroed `plan_metric` is exactly A-7's defect reopened through
+        # this wire. The floor never runs on a round-tripped profile regardless -- it runs on one
         # built fresh from the dataset in the same turn.
         profile = VisualProfile(
             fields=tuple(
@@ -237,7 +240,9 @@ def _visual_contexts(
                     field.role
                     if field.role is not None
                     else ("measure" if field.type == "quantitative" else "dimension"),
-                    item.profile.cardinality,
+                    field.cardinality
+                    if field.cardinality is not None
+                    else item.profile.cardinality,
                     field.order if field.order is not None else _DEFAULT_ORDER,
                 )
                 for field in item.profile.fields
@@ -249,8 +254,8 @@ def _visual_contexts(
             verified_total=item.profile.verified_total,
             comparison=item.profile.comparison,
             plan_limited=item.profile.plan_limited,
-            row_count=0,
-            plan_metric=None,
+            row_count=item.profile.row_count,
+            plan_metric=item.profile.plan_metric,
         )
         title_value = raw.get("title")
         title = title_value if isinstance(title_value, str) else None
@@ -314,6 +319,8 @@ def _visual_contexts(
                 plan_digest=item.plan_digest,
                 source=item.source,
                 fallback_reason=item.fallback_reason,
+                group_by=item.group_by,
+                metric_definition_borrowed=item.metric_definition_borrowed,
             )
         )
     return tuple(result)
@@ -384,16 +391,18 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
                     "type": field.type,
                     "role": field.role,
                     "order": field.order,
+                    # Task 2 (Wave 3 hardening, A-6): the field's own count, not the dataset-level
+                    # one below -- a series and its dimension can have different cardinalities, and
+                    # collapsing both onto one number is exactly the defect this key exists to end.
+                    "cardinality": field.cardinality,
                 }
                 for field in context.profile.fields
             ],
-            # The wire payload keeps one dataset-level count, same as before the profile carried
-            # per-field cardinality. It is the nominal dimension's -- what `_limit` and the donut
-            # rule both key off of (`_limit` reads its `order`, the donut rule its `cardinality`),
-            # never "the field that lands in `color`": in a comparison that field is the series,
-            # not the dimension. It is 0 whenever the chart's dimension is temporal rather than
-            # nominal -- read that as "not a donut's business", never as "no rows": the rows are
-            # still all there.
+            # Kept for an older client's payload, which predates per-field cardinality above: the
+            # nominal dimension's count, what `_limit` and the donut rule both key off of when a
+            # field's own number is absent. It is 0 whenever the chart's dimension is temporal
+            # rather than nominal -- read that as "not a donut's business", never as "no rows": the
+            # rows are still all there.
             "cardinality": next(
                 (
                     field.cardinality
@@ -409,6 +418,10 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
             "verified_total": context.profile.verified_total,
             "comparison": context.profile.comparison,
             "plan_limited": context.profile.plan_limited,
+            # Task 2 (Wave 3 hardening, U-4/C-5): sealed with the rest -- a later turn's
+            # explanation reads `measure_metric()`, which needs `plan_metric` to have survived.
+            "row_count": context.profile.row_count,
+            "plan_metric": context.profile.plan_metric,
         },
         "token": context.token,
         # Wave 4.3: the labels the chart drew, sealed with the rest -- `context_semantics` is
@@ -425,6 +438,12 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
         # the fix wave's own two facts just above are -- riding the same digest, no change there.
         "source": context.source,
         "fallback_reason": context.fallback_reason,
+        # Task 2 (Wave 3 hardening, U-5): sealed with the rest, for the same reason `plan_digest`
+        # above is -- `_nouns_of` (`visual_explanation.py`) reads it on a later turn.
+        "group_by": context.group_by,
+        # Task 2 (Wave 3 hardening, A-2): sealed with the rest -- `read_drill_down` reads it on a
+        # later turn to refuse narrowing a chart whose plan it never actually drew.
+        "metric_definition_borrowed": context.metric_definition_borrowed,
     }
 
 

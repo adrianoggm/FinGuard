@@ -261,6 +261,12 @@ class VisualFieldPayload(_Payload):
     # are absent.
     role: FieldRole | None = None
     order: FieldOrder | None = None
+    # Task 2 (Wave 3 hardening, A-6): per field, beside `role`/`order` above -- the same reason
+    # those two are optional applies here: an older client's payload predates this key and still
+    # validates, `to_domain` falling back to `VisualProfilePayload.cardinality` (the one
+    # dataset-level number that used to be all there was) for exactly that window, one turn wide,
+    # the same shape `role`/`order`'s own fallback comment above already describes.
+    cardinality: int | None = Field(default=None, ge=0, le=10000)
 
     @model_validator(mode="after")
     def _role_matches_type(self) -> "VisualFieldPayload":
@@ -303,6 +309,13 @@ class VisualProfilePayload(_Payload):
     verified_total: bool = False
     comparison: bool = False
     plan_limited: bool = False
+    # Task 2 (Wave 3 hardening, U-4/C-5): both used to be reconstructed as `0`/`None` on every
+    # `to_domain` regardless of the wire -- a `row_count` a browser sends is not authority (nothing
+    # in `domain/` reads it as anything but a shape fact, the same as `VisualProfile.row_count`'s
+    # own docstring already argues), and `plan_metric` is one of the closed markers
+    # `measure_metric()` compares against literals, never executes.
+    row_count: int = Field(default=0, ge=0)
+    plan_metric: str | None = Field(default=None, max_length=32, pattern=r"^[A-Z][A-Z0-9_]*$")
 
     @model_validator(mode="after")
     def _no_duplicate_field_names(self) -> "VisualProfilePayload":
@@ -363,6 +376,14 @@ class VisualContextPayload(_Payload):
     fallback_reason: (
         Literal["abstention", "timeout", "provider_error", "invalid_proposal"] | None
     ) = None
+    # Task 2 (Wave 3 hardening, U-5): the plan's own grouping, sealed with the rest -- `None` for
+    # the four plan-less producers, the same way `plan_digest` above is `None` for them. An
+    # unrecognised value is a 422, the same convention `source`/`fallback_reason` already use.
+    group_by: GroupBy | None = None
+    # Task 2 (Wave 3 hardening, A-2): sealed with the rest -- `read_drill_down` refuses to narrow a
+    # chart carrying `True` here, since `plan_digest` alone cannot tell a borrowed plan from an
+    # owned one (see `VisualContext`'s own docstring).
+    metric_definition_borrowed: bool = False
 
     @model_validator(mode="after")
     def _window_is_both_ends_or_neither(self) -> "VisualContextPayload":

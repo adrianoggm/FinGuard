@@ -28,6 +28,7 @@ from finguard_orchestrator.application.queries.financial_turn import AskFinancia
 from finguard_orchestrator.application.queries.readers.drill_down import (
     DrillAsk,
     DrillDown,
+    DrillUnbound,
     read_drill_down,
 )
 from finguard_orchestrator.domain.constants import MAX_SELECTED_TRANSACTIONS
@@ -304,6 +305,42 @@ async def test_a_breakdown_drills_into_the_category_it_names() -> None:
     assert result.outcome == "PLANNED"
 
 
+async def test_a2_a_category_drill_after_a_comparison_asks_instead_of_narrowing() -> None:
+    """The reachable A-2 scenario, at the handler: `_compare_periods` seals a comparison chart
+    whose `plan_digest` fingerprints the back-filled `conversation.last_plan` (the latest window's
+    own plan) with `metric_definition_borrowed=True` -- reproduced here directly rather than by
+    driving `_compare_periods` itself, since the fact that matters is the sealed context's own
+    state, not how it got there. A category drill over it must ask honestly, with no ledger call
+    narrowing "the latest window" silently the way it used to."""
+    ledger = RecordingLedger()
+    breakdown_plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_N_MONTHS, n=3),
+        group_by=GroupBy.CATEGORY,
+        only_account_id=ACCOUNT,
+    )
+    context = VisualContext(
+        "chart-comparison",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=("RESTAURANTS", "TRANSPORT_FUEL", "GROCERIES"),
+        ranked=True,
+        plan_digest=plan_digest(breakdown_plan),
+        metric_definition_borrowed=True,
+    )
+    conversation = Conversation(last_plan=breakdown_plan, visual_contexts=(context,))
+
+    result, _ = await turn_for(
+        "¿Por qué la gasolina es tan cara?",
+        FALLBACK_PLAN,
+        ledger=ledger,
+        conversation=conversation,
+    )
+
+    assert len(ledger.calls) == 0
+    assert result.outcome == "DRILL_UNBOUND"
+
+
 async def test_an_ordinary_question_still_asks_for_no_movements_cap() -> None:
     ledger = RecordingLedger()
     result, _ = await turn_for(
@@ -514,6 +551,26 @@ def test_i1_a_client_edited_last_plan_is_not_drilled() -> None:
     conversation = replace(MONTH_CONVERSATION, last_plan=edited)
 
     assert read_drill_down("¿Por qué agosto es tan alto?", conversation, today=AFTER_AUGUST) is None
+
+
+def test_a2_a_borrowed_plan_is_never_silently_drilled_the_reader_asks_instead() -> None:
+    """A-2: `_compare_periods` seals a comparison chart's `plan_digest` from `conversation.
+    last_plan` after `stream()`'s own back-fill (`~:630-645`) sets `metric_definition_borrowed`
+    True -- so a later category drill's digest check against that SAME back-filled `last_plan`
+    always matches, tautologically, whether or not the chart drew that plan at all. A category
+    drill over such a chart must ask honestly rather than narrow the latest window silently."""
+    category_plan = replace(MONTH_PLAN, group_by=GroupBy.CATEGORY)
+    context = replace(
+        MONTH_CONTEXT,
+        plan_digest=plan_digest(category_plan),
+        metric_definition_borrowed=True,
+    )
+    conversation = Conversation(last_plan=category_plan, visual_contexts=(context,))
+
+    drill = read_drill_down("¿Por qué restaurantes es tan alto?", conversation, today=AFTER_AUGUST)
+
+    assert isinstance(drill, DrillUnbound)
+    assert "no es" in drill.text.lower()
 
 
 def test_i4_a_merchant_grouped_plan_with_tied_labels_is_never_asked_about() -> None:

@@ -49,6 +49,7 @@ from finguard_orchestrator.application.queries.readers import seam
 from finguard_orchestrator.application.queries.readers.drill_down import (
     DrillAsk,
     DrillDown,
+    DrillUnbound,
     read_drill_down,
 )
 from finguard_orchestrator.application.queries.readers.follow_up import (
@@ -1248,6 +1249,18 @@ class AskFinancialQuestionHandler:
             if isinstance(drill, DrillAsk):
                 yield AskFinancialQuestionResult(
                     outcome="DRILL_AMBIGUOUS",
+                    text=drill.text,
+                    question=drill.text,
+                    plan=answer_writer.describe(previous) if previous is not None else None,
+                    conversation=was,
+                )
+                return
+            if isinstance(drill, DrillUnbound):
+                # A-2 (Wave 3 hardening): the chart's plan was borrowed, not drawn this turn -- the
+                # honest ask, the same shape `DRILL_AMBIGUOUS` above already uses, never a silent
+                # narrow of whatever `conversation.last_plan` happens to hold.
+                yield AskFinancialQuestionResult(
+                    outcome="DRILL_UNBOUND",
                     text=drill.text,
                     question=drill.text,
                     plan=answer_writer.describe(previous) if previous is not None else None,

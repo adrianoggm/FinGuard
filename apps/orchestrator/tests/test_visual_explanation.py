@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from finguard_orchestrator.domain.enums import GroupBy
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartEncoding,
@@ -227,16 +228,18 @@ def test_a_single_row_uses_the_singular_noun() -> None:
 
 
 def test_the_count_comes_from_the_labels_that_crossed_the_wire_not_row_count() -> None:
-    """I-2: `conversation_mapper.to_domain` zeroes `profile.row_count` on purpose (it is not on
-    the wire), so an explanation asked on a later turn must count what actually travelled --
-    `context.labels` -- or it states a false zero on every echoed chart."""
+    """Task 2 (Wave 3 hardening, U-4/C-5): `profile.row_count` now survives `to_domain` (it is a
+    real wire field), but `_scope_summary` must still count `context.labels` -- the one thing a
+    later turn can resolve a reference against -- rather than switch to reading the now-available
+    `row_count`, which is not authority and can legitimately differ (a plan-limited chart's rows
+    are capped while its labels are not, or vice versa)."""
     context = _context("categorical_comparison")
     conversation = IDLE.with_visual_context(context)
     payload = mapper.to_payload(conversation)
     echoed = mapper.to_domain(payload)
     wired_context = echoed.visual_context()
     assert wired_context is not None
-    assert wired_context.profile.row_count == 0
+    assert wired_context.profile.row_count == context.profile.row_count
     minted_text = explain_chart(context).scope_summary
     wired_text = explain_chart(wired_context).scope_summary
     assert minted_text == wired_text
@@ -334,27 +337,73 @@ _COUNT_PATTERN = re.compile(
 
 
 def test_nouns_of_a_month_label_tuple() -> None:
-    assert _nouns_of(("2026-01", "2026-02")) == ("mes", "meses", "un mes")
+    assert _nouns_of(None, ("2026-01", "2026-02")) == ("mes", "meses", "un mes")
 
 
 def test_nouns_of_an_iso_date_label_tuple() -> None:
-    assert _nouns_of(("2026-01-05", "2026-01-12")) == ("día", "días", "un día")
+    assert _nouns_of(None, ("2026-01-05", "2026-01-12")) == ("día", "días", "un día")
 
 
 def test_nouns_of_a_category_key_label_tuple() -> None:
-    assert _nouns_of(("GROCERIES", "RESTAURANTS")) == ("categoría", "categorías", "una categoría")
+    assert _nouns_of(None, ("GROCERIES", "RESTAURANTS")) == (
+        "categoría",
+        "categorías",
+        "una categoría",
+    )
 
 
 def test_nouns_of_free_strings_is_generic() -> None:
-    assert _nouns_of(("Netflix", "Spotify")) == ("grupo", "grupos", "un grupo")
+    assert _nouns_of(None, ("Netflix", "Spotify")) == ("grupo", "grupos", "un grupo")
 
 
 def test_nouns_of_a_mixed_label_tuple_is_generic() -> None:
-    assert _nouns_of(("2026-01", "GROCERIES")) == ("grupo", "grupos", "un grupo")
+    assert _nouns_of(None, ("2026-01", "GROCERIES")) == ("grupo", "grupos", "un grupo")
 
 
 def test_nouns_of_an_empty_tuple_is_generic() -> None:
-    assert _nouns_of(()) == ("grupo", "grupos", "un grupo")
+    assert _nouns_of(None, ()) == ("grupo", "grupos", "un grupo")
+
+
+# --- Task 2 (Wave 3 hardening, U-5): `group_by` decides first, WEEK is no longer misread as DAY --
+
+
+def test_nouns_of_a_week_group_says_semanas_even_with_day_shaped_labels() -> None:
+    """A WEEK bucket's key is its Monday, written as a plain ISO date -- the identical shape a DAY
+    key already has (the gap `_nouns_of`'s own docstring used to name). `group_by=WEEK` must win
+    over that label shape, not fall through to the day branch."""
+    assert _nouns_of(GroupBy.WEEK, ("2026-01-05", "2026-01-12")) == (
+        "semana",
+        "semanas",
+        "una semana",
+    )
+
+
+def test_nouns_of_none_group_by_falls_back_to_labels() -> None:
+    """A labels-only context (`group_by=None`, the four plan-less producers) still works exactly
+    as before this task -- the label-shape guess is untouched."""
+    assert _nouns_of(None, ("2026-01", "2026-02")) == ("mes", "meses", "un mes")
+
+
+def test_a_week_chart_says_semanas_after_a_round_trip() -> None:
+    """`group_by` must survive `to_payload` -> `to_domain` for a later-turn explanation to read it
+    at all -- the same round trip `source`/`fallback_reason` already prove for themselves."""
+    spec, profile = _spec_and_profile("breakdown")
+    context = VisualContext(
+        chart_id="c1",
+        spec=spec,
+        profile=profile,
+        labels=("2026-01-05", "2026-01-12"),
+        source="deterministic",
+        group_by=GroupBy.WEEK,
+    )
+    conversation = IDLE.with_visual_context(context)
+    payload = mapper.to_payload(conversation)
+    echoed = mapper.to_domain(payload)
+    restored = echoed.visual_context()
+    assert restored is not None
+    assert restored.group_by == GroupBy.WEEK
+    explanation = explain_chart(restored)
+    assert "semana" in explanation.scope_summary
 
 
 @pytest.mark.parametrize(

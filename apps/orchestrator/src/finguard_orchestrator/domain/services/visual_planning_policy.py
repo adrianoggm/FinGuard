@@ -133,6 +133,16 @@ class VisualPlanningPolicy:
             floor = self._fallback.plan(profile, presentation)
             if floor is None:
                 return None
+        if floor is None and proposed_spec is not None:
+            # A-5 (Wave 3 hardening): `promoted`'s own accepted-proposal branch used to skip the
+            # floor entirely (R2), which is exactly why `changed_from_baseline` could never be
+            # measured in the one mode it exists to justify. Computed here too now, but only for
+            # the comparison below -- never gating on the result the way the eligibility guard
+            # does above: a floor that declines (a one-row profile) must not take back a valid
+            # model proposal `promoted` already decided to show
+            # (`test_promoted_trusts_the_eligibility_guard`). `floor is None` stays a legitimate
+            # outcome here, read by `changed` below as "nothing to compare against".
+            floor = self._fallback.plan(profile, presentation)
         changed = (
             canonical(proposed_spec) != canonical(floor)
             if proposed_spec is not None and floor is not None
@@ -147,7 +157,14 @@ class VisualPlanningPolicy:
             source="llm" if accept else "deterministic",
             # `draft.rationale` is never read: it is model-written free text that can echo the
             # question back, and the question must never reach a record (Section E's guarantee).
-            fallback_reason=reason,
+            #
+            # A-4 (Wave 3 hardening): `None` in `shadow` regardless of what `reason` holds -- the
+            # floor is always what shadow shows (`accept` above is never `True` in this mode), so
+            # nothing here ever fell back to it; recording a reason anyway told the holder's own
+            # explanation (`visual_explanation._provenance`) that a fallback happened when the
+            # floor was the intended selection all along, and corrupted the very rate Task 9 reads
+            # as promotion evidence.
+            fallback_reason=None if self._mode == "shadow" else reason,
             proposed=proposed,
             valid=proposed_spec is not None,
             accepted=accept,

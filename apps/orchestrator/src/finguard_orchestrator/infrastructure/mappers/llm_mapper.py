@@ -418,6 +418,19 @@ def _remember_visual_context(
         # already came from -- never re-derived, never guessed.
         source=decision.source,
         fallback_reason=decision.fallback_reason,
+        # Task 2 (Wave 3 hardening, U-5): the plan's own grouping, when a `FinancialPlan` -- not a
+        # `ComparisonPlan`/`RatioPlan`, neither of which groups this way -- drew this chart. `None`
+        # otherwise, the same as `plan_digest`/`window` above for the producers with nothing to
+        # fingerprint.
+        group_by=(
+            result.metric_definition.group_by
+            if isinstance(result.metric_definition, FinancialPlan)
+            else None
+        ),
+        # Task 2 (Wave 3 hardening, A-2): from the same turn-local flag `plan_digest` above is a
+        # fingerprint of -- `stream()`'s own back-fill (`~:630-645`) is the only place this is ever
+        # `True`, and it is the fact a bare digest comparison cannot recover on a later turn.
+        metric_definition_borrowed=result.metric_definition_borrowed,
     )
     # Task 3: sealed here, where the context is born -- before it ever reaches `to_payload` --
     # rather than by a second pass over the wire once the response is built. `seal` is `None` for

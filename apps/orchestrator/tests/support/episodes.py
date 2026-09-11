@@ -247,7 +247,10 @@ _VISUAL_OUTCOMES = {
 # named set of its own, the same shape as `_VISUAL_OUTCOMES`, for the same reason: without this,
 # `DRILL_AMBIGUOUS` fell through to `tool_of`'s `QUERY` fallthrough and a turn that asked instead of
 # answering was silently counted as having answered.
-_ASKED_ABOUT_THE_FIGURES = {"DRILL_AMBIGUOUS"}
+# Task 2 (Wave 3 hardening, A-2): `DRILL_UNBOUND` belongs beside `DRILL_AMBIGUOUS` for the same
+# reason -- a question about the figures on screen (this chart is not this plan's), not a request
+# to change the chart, and no slot opened or workflow left waiting either.
+_ASKED_ABOUT_THE_FIGURES = {"DRILL_AMBIGUOUS", "DRILL_UNBOUND"}
 
 # N-1 (4.4 re-review): a compound read probes as `QUERY` by fallthrough yet answers through
 # `_open_payment_events` with a single answer frame -- no plan of its own runs through `_steps`,

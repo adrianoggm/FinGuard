@@ -174,12 +174,18 @@ async def test_a_providers_own_timeout_is_told_apart_from_the_budget() -> None:
 async def test_the_three_failures_are_told_apart(outcome, reason, mode) -> None:
     """Nine rows: each of the three causes, in each of the three modes that attempt the model at
     all. `shadow` and `promoted` were previously untested here -- only `hybrid` was -- so
-    `promoted`'s lazy floor recovery (the only reason that code path exists) had zero coverage."""
+    `promoted`'s lazy floor recovery (the only reason that code path exists) had zero coverage.
+
+    A-4 (Wave 3 hardening): `shadow` never shows anything but the floor (`accept` is never `True`
+    there), so nothing in this mode ever falls back -- its own `fallback_reason` is `None`
+    regardless of `reason`, unlike `hybrid`/`promoted`, which really did just fall back to the
+    floor and say so."""
     decision = await policy(ScriptedVisualPlanner(outcome), mode, budget=0.05).decide(
         "q", PROFILE, DEFAULT_PRESENTATION
     )
     floor = DeterministicVisualPlanner().plan(PROFILE, DEFAULT_PRESENTATION)
-    assert decision.source == "deterministic" and decision.fallback_reason == reason
+    expected_reason = None if mode == "shadow" else reason
+    assert decision.source == "deterministic" and decision.fallback_reason == expected_reason
     # A timeout never learns whether the provider was reached; the other two did reach it.
     assert decision.proposed is (reason != "timeout")
     assert decision.proposed_spec is None
@@ -202,16 +208,17 @@ async def test_every_fallback_reason_is_reachable() -> None:
     assert reasons == set(get_args(FallbackReason))
 
 
-async def test_promoted_does_not_pay_for_the_baseline() -> None:
-    """The direct proof of R2's lazy half: a `promoted` branch that computed the floor and then
-    discarded the comparison would still pass the old `changed_from_baseline is None` assertion --
-    only counting the floor's own calls proves the laziness rather than a consequence of it."""
+async def test_promoted_pays_for_the_baseline_to_measure_change() -> None:
+    """A-5 (Wave 3 hardening): R2's lazy half traded away the one number `promoted` exists to be
+    measured by -- reversed here. An accepted proposal now computes the floor too, so
+    `changed_from_baseline` is measurable in the mode it exists to justify, at the cost of one
+    extra floor call per accepted turn."""
     floor = _CountingFloor()
     decision = await policy(ScriptedVisualPlanner(VERTICAL), "promoted", fallback=floor).decide(
         "q", PROFILE, DEFAULT_PRESENTATION
     )
-    assert decision.accepted and decision.changed_from_baseline is None
-    assert floor.calls == 0
+    assert decision.accepted and decision.changed_from_baseline is True
+    assert floor.calls == 1
 
 
 async def test_promoted_pays_for_the_baseline_when_the_model_fails() -> None:
