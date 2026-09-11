@@ -124,6 +124,11 @@ services:
       ORCHESTRATOR_OLLAMA_TIMEOUT_SECONDS: "120"
       ORCHESTRATOR_BANKING_TIMEOUT_SECONDS: "10"
       ORCHESTRATOR_SUPPORTING_MOVEMENTS: "10"
+      # Who draws a chart: `deterministic` until the Task 9 runbook's three `evaluate-visual`
+      # runs (docs/superpowers/plans/2026-09-05-visual-planner-shadow.md) say otherwise. This
+      # key exists so that runbook's flip step has something real to flip -- `bootstrap/main.py`
+      # reads `settings.visual_planner` from this exact variable when wiring the app.
+      ORCHESTRATOR_VISUAL_PLANNER: deterministic
       # The deterministic router remains authoritative wherever it recognises a turn. A model only
       # widens its generic catch-all, and cannot create a payment or an own-account transfer.
       ORCHESTRATOR_TURN_INTERPRETER: hybrid
