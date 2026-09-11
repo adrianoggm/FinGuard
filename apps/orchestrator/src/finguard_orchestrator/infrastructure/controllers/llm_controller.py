@@ -107,10 +107,16 @@ from finguard_orchestrator.domain.services import (
 )
 from finguard_orchestrator.domain.services.deterministic_visual_planner import VisualDecision
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.visual_explanation import (
+    WhyAsked,
+    asks_why,
+    explain_chart,
+)
 from finguard_orchestrator.domain.services.visual_interpreter import (
     VisualIntent,
     apply_visual_intent,
     interpret_visual,
+    resolve_target,
 )
 from finguard_orchestrator.domain.services.visual_plan_verifier import verify
 from finguard_orchestrator.domain.value_objects.caller import Caller
@@ -324,6 +330,41 @@ def _refusal_response(rule: RejectionRule, conversation: Conversation) -> Questi
             f"No puedo aplicar ese cambio a este gráfico: {_REFUSAL_TEXT[rule]}; el anterior "
             "se mantiene."
         ),
+        conversation=conversation_mapper.to_payload(conversation),
+    )
+
+
+def _explanation_response(why: WhyAsked, conversation: Conversation) -> QuestionResponse:
+    """R4/R5/R6: «¿Por qué este gráfico?» answered from the chart itself -- zero ledger calls, zero
+    model calls, the conversation unchanged. `context` is resolved exactly as a restyle resolves
+    one (`resolve_target`, the same helper `interpret_visual` uses), and the two shapes it can
+    miss on -- no such chart, an untrusted echo -- are `_visual_only_response`'s own two shapes,
+    verbatim: a holder should not learn two different sentences for the same failure depending on
+    whether the turn asked to change the chart or asked why it looks the way it does.
+    """
+    # `resolve_target` returns `None` here only for "el segundo gráfico" with no second chart --
+    # `conversation.visual_contexts` is non-empty (the caller's own gate) so `resolve_target`
+    # otherwise always names a real chart_id. `visual_context(None)` means something else
+    # entirely (its own default: "the last chart"), so `None` is answered here directly rather
+    # than handed to it.
+    target = resolve_target(why.target, conversation.visual_contexts)
+    context = conversation.visual_context(target) if target is not None else None
+    if context is None:
+        return QuestionResponse(
+            outcome="VISUAL_NEEDS_TARGET",
+            text="Indica qué gráfico quieres cambiar.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    if not context.trusted:
+        return QuestionResponse(
+            outcome="VISUAL_UNTRUSTED",
+            text="No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
+            conversation=conversation_mapper.to_payload(conversation),
+        )
+    return QuestionResponse(
+        outcome="VISUAL_EXPLAINED",
+        text=explain_chart(context).as_text(),
+        explanation=llm_mapper._explanation_of(context),
         conversation=conversation_mapper.to_payload(conversation),
     )
 
@@ -1599,6 +1640,20 @@ async def ask(
     # holder's real one, and the turn then refuses at the trust gate -- self-inflicted (a client
     # can only harm its own conversation this way) and the safe direction: refusing beats
     # silently resolving onto whichever context happens to still be trusted.
+    # R5: claimed before `interpret_visual` -- «¿por qué este gráfico?» is a question about the
+    # chart, not a request to change it, and the two grammars do not overlap (`asks_why` excludes
+    # every `_FINANCIAL`/`_VISUAL` sentence `interpret_visual` would otherwise read). Gated on
+    # there being a chart at all: with nothing charted the recogniser has nothing to explain and
+    # this falls through unchanged, to whatever answered the sentence before this recogniser
+    # existed -- not an oversight, R5's own rule for an empty conversation.
+    why = asks_why(request.question)
+    if why is not None and was.visual_contexts:
+        # `classify_claimed_visual`/`record_visual_follow_up`: no `VisualFollowUpKind` fits an
+        # explanation (`PRESENTATION_ONLY`, `ANALYTICAL_RESHAPE`, `DRILL_DOWN`, `UNRELATED`,
+        # `AMBIGUOUS`) -- it neither changes the chart nor asks about one part of it -- and adding
+        # one is a domain vocabulary change Task 5/6 would have to chase through every ratchet.
+        # Nothing is recorded here; the outcome itself (`VISUAL_EXPLAINED`) is the record.
+        return _explanation_response(why, was)
     visual = interpret_visual(request.question, was.visual_contexts)
     if visual is not None:
         follow_up = classify_claimed_visual(visual, request.question)
@@ -1772,6 +1827,18 @@ async def ask_streaming(
         conversation_mapper.seal_context, holder_reference=who.holder_reference, codec=metric_tokens
     )
     presentation = _presentation_of(request)
+
+    # R5: the same short-circuit as the question route, before `interpret_visual` -- see its own
+    # comment there. Streaming yields the identical single `answer` frame the restyle branch below
+    # does: the answer text exists all at once, so there is nothing to stage.
+    why = asks_why(request.question)
+    if why is not None and was.visual_contexts:
+        answer = _explanation_response(why, was)
+
+        async def explanation_events() -> AsyncIterator[str]:
+            yield _sse({"type": "answer", **answer.model_dump()})
+
+        return StreamingResponse(explanation_events(), media_type="text/event-stream")
 
     visual = interpret_visual(request.question, was.visual_contexts)
     if visual is not None:

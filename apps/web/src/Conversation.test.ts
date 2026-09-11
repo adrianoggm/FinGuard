@@ -518,6 +518,58 @@ describe("the one field this client writes", () => {
   });
 });
 
+describe("¿Por qué este gráfico?", () => {
+  const explanation = {
+    chart_reason: "Barras: comparas categorías entre sí.",
+    ordering_reason: "Orden: de mayor a menor movimiento.",
+    scope_summary: "Datos: 2 categorías.",
+    provenance: "Elegido por las reglas de FinGuard.",
+    text: "Barras: comparas categorías entre sí. Orden: de mayor a menor movimiento. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
+  };
+  const chart = {
+    kind: "chart" as const,
+    chart_id: "chart-1",
+    unit: "money" as const,
+    spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+    data: [{ dimension: "Comida", value_minor: 100 }],
+  };
+
+  function markupFor(fields: Partial<Answer>): string {
+    return renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [{ who: "assistant", answer: answer({ plan: "consulta", ...fields }) }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+  }
+
+  it("renders the four lines before «Ver la consulta» when the answer explains its chart", () => {
+    const markup = markupFor({ explanation, visualization: chart });
+    expect(markup).toContain("¿Por qué este gráfico?");
+    for (const line of [
+      explanation.chart_reason,
+      explanation.ordering_reason,
+      explanation.scope_summary,
+      explanation.provenance,
+    ]) {
+      expect(markup).toContain(line);
+    }
+    expect(markup.indexOf("¿Por qué este gráfico?")).toBeLessThan(markup.indexOf("Ver la consulta"));
+  });
+
+  it("renders no such details when the answer carries no explanation", () => {
+    const markup = markupFor({ visualization: chart });
+    expect(markup).not.toContain("¿Por qué este gráfico?");
+  });
+
+  it("renders no such details when the explanation has no chart to explain", () => {
+    const markup = markupFor({ explanation });
+    expect(markup).not.toContain("¿Por qué este gráfico?");
+  });
+});
+
 describe("financial breakdowns", () => {
   it("presents minor-unit money, count and ratio semantics without mutating API rows", () => {
     const moneyChart = visualPresentation({
@@ -807,6 +859,21 @@ describe("financial breakdowns", () => {
     expect(() => validateVoiceAnswer(answer({ visualization_derivation: {
       ...derivation, spec: { ...derivation.spec, data: { values: [{ amount: 10 }] } },
     } }))).toThrow();
+  });
+  it("accepts explanation as null, absent, and a well-formed object; rejects a malformed one", () => {
+    const explanation = {
+      chart_reason: "Barras: comparas categorías entre sí.",
+      ordering_reason: "Orden: de mayor a menor movimiento.",
+      scope_summary: "Datos: 2 categorías.",
+      provenance: "Elegido por las reglas de FinGuard.",
+      text: "Barras: comparas categorías entre sí. Orden: de mayor a menor movimiento. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
+    };
+    expect(validateVoiceAnswer(answer({ explanation: null })).explanation).toBeNull();
+    expect(validateVoiceAnswer(answer({})).explanation).toBeUndefined();
+    expect(validateVoiceAnswer(answer({ explanation })).explanation).toEqual(explanation);
+    expect(() =>
+      validateVoiceAnswer(answer({ explanation: { chart_reason: 1 } as unknown as Answer["explanation"] })),
+    ).toThrow("Respuesta de voz inválida.");
   });
   it("rejects a chart whose encoding names a field absent from its rows", () => {
     const payload = answer({ visualization: {

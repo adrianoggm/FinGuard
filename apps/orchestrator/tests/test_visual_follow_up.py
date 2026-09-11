@@ -12,6 +12,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from support import episodes
 from support.visual_planners import BREAKDOWN_PROFILE
 from test_decisions_call_sites import ACCOUNT as CS_ACCOUNT
 from test_decisions_call_sites import TODAY as CS_TODAY
@@ -58,7 +59,9 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     VisualDecision,
 )
 from finguard_orchestrator.domain.services.intent_router import Intent
+from finguard_orchestrator.domain.services.visual_explanation import explain_chart
 from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent, interpret_visual
+from finguard_orchestrator.domain.services.visual_planning_policy import VisualPlanningPolicy
 from finguard_orchestrator.domain.value_objects.caller import Caller
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -70,6 +73,7 @@ from finguard_orchestrator.infrastructure.controllers import llm_controller
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask as ask_question
 from finguard_orchestrator.infrastructure.controllers.llm_controller import ask_streaming
 from finguard_orchestrator.infrastructure.dto.llm_dto import (
+    ConversationPayload,
     MetricSourcePayload,
     QuestionRequest,
     QuestionResponse,
@@ -1095,3 +1099,219 @@ def test_a_one_name_split_still_declines() -> None:
         read_contextual_follow_up(_query("Separa la gasolina.", conversation=CHARTED_SUMMER))
         is None
     )
+
+
+# --- Wave 4.5, Task 4: «¿Por qué este gráfico?» is answered from the chart, before
+# `interpret_visual` ever runs ---------------------------------------------------------------
+#
+# R4/R5/R6/R10: a claimed "why" turn with a chart to explain answers `VISUAL_EXPLAINED` -- zero
+# ledger calls, zero model calls, the conversation unchanged. Two charts, sealed the same way
+# `_SEALED_CHARTED` is, so «el primer gráfico» has something to disambiguate.
+_FIRST_CONTEXT = replace(
+    CHARTED.visual_contexts[0],
+    chart_id="chart-first",
+    window=AbsoluteRange(date(2026, 1, 1), date(2026, 1, 31)),
+)
+_SECOND_CONTEXT = replace(
+    CHARTED.visual_contexts[0],
+    chart_id="chart-second",
+    window=AbsoluteRange(date(2026, 6, 1), date(2026, 6, 30)),
+)
+_TWO_CHARTED = (
+    Conversation(last_plan=PREVIOUS)
+    .with_visual_context(_FIRST_CONTEXT)
+    .with_visual_context(_SECOND_CONTEXT)
+)
+_SEALED_TWO_CHARTED = replace(
+    _TWO_CHARTED,
+    visual_contexts=tuple(
+        conversation_mapper.seal_context(context, _WHO.holder_reference, _TEST_TOKENS)
+        for context in _TWO_CHARTED.visual_contexts
+    ),
+)
+
+
+def _two_charted_request(sentence: str) -> QuestionRequest:
+    payload = conversation_mapper.to_payload(_SEALED_TWO_CHARTED).model_copy(
+        update={"conversation_id": _CONVERSATION_ID}
+    )
+    return QuestionRequest(question=sentence, conversation=payload)
+
+
+def _decide_spy(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Same shape as `test_performance_objectives.py`'s own spy: patches
+    `VisualPlanningPolicy.decide` on the class so any call at all -- from any instance, including
+    a handler's own default policy -- is recorded, while still running the real body."""
+    calls: list[object] = []
+    original = VisualPlanningPolicy.decide
+
+    async def spy(self: object, *args: object, **kwargs: object) -> object:
+        calls.append(self)
+        return await original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(VisualPlanningPolicy, "decide", spy)
+    return calls
+
+
+@pytest.mark.parametrize("channel", ["TEXT", "VOICE"])
+async def test_the_question_route_explains_the_newest_chart(
+    channel: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """«¿Por qué este gráfico?» answers `VISUAL_EXPLAINED` from `explain_chart` alone -- no ledger
+    call, no model call, the conversation echoed back unchanged -- on both TEXT and VOICE."""
+    fake_queries = _UnreachableQueries()
+    calls = _decide_spy(monkeypatch)
+    request = _charted_request("¿Por qué este gráfico?")
+    request = request.model_copy(update={"channel": channel})
+
+    response = await ask_question(
+        request,
+        _WHO,
+        queries=fake_queries,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    # `row_count` never travels the wire (`conversation_mapper.to_domain`, deliberately) -- the
+    # expected text is computed off the round-tripped context the server actually reconstructed,
+    # not off the in-process fixture.
+    newest = conversation_mapper.to_domain(response.conversation).visual_contexts[-1]
+    assert response.outcome == "VISUAL_EXPLAINED"
+    assert response.text == explain_chart(newest).as_text()
+    assert response.explanation is not None
+    assert response.explanation.text == response.text
+    assert fake_queries.ran == []
+    assert calls == []
+    assert response.conversation == request.conversation
+    assert response.spoken is None
+    assert response.visualization is None
+    assert response.visualization_derivation is None
+
+
+@pytest.mark.parametrize("channel", ["TEXT", "VOICE"])
+async def test_the_streaming_route_explains_the_newest_chart_in_one_frame(
+    channel: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_queries = _UnreachableQueries()
+    calls = _decide_spy(monkeypatch)
+    request = _charted_request("¿Por qué este gráfico?")
+    request = request.model_copy(update={"channel": channel})
+
+    streamed = await ask_streaming(
+        request,
+        _WHO,
+        asking=None,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        queries=fake_queries,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+    chunks = [chunk async for chunk in streamed.body_iterator]
+    body = "".join(chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks)
+    frames = [
+        json.loads(line.removeprefix("data: "))
+        for line in body.splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert len(frames) == 1
+    assert frames[0]["type"] == "answer"
+    assert frames[0]["outcome"] == "VISUAL_EXPLAINED"
+    newest = conversation_mapper.to_domain(
+        ConversationPayload.model_validate(frames[0]["conversation"])
+    ).visual_contexts[-1]
+    assert frames[0]["text"] == explain_chart(newest).as_text()
+    assert fake_queries.ran == []
+    assert calls == []
+
+
+async def test_por_que_el_primer_grafico_explains_the_first_of_two() -> None:
+    """«¿Por qué el primer gráfico?» over two contexts explains `_FIRST_CONTEXT`, not the newest
+    one -- a distinguishing line (the window it draws) says which."""
+    fake_queries = _UnreachableQueries()
+    response = await ask_question(
+        _two_charted_request("¿Por qué el primer gráfico?"),
+        _WHO,
+        queries=fake_queries,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    assert response.outcome == "VISUAL_EXPLAINED"
+    first_sealed = conversation_mapper.to_domain(response.conversation).visual_contexts[0]
+    assert response.text == explain_chart(first_sealed).as_text()
+    assert "enero" in response.text
+    assert fake_queries.ran == []
+
+
+async def test_a_forged_newest_context_answers_untrusted_not_explained() -> None:
+    """An echoed context whose seal does not check out is refused before it is ever explained --
+    the same `VISUAL_UNTRUSTED` shape a restyle gets, not a new one."""
+    fake_queries = _UnreachableQueries()
+    request = _charted_request("¿Por qué este gráfico?")
+    context = request.conversation.visual_contexts[0]
+    context.profile.comparison = not context.profile.comparison
+
+    response = await ask_question(
+        request,
+        _WHO,
+        queries=fake_queries,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    assert response.outcome == "VISUAL_UNTRUSTED"
+    assert fake_queries.ran == []
+
+
+async def test_a_target_that_resolves_to_nothing_answers_needs_target() -> None:
+    """«¿Por qué el segundo gráfico?» over one chart names a chart that is not there -- the same
+    `VISUAL_NEEDS_TARGET` shape a restyle gets."""
+    fake_queries = _UnreachableQueries()
+    response = await ask_question(
+        _charted_request("¿Por qué el segundo gráfico?"),
+        _WHO,
+        queries=fake_queries,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    assert response.outcome == "VISUAL_NEEDS_TARGET"
+    assert fake_queries.ran == []
+
+
+def test_no_chart_at_all_falls_through_unchanged() -> None:
+    """Probed first (task-4-report.md): with nothing charted, `asks_why` has nothing to explain
+    and this falls through exactly as it did before the recogniser existed -- an ordinary
+    financial question that, over `episodes.a_stack()`'s three accounts, asks which one first."""
+    stack = episodes.a_stack()
+    try:
+        response = stack.client.post("/v1/questions", json={"question": "¿Por qué este gráfico?"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "NEEDS_CLARIFICATION"

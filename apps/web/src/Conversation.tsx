@@ -659,8 +659,23 @@ function SaveMetricControl({ token, suggestion }: { token: string; suggestion?: 
  * second table there would be a second opinion about the same figures.
  */
 export function AnswerEvidence({ answer }: { answer: Answer }) {
+  // Present exactly when the server sent one AND this answer actually shows a chart -- by the
+  // time this renders, a wire `visualization_derivation` has already been materialised into
+  // `answer.visualization` (`materializeVisualizationDerivation`, called before the turn is ever
+  // pushed), so `answer.visualization` alone is what "shows a chart" means here, same as
+  // `Bubble`'s own `hasVisualization` above. §12/R6: inert -- no button, no link, no handler.
+  const explainsAChart = answer.explanation && answer.visualization?.kind === "chart";
   return (
     <>
+      {explainsAChart && (
+        <details>
+          <summary>¿Por qué este gráfico?</summary>
+          {answer.explanation!.chart_reason && <p>{answer.explanation!.chart_reason}</p>}
+          {answer.explanation!.ordering_reason && <p>{answer.explanation!.ordering_reason}</p>}
+          {answer.explanation!.scope_summary && <p>{answer.explanation!.scope_summary}</p>}
+          {answer.explanation!.provenance && <p>{answer.explanation!.provenance}</p>}
+        </details>
+      )}
       {answer.plan && (
         <details>
           <summary>Ver la consulta</summary>

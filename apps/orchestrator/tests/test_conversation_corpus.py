@@ -562,7 +562,9 @@ def test_an_ambiguous_bar_asks_without_a_banking_call() -> None:
     a question about the figures already on screen, not a chart change and not an open slot), and
     the conversation is left exactly where it was: nothing ambiguous is drawn."""
     episode = _episode_32()
-    turn_one, turn_two, turn_three = episode.turns[0], episode.turns[1], episode.turns[2]
+    # Turn 2 is now the "¿Por qué este gráfico?" turn Task 5 inserted; the split and the
+    # regroup-by-month this test drives are turns 3 and 4.
+    turn_one, turn_two, turn_three = episode.turns[0], episode.turns[2], episode.turns[3]
     tied_months = tuple(
         episodes.Group(key, minor, count)
         for key, minor, count in (

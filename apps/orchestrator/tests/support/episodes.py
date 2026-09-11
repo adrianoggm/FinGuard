@@ -234,6 +234,11 @@ _VISUAL_OUTCOMES = {
     "VISUAL_INCOMPATIBLE",
     "VISUAL_NEEDS_TARGET",
     "VISUAL_AMBIGUOUS",
+    # Task 4: the turn asked about the chart and got an answer about the chart -- the same reason
+    # every sibling above belongs in this set. Without it a `VISUAL_EXPLAINED` answer falls through
+    # unrecognised and is silently counted as a query, exactly the blindness a «¿por qué este
+    # gráfico?» turn should be caught answering and could not.
+    "VISUAL_EXPLAINED",
 }
 # R9: a drill-down that fit several bars asks which one rather than guessing -- a question about
 # the figures already on screen (which bar?), not a request to change the chart, so it does not
@@ -841,6 +846,12 @@ class Turn:
     # summary's *presence*, never its wording -- that is `test_visual_context_producers.py`'s own
     # business. `None` asserts nothing, matching every turn written before this field existed.
     spoken: bool | None = None
+    # Whether this turn's answer carries Task 3's chart-derived explanation --
+    # `isinstance(answer.get("explanation"), dict)` compared against this flag. What it measures is
+    # the explanation's *presence* on the answer, never its wording -- that is
+    # `tests/test_visual_explanation.py`'s own business. `None` asserts nothing, matching every turn
+    # written before this field existed.
+    explanation: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -1270,6 +1281,12 @@ def _complaints(
         yield (
             f"the answer should {'' if turn.spoken else 'not '}carry a spoken summary, "
             f"and {'does not' if turn.spoken else 'does'}"
+        )
+    has_explanation = isinstance(answer.get("explanation"), dict)
+    if turn.explanation is not None and has_explanation != turn.explanation:
+        yield (
+            f"the answer should {'' if turn.explanation else 'not '}carry an explanation, "
+            f"and {'does not' if turn.explanation else 'does'}"
         )
     # I-4 (D-4.4-9, ruling R16): every VOICE turn's *last* frame is the answer, always -- that
     # much `ask_streaming` guarantees regardless of which branch answered. A leading `stage`,

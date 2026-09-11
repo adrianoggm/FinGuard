@@ -30,7 +30,9 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.visual_explanation import (
     _MEASURE_WORDS,
+    WhyAsked,
     _nouns_of,
+    asks_why,
     explain_chart,
 )
 from finguard_orchestrator.domain.services.visual_profile import drawn_labels, visual_profile_of
@@ -323,3 +325,64 @@ def test_no_amount_survives_into_the_text(family_name: str) -> None:
     assert not any(character.isdigit() for character in stripped)
     assert "€" not in text
     assert "%" not in text
+
+
+# --- Wave 4.5, Task 4: `asks_why` -- the recogniser for «¿Por qué este gráfico?» ----------------
+#
+# Grammar (over `fold(sentence)`, anchored to the whole sentence -- a longer sentence is a
+# question, not this, the same principle as `_VISUAL_ALL`'s comment): optional leading punctuation,
+# `por que`, then one of four shapes. Claimed sentences resolve to a `WhyAsked`; everything else,
+# including any sentence carrying a `_FINANCIAL` word, is `None` -- the recogniser abstains rather
+# than guesses.
+
+
+@pytest.mark.parametrize(
+    ("sentence", "target"),
+    [
+        ("¿Por qué este gráfico?", None),
+        ("¿Por qué ese gráfico?", None),
+        ("¿Por qué el gráfico?", None),
+        ("¿Por qué el primer gráfico?", "primer"),
+        ("¿Por qué el último gráfico?", "ultimo"),
+        ("¿Por qué el segundo gráfico?", "segund"),
+        ("¿Por qué en barras?", None),
+        ("¿Por qué barras?", None),
+        ("¿Por qué en líneas?", None),
+        ("¿Por qué circular?", None),
+        ("¿Por qué este orden?", None),
+        ("¿Por qué así ordenado?", None),
+        ("¿Por qué de esta forma ordenado?", None),
+        ("¿Por qué me lo has puesto así?", None),
+        ("¿Por qué está así?", None),
+        ("Por qué este gráfico", None),  # no leading ¿, no trailing ?
+    ],
+)
+def test_asks_why_claims_every_phrasing_the_brief_lists(sentence: str, target: str | None) -> None:
+    why = asks_why(sentence)
+    assert why is not None, sentence
+    if target is None:
+        assert why.target is None, sentence
+    else:
+        assert why.target is not None and target in why.target, sentence
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "¿Por qué gasté tanto en junio?",  # a drill: a _FINANCIAL word (a month)
+        "¿Por qué agosto es tan alto?",  # a drill: a _FINANCIAL word (a month)
+        "¿Por qué me has mostrado eso?",  # about_the_answer, not about the chart
+        "Ponlo en barras",  # a restyle instruction, not a question
+        "¿Por qué?",  # nothing to explain -- abstain
+        "¿Por qué gasto tanto en restaurantes?",  # a _FINANCIAL word
+    ],
+)
+def test_asks_why_does_not_claim_a_sentence_that_is_not_this(sentence: str) -> None:
+    assert asks_why(sentence) is None, sentence
+
+
+def test_why_asked_is_a_frozen_dataclass_with_a_target_field() -> None:
+    why = WhyAsked(target=None)
+    assert why.target is None
+    with pytest.raises(Exception):  # noqa: B017, PT011 - frozen: any exception says immutable
+        why.target = "primer"  # type: ignore[misc]
