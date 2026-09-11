@@ -49,10 +49,11 @@ second memory; no rationale).
   conversation → the recogniser abstains (the turn goes where it went before) — no new refusal text.
 - **R6 — no new endpoint, no new memory, no automatic action.** The `<details>` is inert; no chip is added (a chip
   would be the first non-restyle chip and bypass `_chip_verifies`).
-- **R7 — M-2 (4.4 branch review) is closed here (re-ruled — see Landed, D-4.5-6):** `question_to_dto` hands the
+- **R7 — M-2 (4.4 branch review) is OPEN, not closed (re-ruled — see Landed, D-4.5-6):** `question_to_dto` hands the
   presenter (and now the explainer's noun) the plan only when `sha256(plan)[:16] == newest.plan_digest`; otherwise
-  `None` → the generic noun. One test pairs a charted follow-up's noun with the chart's own grouping under a stale
-  `last_plan`.
+  `None` → the generic noun. But `newest.plan_digest` is sealed from the same back-filled `metric_definition` the
+  guard compares it against, so the comparison cannot disagree in production; the fix wave's attempt (D-4.5-6) did
+  not change this. One test pins the guard's mismatch branch by hand, a pairing `stream()` cannot itself produce.
 - **R8 — `turn_id` bound to a recoverable turn is REFUSED for this wave**, with the reason written down: it needs a
   store (§13's second memory) or a replayable record the orchestrator does not keep; the explanation does not need
   it (R1). `docs/next.md`'s sentence is updated to say so.
@@ -136,6 +137,20 @@ Suite at HEAD (`92b00e3`): orchestrator 4227 passed / 3 skipped / 209 deselected
 corpus 207 (176 · 1194) at 0.0 %; web 117; gateway 122 / 1 (untouched across the whole wave);
 ratchets 22/43/0 (`UNMEASURED`/`MUTE`/`CONTESTED`), unmoved.
 
+**Fix wave (one commit per item):**
+1. `0b93c5e` — D-4.5-8, the scope count from `len(context.labels)`. FIXED.
+1b. `82bfde4` — D-4.5-9, the corpus fixture keys. FIXED.
+2. `ba2fe77` — D-4.5-6, the plan digest at the producer. **ATTEMPTED; STILL TAUTOLOGICAL; OPEN** —
+   the digest is captured one line after the `metric_definition` back-fill, off the same object the
+   guard compares against, so the guard cannot fire in production; closing it needs the digest
+   stamped by the dataset's own producer, not read off the back-filled field. Round-2 truthfulness
+   pass (`8fb2d4b`) rewrote the guard's comments and its test to say so plainly; no mechanism change.
+3. `3c89169` — D-4.5-4, M-7, M-8. FIXED.
+4. `7ce1a71` — D-4.5-7, M-10 (web). FIXED.
+
+Re-review (opus): with fixes, 0 critical / 2 important / 3 minor new (`branch-re-review.md`). Item 2
+above (D-4.5-6) stays on this plan's open list, not its closed one.
+
 **Rulings, as applied:**
 - **R1** — §7 rewritten to derive from the sealed context, not `decision`/`source_plan`. Applied,
   Task 1.
@@ -164,20 +179,19 @@ ratchets 22/43/0 (`UNMEASURED`/`MUTE`/`CONTESTED`), unmoved.
 - **R11** (ledger, Task 2 concern) — the dimension noun is derived from the sealed `LABELS`, not the
   field name (every producer names the field literally `"dimension"`). Applied, Task 2b.
 
-**Deferred — open** (the fix wave has not run):
-- **D-4.5-1** — an inline example string in design §7's old code block does not match the four R2
-  provenance strings verbatim. Minor.
-- **D-4.5-4** — `category_words` has no public keys accessor; the noun rule reads the private
-  `_NAMES` across a module boundary.
-- **D-4.5-5** — the `_MARK_REASONS` callables carry unused parameters (optional).
-- **D-4.5-6** — the R7/M-2 digest guard is tautological today (compares a value to itself within one
-  call); the real fix digests the plan at the chart's own producer, before the `metric_definition`
-  back-fill. IMPORTANT.
-- **D-4.5-7** — no web test drives the explanation disclosure through a materialised restyle
-  end-to-end.
-- **D-4.5-8** — a later-turn explanation's `scope_summary` reads a count of zero because
-  `profile.row_count` never crosses the wire; the proposed fix (`len(context.labels)`, worded "al
-  menos N" or omitted at the label cap) has not landed. IMPORTANT.
+**Fixed by the fix wave:** D-4.5-1 (example strings), D-4.5-4 (`category_words.keys()`), D-4.5-7
+(the web restyle-disclosure test), D-4.5-8 (the scope count from `len(context.labels)`), D-4.5-9
+(corpus fixture keys) — see "Fix wave" above.
+
+**Parked:** D-4.5-5 — the `_MARK_REASONS` callables carry unused parameters (optional); untouched.
+
+**Still OPEN** — D-4.5-6, the R7/M-2 digest guard is tautological today: `visual_plan_digest` is
+computed from `metric_definition` one line after that field's own back-fill, off the same object
+the guard later compares it against, so the comparison cannot disagree in production. The fix
+wave's attempt captured the digest at that same back-filled point rather than at the chart's own
+producer, and did not close it. The real fix: stamp the digest of the plan that produced the
+DATASET, at the dataset's own producer, and seal that. IMPORTANT — needs the user's word, since it
+touches `ask_financial_question.py`'s producer contract.
 
 `D-4.5-2` (design §7's `provenance` type) was fixed in Task 2b. `D-4.5-3` (a week-grouped chart's
 labels read as days) was RE-RULED, not a fix-wave item: the 7-day-spacing heuristic that would have

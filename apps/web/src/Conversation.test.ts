@@ -521,10 +521,10 @@ describe("the one field this client writes", () => {
 describe("¿Por qué este gráfico?", () => {
   const explanation = {
     chart_reason: "Barras: comparas categorías entre sí.",
-    ordering_reason: "Orden: de mayor a menor movimiento.",
+    ordering_reason: "Orden: de mayor a menor importe.",
     scope_summary: "Datos: 2 categorías.",
     provenance: "Elegido por las reglas de FinGuard.",
-    text: "Barras: comparas categorías entre sí. Orden: de mayor a menor movimiento. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
+    text: "Barras: comparas categorías entre sí. Orden: de mayor a menor importe. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
   };
   const chart = {
     kind: "chart" as const,
@@ -567,6 +567,36 @@ describe("¿Por qué este gráfico?", () => {
   it("renders no such details when the explanation has no chart to explain", () => {
     const markup = markupFor({ explanation });
     expect(markup).not.toContain("¿Por qué este gráfico?");
+  });
+
+  it("renders on a materialised restyle turn too, not only a freshly drawn chart", () => {
+    // M-10 (fix wave, D-4.5-7): `explainsAChart` reads `answer.visualization`, which
+    // `materializeVisualizationDerivation` fills in from `visualization_derivation` before the
+    // turn is ever pushed (`Conversation.tsx`'s own comment above `explainsAChart`) -- a restyle
+    // answer arrives with `visualization: null` and only the derivation on it, so this is the one
+    // path where the disclosure depends on materialisation having already run.
+    const source = answer({ currency: "EUR", visualization: chart });
+    const turns: Turn[] = [{ who: "assistant", answer: source }];
+    const restyled = materializeVisualizationDerivation(
+      turns,
+      answer({
+        visualization: null,
+        visualization_derivation: { source_chart_id: chart.chart_id, chart_id: "chart-2", spec: chart.spec },
+        explanation,
+      }),
+    );
+    expect(restyled.visualization?.kind).toBe("chart");
+
+    const markup = renderToStaticMarkup(
+      createElement(Conversation, {
+        thread: thread({ turns: [...turns, { who: "assistant", answer: restyled }] }),
+        onThread: noop,
+        onClose: noop,
+        onSettled: noop,
+      }),
+    );
+    expect(markup).toContain("¿Por qué este gráfico?");
+    expect(markup).toContain(explanation.chart_reason);
   });
 });
 
@@ -863,10 +893,10 @@ describe("financial breakdowns", () => {
   it("accepts explanation as null, absent, and a well-formed object; rejects a malformed one", () => {
     const explanation = {
       chart_reason: "Barras: comparas categorías entre sí.",
-      ordering_reason: "Orden: de mayor a menor movimiento.",
+      ordering_reason: "Orden: de mayor a menor importe.",
       scope_summary: "Datos: 2 categorías.",
       provenance: "Elegido por las reglas de FinGuard.",
-      text: "Barras: comparas categorías entre sí. Orden: de mayor a menor movimiento. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
+      text: "Barras: comparas categorías entre sí. Orden: de mayor a menor importe. Datos: 2 categorías. Elegido por las reglas de FinGuard.",
     };
     expect(validateVoiceAnswer(answer({ explanation: null })).explanation).toBeNull();
     expect(validateVoiceAnswer(answer({})).explanation).toBeUndefined();

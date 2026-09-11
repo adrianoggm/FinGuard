@@ -546,21 +546,22 @@ def test_a_restyle_with_no_target_still_asks_to_change_it() -> None:
     assert response.text == "Indica qué gráfico quieres cambiar."
 
 
-async def test_r7_a_stale_backfilled_plan_never_names_its_noun_in_the_spoken_line(
+async def test_r7s_guard_branch_fires_when_the_sealed_digest_and_the_plans_differ(
     charted_result,
 ) -> None:
-    """I-1 (fix wave, D-4.5-6/M-2), natural rather than monkeypatched. `charted_result.
-    visual_plan_digest` is the digest of the plan that actually drew the chart -- `stream()`'s own
-    line, done by hand in the fixture -- and `_remember_visual_context` now seals `newest.
-    plan_digest` from THAT, not from `result.metric_definition`. This test then does exactly what
-    `ask_financial_question.stream()`'s own back-fill does in practice: replaces
-    `metric_definition` with a DIFFERENT plan (a later, unrelated question's `last_plan`, here
-    distinguished by `group_by='CATEGORY'`) without touching `visual_plan_digest`, which stream()
-    would not have touched either -- it was computed once, before the back-fill, from the plan
-    that drew this chart. `plan_digest(result.metric_definition)` (the back-filled plan) and
-    `newest.plan_digest` (sealed from the ORIGINAL plan) now genuinely disagree, no monkeypatch
-    needed, and the presenter must fall back to the generic noun («desglose») rather than speak
-    the stale plan's own noun («categorías»)."""
+    """This does NOT exercise a pairing `ask_financial_question.stream()` can produce today (see
+    `branch-re-review.md`'s N-2 and the R7 comment in `llm_mapper.py`): `stream()` computes
+    `visual_plan_digest` from `step.metric_definition` one line AFTER back-filling that same
+    field, so the two are always digests of the same object within one call, and the guard's
+    mismatch branch is unreachable in production. What this test pins is the branch itself, by
+    hand: it takes `charted_result` (whose `visual_plan_digest` was sealed from its original plan)
+    and replaces `metric_definition` with a DIFFERENT plan (`group_by='CATEGORY'`) without
+    touching `visual_plan_digest` -- a state `stream()` cannot construct, only this test can. Once
+    the digests genuinely disagree, the presenter must fall back to the generic noun («desglose»)
+    rather than speak the substituted plan's own noun («categorías»). This is the dead-code path
+    the real fix (digesting the plan at the dataset's own producer, not at the back-fill) would
+    make reachable; until then it proves only that the `if` in `question_to_dto` does what its
+    branches say, not that the guard protects anything live."""
     plan_with_grouping = replace(charted_result.metric_definition, group_by="CATEGORY")
     assert plan_digest(plan_with_grouping) != charted_result.visual_plan_digest
     voice_result = replace(charted_result, metric_definition=plan_with_grouping)

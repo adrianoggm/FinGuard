@@ -425,14 +425,16 @@ mayor a menor importe.", `scope_summary` "Datos: 4 categorías entre el 1 de jun
 agosto de 2026.", `provenance` "Elegido por las reglas de FinGuard." — the four sentences joined by
 `as_text()`. What it refuses, exactly as ruled: the `turn_id` → recoverable-turn binding (needs a
 store this design does not keep); no amount, total or percentage, ever; no rule name, provider
-error or discarded proposal. The fix wave closed both limits this section used to name here as
-open: a later-turn `scope_summary` now counts `len(context.labels)` rather than the wire-zeroed
-`profile.row_count` (I-2/D-4.5-8, see "Scope" above); the R7 digest guard in `llm_mapper.py` now
-compares the digest sealed at the turn that drew the chart (`AskFinancialQuestionResult.
-visual_plan_digest`, fixed once that turn, before `metric_definition`'s own back-fill) against a
-LATER turn's freshly back-filled `metric_definition`, rather than a value computed from the same
-object in the same call (I-1/D-4.5-6). The one limit still open, by design rather than by
-omission: a week-grouped chart's explanation says «días» (D-4.5-3, above).
+error or discarded proposal. The fix wave closed one limit this section used to name here as open:
+a later-turn `scope_summary` now counts `len(context.labels)` rather than the wire-zeroed
+`profile.row_count` (I-2/D-4.5-8, see "Scope" above). D-4.5-6/M-2 (the R7 digest guard in
+`llm_mapper.py`) is **still open**: `AskFinancialQuestionResult.visual_plan_digest` is computed in
+`stream()` from `metric_definition` one line AFTER that field's own back-fill, off the same
+object the guard later compares it against, so the two sides of the comparison are always digests
+of the same value and the guard cannot fire in production. Closing it needs the DATASET to carry
+the digest of the plan that produced it, stamped by its own producer, not by this back-filled
+field. Also still open, by design rather than by omission: a week-grouped chart's explanation says
+«días» (D-4.5-3, above).
 
 ## 8. Performance
 

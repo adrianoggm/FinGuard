@@ -860,9 +860,9 @@ gráfico?» beside «Ver la consulta», no chip, no endpoint, no action (`6aab2c
 question itself — «¿Por qué este gráfico?» and its close variants, claimed only when a trusted
 chart exists — is answered outcome `VISUAL_EXPLAINED` from `explain_chart` alone: zero ledger calls,
 zero model calls, the conversation byte-identical to before the question (`6283309`). The presenter
-now speaks only the chart's own plan: `question_to_dto` hands `spoken_summary` a plan only when its
-digest matches the sealed `plan_digest`, otherwise the generic noun — M-2 (4.4's branch review) is
-closed on paper, though see the limit below. Episode 32 gains the why-turn right after turn 1 and
+is meant to speak only the chart's own plan: `question_to_dto` hands `spoken_summary` a plan only
+when its digest matches the sealed `plan_digest`, otherwise the generic noun — but M-2 (4.4's
+branch review) is NOT closed; see the limit below. Episode 32 gains the why-turn right after turn 1 and
 episode 33's turn 1 asserts its voice explanation (`7f673e8`, `92b00e3`). Suite at HEAD: 4227 / 3 /
 209 (three globs) + corpus 207 (176 · 1194) at 0.0 %; ratchets 22/43/0 (`UNMEASURED`/`MUTE`/
 `CONTESTED`), unmoved; gateway untouched (`git diff --stat -- apps/voice-gateway` empty across the
@@ -876,20 +876,26 @@ explanation's `turn_id` to a recoverable turn is REFUSED for this wave, same rea
 needs a store this design does not keep, or a replayable record the orchestrator has nowhere to
 put — replacing the older sentence at this document that said the binding "stays 4.5's": it does
 not land in 4.5 either, and needs no store 4.5 does not already lack. What is not yet true, plainly:
-an explanation asked on a *later* turn reads «Datos: 0 grupos/días/…» today, because
-`profile.row_count` never crosses the wire and the fix wave's own proposal (reading `len(labels)`
-instead, capped and worded "al menos N") has not run — D-4.5-8, open. A week-grouped chart's labels
-are indistinguishable on the wire from a day-grouped chart's (both a plain ISO date), so a
-week-grouped explanation says «días», by design until a real week-shaped key exists — not fixed,
-ruled a stated limit (D-4.5-3, re-ruled, no fix-wave item). The R7/M-2 digest guard compares a
-value against itself within one call today (`llm_mapper.py`'s seal and its guard both read
-`plan_digest(result.metric_definition)` off the same object), so it is tautological until the fix
-wave digests the plan at the chart's own producer — D-4.5-6, open. Also open from the fix wave:
-D-4.5-1 (an inline example string in the design's old §7 code block), D-4.5-4 (a public
-`category_words.keys()` accessor), D-4.5-5 (unused params on the `_MARK_REASONS` callables),
-D-4.5-7 (no web test drives the disclosure through a materialised restyle) — D-4.5-2 was fixed in
-Task 2b. The video's on-camera run of §11 is the user's; what the code offers it is episode 32's
-turn order and the explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
+the fix wave closed D-4.5-8 — a later-turn explanation's `scope_summary` now counts
+`len(context.labels)` rather than the wire-zeroed `profile.row_count`, omitted (not "al menos N")
+when the labels are empty or hit the cap. D-4.5-1 (the design's example strings), D-4.5-4 (a public
+`category_words.keys()` accessor), and D-4.5-7 (a web test driving the disclosure through a
+materialised restyle) are likewise FIXED, as is D-4.5-9 (the corpus fixture keys, `TRANSPORT_PUBLIC`
+replacing a key absent from every ledger category enum). A week-grouped chart's labels are
+indistinguishable on the wire from a day-grouped chart's (both a plain ISO date), so a week-grouped
+explanation says «días», by design until a real week-shaped key exists — not a defect, a stated
+limit (D-4.5-3, re-ruled, no fix-wave item). D-4.5-5 (unused params on the `_MARK_REASONS`
+callables) is PARKED, untouched. The R7/M-2 digest guard is **still OPEN**: the fix wave's attempt
+moved the capture one field of indirection later but not to the right place — `visual_plan_digest`
+is computed in `stream()` from `metric_definition` one line AFTER that field's own back-fill from
+`conversation.last_plan`, off the same object the guard in `llm_mapper.py` then compares it
+against, so the two sides of the comparison are always digests of the same value and the guard
+cannot fire in production (a comparison turn, for one, seals only its later single-window plan's
+digest and still speaks that plan's noun). Closing it needs the DATASET to carry the digest of the
+plan that produced it, stamped by the dataset's own producer — not read off `metric_definition`'s
+back-fill — with `_remember_visual_context` sealing that instead; D-4.5-6, open. The video's
+on-camera run of §11 is the user's; what the code offers it is episode 32's turn order and the
+explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
 
 ## ~~10. Phase 6 — real-time voice~~ — implemented and validated locally
 
