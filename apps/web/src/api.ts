@@ -362,6 +362,18 @@ export type Answer = {
     limit?: number | null;
   } | null;
   suggestions: string[];
+  /**
+   * Why the chart on screen looks the way it does -- present exactly when this answer draws a
+   * chart, absent for a KPI or a chart-less answer. Derived server-side from the sealed context,
+   * never from a model.
+   */
+  explanation?: {
+    chart_reason: string;
+    ordering_reason: string | null;
+    scope_summary: string;
+    provenance: string | null;
+    text: string;
+  } | null;
   /** Independent read-only questions asked in one turn, each with its own plan and evidence. */
   parts?: Answer[];
   /**
@@ -462,6 +474,14 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
         (Number.isSafeInteger(item.limit) && (item.limit as number) >= 1)) &&
       !containsChartValues(spec);
   };
+  const validExplanation = (field: unknown) => {
+    if (field === undefined || field === null) return true;
+    if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+    const item = field as Record<string, unknown>;
+    return typeof item.chart_reason === "string" && nullableString(item.ordering_reason) &&
+      typeof item.scope_summary === "string" && nullableString(item.provenance) &&
+      typeof item.text === "string";
+  };
   if (
     typeof body.outcome !== "string" || typeof body.text !== "string" ||
     !nullableString(body.question) || !nullableString(body.intent_id) ||
@@ -473,6 +493,7 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
     !validVisualization(body.visualization) ||
     !validDerivation(body.visualization_derivation) ||
+    !validExplanation(body.explanation) ||
     body.groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
