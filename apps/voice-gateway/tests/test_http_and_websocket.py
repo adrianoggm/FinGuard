@@ -970,9 +970,16 @@ class _CancellationResistantTTS:
 
 
 @pytest.mark.asyncio
-async def test_cancelled_speaking_turn_does_not_commit_conversation(
+async def test_barge_in_during_tts_still_keeps_the_chart_the_turn_drew(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """G-4: a barge-in is cancellation during TTS -- the normal voice gesture, not a reason to
+    discard the chart the turn already drew. Before the fix, the conversation committed only
+    after `audio.completed` survived, so interrupting playback of a charted answer left the
+    *next* turn's `session.conversation` pointing at the previous, uncharted turn -- a follow-up
+    "ponlo en horizontal" would hit `VISUAL_NEEDS_TARGET` or restyle a stale chart. The fix moves
+    the commit to right after the reply is known, before synthesis starts, so it survives a
+    cancellation that only ever fences *sends*, never session state, from this point on."""
     original_tts = services.tts
     resistant_tts = _CancellationResistantTTS()
     monkeypatch.setattr(services, "tts", resistant_tts)
@@ -1017,7 +1024,18 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
         resistant_tts.release.set()
     await asyncio.gather(*session.retired_tasks)
 
-    assert session.conversation is original_conversation
+    # G-4: the barge-in fenced the *audio*, never the conversation the answer already produced --
+    # `session.conversation` is the cancelled turn's own charted reply, not the stale value from
+    # before it ran. `is not original_conversation` first: a bug that reverted to committing
+    # nothing would leave the identity comparison below vacuously true only by accident.
+    assert session.conversation is not original_conversation
+    assert session.conversation == {
+        "previous": original_conversation,
+        "last": "old grafico text",
+        "visual_contexts": [
+            {"chart_id": "chart-fake-1", "turn_id": "11111111-1111-1111-1111-111111111111"}
+        ],
+    }
     assert session.machine.turn_id == "new-turn"
     assert transport.audio == []
     # No event carrying the old turn's chart identity reaches the transport after the cancel
@@ -1032,6 +1050,7 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
     monkeypatch.setattr(services, "tts", original_tts)
     session.audio.extend(b"hola")
     session.machine.commit()
+    charted_conversation_after_barge_in = session.conversation
     events_before_new_turn = len(transport.events)
     await process_turn(transport, session, "new-turn")
     new_turn_events = transport.events[events_before_new_turn:]
@@ -1039,6 +1058,11 @@ async def test_cancelled_speaking_turn_does_not_commit_conversation(
     for item in new_turn_events:
         assert "chartId" not in item
         assert "visualTurnId" not in item
+    # G-4's own claim: the *next* turn sees the charted conversation the barge-in interrupted --
+    # the fake assistant was asked with it as `conversation` and echoes it back under `previous`.
+    next_turn_conversation = session.conversation
+    assert isinstance(next_turn_conversation, dict)
+    assert next_turn_conversation["previous"] is charted_conversation_after_barge_in
 
 
 @pytest.mark.parametrize("provider", ["stt", "tts"])

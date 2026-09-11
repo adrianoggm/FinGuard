@@ -540,6 +540,20 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     # Computed once the reply is known, both branches: the chart this turn drew and the
     # identity of the decision that drew it, riding the four turn events below.
     identity = chart_identity(reply_answer, reply_conversation)
+    # G-4: committed here, before synthesis, not after `audio.completed` survives. A barge-in
+    # is cancellation during TTS -- the normal voice gesture -- and until this point every
+    # cancellation check above already returned before touching session state, so reaching here
+    # means this turn's reply is real and belongs to the conversation regardless of what happens
+    # to its audio next. The old placement (right before `turn.completed`) discarded the chart
+    # a charted answer had just drawn on exactly that gesture: the holder saw it, interrupted,
+    # and the next "ponlo en horizontal" found no chart to restyle.
+    session.conversation = reply_conversation
+    # G-1: a refusal is spoken once and this session-local latch clears immediately after --
+    # the assistant was never asked this turn, so nothing it said could have changed the
+    # conversation's real payment state, and holding the latch open forever (the old behaviour)
+    # meant the assistant could never be reached again on this session, not even to cancel.
+    # ADR-010 §5 blocks a spoken *confirmation* turn from moving money, not every later turn.
+    session.payment_confirmation_required = False if refusing_payment else payment_required
     session.machine.speaking()
     # `text=reply_text` here always -- the screen shows the full written answer regardless of
     # channel (Task 3, Wave 4.4); only the audio below speaks `reply_spoken` when there is one.
@@ -586,15 +600,6 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     )
     if session.cancelled(generation, turn_id):
         return
-    # Conversation is committed only after the turn survives synthesis. A
-    # cancelled answer may have completed remotely, but it is discarded here.
-    session.conversation = reply_conversation
-    # G-1: a refusal is spoken once and this session-local latch clears immediately after --
-    # the assistant was never asked this turn, so nothing it said could have changed the
-    # conversation's real payment state, and holding the latch open forever (the old behaviour)
-    # meant the assistant could never be reached again on this session, not even to cancel.
-    # ADR-010 §5 blocks a spoken *confirmation* turn from moving money, not every later turn.
-    session.payment_confirmation_required = False if refusing_payment else payment_required
     session.machine.completed()
     timings.mark("turn_completed")
     try:
