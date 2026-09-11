@@ -463,6 +463,16 @@ async def process_turn(websocket: VoiceTransport, session: VoiceSession, turn_id
     except AssistantClientError as exc:
         if session.machine.turn_id != turn_id:
             return
+        if exc.code == "ORCHESTRATOR_REJECTED":
+            # G-10: a 4xx is the orchestrator refusing this turn's own request -- e.g. the
+            # `conversation` this gateway echoed back failed the orchestrator's DTO validation
+            # (`orchestrator_assistant.py`'s `_status_message`, any status below 500 other than
+            # 401/403). That is one bad turn, not a broken session: `machine.cancel()` returns
+            # to READY (clearing the dead turn id) so the next `input.start` behaves like any
+            # other new turn, and the socket -- and everything already said on it -- survives.
+            session.machine.cancel()
+            await send_error(websocket, session, exc.code, "assistant provider rejected the turn")
+            return
         session.machine.close()
         await send_error(websocket, session, exc.code, "assistant provider failed", fatal=True)
         await websocket.close(code=1011)
@@ -541,19 +551,16 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
         reply_spoken = None
         reply_conversation = session.conversation
         payment_required = True
+        # G-7: a minimal, honest answer -- `outcome`, `text` and the unchanged `conversation`,
+        # never the other nine `QuestionResponse` keys the gateway used to invent (`intent_id`,
+        # `plan`, `currency`, `total_minor`, `movement_count`, `groups`, `movements`,
+        # `suggestions`, and the two literal fields above). The assistant is never asked this
+        # turn, so the gateway has no real values for any of them, and ADR-010 (§1, "no new
+        # financial authority") says it carries no financial domain types to fabricate one with.
         reply_answer: dict[str, object] = {
             "outcome": "AWAITING_CONFIRMATION",
             "text": reply_text,
-            "question": None,
-            "intent_id": None,
-            "plan": None,
             "conversation": reply_conversation,
-            "currency": None,
-            "total_minor": None,
-            "movement_count": 0,
-            "groups": [],
-            "movements": [],
-            "suggestions": [],
         }
     else:
 

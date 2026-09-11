@@ -24,6 +24,7 @@ from finguard_voice_gateway.app import (
     spoken_text,
 )
 from finguard_voice_gateway.domain.state import SessionProtocolError, SessionState
+from finguard_voice_gateway.ports.assistant_client import AssistantClientError, AssistantReply
 from finguard_voice_gateway.ports.speech_to_text import SpeechToTextTimeoutError
 from finguard_voice_gateway.protocol import parse_event
 
@@ -623,6 +624,127 @@ def test_payment_policy_blocks_next_spoken_turn_without_calling_assistant() -> N
             assert "chartId" not in final
             assert "visualTurnId" not in final
     sessions.clear()
+
+
+def test_the_refusal_answer_carries_only_outcome_text_and_conversation() -> None:
+    """G-7: the gateway must not fabricate an orchestrator answer -- ADR-010 says it carries no
+    financial domain types (§1), and the assistant is never asked on this turn, so it has no
+    real value for `intent_id`, `plan`, `currency`, `total_minor`, `movement_count`, `groups`,
+    `movements` or `suggestions`. Before the fix this dict carried all of those, every one
+    invented."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            socket.receive_json()
+            for sequence, turn_id, audio in (
+                (1, "prepare", b"quiero preparar un pago "),
+                (3, "confirm", b"si"),
+            ):
+                socket.send_text(_control("input.start", session_id, sequence, turn_id))
+                socket.send_bytes(audio)
+                socket.send_text(_control("input.commit", session_id, sequence + 1, turn_id))
+                while True:
+                    item = socket.receive()
+                    if item.get("text"):
+                        payload = json.loads(item["text"])
+                        if payload["type"] == "assistant.text.final":
+                            final = payload
+                        if payload["type"] == "turn.completed":
+                            break
+            answer = final["answer"]
+            assert isinstance(answer, dict)
+            assert set(answer.keys()) == {"outcome", "text", "conversation"}
+            assert answer["outcome"] == "AWAITING_CONFIRMATION"
+    sessions.clear()
+
+
+class _RejectsOnceThenAnswers:
+    """G-10: a fake assistant client that answers the orchestrator's own 422 shape once -- an
+    `AssistantClientError` coded `ORCHESTRATOR_REJECTED`, exactly what `orchestrator_assistant.
+    py`'s `_status_message` returns for any 4xx that is not 401/403 -- and answers normally on
+    every call after."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def ask(
+        self,
+        text: str,
+        conversation: object,
+        *,
+        credential: str,
+        idempotency_key: str,
+        on_stage: object = None,
+    ) -> AssistantReply:
+        self.calls += 1
+        if self.calls == 1:
+            raise AssistantClientError("orchestrator rejected the request", "ORCHESTRATOR_REJECTED")
+        return AssistantReply(
+            text=f"He entendido: {text}",
+            conversation={"last": text},
+            answer={"outcome": "ANSWERED", "text": f"He entendido: {text}", "conversation": None},
+            payment_confirmation_required=False,
+        )
+
+
+def test_an_orchestrator_4xx_is_a_recoverable_turn_error_not_a_socket_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G-10: before the fix, every `AssistantClientError` -- including a 4xx, which means only
+    that *this turn's own request* was rejected (e.g. its echoed `conversation` failed the
+    orchestrator's DTO validation) -- closed the socket with a fatal error, destroying the whole
+    session over one bad turn. `ORCHESTRATOR_REJECTED` must instead surface as a non-fatal
+    `error` and leave the socket, and the session, usable for the very next turn."""
+    rejecting_assistant = _RejectsOnceThenAnswers()
+    monkeypatch.setattr(services, "assistant", rejecting_assistant)
+    try:
+        with TestClient(app) as client:
+            body = client.post(
+                "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+            ).json()
+            with client.websocket_connect(
+                body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+            ) as socket:
+                session_id = body["sessionId"]
+                socket.send_text(_control("session.configure", session_id, 0))
+                socket.receive_json()
+                socket.send_text(_control("input.start", session_id, 1, "turn-1"))
+                socket.send_bytes(b"ok")
+                socket.send_text(_control("input.commit", session_id, 2, "turn-1"))
+                error = None
+                while error is None:
+                    item = socket.receive_json()
+                    if item["type"] == "error":
+                        error = item
+                assert error["type"] == "error"
+                assert error["code"] == "ORCHESTRATOR_REJECTED"
+                assert error["fatal"] is False
+
+                # The socket is still open and the session is ready for a normal next turn.
+                socket.send_text(_control("input.start", session_id, 3, "turn-2"))
+                socket.send_bytes(b"ok")
+                socket.send_text(_control("input.commit", session_id, 4, "turn-2"))
+                received: list[dict[str, object]] = []
+                while True:
+                    item = socket.receive()
+                    if item.get("text"):
+                        payload = json.loads(item["text"])
+                        received.append(payload)
+                        if payload["type"] == "turn.completed":
+                            break
+                final = next(e for e in received if e["type"] == "assistant.text.final")
+                final_text = final["text"]
+                assert isinstance(final_text, str)
+                assert "He entendido" in final_text
+                assert rejecting_assistant.calls == 2
+    finally:
+        sessions.clear()
 
 
 def test_a_refused_voice_payment_does_not_silence_the_session() -> None:
