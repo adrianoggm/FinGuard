@@ -1,5 +1,24 @@
 # Planning accuracy — measured, not argued
 
+## State at HEAD (2026-09-11)
+
+The last held-out measurement is 28 August 2026, below, and it **failed its own gate**: held-out
+`unsafe` was **11.4 %** against the ≤ 10 % bar, with `qwen3.5:9b` as the planner (see the model
+table in [next.md](../../../../docs/next.md) and the `visual_planner` row further down this file
+for how that name is used elsewhere). Wave 3 hardening (this branch) and Wave 4 (4.1-4.5, the
+visual-conversation work) have both landed on top of that failing measurement — **no measurement
+at the current HEAD exists**, so nothing in the repository shows the gate holding today, and
+nothing shows it still failing by how much.
+
+A re-run needs: the GPU alone (`nvidia-smi` shows only Ollama), `qwen3.5:9b` warm
+(`curl -s localhost:11434/api/ps`), and the five sets this file already reports —
+`validation` (held out, the gate), `dev`, `adversarial`, `drift`, `metamorphic` — via
+`scripts/evaluate_planning.py --model qwen3.5:9b --dataset <set>` (see the command block below;
+`just evaluate-planning` alone defaults to the baseline `qwen2.5-coder:7b` and measures the wrong
+model). The visual-planner side of Wave 4 has its own runbook, at
+`docs/superpowers/plans/2026-09-05-visual-planner-shadow.md`'s Task 9, and has never been run
+either (M-3, M-5).
+
 ```bash
 cd apps/orchestrator && uv run python scripts/evaluate_planning.py \
     --model qwen3.5:9b --dataset validation   # the number worth quoting

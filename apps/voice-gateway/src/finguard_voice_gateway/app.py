@@ -476,7 +476,11 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     )
     timings.mark("transcript_final")
     session.machine.thinking()
-    if session.payment_confirmation_required:
+    # G-1: captured before the branch below reads it, so the commit at the bottom of this
+    # function can tell "this turn WAS the one-shot refusal" from "this turn actually asked the
+    # assistant" -- the two cases clear the session-local latch differently.
+    refusing_payment = session.payment_confirmation_required
+    if refusing_payment:
         reply_text = "No puedo confirmar pagos por voz; usa el control explícito en pantalla."
         reply_spoken = None
         reply_conversation = session.conversation
@@ -577,7 +581,12 @@ async def _process_turn(websocket: VoiceTransport, session: VoiceSession, turn_i
     # Conversation is committed only after the turn survives synthesis. A
     # cancelled answer may have completed remotely, but it is discarded here.
     session.conversation = reply_conversation
-    session.payment_confirmation_required = payment_required
+    # G-1: a refusal is spoken once and this session-local latch clears immediately after --
+    # the assistant was never asked this turn, so nothing it said could have changed the
+    # conversation's real payment state, and holding the latch open forever (the old behaviour)
+    # meant the assistant could never be reached again on this session, not even to cancel.
+    # ADR-010 §5 blocks a spoken *confirmation* turn from moving money, not every later turn.
+    session.payment_confirmation_required = False if refusing_payment else payment_required
     session.machine.completed()
     timings.mark("turn_completed")
     try:
