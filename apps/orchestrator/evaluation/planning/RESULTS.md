@@ -42,7 +42,17 @@ sets run three further times, because a difference nobody bounded is not a resul
 | dev | 120 | 95.8 % | 92.2 % | 9.2 % | 4 | 1 | 0 |
 | adversarial | 36 | 77.8 % | 76.5 % | 8.3 % | 2 | 2 | 0 |
 | drift | 75 | 94.7 % | 89.8 % | 5.3 % | 1 | 0 | 0 |
-| metamorphic | 19 | 73.7 % | 73.7 % | **0 %** | 0 | 2 | 0 |
+| metamorphic ¹ | 19 | 73.7 % | 73.7 % | **0 %** | 0 | 2 | 0 |
+
+¹ **The metamorphic `unsafe 0 %` is partly a deterministic path scored against its own
+definition, not purely a model score (M-8).** `scripts/evaluate_planning.py` runs
+`explicit_facts.read()` / `enforce()` on the model's plan *before* scoring it, and negative
+filters — the exclusions this set's hardest cases are built from — live only in that enrichment
+layer: they are not fields the model's constrained schema can emit at all (see "Metamorphic
+locality" below, which discloses the mechanism). So part of what "0 % unsafe" measures is that the
+enforcement layer guarantees an exclusion the model never had the chance to get wrong, and part is
+the model's own plan being right; this headline does not split the two. `outcome`/`exact` at
+73.7 % is the model's own figure — nothing in the pipeline enriches those.
 
 Beside what this file and the gate-1 table carried before, **all of which was written on
 2026-08-03**:
