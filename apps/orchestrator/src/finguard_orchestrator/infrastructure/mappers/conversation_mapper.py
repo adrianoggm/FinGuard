@@ -22,6 +22,7 @@ from finguard_orchestrator.domain.models.chart import (
     Channel,
     ChartEncoding,
     ChartSpec,
+    ContextTrust,
     EncodingSort,
     FieldOrder,
     SortMode,
@@ -80,7 +81,12 @@ from finguard_orchestrator.observability import name_the_conversation
 # signatures have to move together by definition (one is the closure the other threads through to
 # it), and a hand-written copy at each site is exactly the kind of pair this module's other
 # comments already warn drifts apart.
-type ContextVerifier = Callable[[str | None, dict[str, object]], bool]
+#
+# A-1 (Wave 3 hardening): the closure now takes the conversation id and the context's position in
+# the echoed list, and returns *why* rather than whether -- `context_semantics` is still the last
+# argument, unchanged, so only the caller (`llm_controller._conversation_of`) had to grow the two
+# new arguments it already has both of by the time it builds this closure.
+type ContextVerifier = Callable[[str | None, UUID, int, dict[str, object]], ContextTrust]
 
 # `VisualField.order`'s own dataclass default (`chart.py`), read rather than copied: a literal
 # `"NONE"` here would be the second copy that goes stale the moment that default changes -- the
@@ -153,12 +159,13 @@ def _encoding_sort_from_payload(raw: object) -> EncodingSort | None:
 def _visual_contexts(
     payload: ConversationPayload | None,
     *,
+    conversation_id: UUID,
     verify: ContextVerifier | None = None,
 ) -> tuple[VisualContext, ...]:
     if payload is None:
         return ()
     result: list[VisualContext] = []
-    for item in payload.visual_contexts:
+    for position, item in enumerate(payload.visual_contexts):
         raw = item.spec
         mark = raw.get("mark")
         if not isinstance(mark, dict) or mark.get("type") not in {
@@ -271,7 +278,18 @@ def _visual_contexts(
         # Task 3's holder-bound check in front of it is trusted, on the wire or freshly minted the
         # same way. With one, a context is trusted only through a seal that actually checks out;
         # an unverified token is dropped rather than echoed back as if it still meant something.
-        trusted = verify(item.token, context_semantics(item)) if verify is not None else True
+        #
+        # A-1 (Wave 3 hardening): checked against THIS conversation's id and THIS context's index
+        # in the list the caller just echoed -- never the position it may have been sealed at,
+        # which is exactly what lets a replay from another conversation, a reorder, a duplicate or
+        # a dropped-then-shifted context all fail here instead of passing as `True` the way a bare
+        # holder-and-content seal did.
+        trust_reason: ContextTrust = (
+            verify(item.token, conversation_id, position, context_semantics(item))
+            if verify is not None
+            else "ok"
+        )
+        trusted = trust_reason == "ok"
         # Both ends or neither -- `VisualContextPayload`'s own validator already refuses a payload
         # with just one, so `item.window_end` is never `None` here when `item.window_start` is not.
         window = (
@@ -288,6 +306,7 @@ def _visual_contexts(
                 turn_id=item.turn_id,
                 token=item.token if trusted else None,
                 trusted=trusted,
+                trust_reason=trust_reason,
                 labels=tuple(item.labels),
                 series_labels=tuple(item.series_labels),
                 ranked=item.ranked,
@@ -425,17 +444,77 @@ def context_semantics(payload: VisualContextPayload) -> dict[str, object]:
 
 
 def seal_context(
-    context: VisualContext, holder_reference: str, codec: MetricTokenCodec
+    context: VisualContext,
+    conversation_id: UUID,
+    position: int,
+    holder_reference: str,
+    codec: MetricTokenCodec,
 ) -> VisualContext:
-    """`context`, sealed for `holder_reference`: same wire shape `to_payload` would emit, signed.
+    """`context`, sealed for `holder_reference` at `position` in `conversation_id`'s own list: same
+    wire shape `to_payload` would emit, signed.
 
     Serialised through `_context_payload` -- the same dict `to_payload` builds -- and validated
     through `VisualContextPayload.model_validate` before it is sealed, so the digest covers the
     pydantic-normalised shape a caller's echoed payload will also be read through at verification,
     never the domain object's own, unvalidated, representation of itself.
+
+    A-1 (Wave 3 hardening): `conversation_id` and `position` are folded into the token alongside
+    the content digest, never into `context_semantics` itself -- they describe *where* this
+    context lives, not *what* it is, and the content digest must stay the same value whether a
+    context is sealed once or resealed ten times as its neighbours come and go. `trusted`/
+    `trust_reason` are stamped `True`/`"ok"` explicitly rather than left as whatever `context`
+    already carried: this function is also `reseal_visual_contexts`' own tool for restoring trust
+    to a survivor after an eviction shifted its position, and the context it is given there is
+    already trusted -- stamping it here rather than trusting the caller keeps that invariant true
+    by construction instead of by every caller remembering it.
     """
     payload = VisualContextPayload.model_validate(_context_payload(context))
-    return replace(context, token=codec.seal_context(holder_reference, context_semantics(payload)))
+    token = codec.seal_context(
+        holder_reference, conversation_id, position, context_semantics(payload)
+    )
+    return replace(context, token=token, trusted=True, trust_reason="ok")
+
+
+def reseal_visual_contexts(
+    conversation: Conversation, holder_reference: str, codec: MetricTokenCodec
+) -> Conversation:
+    """`conversation`, with every already-trusted visual context resealed at its current index.
+
+    A-1 (Wave 3 hardening), the design decision the task names explicitly: a seal now covers a
+    context's *position*, and `Conversation.with_visual_context` can evict the oldest context when
+    the cap is reached, which shifts every survivor's index down by one. A seal minted at the old
+    index would then fail its own position check on the very next turn -- not because anything was
+    replayed, reordered or tampered with, but because the list it was sealed against no longer
+    exists. The orchestrator holds the signing key and already re-emits the whole list every turn
+    (`to_payload`), so re-sealing here is free of any new trust the client would have to be asked
+    to extend: the invariant a seal states is "this is context N of the list I, the server, last
+    emitted" -- never "context N of the list you first saw it in".
+
+    Only contexts already `trusted` are resealed; an untrusted one (a failed replay, a tampered
+    payload, a stale `c1.` token) is left exactly as `to_domain` produced it -- resealing it would
+    manufacture trust this function has no business granting.
+
+    `conversation.conversation_id is None` mints one here rather than skipping the seal --
+    `_identified`'s own rule applied a second time ("an absent identifier is a first turn"), for a
+    caller that reaches this function without ever having gone through `_conversation_of`/
+    `to_domain` at all (every production request has, so this is a fallback for exactly one thing:
+    a test, or a future caller, that builds an `AskFinancialQuestionResult` with the module-level
+    `IDLE` conversation directly). Minting here rather than leaving the chart unsealed keeps the
+    invariant this whole task exists for -- every trusted chart carries a seal -- true even for a
+    caller that forgot to mint an id first, at the cost of nothing: the id this function mints is
+    stamped onto the very `Conversation` it returns, so it travels forward exactly as if it had
+    been minted earlier.
+    """
+    if not conversation.visual_contexts:
+        return conversation
+    conversation_id = conversation.conversation_id or uuid4()
+    resealed = tuple(
+        seal_context(context, conversation_id, position, holder_reference, codec)
+        if context.trusted
+        else context
+        for position, context in enumerate(conversation.visual_contexts)
+    )
+    return replace(conversation, conversation_id=conversation_id, visual_contexts=resealed)
 
 
 def query_to_domain(payload: PlanPayload) -> FinancialPlan | TopMovements:
@@ -544,7 +623,9 @@ def to_domain(
             counterparty_aliases=_counterparty_aliases(payload),
             recent_payment_rail=payload.recent_payment_rail,
             turns=_turns(payload),
-            visual_contexts=_visual_contexts(payload, verify=verify),
+            visual_contexts=_visual_contexts(
+                payload, conversation_id=conversation_id, verify=verify
+            ),
             account_selection=_account_selection(payload) if payload else None,
         )
 
@@ -574,7 +655,7 @@ def to_domain(
         counterparty_aliases=_counterparty_aliases(payload),
         recent_payment_rail=payload.recent_payment_rail,
         turns=_turns(payload),
-        visual_contexts=_visual_contexts(payload, verify=verify),
+        visual_contexts=_visual_contexts(payload, conversation_id=conversation_id, verify=verify),
         account_selection=_account_selection(payload),
     )
 

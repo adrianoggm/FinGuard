@@ -223,7 +223,7 @@ async def test_an_untrusted_chart_is_not_drilled() -> None:
     sentence = "¿Por qué agosto es tan alto?"
     conversation = replace(
         MONTH_CONVERSATION,
-        visual_contexts=(replace(MONTH_CONTEXT, trusted=False),),
+        visual_contexts=(replace(MONTH_CONTEXT, trusted=False, trust_reason="content"),),
     )
 
     result = await handler.handle(

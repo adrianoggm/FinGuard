@@ -311,11 +311,16 @@ def test_a_bare_word_still_gets_through_and_that_is_the_honest_limit() -> None:
 
 def test_the_step_and_the_verdict_cannot_carry_anything() -> None:
     """Two of the six slots are structurally incapable of leaking, which is half the reason they
-    are enums. The other half is that Section 3 makes them metric labels."""
-    assert len(Step) == 12, (
-        "the design argues twelve seams; a thirteenth should be a diff to justify"
+    are enums. The other half is that Section 3 makes them metric labels.
+
+    Thirteen, not twelve, since Task 1 (Wave 3 hardening, A-1) added `CONTEXT_TRUST` -- the diff
+    the design's own docstring asks for: a defect (a replayed, reordered or tampered visual
+    context passing the trust gate silently) hid in exactly this seam.
+    """
+    assert len(Step) == 13, (
+        "the design argues thirteen seams; a fourteenth should be a diff to justify"
     )
-    assert len({step.value for step in Step}) == 12, "two seams sharing a label share a time series"
+    assert len({step.value for step in Step}) == 13, "two seams sharing a label share a time series"
     assert set(Verdict) == {
         Verdict.AGREED,
         Verdict.OVERRODE,
@@ -686,12 +691,21 @@ def test_every_seam_in_the_design_can_be_recorded_in_one_call() -> None:
             now="UNRELATED",
             detail="none",
         )
+        # Task 1 (Wave 3 hardening, A-1): the thirteenth seam -- an echoed visual context's seal
+        # checked out, so nothing changed and nothing is declined.
+        record(
+            Step.CONTEXT_TRUST,
+            Verdict.AGREED,
+            changed=False,
+            field="chart",
+            detail="ok",
+        )
         turn.outcome = PlanningOutcome.PLANNED.value
 
     sealed = turn.sealed()
-    assert {decision.step for decision in sealed.decisions} == set(Step), "all twelve fit"
+    assert {decision.step for decision in sealed.decisions} == set(Step), "all thirteen fit"
     assert all(REDACTED not in everything_in(TurnRecord((d,))) for d in sealed.decisions)
-    assert len(sealed.changed) == 9, "nine of the twelve altered the answer in this example"
+    assert len(sealed.changed) == 9, "nine of the thirteen altered the answer in this example"
 
 
 # --- the package move -------------------------------------------------------------------------

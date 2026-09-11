@@ -201,7 +201,13 @@ CHARTED_MONTHS_UNRANKED = WITH_LAST_PLAN.with_visual_context(
 # Untrusted: the labels are drawn, but nobody signed for them (a tampered or unsealed context).
 UNTRUSTED_CHARTED_MONTHS = WITH_LAST_PLAN.with_visual_context(
     VisualContext(
-        "chart-1", SPEC, BREAKDOWN_PROFILE, labels=_MONTH_LABELS, ranked=True, trusted=False
+        "chart-1",
+        SPEC,
+        BREAKDOWN_PROFILE,
+        labels=_MONTH_LABELS,
+        ranked=True,
+        trusted=False,
+        trust_reason="content",
     )
 )
 # A chart in context, but no plan behind it -- `analyze()`'s own `elif` never reaches the drill

@@ -872,7 +872,9 @@ def test_an_untrusted_context_is_refused_before_any_merge_or_ledger_call() -> No
     `VISUAL_UNCHANGED` above.
     """
     spec, profile = _base()
-    untrusted = replace(VisualContext("chart-1", spec, profile), trusted=False)
+    untrusted = replace(
+        VisualContext("chart-1", spec, profile), trusted=False, trust_reason="content"
+    )
     conversation = Conversation(visual_contexts=(untrusted,))
     intent = interpret_visual("ordénalo descendente", conversation.visual_contexts)
     assert intent is not None and intent.patch is not None
@@ -893,8 +895,10 @@ def test_a_restyle_seals_its_derived_context_for_the_holder() -> None:
     intent = interpret_visual("ordénalo descendente", conversation.visual_contexts)
     assert intent is not None
     tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
+    # A-1 (Wave 3 hardening): `seal` now reseals the whole conversation (`reseal_visual_contexts`),
+    # applied after the derived context is appended -- see the same change in `llm_controller.py`.
     seal = functools.partial(
-        conversation_mapper.seal_context, holder_reference="holder", codec=tokens
+        conversation_mapper.reseal_visual_contexts, holder_reference="holder", codec=tokens
     )
 
     response = _visual_only_response(intent, conversation, seal=seal)
@@ -903,8 +907,15 @@ def test_a_restyle_seals_its_derived_context_for_the_holder() -> None:
     assert response.conversation is not None
     (payload_context,) = response.conversation.visual_contexts[-1:]
     assert payload_context.token is not None
-    assert tokens.verify_context(
-        payload_context.token, "holder", conversation_mapper.context_semantics(payload_context)
+    assert (
+        tokens.verify_context(
+            payload_context.token,
+            "holder",
+            response.conversation.conversation_id,
+            len(response.conversation.visual_contexts) - 1,
+            conversation_mapper.context_semantics(payload_context),
+        )
+        == "ok"
     )
 
 
@@ -920,7 +931,9 @@ def test_saved_visual_source_refuses_an_untrusted_context_even_with_a_valid_toke
     tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
     who = Caller(holder_reference="holder", account_id=UUID(int=0), scopes=frozenset())
     metric_token = tokens.issue(who.holder_reference, definition)
-    untrusted = replace(VisualContext("chart-1", spec, profile), trusted=False)
+    untrusted = replace(
+        VisualContext("chart-1", spec, profile), trusted=False, trust_reason="content"
+    )
     conversation = Conversation(visual_contexts=(untrusted,))
     intent = VisualIntent(None, "chart-1")
     request = QuestionRequest(

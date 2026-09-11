@@ -623,6 +623,27 @@ untrusted until their next chart. Suite at HEAD: 3936 / 3 / 204, corpus 204. Wha
 reference, not a device; no server-side store — the codec is stateless and the seal is the only
 record of it.
 
+**2026-09-11 — the seal binds the conversation and the position too (Task 1, Wave 3 hardening,
+A-1/A-13).** The above bound a holder to a blob and nothing else: the same holder's own sealed
+context verified for `True` from any conversation, at any position, forever — a client could
+replay a sealed chart from another conversation, reorder its own list, duplicate an entry, or drop
+one and promote the next, and every one of those passed the trust gate. `seal_context`/
+`verify_context` now fold `conversation_id` and the context's own index into the signed body (the
+`c2.` envelope; a pre-hardening `c1.` token still parses at the wire but opens as `"format"`,
+never a 500) and `verify_context` returns which of five reasons failed — `holder`, `conversation`,
+`position`, `content`, `format` — rather than a bare bool, so `VISUAL_UNTRUSTED` can say «este
+gráfico no es de esta conversación» for the first three and keep the older tamper text for the
+last two. Eviction at `MAX_VISUAL_CONTEXTS` and a compound turn's merge both shift a survivor's
+position; `conversation_mapper.reseal_visual_contexts` re-signs every still-trusted context at its
+current index whenever the list's shape changes, so a long-running or multi-clause conversation
+stays trusted rather than refusing its own oldest surviving chart the very next turn. **The
+loopback default is not a trust boundary**: `just app` and every demo run the whole seal — save
+candidates and every visual context alike — on the committed development key (`bootstrap/main.py`
+logs one warning naming this at startup, per A-13, and refuses to start on that key against any
+non-loopback `ORCHESTRATOR_WEB_ORIGINS`); an altered-context demo only means something once a real
+`ORCHESTRATOR_METRICS_SIGNING_KEYS` is configured. Suite at HEAD: 4242 / 3 / 209, corpus 207
+(176 · 1194) at 0.0 %.
+
 **2026-09-07 — wave 4.2b landed: the conversation reads a split, a regroup and a turned bar in its
 own words.** `turn_analyzer.py` gains three follow-up shapes, all gated on
 `conversation.last_plan is not None`: a sentence opening with «ahora», a reshape/compare verb

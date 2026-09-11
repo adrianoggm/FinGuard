@@ -331,8 +331,11 @@ class VisualContextPayload(_Payload):
         default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
     )
     turn_id: UUID | None = None
+    # A-1 (Wave 3 hardening): `c1` and `c2` both validate at the wire -- a `c1.` token is a
+    # pre-hardening client's own seal, and it must reach `verify_context` to be told apart from a
+    # tampered one (`"format"`) rather than being refused here as a 422 before it gets that chance.
     token: str | None = Field(
-        default=None, max_length=512, pattern=r"^c1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"
+        default=None, max_length=512, pattern=r"^c[12]\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"
     )
     # Wave 4.3: the labels the chart drew, sealed with the rest of the context (`_value_free_spec`
     # below never touches these -- they are not the spec). Defaults are the old-client shape: an

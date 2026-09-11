@@ -32,6 +32,7 @@ from finguard_orchestrator.domain.models.chart import (
     Visualization,
     VisualRow,
 )
+from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUpKind
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
@@ -353,7 +354,7 @@ def _remember_visual_context(
     result: AskFinancialQuestionResult,
     visualization: VisualizationResponse | None,
     *,
-    seal: Callable[[VisualContext], VisualContext] | None = None,
+    seal: Callable[[Conversation], Conversation] | None = None,
 ) -> AskFinancialQuestionResult:
     if not isinstance(visualization, ChartVisualizationResponse) or result.visual_dataset is None:
         return result
@@ -422,12 +423,19 @@ def _remember_visual_context(
     # rather than by a second pass over the wire once the response is built. `seal` is `None` for
     # every caller with no holder to seal for (every existing call in this codebase's tests), and
     # the context stays exactly as it always has: unsealed, `trusted=True` in-process.
+    #
+    # A-1 (Wave 3 hardening): `seal` now reseals the whole *conversation*, applied AFTER the new
+    # context is appended -- never the bare context before it, the way this used to seal in place.
+    # A seal covers a context's position in the list, and `with_visual_context` can evict the
+    # oldest context once `MAX_VISUAL_CONTEXTS` is reached, which shifts every survivor's index
+    # down by one; sealing before the append would sign the new chart at a position the append can
+    # immediately invalidate. `conversation_mapper.reseal_visual_contexts` (what `seal` is bound to
+    # at the one production call site, `question_to_dto`) reseals every already-trusted context at
+    # its now-final index and leaves any untrusted one alone.
+    next_conversation = result.conversation.with_visual_context(context)
     if seal is not None:
-        context = seal(context)
-    return replace(
-        result,
-        conversation=result.conversation.with_visual_context(context),
-    )
+        next_conversation = seal(next_conversation)
+    return replace(result, conversation=next_conversation)
 
 
 def _chart_suggestions(context: VisualContext) -> list[str]:
@@ -566,7 +574,9 @@ def question_to_dto(
     # offer to save it.
     seal = (
         functools.partial(
-            conversation_mapper.seal_context, holder_reference=holder_reference, codec=metric_tokens
+            conversation_mapper.reseal_visual_contexts,
+            holder_reference=holder_reference,
+            codec=metric_tokens,
         )
         if holder_reference is not None and metric_tokens is not None
         else None

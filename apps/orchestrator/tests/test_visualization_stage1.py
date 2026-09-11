@@ -525,37 +525,58 @@ def test_an_invalid_origin_on_the_wire_is_refused() -> None:
         ConversationPayload.model_validate(raw)
 
 
+def _verify_for(codec: MetricTokenCodec, holder: str):
+    """A-1 (Wave 3 hardening): `verify_context` now takes the conversation id and the index
+    `_visual_contexts` resolved from the echoed list -- this just forwards both through rather
+    than hard-coding either, so a test can still name only the one thing it means to vary (the
+    holder)."""
+
+    def verify(token: str | None, conversation_id, position: int, semantics: dict[str, object]):
+        return codec.verify_context(token, holder, conversation_id, position, semantics)
+
+    return verify
+
+
 def test_a_sealed_context_round_trips_trusted_and_a_tampered_one_does_not() -> None:
     """A context this process sealed comes back `trusted` under the holder it was sealed for,
     untrusted the moment a byte the seal covers changes underneath it, and untrusted again for a
     different holder entirely -- the seal names who it was sealed for as much as what."""
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)
-    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    cid = uuid4()
+    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
     assert sealed.token is not None and sealed.trusted is True
 
-    def verify(token: str | None, semantics: dict[str, object]) -> bool:
-        return codec.verify_context(token, "holder-a", semantics)
+    verify = _verify_for(codec, "holder-a")
 
     echoed = conversation_mapper.to_domain(
-        conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,))), verify=verify
+        conversation_mapper.to_payload(
+            Conversation(conversation_id=cid, visual_contexts=(sealed,))
+        ),
+        verify=verify,
     )
     assert echoed.visual_contexts[0].trusted is True
     assert echoed.visual_contexts[0].token == sealed.token
 
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload = conversation_mapper.to_payload(
+        Conversation(conversation_id=cid, visual_contexts=(sealed,))
+    )
     # `_Payload` is not frozen: mutate the wire shape in place, exactly what a tampering client's
     # request body would look like once it reaches the DTO.
     profile = payload.visual_contexts[0].profile
     profile.comparison = not profile.comparison
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
+    assert tampered.trust_reason == "content"
 
     other = conversation_mapper.to_domain(
-        conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,))),
-        verify=lambda t, s: codec.verify_context(t, "holder-b", s),
+        conversation_mapper.to_payload(
+            Conversation(conversation_id=cid, visual_contexts=(sealed,))
+        ),
+        verify=_verify_for(codec, "holder-b"),
     ).visual_contexts[0]
     assert other.trusted is False
+    assert other.trust_reason == "holder"
 
 
 def test_an_unsealed_echo_is_untrusted_only_when_someone_verifies() -> None:
@@ -565,7 +586,7 @@ def test_an_unsealed_echo_is_untrusted_only_when_someone_verifies() -> None:
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE)  # token None: an older client
     payload = conversation_mapper.to_payload(Conversation(visual_contexts=(context,)))
     assert conversation_mapper.to_domain(payload).visual_contexts[0].trusted is True
-    untrusted = conversation_mapper.to_domain(payload, verify=lambda t, s: False)
+    untrusted = conversation_mapper.to_domain(payload, verify=lambda t, c, p, s: "format")
     assert untrusted.visual_contexts[0].trusted is False
 
 
@@ -620,13 +641,15 @@ def test_a_tampered_label_untrusts_a_sealed_context() -> None:
         labels=("ALQUILER", "GROCERIES", "ZAPATOS"),
         ranked=True,
     )
-    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    cid = uuid4()
+    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
     assert sealed.token is not None
 
-    def verify(token: str | None, semantics: dict[str, object]) -> bool:
-        return codec.verify_context(token, "holder-a", semantics)
+    verify = _verify_for(codec, "holder-a")
 
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload = conversation_mapper.to_payload(
+        Conversation(conversation_id=cid, visual_contexts=(sealed,))
+    )
     payload.visual_contexts[0].labels[0] = "OTRA"
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
@@ -637,13 +660,15 @@ def test_a_tampered_ranked_flag_also_untrusts_a_sealed_context() -> None:
     -- flipping it in place must untrust the context too."""
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, labels=("ALQUILER",), ranked=True)
-    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    cid = uuid4()
+    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
     assert sealed.token is not None
 
-    def verify(token: str | None, semantics: dict[str, object]) -> bool:
-        return codec.verify_context(token, "holder-a", semantics)
+    verify = _verify_for(codec, "holder-a")
 
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload = conversation_mapper.to_payload(
+        Conversation(conversation_id=cid, visual_contexts=(sealed,))
+    )
     payload.visual_contexts[0].ranked = not payload.visual_contexts[0].ranked
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
@@ -690,13 +715,15 @@ def test_a_tampered_plan_digest_untrusts_a_sealed_context() -> None:
     after the seal, must untrust the context exactly the same way."""
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, plan_digest="0123456789abcdef")
-    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    cid = uuid4()
+    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
     assert sealed.token is not None
 
-    def verify(token: str | None, semantics: dict[str, object]) -> bool:
-        return codec.verify_context(token, "holder-a", semantics)
+    verify = _verify_for(codec, "holder-a")
 
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload = conversation_mapper.to_payload(
+        Conversation(conversation_id=cid, visual_contexts=(sealed,))
+    )
     payload.visual_contexts[0].plan_digest = "fedcba9876543210"
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
@@ -711,13 +738,15 @@ def test_a_tampered_window_end_untrusts_a_sealed_context() -> None:
         BREAKDOWN_PROFILE,
         window=AbsoluteRange(date(2026, 7, 1), date(2026, 7, 20)),
     )
-    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    cid = uuid4()
+    sealed = conversation_mapper.seal_context(context, cid, 0, "holder-a", codec)
     assert sealed.token is not None
 
-    def verify(token: str | None, semantics: dict[str, object]) -> bool:
-        return codec.verify_context(token, "holder-a", semantics)
+    verify = _verify_for(codec, "holder-a")
 
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload = conversation_mapper.to_payload(
+        Conversation(conversation_id=cid, visual_contexts=(sealed,))
+    )
     payload.visual_contexts[0].window_end = date(2026, 7, 31)
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
@@ -1194,20 +1223,36 @@ async def test_offer_saving_gates_the_candidate_and_not_the_seal() -> None:
     unoffered = question_to_dto(figure, holder_reference="holder", metric_tokens=tokens)
     assert unoffered.save_candidate is None
     assert unoffered.visualization is not None
+    assert unoffered.conversation is not None
     (unoffered_context,) = unoffered.conversation.visual_contexts[-1:]
     assert unoffered_context.token is not None
-    assert tokens.verify_context(
-        unoffered_context.token, "holder", conversation_mapper.context_semantics(unoffered_context)
+    assert (
+        tokens.verify_context(
+            unoffered_context.token,
+            "holder",
+            unoffered.conversation.conversation_id,
+            len(unoffered.conversation.visual_contexts) - 1,
+            conversation_mapper.context_semantics(unoffered_context),
+        )
+        == "ok"
     )
 
     offered = question_to_dto(
         figure, holder_reference="holder", metric_tokens=tokens, offer_saving=True
     )
     assert offered.save_candidate is not None
+    assert offered.conversation is not None
     (offered_context,) = offered.conversation.visual_contexts[-1:]
     assert offered_context.token is not None
-    assert tokens.verify_context(
-        offered_context.token, "holder", conversation_mapper.context_semantics(offered_context)
+    assert (
+        tokens.verify_context(
+            offered_context.token,
+            "holder",
+            offered.conversation.conversation_id,
+            len(offered.conversation.visual_contexts) - 1,
+            conversation_mapper.context_semantics(offered_context),
+        )
+        == "ok"
     )
 
 

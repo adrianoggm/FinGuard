@@ -95,6 +95,11 @@ class Step(StrEnum):
     """What a turn wants from the chart it follows — recorded before anything is changed, so the
     readers' agreement can be measured before a model is trusted with the disagreement."""
 
+    CONTEXT_TRUST = "context_trust"
+    """Whether an echoed visual context's seal checked out, and if not, which of the five reasons
+    (Task 1, Wave 3 hardening: A-1) -- a replay from another conversation and a tampered payload
+    are two different failure populations, and this is the seam that tells them apart."""
+
 
 class Verdict(StrEnum):
     """Which way a decision went.

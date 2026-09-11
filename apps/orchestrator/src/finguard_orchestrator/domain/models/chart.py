@@ -37,6 +37,12 @@ SortMode = Literal["input", "ascending", "descending"]
 # follows, so a fourth orientation nobody asked for cannot come into existence at one of the three
 # without the type checker catching the other two.
 Orientation = Literal["horizontal", "vertical"]
+# Task 1 (Wave 3 hardening, A-1): what `MetricTokenCodec.verify_context` found, a closed set so a
+# refusal text and a promotion-log line can both key off the exact reason rather than a bare bool.
+# `"ok"` is the only reason `trusted=True` -- everything else means `trusted=False`, and which of
+# the five it was decides the sentence a holder reads (`"holder"`/`"conversation"`/`"position"`
+# read as "not this conversation"; `"content"`/`"format"` read as the existing tamper text).
+ContextTrust = Literal["ok", "holder", "conversation", "position", "content", "format"]
 
 # The identifier shape every field name -- a chart field, a visual field, a sort field -- must
 # have. Promoted to a module constant so `VisualContextPayload._value_free_spec`
@@ -389,6 +395,12 @@ class VisualContext:
     `source` and `fallback_reason` travel and are sealed too (Wave 4.5): descriptive provenance,
     read only by the explanation (`explain_chart`) to say who chose the chart, never by anything
     that decides. `None` when the chart was echoed with no decision behind it at all.
+
+    `trust_reason` is turn-local like `trusted` itself (Task 1, Wave 3 hardening): `trusted` stays
+    the bool everything downstream already branches on, and this is *why*, kept only long enough
+    for the one caller (`llm_controller`'s `VISUAL_UNTRUSTED` responses) that needs to tell a
+    replayed-from-another-conversation chart from a tampered one apart in the sentence a holder
+    reads. `"ok"` for a context this process built fresh or one whose seal checked out in full.
     """
 
     chart_id: str
@@ -401,6 +413,7 @@ class VisualContext:
     turn_id: UUID | None = None
     token: str | None = None
     trusted: bool = True
+    trust_reason: ContextTrust = "ok"
     labels: tuple[str, ...] = ()
     series_labels: tuple[str, ...] = ()
     ranked: bool = False
@@ -412,6 +425,8 @@ class VisualContext:
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):
             raise ValueError("invalid chart id")
+        if self.trusted != (self.trust_reason == "ok"):
+            raise ValueError("trusted must agree with trust_reason")
         if self.derived_from is not None:
             if not CHART_ID_PATTERN.fullmatch(self.derived_from):
                 raise ValueError("derived_from must be a chart id")

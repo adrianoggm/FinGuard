@@ -164,6 +164,15 @@ Still not OAuth. §12.2 asks for short-lived tokens from an issuer, and what exi
 seam: the account and the permissions come from the credential, so swapping the issuer is a
 change of adapter rather than a change of design.
 
+**The loopback default is not a trust boundary.** `just app`, every demo, and any deployment
+that never sets `ORCHESTRATOR_METRICS_SIGNING_KEYS` seal every visual context and every saved
+metric — not only the ones metrics-flagged endpoints touch — with the development key
+committed in this repository, forgeable by anyone who reads the source. `bootstrap/main.py`
+logs one warning naming this at startup, and refuses to start on that key the moment
+`ORCHESTRATOR_WEB_ORIGINS` names a non-loopback origin (A-13); short of that, an "altered
+context is refused" demonstration run against `just app` alone proves nothing about the
+signature — set a real signing key first.
+
 ## Running it
 
 ```bash
