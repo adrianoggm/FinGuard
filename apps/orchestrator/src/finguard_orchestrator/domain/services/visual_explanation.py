@@ -379,11 +379,24 @@ _WHY = re.compile(
     r"(?:este|ese|el) grafico"
     r"|(?:(?:el )?(?:ultimo|last|primer[oa]?|segund[oa]?) grafico)"
     r"|(?:en |con )?(?:barras|lineas|linea|area|puntos|donut|anillo|circular)"
+    # A-9 (Wave 3 hardening): "¿Por qué has elegido/puesto/usado barras?" names the same mark
+    # words above, behind the verb a holder actually uses to ask why the chart looks that way
+    # rather than to change it -- `interpret_visual`'s own `_VISUAL` grammar reads the bare mark
+    # word alone and would otherwise restyle a question.
+    r"|(?:has |he |habeis )?(?:elegido|puesto|usado|escogido) "
+    r"(?:barras?|lineas?|areas?|puntos?|donut|anillo|circular)"
     r"|(?:este|ese|el) orden"
     r"|(?:asi|de esta forma) ordenado"
     r"|(?:me )?lo has puesto asi"
     r"|esta asi"
-    r")$"
+    r")"
+    # B-6 (Wave 3 hardening): design §3.3/§7's own explanation wording -- "explícame el gráfico",
+    # "cuéntame el gráfico", "¿qué significa este gráfico?" -- none of it built on "por qué" at
+    # all, so it could not live inside the group above.
+    r"|explica(?:me)?(?: el grafico)?"
+    r"|cuentame(?: el grafico)?"
+    r"|que significa (?:este|el) grafico"
+    r"$"
 )
 
 

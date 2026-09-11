@@ -78,6 +78,22 @@ def test_a_superlative_over_a_ranked_chart_names_the_top_or_bottom_bar(sentence,
     assert resolve_reference(sentence, RANKED_MONTHS) == expected
 
 
+# B-6 (Wave 3 hardening): design §3.3's own drill-down words. None of the three names a month or a
+# category, and none uses `_TOP`'s original "más alto/grande/caro" vocabulary -- each is an
+# implicit "the standout bar" the same way "el pico" already is, and all three used to resolve
+# `NoMatch()` over a real chart in view, so the drill classifier never claimed them.
+IMPLICIT_TOP_ROWS = [
+    ("¿Por qué tanto?", Resolved("2026-08", "rank")),
+    ("¿Qué comercio es responsable?", Resolved("2026-08", "rank")),
+    ("¿De dónde sale?", Resolved("2026-08", "rank")),
+]
+
+
+@pytest.mark.parametrize(("sentence", "expected"), IMPLICIT_TOP_ROWS)
+def test_the_designs_own_drill_words_resolve_the_standout_bar(sentence, expected) -> None:
+    assert resolve_reference(sentence, RANKED_MONTHS) == expected
+
+
 def test_a_superlative_over_an_unranked_chart_asks_instead_of_guessing() -> None:
     assert resolve_reference("¿Qué movimientos explican ese pico?", UNRANKED_MONTHS) == Ambiguous(
         MONTH_LABELS
@@ -140,7 +156,12 @@ def test_one_label_a_superlative_names_the_only_bar(sentence) -> None:
 
 
 def test_a_weekday_reference_is_not_resolved() -> None:
-    assert resolve_reference("¿Por qué los martes gasto tanto?", WEEKDAYS) == NoMatch()
+    """B-6 (Wave 3 hardening): reworded from "¿Por qué los martes gasto tanto?" -- "tanto" is now
+    one of `_TOP`'s own implicit-superlative words (design §3.3's "¿por qué tanto?"), so that
+    sentence resolves to the standout bar the same way it would over any other ranked chart; the
+    fact this test still pins (a full weekday name, "martes", never matches a chart's own
+    three-letter labels, "Mar") needs a sentence that names nothing else resolvable either."""
+    assert resolve_reference("¿Qué gasté los martes?", WEEKDAYS) == NoMatch()
 
 
 # --- The type itself ------------------------------------------------------------------------------

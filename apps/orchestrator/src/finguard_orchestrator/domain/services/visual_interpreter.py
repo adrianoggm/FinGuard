@@ -114,6 +114,13 @@ def resolve_target(word: str | None, contexts: tuple[VisualContext, ...]) -> str
 
 def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> VisualIntent | None:
     folded = fold(sentence)
+    # A-9 (Wave 3 hardening): a second line of defence, beside `asks_why` claiming a "por qué"
+    # sentence before this ever runs. "Por qué barras" names a mark word and nothing else this
+    # function's own grammar can tell apart from an instruction to restyle TO it -- refusing any
+    # sentence that starts with the question word closes that gap however the "why" grammar is
+    # phrased next, rather than only for the phrasings it already knows.
+    if folded.strip(" ¿?¡!.,").startswith("por que"):
+        return None
     financial = _FINANCIAL.search(folded)
     show_every_row = _VISUAL_ALL.fullmatch(folded.strip(" ¿?¡!.,")) is not None
     limit_phrase = _LIMIT_PHRASE.search(folded)

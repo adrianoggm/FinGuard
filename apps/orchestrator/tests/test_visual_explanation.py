@@ -469,6 +469,18 @@ def test_no_amount_survives_into_the_text(family_name: str) -> None:
         ("¿Por qué me lo has puesto así?", None),
         ("¿Por qué está así?", None),
         ("Por qué este gráfico", None),  # no leading ¿, no trailing ?
+        # A-9 + B-6 (Wave 3 hardening): the verb a holder actually uses to ask why the chart looks
+        # the way it does, and the design's own explanation wording, neither built on the mark
+        # word alone or on "por qué" at all.
+        ("¿Por qué has elegido barras?", None),
+        ("¿Por qué has puesto líneas?", None),
+        ("¿Por qué has usado circular?", None),
+        ("¿Por qué escogido áreas?", None),
+        ("Explícame el gráfico", None),
+        ("Explícame", None),
+        ("Cuéntame el gráfico", None),
+        ("¿Qué significa este gráfico?", None),
+        ("¿Qué significa el gráfico?", None),
     ],
 )
 def test_asks_why_claims_every_phrasing_the_brief_lists(sentence: str, target: str | None) -> None:

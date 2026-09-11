@@ -78,6 +78,16 @@ def test_a_bare_axis_noun_beside_a_sort_word_is_a_restyle_not_a_mixed_refusal() 
         assert intent.patch is not None, sentence
 
 
+def test_a_sentence_starting_por_que_never_restyles() -> None:
+    """A-9 (Wave 3 hardening): `asks_why` claims «¿por qué has elegido barras?» before
+    `interpret_visual` ever runs (the controller's own order) -- this is the second line of
+    defence the finding names directly: whatever phrasing a future "why" sentence takes, one that
+    starts "por qué" is never read as an instruction to change the chart TO the mark word it
+    names, even in isolation."""
+    for sentence in ("Por qué barras", "¿Por qué en líneas?", "Por que circular"):
+        assert interpret_visual(sentence, CONTEXTS) is None, sentence
+
+
 def test_a_real_financial_signal_beside_a_style_word_is_still_mixed() -> None:
     """The other half of A-10's rule: a window or a comparison verb beside a style word is a
     genuine two-things-at-once turn, and the ambiguity still has to be asked about."""
