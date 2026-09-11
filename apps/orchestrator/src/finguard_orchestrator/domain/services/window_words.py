@@ -349,7 +349,13 @@ def whole_year(year: int) -> AbsoluteRange:
 
 def whole_month(year: int, month: int) -> AbsoluteRange:
     """A calendar month as the range it is. `monthrange` rather than a table of lengths: February
-    is the one that moves and a hand-written table is how it stops moving."""
+    is the one that moves and a hand-written table is how it stops moving.
+
+    C-4 (Wave 3 hardening): never raises for a `(year, month)` pair `visual_reference.parsed_month`
+    accepted -- that reader now bounds the year to `2000-2099` (the same range every other named
+    year in this file already enforces) and the month to `01-12`, so `date`/`monthrange` here
+    never see a value outside what they can build. A caller with an unvalidated year is still its
+    own responsibility; this function itself does not re-check one."""
     return AbsoluteRange(
         start=date(year, month, 1), end=date(year, month, monthrange(year, month)[1])
     )

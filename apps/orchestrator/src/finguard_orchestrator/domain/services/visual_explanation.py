@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Final, get_args
 
-from finguard_orchestrator.domain.enums import GroupBy
+from finguard_orchestrator.domain.enums import GroupBy, Metric
 from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     Mark,
@@ -123,29 +123,30 @@ def _nouns_of(group_by: GroupBy | None, labels: tuple[str, ...]) -> tuple[str, s
     return _GENERIC_NOUN
 
 
-# What `profile.measure_metric()` actually returns across the seven `FAMILY_DATASETS` families
-# (verified on the tree at 47a0597, no `plan_metric` set by any of them): `SUM`, `CUMULATIVE`,
-# `FREQUENCY`, `RECURRENCE`, `RATIO_SHARE`, `COMPARISON` -- shape/measure markers, never
-# `EXPENSE`/`INCOME` (those live only on a `FinancialPlan.direction`, which this module never sees
-# -- R1's whole point, restated by R11). Closed over exactly the values found: an unknown metric
-# marker is a producer change the tests below will catch at import time (the assertion), not
-# something this dict should silently grow to cover.
+# A-7/C-2/U-3 (Wave 3 hardening): `profile.measure_metric()` is `plan_metric or metric` -- the
+# plan's own `Metric` when one survived the wire (Task 2 made it), the dataset's shape marker
+# otherwise. This module used to close over six *shape* markers only, on the premise that no
+# producer ever set `plan_metric` -- false on the live path: `_decided_visual` passes
+# `plan_metric=context.metric` on every turn with a plan in view, so a COUNT/AVERAGE/
+# PERIOD_AVERAGE plan reaches here as itself, not as the dataset's shape. Closed over the real
+# `Metric` enum (never `EXPENSE`/`INCOME` -- those live only on a `FinancialPlan.direction`, which
+# this module never sees, R1's whole point) plus the two shape markers no `Metric` member names:
+# `RATIO_SHARE` and `COMPARISON` (a comparison whose `plan_metric` did not survive -- an ungrouped
+# two-total comparison with no plan in view -- assumed a comparison of amounts, same as before).
+# U-2: `RECURRENCE`'s points plot `value_minor`, an amount, not a count -- "número de movimientos"
+# was always the wrong word for it, unrelated to the `plan_metric` gap C-2 fixes.
 _MEASURE_WORDS: Final[dict[str, str]] = {
     "SUM": "importe",
-    "COMPARISON": "importe",
     "CUMULATIVE": "importe",
+    "COMPARISON": "importe",
+    "COUNT": "número de movimientos",
     "FREQUENCY": "número de movimientos",
-    "RECURRENCE": "número de movimientos",
+    "AVERAGE": "importe medio",
+    "PERIOD_AVERAGE": "importe medio",
+    "RECURRENCE": "importe",
     "RATIO_SHARE": "peso",
 }
-assert set(_MEASURE_WORDS) == {
-    "SUM",
-    "CUMULATIVE",
-    "FREQUENCY",
-    "RECURRENCE",
-    "RATIO_SHARE",
-    "COMPARISON",
-}
+assert set(_MEASURE_WORDS) == {m.value for m in Metric} | {"RATIO_SHARE", "COMPARISON"}
 
 
 def _measure_word(profile: VisualProfile) -> str:

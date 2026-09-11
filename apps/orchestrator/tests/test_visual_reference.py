@@ -12,7 +12,8 @@ from finguard_orchestrator.domain.services import category_words
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
 )
-from finguard_orchestrator.domain.services.visual_reference import resolve_reference
+from finguard_orchestrator.domain.services.visual_reference import parsed_month, resolve_reference
+from finguard_orchestrator.domain.services.window_words import whole_month
 
 SPEC = DeterministicVisualPlanner().plan(BREAKDOWN_PROFILE, DEFAULT_PRESENTATION)
 assert SPEC is not None
@@ -202,3 +203,30 @@ def test_the_new_domain_modules_import_nothing_from_application_or_infrastructur
                 assert not any(name.startswith(prefix) for prefix in banned), (
                     f"{path.name} imports {name}"
                 )
+
+
+# --- C-4 (Wave 3 hardening): a month label the resolver accepts is a month the calendar has ------
+#
+# `_MONTH_LABEL` is a bare `(\d{4})-(\d{2})` with no bound on the year, so a ledger group key of
+# "0000-01" -- a boundary or unbucketed row -- parsed to `(0, 1)`, and `whole_month(0, 1)` then
+# built `date(0, 1, 1)`, an unhandled `ValueError` neither a `DomainError` nor a pydantic
+# `ValidationError` maps to anything but an HTTP 500. `20\d{2}` is the bound every other year this
+# service reads already uses (`window_words.py`'s own named-year and quarter/semester patterns),
+# so this is not a new range, only the one this reader had never enforced.
+
+
+def test_year_zero_is_not_a_month_label() -> None:
+    assert parsed_month("0000-01") is None
+
+
+def test_a_year_outside_the_ledgers_range_is_not_a_month_label() -> None:
+    for label in ("0000-01", "1999-12", "2100-01", "9999-12"):
+        assert parsed_month(label) is None, label
+
+
+def test_every_label_parsed_month_accepts_is_a_month_whole_month_can_build() -> None:
+    for label in ("2000-01", "2026-08", "2099-12"):
+        parsed = parsed_month(label)
+        assert parsed is not None, label
+        # Never raises -- the C-4 guarantee itself, not just a bound on the year.
+        whole_month(*parsed)

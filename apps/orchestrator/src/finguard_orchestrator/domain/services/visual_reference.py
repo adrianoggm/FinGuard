@@ -76,7 +76,18 @@ def parsed_month(label: str) -> tuple[int, int] | None:
     month = int(match.group(2))
     if not 1 <= month <= 12:
         return None
-    return int(match.group(1)), month
+    year = int(match.group(1))
+    # C-4 (Wave 3 hardening): the month was already bounded to 01-12; the year never was. A
+    # boundary or unbucketed ledger row can carry a group key like "0000-01", which parsed to
+    # `(0, 1)` and made `window_words.whole_month(0, 1)` build `date(0, 1, 1)` -- an unhandled
+    # `ValueError`, neither a `DomainError` nor a pydantic `ValidationError`, on the way to an
+    # HTTP 500. `2000-2099` is not a new range: it is the bound every other year this service
+    # reads already enforces (`window_words.py`'s own named-year, quarter and semester patterns
+    # all match `20\d{2}`), applied here so a label the resolver accepts is always a month the
+    # calendar -- and `whole_month` -- can build without raising.
+    if not 2000 <= year <= 2099:
+        return None
+    return year, month
 
 
 def _word_present(word: str, folded_sentence: str) -> bool:
