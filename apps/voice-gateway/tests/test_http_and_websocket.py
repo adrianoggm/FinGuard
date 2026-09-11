@@ -381,6 +381,75 @@ def test_payment_policy_blocks_next_spoken_turn_without_calling_assistant() -> N
     sessions.clear()
 
 
+def test_a_refused_voice_payment_does_not_silence_the_session() -> None:
+    """G-1: the refusal fires once and then clears, so the very next turn -- whatever it says,
+    a cancel included -- reaches the assistant again. Before the fix, `payment_confirmation_
+    required` never cleared and every later turn on the session answered the same refusal
+    forever, `assistant.call_count` never rising again."""
+    assert isinstance(services.assistant, FakeAssistantClient)
+    with TestClient(app) as client:
+        before = services.assistant.call_count
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            socket.receive_json()
+
+            def run_turn(sequence: int, turn_id: str, audio: bytes) -> list[dict[str, object]]:
+                socket.send_text(_control("input.start", session_id, sequence, turn_id))
+                socket.send_bytes(audio)
+                socket.send_text(_control("input.commit", session_id, sequence + 1, turn_id))
+                collected: list[dict[str, object]] = []
+                while True:
+                    item = socket.receive()
+                    if item.get("text"):
+                        payload = json.loads(item["text"])
+                        collected.append(payload)
+                        if payload["type"] == "turn.completed":
+                            break
+                return collected
+
+            run_turn(1, "prepare", b"quiero preparar un pago ")
+            refusal_events = run_turn(3, "confirm", b"si")
+            refusal = next(e for e in refusal_events if e["type"] == "assistant.text.final")
+            refusal_text = refusal["text"]
+            assert isinstance(refusal_text, str)
+            assert "No puedo confirmar" in refusal_text
+            assert services.assistant.call_count == before + 1
+
+            # The next turn is answered normally: the assistant is called again, not refused a
+            # second time.
+            next_events = run_turn(5, "after-refusal", b"hola")
+            answered = next(e for e in next_events if e["type"] == "assistant.text.final")
+            answered_text = answered["text"]
+            assert isinstance(answered_text, str)
+            assert "No puedo confirmar" not in answered_text
+            assert answered["paymentConfirmationRequired"] is False
+            assert services.assistant.call_count == before + 2
+
+            # G-1 explicitly covers a cancel too: sent right after another refusal, it still
+            # reaches the assistant on the turn after.
+            run_turn(7, "prepare-again", b"quiero preparar un pago ")
+            run_turn(9, "confirm-again", b"si")
+            assert services.assistant.call_count == before + 3
+            # A cancel with no active turn -- no `response.cancelled` to wait for, but it must
+            # not resurrect the latch either: the very next turn still reaches the assistant.
+            socket.send_text(_control("response.cancel", session_id, 11))
+            after_cancel_events = run_turn(12, "after-cancel", b"hola")
+            after_cancel = next(
+                e for e in after_cancel_events if e["type"] == "assistant.text.final"
+            )
+            after_cancel_text = after_cancel["text"]
+            assert isinstance(after_cancel_text, str)
+            assert "No puedo confirmar" not in after_cancel_text
+            assert services.assistant.call_count == before + 4
+    sessions.clear()
+
+
 class _Socket:
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []

@@ -2004,13 +2004,23 @@ git commit -m "docs(visual): wave 3 lands in shadow, the record carries both spe
 
 This task needs the GPU alone and the model warm. It is run by a person, and its output is a decision written into `docs/next.md`, not code.
 
-- [ ] **Step 1: Warm the model and check nothing else holds the GPU** — `nvidia-smi` shows only Ollama; `curl -s localhost:11434/api/ps` shows `qwen3.5:9b` loaded (never a bare `curl` to `/api/generate` without `num_ctx` — it reloads the model at 262k context).
-- [ ] **Step 2: Three runs** — `just evaluate-visual` three times, `ORCHESTRATOR_VISUAL_PLANNER=shadow`, budget `6.0`. Keep the three `last-run.json` files as `run1.json`, `run2.json`, `run3.json` under `evaluation/visual/`.
+- [ ] **Step 1: Warm the model and check nothing else holds the GPU** — `nvidia-smi` shows only Ollama; `curl -s localhost:11434/api/ps` shows `qwen3.5:9b` loaded. Warm it explicitly with `num_ctx` pinned to the production value, matching `evaluation/conversations/RESULTS-E2E.md`'s own warm-up (a bare call with no `num_ctx` reloads the model at Ollama's default 262k context, which is the mistake both files now warn against the same way):
+  ```bash
+  curl -s http://127.0.0.1:11434/api/generate \
+    -d '{"model":"qwen3.5:9b","prompt":"hola","stream":false,"keep_alive":"60m","options":{"num_ctx":4096}}' >/dev/null
+  curl -s http://127.0.0.1:11434/api/ps
+  ```
+  **Context-size guidance (M-3f).** `ORCHESTRATOR_OLLAMA_CONTEXT_TOKENS=4096` is the production
+  setting and what the warm-up above matches. On an 8 GB laptop GPU, `qwen3.5:9b` fits alongside a
+  4096-token context only if nothing else pins VRAM; a larger context or a second resident model
+  risks CPU offload, which inflates the very P95 this run exists to produce. If `nvidia-smi` shows
+  the model partly in system RAM, stop and free the GPU rather than reading the run.
+- [ ] **Step 2: Three runs** — `just evaluate-visual` three times (the recipe now defaults `--model` to `qwen3.5:9b`, the shipped and measured planner everywhere else in this repo — pass `model=<other>` to override). Budget is `ORCHESTRATOR_VISUAL_PLANNER_BUDGET_SECONDS` (default `6.0`, itself an unmeasured guess — see `bootstrap/config.py`'s comment on the field); pass `--budget <n>` in `args` to change it. Do **not** set `ORCHESTRATOR_VISUAL_PLANNER=shadow` for this step: the script hardcodes `mode="shadow"` in `evaluate_visual.py`'s `run()` regardless of that setting, so setting it here is a no-op — it matters only for Step 4's flip, below. Keep the three `last-run.json` files as `run1.json`, `run2.json`, `run3.json` under `evaluation/visual/`.
 - [ ] **Step 3: Read the minimum** of validity, suitability and `valid ∧ suitable ∧ changed` across the three; the **maximum** P95 latency.
 - [ ] **Step 4: Decide**, and write the decision with the numbers into `docs/next.md` §9:
   - validity < 90 % → the prompt or the schema, not the product: fix `visual_prompt.py`, re-run; do not promote.
   - `valid ∧ suitable ∧ changed` = 0 across three runs → the planner is real and decorative for these cases; stay in `shadow`, and say so — a zero is a finding, not a failure to report.
-  - otherwise → set `visual_planner_budget_seconds` to the max P95 rounded up to 0.5 s, flip `compose.yaml` to `ORCHESTRATOR_VISUAL_PLANNER: "hybrid"`, and re-run the three runs in `hybrid` to confirm `accepted` matches `valid` and no fallback reason grew.
+  - otherwise → set `visual_planner_budget_seconds` to the max P95 rounded up to 0.5 s (and update the "not chosen" comment beside it to say what it now is), flip `compose.yaml`'s `ORCHESTRATOR_VISUAL_PLANNER` key from `deterministic` to `hybrid`, restart the composed orchestrator, and confirm the promotion **against the deployed service**, not by re-running `evaluate_visual.py` — that script has no `--mode` flag and always evaluates `shadow`. Drive `just evaluate-e2e demo-token-laura-0001 dev` (or the visual corpus episodes, once Task 8 lands) against the running `hybrid` stack and confirm the answers it accepts match what `shadow`'s three runs called `valid`, with no new fallback reason.
 - [ ] **Step 5: Commit** the three run files and the `docs/next.md` decision, one commit; the `compose.yaml` flip is its own commit with the numbers in its body.
 
 ---
