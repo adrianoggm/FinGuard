@@ -352,6 +352,14 @@ class VisualContextPayload(_Payload):
     plan_digest: str | None = Field(
         default=None, min_length=16, max_length=16, pattern=r"^[0-9a-f]{16}$"
     )
+    # Task 1 (Wave 4.5): descriptive provenance, sealed with the rest -- an unknown value here is
+    # a 422 like any other field, the same way an unknown `spec` key already is below. Rides the
+    # sealed digest through `context_semantics` unchanged: that function is `model_dump(exclude
+    # token)`, so a new field here needs no change there to be covered by the seal.
+    source: Literal["llm", "deterministic", "patch"] | None = None
+    fallback_reason: (
+        Literal["abstention", "timeout", "provider_error", "invalid_proposal"] | None
+    ) = None
 
     @model_validator(mode="after")
     def _window_is_both_ends_or_neither(self) -> "VisualContextPayload":

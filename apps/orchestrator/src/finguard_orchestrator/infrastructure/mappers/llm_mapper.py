@@ -412,6 +412,10 @@ def _remember_visual_context(
             if isinstance(result.metric_definition, FinancialPlan)
             else None
         ),
+        # Task 1 (Wave 4.5): descriptive provenance, from the same decision the profile above
+        # already came from -- never re-derived, never guessed.
+        source=decision.source,
+        fallback_reason=decision.fallback_reason,
     )
     # Task 3: sealed here, where the context is born -- before it ever reaches `to_payload` --
     # rather than by a second pass over the wire once the response is built. `seal` is `None` for

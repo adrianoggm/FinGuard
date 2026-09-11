@@ -18,6 +18,13 @@ if TYPE_CHECKING:  # the decision and the plans import this module; only the ann
     from finguard_orchestrator.domain.value_objects.ratio_plan import RatioPlan
 
 Mark = Literal["line", "area", "bar", "point", "donut"]
+# Task 1 (Wave 4.5): `VisualContext.source`/`.fallback_reason` need these two closed sets, and
+# `domain/models/visual_plan.py` already imports `ChartSpec` from this module -- the reverse
+# import would be the cycle, not this one -- so the two are defined here and re-exported from
+# `visual_plan.py` (which builds `VisualDecision.source`/`.fallback_reason` from the same names)
+# rather than duplicated.
+VisualSource = Literal["llm", "deterministic", "patch"]
+FallbackReason = Literal["abstention", "timeout", "provider_error", "invalid_proposal"]
 Channel = Literal["x", "y", "color", "tooltip", "theta", "xOffset", "yOffset"]
 FieldType = Literal["nominal", "quantitative", "temporal"]
 Stack = Literal["zero", "normalize", "disabled"]
@@ -378,6 +385,10 @@ class VisualContext:
     (`domain/services/plan_digest.py`), so the drill can refuse to narrow a plan that is not this
     chart's own -- a KPI turn after a chart, a restyle of an older chart, or a client-edited
     `last_plan` all fail that check rather than silently narrowing the wrong query.
+
+    `source` and `fallback_reason` travel and are sealed too (Wave 4.5): descriptive provenance,
+    read only by the explanation (`explain_chart`) to say who chose the chart, never by anything
+    that decides. `None` when the chart was echoed with no decision behind it at all.
     """
 
     chart_id: str
@@ -395,6 +406,8 @@ class VisualContext:
     ranked: bool = False
     window: AbsoluteRange | None = None
     plan_digest: str | None = None
+    source: VisualSource | None = None
+    fallback_reason: FallbackReason | None = None
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):

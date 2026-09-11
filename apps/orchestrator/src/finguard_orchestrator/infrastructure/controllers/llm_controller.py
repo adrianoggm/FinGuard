@@ -267,6 +267,11 @@ def _derived_context(
         ranked=trusted.ranked,
         window=trusted.window,
         plan_digest=trusted.plan_digest,
+        # Task 1 (Wave 4.5): from this restyle's own decision (the patch's, `source="patch"`) --
+        # `None` only when there is no decision at all, the same guard `decision` above already
+        # needs for the docstring's own reasoning.
+        source=decision.source if decision is not None else None,
+        fallback_reason=decision.fallback_reason if decision is not None else None,
     )
     return seal(context) if seal is not None else context
 

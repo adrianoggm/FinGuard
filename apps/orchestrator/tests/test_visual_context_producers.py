@@ -429,6 +429,17 @@ def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> N
     assert derived.evidence_ids == ()
 
 
+def test_a_restyles_derived_context_carries_source_patch(restyle_turn) -> None:
+    """Task 1 (Wave 4.5): `_derived_context` builds its `decision` as `VisualDecision(source=
+    "patch", ...)` (`llm_controller._visual_only_response`), so the derived context it seals
+    carries `source="patch"`, `fallback_reason=None` -- surviving the wire round trip
+    `restyle_turn`'s own fixture drives it through."""
+    response = restyle_turn
+    (derived,) = response.conversation.visual_contexts[-1:]
+    assert derived.source == "patch"
+    assert derived.fallback_reason is None
+
+
 def test_the_restyle_helper_copies_a_trusted_contexts_provenance_forward() -> None:
     """`restyle_turn` above proves the wire's own emptying of `source_plan`/`evidence_ids`, which
     means it cannot also prove the copy that runs before the wire ever sees them: in that fixture,
@@ -479,6 +490,20 @@ def test_the_restyle_helper_copies_a_trusted_contexts_labels_forward_too() -> No
     assert derived.labels == trusted.labels
     assert derived.series_labels == trusted.series_labels
     assert derived.ranked == trusted.ranked
+
+
+def test_a_fresh_charts_newest_context_carries_the_decisions_source(
+    charted_result, chart_response
+) -> None:
+    """Task 1 (Wave 4.5): `charted_result` drives the default deterministic policy
+    (`default_policy()`, `_charted_result`'s own fixture), so `visual_decision.source ==
+    "deterministic"` with no `fallback_reason` -- `_remember_visual_context` copies both onto the
+    context it builds, before the seal, the same way it already does for `window`/`plan_digest`."""
+    assert charted_result.visual_decision.source == "deterministic"
+    remembered = llm_mapper._remember_visual_context(charted_result, chart_response)
+    (context,) = remembered.conversation.visual_contexts[-1:]
+    assert context.source == "deterministic"
+    assert context.fallback_reason is None
 
 
 def test_the_restyle_helper_copies_a_trusted_contexts_window_and_digest_forward_too() -> None:

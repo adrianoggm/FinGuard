@@ -293,6 +293,8 @@ def _visual_contexts(
                 ranked=item.ranked,
                 window=window,
                 plan_digest=item.plan_digest,
+                source=item.source,
+                fallback_reason=item.fallback_reason,
             )
         )
     return tuple(result)
@@ -400,6 +402,10 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
         "window_start": context.window.start if context.window is not None else None,
         "window_end": context.window.end if context.window is not None else None,
         "plan_digest": context.plan_digest,
+        # Task 1 (Wave 4.5): descriptive provenance, sealed the same way and for the same reason
+        # the fix wave's own two facts just above are -- riding the same digest, no change there.
+        "source": context.source,
+        "fallback_reason": context.fallback_reason,
     }
 
 
