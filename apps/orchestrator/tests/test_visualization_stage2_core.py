@@ -682,6 +682,49 @@ def test_a_grouped_comparison_bar_turns_and_its_offset_swaps_too() -> None:
     assert not any(item.channel == "yOffset" for item in derived.spec.encodings)
 
 
+def test_desapilalo_disables_the_stack_the_verifier_can_accept() -> None:
+    """U-1: "desapílalo" used to build `stack=None` -- "Vega-Lite decides", and its default for a
+    bar with a colour series is to stack -- so the request for *no* stacking left the chart
+    stacked, and the verifier's own `_grouped` rule (a comparison bar must carry `stack ==
+    "disabled"`, never merely absent) then refused the merge outright as ambiguous. The fix names
+    the one value that actually turns stacking off.
+
+    The chart on screen here is a temporal comparison drawn as a bar (color=series, no offset --
+    `_grouped`'s offset requirement is scoped to a *nominal* dimension axis, so a temporal one
+    like this can be a plain, unoffset bar) that is, illegitimately, already stacked: exactly the
+    shape a holder means by "a stacked grouped bar".
+    """
+    dataset = VisualDataset(
+        metric="COMPARISON",
+        rows=(
+            VisualRow("2026-06", 100, series="ALQUILER"),
+            VisualRow("2026-07", 90, series="ALQUILER"),
+            VisualRow("2026-06", 50, series="OCIO"),
+            VisualRow("2026-07", 70, series="OCIO"),
+        ),
+    )
+    profile = visual_profile_of(dataset, total_minor=None, group_by="MONTH")
+    assert profile.comparison  # the shape `_grouped`'s comparison rule targets
+    spec = ChartSpec(
+        mark="bar",
+        encodings=(
+            ChartEncoding("x", "dimension", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+            ChartEncoding("color", "series", "nominal"),
+        ),
+        stack="zero",  # already (illegitimately) stacked -- the state "desapílalo" is asked of
+    )
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent = interpret_visual("desapílalo", conversation.visual_contexts)
+    assert intent is not None
+    assert intent.patch is not None
+    assert intent.patch.stack == "disabled"
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_UPDATED", response.text
+    derived = to_domain(response.conversation).visual_contexts[-1]
+    assert derived.spec.stack == "disabled"
+
+
 def test_asking_a_line_to_turn_is_a_merge_refusal() -> None:
     """Refuse, never repair: orientation applies to bars only. A line asked to turn trips
     `merge_encoding_patch`'s own gate directly, before the verifier ever runs -- recorded exactly

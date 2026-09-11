@@ -9,6 +9,7 @@ from finguard_orchestrator.domain.models.chart import (
     EncodingPatch,
     Orientation,
     SortMode,
+    Stack,
     VisualContext,
     merge_encoding_patch,
 )
@@ -57,6 +58,12 @@ _VISUAL_STYLE = re.compile(
     r"\b(?:barras?|lineas?|areas?|puntos?|apil\w*|desapil\w*|ordena\w*|ascendente|descendente|"
     r"circular|donut|anillo|horizontal|vertical|tumba\w*|de\s+pie)\b"
 )
+# U-1 (Wave 3 hardening): "desapil\w*" already fires `_VISUAL`/`_VISUAL_STYLE` above (it contains
+# "apil"), but the plain substring check below used to read that same "apil" as "apila" (stack
+# zero) and only "desapil" as "clear the stack" -- leaving "sin apilar" (no "desapil" substring)
+# misread as a request TO stack, and giving no way to ask at all through "separa las barras". Named
+# here once so both the gate and the value derivation agree on what "wants no stacking" means.
+_UNSTACK = re.compile(r"\bdesapil\w*\b|\bsin\s+apilar\b|\bseparar?\s+las\s+barras\b")
 # B-8 (Wave 3 hardening): "solo los tres primeros", "los cinco primeros", "los 10 últimos" -- a
 # row limit in words or digits. Not folded into `_VISUAL`'s own alternation because, exactly like
 # "top N" beside it, this phrase means something different in a financial sentence ("los tres
@@ -174,13 +181,17 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
         orientation = "horizontal"
     elif re.search(r"\b(?:vertical|de\s+pie)\b", folded):
         orientation = "vertical"
+    # U-1: the presenter (`vega_lite.py`) emits an explicit `null` only for `stack="disabled"` --
+    # `stack=None` means "Vega-Lite decides", and its default for a bar/area with a colour series
+    # is to stack. So "desapílalo"/"sin apilar"/"separa las barras" have to name the disabled
+    # value outright, never fall back to the absent one, or the verifier's own `_grouped` rule
+    # (which requires `stack == "disabled"` on a comparison) refuses the very change asked for.
+    wants_unstack = _UNSTACK.search(folded) is not None
     stack = (
         "normalize"
-        if "100%" in folded or "porcentaje" in folded
-        else ("zero" if "apil" in folded else None)
+        if "100%" in folded or "porcentaje" in folded or "normalizado" in folded
+        else ("disabled" if wants_unstack else ("zero" if "apil" in folded else None))
     )
-    if "desapil" in folded:
-        stack = None
     sort = (
         "ascending"
         if re.search(r"\b(?:ascendente|menor\s+a\s+mayor)\b", folded)
@@ -217,8 +228,6 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
         )
         if value is not None
     )
-    if "desapil" in folded:
-        changed = changed | {"stack"}
     target_context = next((item for item in contexts if item.chart_id == target), None)
     sort_field = None
     if sort is not None and target_context is not None:
@@ -231,7 +240,7 @@ def interpret_visual(sentence: str, contexts: tuple[VisualContext, ...]) -> Visu
     return VisualIntent(
         EncodingPatch(
             mark=cast(Literal["line", "area", "bar", "point", "donut"] | None, mark),
-            stack=cast(Literal["zero", "normalize"] | None, stack),
+            stack=cast(Stack | None, stack),
             sort=cast(SortMode | None, sort),
             sort_field=sort_field,
             limit=limit,
