@@ -178,6 +178,51 @@ def test_ratio_share_can_become_a_donut_and_return_to_bars() -> None:
     assert {item.channel for item in bars.encodings} == {"x", "y"}
 
 
+def test_a_chart_keeps_its_order_through_a_donut_and_back() -> None:
+    """U-6: the mark rebuild in `merge_encoding_patch` (both the bar-to-donut and the donut-to-bar
+    branches) used to build each renamed `ChartEncoding` without its `sort` -- the dimension's own
+    `EncodingSort`, dropped silently on the one channel-renaming path that never carried it along.
+
+    A donut's `color`/`theta` channels are never axes, so the missing sort was invisible there
+    (`_order`'s `MEASURE_DESC` rule only requires a sort *on the axis*) -- the loss only surfaces
+    on the turn back to a bar, where the dimension is an axis again and the verifier's own `order`
+    rule refuses a ranked dimension whose axis carries no ranking, as an unrelated change nobody
+    asked for. Driven through the live route (`interpret_visual` + `_visual_only_response`) three
+    states deep -- ranked bar, donut, bar again -- because the bug lives in what a holder can
+    actually ask for in two ordinary turns, not only in the domain function directly.
+    """
+    dataset = VisualDataset(
+        metric="SUM",
+        rows=(
+            VisualRow("ALQUILER", 51_300),
+            VisualRow("OCIO", 4_000),
+            VisualRow("TRANSPORTE", 2_000),
+        ),
+    )
+    total = sum(row.value_minor for row in dataset.rows)
+    profile = visual_profile_of(dataset, total_minor=total, group_by="NONE")
+    spec = DeterministicVisualPlanner().plan(profile, DEFAULT_PRESENTATION)
+    assert spec is not None
+    dimension_axis = next(item for item in spec.encodings if item.field == "dimension")
+    assert dimension_axis.sort is not None  # the floor's own ranking, the thing U-6 loses
+
+    conversation = Conversation(visual_contexts=(VisualContext("chart-1", spec, profile),))
+    intent_donut = interpret_visual("ponlo en donut", conversation.visual_contexts)
+    assert intent_donut is not None
+    response_donut = _visual_only_response(intent_donut, conversation)
+    assert response_donut.outcome == "VISUAL_UPDATED", response_donut.text
+
+    conversation_2 = to_domain(response_donut.conversation)
+    intent_bar = interpret_visual("ponlo en barras", conversation_2.visual_contexts)
+    assert intent_bar is not None
+    response_bar = _visual_only_response(intent_bar, conversation_2)
+    assert response_bar.outcome == "VISUAL_UPDATED", response_bar.text
+
+    derived = to_domain(response_bar.conversation).visual_contexts[-1]
+    restored_axis = next(item for item in derived.spec.encodings if item.field == "dimension")
+    assert restored_axis.sort == dimension_axis.sort
+
+
 def test_limit_presenter_uses_valid_rank_window_and_measure_sort() -> None:
     spec, profile = _base()
     limited = merge_encoding_patch(spec, EncodingPatch(limit=3), profile)

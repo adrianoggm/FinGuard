@@ -596,12 +596,18 @@ def merge_encoding_patch(
         )
         if nominal is None or quantitative is None:
             raise ValueError("donut needs a categorical field and a quantitative measure")
+        # U-6 (Wave 3 hardening): `sort` rides along with the rebuild -- `EncodingSort` is the
+        # dimension's own order (the `order` rule below reads it off the merged spec), and a bar
+        # that turned into a donut and back used to lose it here, on the one channel-renaming
+        # rebuild that never carried it, so the round trip's own `order` rule then refused the
+        # second turn back to a bar as an unrelated change nobody asked for.
         encodings = tuple(
             ChartEncoding(
                 "color" if item.field == nominal.field else "theta",
                 item.field,
                 item.type,
                 item.title,
+                item.sort,
             )
             if item.channel in {"x", "y"} and item.field in {nominal.field, quantitative.field}
             else item
@@ -615,6 +621,7 @@ def merge_encoding_patch(
                 item.field,
                 item.type,
                 item.title,
+                item.sort,
             )
             if item.channel in {"color", "theta"}
             else item
