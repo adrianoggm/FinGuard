@@ -57,10 +57,11 @@ _GENERIC_NOUN: Final[tuple[str, str, str]] = ("grupo", "grupos", "un grupo")
 # ...) -- what `answer_writer._group_name` substitutes into spoken text. A chart's `labels` are
 # never that: `visual_profile.drawn_labels` carries `row.dimension` straight through with no
 # translation, so a CATEGORY-grouped chart's labels are the ledger's own keys ("GROCERIES",
-# "RESTAURANTS", ...), exactly the set `category_words._NAMES` closes over. The public `names()`
-# would never match a real label -- stated here rather than silently swapped, and repeated in the
-# Task 2b report as a brief/code mismatch worth a second look.
-_CATEGORY_KEYS: Final[frozenset[str]] = frozenset(category_words._NAMES)
+# "RESTAURANTS", ...), exactly the set `category_words.keys()` closes over (D-4.5-4, fix wave:
+# was `category_words._NAMES`, read across the module boundary). The public `names()` would never
+# match a real label -- stated here rather than silently swapped, and repeated in the Task 2b
+# report as a brief/code mismatch worth a second look.
+_CATEGORY_KEYS: Final[frozenset[str]] = frozenset(category_words.keys())
 
 
 def _is_iso_date(label: str) -> bool:

@@ -22,7 +22,11 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     _decided_visual,
 )
 from finguard_orchestrator.domain.enums import Direction, Period
-from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    EncodingPatch,
+    VisualContext,
+)
 from finguard_orchestrator.domain.models.conversation import IDLE
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
@@ -30,7 +34,7 @@ from finguard_orchestrator.domain.services.deterministic_visual_planner import (
 )
 from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.visual_explanation import explain_chart
-from finguard_orchestrator.domain.services.visual_interpreter import interpret_visual
+from finguard_orchestrator.domain.services.visual_interpreter import VisualIntent, interpret_visual
 from finguard_orchestrator.domain.services.visual_profile import drawn_labels
 from finguard_orchestrator.domain.value_objects.financial_plan import (
     AbsoluteRange,
@@ -528,6 +532,18 @@ def test_a_visual_unchanged_answer_carries_no_explanation() -> None:
     response = _visual_only_response(intent, conversation)
     assert response.outcome == "VISUAL_UNCHANGED"
     assert response.explanation is None
+
+
+def test_a_restyle_with_no_target_still_asks_to_change_it() -> None:
+    """M-8 (fix wave): the restyle path's own `VISUAL_NEEDS_TARGET` keeps its "quieres cambiar"
+    wording -- the holder DID ask to change a chart here, just not one that resolved to anything
+    ("el segundo gráfico" with only one on screen). Only the explanation path's own text changes
+    (`test_a_target_that_resolves_to_nothing_answers_needs_target`, `test_visual_follow_up.py`)."""
+    conversation = IDLE.with_visual_context(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE))
+    intent = VisualIntent(patch=EncodingPatch(mark="bar"), target="chart-not-on-screen")
+    response = _visual_only_response(intent, conversation)
+    assert response.outcome == "VISUAL_NEEDS_TARGET"
+    assert response.text == "Indica qué gráfico quieres cambiar."
 
 
 async def test_r7_a_stale_backfilled_plan_never_names_its_noun_in_the_spoken_line(

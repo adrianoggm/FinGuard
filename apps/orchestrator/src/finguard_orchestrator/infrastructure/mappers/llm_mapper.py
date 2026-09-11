@@ -516,9 +516,14 @@ def _chip_verifies(chip: str, context: VisualContext) -> bool:
     return isinstance(verify(draft_of(merged.spec), context.profile), ChartSpec)
 
 
-def _explanation_of(context: VisualContext) -> VisualExplanationResponse:
+def explanation_of(context: VisualContext) -> VisualExplanationResponse:
     """`explain_chart(context)`, put on the wire -- `text` is `as_text()` so a client that wants
-    one line has it without recomputing the join itself."""
+    one line has it without recomputing the join itself.
+
+    M-7 (fix wave): public, not `_explanation_of` -- `llm_controller.py` calls it from outside
+    this module (the charted-answer field and `VISUAL_EXPLAINED` both go through this one
+    derivation), and the one-derivation property is worth stating in the name rather than reusing
+    a name that reads as private to two of its own callers."""
     explanation = explain_chart(context)
     return VisualExplanationResponse(
         chart_reason=explanation.chart_reason,
@@ -575,7 +580,7 @@ def question_to_dto(
         if isinstance(visualization, ChartVisualizationResponse)
         else None
     )
-    explanation = _explanation_of(newest) if newest is not None else None
+    explanation = explanation_of(newest) if newest is not None else None
     spoken = None
     if spoken_for_voice and newest is not None:
         # R7 (4.4 review M-2, closed for real by I-1 in the fix wave): `result.metric_definition`
