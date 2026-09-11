@@ -282,6 +282,10 @@ def _derived_context(
         # needs for the docstring's own reasoning.
         source=decision.source if decision is not None else None,
         fallback_reason=decision.fallback_reason if decision is not None else None,
+        # Task 2 (Wave 3 hardening, U-5): copied from `trusted` too, the same reasoning
+        # `labels`/`window`/`plan_digest` above already give -- a restyle shows the same data, so
+        # its grouping is the source chart's own, unchanged by the shape it is redrawn in.
+        group_by=trusted.group_by,
     )
     return context
 

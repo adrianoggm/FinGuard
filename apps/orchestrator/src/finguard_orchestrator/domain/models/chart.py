@@ -9,6 +9,7 @@ from uuid import UUID
 # Domain to domain, not a forward reference: `VisualDataset.window` and `VisualContext.window`
 # below are both typed with this at runtime (Wave 4.3), so a chart's own module can intersect a
 # drilled month against it without importing anything from `application/` or `infrastructure/`.
+from finguard_orchestrator.domain.enums import GroupBy
 from finguard_orchestrator.domain.value_objects.financial_plan import AbsoluteRange
 
 if TYPE_CHECKING:  # the decision and the plans import this module; only the annotation needs them
@@ -401,6 +402,13 @@ class VisualContext:
     for the one caller (`llm_controller`'s `VISUAL_UNTRUSTED` responses) that needs to tell a
     replayed-from-another-conversation chart from a tampered one apart in the sentence a holder
     reads. `"ok"` for a context this process built fresh or one whose seal checked out in full.
+
+    `group_by` travels and is sealed too (Task 2, Wave 3 hardening, U-5): the plan's own grouping,
+    when a `FinancialPlan` drew this chart -- `None` for the four producers that draw from
+    something else (a comparison, a ratio, a plan-less dataset). It is what `_nouns_of`
+    (`visual_explanation.py`) reads first, so a WEEK-grouped chart says «semanas» instead of
+    misreading its labels' shared date shape as DAY -- the gap `_nouns_of`'s own docstring named
+    before this field existed to close it.
     """
 
     chart_id: str
@@ -421,6 +429,7 @@ class VisualContext:
     plan_digest: str | None = None
     source: VisualSource | None = None
     fallback_reason: FallbackReason | None = None
+    group_by: GroupBy | None = None
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):

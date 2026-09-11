@@ -319,6 +319,7 @@ def _visual_contexts(
                 plan_digest=item.plan_digest,
                 source=item.source,
                 fallback_reason=item.fallback_reason,
+                group_by=item.group_by,
             )
         )
     return tuple(result)
@@ -436,6 +437,9 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
         # the fix wave's own two facts just above are -- riding the same digest, no change there.
         "source": context.source,
         "fallback_reason": context.fallback_reason,
+        # Task 2 (Wave 3 hardening, U-5): sealed with the rest, for the same reason `plan_digest`
+        # above is -- `_nouns_of` (`visual_explanation.py`) reads it on a later turn.
+        "group_by": context.group_by,
     }
 
 

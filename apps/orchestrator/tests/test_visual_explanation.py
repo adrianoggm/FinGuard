@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from finguard_orchestrator.domain.enums import GroupBy
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     ChartEncoding,
@@ -336,27 +337,73 @@ _COUNT_PATTERN = re.compile(
 
 
 def test_nouns_of_a_month_label_tuple() -> None:
-    assert _nouns_of(("2026-01", "2026-02")) == ("mes", "meses", "un mes")
+    assert _nouns_of(None, ("2026-01", "2026-02")) == ("mes", "meses", "un mes")
 
 
 def test_nouns_of_an_iso_date_label_tuple() -> None:
-    assert _nouns_of(("2026-01-05", "2026-01-12")) == ("día", "días", "un día")
+    assert _nouns_of(None, ("2026-01-05", "2026-01-12")) == ("día", "días", "un día")
 
 
 def test_nouns_of_a_category_key_label_tuple() -> None:
-    assert _nouns_of(("GROCERIES", "RESTAURANTS")) == ("categoría", "categorías", "una categoría")
+    assert _nouns_of(None, ("GROCERIES", "RESTAURANTS")) == (
+        "categoría",
+        "categorías",
+        "una categoría",
+    )
 
 
 def test_nouns_of_free_strings_is_generic() -> None:
-    assert _nouns_of(("Netflix", "Spotify")) == ("grupo", "grupos", "un grupo")
+    assert _nouns_of(None, ("Netflix", "Spotify")) == ("grupo", "grupos", "un grupo")
 
 
 def test_nouns_of_a_mixed_label_tuple_is_generic() -> None:
-    assert _nouns_of(("2026-01", "GROCERIES")) == ("grupo", "grupos", "un grupo")
+    assert _nouns_of(None, ("2026-01", "GROCERIES")) == ("grupo", "grupos", "un grupo")
 
 
 def test_nouns_of_an_empty_tuple_is_generic() -> None:
-    assert _nouns_of(()) == ("grupo", "grupos", "un grupo")
+    assert _nouns_of(None, ()) == ("grupo", "grupos", "un grupo")
+
+
+# --- Task 2 (Wave 3 hardening, U-5): `group_by` decides first, WEEK is no longer misread as DAY --
+
+
+def test_nouns_of_a_week_group_says_semanas_even_with_day_shaped_labels() -> None:
+    """A WEEK bucket's key is its Monday, written as a plain ISO date -- the identical shape a DAY
+    key already has (the gap `_nouns_of`'s own docstring used to name). `group_by=WEEK` must win
+    over that label shape, not fall through to the day branch."""
+    assert _nouns_of(GroupBy.WEEK, ("2026-01-05", "2026-01-12")) == (
+        "semana",
+        "semanas",
+        "una semana",
+    )
+
+
+def test_nouns_of_none_group_by_falls_back_to_labels() -> None:
+    """A labels-only context (`group_by=None`, the four plan-less producers) still works exactly
+    as before this task -- the label-shape guess is untouched."""
+    assert _nouns_of(None, ("2026-01", "2026-02")) == ("mes", "meses", "un mes")
+
+
+def test_a_week_chart_says_semanas_after_a_round_trip() -> None:
+    """`group_by` must survive `to_payload` -> `to_domain` for a later-turn explanation to read it
+    at all -- the same round trip `source`/`fallback_reason` already prove for themselves."""
+    spec, profile = _spec_and_profile("breakdown")
+    context = VisualContext(
+        chart_id="c1",
+        spec=spec,
+        profile=profile,
+        labels=("2026-01-05", "2026-01-12"),
+        source="deterministic",
+        group_by=GroupBy.WEEK,
+    )
+    conversation = IDLE.with_visual_context(context)
+    payload = mapper.to_payload(conversation)
+    echoed = mapper.to_domain(payload)
+    restored = echoed.visual_context()
+    assert restored is not None
+    assert restored.group_by == GroupBy.WEEK
+    explanation = explain_chart(restored)
+    assert "semana" in explanation.scope_summary
 
 
 @pytest.mark.parametrize(

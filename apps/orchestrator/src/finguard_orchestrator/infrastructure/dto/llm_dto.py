@@ -376,6 +376,10 @@ class VisualContextPayload(_Payload):
     fallback_reason: (
         Literal["abstention", "timeout", "provider_error", "invalid_proposal"] | None
     ) = None
+    # Task 2 (Wave 3 hardening, U-5): the plan's own grouping, sealed with the rest -- `None` for
+    # the four plan-less producers, the same way `plan_digest` above is `None` for them. An
+    # unrecognised value is a 422, the same convention `source`/`fallback_reason` already use.
+    group_by: GroupBy | None = None
 
     @model_validator(mode="after")
     def _window_is_both_ends_or_neither(self) -> "VisualContextPayload":

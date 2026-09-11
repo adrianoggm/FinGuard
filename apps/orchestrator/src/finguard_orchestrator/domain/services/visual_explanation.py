@@ -4,22 +4,25 @@ Design §7 (as rewritten by Task 1, Wave 4.5) rules out deriving this from `deci
 `source_plan`: both are turn-local (§4), and the orchestrator keeps no conversation store to
 resurrect either after a round trip (§13). An explanation asked on a later turn -- «¿Por qué este
 gráfico?» typed after the chart has already scrolled by -- has to come from what actually crossed
-the wire and came back: `spec`, `profile`, `labels`, `ranked`, `window`, `source` and
-`fallback_reason`. `explain_chart` reads exactly those and nothing else.
+the wire and came back: `spec`, `profile`, `labels`, `ranked`, `window`, `source`,
+`fallback_reason` and `group_by`. `explain_chart` reads exactly those and nothing else.
 
 **What this never says**: an amount, a total, a percentage, a rule name, a provider error, or the
 proposal the verifier discarded. §9's invariant -- "zero explanations of a discarded spec" --
 holds here too: this describes the chart finally accepted, never the one a model wanted. The
 evidence (movement) count does not survive the wire either, so it is never claimed.
 
-**Why the noun comes from the drawn labels, not the dimension field's name (R11).** Every
-`FAMILY_DATASETS` producer names its dimension field literally `"dimension"` (Task 2's report), so
-a name-keyed noun was always the generic «grupo/grupos» -- it explained nothing. The producers name
-a field by its *role* (`"dimension"`, `"measure"`, `"series"`), never by what it holds; the only
-thing that says what a group actually is is the values the chart drew, i.e. `context.labels`. A
-merchant, counterparty or account chart is «grupos» on purpose here too: the wire carries no
-grouping marker for those fields, and the labels themselves (free strings such as "Netflix" or a
-counterparty name) do not say what kind of thing they are either -- this module never guesses.
+**Why the noun comes from `group_by` first, the drawn labels second, never the dimension field's
+name (R11).** Every `FAMILY_DATASETS` producer names its dimension field literally `"dimension"`
+(Task 2's report), so a name-keyed noun was always the generic «grupo/grupos» -- it explained
+nothing. The producers name a field by its *role* (`"dimension"`, `"measure"`, `"series"`), never
+by what it holds. Task 2 (Wave 3 hardening, U-5) closed the gap this paragraph used to name here:
+`group_by` now travels sealed, so a WEEK-grouped chart says «semanas» rather than misreading its
+bucket-Monday labels as DAY, and a merchant/counterparty/account chart gets its own noun instead of
+the generic one. `group_by` is `None` for the four plan-less producers (a comparison, a ratio,
+...); those fall back to the values the chart drew, i.e. `context.labels` -- free strings such as
+"Netflix" that do not say what kind of thing they are, so the fallback still reads «grupos» there,
+same as before this task.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Final, get_args
 
+from finguard_orchestrator.domain.enums import GroupBy
 from finguard_orchestrator.domain.models.chart import (
     ChartSpec,
     Mark,
@@ -72,25 +76,42 @@ def _is_iso_date(label: str) -> bool:
     return True
 
 
-def _nouns_of(labels: tuple[str, ...]) -> tuple[str, str, str]:
-    """The noun triple the drawn labels earn: singular, plural, indefinite.
+# Task 2 (Wave 3 hardening, U-5): the plan's own `group_by`, when the chart has one, decides the
+# noun outright -- no label-shape guessing needed, and the one place that guessing could not
+# distinguish (WEEK's bucket-Monday key has the identical `YYYY-MM-DD` shape a DAY key already
+# has, the gap `_nouns_of`'s own docstring used to name) is closed for good, not narrowed. `NONE`
+# is deliberately absent: an ungrouped chart falls through to the label-shape guess below, same as
+# a chart with no `group_by` at all (a comparison, a ratio, a plan-less producer).
+_NOUNS_BY_GROUP: Final[dict[GroupBy, tuple[str, str, str]]] = {
+    GroupBy.DAY: ("día", "días", "un día"),
+    GroupBy.WEEK: ("semana", "semanas", "una semana"),
+    GroupBy.MONTH: ("mes", "meses", "un mes"),
+    GroupBy.CATEGORY: ("categoría", "categorías", "una categoría"),
+    GroupBy.MERCHANT: ("comercio", "comercios", "un comercio"),
+    GroupBy.COUNTERPARTY: ("contraparte", "contrapartes", "una contraparte"),
+    GroupBy.ACCOUNT: ("cuenta", "cuentas", "una cuenta"),
+}
 
-    All-or-nothing: every label in the tuple must agree on the same shape, or the tuple reads as a
-    mix and gets the generic noun -- one merchant name next to two month labels is not "two months
-    and a merchant", it is a chart this module cannot name precisely. Checked in this order --
-    month, then ISO date, then category key -- because the three never collide:
-    `visual_reference.parsed_month` demands a `YYYY-MM` shape with `01`-`12`, `date.fromisoformat`
-    rejects that same string only when the day component is missing (it is), and a category key
-    such as `RESTAURANTS` fails both.
 
-    NEEDS_CONTEXT (also in the Task 2b report): the brief asks for a fourth, WEEK-shaped branch
-    ahead of the day check. `cumulative_calculator`/`test_cumulative_and_group_rankings.py` show a
-    WEEK group's key is its bucket's Monday written as a plain ISO date -- the identical shape a
-    DAY group's key already has. There is no format left in a WEEK label that a DAY label does not
-    also have, so a week-grouped chart's labels take the day branch below; a separate WEEK branch
-    would either never fire or fire on DAY labels too, and this module does not invent a pattern
-    that was not found.
+def _nouns_of(group_by: GroupBy | None, labels: tuple[str, ...]) -> tuple[str, str, str]:
+    """The noun triple the chart earns: singular, plural, indefinite.
+
+    `group_by` decides first, when the chart has one -- the plan's own grouping is stronger
+    evidence than a guess from the labels' shape, and it is the only way to tell WEEK from DAY at
+    all (see `_NOUNS_BY_GROUP`'s own comment). Labels are the fallback: `group_by` is `None` for
+    the four plan-less producers (a comparison, a ratio, ...) and for `GroupBy.NONE` alike, and the
+    guess below is all either has.
+
+    All-or-nothing on the label guess: every label in the tuple must agree on the same shape, or
+    the tuple reads as a mix and gets the generic noun -- one merchant name next to two month
+    labels is not "two months and a merchant", it is a chart this module cannot name precisely.
+    Checked in this order -- month, then ISO date, then category key -- because the three never
+    collide: `visual_reference.parsed_month` demands a `YYYY-MM` shape with `01`-`12`,
+    `date.fromisoformat` rejects that same string only when the day component is missing (it is),
+    and a category key such as `RESTAURANTS` fails both.
     """
+    if group_by is not None and group_by in _NOUNS_BY_GROUP:
+        return _NOUNS_BY_GROUP[group_by]
     if not labels:
         return _GENERIC_NOUN
     if all(visual_reference.parsed_month(label) is not None for label in labels):
@@ -323,7 +344,7 @@ def explain_chart(context: VisualContext) -> VisualExplanation:
     profile = context.profile
     spec = context.spec
     dimension = _spec_dimension(spec, profile)
-    singular, plural, indef = _nouns_of(context.labels)
+    singular, plural, indef = _nouns_of(context.group_by, context.labels)
     medida = _measure_word(profile)
 
     if profile.comparison:
