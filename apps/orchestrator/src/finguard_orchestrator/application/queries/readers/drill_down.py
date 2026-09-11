@@ -47,6 +47,22 @@ class DrillAsk:
     text: str
 
 
+@dataclass(frozen=True)
+class DrillUnbound:
+    """A-2 (Wave 3 hardening): the chart in view is not this plan's own -- `metric_definition_
+    borrowed` says so directly, where a bare digest comparison against the same back-filled field
+    cannot. The honest ask, never a silent narrow of whatever `conversation.last_plan` happens to
+    hold."""
+
+    text: str
+
+
+_UNBOUND_TEXT = (
+    "Ese gráfico no es de esta consulta: no puedo profundizar en él sin volver a calcularlo. "
+    "¿Quieres que repita la pregunta sobre el gráfico en pantalla?"
+)
+
+
 def _candidate_name(key: str) -> str | None:
     """One word for a candidate, in the chart's own order: a month a person would say, or a
     category's one-word name -- `None` when `key` is neither (M9, security, fix wave). It used to
@@ -87,7 +103,7 @@ def _ask(candidates: tuple[str, ...]) -> str:
 
 def read_drill_down(
     sentence: str, conversation: Conversation, *, today: date
-) -> DrillDown | DrillAsk | None:
+) -> DrillDown | DrillAsk | DrillUnbound | None:
     """The bounded plan `sentence` drills into, off the newest trusted chart in `conversation` --
     an ambiguous question when several bars fit, or `None` for today's path.
 
@@ -126,6 +142,14 @@ def read_drill_down(
         # underneath an unrelated chart. Refuse, never guess which plan the chart was really drawn
         # from.
         return None
+    if newest.metric_definition_borrowed:
+        # A-2 (Wave 3 hardening): the digest check above just passed, but it is tautological here
+        # -- a comparison chart's `plan_digest` fingerprints `conversation.last_plan` AFTER
+        # `stream()`'s own back-fill, so a later re-derivation of the same field always matches,
+        # whether or not the chart actually drew that plan. `metric_definition_borrowed` is the one
+        # fact only the producer holds; ask honestly rather than narrow the latest window as if it
+        # were the chart's own.
+        return DrillUnbound(_UNBOUND_TEXT)
     if plan.group_by not in _DRILLABLE_GROUPINGS:
         return None
     if plan.group_by is GroupBy.MONTH and newest.window is None:

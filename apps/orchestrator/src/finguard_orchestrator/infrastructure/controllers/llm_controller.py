@@ -286,6 +286,9 @@ def _derived_context(
         # `labels`/`window`/`plan_digest` above already give -- a restyle shows the same data, so
         # its grouping is the source chart's own, unchanged by the shape it is redrawn in.
         group_by=trusted.group_by,
+        # Task 2 (Wave 3 hardening, A-2): copied from `trusted` too, for the same reason -- a
+        # restyle of a borrowed-plan chart is still a chart whose plan it never drew.
+        metric_definition_borrowed=trusted.metric_definition_borrowed,
     )
     return context
 

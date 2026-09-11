@@ -409,6 +409,15 @@ class VisualContext:
     (`visual_explanation.py`) reads first, so a WEEK-grouped chart says «semanas» instead of
     misreading its labels' shared date shape as DAY -- the gap `_nouns_of`'s own docstring named
     before this field existed to close it.
+
+    `metric_definition_borrowed` travels and is sealed too (Task 2, Wave 3 hardening, A-2): whether
+    `plan_digest` above fingerprints THIS chart's own plan or one `stream()`'s own back-fill copied
+    in from `conversation.last_plan` because no producer this turn set one (`AskFinancialQuestion
+    Result.metric_definition_borrowed`'s own docstring). A digest alone cannot tell the two apart --
+    a comparison chart backfills `conversation.last_plan` with the latest window's own plan, so a
+    digest taken from it always matches a later re-derivation of the same field, trivially, whether
+    or not the chart drew that plan at all. `read_drill_down` refuses to narrow a chart carrying
+    `True` here rather than trust the digest check alone.
     """
 
     chart_id: str
@@ -430,6 +439,7 @@ class VisualContext:
     source: VisualSource | None = None
     fallback_reason: FallbackReason | None = None
     group_by: GroupBy | None = None
+    metric_definition_borrowed: bool = False
 
     def __post_init__(self) -> None:
         if not CHART_ID_PATTERN.fullmatch(self.chart_id):

@@ -320,6 +320,7 @@ def _visual_contexts(
                 source=item.source,
                 fallback_reason=item.fallback_reason,
                 group_by=item.group_by,
+                metric_definition_borrowed=item.metric_definition_borrowed,
             )
         )
     return tuple(result)
@@ -440,6 +441,9 @@ def _context_payload(context: VisualContext) -> dict[str, object]:
         # Task 2 (Wave 3 hardening, U-5): sealed with the rest, for the same reason `plan_digest`
         # above is -- `_nouns_of` (`visual_explanation.py`) reads it on a later turn.
         "group_by": context.group_by,
+        # Task 2 (Wave 3 hardening, A-2): sealed with the rest -- `read_drill_down` reads it on a
+        # later turn to refuse narrowing a chart whose plan it never actually drew.
+        "metric_definition_borrowed": context.metric_definition_borrowed,
     }
 
 

@@ -380,6 +380,10 @@ class VisualContextPayload(_Payload):
     # the four plan-less producers, the same way `plan_digest` above is `None` for them. An
     # unrecognised value is a 422, the same convention `source`/`fallback_reason` already use.
     group_by: GroupBy | None = None
+    # Task 2 (Wave 3 hardening, A-2): sealed with the rest -- `read_drill_down` refuses to narrow a
+    # chart carrying `True` here, since `plan_digest` alone cannot tell a borrowed plan from an
+    # owned one (see `VisualContext`'s own docstring).
+    metric_definition_borrowed: bool = False
 
     @model_validator(mode="after")
     def _window_is_both_ends_or_neither(self) -> "VisualContextPayload":
