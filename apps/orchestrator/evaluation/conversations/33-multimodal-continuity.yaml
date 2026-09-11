@@ -55,7 +55,11 @@ episodes:
       frame that carries the line's `visualization` also carries `spoken: true` — the event order a
       voice client actually sees (`assistant.text.final` before `audio.started`, sharing the chart's
       id) is the gateway's own protocol test from Task 1; what this turn proves is only the
-      orchestrator's half of it, that the two never travel on separate frames.
+      orchestrator's half of it, that the two never travel on separate frames. `spoken_says: fue el
+      mes con mayor gasto` pins this line's own noun, not merely its presence — turn 4, and not
+      turn 1, because turn 1's plan is `group_by: NONE` and speaks the same generic line in both
+      worlds, telling a silenced summary from a genuine one nothing that `spoken: true` alone did
+      not already tell it.
 
       Turn 5 is where this episode departs from 32's own wording, and only because 32 never asked
       this question. «¿Y en julio?» is case (d): a channel switch — TEXT, TEXT, VOICE, now this turn
@@ -133,6 +137,7 @@ episodes:
         no_model: true
         derived_from: true
         spoken: true
+        spoken_says: fue el mes con mayor gasto
         chart:
           mark: line
           channels: [[x, dimension, temporal], [y, value_minor, quantitative], [tooltip, dimension, temporal], [tooltip, value_minor, quantitative]]
