@@ -263,7 +263,13 @@ export class PcmPlayer {
 export type VoiceClientOptions = {
   gatewayUrl: string;
   token: string;
-  onEvent: (event: VoiceEvent) => void;
+  /**
+   * `false` from an `assistant.text.final` callback means the chart it announced failed to
+   * materialise on screen (the caller already showed why). The fence then has to treat this turn
+   * as charting nothing, same as an uncharted answer -- announcing the chart it failed to render
+   * would let its audio play over a bubble with no chart in it (W-2).
+   */
+  onEvent: (event: VoiceEvent) => void | boolean;
   onStatus: (status: VoiceStatus, error?: string) => void;
   onFinished?: () => void;
   fetch?: typeof fetch;
@@ -326,6 +332,13 @@ export class VoiceClient {
   // The chart_id the current turn's assistant.text.final announced, or null when it announced
   // none. Reset alongside audioStarted at every per-turn reset.
   private announcedChartId: string | null = null;
+  // Whether this turn's assistant.text.final has been applied yet. audio.started names a chart
+  // before that text is what "chart," if any, it drew -- so an audio.started that arrives first
+  // is buffered rather than fenced against a chart identity that has not arrived yet (W-4): the
+  // ordering is not itself a violation, only guessing what it would have meant would be.
+  private textFinalSeen = false;
+  private pendingAudioStarted: VoiceEvent | null = null;
+  private pendingAudioFrames: ArrayBuffer[] = [];
   private readonly player: PcmPlayer;
 
   constructor(private readonly options: VoiceClientOptions) {
@@ -432,6 +445,9 @@ export class VoiceClient {
     this.commitSent = false;
     this.audioStarted = false;
     this.announcedChartId = null;
+    this.textFinalSeen = false;
+    this.pendingAudioStarted = null;
+    this.pendingAudioFrames = [];
     this.audioCompleted = false;
     this.turnCompleted = false;
     this.playerIdle = false;
@@ -453,6 +469,9 @@ export class VoiceClient {
     this.player.clear();
     this.audioStarted = false;
     this.announcedChartId = null;
+    this.textFinalSeen = false;
+    this.pendingAudioStarted = null;
+    this.pendingAudioFrames = [];
     this.audioCompleted = false;
     this.turnCompleted = false;
     this.playerIdle = false;
@@ -557,6 +576,13 @@ export class VoiceClient {
   private receive(data: unknown, onReady: () => void): void {
     if (data instanceof ArrayBuffer) {
       if (this.discardFencedAudio && !this.audioStarted) return;
+      if (this.pendingAudioStarted) {
+        // Its own audio.started is buffered, waiting on the text that will say which chart (if
+        // any) this turn is about -- nothing plays yet, but nothing already sent is dropped
+        // either once that arrives and the fence is actually checked (W-4).
+        this.pendingAudioFrames.push(data);
+        return;
+      }
       if (
         !this.audioStarted ||
         this.audioCompleted ||
@@ -597,28 +623,39 @@ export class VoiceClient {
       return;
     }
 
-    this.options.onEvent(event);
+    const outcome = this.options.onEvent(event);
 
     if (event.type === "assistant.text.final") {
-      this.announcedChartId = VoiceClient.chartIdOf(event.answer);
+      // `outcome === false` is the caller reporting that the chart this text announced failed to
+      // materialise (W-2): the fence must not treat the turn as charting it, or a chart's audio
+      // would play over a bubble that never got one. Treated exactly like an uncharted answer.
+      this.announcedChartId = outcome === false ? null : VoiceClient.chartIdOf(event.answer);
+      this.textFinalSeen = true;
+      if (this.pendingAudioStarted) {
+        const buffered = this.pendingAudioStarted;
+        this.pendingAudioStarted = null;
+        this.applyAudioStarted(buffered);
+        const frames = this.pendingAudioFrames;
+        this.pendingAudioFrames = [];
+        for (const frame of frames) {
+          if (this.audioCompleted || !this.player.enqueue(frame)) {
+            throw new Error("Audio binario fuera de audio.started/audio.completed.");
+          }
+          this.playerIdle = false;
+        }
+      }
     } else if (event.type === "audio.started") {
-      // The gateway stamps the chart the turn drew on audio.started; audio for a chart this
-      // client did not just render is a protocol error, never played.
-      const chartId = typeof event.chartId === "string" ? event.chartId : null;
-      if (chartId !== this.announcedChartId) {
-        throw new Error("Audio de otro gráfico.");
+      if (this.textFinalSeen) {
+        this.applyAudioStarted(event);
+      } else {
+        // W-4: audio.started arrived before the assistant.text.final that says which chart (if
+        // any) this turn drew. The ordering is not itself a violation -- only fencing it against
+        // a chart identity that has not arrived yet would be, one way by accident (an uncharted
+        // turn's null happens to match) and the other by a wrong-sounding error (a charted turn's
+        // real id looks like "another chart" when none has been announced yet). Buffered instead,
+        // deterministically: applied the moment the text that resolves it arrives.
+        this.pendingAudioStarted = event;
       }
-      if (event.sampleRate !== VOICE_OUTPUT_RATE || this.audioStarted) {
-        throw new Error("Frecuencia o estado de reproducción inválido.");
-      }
-      this.audioStarted = true;
-      this.audioCompleted = false;
-      this.playerIdle = false;
-      this.player.begin();
-      this.discardFencedAudio = false;
-      this.bargeInActive = false;
-      this.turnState = "speaking";
-      this.options.onStatus("speaking");
     } else if (event.type === "audio.completed") {
       if (!this.audioStarted || this.audioCompleted) {
         throw new Error("audio.completed fuera de orden.");
@@ -641,6 +678,28 @@ export class VoiceClient {
           : "Error del gateway de voz.",
       );
     }
+  }
+
+  /** The audio.started fence and its side effects, applied once the chart it names (if any) is
+   * actually known -- either immediately, or once a buffered event's text arrives (W-4). */
+  private applyAudioStarted(event: VoiceEvent): void {
+    // The gateway stamps the chart the turn drew on audio.started; audio for a chart this
+    // client did not just render is a protocol error, never played.
+    const chartId = typeof event.chartId === "string" ? event.chartId : null;
+    if (chartId !== this.announcedChartId) {
+      throw new Error("Audio de otro gráfico.");
+    }
+    if (event.sampleRate !== VOICE_OUTPUT_RATE || this.audioStarted) {
+      throw new Error("Frecuencia o estado de reproducción inválido.");
+    }
+    this.audioStarted = true;
+    this.audioCompleted = false;
+    this.playerIdle = false;
+    this.player.begin();
+    this.discardFencedAudio = false;
+    this.bargeInActive = false;
+    this.turnState = "speaking";
+    this.options.onStatus("speaking");
   }
 
   private maybeFinish(): void {

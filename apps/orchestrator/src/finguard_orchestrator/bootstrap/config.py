@@ -396,11 +396,17 @@ class Settings(BaseSettings):
     # collected before anything is risked. Promotion is a measured decision (docs/next.md), not a
     # default: this stays `deterministic` until three runs of `just evaluate-visual` say otherwise.
     visual_planner: VisualMode = "deterministic"
-    # Spent before the floor answers, so it is added latency on every turn the model runs. Set from
-    # the P95 of `latency_ms` in the evaluation, not chosen; generous here so shadow measures the
-    # model rather than the budget. `gt=0`: `VisualPlanningPolicy.__init__` refuses a non-positive
-    # budget with a bare `ValueError` and no field name, so an operator's `0` is caught here, at
-    # load, with a named validation error, rather than during `create_app()`.
+    # Spent before the floor answers, so it is added latency on every turn the model runs.
+    # `6.0` is a guess, not a measurement: Task 9's runbook
+    # (docs/superpowers/plans/2026-09-05-visual-planner-shadow.md) has never been run, so no
+    # `evaluation/visual/last-run.json` exists to set this from (M-4, M-5). And the method the
+    # runbook prescribes is right-censored by construction -- a run made *at* budget B records
+    # every timed-out call's `latency_ms` as B, so its own P95 can never exceed B and "set the
+    # budget from the P95 of a run at this budget" would silently ratify whatever B was already
+    # guessed. Generous here so a future `shadow` run measures the model rather than the budget.
+    # `gt=0`: `VisualPlanningPolicy.__init__` refuses a non-positive budget with a bare
+    # `ValueError` and no field name, so an operator's `0` is caught here, at load, with a named
+    # validation error, rather than during `create_app()`.
     visual_planner_budget_seconds: float = Field(default=6.0, gt=0)
 
     # The visual planner's own provider, model and sampling. `None` means "the financial

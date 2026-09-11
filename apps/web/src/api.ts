@@ -18,7 +18,8 @@ export const voiceGatewayUrl = import.meta.env.VITE_VOICE_GATEWAY_URL ?? "";
 export const voiceEnabled = voiceGatewayUrl !== "" && TOKEN !== "";
 
 export type VoiceCallbacks = {
-  onEvent: (event: VoiceEvent) => void;
+  /** `false` disarms the audio fence for this turn -- see `VoiceClientOptions.onEvent`. */
+  onEvent: (event: VoiceEvent) => void | boolean;
   onStatus: (status: VoiceStatus, error?: string) => void;
   onFinished?: () => void;
 };
@@ -412,6 +413,12 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
   const nullableString = (field: unknown) => field === null || typeof field === "string";
   const finiteNumber = (field: unknown) => typeof field === "number" && Number.isFinite(field);
   const nullableNumber = (field: unknown) => field === null || finiteNumber(field);
+  // `QuestionResponse`'s optional fields (`llm_dto.py`) default to `None`/`[]` and pydantic omits
+  // nothing today -- but the field is declared optional there, so a caller that later adds
+  // `exclude_none` sends no key at all rather than an explicit null. Absence has to mean the same
+  // thing null already does, for every field the DTO can omit.
+  const optionalString = (field: unknown) => field === undefined || nullableString(field);
+  const optionalNumber = (field: unknown) => field === undefined || nullableNumber(field);
   const containsChartValues = (field: unknown): boolean => {
     if (Array.isArray(field)) return field.some(containsChartValues);
     if (!field || typeof field !== "object") return false;
@@ -436,7 +443,9 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     const spec = item.spec as Record<string, unknown> | undefined;
     if (
       item.kind !== "chart" || !spec || typeof spec !== "object" ||
-      (item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
+      // `ChartVisualizationResponse.unit` defaults to `"money"` (`llm_dto.py`); a chart drawn
+      // before this field existed, or sent with `exclude_defaults`, carries no key at all.
+      (item.unit !== undefined && item.unit !== "money" && item.unit !== "count" && item.unit !== "ratio") ||
       typeof item.chart_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(item.chart_id) ||
       typeof spec.mark !== "object" || !spec.encoding || typeof spec.encoding !== "object" ||
       !Array.isArray(item.data) ||
@@ -478,41 +487,88 @@ function validateVoiceAnswerAt(value: unknown, depth: number): Answer {
     if (field === undefined || field === null) return true;
     if (!field || typeof field !== "object" || Array.isArray(field)) return false;
     const item = field as Record<string, unknown>;
-    return typeof item.chart_reason === "string" && nullableString(item.ordering_reason) &&
-      typeof item.scope_summary === "string" && nullableString(item.provenance) &&
+    return typeof item.chart_reason === "string" && optionalString(item.ordering_reason) &&
+      typeof item.scope_summary === "string" && optionalString(item.provenance) &&
       typeof item.text === "string";
   };
+  // Recursed and normalised first: a compound part is itself a whole answer, and a part the
+  // orchestrator sent with fields omitted must come back with the same defaults the parent gets.
+  let normalizedParts: Answer[] | undefined;
+  if (body.parts !== undefined) {
+    if (!Array.isArray(body.parts)) throw new Error("Respuesta de voz inválida.");
+    normalizedParts = body.parts.map((part) => validateVoiceAnswerAt(part, depth + 1));
+  }
+  const groups = (body.groups ?? []) as unknown[];
+  const movements = (body.movements ?? []) as unknown[];
+  const suggestions = (body.suggestions ?? []) as unknown[];
+  // Same default `ChartVisualizationResponse.unit` carries on the wire (`llm_dto.py`), applied here
+  // rather than left `undefined`: `Chart.tsx` reads `visualization.unit` directly with no fallback,
+  // and an unrecognised unit renders the chart as though it had none.
+  const chart = body.visualization as Record<string, unknown> | null | undefined;
+  const visualization =
+    chart && typeof chart === "object" && !Array.isArray(chart) &&
+    chart.kind === "chart" && chart.unit === undefined
+      ? { ...chart, unit: "money" }
+      : body.visualization;
   if (
     typeof body.outcome !== "string" || typeof body.text !== "string" ||
-    !nullableString(body.question) || !nullableString(body.intent_id) ||
-    !nullableString(body.plan) ||
-    (body.conversation !== null &&
+    !optionalString(body.question) || !optionalString(body.intent_id) ||
+    !optionalString(body.plan) ||
+    (body.conversation !== undefined && body.conversation !== null &&
       (typeof body.conversation !== "object" || Array.isArray(body.conversation))) ||
-    !nullableString(body.currency) || !nullableNumber(body.total_minor) ||
-    !nullableNumber(body.movement_count) || !Array.isArray(body.groups) ||
-    !Array.isArray(body.movements) || !Array.isArray(body.suggestions) ||
+    !optionalString(body.currency) || !optionalNumber(body.total_minor) ||
+    !optionalNumber(body.movement_count) ||
+    (body.groups !== undefined && !Array.isArray(body.groups)) ||
+    (body.movements !== undefined && !Array.isArray(body.movements)) ||
+    (body.suggestions !== undefined && !Array.isArray(body.suggestions)) ||
     !validVisualization(body.visualization) ||
     !validDerivation(body.visualization_derivation) ||
     !validExplanation(body.explanation) ||
-    body.groups.some((group) => {
+    groups.some((group) => {
       if (!group || typeof group !== "object") return true;
       const item = group as Record<string, unknown>;
       return typeof item.key !== "string" || !finiteNumber(item.total_minor) ||
         !finiteNumber(item.movement_count) ||
         (item.value_minor !== undefined && !nullableNumber(item.value_minor));
-    }) || body.suggestions.some((item) => typeof item !== "string") ||
-    body.movements.some((movement) => {
+    }) || suggestions.some((item) => typeof item !== "string") ||
+    movements.some((movement) => {
       if (!movement || typeof movement !== "object") return true;
       const item = movement as Record<string, unknown>;
       return typeof item.occurred_at !== "string" || typeof item.description !== "string" ||
         !finiteNumber(item.amount_minor) || !nullableString(item.merchant_name) ||
         !nullableString(item.category);
-    }) ||
-    (body.parts !== undefined && (!Array.isArray(body.parts) || body.parts.some((part) => {
-      try { validateVoiceAnswerAt(part, depth + 1); return false; } catch { return true; }
-    })))
+    })
   ) throw new Error("Respuesta de voz inválida.");
-  return body as unknown as Answer;
+
+  const partsChanged =
+    normalizedParts !== undefined &&
+    !(body.parts as unknown[]).every((part, index) => part === normalizedParts![index]);
+  const needsDefaults =
+    body.question === undefined || body.intent_id === undefined || body.plan === undefined ||
+    body.conversation === undefined || body.currency === undefined ||
+    body.total_minor === undefined || body.movement_count === undefined ||
+    body.groups === undefined || body.movements === undefined || body.suggestions === undefined ||
+    visualization !== body.visualization || partsChanged;
+  if (!needsDefaults) return body as unknown as Answer;
+
+  // A field the orchestrator's DTO can omit (it has a `None`/`[]` default -- `llm_dto.py`) comes
+  // back with that same default rather than `undefined`, which is not a value any reader downstream
+  // (`Conversation.tsx`'s `.length`, `!== null`) was ever asked to expect.
+  return {
+    ...body,
+    question: body.question ?? null,
+    intent_id: body.intent_id ?? null,
+    plan: body.plan ?? null,
+    conversation: body.conversation ?? null,
+    currency: body.currency ?? null,
+    total_minor: body.total_minor ?? null,
+    movement_count: body.movement_count ?? null,
+    groups,
+    movements,
+    suggestions,
+    visualization,
+    ...(partsChanged ? { parts: normalizedParts } : {}),
+  } as unknown as Answer;
 }
 
 export type Stage = { name: string };

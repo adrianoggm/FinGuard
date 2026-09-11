@@ -153,7 +153,25 @@ P50 and P95 land on the same value because Windows' default ~15.6 ms scheduler t
 dominant source of jitter at this scale, not because the samples are a fabricated flat line; every
 one of the 20 fake-provider runs quantises to that tick.
 
-**§8 gate:** a follow-up turn's P95 must not exceed Wave 3's single-turn P95 (5,076 ms, real
-providers, 17 August 2026) plus the presentation-only path's own cost (16.000 ms here), measured
-before it is promised — sum: 5,076.250 ms + 16.000 ms = 5,092.250 ms; the real-provider follow-up
-row is the operator's run (Task 9's runbook).
+**§8 gate: two separately measured quantities, not one summed number.** The gate compares two P95s
+of the *same provider class, same machine* — a follow-up turn must not cost meaningfully more than
+a single turn already does. What exists today is not that pair:
+
+| quantity | value | provenance |
+| --- | ---: | --- |
+| single-turn P95, **real providers** | 5,076.250 ms | Linux (Ryzen 7700X + RTX 3060), 17 August 2026, `ministral-3:14b` (see M-2: not the shipped planner — `RESULTS.md` above) |
+| follow-up P95, **fake providers** | 16.000 ms | Windows, 11 September 2026, gateway protocol overhead only — the fake assistant does not restyle a chart (`:142-146` above), so this is not the cost of a real presentation-only turn |
+
+These two numbers are **not addable and not comparable**: different machines, different OSes,
+and — the disqualifying difference — different provider classes. Summing them (as an earlier
+version of this section did: "5,076.250 ms + 16.000 ms = 5,092.250 ms") produces a number with no
+referent; it was removed rather than corrected, because no correction makes a real-provider number
+and a fake-provider number commensurable.
+
+**What a real gate needs:** a single-turn P95 and a follow-up P95, both real providers, both one
+machine, one run. The follow-up row was previously impossible to produce — `benchmark_e2e.py`
+encoded `--follow-up-text` as UTF-8 bytes standing in for PCM16, which only transcribes under the
+fake STT (M-7) — and now takes `--follow-up-pcm-file` for a real recording, the same way
+`--pcm-file` supplies the first turn. Producing the pair is Task 9's runbook and the GPU run is the
+operator's; `apps/orchestrator/scripts/latency_gate.py` computes the gate itself once both P95s
+exist, from the two RESULTS rows given on its command line.
