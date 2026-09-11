@@ -32,14 +32,34 @@ import { Chart, chartTitle } from "./Chart";
 
 type ChartVisualization = Extract<NonNullable<Answer["visualization"]>, { kind: "chart" }>;
 
+type ChartSource = {
+  visualization: ChartVisualization;
+  currency: string | null;
+  // W-7: the evidence `AnswerEvidence` renders next to a chart -- the query that produced it and
+  // the movements behind it -- read off the same answer the chart itself came from (a compound
+  // part carries its own; the parent otherwise), not inherited from whichever answer the restyle
+  // happened to arrive attached to.
+  plan: Answer["plan"];
+  groups: Answer["groups"];
+  movementCount: Answer["movement_count"];
+  movements: Answer["movements"];
+};
+
 function chartSource(
   answer: Answer,
   chartId: string,
   inheritedCurrency: string | null = null,
-): { visualization: ChartVisualization; currency: string | null } | null {
+): ChartSource | null {
   const currency = answer.currency ?? inheritedCurrency;
   if (answer.visualization?.kind === "chart" && answer.visualization.chart_id === chartId) {
-    return { visualization: answer.visualization, currency };
+    return {
+      visualization: answer.visualization,
+      currency,
+      plan: answer.plan,
+      groups: answer.groups,
+      movementCount: answer.movement_count,
+      movements: answer.movements,
+    };
   }
   for (const part of answer.parts ?? []) {
     const found = chartSource(part, chartId, currency);
@@ -61,6 +81,16 @@ export function materializeVisualizationDerivation(turns: Turn[], answer: Answer
   return {
     ...answer,
     currency: answer.currency ?? source.currency,
+    // W-7: a restyle answer (`VISUAL_UPDATED`) carries `plan: null`, `groups: []`, `movements: []`
+    // -- the orchestrator never re-derives evidence for a presentation-only change -- so without
+    // this the restyled bubble drew a chart with rows and showed only "¿Por qué este gráfico?": no
+    // "Ver la consulta", no "Ver los movimientos", no "Ver los datos". Inherited the same way
+    // `currency` and the chart's own `data` already are: only when this answer's own is empty, so
+    // a genuinely evidenced answer (should one ever carry a derivation) is never overwritten.
+    plan: answer.plan ?? source.plan,
+    groups: answer.groups.length > 0 ? answer.groups : source.groups,
+    movement_count: answer.movement_count ?? source.movementCount,
+    movements: answer.movements.length > 0 ? answer.movements : source.movements,
     visualization: {
       ...source.visualization,
       chart_id: derivation.chart_id,
