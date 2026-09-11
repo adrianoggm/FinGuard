@@ -27,7 +27,12 @@ episodes:
       the planner never (`no_model: true`, the same `_LAST_QUARTER` phrase 32's own turn 1 resolves
       deterministically) and draws the same ranked breakdown bar. Posted to the streaming route with
       `channel: VOICE`, `spoken_for_voice` turns on and the answer carries a spoken summary of the
-      chart it just drew — case (a)'s opening half: a voice question, a chart, `spoken: true`.
+      chart it just drew — case (a)'s opening half: a voice question, a chart, `spoken: true`. It also
+      carries `explanation: true` (R4): the chart-derived explanation rides the same answer frame
+      the spoken summary does, on whichever channel drew the chart, so this turn is the VOICE proof
+      that R4's "one derivation, two surfaces" is not a TEXT-only fact. No new VOICE «¿Por qué…?»
+      turn is added here — episode 32's typed one and Task 4's own VOICE route tests already prove
+      both channels carry the explanation; this turn only shows a VOICE-drawn chart carries one too.
 
       Turn 2, «Pon el primer gráfico en vertical.», is 32's own turn 6, on TEXT. «El primer gráfico»
       reaches back to turn 1's bar and flips its dimension onto the x axis — probed, the same
@@ -96,6 +101,7 @@ episodes:
         banking_calls: 1
         no_model: true
         spoken: true
+        explanation: true
         ran: {window: LAST_N_MONTHS:3, direction: EXPENSE, categories: [], merchants: [], group_by: NONE, metric: SUM, excluded_categories: [], excluded_merchants: []}
       - say: Pon el primer gráfico en vertical.
         route: VISUAL
