@@ -49,11 +49,12 @@ second memory; no rationale).
   conversation → the recogniser abstains (the turn goes where it went before) — no new refusal text.
 - **R6 — no new endpoint, no new memory, no automatic action.** The `<details>` is inert; no chip is added (a chip
   would be the first non-restyle chip and bypass `_chip_verifies`).
-- **R7 — M-2 (4.4 branch review) is OPEN, not closed (re-ruled — see Landed, D-4.5-6):** `question_to_dto` hands the
-  presenter (and now the explainer's noun) the plan only when `sha256(plan)[:16] == newest.plan_digest`; otherwise
-  `None` → the generic noun. But `newest.plan_digest` is sealed from the same back-filled `metric_definition` the
-  guard compares it against, so the comparison cannot disagree in production; the fix wave's attempt (D-4.5-6) did
-  not change this. One test pins the guard's mismatch branch by hand, a pairing `stream()` cannot itself produce.
+- **R7 — M-2 (4.4 branch review) is CLOSED by Task 7 (superseded by R14/R15 — see Landed):** the presenter
+  speaks a plan only when this turn ran it. The handler flags `metric_definition_borrowed` at its one back-fill site
+  (`ask_financial_question.py:~643`); the main query producer stamps the `FinancialPlan` it ran (`:~5886`), so it is
+  never borrowed; the four plan-less producers (payee count, period comparison, ratio, salary history) stay borrowed
+  and speak the generic noun by design. The digest guard this ruling first proposed was tautological (a fingerprint of
+  the same field cannot tell borrowed from owned) and is gone; the sealed `plan_digest` stays as data 4.3 binds to.
 - **R8 — `turn_id` bound to a recoverable turn is REFUSED for this wave**, with the reason written down: it needs a
   store (§13's second memory) or a replayable record the orchestrator does not keep; the explanation does not need
   it (R1). `docs/next.md`'s sentence is updated to say so.
@@ -166,7 +167,8 @@ ratchets 22/43/0 (`UNMEASURED`/`MUTE`/`CONTESTED`), unmoved.
 4. `7ce1a71` — D-4.5-7, M-10 (web). FIXED.
 
 Re-review (opus): with fixes, 0 critical / 2 important / 3 minor new (`branch-re-review.md`). Item 2
-above (D-4.5-6) stays on this plan's open list, not its closed one.
+above (D-4.5-6) was then CLOSED by Task 7 and its round 3 (`ca63a5f`, `b3f1081`, `21d0e93`; see below) —
+verified by the second re-review (`branch-re-review-2.md`).
 
 **Rulings, as applied:**
 - **R1** — §7 rewritten to derive from the sealed context, not `decision`/`source_plan`. Applied,
