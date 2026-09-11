@@ -631,19 +631,19 @@ class AskFinancialQuestionHandler:
                         step.conversation.last_plan, FinancialPlan
                     ):
                         step = replace(step, metric_definition=step.conversation.last_plan)
-                    # I-1 (fix wave, D-4.5-6/M-2): a fingerprint of `metric_definition` -- the
-                    # plan that ran this turn, back-fill included -- taken HERE and sealed onto
-                    # the chart `_remember_visual_context` is about to build below (via
-                    # `_decided_visual` -> `llm_mapper`). The seal reads THIS field, a value fixed
-                    # for this turn, never `result.metric_definition` recomputed a second time --
-                    # that was the tautology I-1 named: a LATER turn that only echoes this chart
-                    # (no new `visual_dataset`, so this line never re-runs) still gets a FRESH
-                    # `metric_definition` of its own, backfilled from ITS OWN, possibly different
-                    # `last_plan`, and the R7 guard in `llm_mapper.question_to_dto` compares that
-                    # fresh value against the digest sealed HERE, at the turn that actually drew
-                    # the chart -- a comparison across two turns' worth of state, not the same
-                    # field read twice within one call. `None` when `metric_definition` is not a
-                    # `FinancialPlan` at all (a comparison, a ratio, or no plan ran).
+                    # I-1 (fix wave, D-4.5-6/M-2) -- STILL OPEN. This fingerprints
+                    # `step.metric_definition` one line AFTER the back-fill just above, off the
+                    # SAME object the R7 guard in `llm_mapper.question_to_dto` later compares it
+                    # against -- so within any one call the two sides of that comparison are
+                    # digests of the same value, and the guard cannot fire in production (see the
+                    # comment there, and `branch-re-review.md`'s `probe_m2`). The real fix is not
+                    # here: the DATASET must carry the digest of the plan that produced it, set by
+                    # its own producer (`_visual_dataset`, and the inline `VisualDataset(...)`
+                    # builds in `_compare_periods`, `_how_many_payees`, and the ratio branches --
+                    # each using the plan already in its own local scope) rather than this
+                    # back-filled field, and `_remember_visual_context` would seal that instead.
+                    # `None` when `metric_definition` is not a `FinancialPlan` at all (a
+                    # comparison, a ratio, or no plan ran).
                     step = replace(
                         step,
                         visual_plan_digest=(

@@ -583,17 +583,20 @@ def question_to_dto(
     explanation = explanation_of(newest) if newest is not None else None
     spoken = None
     if spoken_for_voice and newest is not None:
-        # R7 (4.4 review M-2, closed for real by I-1 in the fix wave): `result.metric_definition`
-        # is back-filled from `conversation.last_plan` (`ask_financial_question.py:~629-632`)
-        # whenever the turn's own step named none, so by the time it reaches here it can be a
-        # DIFFERENT plan than the one that drew this chart -- a later, unrelated question's plan
-        # riding along on a turn that only echoed a chart. `newest.plan_digest` is sealed from
-        # `result.visual_plan_digest` -- taken in `stream()` from the plan that actually produced
-        # `visual_dataset`, BEFORE that back-fill runs -- so this comparison can genuinely
-        # disagree: a back-filled `metric_definition` from a different `group_by` digests
-        # differently than the plan that drew the chart, and the guard below actually fires
-        # rather than matching itself by construction (the tautology I-1 named). A mismatch falls
-        # back to `None`, and `spoken_summary` speaks the generic noun instead of another turn's.
+        # R7 (4.4 review M-2, ledger D-4.5-6) -- STILL OPEN, not closed by the fix wave. `newest.
+        # plan_digest` is sealed from `result.visual_plan_digest`, which `ask_financial_question.
+        # stream()` (`~:645-653`) computes from `step.metric_definition` one line AFTER that same
+        # field is back-filled from `conversation.last_plan` (`~:630-633`) -- the seal and this
+        # guard's left-hand side both read the SAME back-filled object within the SAME call, so
+        # `plan_digest(result.metric_definition) == newest.plan_digest` holds by construction and
+        # this branch cannot fire in production today (probe: `branch-re-review.md`'s `probe_m2`
+        # scenario -- a comparison turn seals `last_plan`'s digest and speaks its noun regardless).
+        # The real fix: the DATASET (`VisualDataset`, built at each of its construction sites --
+        # `_visual_dataset` and the inline builds in `_compare_periods`, `_how_many_payees`, and
+        # the ratio branches) must carry the digest of the plan that produced IT, stamped by that
+        # producer using the plan actually in its own scope, not `metric_definition`'s later
+        # back-fill; `_remember_visual_context` would then seal THAT value instead. Kept here as
+        # the seam where that lands -- dead code until then.
         plan_for_spoken = (
             result.metric_definition
             if isinstance(result.metric_definition, FinancialPlan)
