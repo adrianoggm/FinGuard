@@ -381,7 +381,7 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
           {voiceStatus === "idle" || voiceStatus === "error" ? "🎙️ Iniciar voz" : voiceStatus === "processing" || voiceStatus === "speaking" ? "🎙️ Interrumpir y hablar" : voiceStatus === "connecting" ? "Cancelar conexión" : "⏹ Detener voz"}
         </button>
         <span role="status">{voiceStatus === "connecting" ? "Conectando…" : voiceStatus === "listening" ? "Escuchando" : voiceStatus === "processing" ? "Procesando…" : voiceStatus === "speaking" ? "Reproduciendo" : voiceStatus === "error" ? "Voz no disponible" : "Voz apagada"}</span>
-        {voiceError && <small className="voice-error">{voiceError}</small>}
+        <VoiceError message={voiceError} />
       </div>}
 
       <div className="turns">
@@ -519,6 +519,25 @@ export function recipientChoices(thread: Thread) {
     return [];
   }
   return conversation.candidates;
+}
+
+/**
+ * A voice-session failure, announced.
+ *
+ * W-8: this used to be a bare `<small>`, so "Permiso de micrófono denegado…" only ever reached a
+ * screen reader if it happened to be focused on this exact node -- `SaveMetricControl`'s own
+ * failure (`:role="alert"`, below) already gets this right. Extracted so the one attribute that
+ * matters here is exercised by a render test without a DOM, the way this file tests everything
+ * else: `role="alert"` alone is enough (it implies `aria-live="assertive"`; a redundant explicit
+ * one would only risk the two ever saying something different).
+ */
+export function VoiceError({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <small className="voice-error" role="alert">
+      {message}
+    </small>
+  );
 }
 
 /** Actions attached to the latest answer. Older suggestions must never remain live. */

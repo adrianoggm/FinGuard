@@ -33,6 +33,7 @@ import {
   settled,
   voiceButtonAction,
   voiceEventIdentity,
+  VoiceError,
   withChoice,
   type Thread,
   type Turn,
@@ -229,6 +230,21 @@ describe("voice button controls", () => {
     await voiceButtonAction("listening", client);
 
     expect(calls).toEqual(["stopCapture"]);
+  });
+});
+
+describe("voice error announcement (W-8)", () => {
+  it("gets role=\"alert\" so a screen reader announces it without being focused on it", () => {
+    const markup = renderToStaticMarkup(
+      createElement(VoiceError, { message: "Permiso de micrófono denegado. Actívalo para usar la voz." }),
+    );
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("Permiso de micrófono denegado.");
+  });
+
+  it("renders nothing when there is no error, same as before", () => {
+    const markup = renderToStaticMarkup(createElement(VoiceError, { message: null }));
+    expect(markup).toBe("");
   });
 });
 
