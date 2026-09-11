@@ -1729,8 +1729,44 @@ async def ask(
         # one is a domain vocabulary change Task 5/6 would have to chase through every ratchet.
         # Nothing is recorded here; the outcome itself (`VISUAL_EXPLAINED`) is the record.
         return _explanation_response(why, was)
+
+    if isinstance(was.active, PaymentConfirmation):
+        # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
+        # not a new instruction: the deterministic confirmation reader leaves the preview open.
+        #
+        # A transfer between the holder's own accounts is the exception, and it is the ordinary case
+        # that made it one: move money, then look at the balance. Stubbornness there answered
+        # "¿cuánto tengo en la hucha?" with the pending transfer, and every turn after it too.
+        previewed = was.active
+        if await _abandons_a_transfer_preview(
+            request.question, who, commands, payments_on, previewed
+        ):
+            was = was.with_active(None)
+        else:
+            return await _as_confirmation(
+                request.question, who, commands, payments_on, was, previewed, key=key
+            )
+
+    if isinstance(was.active, PaymentInProgress):
+        paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
+        if paused is not None:
+            return paused
+        immediate = _open_payment_reply(request.question, was, was.active)
+        if immediate is not None:
+            return immediate
+
+    # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above -- a preview or an
+    # open payment owns its own reply, whatever words it contains, and a restyle answering it left
+    # the preview open with nothing the holder said ever reaching `_as_confirmation`/the paused-
+    # payment readers. Gated on `was.visual_contexts` the same way `asks_why` already is (`if
+    # visual is not None and was.visual_contexts:` -- not just `if visual is not None:`):
+    # `interpret_visual` can return a non-`None` intent with no chart at all (the mixed-turn
+    # refusal fires on financial + style words alone, and `_VISUAL_ALL`/`show_every_row` fires on
+    # a bare "todos"), and both used to be answered `VISUAL_AMBIGUOUS`/`VISUAL_INCOMPATIBLE` -- a
+    # question about, or a refusal of, a chart the holder never mentioned -- instead of falling
+    # through to the planner or the clarification the sentence was actually answering.
     visual = interpret_visual(request.question, was.visual_contexts)
-    if visual is not None:
+    if visual is not None and was.visual_contexts:
         follow_up = classify_claimed_visual(visual, request.question)
         record_visual_follow_up(follow_up)
         if follow_up.kind == "AMBIGUOUS":
@@ -1757,31 +1793,6 @@ async def ask(
             metric_tokens=metric_tokens,
             seal=seal,
         )
-
-    if isinstance(was.active, PaymentConfirmation):
-        # A preview owns the next turn, whatever its words are. In particular, "sí pero 30" is
-        # not a new instruction: the deterministic confirmation reader leaves the preview open.
-        #
-        # A transfer between the holder's own accounts is the exception, and it is the ordinary case
-        # that made it one: move money, then look at the balance. Stubbornness there answered
-        # "¿cuánto tengo en la hucha?" with the pending transfer, and every turn after it too.
-        previewed = was.active
-        if await _abandons_a_transfer_preview(
-            request.question, who, commands, payments_on, previewed
-        ):
-            was = was.with_active(None)
-        else:
-            return await _as_confirmation(
-                request.question, who, commands, payments_on, was, previewed, key=key
-            )
-
-    if isinstance(was.active, PaymentInProgress):
-        paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
-        if paused is not None:
-            return paused
-        immediate = _open_payment_reply(request.question, was, was.active)
-        if immediate is not None:
-            return immediate
 
     repeated = await _repeats_a_recent_payment(was, request.question, who, queries)
     if repeated is not None:
@@ -1917,8 +1928,32 @@ async def ask_streaming(
 
         return StreamingResponse(explanation_events(), media_type="text/event-stream")
 
+    if isinstance(was.active, PaymentConfirmation):
+        # Here too, and for the reason every payment branch is duplicated: the browser types into
+        # this endpoint, so a rule that only held on the other one is a rule the conversation never
+        # got.
+        previewed = was.active
+        if await _abandons_a_transfer_preview(
+            request.question, who, commands, payments_on, previewed
+        ):
+            was = was.with_active(None)
+        else:
+            return _confirmation_events(
+                request.question, who, commands, payments_on, was, previewed, key=key
+            )
+
+    if isinstance(was.active, PaymentInProgress):
+        paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
+        if paused is not None:
+            return _open_payment_events(paused)
+        immediate = _open_payment_reply(request.question, was, was.active)
+        if immediate is not None:
+            return _open_payment_events(immediate)
+
+    # C-1/C-6/C-3 (Wave 3 hardening): moved below the two payment branches above, and gated on
+    # `was.visual_contexts` -- see the same block's comment on the question route.
     visual = interpret_visual(request.question, was.visual_contexts)
-    if visual is not None:
+    if visual is not None and was.visual_contexts:
         follow_up = classify_claimed_visual(visual, request.question)
         record_visual_follow_up(follow_up)
         if follow_up.kind == "AMBIGUOUS":
@@ -1943,28 +1978,6 @@ async def ask_streaming(
             yield _sse({"type": "answer", **answer.model_dump()})
 
         return StreamingResponse(visual_events(), media_type="text/event-stream")
-
-    if isinstance(was.active, PaymentConfirmation):
-        # Here too, and for the reason every payment branch is duplicated: the browser types into
-        # this endpoint, so a rule that only held on the other one is a rule the conversation never
-        # got.
-        previewed = was.active
-        if await _abandons_a_transfer_preview(
-            request.question, who, commands, payments_on, previewed
-        ):
-            was = was.with_active(None)
-        else:
-            return _confirmation_events(
-                request.question, who, commands, payments_on, was, previewed, key=key
-            )
-
-    if isinstance(was.active, PaymentInProgress):
-        paused = await _paused_payment_reply(request.question, was, was.active, who, queries)
-        if paused is not None:
-            return _open_payment_events(paused)
-        immediate = _open_payment_reply(request.question, was, was.active)
-        if immediate is not None:
-            return _open_payment_events(immediate)
 
     repeated = await _repeats_a_recent_payment(was, request.question, who, queries)
     if repeated is not None:

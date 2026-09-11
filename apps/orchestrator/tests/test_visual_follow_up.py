@@ -40,14 +40,14 @@ from finguard_orchestrator.bootstrap.dependencies import (
 )
 from finguard_orchestrator.bootstrap.main import app
 from finguard_orchestrator.domain.constants import MAX_VISUAL_CONTEXTS
-from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, PaymentOutcome, Period
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     VisualContext,
     VisualDataset,
     VisualRow,
 )
-from finguard_orchestrator.domain.models.conversation import IDLE, Conversation
+from finguard_orchestrator.domain.models.conversation import IDLE, Conversation, PaymentConfirmation
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.turn_analysis import TurnAnalysis, TurnFocus, TurnRelation
 from finguard_orchestrator.domain.models.visual_follow_up import (
@@ -529,6 +529,105 @@ async def test_the_controllers_visual_response_is_unchanged_by_recording(monkeyp
     unrecorded = await _drive_question_route("Ordénalo de mayor a menor")
 
     assert recorded == unrecorded
+
+
+# --- Task 3 (Wave 3 hardening, C-1/C-6/C-3): the restyle short-circuit needs a chart and yields
+# to an open payment ------------------------------------------------------------------------------
+
+
+def test_a_first_turn_naming_a_chart_style_reaches_the_planner_not_visual_ambiguous() -> None:
+    """C-1: a brand-new conversation has no `visual_contexts` at all. «Compara junio y mayo en
+    barras» names both a financial comparison and a chart style -- `interpret_visual` used to
+    answer this `VISUAL_AMBIGUOUS` (a question about a chart that does not exist) whether or not
+    any chart was on screen, because the mixed-turn refusal fires before the interpreter's own
+    `if not contexts` guard ever runs. Gated on `was.visual_contexts` the same way `asks_why`
+    already is, the turn now falls through to the handler -- proven here by a real `QueryBus` and
+    `TestClient` round trip that reaches `_DrawsOneChart` exactly once.
+    """
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+        response = client.post("/v1/questions", json={"question": "Compara junio y mayo en barras"})
+    finally:
+        app.dependency_overrides.clear()
+        app.state.questions_enabled = previously_questions_enabled
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] != "VISUAL_AMBIGUOUS"
+    assert len(draws.calls) == 1
+
+
+def test_a_bare_all_reply_with_no_chart_falls_through_to_the_clarification() -> None:
+    """C-3: with no chart in context, «todos» used to be claimed by `_VISUAL_ALL` and answered
+    `VISUAL_INCOMPATIBLE` («No hay ningún gráfico anterior que pueda cambiar.») -- a sentence about
+    a chart the holder never mentioned, and the clarification it was actually answering (which
+    lives in the handler, not the controller) never saw it. Gated on `was.visual_contexts`, the
+    turn now falls through to the handler exactly like any other reply would.
+    """
+    draws = _DrawsOneChart()
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, draws)
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.questions_enabled = True
+    try:
+        client = TestClient(app)
+        response = client.post("/v1/questions", json={"question": "todos"})
+    finally:
+        app.dependency_overrides.clear()
+        app.state.questions_enabled = previously_questions_enabled
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] != "VISUAL_INCOMPATIBLE"
+    assert len(draws.calls) == 1
+
+
+async def test_a_visual_word_during_an_open_payment_preview_stays_in_the_payment_branch() -> None:
+    """C-6: a payment preview is open (`PaymentConfirmation`) and a chart is also on screen. A
+    reply carrying only a visual word («ponlo en barras») used to be claimed by `interpret_visual`
+    before the controller ever looked at `was.active`, so the restyle answered, the preview was
+    left open, and the confirmation reader never saw the sentence. With `interpret_visual` moved
+    below the `PaymentConfirmation`/`PaymentInProgress` branches, the same reply now stays in the
+    payment branch (`payments_on=False` here makes `_as_confirmation` answer `UNSUPPORTED`
+    immediately, without touching `commands`) and never reaches the query bus.
+    """
+    fake_queries = _UnreachableQueries()
+    previewing = replace(
+        _SEALED_CHARTED,
+        active=PaymentConfirmation(
+            intent_id=UUID(int=7), recipient="Marta Solis Vega", amount_minor=1_500
+        ),
+    )
+    payload = conversation_mapper.to_payload(previewing).model_copy(
+        update={"conversation_id": _CONVERSATION_ID}
+    )
+    request = QuestionRequest(question="ponlo en barras", conversation=payload)
+
+    response = await ask_question(
+        request,
+        _WHO,
+        queries=fake_queries,
+        today=CS_TODAY,
+        commands=None,
+        payments_on=False,
+        attempt="x",
+        reads=None,
+        metric_tokens=_TEST_TOKENS,
+        metrics_on=False,
+    )
+
+    assert response.outcome == PaymentOutcome.UNSUPPORTED.value
+    assert not response.outcome.startswith("VISUAL_")
+    assert fake_queries.ran == []
 
 
 # --- Wave 4.4 (design §6): a spoken restyle takes the typed restyle's own path ------------------
