@@ -443,6 +443,8 @@ def _visual_only_response(
         )
     # `spoken` stays unset (Task 3): a restyle never runs `question_to_dto`, so it never computes
     # one, and a voice client speaks this `text` instead -- the same sentence a screen would show.
+    # `explanation` IS set (Task 3, Wave 4.5): the derived context is a chart too, and R4 says
+    # every chart explains itself regardless of which path drew it.
     return QuestionResponse(
         outcome="VISUAL_UPDATED",
         text="He creado una nueva versión del gráfico.",
@@ -454,6 +456,7 @@ def _visual_only_response(
             limit=updated.spec.limit,
         ),
         save_candidate=candidate,
+        explanation=llm_mapper._explanation_of(next_conversation.visual_contexts[-1]),
     )
 
 

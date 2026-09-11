@@ -913,6 +913,19 @@ VisualizationResponse = Annotated[
 ]
 
 
+class VisualExplanationResponse(_Payload):
+    """Why the chart on screen looks the way it does, said in Spanish -- from the sealed context
+    alone (`domain/services/visual_explanation.py`), never from a model."""
+
+    chart_reason: str
+    ordering_reason: str | None = None
+    scope_summary: str
+    provenance: str | None = None
+    # `as_text()`'s own line, so a client that wants one sentence rather than four fields has it
+    # without recomputing anything.
+    text: str
+
+
 class SaveCandidate(_Payload):
     """Authority to keep this answer as a metric, and the chart it was drawn as if it was one.
 
@@ -960,6 +973,11 @@ class QuestionResponse(_Payload):
     # What a voice client speaks instead of `text` -- present only on a VOICE request that drew a
     # chart this turn (Task 3); the screen keeps `text` regardless of channel.
     spoken: str | None = None
+    # Why the chart draws the way it does (R4): a chart explains itself on every channel, not only
+    # TEXT's screen, since «¿por qué este gráfico?» is as fair a question over voice as over the
+    # screen. Derived from the sealed context alone (`explain_chart`), never from a model, and
+    # absent exactly when this turn's answer draws no chart.
+    explanation: VisualExplanationResponse | None = None
     # Replies the service can actually understand on the next turn. They are data rather than
     # prose so a client can render buttons without scraping the answer text.
     suggestions: list[str] = []
