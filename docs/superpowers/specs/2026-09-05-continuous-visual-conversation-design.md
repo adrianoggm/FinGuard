@@ -241,6 +241,25 @@ was accepted and from whom, which evidence backs each figure, in which turn.
 **Invariant.** A visual follow-up may change the presentation; it can never, on its own, change the
 financial question or its figures.
 
+**2026-09-11 — the seal binds the conversation and the position, not only the holder and the
+content (Task 1, Wave 3 hardening, A-1).** `MetricTokenCodec.seal_context`/`verify_context` fold
+two more facts into the signed body: `conversation_id` and the context's own index in the ordered
+list this process last emitted — the `c2.` envelope, replacing `c1.` (an old `c1.` token still
+parses at the wire but opens as reason `"format"`, never a 500). Verification checks four things in
+order — holder, conversation, position, content — and `verify_context` now returns which one failed
+rather than a bare bool, so a genuinely-sealed context replayed from another conversation or moved
+to a different index in this one answers «este gráfico no es de esta conversación» while a changed
+byte or a malformed token keeps the older, more general refusal text. A context's position is not
+fixed at birth: `Conversation.with_visual_context` evicts the oldest entry once `MAX_VISUAL_CONTEXTS`
+is reached, which shifts every survivor down by one index, so `conversation_mapper.
+reseal_visual_contexts` re-signs every still-trusted context at its current index whenever the list
+changes shape (a new chart appended, an eviction, a compound turn's merge) — the invariant a seal
+now states is *"position N of the list the orchestrator itself last emitted"*, never *"position N of
+the list a client first saw it in"*. One consequence stated plainly: every visual context sealed
+before this task carries a `c1.` token, and the first echo of it after this task lands answers
+untrusted once, the same way a stale key rotation already does — the chart is not lost, it is drawn
+fresh the next turn and sealed under the new envelope from there.
+
 ## 5. Follow-up resolution
 
 ```python
@@ -574,3 +593,8 @@ collaboration between users · proactive alerts.
   turn-local and are never taken from the wire (§4).
 - **No unsealed source.** An unsealed or altered visual context is still drawn and navigated, but
   is never a source for a restyle decision or a saved metric (§4, Task 3b).
+- **No seal that outlives its own place.** A seal seals a holder, a conversation and a position, not
+  only a holder and a byte string — a genuine seal replayed from another conversation, or moved to
+  an index it was never issued for, is exactly as untrusted as a tampered one (§4, Task 1, Wave 3
+  hardening, A-1). Nobody's chart is trusted merely because the signature over its bytes still
+  checks out.
