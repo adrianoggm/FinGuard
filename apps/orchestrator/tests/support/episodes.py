@@ -244,6 +244,12 @@ _VISUAL_OUTCOMES = {
 # answering was silently counted as having answered.
 _ASKED_ABOUT_THE_FIGURES = {"DRILL_AMBIGUOUS"}
 
+# N-1 (4.4 re-review): a compound read probes as `QUERY` by fallthrough yet answers through
+# `_open_payment_events` with a single answer frame -- no plan of its own runs through `_steps`,
+# so no `Stage` is yielded. Named positively so the stage rule states which QUERY answers do
+# not stage, instead of trusting the fallthrough to mean "planned".
+_ANSWERED_WITHOUT_A_STAGE = {"COMPOUND"}
+
 
 def tool_of(answer: dict[str, Any]) -> str:
     """Which of the thirteen answered this turn.
@@ -1274,11 +1280,18 @@ def _complaints(
     # None` branch yields only `{"type": "answer", ...}`), the spoken categories -- COURTESY,
     # IDENTITY, CATEGORIES, EXPLANATION, GUIDANCE, CONTACTS, CARDS -- and payment turns answered
     # through `_confirmation_events`/`_open_payment_events` (no invented planning stage, by their
-    # own docstrings). A `PAYMENT`-routed turn reaching `_payment_events` instead *does* stage
-    # ("reading"), so the rule states a minimum, not an exact shape, for anything but `QUERY`.
+    # own docstrings), and a compound read (`_ANSWERED_WITHOUT_A_STAGE`) -- `QUERY` by
+    # fallthrough, one answer frame. A `PAYMENT`-routed turn reaching `_payment_events` instead
+    # *does* stage ("reading"), so the rule states a minimum, not an exact shape, for anything
+    # but `QUERY`.
     if turn.channel == "VOICE" and (not frames or frames[-1]["type"] != "answer"):
         yield f"a VOICE turn should close with an answer frame, and closes with {frames[-1:]!r}"
-    if turn.channel == "VOICE" and tool == QUERY and (not frames or frames[0]["type"] != "stage"):
+    if (
+        turn.channel == "VOICE"
+        and tool == QUERY
+        and answer.get("outcome") not in _ANSWERED_WITHOUT_A_STAGE
+        and (not frames or frames[0]["type"] != "stage")
+    ):
         yield (
             "a VOICE turn answering a query should open with a stage frame, and opens with "
             f"{frames[:1]!r}"
