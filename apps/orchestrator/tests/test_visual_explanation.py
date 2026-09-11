@@ -227,16 +227,18 @@ def test_a_single_row_uses_the_singular_noun() -> None:
 
 
 def test_the_count_comes_from_the_labels_that_crossed_the_wire_not_row_count() -> None:
-    """I-2: `conversation_mapper.to_domain` zeroes `profile.row_count` on purpose (it is not on
-    the wire), so an explanation asked on a later turn must count what actually travelled --
-    `context.labels` -- or it states a false zero on every echoed chart."""
+    """Task 2 (Wave 3 hardening, U-4/C-5): `profile.row_count` now survives `to_domain` (it is a
+    real wire field), but `_scope_summary` must still count `context.labels` -- the one thing a
+    later turn can resolve a reference against -- rather than switch to reading the now-available
+    `row_count`, which is not authority and can legitimately differ (a plan-limited chart's rows
+    are capped while its labels are not, or vice versa)."""
     context = _context("categorical_comparison")
     conversation = IDLE.with_visual_context(context)
     payload = mapper.to_payload(conversation)
     echoed = mapper.to_domain(payload)
     wired_context = echoed.visual_context()
     assert wired_context is not None
-    assert wired_context.profile.row_count == 0
+    assert wired_context.profile.row_count == context.profile.row_count
     minted_text = explain_chart(context).scope_summary
     wired_text = explain_chart(wired_context).scope_summary
     assert minted_text == wired_text

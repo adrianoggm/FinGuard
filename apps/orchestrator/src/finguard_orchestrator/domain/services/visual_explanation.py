@@ -270,11 +270,12 @@ def _ordering_reason(
 
 
 def _scope_summary(context: VisualContext, singular: str, plural: str, indef: str) -> str:
-    # I-2 (fix wave, D-4.5-8): `profile.row_count` never crosses the wire --
-    # `conversation_mapper.to_domain` zeroes it on purpose, since a count of rows is not something
-    # a client should be able to assert (see that mapper's own comment). What DOES travel, sealed,
-    # is `context.labels`: the count comes from `len(labels)` so a later-turn explanation states
-    # what actually crossed the wire instead of a false zero. `labels` is capped at
+    # I-2 (fix wave, D-4.5-8), updated by Task 2 (Wave 3 hardening, U-4/C-5): `profile.row_count`
+    # now crosses the wire too, but it is still not what this counts -- it is not authority (a
+    # client-sent number, read only by `measure_metric()`'s sibling `plan_metric`, never by a rule
+    # that decides), and `context.labels` is what a holder can actually resolve a reference
+    # against. The count comes from `len(labels)` so the sentence names exactly what a later turn
+    # can point at. `labels` is capped at
     # `MAX_DRAWN_LABELS`, so a full label list means "at least this many, we stopped counting" --
     # stating that as a bare number would read as a total, so the count is omitted instead (chosen
     # over "al menos N": an omitted clause cannot be misread as a bound stated as fact). An empty

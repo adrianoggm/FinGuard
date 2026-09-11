@@ -9,7 +9,14 @@ import pytest
 from pydantic import ValidationError
 from support.visual_planners import BREAKDOWN_PROFILE
 
-from finguard_orchestrator.domain.models.chart import DEFAULT_PRESENTATION, VisualContext
+from finguard_orchestrator.domain.models.chart import (
+    DEFAULT_PRESENTATION,
+    ChartEncoding,
+    ChartSpec,
+    VisualContext,
+    VisualField,
+    VisualProfile,
+)
 from finguard_orchestrator.domain.models.conversation import Conversation
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
@@ -111,6 +118,69 @@ def test_a_tampered_source_untrusts_a_sealed_context() -> None:
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
     assert tampered.trust_reason == "content"
+
+
+# --- Task 2 (Wave 3 hardening, U-4/C-5/A-6): the profile crosses the wire whole -----------------
+
+
+def test_per_field_cardinality_round_trips_distinctly() -> None:
+    """Two nominal fields with different cardinalities must come back with their own numbers, not
+    the one dataset-level count `_context_payload` used to pick from the first nominal dimension
+    and copy onto every field (A-6). `field_b` here stands for the field the donut rule or the
+    drill would judge differently if it silently inherited `field_a`'s count instead of its own."""
+    profile = VisualProfile(
+        fields=(
+            VisualField("field_a", "nominal", "dimension", 6),
+            VisualField("field_b", "nominal", "dimension", 3),
+            VisualField("value_minor", "quantitative", "measure", 0),
+        ),
+        metric="SUM",
+        unit="money",
+    )
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "field_a", "nominal"),
+            ChartEncoding("color", "field_b", "nominal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+    context = VisualContext("chart-1", spec, profile)
+    conversation = Conversation(visual_contexts=(context,))
+    payload = conversation_mapper.to_payload(conversation)
+    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
+    assert restored.profile.field("field_a").cardinality == 6
+    assert restored.profile.field("field_b").cardinality == 3
+
+
+def test_row_count_and_plan_metric_round_trip_so_measure_metric_reads_true() -> None:
+    """`row_count`/`plan_metric` used to be zeroed by `to_domain` regardless of what the wire
+    carried (U-4/C-5). A COMPARISON-of-COUNT chart explained on a later turn must still read
+    `measure_metric() == "COUNT"`, not fall back to the shape marker and say "importe" (A-7's
+    defect, reachable here through the round trip A-6/U-4 own)."""
+    profile = VisualProfile(
+        fields=(
+            VisualField("month", "temporal", "dimension", 0),
+            VisualField("value_minor", "quantitative", "measure", 0),
+        ),
+        metric="COMPARISON",
+        unit="count",
+        row_count=42,
+        plan_metric="COUNT",
+    )
+    spec = ChartSpec(
+        "bar",
+        (
+            ChartEncoding("x", "month", "temporal"),
+            ChartEncoding("y", "value_minor", "quantitative"),
+        ),
+    )
+    context = VisualContext("chart-1", spec, profile)
+    conversation = Conversation(visual_contexts=(context,))
+    payload = conversation_mapper.to_payload(conversation)
+    (restored,) = conversation_mapper.to_domain(payload).visual_contexts
+    assert restored.profile.row_count == 42
+    assert restored.profile.measure_metric() == "COUNT"
 
 
 def test_an_unknown_source_value_is_a_422() -> None:
