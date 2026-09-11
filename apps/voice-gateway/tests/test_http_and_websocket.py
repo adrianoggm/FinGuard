@@ -238,6 +238,10 @@ def test_charted_turn_carries_chart_identity_on_its_four_events() -> None:
             visualization = text_final_answer["visualization"]
             assert isinstance(visualization, dict)
             assert visualization["chart_id"] == received[indices["assistant.text.final"]]["chartId"]
+            # G-3: the real `ChartVisualizationResponse` always emits `unit` and `limit`; a fake
+            # that omitted them proved nothing about a payload the real web client would accept.
+            assert visualization["unit"] == "money"
+            assert visualization["limit"] is None
             # Task 3, Wave 4.4: the screen shows the full written answer (`text`, asserted above
             # via `answer`), but the audio speaks the fake's `spoken` summary instead of `text`.
             assert isinstance(services.tts, FakeTextToSpeech)
@@ -256,8 +260,21 @@ def test_chart_identity_omits_a_stale_visual_turn_id_on_an_uncharted_answer() ->
     assert chart_identity({"visualization": None}, stale_conversation) == {}
     # Even a charted answer must not borrow a *different* chart's context: the newest context's
     # own `chart_id` has to equal the chart this turn just drew.
-    mismatched_answer = {"visualization": {"chart_id": "chart-new"}}
+    mismatched_answer = {"visualization": {"kind": "chart", "chart_id": "chart-new"}}
     assert chart_identity(mismatched_answer, stale_conversation) == {"chartId": "chart-new"}
+
+
+def test_chart_identity_ignores_a_chart_id_on_an_unknown_visualization_kind() -> None:
+    """G-11: a future `kind` this gateway has never seen -- anything but `"chart"` -- must not be
+    read as if it named a chart merely because it carries a same-named field. `apps/web/src/
+    api.ts` throws on any `kind` it does not recognise; stamping a `chartId` the client will
+    never render is worse than stamping none."""
+    unknown_kind_answer = {"visualization": {"kind": "table", "chart_id": "c9"}}
+    assert chart_identity(unknown_kind_answer, None) == {}
+    # A KPI is the one real kind with no `chart_id` at all -- also omitted, and already the
+    # docstring's own claim before this test existed to check it (G-8).
+    kpi_answer = {"visualization": {"kind": "kpi", "value_field": "value_minor", "unit": "money"}}
+    assert chart_identity(kpi_answer, None) == {}
 
 
 def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
@@ -294,7 +311,214 @@ def test_restyle_turn_carries_chart_identity_from_the_derivation() -> None:
             text_final_answer = received[indices["assistant.text.final"]]["answer"]
             assert isinstance(text_final_answer, dict)
             assert text_final_answer["visualization"] is None
-            assert text_final_answer["visualization_derivation"] == {"chart_id": "chart-fake-2"}
+            # G-2: the full shape `VisualizationDerivation` requires -- `source_chart_id`,
+            # `chart_id`, `spec` and `limit` are all present, not the two-field stub the real
+            # `apps/web/src/api.ts` client rejects.
+            assert text_final_answer["visualization_derivation"] == {
+                "source_chart_id": "chart-fake-1",
+                "chart_id": "chart-fake-2",
+                "spec": {
+                    "mark": {"type": "line"},
+                    "encoding": {
+                        "x": {"field": "dimension", "type": "nominal"},
+                        "y": {"field": "value_minor", "type": "quantitative"},
+                    },
+                },
+                "limit": None,
+            }
+            # The real controller's own outcome for this path is `VISUAL_UPDATED`
+            # (`_visual_only_response`), never `ANSWERED`.
+            assert text_final_answer["outcome"] == "VISUAL_UPDATED"
+    sessions.clear()
+
+
+def _run_one_turn(
+    socket: object, session_id: str, sequence: int, turn_id: str, audio: bytes
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Send one committed turn and collect its events, indexed by first occurrence of `type` --
+    the same loop every test in this file already repeats inline."""
+    socket.send_text(_control("input.start", session_id, sequence, turn_id))  # type: ignore[attr-defined]
+    socket.send_bytes(audio)  # type: ignore[attr-defined]
+    socket.send_text(_control("input.commit", session_id, sequence + 1, turn_id))  # type: ignore[attr-defined]
+    received: list[dict[str, object]] = []
+    indices: dict[str, int] = {}
+    while True:
+        item = socket.receive()  # type: ignore[attr-defined]
+        if item.get("text"):
+            payload = json.loads(item["text"])
+            received.append(payload)
+            indices.setdefault(payload["type"], len(received) - 1)
+            if payload["type"] == "turn.completed":
+                break
+    return received, indices
+
+
+def test_kpi_visualization_carries_no_chart_identity() -> None:
+    """G-8: zero coverage before this test for a KPI answer -- `chart_identity`'s own docstring
+    already claimed a KPI has no `chart_id` to stamp; nothing exercised that claim."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            received, indices = _run_one_turn(socket, session_id, 1, "turn-1", b"dame el kpi ")
+            answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(answer, dict)
+            visualization = answer["visualization"]
+            assert isinstance(visualization, dict)
+            assert visualization["kind"] == "kpi"
+            for event_type in IDENTITY_EVENT_TYPES:
+                event_payload = received[indices[event_type]]
+                assert "chartId" not in event_payload
+                assert "visualTurnId" not in event_payload
+    sessions.clear()
+
+
+def test_explanation_answer_carries_no_chart_identity_needs_context_on_the_orchestrator_side() -> (
+    None
+):
+    """G-6/G-8: `VISUAL_EXPLAINED` mirrors `_explanation_response` -- the answer names no chart
+    anywhere (no `visualization`, no `visualization_derivation`), so `chart_identity` correctly
+    stamps nothing. This is not a gateway bug to fix: the orchestrator's own `QuestionResponse`
+    for this outcome has no field naming which chart it explains (confirmed by reading
+    `llm_controller.py`'s `_explanation_response` and `VisualExplanationResponse`), so a gateway
+    that guessed "the newest context" would be wrong exactly on "el primer gráfico"/"el segundo
+    gráfico" (`resolve_target`). NEEDS_CONTEXT for the orchestrator side; the gateway stamps
+    nothing, honestly."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            received, indices = _run_one_turn(
+                socket, session_id, 1, "turn-1", "explícame el gráfico".encode()
+            )
+            answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(answer, dict)
+            assert answer["outcome"] == "VISUAL_EXPLAINED"
+            explanation = answer["explanation"]
+            assert isinstance(explanation, dict)
+            assert explanation["chart_reason"]
+            assert answer.get("visualization") is None
+            assert answer.get("visualization_derivation") is None
+            for event_type in IDENTITY_EVENT_TYPES:
+                event_payload = received[indices[event_type]]
+                assert "chartId" not in event_payload
+                assert "visualTurnId" not in event_payload
+    sessions.clear()
+
+
+@pytest.mark.parametrize(
+    "phrase,outcome",
+    [
+        ("sin grafico por favor ", "VISUAL_NEEDS_TARGET"),
+        ("un grafico viejo", "VISUAL_UNTRUSTED"),
+        ("ya esta asi gracias ", "VISUAL_UNCHANGED"),
+        ("esa regla rota no ", "VISUAL_INCOMPATIBLE"),
+        ("eso es ambiguo", "VISUAL_AMBIGUOUS"),
+    ],
+)
+def test_every_visual_outcome_the_orchestrator_emits_carries_no_chart_identity(
+    phrase: str, outcome: str
+) -> None:
+    """G-6/G-8: the refusal-shaped `VISUAL_*` outcomes (`_visual_only_response`,
+    `_compound_read_reply`'s `AMBIGUOUS` branch) all echo `conversation` unchanged and name no
+    chart on the answer itself -- `chart_identity` must stamp nothing for any of them, the same
+    honest gap `VISUAL_EXPLAINED` has (NEEDS_CONTEXT for the orchestrator side)."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            received, indices = _run_one_turn(socket, session_id, 1, "turn-1", phrase.encode())
+            answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(answer, dict)
+            assert answer["outcome"] == outcome
+            for event_type in IDENTITY_EVENT_TYPES:
+                event_payload = received[indices[event_type]]
+                assert "chartId" not in event_payload
+                assert "visualTurnId" not in event_payload
+    sessions.clear()
+
+
+def test_save_candidate_names_the_same_chart_the_answer_drew() -> None:
+    """G-8: zero coverage before this test for `save_candidate` -- `SaveCandidate.chart_id`
+    names the same chart this turn's own `visualization` just drew."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            received, indices = _run_one_turn(socket, session_id, 1, "turn-1", b"guardalo")
+            answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(answer, dict)
+            save_candidate = answer["save_candidate"]
+            assert isinstance(save_candidate, dict)
+            visualization = answer["visualization"]
+            assert isinstance(visualization, dict)
+            assert save_candidate["chart_id"] == visualization["chart_id"]
+            for event_type in IDENTITY_EVENT_TYPES:
+                event_payload = received[indices[event_type]]
+                assert event_payload["chartId"] == visualization["chart_id"]
+    sessions.clear()
+
+
+def test_compound_answer_carries_no_chart_identity_before_g5() -> None:
+    """G-5/G-8: a compound (`parts`) answer's own top-level `visualization`/`visualization_
+    derivation` are always `None` (`_compound_read_reply`); the chart its second part draws
+    rides only inside `answer["parts"][1]["visualization"]` and the conversation's own newest
+    context. `chart_identity` does not look at either yet -- fixed in the G-5 commit, which
+    updates this same test's expectations once it does."""
+    with TestClient(app) as client:
+        body = client.post(
+            "/v1/voice/sessions", headers={"Authorization": "Bearer dev-secret"}
+        ).json()
+        with client.websocket_connect(
+            body["websocketUrl"], subprotocols=["finguard.voice.v1", body["ticket"]]
+        ) as socket:
+            session_id = body["sessionId"]
+            socket.send_text(_control("session.configure", session_id, 0))
+            assert socket.receive_json()["type"] == "session.ready"
+            received, indices = _run_one_turn(
+                socket, session_id, 1, "turn-1", b"pregunta compuesta"
+            )
+            answer = received[indices["assistant.text.final"]]["answer"]
+            assert isinstance(answer, dict)
+            assert answer["outcome"] == "COMPOUND"
+            assert answer["text"] == (
+                "1. En agosto gastaste 100,00 €.\n2. En septiembre gastaste 200,00 €."
+            )
+            parts = answer["parts"]
+            assert isinstance(parts, list) and len(parts) == 2
+            second_part_visualization = parts[1]["visualization"]
+            assert isinstance(second_part_visualization, dict)
+            assert second_part_visualization["chart_id"] == "chart-fake-3"
+            assert answer.get("visualization") is None
+            assert answer.get("visualization_derivation") is None
+            for event_type in IDENTITY_EVENT_TYPES:
+                event_payload = received[indices[event_type]]
+                assert "chartId" not in event_payload
+                assert "visualTurnId" not in event_payload
     sessions.clear()
 
 

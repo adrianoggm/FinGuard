@@ -266,6 +266,11 @@ export function Conversation({ thread, onThread, onClose, onSettled }: Props) {
           }
         } catch (error) {
           setVoiceError(error instanceof Error ? error.message : "Respuesta de voz inválida.");
+          // W-2: an assistant.text.final that failed to materialise (a restyle whose source
+          // chart is gone from the thread, say) never rendered a chart, so the fence must not
+          // treat this turn as having one either -- audio for it would play over a bubble with
+          // no chart, which is exactly the defect the fence exists to rule out.
+          return false;
         }
       },
     });

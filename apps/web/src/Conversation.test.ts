@@ -953,6 +953,82 @@ describe("financial breakdowns", () => {
     expect(() => validateVoiceAnswer({ ...payload, total_minor: Number.NaN })).toThrow();
   });
 
+  it("accepts every optional QuestionResponse field absent, exactly as an exclude_none caller would send it", () => {
+    // W-6: `question`, `intent_id`, `plan`, `conversation`, `currency`, `total_minor`,
+    // `movement_count`, `groups`, `movements` and `suggestions` all default to `None`/`[]` in
+    // `QuestionResponse` (`llm_dto.py`) -- absence has to mean what the DTO's own default means,
+    // not "malformed". A minimal wire body carries only the two fields that are actually required.
+    const minimal = { outcome: "PLANNED", text: "Has gastado 12,00 €." };
+    const validated = validateVoiceAnswer(minimal);
+    expect(validated).toEqual({
+      outcome: "PLANNED", text: "Has gastado 12,00 €.",
+      question: null, intent_id: null, plan: null, conversation: null,
+      currency: null, total_minor: null, movement_count: null,
+      groups: [], movements: [], suggestions: [],
+    });
+    expect(validated.movements).toHaveLength(0);
+    expect(validated.groups).toHaveLength(0);
+  });
+
+  it("defaults an omitted part's fields the same way it does the parent's", () => {
+    const compound = {
+      outcome: "COMPOUND",
+      text: "Dos resultados",
+      parts: [{ outcome: "PLANNED", text: "Parte uno" }],
+    };
+    const validated = validateVoiceAnswer(compound);
+    expect(validated.parts).toHaveLength(1);
+    expect(validated.parts![0]).toEqual({
+      outcome: "PLANNED", text: "Parte uno",
+      question: null, intent_id: null, plan: null, conversation: null,
+      currency: null, total_minor: null, movement_count: null,
+      groups: [], movements: [], suggestions: [],
+    });
+  });
+
+  it("defaults a chart's unit to money, matching ChartVisualizationResponse's own default", () => {
+    const payload = answer({ visualization: {
+      kind: "chart", chart_id: "chart-1",
+      spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+      data: [{ dimension: "Comida" }],
+    } as unknown as Answer["visualization"] });
+    const validated = validateVoiceAnswer(payload);
+    expect(validated.visualization).toMatchObject({ unit: "money" });
+    // And a chart that does carry a unit is unaffected -- no rebuild when nothing was missing.
+    const withUnit = answer({ visualization: {
+      kind: "chart", chart_id: "chart-1", unit: "count",
+      spec: { mark: { type: "bar" }, encoding: { x: { field: "dimension", type: "nominal" } } },
+      data: [{ dimension: "Comida" }],
+    } });
+    expect(validateVoiceAnswer(withUnit)).toBe(withUnit);
+  });
+
+  it("accepts a provenance-less explanation and a restyle answer, real DTO shapes both ways", () => {
+    // VisualExplanationResponse.provenance defaults to None; a chart drawn without a recorded
+    // source (a KPI-derived plot, say) sends the key as an explicit null, which already passed --
+    // this is the omitted-key case W-6 also names for `explanation`.
+    const withoutProvenance = answer({
+      explanation: {
+        chart_reason: "Barras: comparas categorías entre sí.",
+        ordering_reason: null,
+        scope_summary: "Datos: 2 categorías.",
+        text: "Barras: comparas categorías entre sí. Datos: 2 categorías.",
+      } as unknown as Answer["explanation"],
+    });
+    expect(validateVoiceAnswer(withoutProvenance).explanation?.provenance).toBeUndefined();
+
+    // VisualizationDerivation always carries source_chart_id, chart_id and spec -- the real
+    // restyle shape a `VISUAL_UPDATED` answer sends, with no limit.
+    const restyle = answer({
+      visualization_derivation: {
+        source_chart_id: "chart-a",
+        chart_id: "chart-b",
+        spec: { mark: { type: "line" }, encoding: { x: { field: "dimension", type: "temporal" } } },
+      },
+    });
+    expect(validateVoiceAnswer(restyle).visualization_derivation?.chart_id).toBe("chart-b");
+  });
+
   it("renders a count by merchant as movement counts, not monetary totals", () => {
     const countPlan = { ...LAST_MONTH, group_by: "MERCHANT", metric: "COUNT" };
     const counted = thread({

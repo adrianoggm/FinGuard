@@ -105,8 +105,10 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
 
     The gateway reads two strings off a payload it otherwise passes through unchanged; it still
     interprets nothing (ADR-010). `chartId` is `answer["visualization"]["chart_id"]` when that is a
-    str -- a KPI answer's visualization has no `chart_id` and a KPI is not a chart a later turn can
-    name, so it is omitted; a restyle answers with `visualization` empty and the chart only in
+    str AND `answer["visualization"]["kind"] == "chart"` (G-11) -- a KPI answer's visualization has
+    no `chart_id` and a KPI is not a chart a later turn can name, so it is omitted, and a future
+    kind this gateway has never seen must not be read as a chart merely because it carries a
+    same-named field; a restyle answers with `visualization` empty and the chart only in
     `answer["visualization_derivation"]["chart_id"]` (`_visual_only_response`), so that is read as
     the fallback under the same guards. `visualTurnId` is the newest
     `conversation["visual_contexts"][-1]["turn_id"]`, but only when that same newest context's
@@ -118,7 +120,13 @@ def chart_identity(answer: Mapping[str, Any], conversation: object) -> dict[str,
     """
     identity: dict[str, str] = {}
     visualization = answer.get("visualization")
-    if isinstance(visualization, Mapping):
+    # G-11: gated on `kind == "chart"`, not merely on a `chart_id` string being present. A KPI's
+    # visualization has no `chart_id` (already excluded by the `isinstance` check below), but a
+    # future kind this gateway has never seen -- anything other than "chart" or "kpi" -- must not
+    # be read as if it were one just because it happens to carry a same-named field: the web
+    # client throws on any `kind` it does not recognise, and stamping a `chartId` the client will
+    # never render is worse than stamping none.
+    if isinstance(visualization, Mapping) and visualization.get("kind") == "chart":
         chart_id = visualization.get("chart_id")
         if isinstance(chart_id, str):
             identity["chartId"] = chart_id
