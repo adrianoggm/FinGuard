@@ -349,23 +349,34 @@ async def run_cancel_probe(
     return round((time.monotonic() - sent) * 1000, 3), sequence + 4
 
 
+async def _pcm_audio(pcm_file: str | None, text: str | None) -> bytes | None:
+    """PCM16 for one turn: a real recording's bytes verbatim when `pcm_file` is given, else
+    `text` UTF-8-encoded and padded to an even length -- a stand-in that only transcribes under
+    the fake STT, not a real provider. Returns `None` when neither is given (no turn)."""
+    if pcm_file:
+        audio = await asyncio.to_thread(Path(pcm_file).read_bytes)
+    elif text:
+        audio = text.encode("utf-8")
+        if len(audio) % 2:
+            audio += b"\x00"
+    else:
+        return None
+    if not audio or len(audio) % 2:
+        raise RuntimeError("audio must be non-empty PCM16 with complete samples")
+    return audio
+
+
 async def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     token = args.token or os.environ.get("VOICE_GATEWAY_TOKEN")
     if not token:
         raise RuntimeError("missing token: pass --token or VOICE_GATEWAY_TOKEN")
-    if args.pcm_file:
-        audio = await asyncio.to_thread(Path(args.pcm_file).read_bytes)
-    else:
-        audio = args.text.encode("utf-8")
-        if len(audio) % 2:
-            audio += b"\x00"
-    if not audio or len(audio) % 2:
+    audio = await _pcm_audio(args.pcm_file, args.text)
+    if audio is None:
         raise RuntimeError("input audio must be non-empty PCM16 with complete samples")
-    follow_up_audio: bytes | None = None
-    if args.follow_up_text:
-        follow_up_audio = args.follow_up_text.encode("utf-8")
-        if len(follow_up_audio) % 2:
-            follow_up_audio += b"\x00"
+    # `--follow-up-pcm-file` takes a real recording for the follow-up turn, the way `--pcm-file`
+    # does for the first; `--follow-up-text` remains the fake-STT stand-in when no recording is
+    # given. A real-provider follow-up row (M-7) needs the file, not the text.
+    follow_up_audio = await _pcm_audio(args.follow_up_pcm_file, args.follow_up_text)
     base_url = args.url.rstrip("/")
     async with httpx.AsyncClient(base_url=base_url, timeout=args.timeout) as client:
         response = await client.post(
@@ -448,6 +459,7 @@ async def benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 "providerConfiguration": "read from gateway environment; no credentials emitted",
                 "warmupRuns": args.warmup,
                 "followUpText": args.follow_up_text,
+                "followUpPcmFile": args.follow_up_pcm_file,
                 "requestedRuns": args.runs,
                 "completedRuns": completed_turns,
                 "metrics": metrics,
@@ -471,6 +483,13 @@ def parse_args() -> argparse.Namespace:
         "its Sample durations are reported under a followUp: prefix",
     )
     parser.add_argument("--pcm-file", help="raw mono PCM16 little-endian at 16 kHz")
+    parser.add_argument(
+        "--follow-up-pcm-file",
+        default=None,
+        help="raw mono PCM16 little-endian at 16 kHz for the follow-up turn; a real recording, "
+        "the way --pcm-file is for the first turn. Overrides --follow-up-text, whose UTF-8 "
+        "bytes only transcribe under the fake STT and cannot produce a real-provider row.",
+    )
     parser.add_argument("--require-stage-timings", action="store_true")
     parser.add_argument("--format", choices=("json", "table"), default="json")
     args = parser.parse_args()
