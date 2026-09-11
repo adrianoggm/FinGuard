@@ -846,6 +846,13 @@ class Turn:
     # summary's *presence*, never its wording -- that is `test_visual_context_producers.py`'s own
     # business. `None` asserts nothing, matching every turn written before this field existed.
     spoken: bool | None = None
+    # A substring the spoken line must contain, case-insensitively -- the noun the presenter
+    # chose, not merely that a presenter spoke at all. `spoken` above went presence-only under
+    # 4.4's R8; Task 7 round 0 of Wave 4.5 then silenced every chart's noun down to a generic
+    # line and no corpus turn complained, because none checked the words. When set,
+    # `answer.get("spoken")` must be a `str` containing this substring, `says`-style. `None`
+    # asserts nothing, matching every turn written before this field existed.
+    spoken_says: str | None = None
     # Whether this turn's answer carries Task 3's chart-derived explanation --
     # `isinstance(answer.get("explanation"), dict)` compared against this flag. What it measures is
     # the explanation's *presence* on the answer, never its wording -- that is
@@ -1282,6 +1289,13 @@ def _complaints(
             f"the answer should {'' if turn.spoken else 'not '}carry a spoken summary, "
             f"and {'does not' if turn.spoken else 'does'}"
         )
+    if turn.spoken_says is not None:
+        spoken_line = answer.get("spoken")
+        if not isinstance(spoken_line, str) or turn.spoken_says.lower() not in spoken_line.lower():
+            yield (
+                f"turn {turn.say!r}'s spoken line does not say {turn.spoken_says!r}: "
+                f"{(spoken_line or '')[:90]!r}"
+            )
     has_explanation = isinstance(answer.get("explanation"), dict)
     if turn.explanation is not None and has_explanation != turn.explanation:
         yield (
