@@ -861,8 +861,9 @@ question itself — «¿Por qué este gráfico?» and its close variants, claime
 chart exists — is answered outcome `VISUAL_EXPLAINED` from `explain_chart` alone: zero ledger calls,
 zero model calls, the conversation byte-identical to before the question (`6283309`). The presenter
 is meant to speak only the chart's own plan: `question_to_dto` hands `spoken_summary` a plan only
-when its digest matches the sealed `plan_digest`, otherwise the generic noun — but M-2 (4.4's
-branch review) is NOT closed; see the limit below. Episode 32 gains the why-turn right after turn 1 and
+when `AskFinancialQuestionResult.metric_definition_borrowed` is False, otherwise the generic noun —
+M-2 (4.4's branch review) is now closed this way; see below for what closing it this way still
+does not reach. Episode 32 gains the why-turn right after turn 1 and
 episode 33's turn 1 asserts its voice explanation (`7f673e8`, `92b00e3`). Suite at HEAD: 4227 / 3 /
 209 (three globs) + corpus 207 (176 · 1194) at 0.0 %; ratchets 22/43/0 (`UNMEASURED`/`MUTE`/
 `CONTESTED`), unmoved; gateway untouched (`git diff --stat -- apps/voice-gateway` empty across the
@@ -885,15 +886,24 @@ replacing a key absent from every ledger category enum). A week-grouped chart's 
 indistinguishable on the wire from a day-grouped chart's (both a plain ISO date), so a week-grouped
 explanation says «días», by design until a real week-shaped key exists — not a defect, a stated
 limit (D-4.5-3, re-ruled, no fix-wave item). D-4.5-5 (unused params on the `_MARK_REASONS`
-callables) is PARKED, untouched. The R7/M-2 digest guard is **still OPEN**: the fix wave's attempt
-moved the capture one field of indirection later but not to the right place — `visual_plan_digest`
-is computed in `stream()` from `metric_definition` one line AFTER that field's own back-fill from
-`conversation.last_plan`, off the same object the guard in `llm_mapper.py` then compares it
-against, so the two sides of the comparison are always digests of the same value and the guard
-cannot fire in production (a comparison turn, for one, seals only its later single-window plan's
-digest and still speaks that plan's noun). Closing it needs the DATASET to carry the digest of the
-plan that produced it, stamped by the dataset's own producer — not read off `metric_definition`'s
-back-fill — with `_remember_visual_context` sealing that instead; D-4.5-6, open. The video's
+callables) is PARKED, untouched. D-4.5-6/M-2 (Task 7, R14) is **CLOSED**, not by a digest: a digest
+of `metric_definition` can never tell a borrowed plan from an owned one (both a comparison's stale
+`last_plan` and this turn's own plan digest identically, since both are read off the same field in
+the same call — the fix wave's attempt learned this the hard way and stayed tautological). The real
+fact is provenance, and only `stream()`'s own back-fill (`ask_financial_question.py:~630-633`) knows
+it, so it says so directly: `AskFinancialQuestionResult.metric_definition_borrowed` is set True in
+the same `replace` that back-fills `metric_definition` from `conversation.last_plan`, and
+`question_to_dto` hands the presenter the plan only when it is False. `visual_plan_digest` stays —
+4.3's drill still binds to it — but the presenter no longer reads it. Round 3 (R15) found the first
+cut too conservative: the main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS the
+`FinancialPlan` that drew the chart in its own local scope, so it now stamps `metric_definition`
+there directly, alongside `visual_dataset=`. `stream()`'s back-fill then finds the field already
+set and never runs, so an ordinary, single-turn VOICE query keeps the 4.4 behaviour
+(«Restaurantes fue la categoría con mayor gasto…», «…por categorías»). The other four producers
+(`_how_many_payees`, `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely
+run no single `FinancialPlan` of that shape, stamp nothing, and are correctly left to the
+back-fill — a chart that follows one of them, over whatever plan was previously in view, speaks
+only the generic «En pantalla tienes el desglose.» line, by design. The video's
 on-camera run of §11 is the user's; what the code offers it is episode 32's turn order and the
 explanation visible after turn 1, spoken right after «¿Por qué este gráfico?».
 

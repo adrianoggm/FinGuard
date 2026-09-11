@@ -49,11 +49,12 @@ second memory; no rationale).
   conversation → the recogniser abstains (the turn goes where it went before) — no new refusal text.
 - **R6 — no new endpoint, no new memory, no automatic action.** The `<details>` is inert; no chip is added (a chip
   would be the first non-restyle chip and bypass `_chip_verifies`).
-- **R7 — M-2 (4.4 branch review) is OPEN, not closed (re-ruled — see Landed, D-4.5-6):** `question_to_dto` hands the
-  presenter (and now the explainer's noun) the plan only when `sha256(plan)[:16] == newest.plan_digest`; otherwise
-  `None` → the generic noun. But `newest.plan_digest` is sealed from the same back-filled `metric_definition` the
-  guard compares it against, so the comparison cannot disagree in production; the fix wave's attempt (D-4.5-6) did
-  not change this. One test pins the guard's mismatch branch by hand, a pairing `stream()` cannot itself produce.
+- **R7 — M-2 (4.4 branch review) is CLOSED by Task 7 (superseded by R14/R15 — see Landed):** the presenter
+  speaks a plan only when this turn ran it. The handler flags `metric_definition_borrowed` at its one back-fill site
+  (`ask_financial_question.py:~643`); the main query producer stamps the `FinancialPlan` it ran (`:~5886`), so it is
+  never borrowed; the four plan-less producers (payee count, period comparison, ratio, salary history) stay borrowed
+  and speak the generic noun by design. The digest guard this ruling first proposed was tautological (a fingerprint of
+  the same field cannot tell borrowed from owned) and is gone; the sealed `plan_digest` stays as data 4.3 binds to.
 - **R8 — `turn_id` bound to a recoverable turn is REFUSED for this wave**, with the reason written down: it needs a
   store (§13's second memory) or a replayable record the orchestrator does not keep; the explanation does not need
   it (R1). `docs/next.md`'s sentence is updated to say so.
@@ -132,6 +133,23 @@ Then: whole-branch review (opus, base = 4.4's closing head), one fix wave, scope
   `explanation: true`; `Turn.explanation` in the harness. `7f673e8`, `92b00e3`.
 - **Task 6** — this record: design §7/§10/§11, `docs/next.md`, `docs/conversational-capabilities.md`,
   this Landed section. Docs only.
+- **Task 7 (R14)** — D-4.5-6/M-2 closed, not with the digest: `AskFinancialQuestionResult.
+  metric_definition_borrowed`, set True in the same `replace` that back-fills `metric_definition`
+  from `conversation.last_plan` (`ask_financial_question.stream()`, `~:630-633`) — the one place
+  that ever assigns it. `question_to_dto` hands the presenter a plan only when the flag is False;
+  `visual_plan_digest` stays sealed as data for 4.3's drill, unread by the presenter now. The R7
+  guard and its two stale-plan tests are removed.
+- **Task 7, round 3 (R15)** — round 1 shipped the flag True on every chart, including an ordinary
+  single-turn one, since no producer stamped its own plan — a regression against 4.4's VOICE noun,
+  caught before merge. Fix: the main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS
+  the `FinancialPlan` that drew the chart in its own local scope, so it now stamps
+  `metric_definition=plan` there directly, alongside `visual_dataset=`; `stream()`'s back-fill then
+  finds the field already set and never runs. An ordinary VOICE query keeps its 4.4 noun
+  («Restaurantes fue la categoría con mayor gasto…», «…por categorías»); the other four producers
+  (`_how_many_payees`, `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely
+  run no single `FinancialPlan` of that shape, stamp nothing, and correctly stay on the back-fill —
+  a chart that follows one of those, over whatever plan was previously in view, speaks the generic
+  desglose line, by design.
 
 Suite at HEAD (`92b00e3`): orchestrator 4227 passed / 3 skipped / 209 deselected (three globs) +
 corpus 207 (176 · 1194) at 0.0 %; web 117; gateway 122 / 1 (untouched across the whole wave);
@@ -149,7 +167,8 @@ ratchets 22/43/0 (`UNMEASURED`/`MUTE`/`CONTESTED`), unmoved.
 4. `7ce1a71` — D-4.5-7, M-10 (web). FIXED.
 
 Re-review (opus): with fixes, 0 critical / 2 important / 3 minor new (`branch-re-review.md`). Item 2
-above (D-4.5-6) stays on this plan's open list, not its closed one.
+above (D-4.5-6) was then CLOSED by Task 7 and its round 3 (`ca63a5f`, `b3f1081`, `21d0e93`; see below) —
+verified by the second re-review (`branch-re-review-2.md`).
 
 **Rulings, as applied:**
 - **R1** — §7 rewritten to derive from the sealed context, not `decision`/`source_plan`. Applied,
@@ -167,7 +186,16 @@ above (D-4.5-6) stays on this plan's open list, not its closed one.
 - **R7** — the digest guard was written exactly as ruled, but Task 3's review found it tautological
   within today's `AskFinancialQuestionResult` assembly (the seal and the guard read the same value
   off the same object in one call) — **re-ruled by the review as D-4.5-6, IMPORTANT, fix wave**: M-2
-  is not actually closed; the fix belongs at the chart's own producer.
+  is not actually closed; the fix belongs at the chart's own producer. The fix wave's attempt stayed
+  tautological too (same object, one field of indirection later) — **re-ruled again as R14**: a
+  digest can never make this distinction, because no producer stamps its own plan; the presenter
+  needs the handler to say so directly. Closed, Task 7, with `metric_definition_borrowed`.
+- **R15** — round 1's flag was True on every chart, silencing the specific noun even on an
+  ordinary, single-turn query — a regression against 4.4's VOICE summary, not an acceptable
+  consequence of R14. Fix: the main query producer (`_answered`/`_visual_dataset`) stamps
+  `metric_definition` with the `FinancialPlan` it actually ran, since it is the one producer that
+  has one in local scope; the other four stay on the back-fill because they genuinely have none.
+  Closed, Task 7 round 3.
 - **R8** — the `turn_id` → recoverable-turn binding is refused, reason written down in `docs/next.md`.
   Applied, Task 6.
 - **R9** — the video's polish is the user's; the plan states what the code offers the on-camera run
@@ -185,13 +213,22 @@ above (D-4.5-6) stays on this plan's open list, not its closed one.
 
 **Parked:** D-4.5-5 — the `_MARK_REASONS` callables carry unused parameters (optional); untouched.
 
-**Still OPEN** — D-4.5-6, the R7/M-2 digest guard is tautological today: `visual_plan_digest` is
-computed from `metric_definition` one line after that field's own back-fill, off the same object
-the guard later compares it against, so the comparison cannot disagree in production. The fix
-wave's attempt captured the digest at that same back-filled point rather than at the chart's own
-producer, and did not close it. The real fix: stamp the digest of the plan that produced the
-DATASET, at the dataset's own producer, and seal that. IMPORTANT — needs the user's word, since it
-touches `ask_financial_question.py`'s producer contract.
+**CLOSED, Task 7 (R14)** — D-4.5-6, the R7/M-2 digest guard, is gone: no digest of
+`metric_definition` can tell a borrowed plan from an owned one, since both would read it off the
+same field in the same call. `ask_financial_question.stream()`'s own back-fill (`~:630-633`) is the
+only place that ever assigns `metric_definition`, so it is the only place that can know whether the
+value came from `conversation.last_plan` rather than this turn's own producer — it says so with
+`AskFinancialQuestionResult.metric_definition_borrowed`, and `question_to_dto` hands the presenter
+a plan only when that flag is False. `visual_plan_digest` stays sealed as data (4.3's drill still
+binds to it); the presenter no longer reads it. Round 3 (R15) corrected round 1's over-reach: the
+main query producer (`_answered`/`_visual_dataset`, `~:5873`) HAS the `FinancialPlan` that drew the
+chart in its own local scope, so it now stamps `metric_definition` there directly — the back-fill
+never runs for it, and an ordinary, single-turn VOICE query keeps its 4.4 noun («Restaurantes fue
+la categoría con mayor gasto…», «…por categorías»). The other four producers (`_how_many_payees`,
+`_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no single
+`FinancialPlan` of that shape, stamp nothing, and correctly stay on the back-fill — a chart that
+follows one of those, over whatever plan was previously in view, speaks the generic desglose line,
+by design, not as an open limit.
 
 `D-4.5-2` (design §7's `provenance` type) was fixed in Task 2b. `D-4.5-3` (a week-grouped chart's
 labels read as days) was RE-RULED, not a fix-wave item: the 7-day-spacing heuristic that would have

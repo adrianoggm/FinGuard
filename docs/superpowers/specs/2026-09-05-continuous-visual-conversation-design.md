@@ -428,12 +428,22 @@ store this design does not keep); no amount, total or percentage, ever; no rule 
 error or discarded proposal. The fix wave closed one limit this section used to name here as open:
 a later-turn `scope_summary` now counts `len(context.labels)` rather than the wire-zeroed
 `profile.row_count` (I-2/D-4.5-8, see "Scope" above). D-4.5-6/M-2 (the R7 digest guard in
-`llm_mapper.py`) is **still open**: `AskFinancialQuestionResult.visual_plan_digest` is computed in
-`stream()` from `metric_definition` one line AFTER that field's own back-fill, off the same
-object the guard later compares it against, so the two sides of the comparison are always digests
-of the same value and the guard cannot fire in production. Closing it needs the DATASET to carry
-the digest of the plan that produced it, stamped by its own producer, not by this back-filled
-field. Also still open, by design rather than by omission: a week-grouped chart's explanation says
+`llm_mapper.py`) is **closed by Task 7 (R14)**, not by that digest: a digest of `metric_definition`
+cannot tell a borrowed plan from an owned one, since the seal and any guard both read it off the
+same field within the same call. Only `ask_financial_question.stream()`'s own back-fill
+(`~:630-633`) knows whether `metric_definition` came from `conversation.last_plan` rather than this
+turn's own producer, so it says so directly: `AskFinancialQuestionResult.metric_definition_borrowed`,
+set True in the same `replace` that back-fills the plan. `question_to_dto` hands the presenter's
+`spoken_summary` a plan only when the flag is False; `visual_plan_digest` stays sealed as data for
+4.3's drill, unread by the presenter now. Round 3 (R15): the main query producer
+(`_answered`/`_visual_dataset`, `~:5873`) HAS the `FinancialPlan` that drew the chart in its own
+local scope and now stamps `metric_definition` there directly, so `stream()`'s back-fill never
+runs for it and an ordinary, single-turn VOICE query keeps its 4.4 noun («Restaurantes fue la
+categoría con mayor gasto…», «…por categorías»). The other four producers (`_how_many_payees`,
+`_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no single
+`FinancialPlan` of that shape, stamp nothing, and stay on the back-fill — a chart that follows one
+of those, over whatever plan was previously in view, speaks only the generic desglose line, by
+design, not as an unclosed limit. Also still open, by design rather than by omission: a week-grouped chart's explanation says
 «días» (D-4.5-3, above).
 
 ## 8. Performance

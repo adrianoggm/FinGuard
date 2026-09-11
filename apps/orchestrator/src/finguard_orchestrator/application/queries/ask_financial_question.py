@@ -630,20 +630,25 @@ class AskFinancialQuestionHandler:
                     if step.metric_definition is None and isinstance(
                         step.conversation.last_plan, FinancialPlan
                     ):
-                        step = replace(step, metric_definition=step.conversation.last_plan)
-                    # I-1 (fix wave, D-4.5-6/M-2) -- STILL OPEN. This fingerprints
-                    # `step.metric_definition` one line AFTER the back-fill just above, off the
-                    # SAME object the R7 guard in `llm_mapper.question_to_dto` later compares it
-                    # against -- so within any one call the two sides of that comparison are
-                    # digests of the same value, and the guard cannot fire in production (see the
-                    # comment there, and `branch-re-review.md`'s `probe_m2`). The real fix is not
-                    # here: the DATASET must carry the digest of the plan that produced it, set by
-                    # its own producer (`_visual_dataset`, and the inline `VisualDataset(...)`
-                    # builds in `_compare_periods`, `_how_many_payees`, and the ratio branches --
-                    # each using the plan already in its own local scope) rather than this
-                    # back-filled field, and `_remember_visual_context` would seal that instead.
-                    # `None` when `metric_definition` is not a `FinancialPlan` at all (a
-                    # comparison, a ratio, or no plan ran).
+                        # R14 (Wave 4.5, closes D-4.5-6/M-2): this is the one place
+                        # `metric_definition` is ever assigned a value it did not already have --
+                        # every producer of a chart in this handler (`_visual_dataset`,
+                        # `_how_many_payees`, `_compare_periods`, the ratio branches, the salary
+                        # history) leaves it `None` and lets THIS line supply `conversation.
+                        # last_plan` instead. So the flag is set here, in the same `replace`, and
+                        # nowhere else -- it says the fact this line alone knows: the plan on the
+                        # result did not come from this turn's own producer.
+                        step = replace(
+                            step,
+                            metric_definition=step.conversation.last_plan,
+                            metric_definition_borrowed=True,
+                        )
+                    # A fingerprint of `step.metric_definition` as held at this line, borrowed or
+                    # not. `None` when `metric_definition` is not a `FinancialPlan` at all (a
+                    # comparison, a ratio, or no plan ran). Sealed as data for 4.3's drill to bind
+                    # to; the presenter reads `metric_definition_borrowed` above instead (a digest
+                    # of this same field cannot tell borrowed from owned -- only the back-fill
+                    # above can, so it says so directly).
                     step = replace(
                         step,
                         visual_plan_digest=(
@@ -5870,6 +5875,15 @@ def _answered(
         movements=[_spoken_movement(movement) for movement in visible_movements],
         suggestions=query_recovery.empty_suggestions(plan) if answer.is_empty else [],
         explicit_visualization=_asks_for_visualization(sentence),
+        # R15 (Wave 4.5, round 3 of D-4.5-6/M-2): this is the one producer that actually HAS the
+        # `FinancialPlan` that drew `visual_dataset` -- it is the same `plan` two lines below, in
+        # its own local scope, never inherited from `conversation.last_plan`. Stamping it here
+        # means `stream()`'s back-fill (`~:630-641`) finds `metric_definition` already set and
+        # never runs, so `metric_definition_borrowed` stays False and the presenter may name this
+        # plan's own noun. The other four producers in this handler (`_how_many_payees`,
+        # `_compare_periods`, the ratio branches, `_compare_salary_history`) genuinely run no
+        # single `FinancialPlan` of this shape and are correctly left to the back-fill.
+        metric_definition=plan,
         visual_dataset=_visual_dataset(
             plan,
             answer,
