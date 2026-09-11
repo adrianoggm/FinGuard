@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -21,13 +21,17 @@ from finguard_orchestrator.application.queries.ask_financial_question import (
     VisualRow,
     _decided_visual,
 )
-from finguard_orchestrator.domain.enums import Direction, Period
+from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
+from finguard_orchestrator.domain.models.account_summary import AccountSummary
+from finguard_orchestrator.domain.models.card import Wallet
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
     EncodingPatch,
     VisualContext,
 )
 from finguard_orchestrator.domain.models.conversation import IDLE
+from finguard_orchestrator.domain.models.planning_result import PlanningResult
+from finguard_orchestrator.domain.models.query_answer import Group, QueryAnswer
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUp
 from finguard_orchestrator.domain.services.deterministic_visual_planner import (
     DeterministicVisualPlanner,
@@ -546,40 +550,117 @@ def test_a_restyle_with_no_target_still_asks_to_change_it() -> None:
     assert response.text == "Indica qué gráfico quieres cambiar."
 
 
-async def test_r7s_guard_branch_fires_when_the_sealed_digest_and_the_plans_differ(
-    charted_result,
-) -> None:
-    """This does NOT exercise a pairing `ask_financial_question.stream()` can produce today (see
-    `branch-re-review.md`'s N-2 and the R7 comment in `llm_mapper.py`): `stream()` computes
-    `visual_plan_digest` from `step.metric_definition` one line AFTER back-filling that same
-    field, so the two are always digests of the same object within one call, and the guard's
-    mismatch branch is unreachable in production. What this test pins is the branch itself, by
-    hand: it takes `charted_result` (whose `visual_plan_digest` was sealed from its original plan)
-    and replaces `metric_definition` with a DIFFERENT plan (`group_by='CATEGORY'`) without
-    touching `visual_plan_digest` -- a state `stream()` cannot construct, only this test can. Once
-    the digests genuinely disagree, the presenter must fall back to the generic noun («desglose»)
-    rather than speak the substituted plan's own noun («categorías»). This is the dead-code path
-    the real fix (digesting the plan at the dataset's own producer, not at the back-fill) would
-    make reachable; until then it proves only that the `if` in `question_to_dto` does what its
-    branches say, not that the guard protects anything live."""
-    plan_with_grouping = replace(charted_result.metric_definition, group_by="CATEGORY")
-    assert plan_digest(plan_with_grouping) != charted_result.visual_plan_digest
-    voice_result = replace(charted_result, metric_definition=plan_with_grouping)
-    response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
-    assert response.spoken is not None
-    assert "categoría" not in response.spoken.lower()
+_SUBSCRIPTIONS = QueryAnswer(
+    currency="EUR",
+    total_minor=64_476,
+    movement_count=36,
+    groups=(Group("Netflix", 16_788, 12), Group("Spotify", 9_684, 9)),
+)
+_BREAKDOWN = QueryAnswer(
+    currency="EUR",
+    total_minor=30_000,
+    movement_count=5,
+    groups=(Group("RESTAURANTS", 20_000, 3), Group("GROCERIES", 10_000, 2)),
+)
+
+
+class _PlansTheBreakdown:
+    """Answers whatever `ask()` is called with by planning the one CATEGORY breakdown that
+    starts turn 1 -- the payee count that follows never reaches this (it is deterministic)."""
+
+    def __init__(self, plan: FinancialPlan) -> None:
+        self._plan = plan
+
+    async def plan(self, sentence: str, **_: object) -> PlanningResult:
+        return PlanningResult.planned(self._plan)
+
+
+class _TwoTurnLedger:
+    """Routes by category filter: the payee count asks for SUBSCRIPTIONS, the breakdown for
+    nothing in particular. Real banking would do the same keyed on the plan it was handed."""
+
+    async def run(self, plan: FinancialPlan, **_: object) -> QueryAnswer:
+        return _SUBSCRIPTIONS if plan.categories == ("SUBSCRIPTIONS",) else _BREAKDOWN
+
+
+class _Accounts:
+    async def of(self, *_: object, **__: object) -> AccountSummary:
+        return AccountSummary("EUR", 100_000, 100_000, datetime(2026, 8, 5, 10, 0))
+
+
+class _Contacts:
+    async def all_of(self, *_: object, **__: object) -> tuple[()]:
+        return ()
+
+
+class _Cards:
+    async def all_of(self, *_: object, **__: object) -> Wallet:
+        return Wallet(since=date(2026, 8, 5))
+
+    async def charges_on(self, *_: object, **__: object) -> tuple[()]:
+        return ()
+
+
+async def test_a_charted_step_with_no_plan_of_its_own_speaks_the_generic_noun() -> None:
+    """The re-review's `probe_m2` scenario (`branch-re-review.md`, item 2), reproduced through
+    `stream()`'s own lines rather than by hand -- N-2's own complaint about the deleted R7 tests.
+
+    Turn 1 answers an ordinary CATEGORY breakdown; its own `_visual_dataset` producer sets no
+    `metric_definition`, so `stream()`'s back-fill supplies `conversation.last_plan` and flags it
+    `metric_definition_borrowed=True` -- true of turn 1 itself, not only of what follows (the probe
+    table in the task report says so for all five producers: none stamps its own plan). Turn 2
+    ("¿cuántas suscripciones tengo?") is a real, deterministic payee count -- `_how_many_payees`
+    sets no `metric_definition` either. Its own `conversation.last_plan` ends up its OWN plan
+    (`answered_with_result` updates it), not turn 1's -- but since `metric_definition` is still
+    back-filled rather than stamped by the producer, `metric_definition_borrowed` is True here too,
+    and the presenter cannot tell "this chart's own plan" from "whatever was in view" either way.
+    The generic noun is the only one it is ever entitled to say."""
+    breakdown_plan = FinancialPlan(
+        direction=Direction.EXPENSE,
+        period=RelativePeriod(Period.LAST_MONTH),
+        group_by=GroupBy.CATEGORY,
+    )
+    handler = ask_financial_question.AskFinancialQuestionHandler(
+        _PlansTheBreakdown(breakdown_plan),
+        _TwoTurnLedger(),
+        accounts=_Accounts(),
+        contacts=_Contacts(),
+        cards=_Cards(),
+    )
+    turn1 = await handler.handle(
+        ask_financial_question.AskFinancialQuestionQuery(
+            sentence="¿en qué categorías gasté el mes pasado?",
+            account_id=uuid4(),
+            today=date(2026, 8, 5),
+        )
+    )
+    assert turn1.metric_definition_borrowed is True, "no producer here stamps its own plan"
+
+    turn2 = await handler.handle(
+        ask_financial_question.AskFinancialQuestionQuery(
+            sentence="¿cuántas suscripciones tengo?",
+            account_id=uuid4(),
+            today=date(2026, 8, 5),
+            conversation=turn1.conversation,
+        )
+    )
+    assert turn2.visual_dataset is not None
+    assert turn2.metric_definition_borrowed is True
+
+    response = llm_mapper.question_to_dto(turn2, spoken_for_voice=True)
     assert response.spoken == "En pantalla tienes el desglose."
-    assert "€" not in response.spoken
+    assert "categoría" not in response.spoken.lower()
 
 
-async def test_r7_a_matching_digest_keeps_the_specific_noun() -> None:
-    """The matching-digest case (today's own, unaffected by R7's guard) keeps speaking the
-    specific noun the plan actually names -- same assertion as
-    `test_a_voice_charted_answer_carries_a_spoken_summary`, kept here too under R7's own name."""
+async def test_metric_definition_borrowed_is_false_until_the_backfill_sets_it() -> None:
+    """The flag's own default (`AskFinancialQuestionResult.metric_definition_borrowed = False`)
+    is what a producer that stamped its own plan would leave untouched -- exactly the shape
+    `_charted_result_grouped_by_category` builds, which is why `question_to_dto` still speaks the
+    specific noun for it (`test_a_voice_charted_answer_carries_a_spoken_summary`, above). Pinned
+    here directly, on the field, so the two ends of R14's contract -- False on a stamped plan, True
+    once `stream()`'s back-fill runs -- are each asserted once, in one place."""
     voice_result = await _charted_result_grouped_by_category()
-    response = llm_mapper.question_to_dto(voice_result, spoken_for_voice=True)
-    assert response.spoken is not None
-    assert response.spoken.startswith("Comida fue la categoría con mayor gasto.")
+    assert voice_result.metric_definition_borrowed is False
 
 
 def test_a_restyled_chart_names_its_origin_and_keeps_its_plan(restyle_turn) -> None:

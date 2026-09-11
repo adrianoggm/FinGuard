@@ -35,7 +35,6 @@ from finguard_orchestrator.domain.models.chart import (
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.domain.models.visual_follow_up import VisualFollowUpKind
 from finguard_orchestrator.domain.models.visual_plan import canonical, draft_of
-from finguard_orchestrator.domain.services.plan_digest import plan_digest
 from finguard_orchestrator.domain.services.spoken_presenter import spoken_summary
 from finguard_orchestrator.domain.services.visual_explanation import explain_chart
 from finguard_orchestrator.domain.services.visual_interpreter import (
@@ -409,12 +408,10 @@ def _remember_visual_context(
         # is nothing to fingerprint (a comparison, a ratio, a metric_definition that is not a
         # `FinancialPlan` at all).
         window=result.visual_dataset.window,
-        # I-1 (fix wave, D-4.5-6/M-2): sealed from `result.visual_plan_digest`, computed in
-        # `ask_financial_question.stream()` from the plan that actually produced `visual_dataset`
-        # -- BEFORE `metric_definition` could be back-filled from a different turn's `last_plan`.
-        # Recomputing it here from `result.metric_definition` (the old shape) sealed whatever plan
-        # `metric_definition` happened to hold by this point, which is sometimes the back-filled
-        # one -- the guard below then compared that value against itself and could never disagree.
+        # A fingerprint of `result.metric_definition` as `ask_financial_question.stream()` held it
+        # (`~:645-653`) -- borrowed or not; `_visual_dataset` and its sibling producers stamp
+        # nothing of their own. Sealed as data for 4.3's drill to bind to; the presenter reads
+        # `metric_definition_borrowed` instead of this digest (see `question_to_dto` below).
         plan_digest=result.visual_plan_digest,
         # Task 1 (Wave 4.5): descriptive provenance, from the same decision the profile above
         # already came from -- never re-derived, never guessed.
@@ -583,25 +580,17 @@ def question_to_dto(
     explanation = explanation_of(newest) if newest is not None else None
     spoken = None
     if spoken_for_voice and newest is not None:
-        # R7 (4.4 review M-2, ledger D-4.5-6) -- STILL OPEN, not closed by the fix wave. `newest.
-        # plan_digest` is sealed from `result.visual_plan_digest`, which `ask_financial_question.
-        # stream()` (`~:645-653`) computes from `step.metric_definition` one line AFTER that same
-        # field is back-filled from `conversation.last_plan` (`~:630-633`) -- the seal and this
-        # guard's left-hand side both read the SAME back-filled object within the SAME call, so
-        # `plan_digest(result.metric_definition) == newest.plan_digest` holds by construction and
-        # this branch cannot fire in production today (probe: `branch-re-review.md`'s `probe_m2`
-        # scenario -- a comparison turn seals `last_plan`'s digest and speaks its noun regardless).
-        # The real fix: the DATASET (`VisualDataset`, built at each of its construction sites --
-        # `_visual_dataset` and the inline builds in `_compare_periods`, `_how_many_payees`, and
-        # the ratio branches) must carry the digest of the plan that produced IT, stamped by that
-        # producer using the plan actually in its own scope, not `metric_definition`'s later
-        # back-fill; `_remember_visual_context` would then seal THAT value instead. Kept here as
-        # the seam where that lands -- dead code until then.
+        # R14 (Wave 4.5, closes D-4.5-6/M-2): a digest cannot tell a borrowed plan from an owned
+        # one, because both the seal (`ask_financial_question.stream()`, `~:645-653`) and any guard
+        # here would read `plan_digest` off the SAME `metric_definition`, back-filled or not, within
+        # the SAME call -- there is no second, independent value to compare it against (see the
+        # re-review's `probe_m2`: a comparison turn's stale `last_plan` digests identically to
+        # itself and the old guard passed). Only `ask_financial_question.stream()` -- the one place
+        # that back-fills `metric_definition` from `conversation.last_plan` -- knows whether this
+        # turn's own producer set it, so it says so directly with `metric_definition_borrowed`
+        # rather than this mapper trying to re-derive it from a fingerprint.
         plan_for_spoken = (
-            result.metric_definition
-            if isinstance(result.metric_definition, FinancialPlan)
-            and plan_digest(result.metric_definition) == newest.plan_digest
-            else None
+            result.metric_definition if not result.metric_definition_borrowed else None
         )
         spoken = spoken_summary(
             newest.spec, newest.profile, newest.labels, newest.ranked, plan_for_spoken
