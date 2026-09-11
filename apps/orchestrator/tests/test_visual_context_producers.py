@@ -290,7 +290,9 @@ def test_a_reshape_over_an_untrusted_previous_names_no_origin(
     origin when the previous chart is untrusted is the same refusal `UNRELATED` already gets
     below, applied to the one case that used to slip past it.
     """
-    previous = replace(VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE), trusted=False)
+    previous = replace(
+        VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE), trusted=False, trust_reason="content"
+    )
     reshaped = replace(
         charted_result,
         conversation=charted_result.conversation.with_visual_context(previous),
@@ -321,7 +323,9 @@ def test_a_drill_down_over_an_untrusted_previous_names_no_origin(
 ) -> None:
     """The m9 rule holds for a drill too: an untrusted previous chart is never named as the origin,
     whether the follow-up that produced the new chart was a reshape or a drill."""
-    previous = replace(VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE), trusted=False)
+    previous = replace(
+        VisualContext("chart-0", SPEC, BREAKDOWN_PROFILE), trusted=False, trust_reason="content"
+    )
     drilled = replace(
         charted_result,
         conversation=charted_result.conversation.with_visual_context(previous),
@@ -838,10 +842,18 @@ def test_a_fresh_chart_is_sealed_for_its_holder_and_unsealed_without_one(
     tokens = MetricTokenCodec({"active": b"x" * 32}, "active")
 
     sealed = llm_mapper.question_to_dto(charted_result, holder_reference="h", metric_tokens=tokens)
+    assert sealed.conversation is not None
     (payload_context,) = sealed.conversation.visual_contexts[-1:]
     assert payload_context.token is not None
-    assert tokens.verify_context(
-        payload_context.token, "h", conversation_mapper.context_semantics(payload_context)
+    assert (
+        tokens.verify_context(
+            payload_context.token,
+            "h",
+            sealed.conversation.conversation_id,
+            len(sealed.conversation.visual_contexts) - 1,
+            conversation_mapper.context_semantics(payload_context),
+        )
+        == "ok"
     )
 
     unsealed = llm_mapper.question_to_dto(charted_result)
@@ -856,26 +868,37 @@ def test_chart_suggestions_offers_nothing_for_an_untrusted_context() -> None:
     """A chip offered over a context nobody can vouch for is a button that will answer
     `VISUAL_UNTRUSTED` the moment it is tapped -- `_chart_suggestions` says so up front rather than
     relying on `_visual_only_response`'s own refusal to happen to produce the same empty list."""
-    untrusted = replace(VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE), trusted=False)
+    untrusted = replace(
+        VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE), trusted=False, trust_reason="content"
+    )
     assert llm_mapper._chart_suggestions(untrusted) == []
 
 
 def test_to_domain_is_called_only_where_a_caller_can_verify_it() -> None:
     """`to_domain` builds `VisualContext.trusted` from its `verify` callable, so a call with no
     `verify` trusts whatever the caller echoed with no check at all -- `to_domain`'s own default.
-    Two call sites do this in `src/` today, and this pins both rather than either alone.
+    Two call sites bind `verify=...` in `src/` today, and this pins both rather than either alone.
 
     `_conversation_of` is the one HTTP boundary: `request.conversation` is a caller's own claim
-    about where a conversation was, and it is the one call bound to `verify=...`, closing over
+    about where a conversation was, and it is bound to `verify=...`, closing over
     `who.holder_reference` and the app's own `metric_tokens` codec.
 
-    `_compound_read_reply`'s own call is not a second boundary. Its argument
+    `_compound_read_reply`'s own call is not a second HTTP boundary -- its argument
     (`rendered.conversation`) is `to_payload(result.conversation)`, built two lines earlier in the
-    same function from a `Conversation` the query bus just returned inside *this* request --
-    nothing a caller sent reaches it. The round trip exists to recover the richer domain types
-    (`ChartSpec` and friends) `to_payload` just flattened, not to admit new data; every context it
-    builds carries `token=None`, so binding a `verify` there would refuse it regardless of content
-    and turn an internal implementation detail into a bug in the compound-question path.
+    same function from a `Conversation` the query bus just returned inside *this* request, never
+    from something a caller sent on this turn. It binds `verify=...` too, though, and did not
+    always (A-1, Wave 3 hardening): before this task, nothing in this pipeline ever re-sealed a
+    context after the wire round trip that verified it, so `to_domain`'s own unconditional
+    relaunder to `trusted=True` here was inert -- a context that had come in untrusted was also
+    tokenless, and tokenless it stayed. Task 1's `reseal_visual_contexts` (called once, at the end
+    of this same function, to fix the position every survivor sits at after the compound merge)
+    changed that: it reseals whatever `trusted` says by the time it runs, so an unguarded relaunder
+    here would let a tampered context carried into a compound turn walk out with a brand-new, this
+    time genuinely valid, seal. Binding a real `verify=` keeps a relaundered-but-tokenless context
+    `trusted=False` exactly as `_conversation_of` already found it, while a context this very
+    clause just minted (a real token, sealed earlier in the same loop iteration by
+    `question_to_dto`'s own `seal`) verifies `"ok"` and is correctly resealed at its final
+    position.
 
     A third call site appearing anywhere else in `src/` -- verified or not -- fails this test until
     someone decides which of the two shapes it is, the way `test_otel.py`'s own import sweep pins
@@ -928,12 +951,14 @@ def test_to_domain_is_called_only_where_a_caller_can_verify_it() -> None:
     verified_calls = [call for call in calls if call[3]]
     unverified_calls = [call for call in calls if not call[3]]
 
-    assert [call[2] for call in verified_calls] == ["_conversation_of"], (
-        f"to_domain called with verify= outside _conversation_of, or not at all: {verified_calls}"
+    assert {call[2] for call in verified_calls} == {"_conversation_of", "_compound_read_reply"}, (
+        "to_domain called with verify= outside the two known call sites, or not at all: "
+        f"{verified_calls}"
     )
-    assert [(call[0], call[2]) for call in unverified_calls] == [
-        ("infrastructure/controllers/llm_controller.py", "_compound_read_reply")
-    ], f"an unverified to_domain call site appeared where none is accounted for: {unverified_calls}"
+    assert unverified_calls == [], (
+        f"an unverified to_domain call site appeared where none is accounted for: "
+        f"{unverified_calls}"
+    )
 
 
 def test_the_seal_is_never_silently_skipped() -> None:
@@ -1054,7 +1079,9 @@ def test_trusted_never_crosses_the_wire() -> None:
     `_context_payload`.
     """
     assert "trusted" not in VisualContextPayload.model_fields
-    context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, trusted=False)
+    context = VisualContext(
+        "chart-1", SPEC, BREAKDOWN_PROFILE, trusted=False, trust_reason="content"
+    )
     payload = conversation_mapper.to_payload(IDLE.with_visual_context(context))
     (item,) = payload.visual_contexts
     assert "trusted" not in item.model_dump()

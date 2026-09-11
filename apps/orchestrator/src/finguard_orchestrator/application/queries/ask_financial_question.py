@@ -5498,6 +5498,33 @@ def record_visual_decision_refused(context: VisualContext, rejection: Rejection)
     )
 
 
+def record_context_untrusted(context: VisualContext) -> None:
+    """One `DECLINED` row for an echoed visual context whose seal did not check out.
+
+    Task 1 (Wave 3 hardening, A-1). `context.trusted` is the bool everything downstream branches
+    on; `context.trust_reason` is the one of five closed reasons `MetricTokenCodec.verify_context`
+    found (`"holder"`, `"conversation"`, `"position"`, `"content"`, `"format"`) -- kept off the
+    text a holder reads (`llm_controller`'s `VISUAL_UNTRUSTED` sentence collapses the first three
+    into one and the last two into the other) but not off the promotion log, the same way a merge
+    refusal's rule name (`record_visual_decision_refused`, just above) never reaches the sentence
+    either. A rejection rate per reason is read across every turn that produced one, next to every
+    other seam's rows, for the same reason `record_visual_decision_refused` sits here rather than
+    logging ad hoc from the controller.
+
+    Called once per untrusted context, at verification time (`llm_controller._conversation_of`) --
+    not deferred to whichever response branch happens to read `trusted` later, so a context that is
+    never actually used for anything this turn (echoed back but not targeted by a restyle or an
+    explanation) is still counted.
+    """
+    record(
+        Step.CONTEXT_TRUST,
+        Verdict.DECLINED,
+        changed=False,
+        field="chart",
+        detail=f"untrusted:{context.trust_reason}",
+    )
+
+
 def _spoken(plan: FinancialPlan) -> SpokenPlan:
     """Flattened, so no domain object leaves this layer."""
     return SpokenPlan(

@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 
 from finguard_orchestrator.domain.enums import Direction, Period
@@ -87,54 +89,77 @@ def test_a_metric_can_be_a_figure_with_no_chart_and_the_old_shape_still_reads() 
             raise AssertionError("a token must not verify for another holder")
 
 
-def test_a_sealed_context_verifies_for_its_holder_and_content() -> None:
+def test_a_sealed_context_verifies_for_its_holder_conversation_position_and_content() -> None:
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
     semantics = {"chart_id": "chart-1", "spec": ["bar"], "profile": {"comparison": True}}
-    token = codec.seal_context("holder-a", semantics)
-    assert token.startswith("c1.")
-    assert codec.verify_context(token, "holder-a", semantics) is True
+    conversation_id = uuid4()
+    token = codec.seal_context("holder-a", conversation_id, 0, semantics)
+    assert token.startswith("c2.")
+    assert codec.verify_context(token, "holder-a", conversation_id, 0, semantics) == "ok"
 
 
 @pytest.mark.parametrize(
-    "tamper",
+    "tamper,reason",
     [
-        lambda t, s: (t, "holder-b", s),  # another holder
-        lambda t, s: (t, "holder-a", {**s, "profile": {"comparison": False}}),  # content changed
-        # signature bit
-        lambda t, s: (t[:-2] + ("A" if t[-1] != "A" else "B") + t[-1], "holder-a", s),
-        lambda t, s: ("m1." + t[3:], "holder-a", s),  # wrong prefix
-        lambda t, s: ("not a token", "holder-a", s),
-        lambda t, s: (None, "holder-a", s),
+        (lambda t, c, s: (t, "holder-b", c, 0, s), "holder"),  # another holder
+        (lambda t, c, s: (t, "holder-a", uuid4(), 0, s), "conversation"),  # another conversation
+        (lambda t, c, s: (t, "holder-a", c, 1, s), "position"),  # a different index in the list
+        (
+            lambda t, c, s: (t, "holder-a", c, 0, {**s, "profile": {"comparison": False}}),
+            "content",
+        ),
+        (
+            # signature bit
+            lambda t, c, s: (t[:-2] + ("A" if t[-1] != "A" else "B") + t[-1], "holder-a", c, 0, s),
+            "format",
+        ),
+        (lambda t, c, s: ("m1." + t[3:], "holder-a", c, 0, s), "format"),  # wrong prefix
+        (lambda t, c, s: ("c1." + t[3:], "holder-a", c, 0, s), "format"),  # pre-hardening prefix
+        (lambda t, c, s: ("not a token", "holder-a", c, 0, s), "format"),
+        (lambda t, c, s: (None, "holder-a", c, 0, s), "format"),
     ],
-    ids=["holder", "content", "signature", "prefix", "malformed", "missing"],
+    ids=[
+        "holder",
+        "conversation",
+        "position",
+        "content",
+        "signature",
+        "prefix",
+        "pre-hardening-prefix",
+        "malformed",
+        "missing",
+    ],
 )
-def test_a_seal_does_not_verify_when_anything_moves(tamper) -> None:
+def test_a_seal_names_why_it_does_not_verify_when_anything_moves(tamper, reason) -> None:
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
     semantics = {"chart_id": "chart-1", "spec": ["bar"], "profile": {"comparison": True}}
-    token = codec.seal_context("holder-a", semantics)
-    assert codec.verify_context(*tamper(token, semantics)) is False
+    conversation_id = uuid4()
+    token = codec.seal_context("holder-a", conversation_id, 0, semantics)
+    assert codec.verify_context(*tamper(token, conversation_id, semantics)) == reason
 
 
 def test_a_seal_survives_key_order_and_dies_with_key_rotation() -> None:
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    token = codec.seal_context("h", {"b": 1, "a": [1, 2]})
-    assert codec.verify_context(token, "h", {"a": [1, 2], "b": 1}) is True  # canonical JSON
+    conversation_id = uuid4()
+    token = codec.seal_context("h", conversation_id, 0, {"b": 1, "a": [1, 2]})
+    # canonical JSON
+    assert codec.verify_context(token, "h", conversation_id, 0, {"a": [1, 2], "b": 1}) == "ok"
     rotated = MetricTokenCodec({"k2": b"y" * 32}, "k2")
-    assert rotated.verify_context(token, "h", {"a": [1, 2], "b": 1}) is False
+    assert rotated.verify_context(token, "h", conversation_id, 0, {"a": [1, 2], "b": 1}) == "format"
 
 
 def test_the_type_discriminator_is_signed_not_only_the_prefix() -> None:
     """m1 (fix wave): before this fix, `_open` compared the unsigned `parts[0]` against the
     prefix its caller asked for and never asked the signed body what it thought it was. A context
-    seal (`c1.`) relabelled `m1.` still carries a valid signature over its own, untouched body --
+    seal (`c2.`) relabelled `m1.` still carries a valid signature over its own, untouched body --
     `_open("m1." + body_and_signature, "m1")` matched the structural check and would have handed
     that body back to `verify()` as if it had opened a metric token. Only the two envelopes'
-    disjoint key sets (`{v,k,h,g}` vs `{v,t,k,h,d}`) stopped `verify()` from accepting it -- luck,
-    not a check. The signed `"t"` field closes it: the relabelled token's body still says
-    `"t": "c1"`, so `_open` refuses it before either side ever asks about keys.
+    disjoint key sets (`{v,k,h,c,p,g}` vs `{v,t,k,h,d}`) stopped `verify()` from accepting it --
+    luck, not a check. The signed `"t"` field closes it: the relabelled token's body still says
+    `"t": "c2"`, so `_open` refuses it before either side ever asks about keys.
     """
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
-    context_token = codec.seal_context("holder-a", {"chart_id": "chart-1"})
+    context_token = codec.seal_context("holder-a", uuid4(), 0, {"chart_id": "chart-1"})
     relabelled = "m1." + context_token.split(".", 1)[1]
     assert codec._open(relabelled, "m1") is None
 

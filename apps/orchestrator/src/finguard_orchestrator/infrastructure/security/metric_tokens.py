@@ -1,11 +1,15 @@
 """Stateless HMAC envelopes for save candidates and signed visual contexts.
 
-A sealed context binds a holder reference to the SHA-256 digest of a piece of canonical-JSON
-content -- what was shown, not who asked -- so the orchestrator can hand a client a token and
-later confirm that the same holder is still looking at the same thing. It carries no content of
-its own (a digest only) and no expiry of its own; the only way a seal goes stale is key rotation.
-`verify_context` never raises: an unverified context is a state the caller branches on, not an
-error condition.
+A sealed context binds a holder reference, a conversation id and a position in that conversation's
+own ordered list of contexts to the SHA-256 digest of a piece of canonical-JSON content -- what was
+shown, to whom, from where, and in what place -- so the orchestrator can hand a client a token and
+later confirm that the same holder is still looking at the same thing, in the same conversation, in
+the place it was last emitted (A-1, Wave 3 hardening: a `c1.` seal bound the holder and the content
+alone, so a genuinely-sealed context replayed from another conversation, reordered, duplicated, or
+promoted after a middle one was dropped all verified as `True`). It carries no expiry of its own;
+the only way a seal goes stale is key rotation or the conversation moving the context to a new
+position (which re-seals it -- see `conversation_mapper.reseal_visual_contexts`). `verify_context`
+never raises: an unverified context is a state the caller branches on, not an error condition.
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ import hashlib
 import hmac
 import json
 from typing import Any
+from uuid import UUID
 
+from finguard_orchestrator.domain.models.chart import ContextTrust
 from finguard_orchestrator.domain.models.saved_metric import SavedMetricDefinition
 from finguard_orchestrator.infrastructure.metrics.codec import decode_definition, encode_definition
 
@@ -85,29 +91,70 @@ class MetricTokenCodec:
             raise MetricTokenError("invalid metric token")
         return decode_definition(raw.get("d"))
 
-    def seal_context(self, holder_reference: str, semantics: dict[str, object]) -> str:
-        """A token binding `holder_reference` to the digest of `semantics`, nothing else."""
+    def seal_context(
+        self,
+        holder_reference: str,
+        conversation_id: UUID,
+        position: int,
+        semantics: dict[str, object],
+    ) -> str:
+        """A token binding `holder_reference`, `conversation_id` and `position` to the digest of
+        `semantics`.
+
+        A-1 (Wave 3 hardening): the `c1.` envelope bound a holder to a blob and nothing else, so
+        the same holder's own sealed chart verified from any conversation, at any position, at any
+        later turn -- a replay, a reorder, a duplicate and a dropped-then-shifted context all
+        passed. `"c"` and `"p"` close that: `position` is the context's index in the ordered list
+        this process last emitted (`conversation_mapper.reseal_visual_contexts`), not a value the
+        context carries about itself, so a caller cannot keep an old position valid by echoing it
+        unchanged. The prefix moves to `c2.` so a `c1.` token minted before this change opens as
+        `None` (`_open`'s own prefix check) and verifies as `"format"` -- untrusted, never a 500.
+        """
         payload = {
             "v": 1,
-            "t": "c1",
+            "t": "c2",
             "k": self._active,
             "h": holder_reference,
+            "c": str(conversation_id),
+            "p": position,
             "g": _digest(semantics),
         }
-        return "c1." + self._sign(payload)
+        return "c2." + self._sign(payload)
 
     def verify_context(
-        self, token: str | None, holder_reference: str, semantics: dict[str, object]
-    ) -> bool:
-        """Whether `token` is `holder_reference`'s own seal over `semantics` -- never raises."""
+        self,
+        token: str | None,
+        holder_reference: str,
+        conversation_id: UUID,
+        position: int,
+        semantics: dict[str, object],
+    ) -> ContextTrust:
+        """Why `token` does or does not seal `semantics` for this holder, conversation and
+        position -- never raises.
+
+        A-1 (Wave 3 hardening): a bool told a caller nothing about *why* a context failed, and the
+        two failure shapes read as very different sentences to a holder -- "this chart is not from
+        this conversation" (the seal is genuine, for a different conversation or a shifted
+        position) versus the existing tamper text (the content or the holder or the envelope
+        itself does not check out). The five failure reasons are checked in the order a caller
+        should read them: an unopenable or wrongly-shaped token first (nothing else below can be
+        trusted), then holder, then conversation, then position, then content -- so a token that
+        fails two checks at once is always reported by the earliest one, deterministically.
+        """
         if token is None:
-            return False
-        raw = self._open(token, "c1")
-        if raw is None or set(raw) != {"v", "t", "k", "h", "g"}:
-            return False
+            return "format"
+        raw = self._open(token, "c2")
+        if raw is None or set(raw) != {"v", "t", "k", "h", "c", "p", "g"}:
+            return "format"
         if raw.get("h") != holder_reference:
-            return False
-        return raw.get("g") == _digest(semantics)
+            return "holder"
+        if raw.get("c") != str(conversation_id):
+            return "conversation"
+        if raw.get("p") != position:
+            return "position"
+        if raw.get("g") != _digest(semantics):
+            return "content"
+        return "ok"
 
     def _sign(self, body: dict[str, object]) -> str:
         encoded = json.dumps(

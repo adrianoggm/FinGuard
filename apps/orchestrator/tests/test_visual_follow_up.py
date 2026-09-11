@@ -39,6 +39,7 @@ from finguard_orchestrator.bootstrap.dependencies import (
     get_query_bus,
 )
 from finguard_orchestrator.bootstrap.main import app
+from finguard_orchestrator.domain.constants import MAX_VISUAL_CONTEXTS
 from finguard_orchestrator.domain.enums import Direction, GroupBy, Period
 from finguard_orchestrator.domain.models.chart import (
     DEFAULT_PRESENTATION,
@@ -440,9 +441,16 @@ _SEALED_CHARTED = replace(
     # `CHARTED` holds one chart today, so the two read the same, but a hard-coded index silently
     # drops the rest the day `CHARTED` gains a second one, and the failure would look like a trust
     # bug in whatever test runs next rather than a stale fixture here.
+    #
+    # A-1 (Wave 3 hardening): sealed against `_CONVERSATION_ID` -- the id `_charted_request` below
+    # stamps onto the payload -- and each context's own index in `CHARTED.visual_contexts`, so the
+    # seal verifies against the exact conversation and position `_conversation_of` re-derives from
+    # the wire.
     visual_contexts=tuple(
-        conversation_mapper.seal_context(context, _WHO.holder_reference, _TEST_TOKENS)
-        for context in CHARTED.visual_contexts
+        conversation_mapper.seal_context(
+            context, _CONVERSATION_ID, position, _WHO.holder_reference, _TEST_TOKENS
+        )
+        for position, context in enumerate(CHARTED.visual_contexts)
     ),
 )
 
@@ -1008,16 +1016,17 @@ def test_a_compound_turns_charts_are_sealed_and_each_restyles() -> None:
 
 
 def test_an_untrusted_context_survives_a_compound_round_trip_still_tokenless() -> None:
-    """I2: `_compound_read_reply`'s own `to_domain(rendered.conversation)` call passes no
-    `verify=`, so every context it round-trips -- including one the caller's own turn already
-    marked untrusted -- comes back `trusted=True` in-process. That relaundering is inert only
-    because `trusted` never crosses the wire (pinned directly by
-    `test_trusted_never_crosses_the_wire`, `test_visual_context_producers.py`) and because the
-    untrusted context's `token` was already nulled by `_conversation_of` before this function ever
-    saw it, and nothing here re-seals it. Proven end to end: a tampered chart carried into a
-    compound turn comes out the other side of the round trip still tokenless, and restyling it
-    alone on the next turn is still refused -- the relaundered `trusted=True` never leaks past this
-    function's own return.
+    """I2, then A-1 (Wave 3 hardening): `_compound_read_reply`'s own
+    `to_domain(rendered.conversation)` call now binds a real `verify=`, closing over
+    `who.holder_reference` the same way `_conversation_of` does. Before this task, it passed none,
+    and `to_domain`'s own default relaunder to `trusted=True` was inert only because nothing ever
+    re-signed a context after this point -- a context that came in untrusted was also tokenless,
+    and tokenless it stayed. Task 1's `reseal_visual_contexts` (this function's own final merge)
+    reseals whatever `trusted` says by the time it runs, so leaving this call unverified would let
+    a tampered chart carried into a compound turn walk out with a brand-new, genuinely valid seal
+    -- exactly the gap this test now closes at the route. Proven end to end: a tampered chart
+    carried into a compound turn comes out the other side of the round trip still tokenless, and
+    restyling it alone on the next turn is still refused.
     """
     bus = QueryBus()
     bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
@@ -1063,6 +1072,205 @@ def test_an_untrusted_context_survives_a_compound_round_trip_still_tokenless() -
         app.dependency_overrides.clear()
         app.state.metrics_enabled = previously_metrics_enabled
         app.state.questions_enabled = previously_questions_enabled
+
+
+# --- Task 1 (Wave 3 hardening, A-1): the four tamper shapes, at the route ----------------------
+
+
+def _draw_chart(client: TestClient, question: str, conversation: dict | None) -> dict:
+    """One `/v1/questions` draw -- a sentence `interpret_visual` does not recognise, so the
+    controller reaches the query bus and `_DrawsOneChart` appends a fresh, freshly-sealed chart
+    rather than restyling whatever is already in view."""
+    payload: dict = {"question": question}
+    if conversation is not None:
+        payload["conversation"] = conversation
+    response = client.post("/v1/questions", json=payload)
+    assert response.status_code == 200
+    return response.json()["conversation"]
+
+
+def _drive_chain(client: TestClient, months: tuple[str, ...]) -> dict:
+    """`len(months)` charts, drawn one per turn into a single, growing conversation."""
+    conversation: dict | None = None
+    for month in months:
+        conversation = _draw_chart(client, f"¿Cuánto gasté en {month}?", conversation)
+    assert conversation is not None
+    return conversation
+
+
+@pytest.fixture
+def _tamper_client():
+    bus = QueryBus()
+    bus.register(AskFinancialQuestionQuery, _DrawsOneChart())
+    app.dependency_overrides[get_query_bus] = lambda: bus
+    app.dependency_overrides[authenticated_caller] = lambda: _WHO
+    previously_metrics_enabled = app.state.metrics_enabled
+    previously_questions_enabled = app.state.questions_enabled
+    app.state.metrics_enabled = True
+    app.state.questions_enabled = True
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+        app.state.metrics_enabled = previously_metrics_enabled
+        app.state.questions_enabled = previously_questions_enabled
+
+
+def test_a_replayed_context_from_another_conversation_is_untrusted(_tamper_client) -> None:
+    """A-1: a genuinely-sealed context, minted by this very process for this very holder, but for
+    a DIFFERENT conversation, spliced into this one -- the seal's own conversation id no longer
+    matches, so it is refused with the "not this conversation" text rather than the tamper one."""
+    client = _tamper_client
+    conversation_a = _draw_chart(client, "¿Cuánto gasté en enero?", None)
+    conversation_b = _draw_chart(client, "¿Cuánto gasté en febrero?", None)
+    assert conversation_a["conversation_id"] != conversation_b["conversation_id"]
+
+    foreign_context = conversation_a["visual_contexts"][0]
+    spliced = copy.deepcopy(conversation_b)
+    spliced["visual_contexts"].append(foreign_context)
+
+    response = client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué el segundo gráfico?", "conversation": spliced},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["outcome"] == "VISUAL_UNTRUSTED"
+    assert (
+        body["text"] == "Ese gráfico no es de esta conversación; pide uno nuevo y podré cambiarlo."
+    )
+    # The surviving, genuinely-this-conversation's own context is untouched.
+    own_context = next(
+        c
+        for c in body["conversation"]["visual_contexts"]
+        if c["chart_id"] != foreign_context["chart_id"]
+    )
+    assert own_context["token"] is not None
+
+
+def test_reordering_two_trusted_contexts_untrusts_both(_tamper_client) -> None:
+    """A-1: two contexts this process sealed, each for its own position -- swapping their order in
+    the echoed list leaves both seals pointing at a position that is no longer theirs, so both
+    fail, not just one."""
+    client = _tamper_client
+    conversation = _drive_chain(client, ("enero", "febrero"))
+    contexts = conversation["visual_contexts"]
+    assert len(contexts) == 2
+    reordered = copy.deepcopy(conversation)
+    reordered["visual_contexts"] = [contexts[1], contexts[0]]
+
+    response = client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué el primer gráfico?", "conversation": reordered},
+    )
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "VISUAL_UNTRUSTED"
+    survivors = response.json()["conversation"]["visual_contexts"]
+    assert all(context["token"] is None for context in survivors)
+
+
+def test_duplicating_the_newest_context_is_refused_before_the_seal_even_runs(
+    _tamper_client,
+) -> None:
+    """A-1: literally duplicating an entry (the same `chart_id` twice) never reaches the trust
+    gate at all -- `Conversation.__post_init__`'s own chart-id-uniqueness invariant (`domain/
+    models/conversation.py`) refuses it at the edge as a 422, a stronger and earlier defence than
+    an untrusted verdict. The shape the seal's position binding actually has to catch is a
+    *distinct* context minted for one position and echoed at another -- proven directly by
+    `test_reordering_two_trusted_contexts_untrusts_both` and `test_dropping_the_middle_context_
+    shifts_and_untrusts_the_last` above and below: both move a genuinely-sealed context to an
+    index its seal does not name, without needing two contexts to share an id to do it."""
+    client = _tamper_client
+    conversation = _drive_chain(client, ("enero", "febrero"))
+    contexts = conversation["visual_contexts"]
+    assert len(contexts) == 2
+    duplicated = copy.deepcopy(conversation)
+    duplicated["visual_contexts"] = [contexts[0], contexts[1], copy.deepcopy(contexts[1])]
+
+    response = client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué el primer gráfico?", "conversation": duplicated},
+    )
+    assert response.status_code == 422
+
+
+def test_dropping_the_middle_context_shifts_and_untrusts_the_last(_tamper_client) -> None:
+    """A-1: dropping a middle context shifts every later one down by a position its seal does not
+    name -- exactly the shape A-1 calls out by name (a category drill's own middle-drop hazard).
+    The untouched first survivor, whose position never moved, stays trusted."""
+    client = _tamper_client
+    conversation = _drive_chain(client, ("enero", "febrero", "marzo"))
+    contexts = conversation["visual_contexts"]
+    assert len(contexts) == 3
+    dropped = copy.deepcopy(conversation)
+    dropped["visual_contexts"] = [contexts[0], contexts[2]]
+
+    response = client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué el primer gráfico?", "conversation": dropped},
+    )
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "VISUAL_EXPLAINED"
+    survivors = response.json()["conversation"]["visual_contexts"]
+    assert survivors[0]["token"] is not None, (
+        "the untouched first chart, still at index 0, stays trusted"
+    )
+    assert survivors[1]["token"] is None, "the shifted last chart, now at index 1, is not"
+
+
+def test_an_old_pre_hardening_token_is_untrusted_not_a_500(_tamper_client) -> None:
+    """A-1: a `c1.` seal -- the only shape a pre-hardening client could ever have held -- still
+    matches the wire's widened token pattern (`c1` or `c2`), so it reaches `verify_context` rather
+    than being refused as a malformed request; `verify_context` opens it, finds its signed `"t"`
+    is `"c1"` and not `"c2"`, and returns `"format"`. The turn still completes and answers
+    `VISUAL_UNTRUSTED`, never a 500."""
+    client = _tamper_client
+    conversation = _draw_chart(client, "¿Cuánto gasté en enero?", None)
+    stale = copy.deepcopy(conversation)
+    # A syntactically well-formed `c1.<body>.<sig>` token nothing here ever issued -- standing in
+    # for a seal minted by this same process before the `c2.` prefix existed.
+    stale["visual_contexts"][0]["token"] = "c1." + "A" * 20 + "." + "B" * 20
+
+    response = client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué este gráfico?", "conversation": stale},
+    )
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "VISUAL_UNTRUSTED"
+
+
+def test_eviction_reseals_survivors_so_a_long_conversation_stays_trusted(_tamper_client) -> None:
+    """A-1's own design decision: once `MAX_VISUAL_CONTEXTS` is reached, appending a new chart
+    evicts the oldest and shifts every survivor's position down by one. Without a reseal at
+    eviction, every survivor's seal would immediately fail its own position check on the very next
+    turn -- not because of any replay or tampering, but because the list it was sealed against no
+    longer exists. Driving `MAX_VISUAL_CONTEXTS + 2` charts through the fake route and then
+    restyling the OLDEST surviving chart proves the reseal happened: a stale seal would answer
+    `VISUAL_UNTRUSTED` here instead.
+    """
+    client = _tamper_client
+    months = (
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+    )[: MAX_VISUAL_CONTEXTS + 2]
+    conversation = _drive_chain(client, months)
+    contexts = conversation["visual_contexts"]
+    assert len(contexts) == MAX_VISUAL_CONTEXTS
+    assert all(context["token"] is not None for context in contexts), (
+        "every survivor was resealed at eviction, not just the newest"
+    )
+
+    restyled = client.post(
+        "/v1/questions",
+        json={"question": "¿Por qué el primer gráfico?", "conversation": conversation},
+    )
+    assert restyled.status_code == 200
+    assert restyled.json()["outcome"] == "VISUAL_EXPLAINED"
 
 
 # --- Task 2 (Wave 4.2b): the reader splits by names and regroups by calendar -------------------
@@ -1125,8 +1333,10 @@ _TWO_CHARTED = (
 _SEALED_TWO_CHARTED = replace(
     _TWO_CHARTED,
     visual_contexts=tuple(
-        conversation_mapper.seal_context(context, _WHO.holder_reference, _TEST_TOKENS)
-        for context in _TWO_CHARTED.visual_contexts
+        conversation_mapper.seal_context(
+            context, _CONVERSATION_ID, position, _WHO.holder_reference, _TEST_TOKENS
+        )
+        for position, context in enumerate(_TWO_CHARTED.visual_contexts)
     ),
 )
 

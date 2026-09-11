@@ -46,6 +46,7 @@ from finguard_orchestrator.application import (
     Stage,
 )
 from finguard_orchestrator.application.queries.ask_financial_question import (
+    record_context_untrusted,
     record_visual_decision,
     record_visual_decision_refused,
 )
@@ -76,7 +77,12 @@ from finguard_orchestrator.domain.enums import (
     Spoken,
 )
 from finguard_orchestrator.domain.errors import InvalidValueError
-from finguard_orchestrator.domain.models.chart import ChartSpec, PresentationContext, VisualContext
+from finguard_orchestrator.domain.models.chart import (
+    ChartSpec,
+    ContextTrust,
+    PresentationContext,
+    VisualContext,
+)
 from finguard_orchestrator.domain.models.contact import Contact
 from finguard_orchestrator.domain.models.conversation import (
     IDLE,
@@ -223,7 +229,6 @@ def _derived_context(
     chart_id: str,
     *,
     decision: VisualDecision | None = None,
-    seal: Callable[[VisualContext], VisualContext] | None = None,
 ) -> VisualContext:
     """The restyled chart's own context: a new id and turn, the source's profile and provenance.
 
@@ -245,11 +250,10 @@ def _derived_context(
     saved metric's. Correct -- the restyle *is* of the chart on screen -- but read the link as
     "this is a restyle of that chart", never as "this spec derives from that spec".
 
-    `seal` defaults to `None` -- Task 3's own addition, and every caller before it had none to pass
-    either. Sealed here rather than by a second pass over the wire afterward, the same reason
-    `_remember_visual_context` seals a fresh chart at birth: a restyle is signed the turn it is
-    minted, so the holder does not have to ask a new question just to get a context this process's
-    own verifier will accept back.
+    No `seal` parameter (A-1, Wave 3 hardening: it moved out from here). A seal covers a context's
+    *position*, which this function -- building one context in isolation -- cannot know until its
+    caller appends it to the conversation; `_visual_only_response` reseals the whole conversation
+    once, after `with_visual_context`, the same way `_remember_visual_context` now does.
 
     `labels`/`series_labels`/`ranked` are copied from `trusted` too (Task 1, Wave 4.3): a restyle
     shows the same data, so the labels a reader can resolve «agosto» or «la barra más alta»
@@ -279,7 +283,7 @@ def _derived_context(
         source=decision.source if decision is not None else None,
         fallback_reason=decision.fallback_reason if decision is not None else None,
     )
-    return seal(context) if seal is not None else context
+    return context
 
 
 # §5's question, for the two AMBIGUOUS pairs the short-circuit's own `classify_claimed_visual`
@@ -334,6 +338,29 @@ def _refusal_response(rule: RejectionRule, conversation: Conversation) -> Questi
     )
 
 
+# A-1 (Wave 3 hardening): two failure populations, two sentences. `"conversation"` and `"position"`
+# are a *genuine* seal, minted by this very process for this very holder, that simply names a
+# different conversation or a different place in this one -- another conversation's chart replayed
+# here, or this conversation's own list reordered, duplicated, or shifted by a dropped neighbour --
+# and the honest, specific thing to say is that the chart is not this conversation's. `"holder"`,
+# `"content"` and `"format"` are the three shapes where the holder check itself already failed or
+# the token cannot be trusted at all (a different holder's seal, a changed payload, a malformed or
+# pre-hardening token) -- a holder cannot fix any of those by naming the right conversation, so the
+# older, more general tamper sentence stays for them.
+_UNTRUSTED_TEXT: dict[ContextTrust, str] = {
+    "holder": "No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
+    "conversation": "Ese gráfico no es de esta conversación; pide uno nuevo y podré cambiarlo.",
+    "position": "Ese gráfico no es de esta conversación; pide uno nuevo y podré cambiarlo.",
+    "content": "No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
+    "format": "No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
+}
+
+
+def _untrusted_text(context: VisualContext) -> str:
+    """The `VISUAL_UNTRUSTED` sentence for `context`, chosen by why its seal failed."""
+    return _UNTRUSTED_TEXT[context.trust_reason]
+
+
 def _explanation_response(why: WhyAsked, conversation: Conversation) -> QuestionResponse:
     """R4/R5/R6: «¿Por qué este gráfico?» answered from the chart itself -- zero ledger calls, zero
     model calls, the conversation unchanged. `context` is resolved exactly as a restyle resolves
@@ -362,7 +389,7 @@ def _explanation_response(why: WhyAsked, conversation: Conversation) -> Question
     if not context.trusted:
         return QuestionResponse(
             outcome="VISUAL_UNTRUSTED",
-            text="No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
+            text=_untrusted_text(context),
             conversation=conversation_mapper.to_payload(conversation),
         )
     return QuestionResponse(
@@ -380,7 +407,7 @@ def _visual_only_response(
     source: SavedMetricDefinition | None = None,
     holder_reference: str | None = None,
     metric_tokens: MetricTokenCodec | None = None,
-    seal: Callable[[VisualContext], VisualContext] | None = None,
+    seal: Callable[[Conversation], Conversation] | None = None,
 ) -> QuestionResponse:
     if intent.explanation:
         return QuestionResponse(
@@ -402,7 +429,7 @@ def _visual_only_response(
     if not context.trusted:
         return QuestionResponse(
             outcome="VISUAL_UNTRUSTED",
-            text="No reconozco ese gráfico; pide uno nuevo y podré cambiarlo.",
+            text=_untrusted_text(context),
             conversation=conversation_mapper.to_payload(conversation),
         )
     # `_saved_visual_source` only ever offers a definition that has a chart; this states it rather
@@ -472,10 +499,15 @@ def _visual_only_response(
     was = trusted_context.decision.source if trusted_context.decision is not None else None
     record_visual_decision(decision, was=was)
     chart_id = "chart-" + uuid.uuid4().hex[:16]
-    derived_context = _derived_context(
-        trusted_context, updated.spec, chart_id, decision=decision, seal=seal
-    )
+    derived_context = _derived_context(trusted_context, updated.spec, chart_id, decision=decision)
     next_conversation = conversation.with_visual_context(derived_context)
+    # A-1 (Wave 3 hardening): sealed here, after the append -- never before it -- because a seal
+    # covers the context's position and `with_visual_context` can evict the oldest context once
+    # `MAX_VISUAL_CONTEXTS` is reached, shifting every survivor down by one. `seal` (bound to
+    # `conversation_mapper.reseal_visual_contexts`) reseals every already-trusted context at its
+    # now-final index, this restyle's own new one included, and leaves any untrusted context alone.
+    if seal is not None:
+        next_conversation = seal(next_conversation)
     candidate = None
     if source is not None and holder_reference is not None and metric_tokens is not None:
         candidate = SaveCandidate(
@@ -1218,16 +1250,26 @@ async def _compound_read_reply(
             result, holder_reference=who.holder_reference, metric_tokens=metric_tokens
         )
         if rendered.conversation is not None:
-            # No `verify=` here on purpose (I2): `rendered.conversation` is
-            # `to_payload(result.conversation)`, built from this clause's own `result` two lines
-            # above -- a `Conversation` the query bus just returned inside this same request, never
-            # `request.conversation` itself. `to_domain`'s default relaunders every context back to
-            # `trusted=True`, and that stays harmless only because `trusted` never crosses the wire
-            # (`_context_payload` emits `token`, never `trusted`) and because `_conversation_of`
-            # already nulled the `token` of anything refused before it ever reached this function --
-            # so a context that was untrusted coming in is still tokenless going out, and the next
-            # turn's `_conversation_of` refuses it again regardless of what `trusted` says here.
-            rendered_conversation = conversation_mapper.to_domain(rendered.conversation)
+            # A-1 (Wave 3 hardening): `verify=` now real, where I2 (above this edit) argued none
+            # was needed. That argument held only as long as nothing here ever re-signed a
+            # context -- `to_domain`'s default relaunders every context to `trusted=True`, but a
+            # context that came in untrusted was also tokenless, and I2's own `reseal_visual_
+            # contexts` did not exist yet to mint it a fresh one. It exists now (this function's
+            # own final merge calls it, below), and it reseals whatever `trusted` says here --
+            # so an unguarded relaunder would let a tampered context carried into a compound turn
+            # walk out with a brand-new, genuinely valid seal. Verifying for real keeps a
+            # relaundered-but-tokenless context `trusted=False` exactly as `_conversation_of`
+            # already found it, while a context this very clause just minted (a real token,
+            # sealed two lines above by `question_to_dto`'s own `seal`) verifies `"ok"` and stays
+            # trusted -- both for the reason that actually holds now, not the one that used to.
+            rendered_conversation = conversation_mapper.to_domain(
+                rendered.conversation,
+                verify=lambda token, conversation_id, position, semantics: (
+                    metric_tokens.verify_context(
+                        token, who.holder_reference, conversation_id, position, semantics
+                    )
+                ),
+            )
             previous_visual_ids = {
                 context.chart_id for context in result.conversation.visual_contexts
             }
@@ -1264,6 +1306,13 @@ async def _compound_read_reply(
     for index in range(len(clauses)):
         for context in visual_contexts_by_index[index]:
             merged = merged.with_visual_context(context)
+    # A-1 (Wave 3 hardening): each clause's own chart was sealed against that clause's own,
+    # smaller conversation (`question_to_dto` inside the loop above) -- a position in a list that
+    # is not this compound answer's final, merged one. Resealing once here, the same tool
+    # `question_to_dto` and a restyle both reseal with, is what makes the very next turn's restyle
+    # of a compound chart verify at all, rather than refusing every one of them as a position
+    # mismatch nobody replayed or reordered.
+    merged = conversation_mapper.reseal_visual_contexts(merged, who.holder_reference, metric_tokens)
     current = merged
     text = "\n".join(f"{index}. {part.text}" for index, part in completed_with_indexes)
     return QuestionResponse(
@@ -1300,13 +1349,26 @@ def _conversation_of(
     context whose seal does not check out comes back `trusted=False` (`to_domain`'s own default
     otherwise), and everything downstream refuses it as a semantic input rather than repairing or
     silently dropping it.
+
+    A-1 (Wave 3 hardening): the closure now also binds each context's conversation id and its
+    index in `request.conversation`'s own echoed list -- `to_domain` computes the id once
+    (`_identified`) and threads it through to every context it verifies, so a context replayed
+    from a different conversation, reordered, duplicated, or shifted by a dropped neighbour fails
+    here on the fact that actually changed, not on content alone. Every context `to_domain` marks
+    untrusted is logged once, by reason, before this function returns -- `record_context_untrusted`
+    reads `trust_reason` off each one, which is exactly why verification happens here rather than
+    lazily, the first time some later branch happens to read `trusted`.
     """
-    return conversation_mapper.to_domain(
+    conversation = conversation_mapper.to_domain(
         request.conversation,
-        verify=lambda token, semantics: metric_tokens.verify_context(
-            token, who.holder_reference, semantics
+        verify=lambda token, conversation_id, position, semantics: metric_tokens.verify_context(
+            token, who.holder_reference, conversation_id, position, semantics
         ),
     )
+    for context in conversation.visual_contexts:
+        if not context.trusted:
+            record_context_untrusted(context)
+    return conversation
 
 
 def _presentation_of(request: QuestionRequest) -> PresentationContext:
@@ -1633,7 +1695,9 @@ async def ask(
     # feature, so a derived context is sealed for its holder the same turn it is minted regardless
     # of whether saved metrics are enabled.
     seal = functools.partial(
-        conversation_mapper.seal_context, holder_reference=who.holder_reference, codec=metric_tokens
+        conversation_mapper.reseal_visual_contexts,
+        holder_reference=who.holder_reference,
+        codec=metric_tokens,
     )
     presentation = _presentation_of(request)
 
@@ -1828,7 +1892,9 @@ async def ask_streaming(
     was = _conversation_of(request, who, metric_tokens)
     # Task 3: built once per request, unconditionally -- see the same line on the question route.
     seal = functools.partial(
-        conversation_mapper.seal_context, holder_reference=who.holder_reference, codec=metric_tokens
+        conversation_mapper.reseal_visual_contexts,
+        holder_reference=who.holder_reference,
+        codec=metric_tokens,
     )
     presentation = _presentation_of(request)
 

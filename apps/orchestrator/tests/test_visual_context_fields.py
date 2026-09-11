@@ -97,16 +97,20 @@ def test_a_tampered_source_untrusts_a_sealed_context() -> None:
     `test_a_tampered_plan_digest_untrusts_a_sealed_context`, `test_visualization_stage1.py`)."""
     codec = MetricTokenCodec({"k1": b"x" * 32}, "k1")
     context = VisualContext("chart-1", SPEC, BREAKDOWN_PROFILE, source="llm")
-    sealed = conversation_mapper.seal_context(context, "holder-a", codec)
+    conversation_id = uuid4()
+    sealed = conversation_mapper.seal_context(context, conversation_id, 0, "holder-a", codec)
     assert sealed.token is not None
 
-    def verify(token: str | None, semantics: dict[str, object]) -> bool:
-        return codec.verify_context(token, "holder-a", semantics)
+    def verify(token: str | None, conv_id, position: int, semantics: dict[str, object]):
+        return codec.verify_context(token, "holder-a", conv_id, position, semantics)
 
-    payload = conversation_mapper.to_payload(Conversation(visual_contexts=(sealed,)))
+    payload = conversation_mapper.to_payload(
+        Conversation(conversation_id=conversation_id, visual_contexts=(sealed,))
+    )
     payload.visual_contexts[0].source = "patch"
     tampered = conversation_mapper.to_domain(payload, verify=verify).visual_contexts[0]
     assert tampered.trusted is False and tampered.token is None
+    assert tampered.trust_reason == "content"
 
 
 def test_an_unknown_source_value_is_a_422() -> None:

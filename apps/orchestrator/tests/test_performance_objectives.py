@@ -87,17 +87,19 @@ _PREVIOUS = FinancialPlan(
     group_by=GroupBy.CATEGORY,
     only_account_id=CS_ACCOUNT,
 )
-_CHARTED = Conversation(last_plan=_PREVIOUS).with_visual_context(
+_CONVERSATION_ID = UUID("44444444-4444-4444-4444-444444444444")
+_CHARTED = Conversation(conversation_id=_CONVERSATION_ID, last_plan=_PREVIOUS).with_visual_context(
     VisualContext("chart-1", _SPEC, BREAKDOWN_PROFILE)
 )
 _SEALED_CHARTED = replace(
     _CHARTED,
     visual_contexts=tuple(
-        conversation_mapper.seal_context(context, _WHO.holder_reference, _TEST_TOKENS)
-        for context in _CHARTED.visual_contexts
+        conversation_mapper.seal_context(
+            context, _CONVERSATION_ID, position, _WHO.holder_reference, _TEST_TOKENS
+        )
+        for position, context in enumerate(_CHARTED.visual_contexts)
     ),
 )
-_CONVERSATION_ID = UUID("44444444-4444-4444-4444-444444444444")
 
 
 def _decide_spy(monkeypatch):
