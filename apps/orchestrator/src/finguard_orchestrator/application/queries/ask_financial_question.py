@@ -796,6 +796,27 @@ class AskFinancialQuestionHandler:
             yield replace(restored, text=f"He vuelto a la consulta anterior. {restored.text}")
             return
 
+        season = window_words.season_ask(query.sentence, today=query.today)
+        if season is not None:
+            # B-4 (Wave 3 hardening): «este verano»/«el verano pasado»/«en primavera» are windows
+            # `window_words.window_in` keeps refusing to guess -- see its own module docstring.
+            # Before this, the refusal was silent: the sentence reached the planner (or a
+            # follow-up reader) with no signal that the season was never read, and whatever window
+            # was already in view answered a different question (§11's own opening sentence, «¿En
+            # qué he gastado más este verano?», ran with the inherited `LAST_N_MONTHS:3`
+            # unchanged). Ahead of intent classification and the planner both, on purpose: no
+            # vocabulary here is more certain about what the sentence is missing, and answering
+            # with the wrong months is worse than asking which ones were meant.
+            question, chips = season
+            yield AskFinancialQuestionResult(
+                outcome=Spoken.GUIDANCE.value,
+                text=question,
+                question=question,
+                conversation=was,
+                suggestions=list(chips),
+            )
+            return
+
         if query.analysis is not None:
             analysis = query.analysis
         elif query.intent is not None:
