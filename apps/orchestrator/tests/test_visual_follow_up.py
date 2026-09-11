@@ -268,9 +268,9 @@ def test_every_kind_and_claimant_is_reachable() -> None:
 def test_the_handlers_drill_down_literal_is_in_the_vocabulary() -> None:
     """M2 (fix wave): `ask_financial_question.py`'s own `follow_up_seen[0].kind == "DRILL_DOWN"`
     check is a hand-typed string, not read off `VisualFollowUpKind` -- pinned against the
-    vocabulary here the same way `_DERIVING_KINDS` (`llm_mapper.py`) now asserts itself at import
-    time, so a typo in either stops silently rather than passing a chart's own follow-up through
-    unrecognised."""
+    vocabulary here, so a typo stops silently rather than passing a chart's own follow-up through
+    unrecognised. `llm_mapper.py`'s own `derived_from` no longer reads `visual_follow_up.kind` at
+    all (B-3, Wave 3 hardening: the fact, not the verb) so it has nothing left to pin here."""
     assert "DRILL_DOWN" in get_args(VisualFollowUpKind)
 
 
